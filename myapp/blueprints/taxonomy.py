@@ -20,7 +20,18 @@ blueprint = Blueprint(ROUTENAME, __name__, url_prefix='/taxonomy', template_fold
 
 def init_app(app):
     """Register menu items."""
-    app.add_menu_item("Taxonomy", f"{ROUTENAME}.platforms", 200)
+    app.add_menu_item("Taxonomy", f"{ROUTENAME}.index", 200)
+
+
+# =============================================================================
+# Index / Navigation
+# =============================================================================
+
+@blueprint.route('/')
+@login_required
+def index():
+    """Taxonomy overview - redirect to platforms or show navigation."""
+    return render_template('taxonomy/index.html')
 
 
 # =============================================================================
@@ -29,7 +40,6 @@ def init_app(app):
 
 class PlatformForm(FlaskForm):
     name = StringField('Name', validators=[DataRequired(), Length(max=100)])
-    manufacturer = StringField('Manufacturer', validators=[Optional(), Length(max=100)])
     description = TextAreaField('Description', validators=[Optional()])
     parent_id = SelectField('Parent Platform', coerce=int, validators=[Optional()])
 
@@ -84,7 +94,6 @@ def new_platform():
     if form.validate_on_submit():
         platform = Platform(
             name=form.name.data,
-            manufacturer=form.manufacturer.data,
             description=form.description.data,
             parent_id=form.parent_id.data if form.parent_id.data != 0 else None
         )
@@ -110,7 +119,6 @@ def edit_platform(id):
     
     if form.validate_on_submit():
         platform.name = form.name.data
-        platform.manufacturer = form.manufacturer.data
         platform.description = form.description.data
         platform.parent_id = form.parent_id.data if form.parent_id.data != 0 else None
         db.session.commit()

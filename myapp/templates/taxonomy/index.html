@@ -1,0 +1,59 @@
+{% extends "_base.html" %}
+{% block page_title %}Taxonomy{% endblock %}
+
+{% block content %}
+<h1 class="mb-4"><i class="bi bi-diagram-3"></i> Taxonomy</h1>
+
+<div class="row">
+    <div class="col-md-4 mb-4">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <i class="bi bi-pc-display display-4 text-primary mb-3"></i>
+                <h5 class="card-title">Platforms</h5>
+                <p class="card-text text-muted">Computer systems and hardware platforms</p>
+                <a href="{{ url_for('myapp_blueprints_taxonomy.platforms') }}" class="btn btn-primary">Manage Platforms</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4 mb-4">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <i class="bi bi-folder display-4 text-success mb-3"></i>
+                <h5 class="card-title">Categories</h5>
+                <p class="card-text text-muted">Software categories and types</p>
+                <a href="{{ url_for('myapp_blueprints_taxonomy.categories') }}" class="btn btn-success">Manage Categories</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4 mb-4">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <i class="bi bi-tags display-4 text-info mb-3"></i>
+                <h5 class="card-title">Tags</h5>
+                <p class="card-text text-muted">Flexible tags for items</p>
+                <a href="{{ url_for('myapp_blueprints_taxonomy.tags') }}" class="btn btn-info">Manage Tags</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6 mb-4">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <i class="bi bi-link-45deg display-4 text-warning mb-3"></i>
+                <h5 class="card-title">External Systems</h5>
+                <p class="card-text text-muted">Links to Koillection, Collective Access, etc.</p>
+                <a href="{{ url_for('myapp_blueprints_taxonomy.external_systems') }}" class="btn btn-warning">Manage External Systems</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6 mb-4">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <i class="bi bi-database display-4 text-secondary mb-3"></i>
+                <h5 class="card-title">Hash Databases</h5>
+                <p class="card-text text-muted">Known file identification (NSRL, etc.)</p>
+                <a href="{{ url_for('myapp_blueprints_taxonomy.hash_databases') }}" class="btn btn-secondary">Manage Hash Databases</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

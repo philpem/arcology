@@ -65,15 +65,28 @@
         <div class="card">
             <div class="card-header d-flex justify-content-between">
                 <span><i class="bi bi-disc"></i> Artefacts ({{ item.artefacts|length }})</span>
-                <a href="{{ url_for('myapp_blueprints_artefacts.new', item_id=item.id) }}" class="btn btn-sm btn-primary"><i class="bi bi-plus"></i> Add</a>
+                <a href="{{ url_for('myapp_blueprints_artefacts.upload', item_id=item.id) }}" class="btn btn-sm btn-primary"><i class="bi bi-plus"></i> Upload</a>
             </div>
             <div class="list-group list-group-flush">
-                {% for artefact in item.artefacts %}
+                {% for artefact in item.artefacts if not artefact.parent_artefact %}
                 <div class="list-group-item">
                     <div class="d-flex justify-content-between">
                         <div>
                             <h5><a href="{{ url_for('myapp_blueprints_artefacts.view', id=artefact.id) }}">{{ artefact.label }}</a></h5>
-                            <p class="mb-1 text-muted"><span class="badge bg-secondary">{{ artefact.artefact_type.value|replace('_', ' ')|title }}</span> <code>{{ artefact.file_path }}</code></p>
+                            <p class="mb-1 text-muted">
+                                <span class="badge bg-secondary">{{ artefact.artefact_type.value.upper().replace('_', ' ') }}</span>
+                                <code>{{ artefact.original_filename }}</code>
+                            </p>
+                            {% if artefact.derived_artefacts %}
+                            <div class="ms-3 mt-2 small">
+                                <i class="bi bi-arrow-return-right text-muted"></i>
+                                {% for derived in artefact.derived_artefacts %}
+                                <a href="{{ url_for('myapp_blueprints_artefacts.view', id=derived.id) }}" class="me-2">
+                                    {{ derived.label }} <span class="badge bg-info">{{ derived.artefact_type.value.upper() }}</span>
+                                </a>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
                         </div>
                         <div class="text-end">
                             {% if artefact.file_size %}<small class="text-muted">{{ (artefact.file_size / 1024 / 1024)|round(2) }} MB</small>{% endif %}

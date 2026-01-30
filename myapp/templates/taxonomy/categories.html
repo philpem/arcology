@@ -2,6 +2,13 @@
 {% block page_title %}Categories{% endblock %}
 
 {% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_taxonomy.index') }}">Taxonomy</a></li>
+        <li class="breadcrumb-item active">Categories</li>
+    </ol>
+</nav>
+
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h1><i class="bi bi-folder"></i> Categories</h1>
     <a href="{{ url_for('myapp_blueprints_taxonomy.new_category') }}" class="btn btn-primary"><i class="bi bi-plus-lg"></i> New Category</a>

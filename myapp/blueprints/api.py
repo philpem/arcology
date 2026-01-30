@@ -215,6 +215,66 @@ def get_pending_analyses():
 # Partitions & Files
 # =============================================================================
 
+@blueprint.route('/analysis/<int:id>/produce-artefact', methods=['POST'])
+def produce_artefact(id):
+    """
+    Create a derived artefact from an analysis result.
+    Used by workers when e.g. flux decode produces a sector image.
+    The new artefact will automatically have follow-on analyses queued.
+    """
+    analysis = Analysis.query.get_or_404(id)
+    data = request.get_json()
+    
+    if not data:
+        return error_response('JSON body required')
+    
+    required = ['label', 'original_filename', 'storage_path', 'artefact_type']
+    for field in required:
+        if field not in data:
+            return error_response(f'{field} is required')
+    
+    try:
+        artefact_type = ArtefactType(data['artefact_type'])
+    except ValueError:
+        return error_response('Invalid artefact_type')
+    
+    # Create derived artefact
+    artefact = Artefact(
+        item_id=analysis.artefact.item_id,
+        label=data['label'],
+        artefact_type=artefact_type,
+        type_overridden=False,
+        description=data.get('description'),
+        original_filename=data['original_filename'],
+        storage_path=data['storage_path'],
+        file_size=data.get('file_size'),
+        mime_type=data.get('mime_type'),
+        md5=data.get('md5'),
+        sha256=data.get('sha256'),
+        parent_artefact_id=analysis.artefact_id,
+        derived_from_analysis_id=analysis.id
+    )
+    
+    db.session.add(artefact)
+    db.session.commit()
+    
+    # Queue follow-on analyses for the new artefact
+    from .artefacts import queue_analyses_for_artefact, ANALYSIS_MAP
+    
+    # Pass through any hints from parent analysis
+    hints = None
+    if analysis.hints:
+        import json
+        hints = json.loads(analysis.hints)
+    
+    queue_analyses_for_artefact(artefact, hints)
+    
+    return jsonify({
+        'artefact': artefact_to_dict(artefact),
+        'queued_analyses': [t.value for t in ANALYSIS_MAP.get(artefact_type, [])]
+    }), 201
+
+
 @blueprint.route('/artefacts/<int:id>/partitions', methods=['POST'])
 def add_partition(id):
     artefact = Artefact.query.get_or_404(id)
@@ -343,8 +403,11 @@ def item_to_dict(item, include_artefacts=False):
 def artefact_to_dict(artefact, include_partitions=False):
     result = {
         'id': artefact.id, 'item_id': artefact.item_id, 'label': artefact.label,
-        'artefact_type': artefact.artefact_type.value, 'file_path': artefact.file_path,
-        'file_size': artefact.file_size, 'md5': artefact.md5, 'sha256': artefact.sha256,
+        'artefact_type': artefact.artefact_type.value, 
+        'type_overridden': artefact.type_overridden,
+        'original_filename': artefact.original_filename,
+        'file_size': artefact.file_size, 'mime_type': artefact.mime_type,
+        'md5': artefact.md5, 'sha256': artefact.sha256,
         'created_at': artefact.created_at.isoformat(), 'updated_at': artefact.updated_at.isoformat()
     }
     if include_partitions:
@@ -356,7 +419,8 @@ def analysis_to_dict(analysis, include_artefact=False):
     result = {
         'id': analysis.id, 'artefact_id': analysis.artefact_id,
         'analysis_type': analysis.analysis_type.value, 'status': analysis.status.value,
-        'tool_name': analysis.tool_name, 'output_url': analysis.output_url,
+        'tool_name': analysis.tool_name, 'hints': analysis.hints,
+        'output_url': analysis.output_url,
         'success': analysis.success, 'summary': analysis.summary, 'error_message': analysis.error_message,
         'created_at': analysis.created_at.isoformat(),
         'started_at': analysis.started_at.isoformat() if analysis.started_at else None,
@@ -364,7 +428,9 @@ def analysis_to_dict(analysis, include_artefact=False):
     }
     if include_artefact:
         result['artefact'] = {'id': analysis.artefact.id, 'label': analysis.artefact.label,
-                             'file_path': analysis.artefact.file_path, 'artefact_type': analysis.artefact.artefact_type.value}
+                             'original_filename': analysis.artefact.original_filename, 
+                             'storage_path': analysis.artefact.storage_path,
+                             'artefact_type': analysis.artefact.artefact_type.value}
     return result
 
 

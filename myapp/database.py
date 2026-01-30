@@ -22,26 +22,69 @@ from .extensions import db
 # =============================================================================
 
 class ArtefactType(enum.Enum):
-    """Types of digital artefacts."""
-    FLOPPY_SCP = "floppy_scp"
-    FLOPPY_IMD = "floppy_imd"
-    FLOPPY_RAW = "floppy_raw"
-    HDD_IMAGE = "hdd_image"
-    CDROM_ISO = "cdrom_iso"
-    CDROM_BIN = "cdrom_bin"
-    SCAN_PDF = "scan_pdf"
-    SCAN_IMAGE = "scan_image"
-    OTHER = "other"
+    """Types of digital artefacts - auto-detected or manually specified."""
+    # Flux-level floppy images
+    SCP = "scp"                  # SuperCard Pro
+    KF = "kf"                    # Kryoflux
+    IPF = "ipf"                  # SPS/IPF
+    FLUX_RAW = "flux_raw"        # Raw flux (e.g., .raw from Greaseweazle)
+    
+    # Sector-level floppy images
+    IMD = "imd"                  # ImageDisk
+    TD0 = "td0"                  # Teledisk
+    D64 = "d64"                  # C64 disk image
+    ADF = "adf"                  # Amiga Disk File
+    DSK = "dsk"                  # Various (CPC, Spectrum, etc.)
+    IMG = "img"                  # Raw sector image
+    
+    # CD/DVD images
+    ISO = "iso"                  # ISO 9660
+    BIN_CUE = "bin_cue"          # BIN/CUE pair
+    MDF_MDS = "mdf_mds"          # Alcohol 120%
+    NRG = "nrg"                  # Nero
+    
+    # Hard drive / mass storage
+    HDD_RAW = "hdd_raw"          # Raw HDD image
+    VHD = "vhd"                  # Virtual Hard Disk
+    VMDK = "vmdk"                # VMware
+    QCOW2 = "qcow2"              # QEMU
+    
+    # Documents / scans
+    PDF = "pdf"
+    DJVU = "djvu"
+    
+    # Images
+    JPEG = "jpeg"
+    PNG = "png"
+    TIFF = "tiff"
+    
+    # Archives (containing other artefacts)
+    ZIP = "zip"
+    TARGZ = "tar_gz"
+    RAR = "rar"
+    
+    # Unknown - needs manual identification
+    UNKNOWN = "unknown"
 
 
 class AnalysisType(enum.Enum):
-    """Types of analysis that can be performed."""
-    FLUX_GRAPH = "flux_graph"
-    SECTOR_DUMP = "sector_dump"
-    FILE_LISTING = "file_listing"
-    METADATA_EXTRACT = "metadata_extract"
-    CHECKSUM_VERIFY = "checksum_verify"
-    OTHER = "other"
+    """Types of analysis - automatically determined by artefact type."""
+    # Flux-level analyses
+    FLUX_VISUALISATION = "flux_visualisation"    # Generate flux graphs
+    FLUX_DECODE = "flux_decode"                  # Attempt to decode to sectors
+    
+    # Sector/filesystem analyses
+    SECTOR_DUMP = "sector_dump"                  # Raw sector extraction
+    FILE_LISTING = "file_listing"                # Extract directory/file list
+    FILE_EXTRACTION = "file_extraction"          # Extract actual files
+    
+    # Metadata
+    METADATA_EXTRACT = "metadata_extract"        # Extract format metadata
+    PARTITION_DETECT = "partition_detect"        # Detect partitions (HDD/CD)
+    
+    # Verification
+    CHECKSUM_COMPUTE = "checksum_compute"        # Compute hashes
+    FORMAT_IDENTIFY = "format_identify"          # Identify exact format/variant
 
 
 class AnalysisStatus(enum.Enum):
@@ -175,12 +218,11 @@ class ExternalReference(db.Model):
 # =============================================================================
 
 class Platform(db.Model):
-    """Computer platform/system."""
+    """Computer platform/system - hierarchical."""
     __tablename__ = "platforms"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
-    manufacturer: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     parent_id: Mapped[Optional[int]] = mapped_column(ForeignKey("platforms.id"), nullable=True)
 
@@ -249,41 +291,91 @@ class Artefact(db.Model):
     item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), index=True)
     label: Mapped[str] = mapped_column(String(255))
     artefact_type: Mapped[ArtefactType] = mapped_column(SQLEnum(ArtefactType))
+    type_overridden: Mapped[bool] = mapped_column(Boolean, default=False)  # Was type manually set?
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    file_path: Mapped[str] = mapped_column(String(1000))
+    
+    # File storage
+    original_filename: Mapped[str] = mapped_column(String(255))  # User's original filename
+    storage_path: Mapped[str] = mapped_column(String(1000))      # Path in upload folder
     file_size: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    mime_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    
+    # Hashes (computed after upload)
     md5: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    
+    # Format-specific metadata (JSON)
     media_metadata: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    # Derivation chain - if this artefact was produced by analysing another
+    parent_artefact_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("artefacts.id"), index=True, nullable=True
+    )
+    derived_from_analysis_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("analyses.id"), index=True, nullable=True
+    )
+    
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     item: Mapped["Item"] = relationship(back_populates="artefacts")
-    analyses: Mapped[list["Analysis"]] = relationship(back_populates="artefact", cascade="all, delete-orphan")
+    analyses: Mapped[list["Analysis"]] = relationship(
+        back_populates="artefact", cascade="all, delete-orphan",
+        foreign_keys="Analysis.artefact_id"
+    )
     partitions: Mapped[list["Partition"]] = relationship(back_populates="artefact", cascade="all, delete-orphan")
+    
+    # Derived artefacts (e.g., sector image from flux decode)
+    parent_artefact: Mapped[Optional["Artefact"]] = relationship(
+        back_populates="derived_artefacts", remote_side=[id],
+        foreign_keys=[parent_artefact_id]
+    )
+    derived_artefacts: Mapped[list["Artefact"]] = relationship(
+        back_populates="parent_artefact", foreign_keys=[parent_artefact_id]
+    )
+    derived_from_analysis: Mapped[Optional["Analysis"]] = relationship(
+        foreign_keys=[derived_from_analysis_id]
+    )
 
 
 class Analysis(db.Model):
-    """Results from analysing an artefact."""
+    """Results from analysing an artefact - auto-triggered based on artefact type."""
     __tablename__ = "analyses"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     artefact_id: Mapped[int] = mapped_column(ForeignKey("artefacts.id"), index=True)
     analysis_type: Mapped[AnalysisType] = mapped_column(SQLEnum(AnalysisType))
     status: Mapped[AnalysisStatus] = mapped_column(SQLEnum(AnalysisStatus), default=AnalysisStatus.PENDING)
+    
+    # Tool info (filled by worker)
     tool_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     tool_version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    
+    # Hints to help analysis (JSON) - e.g., {"platform": "bbc_micro", "filesystem": "adfs"}
+    hints: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    # Results
     output_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     output_path: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
     success: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON for structured results
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-    artefact: Mapped["Artefact"] = relationship(back_populates="analyses")
+    artefact: Mapped["Artefact"] = relationship(
+        back_populates="analyses", foreign_keys=[artefact_id]
+    )
+    
+    # Artefacts produced by this analysis (e.g., decoded sector image from flux)
+    produced_artefacts: Mapped[list["Artefact"]] = relationship(
+        foreign_keys="Artefact.derived_from_analysis_id",
+        viewonly=True
+    )
 
 
 # =============================================================================
