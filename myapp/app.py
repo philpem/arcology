@@ -9,6 +9,7 @@ from wtforms import PasswordField, SubmitField, StringField
 from wtforms.validators import DataRequired
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 import os
+import secrets
 
 from .extensions import db, migrate, login_manager, bootstrap, csrf
 
@@ -190,7 +191,7 @@ def _register_login_handlers(app):
 				if userrec.checkPassword(form.password.data):
 					login_user(userrec)
 					#flash("Logged in successfully", "success")
-					return redirect(request.args.get("next") or url_for("myapp_blueprints_index.index"))
+					return redirect(request.args.get("next") or url_for("myapp_blueprints_dashboard.index"))
 
 		if request.method == 'POST':
 			flash("Error logging in - please check your username and password and ensure that CAPS LOCK is turned off.", "error")
