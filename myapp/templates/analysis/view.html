@@ -1,0 +1,66 @@
+{% extends "_base.html" %}
+{% block page_title %}Analysis #{{ analysis.id }}{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_analysis.index') }}">Analyses</a></li>
+        <li class="breadcrumb-item active">#{{ analysis.id }}</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Analysis #{{ analysis.id }} <span class="badge {% if analysis.status.value == 'completed' %}bg-success{% elif analysis.status.value == 'failed' %}bg-danger{% elif analysis.status.value == 'running' %}bg-info{% else %}bg-warning{% endif %}">{{ analysis.status.value }}</span></h1>
+    <div>
+        {% if analysis.status.value == 'pending' %}
+        <form action="{{ url_for('myapp_blueprints_analysis.cancel', id=analysis.id) }}" method="post" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-danger"><i class="bi bi-x-lg"></i> Cancel</button>
+        </form>
+        {% elif analysis.status.value == 'failed' %}
+        <form action="{{ url_for('myapp_blueprints_analysis.retry', id=analysis.id) }}" method="post" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-primary"><i class="bi bi-arrow-repeat"></i> Retry</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-info-circle"></i> Details</div>
+            <div class="card-body">
+                <dl class="mb-0">
+                    <dt>Type</dt><dd>{{ analysis.analysis_type.value|replace('_', ' ')|title }}</dd>
+                    <dt>Artefact</dt><dd><a href="{{ url_for('myapp_blueprints_artefacts.view', id=analysis.artefact.id) }}">{{ analysis.artefact.label }}</a></dd>
+                    <dt>Tool</dt><dd>{{ analysis.tool_name or '-' }}{% if analysis.tool_version %} v{{ analysis.tool_version }}{% endif %}</dd>
+                    <dt>Created</dt><dd>{{ analysis.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</dd>
+                    <dt>Started</dt><dd>{{ analysis.started_at.strftime('%Y-%m-%d %H:%M:%S') if analysis.started_at else '-' }}</dd>
+                    <dt>Completed</dt><dd>{{ analysis.completed_at.strftime('%Y-%m-%d %H:%M:%S') if analysis.completed_at else '-' }}</dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-clipboard-check"></i> Results</div>
+            <div class="card-body">
+                {% if analysis.status.value == 'completed' %}
+                    <dl class="mb-0">
+                        <dt>Success</dt><dd>{% if analysis.success %}<span class="badge bg-success">Yes</span>{% else %}<span class="badge bg-warning">Partial</span>{% endif %}</dd>
+                        {% if analysis.summary %}<dt>Summary</dt><dd>{{ analysis.summary }}</dd>{% endif %}
+                        {% if analysis.output_url %}<dt>Output</dt><dd><a href="{{ analysis.output_url }}" target="_blank">{{ analysis.output_url }}</a></dd>{% endif %}
+                    </dl>
+                {% elif analysis.status.value == 'failed' %}
+                    <div class="alert alert-danger mb-0"><strong>Error:</strong> {{ analysis.error_message or 'Unknown' }}</div>
+                {% elif analysis.status.value == 'running' %}
+                    <div class="d-flex align-items-center"><div class="spinner-border spinner-border-sm me-2"></div> In progress...</div>
+                {% else %}
+                    <p class="text-muted mb-0">Waiting in queue...</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

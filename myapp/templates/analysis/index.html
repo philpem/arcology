@@ -1,0 +1,38 @@
+{% extends "_base.html" %}
+{% block page_title %}Analyses{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1><i class="bi bi-gear"></i> Analyses</h1>
+    <a href="{{ url_for('myapp_blueprints_analysis.queue') }}" class="btn btn-outline-primary"><i class="bi bi-list-task"></i> View Queue</a>
+</div>
+
+<div class="btn-group mb-4">
+    <a href="{{ url_for('myapp_blueprints_analysis.index') }}" class="btn btn-outline-secondary {{ 'active' if not status_filter else '' }}">All</a>
+    <a href="{{ url_for('myapp_blueprints_analysis.index', status='pending') }}" class="btn btn-outline-warning {{ 'active' if status_filter == 'pending' else '' }}">Pending ({{ status_counts.pending }})</a>
+    <a href="{{ url_for('myapp_blueprints_analysis.index', status='running') }}" class="btn btn-outline-info {{ 'active' if status_filter == 'running' else '' }}">Running ({{ status_counts.running }})</a>
+    <a href="{{ url_for('myapp_blueprints_analysis.index', status='completed') }}" class="btn btn-outline-success {{ 'active' if status_filter == 'completed' else '' }}">Completed ({{ status_counts.completed }})</a>
+    <a href="{{ url_for('myapp_blueprints_analysis.index', status='failed') }}" class="btn btn-outline-danger {{ 'active' if status_filter == 'failed' else '' }}">Failed ({{ status_counts.failed }})</a>
+</div>
+
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead><tr><th>ID</th><th>Type</th><th>Artefact</th><th>Status</th><th>Created</th></tr></thead>
+            <tbody>
+                {% for a in analyses %}
+                <tr>
+                    <td><a href="{{ url_for('myapp_blueprints_analysis.view', id=a.id) }}">#{{ a.id }}</a></td>
+                    <td>{{ a.analysis_type.value|replace('_', ' ')|title }}</td>
+                    <td><a href="{{ url_for('myapp_blueprints_artefacts.view', id=a.artefact.id) }}">{{ a.artefact.label }}</a></td>
+                    <td><span class="badge {% if a.status.value == 'completed' %}bg-success{% elif a.status.value == 'failed' %}bg-danger{% elif a.status.value == 'running' %}bg-info{% else %}bg-warning{% endif %}">{{ a.status.value }}</span></td>
+                    <td>{{ a.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="text-center text-muted">No analyses</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

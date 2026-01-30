@@ -1,0 +1,31 @@
+{% extends "_base.html" %}
+{% block page_title %}Platforms{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1><i class="bi bi-pc-display"></i> Platforms</h1>
+    <a href="{{ url_for('myapp_blueprints_taxonomy.new_platform') }}" class="btn btn-primary"><i class="bi bi-plus-lg"></i> New Platform</a>
+</div>
+
+<div class="card">
+    <div class="list-group list-group-flush">
+        {% for platform in platforms recursive %}
+        <div class="list-group-item d-flex justify-content-between" style="padding-left: {{ loop.depth * 1.5 }}rem;">
+            <div><strong>{{ platform.name }}</strong>{% if platform.manufacturer %} <span class="text-muted">- {{ platform.manufacturer }}</span>{% endif %} <span class="badge bg-secondary">{{ platform.items|length }}</span></div>
+            <div>
+                <a href="{{ url_for('myapp_blueprints_taxonomy.edit_platform', id=platform.id) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
+                {% if not platform.items and not platform.children %}
+                <form action="{{ url_for('myapp_blueprints_taxonomy.delete_platform', id=platform.id) }}" method="post" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete?');"><i class="bi bi-trash"></i></button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+        {% if platform.children %}{{ loop(platform.children) }}{% endif %}
+        {% else %}
+        <div class="list-group-item text-muted text-center">No platforms defined</div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

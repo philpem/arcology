@@ -1,0 +1,25 @@
+{% extends "_base.html" %}
+{% block page_title %}Tags{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1><i class="bi bi-tags"></i> Tags</h1>
+    <a href="{{ url_for('myapp_blueprints_taxonomy.new_tag') }}" class="btn btn-primary"><i class="bi bi-plus-lg"></i> New Tag</a>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        {% for tag in tags %}
+        <span class="badge bg-info fs-6 me-2 mb-2 p-2">
+            {{ tag.name }} <span class="badge bg-dark">{{ tag.items|length }}</span>
+            <form action="{{ url_for('myapp_blueprints_taxonomy.delete_tag', id=tag.id) }}" method="post" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn-close btn-close-white ms-1" style="font-size: 0.6rem;" onclick="return confirm('Delete?');"></button>
+            </form>
+        </span>
+        {% else %}
+        <p class="text-muted mb-0">No tags defined</p>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

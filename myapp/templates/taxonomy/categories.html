@@ -1,0 +1,31 @@
+{% extends "_base.html" %}
+{% block page_title %}Categories{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1><i class="bi bi-folder"></i> Categories</h1>
+    <a href="{{ url_for('myapp_blueprints_taxonomy.new_category') }}" class="btn btn-primary"><i class="bi bi-plus-lg"></i> New Category</a>
+</div>
+
+<div class="card">
+    <div class="list-group list-group-flush">
+        {% for category in categories recursive %}
+        <div class="list-group-item d-flex justify-content-between" style="padding-left: {{ loop.depth * 1.5 }}rem;">
+            <div><strong>{{ category.name }}</strong> <span class="badge bg-secondary">{{ category.items|length }}</span></div>
+            <div>
+                <a href="{{ url_for('myapp_blueprints_taxonomy.edit_category', id=category.id) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
+                {% if not category.items and not category.children %}
+                <form action="{{ url_for('myapp_blueprints_taxonomy.delete_category', id=category.id) }}" method="post" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete?');"><i class="bi bi-trash"></i></button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+        {% if category.children %}{{ loop(category.children) }}{% endif %}
+        {% else %}
+        <div class="list-group-item text-muted text-center">No categories defined</div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

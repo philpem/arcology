@@ -1,0 +1,27 @@
+{% extends "_base.html" %}
+{% block page_title %}About{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <h1><i class="bi bi-info-circle"></i> About Arcology</h1>
+        
+        <p class="lead">Arcology is a digital artefact catalogue for retrocomputing collections.</p>
+        
+        <p>Track disk images (Supercard Pro, ImageDisk, ISO, etc.), scanned documents, and other digital files associated with your collection.</p>
+        
+        <h3>Features</h3>
+        <ul>
+            <li>Catalogue items with multiple digital artefacts</li>
+            <li>Link to external collection systems (Koillection, Collective Access, etc.)</li>
+            <li>Browse extracted file listings from disk images</li>
+            <li>Identify known files using hash databases (NSRL, custom)</li>
+            <li>Queue analysis jobs for automated processing</li>
+            <li>REST API for integration with analysis tools</li>
+        </ul>
+        
+        <h3>API</h3>
+        <p>The API is available at <code>/api/</code>. See the README for documentation.</p>
+    </div>
+</div>
+{% endblock %}

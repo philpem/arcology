@@ -1,0 +1,129 @@
+{% extends "_base.html" %}
+{% block page_title %}{{ artefact.label }}{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.index') }}">Items</a></li>
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', id=artefact.item.id) }}">{{ artefact.item.name }}</a></li>
+        <li class="breadcrumb-item active">{{ artefact.label }}</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1>{{ artefact.label }}</h1>
+        <p class="text-muted"><span class="badge bg-secondary">{{ artefact.artefact_type.value|replace('_', ' ')|title }}</span></p>
+    </div>
+    <div>
+        <a href="{{ url_for('myapp_blueprints_artefacts.download', id=artefact.id) }}" class="btn btn-success"><i class="bi bi-download"></i> Download</a>
+        <a href="{{ url_for('myapp_blueprints_artefacts.request_analysis', id=artefact.id) }}" class="btn btn-primary"><i class="bi bi-gear"></i> Analyse</a>
+        <a href="{{ url_for('myapp_blueprints_artefacts.edit', id=artefact.id) }}" class="btn btn-outline-primary"><i class="bi bi-pencil"></i> Edit</a>
+        <form action="{{ url_for('myapp_blueprints_artefacts.delete', id=artefact.id) }}" method="post" class="d-inline" onsubmit="return confirm('Delete?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-danger"><i class="bi bi-trash"></i></button>
+        </form>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-info-circle"></i> Details</div>
+            <div class="card-body">
+                <dl class="mb-0">
+                    <dt>File Path</dt><dd><code>{{ artefact.file_path }}</code></dd>
+                    <dt>Size</dt><dd>{% if artefact.file_size %}{{ (artefact.file_size / 1024 / 1024)|round(2) }} MB{% else %}-{% endif %}</dd>
+                    <dt>MD5</dt><dd>{% if artefact.md5 %}<code class="small">{{ artefact.md5 }}</code>{% else %}<span class="text-muted">Not computed</span>{% endif %}</dd>
+                    <dt>SHA256</dt><dd>{% if artefact.sha256 %}<code class="small">{{ artefact.sha256[:32] }}...</code>{% else %}<span class="text-muted">Not computed</span>{% endif %}</dd>
+                </dl>
+                {% if not artefact.md5 %}
+                <form action="{{ url_for('myapp_blueprints_artefacts.compute_hashes', id=artefact.id) }}" method="post" class="mt-3">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary"><i class="bi bi-hash"></i> Compute Hashes</button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+        
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between">
+                <span><i class="bi bi-gear"></i> Analyses</span>
+                <a href="{{ url_for('myapp_blueprints_artefacts.request_analysis', id=artefact.id) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-plus"></i></a>
+            </div>
+            <ul class="list-group list-group-flush">
+                {% for analysis in artefact.analyses %}
+                <li class="list-group-item d-flex justify-content-between">
+                    <a href="{{ url_for('myapp_blueprints_analysis.view', id=analysis.id) }}">{{ analysis.analysis_type.value|replace('_', ' ')|title }}</a>
+                    <span class="badge {% if analysis.status.value == 'completed' %}bg-success{% elif analysis.status.value == 'failed' %}bg-danger{% elif analysis.status.value == 'running' %}bg-info{% else %}bg-warning{% endif %}">{{ analysis.status.value }}</span>
+                </li>
+                {% else %}
+                <li class="list-group-item text-muted">No analyses</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+    
+    <div class="col-md-8">
+        {% if artefact.partitions %}
+        <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-hdd"></i> Partitions</div>
+            <div class="table-responsive">
+                <table class="table table-sm mb-0">
+                    <thead><tr><th>#</th><th>Label</th><th>Filesystem</th><th>Files</th><th>Unique</th></tr></thead>
+                    <tbody>
+                        {% for p in artefact.partitions %}
+                        <tr>
+                            <td>{{ p.partition_index }}</td>
+                            <td>{{ p.label or '-' }}</td>
+                            <td><code>{{ p.filesystem.value }}</code></td>
+                            <td>{{ p.total_files or '-' }}</td>
+                            <td>{% if p.unique_files is not none %}<span class="badge bg-info">{{ p.unique_files }}</span>{% else %}-{% endif %}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+        
+        <div class="card">
+            <div class="card-header"><i class="bi bi-folder2-open"></i> Extracted Files</div>
+            <div class="card-body border-bottom">
+                <form method="get" class="row g-2">
+                    <div class="col-md-3">{{ file_form.filename(class="form-control form-control-sm", placeholder="Filename") }}</div>
+                    <div class="col-md-2">{{ file_form.extension(class="form-control form-control-sm", placeholder="Ext") }}</div>
+                    <div class="col-md-3">{{ file_form.md5(class="form-control form-control-sm", placeholder="MD5") }}</div>
+                    <div class="col-md-2"><div class="form-check">{{ file_form.show_known(class="form-check-input") }}{{ file_form.show_known.label(class="form-check-label") }}</div></div>
+                    <div class="col-md-2"><button type="submit" class="btn btn-sm btn-secondary w-100">Filter</button></div>
+                </form>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm table-hover mb-0">
+                    <thead><tr><th>Path</th><th>Size</th><th>Known</th></tr></thead>
+                    <tbody>
+                        {% for file in files %}
+                        <tr class="{{ 'table-secondary' if file.is_known else '' }}">
+                            <td><code>{{ file.path }}</code></td>
+                            <td>{% if file.file_size %}{{ (file.file_size / 1024)|round(1) }} KB{% else %}-{% endif %}</td>
+                            <td>{% if file.is_known %}<span class="badge bg-secondary">{{ file.known_file.database.name }}</span>{% endif %}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="3" class="text-center text-muted">No files{% if not artefact.partitions %} - run file listing analysis{% endif %}</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if files_pagination.pages > 1 %}
+            <div class="card-footer">
+                <nav><ul class="pagination pagination-sm justify-content-center mb-0">
+                    {% if files_pagination.has_prev %}<li class="page-item"><a class="page-link" href="?page={{ files_pagination.prev_num }}">Prev</a></li>{% endif %}
+                    <li class="page-item disabled"><span class="page-link">{{ files_pagination.page }}/{{ files_pagination.pages }}</span></li>
+                    {% if files_pagination.has_next %}<li class="page-item"><a class="page-link" href="?page={{ files_pagination.next_num }}">Next</a></li>{% endif %}
+                </ul></nav>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

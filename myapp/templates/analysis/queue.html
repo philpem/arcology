@@ -1,0 +1,47 @@
+{% extends "_base.html" %}
+{% block page_title %}Analysis Queue{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1><i class="bi bi-list-task"></i> Analysis Queue</h1>
+    <a href="{{ url_for('myapp_blueprints_analysis.index') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> All Analyses</a>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header text-bg-info"><i class="bi bi-play-circle"></i> Running ({{ running|length }})</div>
+    {% if running %}
+    <div class="list-group list-group-flush">
+        {% for a in running %}
+        <div class="list-group-item d-flex justify-content-between">
+            <span><a href="{{ url_for('myapp_blueprints_analysis.view', id=a.id) }}">#{{ a.id }}</a> {{ a.analysis_type.value|replace('_', ' ')|title }} - {{ a.artefact.label }}</span>
+            <span class="text-muted">Started {{ a.started_at.strftime('%H:%M:%S') if a.started_at else 'unknown' }}</span>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="card-body text-muted">No analyses running</div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <div class="card-header text-bg-warning"><i class="bi bi-hourglass-split"></i> Pending ({{ pending|length }})</div>
+    {% if pending %}
+    <div class="list-group list-group-flush">
+        {% for a in pending %}
+        <div class="list-group-item d-flex justify-content-between">
+            <span><a href="{{ url_for('myapp_blueprints_analysis.view', id=a.id) }}">#{{ a.id }}</a> {{ a.analysis_type.value|replace('_', ' ')|title }} - {{ a.artefact.label }}</span>
+            <div>
+                <span class="text-muted me-3">Queued {{ a.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                <form action="{{ url_for('myapp_blueprints_analysis.cancel', id=a.id) }}" method="post" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-x"></i></button>
+                </form>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="card-body text-muted">No analyses pending</div>
+    {% endif %}
+</div>
+{% endblock %}

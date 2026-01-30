@@ -1,0 +1,36 @@
+{% extends "_base.html" %}
+{% block page_title %}{{ title }}{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.index') }}">Items</a></li>
+        {% if item %}<li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', id=item.id) }}">{{ item.name }}</a></li>{% endif %}
+        <li class="breadcrumb-item active">{{ title }}</li>
+    </ol>
+</nav>
+
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header"><h4 class="mb-0">{{ title }}</h4></div>
+            <div class="card-body">
+                <form method="post">
+                    {{ form.hidden_tag() }}
+                    <div class="mb-3">{{ form.name.label(class="form-label") }}{{ form.name(class="form-control") }}</div>
+                    <div class="mb-3">{{ form.description.label(class="form-label") }}{{ form.description(class="form-control", rows=4) }}</div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">{{ form.platform_id.label(class="form-label") }}{{ form.platform_id(class="form-select") }}</div>
+                        <div class="col-md-6 mb-3">{{ form.category_id.label(class="form-label") }}{{ form.category_id(class="form-select") }}</div>
+                    </div>
+                    <div class="mb-3">{{ form.tags.label(class="form-label") }}{{ form.tags(class="form-control") }}<div class="form-text">Comma-separated</div></div>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save</button>
+                        <a href="{{ url_for('myapp_blueprints_items.view', id=item.id) if item else url_for('myapp_blueprints_items.index') }}" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

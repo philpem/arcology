@@ -1,0 +1,56 @@
+{% extends "_base.html" %}
+{% block page_title %}{{ title }}{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_taxonomy.platforms') }}">Taxonomy</a></li>
+        <li class="breadcrumb-item active">{{ title }}</li>
+    </ol>
+</nav>
+
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header"><h4 class="mb-0">{{ title }}</h4></div>
+            <div class="card-body">
+                <form method="post">
+                    {{ form.hidden_tag() }}
+                    <div class="mb-3">{{ form.name.label(class="form-label") }}{{ form.name(class="form-control") }}</div>
+                    {% if form.manufacturer is defined %}
+                    <div class="mb-3">{{ form.manufacturer.label(class="form-label") }}{{ form.manufacturer(class="form-control") }}</div>
+                    {% endif %}
+                    {% if form.parent_id is defined %}
+                    <div class="mb-3">{{ form.parent_id.label(class="form-label") }}{{ form.parent_id(class="form-select") }}</div>
+                    {% endif %}
+                    {% if form.system_type is defined %}
+                    <div class="mb-3">{{ form.system_type.label(class="form-label") }}{{ form.system_type(class="form-control") }}</div>
+                    {% endif %}
+                    {% if form.base_url is defined %}
+                    <div class="mb-3">{{ form.base_url.label(class="form-label") }}{{ form.base_url(class="form-control") }}</div>
+                    {% endif %}
+                    {% if form.url_template is defined %}
+                    <div class="mb-3">{{ form.url_template.label(class="form-label") }}{{ form.url_template(class="form-control") }}</div>
+                    {% endif %}
+                    {% if form.source_url is defined %}
+                    <div class="mb-3">{{ form.source_url.label(class="form-label") }}{{ form.source_url(class="form-control") }}</div>
+                    {% endif %}
+                    {% if form.version is defined %}
+                    <div class="mb-3">{{ form.version.label(class="form-label") }}{{ form.version(class="form-control") }}</div>
+                    {% endif %}
+                    {% if form.platform_id is defined %}
+                    <div class="mb-3">{{ form.platform_id.label(class="form-label") }}{{ form.platform_id(class="form-select") }}</div>
+                    {% endif %}
+                    {% if form.description is defined %}
+                    <div class="mb-3">{{ form.description.label(class="form-label") }}{{ form.description(class="form-control", rows=3) }}</div>
+                    {% endif %}
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save</button>
+                        <a href="{{ request.referrer or url_for('myapp_blueprints_taxonomy.platforms') }}" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

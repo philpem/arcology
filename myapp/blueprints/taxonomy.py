@@ -1,0 +1,381 @@
+"""
+Arcology - Taxonomy Blueprint
+
+Platforms, categories, tags, external systems, and hash databases.
+"""
+
+from flask import Blueprint, render_template, redirect, url_for, flash, request
+from flask_login import login_required
+from flask_wtf import FlaskForm
+from wtforms import StringField, TextAreaField, SelectField
+from wtforms.validators import DataRequired, Optional, URL, Length
+
+from ..extensions import db
+from ..database import Platform, Category, Tag, ExternalSystem, HashDatabase
+
+ROUTENAME = __name__.replace('.', '_')
+
+blueprint = Blueprint(ROUTENAME, __name__, url_prefix='/taxonomy', template_folder='templates')
+
+
+def init_app(app):
+    """Register menu items."""
+    app.add_menu_item("Taxonomy", f"{ROUTENAME}.platforms", 200)
+
+
+# =============================================================================
+# Forms
+# =============================================================================
+
+class PlatformForm(FlaskForm):
+    name = StringField('Name', validators=[DataRequired(), Length(max=100)])
+    manufacturer = StringField('Manufacturer', validators=[Optional(), Length(max=100)])
+    description = TextAreaField('Description', validators=[Optional()])
+    parent_id = SelectField('Parent Platform', coerce=int, validators=[Optional()])
+
+
+class CategoryForm(FlaskForm):
+    name = StringField('Name', validators=[DataRequired(), Length(max=100)])
+    description = TextAreaField('Description', validators=[Optional()])
+    parent_id = SelectField('Parent Category', coerce=int, validators=[Optional()])
+
+
+class TagForm(FlaskForm):
+    name = StringField('Name', validators=[DataRequired(), Length(max=50)])
+
+
+class ExternalSystemForm(FlaskForm):
+    name = StringField('Name', validators=[DataRequired(), Length(max=100)])
+    system_type = StringField('System Type', validators=[Optional()],
+                              description='e.g., collection_management, accession_register')
+    base_url = StringField('Base URL', validators=[Optional()])
+    url_template = StringField('URL Template', validators=[Optional()],
+                               description='e.g., /items/{id}')
+    description = TextAreaField('Description', validators=[Optional()])
+
+
+class HashDatabaseForm(FlaskForm):
+    name = StringField('Name', validators=[DataRequired(), Length(max=100)])
+    description = TextAreaField('Description', validators=[Optional()])
+    source_url = StringField('Source URL', validators=[Optional()])
+    version = StringField('Version', validators=[Optional(), Length(max=50)])
+    platform_id = SelectField('Platform', coerce=int, validators=[Optional()])
+
+
+# =============================================================================
+# Platforms
+# =============================================================================
+
+@blueprint.route('/platforms')
+@login_required
+def platforms():
+    platforms = Platform.query.filter(Platform.parent_id.is_(None)).order_by(Platform.name).all()
+    return render_template('taxonomy/platforms.html', platforms=platforms)
+
+
+@blueprint.route('/platforms/new', methods=['GET', 'POST'])
+@login_required
+def new_platform():
+    form = PlatformForm()
+    form.parent_id.choices = [(0, '-- No Parent --')] + [
+        (p.id, p.name) for p in Platform.query.order_by(Platform.name).all()
+    ]
+    
+    if form.validate_on_submit():
+        platform = Platform(
+            name=form.name.data,
+            manufacturer=form.manufacturer.data,
+            description=form.description.data,
+            parent_id=form.parent_id.data if form.parent_id.data != 0 else None
+        )
+        db.session.add(platform)
+        db.session.commit()
+        flash(f'Platform "{platform.name}" created.', 'success')
+        return redirect(url_for(f'{ROUTENAME}.platforms'))
+    
+    return render_template('taxonomy/platform_form.html', form=form, title='New Platform')
+
+
+@blueprint.route('/platforms/<int:id>/edit', methods=['GET', 'POST'])
+@login_required
+def edit_platform(id):
+    platform = Platform.query.get_or_404(id)
+    form = PlatformForm(obj=platform)
+    
+    exclude_ids = {platform.id} | {c.id for c in platform.children}
+    form.parent_id.choices = [(0, '-- No Parent --')] + [
+        (p.id, p.name) for p in Platform.query.order_by(Platform.name).all()
+        if p.id not in exclude_ids
+    ]
+    
+    if form.validate_on_submit():
+        platform.name = form.name.data
+        platform.manufacturer = form.manufacturer.data
+        platform.description = form.description.data
+        platform.parent_id = form.parent_id.data if form.parent_id.data != 0 else None
+        db.session.commit()
+        flash(f'Platform "{platform.name}" updated.', 'success')
+        return redirect(url_for(f'{ROUTENAME}.platforms'))
+    
+    return render_template('taxonomy/platform_form.html', form=form, platform=platform, title='Edit Platform')
+
+
+@blueprint.route('/platforms/<int:id>/delete', methods=['POST'])
+@login_required
+def delete_platform(id):
+    platform = Platform.query.get_or_404(id)
+    
+    if platform.items:
+        flash('Cannot delete platform with associated items.', 'error')
+        return redirect(url_for(f'{ROUTENAME}.platforms'))
+    
+    if platform.children:
+        flash('Cannot delete platform with child platforms.', 'error')
+        return redirect(url_for(f'{ROUTENAME}.platforms'))
+    
+    name = platform.name
+    db.session.delete(platform)
+    db.session.commit()
+    flash(f'Platform "{name}" deleted.', 'success')
+    return redirect(url_for(f'{ROUTENAME}.platforms'))
+
+
+# =============================================================================
+# Categories
+# =============================================================================
+
+@blueprint.route('/categories')
+@login_required
+def categories():
+    categories = Category.query.filter(Category.parent_id.is_(None)).order_by(Category.name).all()
+    return render_template('taxonomy/categories.html', categories=categories)
+
+
+@blueprint.route('/categories/new', methods=['GET', 'POST'])
+@login_required
+def new_category():
+    form = CategoryForm()
+    form.parent_id.choices = [(0, '-- No Parent --')] + [
+        (c.id, c.name) for c in Category.query.order_by(Category.name).all()
+    ]
+    
+    if form.validate_on_submit():
+        category = Category(
+            name=form.name.data,
+            description=form.description.data,
+            parent_id=form.parent_id.data if form.parent_id.data != 0 else None
+        )
+        db.session.add(category)
+        db.session.commit()
+        flash(f'Category "{category.name}" created.', 'success')
+        return redirect(url_for(f'{ROUTENAME}.categories'))
+    
+    return render_template('taxonomy/category_form.html', form=form, title='New Category')
+
+
+@blueprint.route('/categories/<int:id>/edit', methods=['GET', 'POST'])
+@login_required
+def edit_category(id):
+    category = Category.query.get_or_404(id)
+    form = CategoryForm(obj=category)
+    
+    exclude_ids = {category.id} | {c.id for c in category.children}
+    form.parent_id.choices = [(0, '-- No Parent --')] + [
+        (c.id, c.name) for c in Category.query.order_by(Category.name).all()
+        if c.id not in exclude_ids
+    ]
+    
+    if form.validate_on_submit():
+        category.name = form.name.data
+        category.description = form.description.data
+        category.parent_id = form.parent_id.data if form.parent_id.data != 0 else None
+        db.session.commit()
+        flash(f'Category "{category.name}" updated.', 'success')
+        return redirect(url_for(f'{ROUTENAME}.categories'))
+    
+    return render_template('taxonomy/category_form.html', form=form, category=category, title='Edit Category')
+
+
+@blueprint.route('/categories/<int:id>/delete', methods=['POST'])
+@login_required
+def delete_category(id):
+    category = Category.query.get_or_404(id)
+    
+    if category.items:
+        flash('Cannot delete category with associated items.', 'error')
+        return redirect(url_for(f'{ROUTENAME}.categories'))
+    
+    if category.children:
+        flash('Cannot delete category with child categories.', 'error')
+        return redirect(url_for(f'{ROUTENAME}.categories'))
+    
+    name = category.name
+    db.session.delete(category)
+    db.session.commit()
+    flash(f'Category "{name}" deleted.', 'success')
+    return redirect(url_for(f'{ROUTENAME}.categories'))
+
+
+# =============================================================================
+# Tags
+# =============================================================================
+
+@blueprint.route('/tags')
+@login_required
+def tags():
+    tags = Tag.query.order_by(Tag.name).all()
+    return render_template('taxonomy/tags.html', tags=tags)
+
+
+@blueprint.route('/tags/new', methods=['GET', 'POST'])
+@login_required
+def new_tag():
+    form = TagForm()
+    
+    if form.validate_on_submit():
+        tag = Tag(name=form.name.data)
+        db.session.add(tag)
+        db.session.commit()
+        flash(f'Tag "{tag.name}" created.', 'success')
+        return redirect(url_for(f'{ROUTENAME}.tags'))
+    
+    return render_template('taxonomy/tag_form.html', form=form, title='New Tag')
+
+
+@blueprint.route('/tags/<int:id>/delete', methods=['POST'])
+@login_required
+def delete_tag(id):
+    tag = Tag.query.get_or_404(id)
+    name = tag.name
+    db.session.delete(tag)
+    db.session.commit()
+    flash(f'Tag "{name}" deleted.', 'success')
+    return redirect(url_for(f'{ROUTENAME}.tags'))
+
+
+# =============================================================================
+# External Systems
+# =============================================================================
+
+@blueprint.route('/external-systems')
+@login_required
+def external_systems():
+    systems = ExternalSystem.query.order_by(ExternalSystem.name).all()
+    return render_template('taxonomy/external_systems.html', systems=systems)
+
+
+@blueprint.route('/external-systems/new', methods=['GET', 'POST'])
+@login_required
+def new_external_system():
+    form = ExternalSystemForm()
+    
+    if form.validate_on_submit():
+        system = ExternalSystem(
+            name=form.name.data,
+            system_type=form.system_type.data,
+            base_url=form.base_url.data,
+            url_template=form.url_template.data,
+            description=form.description.data
+        )
+        db.session.add(system)
+        db.session.commit()
+        flash(f'External system "{system.name}" created.', 'success')
+        return redirect(url_for(f'{ROUTENAME}.external_systems'))
+    
+    return render_template('taxonomy/external_system_form.html', form=form, title='New External System')
+
+
+@blueprint.route('/external-systems/<int:id>/edit', methods=['GET', 'POST'])
+@login_required
+def edit_external_system(id):
+    system = ExternalSystem.query.get_or_404(id)
+    form = ExternalSystemForm(obj=system)
+    
+    if form.validate_on_submit():
+        system.name = form.name.data
+        system.system_type = form.system_type.data
+        system.base_url = form.base_url.data
+        system.url_template = form.url_template.data
+        system.description = form.description.data
+        db.session.commit()
+        flash(f'External system "{system.name}" updated.', 'success')
+        return redirect(url_for(f'{ROUTENAME}.external_systems'))
+    
+    return render_template('taxonomy/external_system_form.html', form=form, system=system, title='Edit External System')
+
+
+@blueprint.route('/external-systems/<int:id>/delete', methods=['POST'])
+@login_required
+def delete_external_system(id):
+    system = ExternalSystem.query.get_or_404(id)
+    
+    if system.references:
+        flash('Cannot delete external system with associated references.', 'error')
+        return redirect(url_for(f'{ROUTENAME}.external_systems'))
+    
+    name = system.name
+    db.session.delete(system)
+    db.session.commit()
+    flash(f'External system "{name}" deleted.', 'success')
+    return redirect(url_for(f'{ROUTENAME}.external_systems'))
+
+
+# =============================================================================
+# Hash Databases
+# =============================================================================
+
+@blueprint.route('/hash-databases')
+@login_required
+def hash_databases():
+    databases = HashDatabase.query.order_by(HashDatabase.name).all()
+    return render_template('taxonomy/hash_databases.html', databases=databases)
+
+
+@blueprint.route('/hash-databases/new', methods=['GET', 'POST'])
+@login_required
+def new_hash_database():
+    form = HashDatabaseForm()
+    form.platform_id.choices = [(0, '-- All Platforms --')] + [
+        (p.id, p.name) for p in Platform.query.order_by(Platform.name).all()
+    ]
+    
+    if form.validate_on_submit():
+        database = HashDatabase(
+            name=form.name.data,
+            description=form.description.data,
+            source_url=form.source_url.data,
+            version=form.version.data,
+            platform_id=form.platform_id.data if form.platform_id.data != 0 else None
+        )
+        db.session.add(database)
+        db.session.commit()
+        flash(f'Hash database "{database.name}" created.', 'success')
+        return redirect(url_for(f'{ROUTENAME}.hash_databases'))
+    
+    return render_template('taxonomy/hash_database_form.html', form=form, title='New Hash Database')
+
+
+@blueprint.route('/hash-databases/<int:id>')
+@login_required
+def view_hash_database(id):
+    database = HashDatabase.query.get_or_404(id)
+    page = request.args.get('page', 1, type=int)
+    files_pagination = database.known_files.paginate(page=page, per_page=100)
+    return render_template('taxonomy/hash_database_view.html',
+                           database=database,
+                           files=files_pagination.items,
+                           pagination=files_pagination)
+
+
+@blueprint.route('/hash-databases/<int:id>/delete', methods=['POST'])
+@login_required
+def delete_hash_database(id):
+    database = HashDatabase.query.get_or_404(id)
+    name = database.name
+    db.session.delete(database)
+    db.session.commit()
+    flash(f'Hash database "{name}" deleted.', 'success')
+    return redirect(url_for(f'{ROUTENAME}.hash_databases'))
+
+
+# vim: ts=4 sw=4 noet

@@ -1,0 +1,27 @@
+# Flask and dependencies
+Flask
+simplejson
+python-dotenv
+watchdog
+
+# SQLAlchemy
+SQLAlchemy
+
+# Flask extensions
+Flask-WTF
+Flask-Login
+Flask-SQLAlchemy
+Flask-Migrate
+bootstrap-flask
+
+# Python bcrypt password hashing
+bcrypt
+
+# Worker dependencies
+requests
+
+# Production server (optional)
+# gunicorn
+
+# PostgreSQL (optional)
+# psycopg2-binary
