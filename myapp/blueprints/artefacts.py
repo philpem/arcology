@@ -109,10 +109,12 @@ ANALYSIS_MAP = {
     ArtefactType.IPF: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_LISTING],
     ArtefactType.FLUX_RAW: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE],
     
-    # Sector-level floppy - file listing
-    ArtefactType.IMD: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_LISTING],
-    ArtefactType.TD0: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_LISTING],
-    ArtefactType.HFE: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_LISTING],
+    # Sector-level floppy - file listing only works on raw sector images
+    # IMD is track-based format with metadata, HFE is an emulator container format
+    # These need conversion to IMG (raw sectors) before file listing/extraction can work
+    ArtefactType.IMD: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY],
+    ArtefactType.TD0: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY],
+    ArtefactType.HFE: [AnalysisType.FORMAT_IDENTIFY],
     ArtefactType.D64: [AnalysisType.FILE_LISTING],
     ArtefactType.ADF: [AnalysisType.FILE_LISTING],
     ArtefactType.DSK: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_LISTING],

@@ -224,9 +224,32 @@ class AnalysisWorker:
         """
         Process FILE_LISTING analysis.
         Lists files in sector image without extracting.
+        Only works on raw sector images (IMG) - not HFE or IMD formats.
         """
         analysis_id = analysis['id']
         artefact_id = artefact['id']
+        artefact_type = artefact.get('artefact_type', '')
+
+        # Only raw sector images can be processed by 7z and DIM
+        # HFE is an emulator container format, IMD is track-based with metadata
+        # These need to be converted to IMG first via flux_decode
+        supported_types = (
+            ArtefactType.IMG.value,
+            ArtefactType.ISO.value,
+            ArtefactType.DD.value,
+            ArtefactType.DD_ZST.value,
+            ArtefactType.DD_GZ.value,
+            ArtefactType.DD_BZ2.value,
+        )
+        if artefact_type not in supported_types:
+            self.api.update_analysis(
+                analysis_id,
+                status='completed',
+                success=False,
+                error_message=f'File listing not supported for {artefact_type} format. Only raw sector images are supported.'
+            )
+            return
+
         input_path = self.get_input_path(artefact, work_dir)
         hints = json.loads(analysis.get('hints') or '{}')
 
@@ -271,8 +294,31 @@ class AnalysisWorker:
         """
         Process FILE_EXTRACTION analysis.
         Extracts files based on detected/hinted filesystem type.
+        Only works on raw sector images (IMG) - not HFE or IMD formats.
         """
         analysis_id = analysis['id']
+        artefact_type = artefact.get('artefact_type', '')
+
+        # Only raw sector images can be processed by 7z and DIM
+        # HFE is an emulator container format, IMD is track-based with metadata
+        # These need to be converted to IMG first via flux_decode
+        supported_types = (
+            ArtefactType.IMG.value,
+            ArtefactType.ISO.value,
+            ArtefactType.DD.value,
+            ArtefactType.DD_ZST.value,
+            ArtefactType.DD_GZ.value,
+            ArtefactType.DD_BZ2.value,
+        )
+        if artefact_type not in supported_types:
+            self.api.update_analysis(
+                analysis_id,
+                status='completed',
+                success=False,
+                error_message=f'File extraction not supported for {artefact_type} format. Only raw sector images are supported.'
+            )
+            return
+
         input_path = self.get_input_path(artefact, work_dir)
         hints = json.loads(analysis.get('hints') or '{}')
 
