@@ -12,7 +12,7 @@ SECRET_KEY = "0123456789ABCDEF"
 
 # Database connection string
 # Example for SQLite (default)
-SQLALCHEMY_DATABASE_URI = "sqlite:///arcology.db"
+SQLALCHEMY_DATABASE_URI = "sqlite:////var/lib/myapp/arcology.db"
 # Example for PostgreSQL
 #SQLALCHEMY_DATABASE_URI = "postgresql://arcology_user:arcology_password@localhost/arcology"
 
