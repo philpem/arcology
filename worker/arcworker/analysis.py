@@ -25,6 +25,7 @@ from .tools import (
     extract_acorn_disc_image_manager,
     extract_dos_7z,
     list_files_7z,
+    list_files_dim,
 )
 
 
@@ -229,14 +230,26 @@ class AnalysisWorker:
         input_path = self.get_input_path(artefact, work_dir)
         hints = json.loads(analysis.get('hints') or '{}')
 
-        # Try 7z first (works for most formats)
-        result = list_files_7z(input_path)
+        filesystem = hints.get('filesystem', '').lower()
 
-        if result['success'] and result['files']:
-            # Determine filesystem type from hints or detection
-            filesystem = hints.get('filesystem', 'unknown')
+        # Choose listing method based on filesystem hint
+        if filesystem in ('dfs', 'adfs', 'acorn'):
+            result = list_files_dim(input_path)
+        elif filesystem in ('fat', 'fat12', 'fat16', 'fat32', 'dos', 'msdos'):
+            result = list_files_7z(input_path)
+        else:
+            # Try 7z as default (handles many formats)
+            result = list_files_7z(input_path)
 
-            self.api.register_file_listing(artefact_id, result['files'], filesystem)
+            # If that fails and no filesystem hint, try Acorn
+            if not (result['success'] and result.get('files')) and not filesystem:
+                result = list_files_dim(input_path)
+
+        if result['success'] and result.get('files'):
+            # Use filesystem from hints or 'unknown'
+            fs_type = filesystem if filesystem else 'unknown'
+
+            self.api.register_file_listing(artefact_id, result['files'], fs_type)
 
             self.api.update_analysis(
                 analysis_id,

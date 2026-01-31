@@ -17,6 +17,7 @@ from .extraction import (
     extract_dos_7z,
     extract_iso_7z,
     list_files_7z,
+    list_files_dim,
 )
 
 __all__ = [
@@ -31,4 +32,5 @@ __all__ = [
     'extract_dos_7z',
     'extract_iso_7z',
     'list_files_7z',
+    'list_files_dim',
 ]
