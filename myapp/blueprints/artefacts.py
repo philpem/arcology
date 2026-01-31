@@ -20,7 +20,7 @@ from werkzeug.utils import secure_filename
 from ..extensions import db
 from ..database import (
     Item, Artefact, ArtefactType, Partition, ExtractedFile,
-    Analysis, AnalysisType, AnalysisStatus, Platform
+    Analysis, AnalysisType, AnalysisStatus, Platform, StorageDirectory
 )
 
 ROUTENAME = __name__.replace('.', '_')
@@ -223,6 +223,15 @@ def get_upload_folder():
     return folder
 
 
+def get_output_folder():
+    """Get the output folder path, creating it if necessary."""
+    folder = current_app.config.get('OUTPUT_FOLDER', 'outputs')
+    if not os.path.isabs(folder):
+        folder = os.path.join(current_app.instance_path, folder)
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
 def save_uploaded_file(file) -> tuple[str, int]:
     """
     Save an uploaded file and return (storage_path, file_size).
@@ -245,8 +254,11 @@ def save_uploaded_file(file) -> tuple[str, int]:
 
 
 def get_artefact_path(artefact: Artefact) -> str:
-    """Get the full filesystem path for an artefact."""
-    folder = get_upload_folder()
+    """Get the full filesystem path for an artefact based on its storage directory."""
+    if artefact.storage_directory == StorageDirectory.OUTPUTS:
+        folder = get_output_folder()
+    else:
+        folder = get_upload_folder()
     return os.path.join(folder, artefact.storage_path)
 
 
