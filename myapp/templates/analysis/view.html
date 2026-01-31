@@ -27,7 +27,7 @@
 </div>
 
 <div class="row">
-    <div class="col-md-6">
+    <div class="col-md-4">
         <div class="card mb-4">
             <div class="card-header"><i class="bi bi-info-circle"></i> Details</div>
             <div class="card-body">
@@ -41,8 +41,7 @@
                 </dl>
             </div>
         </div>
-    </div>
-    <div class="col-md-6">
+        
         <div class="card mb-4">
             <div class="card-header"><i class="bi bi-clipboard-check"></i> Results</div>
             <div class="card-body">
@@ -61,6 +60,54 @@
                 {% endif %}
             </div>
         </div>
+    </div>
+    
+    <div class="col-md-8">
+        {% if analysis.status.value == 'completed' and analysis.details %}
+        {% set details = analysis.details | fromjson %}
+        
+        {# Display output images (flux visualisations, etc.) #}
+        {% if details.outputs %}
+        <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-image"></i> Output Images</div>
+            <div class="card-body">
+                <div class="row">
+                    {% for output in details.outputs %}
+                    {% if output.type == 'image' %}
+                    <div class="col-md-6 mb-3">
+                        <div class="card">
+                            <a href="{{ url_for('myapp_blueprints_api.get_output_file', filename=output.filename) }}" target="_blank">
+                                <img src="{{ url_for('myapp_blueprints_api.get_output_file', filename=output.filename) }}" 
+                                     class="card-img-top" 
+                                     alt="{{ output.description }}"
+                                     style="cursor: pointer;">
+                            </a>
+                            <div class="card-body py-2">
+                                <small class="text-muted">{{ output.description }} ({{ output.tool }})</small>
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        
+        {# Display raw details for debugging #}
+        <div class="card">
+            <div class="card-header">
+                <a class="text-decoration-none" data-bs-toggle="collapse" href="#rawDetails">
+                    <i class="bi bi-code"></i> Raw Details
+                </a>
+            </div>
+            <div id="rawDetails" class="collapse">
+                <div class="card-body">
+                    <pre class="mb-0" style="max-height: 400px; overflow: auto;"><code>{{ details | tojson(indent=2) }}</code></pre>
+                </div>
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

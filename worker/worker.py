@@ -600,46 +600,68 @@ class AnalysisWorker:
         
         return decompress_if_needed(input_path, work_dir)
     
+    def save_output_file(self, source_path: Path, filename: str) -> str:
+        """
+        Save an output file (like a visualisation) to the outputs directory.
+        Returns the relative path that can be used in URLs.
+        """
+        dest_path = self.outputs / filename
+        shutil.copy(source_path, dest_path)
+        return filename
+    
     def process_flux_visualisation(self, analysis: dict, artefact: dict, work_dir: Path):
         """Process FLUX_VISUALISATION analysis."""
         analysis_id = analysis['id']
+        artefact_id = artefact['id']
         input_path = self.get_input_path(artefact, work_dir)
         
+        outputs = []
+        
         # Try Fluxfox first (more detailed)
-        output_fluxfox = work_dir / f"{analysis_id}_fluxfox.png"
-        result = flux_visualisation_fluxfox(input_path, output_fluxfox)
+        output_fluxfox = work_dir / f"{artefact_id}_fluxfox.png"
+        result_fluxfox = flux_visualisation_fluxfox(input_path, output_fluxfox)
+        
+        if result_fluxfox['success']:
+            saved_name = self.save_output_file(output_fluxfox, f"{artefact_id}_fluxfox.png")
+            outputs.append({
+                'tool': 'fluxfox',
+                'type': 'image',
+                'filename': saved_name,
+                'description': 'Fluxfox visualisation'
+            })
         
         # Also generate HxCFE visualisation (different style)
-        output_hxcfe = work_dir / f"{analysis_id}_hxcfe.png"
+        output_hxcfe = work_dir / f"{artefact_id}_hxcfe.png"
         result_hxcfe = flux_visualisation_hxcfe(input_path, output_hxcfe)
         
-        # Use Fluxfox result as primary
-        if result['success']:
-            # Copy outputs to output dir
-            final_path = self.outputs / output_fluxfox.name
-            shutil.copy(output_fluxfox, final_path)
-            
-            details = {'fluxfox': result}
-            if result_hxcfe['success']:
-                final_hxcfe = self.outputs / output_hxcfe.name
-                shutil.copy(output_hxcfe, final_hxcfe)
-                details['hxcfe'] = result_hxcfe
-            
+        if result_hxcfe['success']:
+            saved_name = self.save_output_file(output_hxcfe, f"{artefact_id}_hxcfe.png")
+            outputs.append({
+                'tool': 'hxcfe',
+                'type': 'image',
+                'filename': saved_name,
+                'description': 'HxCFE visualisation'
+            })
+        
+        if outputs:
             self.update_analysis(
                 analysis_id,
                 status='completed',
                 success=True,
-                tool_name='fluxfox/imgviz',
-                summary=result['summary'],
-                output_path=str(final_path),
-                details=json.dumps(details)
+                tool_name='fluxfox,hxcfe',
+                summary=f'Generated {len(outputs)} flux visualisation(s)',
+                details=json.dumps({
+                    'outputs': outputs,
+                    'fluxfox': result_fluxfox,
+                    'hxcfe': result_hxcfe
+                })
             )
         else:
             self.update_analysis(
                 analysis_id,
                 status='failed',
                 success=False,
-                error_message=result.get('error', 'Unknown error')
+                error_message=f"Fluxfox: {result_fluxfox.get('error', 'unknown')}; HxCFE: {result_hxcfe.get('error', 'unknown')}"
             )
     
     def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):

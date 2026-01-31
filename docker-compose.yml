@@ -28,6 +28,7 @@ services:
       - "8000:8000"
     volumes:
       - ./data/uploads:/app/instance/uploads
+      - ./data/outputs:/app/instance/outputs
       - ./data/db:/var/lib/myapp
     env_file:
       - .env

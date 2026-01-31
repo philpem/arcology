@@ -5,14 +5,69 @@ A digital artefact catalogue for retrocomputing collections, built on Flask.
 ## Features
 
 - **Catalogue items** with multiple digital artefacts (disk images, scans, etc.)
+- **Upload files directly** with automatic type detection
+- **Automatic analysis pipeline** - flux images are decoded, file listings extracted
 - **Link to external systems** (Koillection, Collective Access, etc.)
 - **Browse extracted file listings** from disk images
 - **Identify known files** using hash databases
-- **Queue analysis jobs** for automated processing
 - **REST API** for integration with tools
 - **User authentication** with Flask-Login
 
-## Quick Start
+## Quick Start with Docker
+
+```bash
+# Clone/extract the project
+cd arcology
+
+# Create data directories
+mkdir -p data/uploads data/outputs data/db
+
+# Build and start (first build takes a while - compiles analysis tools)
+docker compose up --build -d
+
+# Watch logs
+docker compose logs -f
+
+# Access at http://localhost:8000
+```
+
+### Docker Commands
+
+```bash
+# Build containers (required after code changes)
+docker compose build
+
+# Start services
+docker compose up -d
+
+# Start with multiple analysis workers
+docker compose up -d --scale worker=4
+
+# View logs
+docker compose logs -f web      # Web app logs
+docker compose logs -f worker   # Worker logs
+
+# Restart after changes
+docker compose up --build --force-recreate -d
+
+# Stop everything
+docker compose down
+
+# Stop and remove volumes (WARNING: deletes data)
+docker compose down -v
+```
+
+### Production Configuration
+
+Create a `.env` file for production:
+
+```bash
+# Generate a secret key
+echo "FLASK_ENV=production" > .env
+echo "SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
+```
+
+## Quick Start (Development)
 
 ```bash
 # Create virtual environment
@@ -25,7 +80,7 @@ pip install -r requirements.txt
 
 # Copy and edit config
 cp myapp/myapp.cfg.example myapp/myapp.cfg
-# Edit myapp/myapp.cfg - set SECRET_KEY and database path
+# Edit myapp/myapp.cfg - set SECRET_KEY
 
 # Initialize database
 flask db init
@@ -59,36 +114,40 @@ arcology/
 │   ├── blueprints/         # Feature modules
 │   │   ├── dashboard.py    # Homepage
 │   │   ├── items.py        # Item CRUD
-│   │   ├── artefacts.py    # Artefact management
+│   │   ├── artefacts.py    # Artefact management + upload
 │   │   ├── taxonomy.py     # Platforms, categories, tags
 │   │   ├── analysis.py     # Analysis queue
 │   │   └── api.py          # REST API
 │   ├── templates/          # Jinja2 templates
 │   └── static/             # CSS, JS, images
+├── worker/
+│   ├── Dockerfile          # Worker container with analysis tools
+│   └── worker.py           # Analysis worker script
+├── docker-compose.yml      # Docker orchestration
+├── Dockerfile              # Web app container
+├── .env.example            # Environment template
 ├── requirements.txt
 └── README.md
 ```
 
-## Adding Features
+## Analysis Pipeline
 
-Features are implemented as blueprints in `myapp/blueprints/`. Each blueprint:
+When you upload a flux image (SCP, KF, etc.), the system automatically:
 
-1. Defines a `blueprint` variable
-2. Optionally defines `init_app(app)` to register menu items
-3. Is auto-loaded by the application factory
+1. **Flux Visualisation** - Generates flux plots using Fluxfox and HxCFE
+2. **Flux Decode** - Converts to sector formats (IMD, HFE, IMG)
+3. **File Listing** - Extracts directory listings from decoded images
+4. **Hash Matching** - Identifies known files using hash databases
 
-Example blueprint structure:
-```python
-from flask import Blueprint
-blueprint = Blueprint('myfeature', __name__, url_prefix='/myfeature')
+Each derived artefact (e.g., decoded IMG from SCP) triggers its own analysis chain.
 
-def init_app(app):
-    app.add_menu_item("My Feature", "myfeature.index", 500)
+### Analysis Tools (in worker container)
 
-@blueprint.route('/')
-def index():
-    return "Hello"
-```
+- **Fluxfox** (imgviz) - Flux visualisation
+- **HxCFE** - Flux conversion and visualisation
+- **Greaseweazle** (gw) - Sector image conversion
+- **DiscImageManager** - Acorn filesystem extraction
+- **7z** - DOS/FAT/ISO extraction
 
 ## API Endpoints
 
@@ -96,6 +155,7 @@ def index():
 - `GET/PUT/DELETE /api/items/{id}` - Item operations
 - `POST /api/items/{id}/artefacts` - Add artefact
 - `GET /api/artefacts/{id}/download` - Download file
+- `GET /api/outputs/{filename}` - Get analysis output (visualisation, etc.)
 - `POST /api/artefacts/{id}/analysis` - Queue analysis
 - `GET /api/analysis/pending` - Get pending jobs (for worker)
 - `PUT /api/analysis/{id}` - Update analysis result

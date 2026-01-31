@@ -225,6 +225,27 @@ def get_pending_analyses():
 
 
 # =============================================================================
+# Output Files
+# =============================================================================
+
+@blueprint.route('/outputs/<path:filename>', methods=['GET'])
+def get_output_file(filename):
+    """Serve an output file (visualisation, etc.)."""
+    output_dir = current_app.config.get('OUTPUT_FOLDER', 'outputs')
+    if not os.path.isabs(output_dir):
+        output_dir = os.path.join(current_app.instance_path, output_dir)
+    
+    # Security: ensure filename doesn't escape the output directory
+    safe_filename = os.path.basename(filename)
+    file_path = os.path.join(output_dir, safe_filename)
+    
+    if not os.path.exists(file_path):
+        return error_response('File not found', 404)
+    
+    return send_file(file_path)
+
+
+# =============================================================================
 # Partitions & Files
 # =============================================================================
 
