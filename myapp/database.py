@@ -116,6 +116,12 @@ class FilesystemType(enum.Enum):
     OTHER = "other"
 
 
+class StorageDirectory(enum.Enum):
+    """Where an artefact file is stored."""
+    UPLOADS = "uploads"    # Original user-uploaded files
+    OUTPUTS = "outputs"    # Derived/generated files (from analysis)
+
+
 # =============================================================================
 # Association Tables
 # =============================================================================
@@ -297,7 +303,10 @@ class Artefact(db.Model):
     
     # File storage
     original_filename: Mapped[str] = mapped_column(String(255))  # User's original filename
-    storage_path: Mapped[str] = mapped_column(String(1000))      # Path in upload folder
+    storage_path: Mapped[str] = mapped_column(String(1000))      # Filename in storage folder
+    storage_directory: Mapped[StorageDirectory] = mapped_column(
+        SQLEnum(StorageDirectory), default=StorageDirectory.UPLOADS
+    )  # Which folder: uploads (original) or outputs (derived)
     file_size: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     mime_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     

@@ -67,6 +67,10 @@ def create_app(config_name=None):
 	app.jinja_env.trim_blocks = True
 	app.jinja_env.lstrip_blocks = True
 
+	# Add custom Jinja2 filters
+	import json
+	app.jinja_env.filters['fromjson'] = lambda s: json.loads(s) if s else {}
+
 	# enable database logging (if enabled)
 	if app.config.get('DEBUG_DB_LOG', False):
 		from flask.logging import default_handler

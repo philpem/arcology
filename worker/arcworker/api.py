@@ -20,16 +20,18 @@ from .tools import compute_file_hash
 class ArcologyAPI:
     """Client for the Arcology REST API."""
 
-    def __init__(self, api_url: str, upload_dir: Path):
+    def __init__(self, api_url: str, upload_dir: Path, output_dir: Path):
         """
         Initialize the API client.
 
         Args:
             api_url: Base URL for the Arcology API
             upload_dir: Directory where uploaded files are stored
+            output_dir: Directory where derived/output files are stored
         """
         self.api = api_url.rstrip('/')
         self.uploads = upload_dir
+        self.outputs = output_dir
 
     def get(self, endpoint: str) -> Optional[dict]:
         """
@@ -114,7 +116,7 @@ class ArcologyAPI:
     ) -> Optional[dict]:
         """
         Register a derived artefact produced by an analysis.
-        Copies file to uploads directory and calls API.
+        Copies file to outputs directory and calls API.
 
         Args:
             analysis_id: ID of the analysis that produced this artefact
@@ -126,19 +128,20 @@ class ArcologyAPI:
             API response dict, or None on error
         """
         storage_name = f"{uuid.uuid4().hex}{source_path.suffix}"
-        storage_path = self.uploads / storage_name
+        storage_path = self.outputs / storage_name
 
-        # Copy file to uploads
+        # Copy file to outputs (derived files go there, not uploads)
         shutil.copy(source_path, storage_path)
 
         # Compute hashes
         md5, sha256, file_size = compute_file_hash(storage_path)
 
-        # Register via API
+        # Register via API - derived artefacts use 'outputs' storage directory
         return self.post(f"/analysis/{analysis_id}/produce-artefact", {
             'label': label,
             'original_filename': source_path.name,
             'storage_path': storage_name,
+            'storage_directory': 'outputs',
             'artefact_type': artefact_type.value,
             'file_size': file_size,
             'md5': md5,

@@ -40,10 +40,10 @@ class AnalysisWorker:
             upload_dir: Directory where uploaded artefacts are stored
             output_dir: Directory for analysis outputs (e.g., visualisations)
         """
-        self.api = ArcologyAPI(api_url, upload_dir)
         self.uploads = upload_dir
         self.outputs = output_dir
         self.outputs.mkdir(parents=True, exist_ok=True)
+        self.api = ArcologyAPI(api_url, upload_dir, output_dir)
 
     def get_input_path(self, artefact: dict, work_dir: Path) -> Path:
         """
@@ -60,7 +60,13 @@ class AnalysisWorker:
             FileNotFoundError: If input file doesn't exist
         """
         storage_path = artefact['storage_path']
-        input_path = self.uploads / storage_path
+        storage_directory = artefact.get('storage_directory', 'uploads')
+
+        # Use uploads or outputs directory based on storage_directory field
+        if storage_directory == 'outputs':
+            input_path = self.outputs / storage_path
+        else:
+            input_path = self.uploads / storage_path
 
         if not input_path.exists():
             raise FileNotFoundError(f"Input file not found: {input_path}")
