@@ -279,16 +279,33 @@ def compute_file_hashes(filepath: str) -> tuple[str, str]:
 # Routes
 # =============================================================================
 
+def get_all_derived_artefact_ids(artefact: Artefact) -> list[int]:
+    """Recursively collect all derived artefact IDs."""
+    ids = []
+    for derived in artefact.derived_artefacts:
+        ids.append(derived.id)
+        ids.extend(get_all_derived_artefact_ids(derived))
+    return ids
+
+
 @blueprint.route('/<int:id>')
 @login_required
 def view(id):
     """View an artefact and its partitions/files."""
     artefact = Artefact.query.get_or_404(id)
-    
+
     file_form = FileSearchForm(request.args)
-    
+
+    # Collect all artefact IDs: current + all derived (recursively)
+    all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+
+    # Query partitions from all artefacts (for display)
+    all_partitions = Partition.query.filter(
+        Partition.artefact_id.in_(all_artefact_ids)
+    ).order_by(Partition.artefact_id, Partition.partition_index).all()
+
     files_query = ExtractedFile.query.join(Partition).filter(
-        Partition.artefact_id == artefact.id
+        Partition.artefact_id.in_(all_artefact_ids)
     )
     
     if file_form.filename.data:
@@ -320,7 +337,8 @@ def view(id):
                            artefact=artefact,
                            file_form=file_form,
                            files=files_pagination.items,
-                           files_pagination=files_pagination)
+                           files_pagination=files_pagination,
+                           all_partitions=all_partitions)
 
 
 @blueprint.route('/item/<int:item_id>/upload', methods=['GET', 'POST'])

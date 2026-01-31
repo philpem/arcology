@@ -92,20 +92,25 @@
     </div>
     
     <div class="col-md-8">
-        {% if artefact.partitions %}
+        {% if all_partitions %}
         <div class="card mb-4">
             <div class="card-header"><i class="bi bi-hdd"></i> Partitions</div>
             <div class="table-responsive">
                 <table class="table table-sm mb-0">
-                    <thead><tr><th>#</th><th>Label</th><th>Filesystem</th><th>Files</th><th>Unique</th></tr></thead>
+                    <thead><tr><th>#</th><th>Label</th><th>Filesystem</th><th>Files</th><th>Unique</th><th>Source</th></tr></thead>
                     <tbody>
-                        {% for p in artefact.partitions %}
+                        {% for p in all_partitions %}
                         <tr>
                             <td>{{ p.partition_index }}</td>
                             <td>{{ p.label or '-' }}</td>
                             <td><code>{{ p.filesystem.value }}</code></td>
                             <td>{{ p.total_files or '-' }}</td>
                             <td>{% if p.unique_files is not none %}<span class="badge bg-info">{{ p.unique_files }}</span>{% else %}-{% endif %}</td>
+                            <td>
+                                {% if p.artefact_id != artefact.id %}
+                                <a href="{{ url_for('myapp_blueprints_artefacts.view', id=p.artefact.id) }}" class="badge bg-secondary text-decoration-none">{{ p.artefact.label }}</a>
+                                {% else %}-{% endif %}
+                            </td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -136,7 +141,7 @@
                             <td>{% if file.is_known %}<span class="badge bg-secondary">{{ file.known_file.database.name }}</span>{% endif %}</td>
                         </tr>
                         {% else %}
-                        <tr><td colspan="3" class="text-center text-muted">No files{% if not artefact.partitions %} - run analysis to extract file listing{% endif %}</td></tr>
+                        <tr><td colspan="3" class="text-center text-muted">No files{% if not all_partitions %} - run analysis to extract file listing{% endif %}</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
