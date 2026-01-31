@@ -181,9 +181,22 @@ def get_analysis(id):
 
 @blueprint.route('/analysis/<int:id>', methods=['PUT'])
 def update_analysis(id):
-    """Update analysis (used by worker)."""
+    """
+    Update analysis (used by worker).
+    
+    Supports atomic claiming: if claim_worker=True and status='running',
+    only succeeds if current status is 'pending'. This prevents race
+    conditions when multiple workers try to claim the same job.
+    """
     analysis = Analysis.query.get_or_404(id)
     data = request.get_json()
+    
+    # Handle atomic claim attempt
+    if data.get('claim_worker') and data.get('status') == 'running':
+        if analysis.status != AnalysisStatus.PENDING:
+            # Already claimed or completed - return current state without error
+            return jsonify(analysis_to_dict(analysis))
+        # Claim successful - continue to update
     
     if 'status' in data:
         try:

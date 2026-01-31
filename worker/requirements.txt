@@ -1,0 +1,2 @@
+# Arcology Analysis Worker Dependencies
+requests>=2.31

@@ -32,6 +32,7 @@ class ArtefactType(enum.Enum):
     # Sector-level floppy images
     IMD = "imd"                  # ImageDisk
     TD0 = "td0"                  # Teledisk
+    HFE = "hfe"                  # HxC Floppy Emulator
     D64 = "d64"                  # C64 disk image
     ADF = "adf"                  # Amiga Disk File
     DSK = "dsk"                  # Various (CPC, Spectrum, etc.)
@@ -43,11 +44,11 @@ class ArtefactType(enum.Enum):
     MDF_MDS = "mdf_mds"          # Alcohol 120%
     NRG = "nrg"                  # Nero
     
-    # Hard drive / mass storage
-    HDD_RAW = "hdd_raw"          # Raw HDD image
-    VHD = "vhd"                  # Virtual Hard Disk
-    VMDK = "vmdk"                # VMware
-    QCOW2 = "qcow2"              # QEMU
+    # Hard drive / mass storage (raw sector images)
+    DD = "dd"                    # Raw disk dump (.dd)
+    DD_ZST = "dd_zst"            # Compressed with zstd
+    DD_GZ = "dd_gz"              # Compressed with gzip
+    DD_BZ2 = "dd_bz2"            # Compressed with bzip2
     
     # Documents / scans
     PDF = "pdf"

@@ -1,0 +1,61 @@
+# Arcology Docker Compose
+#
+# Runs the web application and analysis worker(s) together.
+#
+# Usage:
+#   mkdir -p data/uploads data/outputs data/db  # Create directories first
+#   docker-compose up -d                        # Start with 1 worker
+#   docker-compose up -d --scale worker=4       # Start with 4 workers
+#   docker-compose logs -f worker               # Watch worker logs
+#   docker-compose down                         # Stop all services
+#
+# The web app runs on port 8000 by default.
+#
+# For production, create a .env file:
+#   echo "FLASK_ENV=production" >> .env
+#   echo "SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
+#
+# Note: Building the worker image takes a long time due to compiling
+# HxCFE, Fluxfox (Rust), and optionally DiscImageManager (Lazarus).
+
+services:
+  # Main web application
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/uploads:/app/instance/uploads
+      - ./data/db:/var/lib/myapp
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  # Analysis worker(s)
+  # Scale with: docker-compose up -d --scale worker=N
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    depends_on:
+      - web
+    volumes:
+      - ./data/uploads:/data/uploads
+      - ./data/outputs:/data/outputs
+    environment:
+      - ARCOLOGY_API=http://web:8000/api
+      - UPLOAD_DIR=/data/uploads
+      - OUTPUT_DIR=/data/outputs
+      - POLL_INTERVAL=10
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    deploy:
+      # Default to 1 replica, override with --scale worker=N
+      replicas: 1
+      resources:
+        limits:
+          # Adjust based on your system
+          cpus: '2'
+          memory: 4G

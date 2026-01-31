@@ -44,6 +44,7 @@ EXTENSION_MAP = {
     # Sector-level floppy
     '.imd': ArtefactType.IMD,
     '.td0': ArtefactType.TD0,
+    '.hfe': ArtefactType.HFE,
     '.d64': ArtefactType.D64,
     '.adf': ArtefactType.ADF,
     '.dsk': ArtefactType.DSK,
@@ -58,10 +59,8 @@ EXTENSION_MAP = {
     '.mds': ArtefactType.MDF_MDS,
     '.nrg': ArtefactType.NRG,
     
-    # HDD
-    '.vhd': ArtefactType.VHD,
-    '.vmdk': ArtefactType.VMDK,
-    '.qcow2': ArtefactType.QCOW2,
+    # Hard drive raw images
+    '.dd': ArtefactType.DD,
     
     # Documents
     '.pdf': ArtefactType.PDF,
@@ -86,7 +85,13 @@ def detect_artefact_type(filename: str) -> ArtefactType:
     """Detect artefact type from filename extension."""
     filename_lower = filename.lower()
     
-    # Check compound extensions first
+    # Check compound extensions first (order matters)
+    if filename_lower.endswith('.dd.zst'):
+        return ArtefactType.DD_ZST
+    if filename_lower.endswith('.dd.gz'):
+        return ArtefactType.DD_GZ
+    if filename_lower.endswith('.dd.bz2'):
+        return ArtefactType.DD_BZ2
     if filename_lower.endswith('.tar.gz'):
         return ArtefactType.TARGZ
     
@@ -105,24 +110,25 @@ ANALYSIS_MAP = {
     ArtefactType.FLUX_RAW: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE],
     
     # Sector-level floppy - file listing
-    ArtefactType.IMD: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_LISTING],
-    ArtefactType.TD0: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_LISTING],
+    ArtefactType.IMD: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_LISTING],
+    ArtefactType.TD0: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_LISTING],
+    ArtefactType.HFE: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_LISTING],
     ArtefactType.D64: [AnalysisType.FILE_LISTING],
     ArtefactType.ADF: [AnalysisType.FILE_LISTING],
     ArtefactType.DSK: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_LISTING],
     ArtefactType.IMG: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_LISTING],
     
-    # CD/DVD - partition detect and file listing
+    # CD/DVD - file listing
     ArtefactType.ISO: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_LISTING],
     ArtefactType.BIN_CUE: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_LISTING],
     ArtefactType.MDF_MDS: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_LISTING],
     ArtefactType.NRG: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_LISTING],
     
-    # HDD - partition detection then file listing
-    ArtefactType.HDD_RAW: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_LISTING],
-    ArtefactType.VHD: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_LISTING],
-    ArtefactType.VMDK: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_LISTING],
-    ArtefactType.QCOW2: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_LISTING],
+    # Hard drive raw images - partition detection then file listing
+    ArtefactType.DD: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_LISTING],
+    ArtefactType.DD_ZST: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_LISTING],
+    ArtefactType.DD_GZ: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_LISTING],
+    ArtefactType.DD_BZ2: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_LISTING],
     
     # Documents/images - just metadata/checksums
     ArtefactType.PDF: [AnalysisType.METADATA_EXTRACT],
