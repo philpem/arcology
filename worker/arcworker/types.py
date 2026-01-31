@@ -31,6 +31,10 @@ class ArtefactType(str, Enum):
 
     # Hard drive
     HDD_RAW = "hdd_raw"
+    DD = "dd"
+    DD_ZST = "dd_zst"
+    DD_GZ = "dd_gz"
+    DD_BZ2 = "dd_bz2"
 
     # Documents/images
     PDF = "pdf"
