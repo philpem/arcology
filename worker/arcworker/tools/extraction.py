@@ -8,6 +8,8 @@ Supports:
 """
 
 import os
+import re
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -126,20 +128,45 @@ def extract_iso_7z(input_path: Path, output_dir: Path) -> dict:
     return extract_dos_7z(input_path, output_dir)  # Same process
 
 
+def _parse_acorn_filename(filename: str) -> tuple[str, str | None]:
+    """
+    Parse Acorn filename to extract the true filename and filetype.
+
+    Acorn files extracted by DIM have format: filename,xxx where xxx is the
+    filetype in hex (e.g., !Run,feb means filename "!Run" with filetype 0xFEB).
+
+    Args:
+        filename: The filename as extracted by DIM
+
+    Returns:
+        Tuple of (true_filename, filetype_hex_or_none)
+    """
+    # Match filename,xxx pattern where xxx is 1-3 hex digits
+    match = re.match(r'^(.+),([0-9a-fA-F]{1,3})$', filename)
+    if match:
+        return match.group(1), match.group(2).lower()
+    return filename, None
+
+
 def list_files_dim(input_path: Path) -> dict:
     """
     List files in an Acorn DFS/ADFS disc image using Disc Image Manager.
-    Returns structured file listing without extracting.
+    Extracts to a temp directory to enumerate files and parse Acorn filetypes.
 
     Args:
         input_path: Path to Acorn disc image
 
     Returns:
-        Result dict with success status, file list, and count
+        Result dict with success status, file list, and count.
+        Each file entry includes 'path', 'size', and optionally 'filetype'.
     """
-    # Create DIM script that just lists files
+    # Create a temp directory for extraction
+    temp_dir = tempfile.mkdtemp(prefix='dim_list_')
+
+    # Create DIM script to extract files
     script_content = f"""insert {input_path}
-report
+chdir {temp_dir}
+extract * {temp_dir}
 exit
 """
 
@@ -148,44 +175,47 @@ exit
         script_path = f.name
 
     try:
-        result = run_tool([
+        run_tool([
             'xvfb-run',
             'DiscImageManager',
             '-c', script_path
         ])
 
-        # Parse report output for file entries
-        # DIM report format typically shows files with their attributes
+        # Enumerate extracted files using Python
         files = []
-        output = result.stdout.decode() if result.stdout else ''
+        temp_path = Path(temp_dir)
 
-        # Parse output - look for file entries
-        # DIM report shows files in format: filename  load_addr exec_addr length
-        for line in output.split('\n'):
-            line = line.strip()
-            if not line or line.startswith('Disc Image Manager') or line.startswith('Insert'):
+        for file_path in temp_path.rglob('*'):
+            if not file_path.is_file():
                 continue
 
-            # Skip header lines and empty entries
-            parts = line.split()
-            if len(parts) >= 2:
-                # Try to identify file entries (filename followed by hex addresses)
-                filename = parts[0]
-                # Skip obvious non-file lines
-                if filename in ('report', 'exit', 'OK', 'ADFS', 'DFS', 'Disc'):
-                    continue
+            # Skip .inf metadata files
+            if file_path.suffix == '.inf':
+                continue
 
-                # Try to parse as file entry with load/exec/length
-                file_entry = {'path': filename}
-                if len(parts) >= 4:
-                    try:
-                        # Acorn format: filename load_addr exec_addr length
-                        file_entry['size'] = int(parts[3], 16)
-                    except (ValueError, IndexError):
-                        pass
+            # Get relative path from temp directory
+            rel_path = file_path.relative_to(temp_path)
 
-                if filename and not filename.startswith('#'):
-                    files.append(file_entry)
+            # Parse Acorn filename to extract filetype
+            true_name, filetype = _parse_acorn_filename(file_path.name)
+
+            # Reconstruct path with true filename (without filetype suffix)
+            if filetype and len(rel_path.parts) > 1:
+                display_path = str(Path(*rel_path.parts[:-1]) / true_name)
+            elif filetype:
+                display_path = true_name
+            else:
+                display_path = str(rel_path)
+
+            file_entry = {
+                'path': display_path,
+                'size': file_path.stat().st_size,
+            }
+
+            if filetype:
+                file_entry['filetype'] = filetype
+
+            files.append(file_entry)
 
         if files:
             return {
@@ -204,6 +234,7 @@ exit
 
     finally:
         os.unlink(script_path)
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def list_files_7z(input_path: Path) -> dict:
