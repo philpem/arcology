@@ -13,7 +13,7 @@ from ..extensions import db, csrf
 from ..database import (
     Item, Artefact, ArtefactType, Analysis, AnalysisType, AnalysisStatus,
     Partition, ExtractedFile, FilesystemType, Platform, Category, Tag,
-    ExternalSystem, ExternalReference, HashDatabase, KnownFile
+    ExternalSystem, ExternalReference, HashDatabase, KnownFile, StorageDirectory
 )
 
 ROUTENAME = __name__.replace('.', '_')
@@ -271,7 +271,14 @@ def produce_artefact(id):
         artefact_type = ArtefactType(data['artefact_type'])
     except ValueError:
         return error_response('Invalid artefact_type')
-    
+
+    # Determine storage directory - derived artefacts default to outputs
+    storage_dir_value = data.get('storage_directory', 'outputs')
+    try:
+        storage_directory = StorageDirectory(storage_dir_value)
+    except ValueError:
+        storage_directory = StorageDirectory.OUTPUTS
+
     # Create derived artefact
     artefact = Artefact(
         item_id=analysis.artefact.item_id,
@@ -281,6 +288,7 @@ def produce_artefact(id):
         description=data.get('description'),
         original_filename=data['original_filename'],
         storage_path=data['storage_path'],
+        storage_directory=storage_directory,
         file_size=data.get('file_size'),
         mime_type=data.get('mime_type'),
         md5=data.get('md5'),

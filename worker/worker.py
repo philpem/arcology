@@ -533,23 +533,24 @@ class AnalysisWorker:
     ) -> Optional[dict]:
         """
         Register a derived artefact produced by an analysis.
-        Copies file to uploads directory and calls API.
+        Copies file to outputs directory (not uploads) and calls API.
         """
         import uuid
         storage_name = f"{uuid.uuid4().hex}{source_path.suffix}"
-        storage_path = self.uploads / storage_name
-        
-        # Copy file to uploads
+        storage_path = self.outputs / storage_name
+
+        # Copy file to outputs directory (derived artefacts go here)
         shutil.copy(source_path, storage_path)
-        
+
         # Compute hashes
         md5, sha256, file_size = compute_file_hash(storage_path)
-        
-        # Register via API
+
+        # Register via API with storage_directory='outputs'
         return self.api_post(f"/analysis/{analysis_id}/produce-artefact", {
             'label': label,
             'original_filename': source_path.name,
             'storage_path': storage_name,
+            'storage_directory': 'outputs',
             'artefact_type': artefact_type.value,
             'file_size': file_size,
             'md5': md5,
@@ -611,36 +612,42 @@ class AnalysisWorker:
     
     def process_flux_visualisation(self, analysis: dict, artefact: dict, work_dir: Path):
         """Process FLUX_VISUALISATION analysis."""
+        import uuid
         analysis_id = analysis['id']
         artefact_id = artefact['id']
         input_path = self.get_input_path(artefact, work_dir)
-        
+
         outputs = []
-        
+
+        # Generate unique filename prefix using UUID to prevent any collisions
+        unique_id = uuid.uuid4().hex
+
         # Try Fluxfox first (more detailed)
-        output_fluxfox = work_dir / f"{artefact_id}_fluxfox.png"
+        output_fluxfox = work_dir / f"{unique_id}_fluxfox.png"
         result_fluxfox = flux_visualisation_fluxfox(input_path, output_fluxfox)
-        
+
         if result_fluxfox['success']:
-            saved_name = self.save_output_file(output_fluxfox, f"{artefact_id}_fluxfox.png")
+            saved_name = self.save_output_file(output_fluxfox, f"{unique_id}_fluxfox.png")
             outputs.append({
                 'tool': 'fluxfox',
                 'type': 'image',
                 'filename': saved_name,
-                'description': 'Fluxfox visualisation'
+                'description': 'Fluxfox visualisation',
+                'artefact_id': artefact_id
             })
-        
+
         # Also generate HxCFE visualisation (different style)
-        output_hxcfe = work_dir / f"{artefact_id}_hxcfe.png"
+        output_hxcfe = work_dir / f"{unique_id}_hxcfe.png"
         result_hxcfe = flux_visualisation_hxcfe(input_path, output_hxcfe)
-        
+
         if result_hxcfe['success']:
-            saved_name = self.save_output_file(output_hxcfe, f"{artefact_id}_hxcfe.png")
+            saved_name = self.save_output_file(output_hxcfe, f"{unique_id}_hxcfe.png")
             outputs.append({
                 'tool': 'hxcfe',
                 'type': 'image',
                 'filename': saved_name,
-                'description': 'HxCFE visualisation'
+                'description': 'HxCFE visualisation',
+                'artefact_id': artefact_id
             })
         
         if outputs:
