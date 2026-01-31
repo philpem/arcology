@@ -210,6 +210,9 @@ class ArcologyAPI:
         """
         Attempt to claim an analysis job for processing.
 
+        Uses atomic database-level claiming to prevent race conditions
+        when multiple workers try to claim the same job.
+
         Args:
             analysis_id: ID of the analysis to claim
 
@@ -221,4 +224,6 @@ class ArcologyAPI:
             'claim_worker': True  # Signal this is a claim attempt
         })
 
-        return claim_result and claim_result.get('status') == 'running'
+        # Server returns 'claimed' field indicating if THIS request actually
+        # claimed the job (vs another worker claiming it first)
+        return claim_result and claim_result.get('claimed', False)

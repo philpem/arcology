@@ -8,6 +8,7 @@ import os
 from datetime import datetime
 from flask import Blueprint, jsonify, request, current_app, send_file
 from flask_wtf.csrf import CSRFProtect
+from sqlalchemy import update
 
 from ..extensions import db, csrf
 from ..database import (
@@ -183,36 +184,52 @@ def get_analysis(id):
 def update_analysis(id):
     """
     Update analysis (used by worker).
-    
+
     Supports atomic claiming: if claim_worker=True and status='running',
-    only succeeds if current status is 'pending'. This prevents race
-    conditions when multiple workers try to claim the same job.
+    uses an atomic database UPDATE to ensure only one worker can claim
+    a job. This prevents race conditions when multiple workers try to
+    claim the same job.
     """
-    analysis = Analysis.query.get_or_404(id)
     data = request.get_json()
-    
-    # Handle atomic claim attempt
+
+    # Handle atomic claim attempt using database-level atomicity
     if data.get('claim_worker') and data.get('status') == 'running':
-        if analysis.status != AnalysisStatus.PENDING:
-            # Already claimed or completed - return current state without error
-            return jsonify(analysis_to_dict(analysis))
-        # Claim successful - continue to update
-    
+        # Use atomic UPDATE with WHERE clause to prevent race conditions
+        # Only one worker can successfully transition from PENDING to RUNNING
+        result = db.session.execute(
+            update(Analysis)
+            .where(Analysis.id == id)
+            .where(Analysis.status == AnalysisStatus.PENDING)
+            .values(status=AnalysisStatus.RUNNING, started_at=datetime.utcnow())
+        )
+        db.session.commit()
+
+        # Fetch the analysis to return (also validates it exists)
+        analysis = Analysis.query.get_or_404(id)
+        response = analysis_to_dict(analysis)
+
+        # Add 'claimed' field to indicate if THIS request actually claimed it
+        response['claimed'] = result.rowcount > 0
+        return jsonify(response)
+
+    # Non-claim updates - use standard ORM approach
+    analysis = Analysis.query.get_or_404(id)
+
     if 'status' in data:
         try:
             analysis.status = AnalysisStatus(data['status'])
         except ValueError:
             return error_response('Invalid status')
-    
+
     for field in ['tool_name', 'tool_version', 'output_url', 'output_path', 'success', 'summary', 'details', 'error_message']:
         if field in data:
             setattr(analysis, field, data[field])
-    
+
     if data.get('status') == 'running' and not analysis.started_at:
         analysis.started_at = datetime.utcnow()
     if data.get('status') in ('completed', 'failed'):
         analysis.completed_at = datetime.utcnow()
-    
+
     db.session.commit()
     return jsonify(analysis_to_dict(analysis))
 
