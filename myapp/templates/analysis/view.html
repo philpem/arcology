@@ -94,6 +94,66 @@
         </div>
         {% endif %}
         
+        {# Display process logs for debugging #}
+        {% set process_outputs = [] %}
+        {% for key, value in details.items() %}
+            {% if value is mapping and value.process_output is defined %}
+                {% set _ = process_outputs.append({'tool': key, 'output': value.process_output}) %}
+            {% elif key == 'process_output' %}
+                {% set _ = process_outputs.append({'tool': 'main', 'output': value}) %}
+            {% endif %}
+        {% endfor %}
+
+        {% if process_outputs %}
+        <div class="card mb-4">
+            <div class="card-header">
+                <a class="text-decoration-none" data-bs-toggle="collapse" href="#processLogs">
+                    <i class="bi bi-terminal"></i> Process Logs ({{ process_outputs|length }} tool{{ 's' if process_outputs|length != 1 else '' }})
+                </a>
+            </div>
+            <div id="processLogs" class="collapse">
+                <div class="card-body">
+                    {% for item in process_outputs %}
+                    <div class="mb-4">
+                        <h6 class="mb-2">
+                            <span class="badge {% if item.output.returncode == 0 %}bg-success{% else %}bg-danger{% endif %}">
+                                {{ item.tool }}
+                            </span>
+                            {% if item.output.duration_seconds %}
+                            <small class="text-muted ms-2">{{ item.output.duration_seconds }}s</small>
+                            {% endif %}
+                        </h6>
+
+                        <div class="mb-2">
+                            <small class="text-muted">Command:</small>
+                            <pre class="mb-1 p-2 bg-light rounded" style="font-size: 0.8rem; white-space: pre-wrap; word-break: break-all;"><code>{{ item.output.command }}</code></pre>
+                        </div>
+
+                        <div class="mb-2">
+                            <small class="text-muted">Exit code: <code>{{ item.output.returncode }}</code></small>
+                        </div>
+
+                        {% if item.output.stdout %}
+                        <div class="mb-2">
+                            <small class="text-muted">stdout:</small>
+                            <pre class="mb-1 p-2 bg-light rounded" style="max-height: 200px; overflow: auto; font-size: 0.75rem;"><code>{{ item.output.stdout }}</code></pre>
+                        </div>
+                        {% endif %}
+
+                        {% if item.output.stderr %}
+                        <div class="mb-2">
+                            <small class="text-muted">stderr:</small>
+                            <pre class="mb-1 p-2 bg-light rounded border-danger" style="max-height: 200px; overflow: auto; font-size: 0.75rem;"><code>{{ item.output.stderr }}</code></pre>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% if not loop.last %}<hr>{% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
         {# Display raw details for debugging #}
         <div class="card">
             <div class="card-header">

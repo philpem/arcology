@@ -4,6 +4,7 @@ Base utilities for running external tools.
 
 import hashlib
 import subprocess
+import time
 from pathlib import Path
 
 from ..config import log
@@ -29,6 +30,66 @@ def run_tool(cmd: list[str], timeout: int = 3600) -> subprocess.CompletedProcess
     if result.returncode != 0:
         log.warning(f"Tool returned {result.returncode}: {result.stderr.decode()[:500]}")
     return result
+
+
+def get_process_output(result: subprocess.CompletedProcess, cmd: list[str],
+                       duration: float | None = None, max_output_len: int = 50000) -> dict:
+    """
+    Extract process output information from a CompletedProcess for storage.
+
+    Args:
+        result: The CompletedProcess object from subprocess.run()
+        cmd: The command that was executed
+        duration: Execution time in seconds (optional)
+        max_output_len: Maximum length to store for stdout/stderr (default 50KB)
+
+    Returns:
+        Dict containing command, returncode, stdout, stderr, and duration
+    """
+    stdout = result.stdout.decode(errors='replace')
+    stderr = result.stderr.decode(errors='replace')
+
+    # Truncate if too long (keep first and last portions)
+    if len(stdout) > max_output_len:
+        half = max_output_len // 2
+        stdout = stdout[:half] + f"\n\n... [truncated {len(stdout) - max_output_len} bytes] ...\n\n" + stdout[-half:]
+    if len(stderr) > max_output_len:
+        half = max_output_len // 2
+        stderr = stderr[:half] + f"\n\n... [truncated {len(stderr) - max_output_len} bytes] ...\n\n" + stderr[-half:]
+
+    output = {
+        'command': ' '.join(cmd),
+        'returncode': result.returncode,
+        'stdout': stdout,
+        'stderr': stderr,
+    }
+
+    if duration is not None:
+        output['duration_seconds'] = round(duration, 2)
+
+    return output
+
+
+def run_tool_with_output(cmd: list[str], timeout: int = 3600) -> tuple[subprocess.CompletedProcess, dict]:
+    """
+    Run a tool command and return both the result and structured output info.
+
+    This is a convenience wrapper that combines run_tool() with get_process_output()
+    and also tracks execution time.
+
+    Args:
+        cmd: Command and arguments to run
+        timeout: Maximum execution time in seconds
+
+    Returns:
+        Tuple of (CompletedProcess, process_output_dict)
+    """
+    start_time = time.time()
+    result = run_tool(cmd, timeout)
+    duration = time.time() - start_time
+
+    output = get_process_output(result, cmd, duration)
+    return result, output
 
 
 def compute_file_hash(filepath: Path) -> tuple[str, str, int]:

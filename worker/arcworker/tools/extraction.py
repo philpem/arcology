@@ -13,7 +13,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from .base import run_tool
+from .base import run_tool_with_output
 
 
 def extract_acorn_disc_image_manager(input_path: Path, output_dir: Path) -> dict:
@@ -26,7 +26,7 @@ def extract_acorn_disc_image_manager(input_path: Path, output_dir: Path) -> dict
         output_dir: Directory for extracted files
 
     Returns:
-        Result dict with success status, file count, and output directory
+        Result dict with success status, file count, output directory, and process_output
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -44,11 +44,12 @@ exit
         script_path = f.name
 
     try:
-        result = run_tool([
+        cmd = [
             'xvfb-run',
             'DiscImageManager',
             '-c', script_path
-        ])
+        ]
+        result, process_output = run_tool_with_output(cmd)
 
         # Count extracted files
         extracted_files = list(output_dir.rglob('*'))
@@ -60,13 +61,15 @@ exit
                 'tool': 'DiscImageManager',
                 'output_dir': str(output_dir),
                 'file_count': file_count,
-                'summary': f'Extracted {file_count} files from Acorn disc image'
+                'summary': f'Extracted {file_count} files from Acorn disc image',
+                'process_output': process_output
             }
 
         return {
             'success': False,
             'tool': 'DiscImageManager',
-            'error': 'No files extracted - may not be Acorn format'
+            'error': 'No files extracted - may not be Acorn format',
+            'process_output': process_output
         }
 
     finally:
@@ -83,16 +86,17 @@ def extract_dos_7z(input_path: Path, output_dir: Path) -> dict:
         output_dir: Directory for extracted files
 
     Returns:
-        Result dict with success status, file count, and output directory
+        Result dict with success status, file count, output directory, and process_output
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    result = run_tool([
+    cmd = [
         '7z', 'x',
         f'-o{output_dir}',
         '-y',  # Yes to all
         str(input_path)
-    ])
+    ]
+    result, process_output = run_tool_with_output(cmd)
 
     # Count extracted files
     extracted_files = list(output_dir.rglob('*'))
@@ -104,13 +108,15 @@ def extract_dos_7z(input_path: Path, output_dir: Path) -> dict:
             'tool': '7z',
             'output_dir': str(output_dir),
             'file_count': file_count,
-            'summary': f'Extracted {file_count} files from DOS image'
+            'summary': f'Extracted {file_count} files from DOS image',
+            'process_output': process_output
         }
 
     return {
         'success': False,
         'tool': '7z',
-        'error': result.stderr.decode()[:1000] if result.returncode != 0 else 'No files extracted'
+        'error': result.stderr.decode()[:1000] if result.returncode != 0 else 'No files extracted',
+        'process_output': process_output
     }
 
 
@@ -157,7 +163,7 @@ def list_files_dim(input_path: Path) -> dict:
         input_path: Path to Acorn disc image
 
     Returns:
-        Result dict with success status, file list, and count.
+        Result dict with success status, file list, count, and process_output.
         Each file entry includes 'path', 'size', and optionally 'filetype'.
     """
     # Create a temp directory for extraction
@@ -175,11 +181,12 @@ exit
         script_path = f.name
 
     try:
-        run_tool([
+        cmd = [
             'xvfb-run',
             'DiscImageManager',
             '-c', script_path
-        ])
+        ]
+        result, process_output = run_tool_with_output(cmd)
 
         # Enumerate extracted files using Python
         files = []
@@ -223,13 +230,15 @@ exit
                 'tool': 'DiscImageManager',
                 'files': files,
                 'file_count': len(files),
-                'summary': f'Found {len(files)} files in Acorn disc image'
+                'summary': f'Found {len(files)} files in Acorn disc image',
+                'process_output': process_output
             }
 
         return {
             'success': False,
             'tool': 'DiscImageManager',
-            'error': 'No files found - may not be Acorn format'
+            'error': 'No files found - may not be Acorn format',
+            'process_output': process_output
         }
 
     finally:
@@ -246,19 +255,21 @@ def list_files_7z(input_path: Path) -> dict:
         input_path: Path to image file
 
     Returns:
-        Result dict with success status, file list, and count
+        Result dict with success status, file list, count, and process_output
     """
-    result = run_tool([
+    cmd = [
         '7z', 'l',
         '-slt',  # Technical listing format
         str(input_path)
-    ])
+    ]
+    result, process_output = run_tool_with_output(cmd)
 
     if result.returncode != 0:
         return {
             'success': False,
             'tool': '7z',
-            'error': result.stderr.decode()[:1000]
+            'error': result.stderr.decode()[:1000],
+            'process_output': process_output
         }
 
     # Parse 7z output
@@ -292,5 +303,6 @@ def list_files_7z(input_path: Path) -> dict:
         'tool': '7z',
         'files': files,
         'file_count': len(files),
-        'summary': f'Found {len(files)} files'
+        'summary': f'Found {len(files)} files',
+        'process_output': process_output
     }

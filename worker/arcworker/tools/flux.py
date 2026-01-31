@@ -11,7 +11,7 @@ Supports:
 from pathlib import Path
 
 from ..types import ArtefactType
-from .base import run_tool
+from .base import run_tool_with_output
 
 
 def flux_visualisation_fluxfox(input_path: Path, output_path: Path) -> dict:
@@ -24,9 +24,9 @@ def flux_visualisation_fluxfox(input_path: Path, output_path: Path) -> dict:
         output_path: Path for output PNG
 
     Returns:
-        Result dict with success status, tool name, and output details
+        Result dict with success status, tool name, output details, and process_output
     """
-    result = run_tool([
+    cmd = [
         'imgviz',
         '-i', str(input_path),
         f'-o={output_path}',
@@ -38,20 +38,23 @@ def flux_visualisation_fluxfox(input_path: Path, output_path: Path) -> dict:
         '--decode',
         '--resolution=2048',
         '--ss=4'
-    ])
+    ]
+    result, process_output = run_tool_with_output(cmd)
 
     if result.returncode == 0 and output_path.exists():
         return {
             'success': True,
             'tool': 'fluxfox/imgviz',
             'output_path': str(output_path),
-            'summary': 'Flux visualisation generated with Fluxfox'
+            'summary': 'Flux visualisation generated with Fluxfox',
+            'process_output': process_output
         }
 
     return {
         'success': False,
         'tool': 'fluxfox/imgviz',
-        'error': result.stderr.decode()[:1000]
+        'error': result.stderr.decode()[:1000],
+        'process_output': process_output
     }
 
 
@@ -65,27 +68,30 @@ def flux_visualisation_hxcfe(input_path: Path, output_path: Path) -> dict:
         output_path: Path for output PNG
 
     Returns:
-        Result dict with success status, tool name, and output details
+        Result dict with success status, tool name, output details, and process_output
     """
-    result = run_tool([
+    cmd = [
         'hxcfe',
         f'-finput:{input_path}',
         '-conv:PNG_DISK_IMAGE',
         f'-foutput:{output_path}'
-    ])
+    ]
+    result, process_output = run_tool_with_output(cmd)
 
     if result.returncode == 0 and output_path.exists():
         return {
             'success': True,
             'tool': 'hxcfe',
             'output_path': str(output_path),
-            'summary': 'Flux visualisation generated with HxCFE'
+            'summary': 'Flux visualisation generated with HxCFE',
+            'process_output': process_output
         }
 
     return {
         'success': False,
         'tool': 'hxcfe',
-        'error': result.stderr.decode()[:1000]
+        'error': result.stderr.decode()[:1000],
+        'process_output': process_output
     }
 
 
@@ -98,14 +104,15 @@ def flux_to_imd_hxcfe(input_path: Path, output_path: Path) -> dict:
         output_path: Path for output IMD file
 
     Returns:
-        Result dict with success status and output type
+        Result dict with success status, output type, and process_output
     """
-    result = run_tool([
+    cmd = [
         'hxcfe',
         f'-finput:{input_path}',
         '-conv:IMD_IMG',
         f'-foutput:{output_path}'
-    ])
+    ]
+    result, process_output = run_tool_with_output(cmd)
 
     if result.returncode == 0 and output_path.exists():
         return {
@@ -113,13 +120,15 @@ def flux_to_imd_hxcfe(input_path: Path, output_path: Path) -> dict:
             'tool': 'hxcfe',
             'output_path': str(output_path),
             'output_type': ArtefactType.IMD,
-            'summary': 'Converted to ImageDisk format'
+            'summary': 'Converted to ImageDisk format',
+            'process_output': process_output
         }
 
     return {
         'success': False,
         'tool': 'hxcfe',
-        'error': result.stderr.decode()[:1000]
+        'error': result.stderr.decode()[:1000],
+        'process_output': process_output
     }
 
 
@@ -132,14 +141,15 @@ def flux_to_hfe_hxcfe(input_path: Path, output_path: Path) -> dict:
         output_path: Path for output HFE file
 
     Returns:
-        Result dict with success status and output type
+        Result dict with success status, output type, and process_output
     """
-    result = run_tool([
+    cmd = [
         'hxcfe',
         f'-finput:{input_path}',
         '-conv:HXC_HFEV3',
         f'-foutput:{output_path}'
-    ])
+    ]
+    result, process_output = run_tool_with_output(cmd)
 
     if result.returncode == 0 and output_path.exists():
         return {
@@ -147,13 +157,15 @@ def flux_to_hfe_hxcfe(input_path: Path, output_path: Path) -> dict:
             'tool': 'hxcfe',
             'output_path': str(output_path),
             'output_type': ArtefactType.HFE,
-            'summary': 'Converted to HFE format'
+            'summary': 'Converted to HFE format',
+            'process_output': process_output
         }
 
     return {
         'success': False,
         'tool': 'hxcfe',
-        'error': result.stderr.decode()[:1000]
+        'error': result.stderr.decode()[:1000],
+        'process_output': process_output
     }
 
 
@@ -167,14 +179,15 @@ def sector_image_to_raw_greaseweazle(input_path: Path, output_path: Path) -> dic
         output_path: Path for output raw IMG file
 
     Returns:
-        Result dict with success status and output type
+        Result dict with success status, output type, and process_output
     """
-    result = run_tool([
+    cmd = [
         'gw', 'convert',
         '--format', 'ibm.scan',
         str(input_path),
         str(output_path)
-    ])
+    ]
+    result, process_output = run_tool_with_output(cmd)
 
     if result.returncode == 0 and output_path.exists():
         return {
@@ -182,11 +195,13 @@ def sector_image_to_raw_greaseweazle(input_path: Path, output_path: Path) -> dic
             'tool': 'greaseweazle',
             'output_path': str(output_path),
             'output_type': ArtefactType.IMG,
-            'summary': 'Converted to raw sector image (bad sectors filled)'
+            'summary': 'Converted to raw sector image (bad sectors filled)',
+            'process_output': process_output
         }
 
     return {
         'success': False,
         'tool': 'greaseweazle',
-        'error': result.stderr.decode()[:1000]
+        'error': result.stderr.decode()[:1000],
+        'process_output': process_output
     }
