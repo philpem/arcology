@@ -126,6 +126,86 @@ def extract_iso_7z(input_path: Path, output_dir: Path) -> dict:
     return extract_dos_7z(input_path, output_dir)  # Same process
 
 
+def list_files_dim(input_path: Path) -> dict:
+    """
+    List files in an Acorn DFS/ADFS disc image using Disc Image Manager.
+    Returns structured file listing without extracting.
+
+    Args:
+        input_path: Path to Acorn disc image
+
+    Returns:
+        Result dict with success status, file list, and count
+    """
+    # Create DIM script that just lists files
+    script_content = f"""insert {input_path}
+report
+exit
+"""
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.dim', delete=False) as f:
+        f.write(script_content)
+        script_path = f.name
+
+    try:
+        result = run_tool([
+            'xvfb-run',
+            'DiscImageManager',
+            '-c', script_path
+        ])
+
+        # Parse report output for file entries
+        # DIM report format typically shows files with their attributes
+        files = []
+        output = result.stdout.decode() if result.stdout else ''
+
+        # Parse output - look for file entries
+        # DIM report shows files in format: filename  load_addr exec_addr length
+        for line in output.split('\n'):
+            line = line.strip()
+            if not line or line.startswith('Disc Image Manager') or line.startswith('Insert'):
+                continue
+
+            # Skip header lines and empty entries
+            parts = line.split()
+            if len(parts) >= 2:
+                # Try to identify file entries (filename followed by hex addresses)
+                filename = parts[0]
+                # Skip obvious non-file lines
+                if filename in ('report', 'exit', 'OK', 'ADFS', 'DFS', 'Disc'):
+                    continue
+
+                # Try to parse as file entry with load/exec/length
+                file_entry = {'path': filename}
+                if len(parts) >= 4:
+                    try:
+                        # Acorn format: filename load_addr exec_addr length
+                        file_entry['size'] = int(parts[3], 16)
+                    except (ValueError, IndexError):
+                        pass
+
+                if filename and not filename.startswith('#'):
+                    files.append(file_entry)
+
+        if files:
+            return {
+                'success': True,
+                'tool': 'DiscImageManager',
+                'files': files,
+                'file_count': len(files),
+                'summary': f'Found {len(files)} files in Acorn disc image'
+            }
+
+        return {
+            'success': False,
+            'tool': 'DiscImageManager',
+            'error': 'No files found - may not be Acorn format'
+        }
+
+    finally:
+        os.unlink(script_path)
+
+
 def list_files_7z(input_path: Path) -> dict:
     """
     List files in an image using 7z without extracting.
