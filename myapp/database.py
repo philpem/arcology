@@ -158,11 +158,11 @@ class User(db.Model):
             return str(self.id)
 
     def setPassword(self, password):
-        self.password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+        self.password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
     def checkPassword(self, password):
         try:
-            return bcrypt.checkpw(password.encode('utf-8'), self.password_hash)
+            return bcrypt.checkpw(password.encode('utf-8'), self.password_hash.encode('utf-8'))
         except (ValueError, TypeError):
             return False
 
