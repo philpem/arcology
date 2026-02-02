@@ -5,7 +5,7 @@
 <nav aria-label="breadcrumb" class="mb-3">
     <ol class="breadcrumb">
         <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.index') }}">Items</a></li>
-        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', id=artefact.item.id) }}">{{ artefact.item.name }}</a></li>
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=artefact.item.uuid) }}">{{ artefact.item.name }}</a></li>
         <li class="breadcrumb-item active">{{ artefact.label }}</li>
     </ol>
 </nav>
@@ -19,10 +19,10 @@
         </p>
     </div>
     <div>
-        <a href="{{ url_for('myapp_blueprints_artefacts.download', id=artefact.id) }}" class="btn btn-success"><i class="bi bi-download"></i> Download</a>
-        <a href="{{ url_for('myapp_blueprints_artefacts.analyse', id=artefact.id) }}" class="btn btn-primary"><i class="bi bi-gear"></i> Analyse</a>
-        <a href="{{ url_for('myapp_blueprints_artefacts.edit', id=artefact.id) }}" class="btn btn-outline-primary"><i class="bi bi-pencil"></i> Edit</a>
-        <form action="{{ url_for('myapp_blueprints_artefacts.delete', id=artefact.id) }}" method="post" class="d-inline" onsubmit="return confirm('Delete?');">
+        <a href="{{ url_for('myapp_blueprints_artefacts.download', uuid=artefact.uuid) }}" class="btn btn-success"><i class="bi bi-download"></i> Download</a>
+        <a href="{{ url_for('myapp_blueprints_artefacts.analyse', uuid=artefact.uuid) }}" class="btn btn-primary"><i class="bi bi-gear"></i> Analyse</a>
+        <a href="{{ url_for('myapp_blueprints_artefacts.edit', uuid=artefact.uuid) }}" class="btn btn-outline-primary"><i class="bi bi-pencil"></i> Edit</a>
+        <form action="{{ url_for('myapp_blueprints_artefacts.delete', uuid=artefact.uuid) }}" method="post" class="d-inline" onsubmit="return confirm('Delete?');">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-outline-danger"><i class="bi bi-trash"></i></button>
         </form>
@@ -43,7 +43,7 @@
                     {% if artefact.parent_artefact %}
                     <dt>Derived From</dt>
                     <dd>
-                        <a href="{{ url_for('myapp_blueprints_artefacts.view', id=artefact.parent_artefact.id) }}">{{ artefact.parent_artefact.label }}</a>
+                        <a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=artefact.parent_artefact.uuid) }}">{{ artefact.parent_artefact.label }}</a>
                         {% if artefact.derived_from_analysis %}
                         <span class="text-muted">(via {{ artefact.derived_from_analysis.analysis_type.value.replace('_', ' ') }})</span>
                         {% endif %}
@@ -51,7 +51,7 @@
                     {% endif %}
                 </dl>
                 {% if not artefact.md5 %}
-                <form action="{{ url_for('myapp_blueprints_artefacts.compute_hashes_route', id=artefact.id) }}" method="post" class="mt-3">
+                <form action="{{ url_for('myapp_blueprints_artefacts.compute_hashes_route', uuid=artefact.uuid) }}" method="post" class="mt-3">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-sm btn-outline-secondary"><i class="bi bi-hash"></i> Compute Hashes</button>
                 </form>
@@ -65,7 +65,7 @@
             <ul class="list-group list-group-flush">
                 {% for derived in artefact.derived_artefacts %}
                 <li class="list-group-item d-flex justify-content-between">
-                    <a href="{{ url_for('myapp_blueprints_artefacts.view', id=derived.id) }}">{{ derived.label }}</a>
+                    <a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=derived.uuid) }}">{{ derived.label }}</a>
                     <span class="badge bg-secondary">{{ derived.artefact_type.value.upper() }}</span>
                 </li>
                 {% endfor %}
@@ -76,12 +76,12 @@
         <div class="card mb-4">
             <div class="card-header d-flex justify-content-between">
                 <span><i class="bi bi-gear"></i> Analyses</span>
-                <a href="{{ url_for('myapp_blueprints_artefacts.analyse', id=artefact.id) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-plus"></i></a>
+                <a href="{{ url_for('myapp_blueprints_artefacts.analyse', uuid=artefact.uuid) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-plus"></i></a>
             </div>
             <ul class="list-group list-group-flush">
                 {% for analysis in artefact.analyses %}
                 <li class="list-group-item d-flex justify-content-between">
-                    <a href="{{ url_for('myapp_blueprints_analysis.view', id=analysis.id) }}">{{ analysis.analysis_type.value.replace('_', ' ').title() }}</a>
+                    <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=analysis.uuid) }}">{{ analysis.analysis_type.value.replace('_', ' ').title() }}</a>
                     <span class="badge {% if analysis.status.value == 'completed' %}bg-success{% elif analysis.status.value == 'failed' %}bg-danger{% elif analysis.status.value == 'running' %}bg-info{% else %}bg-warning{% endif %}">{{ analysis.status.value }}</span>
                 </li>
                 {% else %}
@@ -108,7 +108,7 @@
                             <td>{% if p.unique_files is not none %}<span class="badge bg-info">{{ p.unique_files }}</span>{% else %}-{% endif %}</td>
                             <td>
                                 {% if p.artefact_id != artefact.id %}
-                                <a href="{{ url_for('myapp_blueprints_artefacts.view', id=p.artefact.id) }}" class="badge bg-secondary text-decoration-none">{{ p.artefact.label }}</a>
+                                <a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=p.artefact.uuid) }}" class="badge bg-secondary text-decoration-none">{{ p.artefact.label }}</a>
                                 {% else %}-{% endif %}
                             </td>
                         </tr>

@@ -290,11 +290,11 @@ def get_all_derived_artefact_ids(artefact: Artefact) -> list[int]:
     return ids
 
 
-@blueprint.route('/<int:id>')
+@blueprint.route('/<string:uuid>')
 @login_required
-def view(id):
+def view(uuid):
     """View an artefact and its partitions/files."""
-    artefact = Artefact.query.get_or_404(id)
+    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
 
     file_form = FileSearchForm(request.args)
 
@@ -343,11 +343,11 @@ def view(id):
                            all_partitions=all_partitions)
 
 
-@blueprint.route('/item/<int:item_id>/upload', methods=['GET', 'POST'])
+@blueprint.route('/item/<string:item_uuid>/upload', methods=['GET', 'POST'])
 @login_required
-def upload(item_id):
+def upload(item_uuid):
     """Upload a new artefact."""
-    item = Item.query.get_or_404(item_id)
+    item = Item.query.filter_by(uuid=item_uuid).first_or_404()
     form = ArtefactUploadForm()
     
     # Build type choices with auto-detect as default
@@ -404,17 +404,17 @@ def upload(item_id):
             flash(f'Artefact "{artefact.label}" uploaded. Analysis queued.', 'success')
         else:
             flash(f'Artefact "{artefact.label}" uploaded.', 'success')
-        
-        return redirect(url_for(f'{ROUTENAME}.view', id=artefact.id))
-    
+
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=artefact.uuid))
+
     return render_template('artefacts/upload.html', form=form, item=item)
 
 
-@blueprint.route('/<int:id>/edit', methods=['GET', 'POST'])
+@blueprint.route('/<string:uuid>/edit', methods=['GET', 'POST'])
 @login_required
-def edit(id):
+def edit(uuid):
     """Edit artefact metadata."""
-    artefact = Artefact.query.get_or_404(id)
+    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     form = ArtefactEditForm(obj=artefact)
     
     # Build type choices
@@ -433,22 +433,22 @@ def edit(id):
         artefact.description = form.description.data
         
         db.session.commit()
-        
+
         flash(f'Artefact "{artefact.label}" updated.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.view', id=artefact.id))
-    
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=artefact.uuid))
+
     return render_template('artefacts/edit.html',
                            form=form,
                            artefact=artefact,
                            item=artefact.item)
 
 
-@blueprint.route('/<int:id>/delete', methods=['POST'])
+@blueprint.route('/<string:uuid>/delete', methods=['POST'])
 @login_required
-def delete(id):
+def delete(uuid):
     """Delete an artefact and its file."""
-    artefact = Artefact.query.get_or_404(id)
-    item_id = artefact.item_id
+    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    item_uuid = artefact.item.uuid
     label = artefact.label
     
     # Delete the actual file
@@ -461,16 +461,16 @@ def delete(id):
     
     db.session.delete(artefact)
     db.session.commit()
-    
+
     flash(f'Artefact "{label}" deleted.', 'success')
-    return redirect(url_for('myapp_blueprints_items.view', id=item_id))
+    return redirect(url_for('myapp_blueprints_items.view', uuid=item_uuid))
 
 
-@blueprint.route('/<int:id>/download')
+@blueprint.route('/<string:uuid>/download')
 @login_required
-def download(id):
+def download(uuid):
     """Download the artefact file."""
-    artefact = Artefact.query.get_or_404(id)
+    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     
     full_path = get_artefact_path(artefact)
     
@@ -484,18 +484,18 @@ def download(id):
     )
 
 
-@blueprint.route('/<int:id>/analyse', methods=['GET', 'POST'])
+@blueprint.route('/<string:uuid>/analyse', methods=['GET', 'POST'])
 @login_required
-def analyse(id):
+def analyse(uuid):
     """Run analysis on an artefact with optional hints."""
-    artefact = Artefact.query.get_or_404(id)
+    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     form = AnalyseForm()
-    
+
     # Platform choices for hints
     form.platform_id.choices = [(0, '-- No hint --')] + [
         (p.id, p.name) for p in Platform.query.order_by(Platform.name).all()
     ]
-    
+
     if form.validate_on_submit():
         hints = {}
         if form.platform_id.data and form.platform_id.data != 0:
@@ -506,41 +506,41 @@ def analyse(id):
             hints['filesystem'] = form.filesystem_hint.data
         if form.notes.data:
             hints['notes'] = form.notes.data
-        
+
         queue_analyses_for_artefact(artefact, hints if hints else None)
-        
+
         flash('Analysis queued.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.view', id=artefact.id))
-    
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=artefact.uuid))
+
     # Show what analyses will be queued
     pending_types = ANALYSIS_MAP.get(artefact.artefact_type, [AnalysisType.FORMAT_IDENTIFY])
-    
+
     return render_template('artefacts/analyse.html',
                            form=form,
                            artefact=artefact,
                            pending_types=pending_types)
 
 
-@blueprint.route('/<int:id>/compute-hashes', methods=['POST'])
+@blueprint.route('/<string:uuid>/compute-hashes', methods=['POST'])
 @login_required
-def compute_hashes_route(id):
+def compute_hashes_route(uuid):
     """Compute file hashes for an artefact."""
-    artefact = Artefact.query.get_or_404(id)
-    
+    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+
     full_path = get_artefact_path(artefact)
-    
+
     if not os.path.exists(full_path):
         flash('File not found.', 'error')
-        return redirect(url_for(f'{ROUTENAME}.view', id=artefact.id))
-    
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=artefact.uuid))
+
     try:
         artefact.md5, artefact.sha256 = compute_file_hashes(full_path)
         db.session.commit()
         flash('Hashes computed successfully.', 'success')
     except Exception as e:
         flash(f'Error computing hashes: {e}', 'error')
-    
-    return redirect(url_for(f'{ROUTENAME}.view', id=artefact.id))
+
+    return redirect(url_for(f'{ROUTENAME}.view', uuid=artefact.uuid))
 
 
 # vim: ts=4 sw=4 noet

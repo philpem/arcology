@@ -13,12 +13,12 @@
     <h1>Analysis #{{ analysis.id }} <span class="badge {% if analysis.status.value == 'completed' %}bg-success{% elif analysis.status.value == 'failed' %}bg-danger{% elif analysis.status.value == 'running' %}bg-info{% else %}bg-warning{% endif %}">{{ analysis.status.value }}</span></h1>
     <div>
         {% if analysis.status.value == 'pending' %}
-        <form action="{{ url_for('myapp_blueprints_analysis.cancel', id=analysis.id) }}" method="post" class="d-inline">
+        <form action="{{ url_for('myapp_blueprints_analysis.cancel', uuid=analysis.uuid) }}" method="post" class="d-inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-outline-danger"><i class="bi bi-x-lg"></i> Cancel</button>
         </form>
         {% elif analysis.status.value == 'failed' %}
-        <form action="{{ url_for('myapp_blueprints_analysis.retry', id=analysis.id) }}" method="post" class="d-inline">
+        <form action="{{ url_for('myapp_blueprints_analysis.retry', uuid=analysis.uuid) }}" method="post" class="d-inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-outline-primary"><i class="bi bi-arrow-repeat"></i> Retry</button>
         </form>
@@ -33,7 +33,7 @@
             <div class="card-body">
                 <dl class="mb-0">
                     <dt>Type</dt><dd>{{ analysis.analysis_type.value|replace('_', ' ')|title }}</dd>
-                    <dt>Artefact</dt><dd><a href="{{ url_for('myapp_blueprints_artefacts.view', id=analysis.artefact.id) }}">{{ analysis.artefact.label }}</a></dd>
+                    <dt>Artefact</dt><dd><a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=analysis.artefact.uuid) }}">{{ analysis.artefact.label }}</a></dd>
                     <dt>Tool</dt><dd>{{ analysis.tool_name or '-' }}{% if analysis.tool_version %} v{{ analysis.tool_version }}{% endif %}</dd>
                     <dt>Created</dt><dd>{{ analysis.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</dd>
                     <dt>Started</dt><dd>{{ analysis.started_at.strftime('%Y-%m-%d %H:%M:%S') if analysis.started_at else '-' }}</dd>
