@@ -52,50 +52,50 @@ def index():
                            status_counts=status_counts)
 
 
-@blueprint.route('/<int:id>')
+@blueprint.route('/<string:uuid>')
 @login_required
-def view(id):
+def view(uuid):
     """View analysis details."""
-    analysis = Analysis.query.get_or_404(id)
+    analysis = Analysis.query.filter_by(uuid=uuid).first_or_404()
     return render_template('analysis/view.html', analysis=analysis)
 
 
-@blueprint.route('/<int:id>/cancel', methods=['POST'])
+@blueprint.route('/<string:uuid>/cancel', methods=['POST'])
 @login_required
-def cancel(id):
+def cancel(uuid):
     """Cancel a pending analysis."""
-    analysis = Analysis.query.get_or_404(id)
-    
+    analysis = Analysis.query.filter_by(uuid=uuid).first_or_404()
+
     if analysis.status != AnalysisStatus.PENDING:
         flash('Can only cancel pending analyses.', 'error')
-        return redirect(url_for(f'{ROUTENAME}.view', id=id))
-    
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=uuid))
+
     db.session.delete(analysis)
     db.session.commit()
-    
+
     flash('Analysis cancelled.', 'success')
     return redirect(url_for(f'{ROUTENAME}.index'))
 
 
-@blueprint.route('/<int:id>/retry', methods=['POST'])
+@blueprint.route('/<string:uuid>/retry', methods=['POST'])
 @login_required
-def retry(id):
+def retry(uuid):
     """Retry a failed analysis."""
-    analysis = Analysis.query.get_or_404(id)
-    
+    analysis = Analysis.query.filter_by(uuid=uuid).first_or_404()
+
     if analysis.status != AnalysisStatus.FAILED:
         flash('Can only retry failed analyses.', 'error')
-        return redirect(url_for(f'{ROUTENAME}.view', id=id))
-    
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=uuid))
+
     analysis.status = AnalysisStatus.PENDING
     analysis.error_message = None
     analysis.started_at = None
     analysis.completed_at = None
-    
+
     db.session.commit()
-    
+
     flash('Analysis requeued.', 'success')
-    return redirect(url_for(f'{ROUTENAME}.view', id=id))
+    return redirect(url_for(f'{ROUTENAME}.view', uuid=uuid))
 
 
 @blueprint.route('/queue')

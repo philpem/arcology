@@ -128,24 +128,24 @@ def new():
         db.session.commit()
         
         flash(f'Item "{item.name}" created successfully.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.view', id=item.id))
-    
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=item.uuid))
+
     return render_template('items/form.html', form=form, title='New Item')
 
 
-@blueprint.route('/<int:id>')
+@blueprint.route('/<string:uuid>')
 @login_required
-def view(id):
+def view(uuid):
     """View an item and its artefacts."""
-    item = Item.query.get_or_404(id)
+    item = Item.query.filter_by(uuid=uuid).first_or_404()
     return render_template('items/view.html', item=item)
 
 
-@blueprint.route('/<int:id>/edit', methods=['GET', 'POST'])
+@blueprint.route('/<string:uuid>/edit', methods=['GET', 'POST'])
 @login_required
-def edit(id):
+def edit(uuid):
     """Edit an item."""
-    item = Item.query.get_or_404(id)
+    item = Item.query.filter_by(uuid=uuid).first_or_404()
     form = ItemForm(obj=item)
     
     form.platform_id.choices = [(0, '-- Select Platform --')] + [
@@ -175,18 +175,18 @@ def edit(id):
                 item.tags.append(tag)
         
         db.session.commit()
-        
+
         flash(f'Item "{item.name}" updated successfully.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.view', id=item.id))
-    
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=item.uuid))
+
     return render_template('items/form.html', form=form, item=item, title='Edit Item')
 
 
-@blueprint.route('/<int:id>/delete', methods=['POST'])
+@blueprint.route('/<string:uuid>/delete', methods=['POST'])
 @login_required
-def delete(id):
+def delete(uuid):
     """Delete an item."""
-    item = Item.query.get_or_404(id)
+    item = Item.query.filter_by(uuid=uuid).first_or_404()
     name = item.name
     
     db.session.delete(item)
@@ -196,11 +196,11 @@ def delete(id):
     return redirect(url_for(f'{ROUTENAME}.index'))
 
 
-@blueprint.route('/<int:id>/references/add', methods=['GET', 'POST'])
+@blueprint.route('/<string:uuid>/references/add', methods=['GET', 'POST'])
 @login_required
-def add_reference(id):
+def add_reference(uuid):
     """Add an external reference to an item."""
-    item = Item.query.get_or_404(id)
+    item = Item.query.filter_by(uuid=uuid).first_or_404()
     form = ExternalReferenceForm()
     
     form.system_id.choices = [
@@ -222,28 +222,29 @@ def add_reference(id):
         
         db.session.add(ref)
         db.session.commit()
-        
+
         flash('External reference added.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.view', id=item.id))
-    
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=item.uuid))
+
     return render_template('items/add_reference.html', form=form, item=item)
 
 
-@blueprint.route('/<int:item_id>/references/<int:ref_id>/delete', methods=['POST'])
+@blueprint.route('/<string:item_uuid>/references/<int:ref_id>/delete', methods=['POST'])
 @login_required
-def delete_reference(item_id, ref_id):
+def delete_reference(item_uuid, ref_id):
     """Delete an external reference."""
+    item = Item.query.filter_by(uuid=item_uuid).first_or_404()
     ref = ExternalReference.query.get_or_404(ref_id)
-    
-    if ref.item_id != item_id:
+
+    if ref.item_id != item.id:
         flash('Invalid reference.', 'error')
-        return redirect(url_for(f'{ROUTENAME}.view', id=item_id))
-    
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=item_uuid))
+
     db.session.delete(ref)
     db.session.commit()
-    
+
     flash('External reference removed.', 'success')
-    return redirect(url_for(f'{ROUTENAME}.view', id=item_id))
+    return redirect(url_for(f'{ROUTENAME}.view', uuid=item_uuid))
 
 
 # vim: ts=4 sw=4 noet

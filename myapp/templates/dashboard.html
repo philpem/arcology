@@ -49,7 +49,7 @@
             <ul class="list-group list-group-flush">
                 {% for item in recent_items %}
                 <li class="list-group-item d-flex justify-content-between">
-                    <a href="{{ url_for('myapp_blueprints_items.view', id=item.id) }}">{{ item.name }}</a>
+                    <a href="{{ url_for('myapp_blueprints_items.view', uuid=item.uuid) }}">{{ item.name }}</a>
                     <span class="badge bg-secondary">{{ item.artefacts|length }}</span>
                 </li>
                 {% else %}

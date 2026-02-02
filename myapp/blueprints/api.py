@@ -75,15 +75,15 @@ def create_item():
     return jsonify(item_to_dict(item)), 201
 
 
-@blueprint.route('/items/<int:id>', methods=['GET'])
-def get_item(id):
-    item = Item.query.get_or_404(id)
+@blueprint.route('/items/<string:uuid>', methods=['GET'])
+def get_item(uuid):
+    item = Item.query.filter_by(uuid=uuid).first_or_404()
     return jsonify(item_to_dict(item, include_artefacts=True))
 
 
-@blueprint.route('/items/<int:id>', methods=['PUT'])
-def update_item(id):
-    item = Item.query.get_or_404(id)
+@blueprint.route('/items/<string:uuid>', methods=['PUT'])
+def update_item(uuid):
+    item = Item.query.filter_by(uuid=uuid).first_or_404()
     data = request.get_json()
     if 'name' in data: item.name = data['name']
     if 'description' in data: item.description = data['description']
@@ -93,9 +93,9 @@ def update_item(id):
     return jsonify(item_to_dict(item))
 
 
-@blueprint.route('/items/<int:id>', methods=['DELETE'])
-def delete_item(id):
-    item = Item.query.get_or_404(id)
+@blueprint.route('/items/<string:uuid>', methods=['DELETE'])
+def delete_item(uuid):
+    item = Item.query.filter_by(uuid=uuid).first_or_404()
     db.session.delete(item)
     db.session.commit()
     return '', 204
@@ -105,9 +105,9 @@ def delete_item(id):
 # Artefacts
 # =============================================================================
 
-@blueprint.route('/items/<int:item_id>/artefacts', methods=['POST'])
-def add_artefact(item_id):
-    item = Item.query.get_or_404(item_id)
+@blueprint.route('/items/<string:item_uuid>/artefacts', methods=['POST'])
+def add_artefact(item_uuid):
+    item = Item.query.filter_by(uuid=item_uuid).first_or_404()
     data = request.get_json()
     if not data or 'label' not in data or 'file_path' not in data:
         return error_response('Label and file_path are required')
@@ -125,23 +125,23 @@ def add_artefact(item_id):
     return jsonify(artefact_to_dict(artefact)), 201
 
 
-@blueprint.route('/artefacts/<int:id>', methods=['GET'])
-def get_artefact(id):
-    artefact = Artefact.query.get_or_404(id)
+@blueprint.route('/artefacts/<string:uuid>', methods=['GET'])
+def get_artefact(uuid):
+    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     return jsonify(artefact_to_dict(artefact, include_partitions=True))
 
 
-@blueprint.route('/artefacts/<int:id>', methods=['DELETE'])
-def delete_artefact(id):
-    artefact = Artefact.query.get_or_404(id)
+@blueprint.route('/artefacts/<string:uuid>', methods=['DELETE'])
+def delete_artefact(uuid):
+    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     db.session.delete(artefact)
     db.session.commit()
     return '', 204
 
 
-@blueprint.route('/artefacts/<int:id>/download', methods=['GET'])
-def download_artefact(id):
-    artefact = Artefact.query.get_or_404(id)
+@blueprint.route('/artefacts/<string:uuid>/download', methods=['GET'])
+def download_artefact(uuid):
+    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     full_path = os.path.join(current_app.config.get('NAS_BASE_PATH', ''), artefact.file_path.lstrip('/'))
     if not os.path.exists(full_path):
         return error_response('File not found', 404)
@@ -152,9 +152,9 @@ def download_artefact(id):
 # Analysis
 # =============================================================================
 
-@blueprint.route('/artefacts/<int:id>/analysis', methods=['POST'])
-def request_analysis(id):
-    artefact = Artefact.query.get_or_404(id)
+@blueprint.route('/artefacts/<string:uuid>/analysis', methods=['POST'])
+def request_analysis(uuid):
+    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     data = request.get_json() or {}
     try:
         analysis_type = AnalysisType(data.get('analysis_type', 'metadata_extract'))
@@ -168,15 +168,15 @@ def request_analysis(id):
     return jsonify(analysis_to_dict(analysis)), 201
 
 
-@blueprint.route('/artefacts/<int:id>/analysis', methods=['GET'])
-def get_artefact_analyses(id):
-    artefact = Artefact.query.get_or_404(id)
+@blueprint.route('/artefacts/<string:uuid>/analysis', methods=['GET'])
+def get_artefact_analyses(uuid):
+    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     return jsonify({'analyses': [analysis_to_dict(a) for a in artefact.analyses]})
 
 
-@blueprint.route('/analysis/<int:id>', methods=['GET'])
-def get_analysis(id):
-    analysis = Analysis.query.get_or_404(id)
+@blueprint.route('/analysis/<string:uuid>', methods=['GET'])
+def get_analysis(uuid):
+    analysis = Analysis.query.filter_by(uuid=uuid).first_or_404()
     return jsonify(analysis_to_dict(analysis))
 
 
@@ -334,9 +334,9 @@ def produce_artefact(id):
     }), 201
 
 
-@blueprint.route('/artefacts/<int:id>/partitions', methods=['POST'])
-def add_partition(id):
-    artefact = Artefact.query.get_or_404(id)
+@blueprint.route('/artefacts/<string:uuid>/partitions', methods=['POST'])
+def add_partition(uuid):
+    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     data = request.get_json()
     try:
         filesystem = FilesystemType(data.get('filesystem', 'unknown'))
@@ -351,9 +351,9 @@ def add_partition(id):
     return jsonify(partition_to_dict(partition)), 201
 
 
-@blueprint.route('/partitions/<int:id>/files', methods=['POST'])
-def add_files(id):
-    partition = Partition.query.get_or_404(id)
+@blueprint.route('/partitions/<string:uuid>/files', methods=['POST'])
+def add_files(uuid):
+    partition = Partition.query.filter_by(uuid=uuid).first_or_404()
     data = request.get_json()
     if 'files' not in data:
         return error_response('files array required')
@@ -380,9 +380,9 @@ def add_files(id):
     return jsonify({'added': added})
 
 
-@blueprint.route('/partitions/<int:id>/files', methods=['GET'])
-def get_partition_files(id):
-    partition = Partition.query.get_or_404(id)
+@blueprint.route('/partitions/<string:uuid>/files', methods=['GET'])
+def get_partition_files(uuid):
+    partition = Partition.query.filter_by(uuid=uuid).first_or_404()
     show_known = request.args.get('show_known', 'false').lower() == 'true'
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 100, type=int)
@@ -448,7 +448,7 @@ def hash_lookup():
 
 def item_to_dict(item, include_artefacts=False):
     result = {
-        'id': item.id, 'name': item.name, 'description': item.description,
+        'id': item.id, 'uuid': item.uuid, 'name': item.name, 'description': item.description,
         'platform': {'id': item.platform.id, 'name': item.platform.name} if item.platform else None,
         'category': {'id': item.category.id, 'name': item.category.name} if item.category else None,
         'tags': [t.name for t in item.tags], 'artefact_count': len(item.artefacts),
@@ -461,8 +461,9 @@ def item_to_dict(item, include_artefacts=False):
 
 def artefact_to_dict(artefact, include_partitions=False):
     result = {
-        'id': artefact.id, 'item_id': artefact.item_id, 'label': artefact.label,
-        'artefact_type': artefact.artefact_type.value, 
+        'id': artefact.id, 'uuid': artefact.uuid, 'item_id': artefact.item_id,
+        'item_uuid': artefact.item.uuid, 'label': artefact.label,
+        'artefact_type': artefact.artefact_type.value,
         'type_overridden': artefact.type_overridden,
         'original_filename': artefact.original_filename,
         'file_size': artefact.file_size, 'mime_type': artefact.mime_type,
@@ -476,7 +477,8 @@ def artefact_to_dict(artefact, include_partitions=False):
 
 def analysis_to_dict(analysis, include_artefact=False):
     result = {
-        'id': analysis.id, 'artefact_id': analysis.artefact_id,
+        'id': analysis.id, 'uuid': analysis.uuid, 'artefact_id': analysis.artefact_id,
+        'artefact_uuid': analysis.artefact.uuid,
         'analysis_type': analysis.analysis_type.value, 'status': analysis.status.value,
         'tool_name': analysis.tool_name, 'hints': analysis.hints,
         'output_url': analysis.output_url,
@@ -486,7 +488,8 @@ def analysis_to_dict(analysis, include_artefact=False):
         'completed_at': analysis.completed_at.isoformat() if analysis.completed_at else None
     }
     if include_artefact:
-        result['artefact'] = {'id': analysis.artefact.id, 'label': analysis.artefact.label,
+        result['artefact'] = {'id': analysis.artefact.id, 'uuid': analysis.artefact.uuid,
+                             'label': analysis.artefact.label,
                              'original_filename': analysis.artefact.original_filename,
                              'storage_path': analysis.artefact.storage_path,
                              'storage_directory': analysis.artefact.storage_directory.value,
@@ -495,12 +498,13 @@ def analysis_to_dict(analysis, include_artefact=False):
 
 
 def partition_to_dict(partition):
-    return {'id': partition.id, 'partition_index': partition.partition_index, 'label': partition.label,
-            'filesystem': partition.filesystem.value, 'total_files': partition.total_files, 'unique_files': partition.unique_files}
+    return {'id': partition.id, 'uuid': partition.uuid, 'partition_index': partition.partition_index,
+            'label': partition.label, 'filesystem': partition.filesystem.value,
+            'total_files': partition.total_files, 'unique_files': partition.unique_files}
 
 
 def file_to_dict(f):
-    return {'id': f.id, 'path': f.path, 'filename': f.filename, 'extension': f.extension,
+    return {'id': f.id, 'uuid': f.uuid, 'path': f.path, 'filename': f.filename, 'extension': f.extension,
             'file_size': f.file_size, 'md5': f.md5, 'sha1': f.sha1, 'is_known': f.is_known}
 
 

@@ -6,6 +6,7 @@ Models for the digital artefact catalogue system.
 
 from datetime import datetime
 from typing import Optional
+import uuid as uuid_module
 from sqlalchemy import (
     Column, ForeignKey, Sequence, Text, BigInteger, Index, Table
 )
@@ -15,6 +16,11 @@ import bcrypt
 import enum
 
 from .extensions import db
+
+
+def generate_uuid() -> str:
+    """Generate a new UUID4 string for use as a public identifier."""
+    return uuid_module.uuid4().hex
 
 
 # =============================================================================
@@ -270,6 +276,7 @@ class Item(db.Model):
     __tablename__ = "items"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[str] = mapped_column(String(32), unique=True, index=True, default=generate_uuid)
     name: Mapped[str] = mapped_column(String(255), index=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     platform_id: Mapped[Optional[int]] = mapped_column(ForeignKey("platforms.id"), index=True, nullable=True)
@@ -295,6 +302,7 @@ class Artefact(db.Model):
     __tablename__ = "artefacts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[str] = mapped_column(String(32), unique=True, index=True, default=generate_uuid)
     item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), index=True)
     label: Mapped[str] = mapped_column(String(255))
     artefact_type: Mapped[ArtefactType] = mapped_column(SQLEnum(ArtefactType))
@@ -353,6 +361,7 @@ class Analysis(db.Model):
     __tablename__ = "analyses"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[str] = mapped_column(String(32), unique=True, index=True, default=generate_uuid)
     artefact_id: Mapped[int] = mapped_column(ForeignKey("artefacts.id"), index=True)
     analysis_type: Mapped[AnalysisType] = mapped_column(SQLEnum(AnalysisType))
     status: Mapped[AnalysisStatus] = mapped_column(SQLEnum(AnalysisStatus), default=AnalysisStatus.PENDING)
@@ -397,6 +406,7 @@ class Partition(db.Model):
     __tablename__ = "partitions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[str] = mapped_column(String(32), unique=True, index=True, default=generate_uuid)
     artefact_id: Mapped[int] = mapped_column(ForeignKey("artefacts.id"), index=True)
     partition_index: Mapped[int] = mapped_column(Integer, default=0)
     label: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
@@ -419,6 +429,7 @@ class ExtractedFile(db.Model):
     __tablename__ = "extracted_files"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[str] = mapped_column(String(32), unique=True, index=True, default=generate_uuid)
     partition_id: Mapped[int] = mapped_column(ForeignKey("partitions.id"), index=True)
     path: Mapped[str] = mapped_column(String(1000))
     filename: Mapped[str] = mapped_column(String(255), index=True)
