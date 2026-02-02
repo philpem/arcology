@@ -24,4 +24,4 @@ requests
 # gunicorn
 
 # PostgreSQL (optional)
-# psycopg2-binary
+psycopg2-binary

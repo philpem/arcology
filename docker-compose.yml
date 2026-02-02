@@ -24,6 +24,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    depends_on:
+      - db
     ports:
       - "8000:8000"
     volumes:
@@ -60,3 +62,23 @@ services:
           # Adjust based on your system
           cpus: '2'
           memory: 4G
+
+  # PostgreSQL database server
+  db:
+    image: pgautoupgrade/pgautoupgrade:latest
+    restart: unless-stopped
+    # set shared memory limit when using docker compose
+    shm_size: 128mb
+    environment:
+      - POSTGRES_DB=arcology
+      - POSTGRES_USER=arcology_user
+      - POSTGRES_PASSWORD=arcology_password
+    volumes:
+      - ./data/db/pg:/var/lib/postgresql
+
+  adminer:
+    image: adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+
