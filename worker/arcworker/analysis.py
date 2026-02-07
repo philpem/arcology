@@ -26,6 +26,9 @@ from .tools import (
     extract_dos_7z,
     list_files_7z,
     list_files_dim,
+    detect_partitions_sfdisk,
+    detect_acorn_adfs,
+    detect_format_file_cmd,
 )
 
 
@@ -287,7 +290,11 @@ class AnalysisWorker:
                 analysis_id,
                 status='failed',
                 success=False,
-                error_message=result.get('error', 'Could not list files')
+                tool_name=result.get('tool'),
+                error_message=result.get('error', 'Could not list files'),
+                details=json.dumps({
+                    'process_output': result.get('process_output')
+                })
             )
 
     def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path):
@@ -353,7 +360,11 @@ class AnalysisWorker:
                 analysis_id,
                 status='failed',
                 success=False,
-                error_message=result.get('error', 'Extraction failed')
+                tool_name=result.get('tool'),
+                error_message=result.get('error', 'Extraction failed'),
+                details=json.dumps({
+                    'process_output': result.get('process_output')
+                })
             )
 
     def process_metadata_extract(self, analysis: dict, artefact: dict, work_dir: Path):
@@ -400,6 +411,77 @@ class AnalysisWorker:
             details=json.dumps({'detected': 'unknown'})
         )
 
+    def process_partition_detect(self, analysis: dict, artefact: dict, work_dir: Path):
+        """
+        Process PARTITION_DETECT analysis.
+        Detects partitions and filesystem types in raw disc images.
+        Tries sfdisk for standard partition tables, then checks for
+        Acorn ADFS signatures, and falls back to the file command.
+        """
+        analysis_id = analysis['id']
+        input_path = self.get_input_path(artefact, work_dir)
+        hints = json.loads(analysis.get('hints') or '{}')
+        filesystem_hint = hints.get('filesystem', '').lower()
+
+        results = {}
+        detected_partitions = []
+
+        # 1. Try sfdisk for standard partition tables (MBR/GPT)
+        sfdisk_result = detect_partitions_sfdisk(input_path)
+        results['sfdisk'] = sfdisk_result
+
+        if sfdisk_result['success']:
+            detected_partitions = sfdisk_result['partitions']
+
+        # 2. Check for Acorn ADFS signatures
+        adfs_result = detect_acorn_adfs(input_path)
+        results['adfs'] = adfs_result
+
+        if adfs_result.get('adfs_detected') and not detected_partitions:
+            detected_partitions = [{
+                'index': 0,
+                'filesystem': 'adfs',
+                'description': f'Acorn ADFS ({adfs_result.get("adfs_variant", "unknown variant")})',
+                'size_bytes': adfs_result.get('disc_size'),
+                'signatures': adfs_result.get('signatures', []),
+            }]
+
+        # 3. Use file command for additional format info
+        file_result = detect_format_file_cmd(input_path)
+        results['file'] = file_result
+
+        # 4. If nothing detected, report whole disc as single unknown partition
+        if not detected_partitions:
+            file_size = input_path.stat().st_size
+            detected_partitions = [{
+                'index': 0,
+                'filesystem': filesystem_hint or 'unknown',
+                'description': 'No partition table detected (whole disc)',
+                'size_bytes': file_size,
+            }]
+
+        # Build summary
+        fs_types = [p.get('filesystem', 'unknown') for p in detected_partitions]
+        summary = f'Detected {len(detected_partitions)} partition(s): {", ".join(fs_types)}'
+
+        if adfs_result.get('adfs_detected'):
+            summary += f' (ADFS signatures: {", ".join(adfs_result.get("signatures", []))})'
+
+        if file_result.get('file_type'):
+            summary += f' [file: {file_result["file_type"][:200]}]'
+
+        self.api.update_analysis(
+            analysis_id,
+            status='completed',
+            success=True,
+            tool_name='sfdisk,adfs_detect,file',
+            summary=summary,
+            details=json.dumps({
+                'partitions': detected_partitions,
+                'results': results
+            })
+        )
+
     # =========================================================================
     # Job Processing
     # =========================================================================
@@ -428,6 +510,7 @@ class AnalysisWorker:
                     AnalysisType.FILE_EXTRACTION.value: self.process_file_extraction,
                     AnalysisType.METADATA_EXTRACT.value: self.process_metadata_extract,
                     AnalysisType.FORMAT_IDENTIFY.value: self.process_format_identify,
+                    AnalysisType.PARTITION_DETECT.value: self.process_partition_detect,
                 }
 
                 handler = handlers.get(analysis_type)

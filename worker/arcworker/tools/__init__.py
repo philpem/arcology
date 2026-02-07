@@ -19,6 +19,11 @@ from .extraction import (
     list_files_7z,
     list_files_dim,
 )
+from .partition import (
+    detect_partitions_sfdisk,
+    detect_acorn_adfs,
+    detect_format_file_cmd,
+)
 
 __all__ = [
     'run_tool',
@@ -35,4 +40,7 @@ __all__ = [
     'extract_iso_7z',
     'list_files_7z',
     'list_files_dim',
+    'detect_partitions_sfdisk',
+    'detect_acorn_adfs',
+    'detect_format_file_cmd',
 ]
