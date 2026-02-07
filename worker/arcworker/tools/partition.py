@@ -24,8 +24,16 @@ def detect_partitions_sfdisk(input_path: Path) -> dict:
     Returns:
         Result dict with success status, partitions list, and process_output
     """
-    cmd = ['sfdisk', '--json', str(input_path)]
-    result, process_output = run_tool_with_output(cmd, timeout=30)
+    try:
+        cmd = ['sfdisk', '--json', str(input_path)]
+        result, process_output = run_tool_with_output(cmd, timeout=30)
+    except FileNotFoundError:
+        return {
+            'success': False,
+            'tool': 'sfdisk',
+            'partitions': [],
+            'error': 'sfdisk not installed',
+        }
 
     if result.returncode != 0:
         return {
@@ -151,8 +159,16 @@ def detect_format_file_cmd(input_path: Path) -> dict:
     Returns:
         Result dict with file type info and process_output
     """
-    cmd = ['file', '-b', str(input_path)]
-    result, process_output = run_tool_with_output(cmd, timeout=10)
+    try:
+        cmd = ['file', '-b', str(input_path)]
+        result, process_output = run_tool_with_output(cmd, timeout=10)
+    except FileNotFoundError:
+        return {
+            'success': False,
+            'tool': 'file',
+            'file_type': '',
+            'error': 'file command not installed',
+        }
 
     file_type = result.stdout.decode(errors='replace').strip() if result.returncode == 0 else ''
 
