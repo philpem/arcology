@@ -16,37 +16,6 @@ from pathlib import Path
 from .base import run_tool_with_output
 
 
-def _prepare_dim_input(input_path: Path, staging_dir: Path) -> Path:
-    """
-    Prepare input file for DIM by ensuring it has a recognized extension.
-
-    DiscImageManager relies on file extension to detect disc format. Files
-    with unrecognized extensions (e.g., .dd) need a symlink with a recognized
-    extension (.adf for floppies, .hdf for hard discs).
-
-    Args:
-        input_path: Path to the disc image
-        staging_dir: Directory to create symlinks in
-
-    Returns:
-        Path that DIM can read (original path or symlink)
-    """
-    recognized = {'.adf', '.hdf', '.dat', '.img', '.dsd', '.ssd', '.dsk'}
-    if input_path.suffix.lower() in recognized:
-        return input_path
-
-    # Choose extension based on file size: > 2MB is likely a hard disc image
-    file_size = input_path.stat().st_size
-    if file_size > 2 * 1024 * 1024:
-        ext = '.hdf'
-    else:
-        ext = '.adf'
-
-    link_path = staging_dir / f"image{ext}"
-    link_path.symlink_to(input_path.resolve())
-    return link_path
-
-
 def extract_acorn_disc_image_manager(input_path: Path, output_dir: Path) -> dict:
     """
     Extract files from Acorn DFS/ADFS disc image using Disc Image Manager.
@@ -61,14 +30,8 @@ def extract_acorn_disc_image_manager(input_path: Path, output_dir: Path) -> dict
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create staging directory for DIM-compatible symlink
-    stage_dir = tempfile.mkdtemp(prefix='dim_stage_')
-
-    try:
-        dim_input = _prepare_dim_input(input_path, Path(stage_dir))
-
-        # Create DIM script
-        script_content = f"""insert {dim_input}
+    # Create DIM script
+    script_content = f"""insert {input_path}
 report
 chdir {output_dir}
 config CreateINF true
@@ -76,43 +39,41 @@ extract * {output_dir}
 exit
 """
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.dim', delete=False) as f:
-            f.write(script_content)
-            script_path = f.name
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.dim', delete=False) as f:
+        f.write(script_content)
+        script_path = f.name
 
-        try:
-            cmd = [
-                'xvfb-run',
-                'DiscImageManager',
-                '-c', script_path
-            ]
-            result, process_output = run_tool_with_output(cmd)
+    try:
+        cmd = [
+            'xvfb-run',
+            'DiscImageManager',
+            '-c', script_path
+        ]
+        result, process_output = run_tool_with_output(cmd)
 
-            # Count extracted files
-            extracted_files = list(output_dir.rglob('*'))
-            file_count = sum(1 for f in extracted_files if f.is_file() and not f.suffix == '.inf')
+        # Count extracted files
+        extracted_files = list(output_dir.rglob('*'))
+        file_count = sum(1 for f in extracted_files if f.is_file() and not f.suffix == '.inf')
 
-            if file_count > 0:
-                return {
-                    'success': True,
-                    'tool': 'DiscImageManager',
-                    'output_dir': str(output_dir),
-                    'file_count': file_count,
-                    'summary': f'Extracted {file_count} files from Acorn disc image',
-                    'process_output': process_output
-                }
-
+        if file_count > 0:
             return {
-                'success': False,
+                'success': True,
                 'tool': 'DiscImageManager',
-                'error': 'No files extracted - may not be Acorn format',
+                'output_dir': str(output_dir),
+                'file_count': file_count,
+                'summary': f'Extracted {file_count} files from Acorn disc image',
                 'process_output': process_output
             }
 
-        finally:
-            os.unlink(script_path)
+        return {
+            'success': False,
+            'tool': 'DiscImageManager',
+            'error': 'No files extracted - may not be Acorn format',
+            'process_output': process_output
+        }
+
     finally:
-        shutil.rmtree(stage_dir, ignore_errors=True)
+        os.unlink(script_path)
 
 
 def extract_dos_7z(input_path: Path, output_dir: Path) -> dict:
@@ -207,12 +168,9 @@ def list_files_dim(input_path: Path) -> dict:
     """
     # Create a temp directory for extraction
     temp_dir = tempfile.mkdtemp(prefix='dim_list_')
-    temp_path = Path(temp_dir)
-
-    dim_input = _prepare_dim_input(input_path, temp_path)
 
     # Create DIM script to extract files
-    script_content = f"""insert {dim_input}
+    script_content = f"""insert {input_path}
 chdir {temp_dir}
 extract * {temp_dir}
 exit
@@ -232,13 +190,10 @@ exit
 
         # Enumerate extracted files using Python
         files = []
+        temp_path = Path(temp_dir)
 
         for file_path in temp_path.rglob('*'):
             if not file_path.is_file():
-                continue
-
-            # Skip symlinks (created by _prepare_dim_input)
-            if file_path.is_symlink():
                 continue
 
             # Skip .inf metadata files
