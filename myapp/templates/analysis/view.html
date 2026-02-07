@@ -63,9 +63,9 @@
     </div>
     
     <div class="col-md-8">
-        {% if analysis.status.value == 'completed' and analysis.details %}
+        {% if analysis.status.value in ('completed', 'failed') and analysis.details %}
         {% set details = analysis.details | fromjson %}
-        
+
         {# Display output images (flux visualisations, etc.) #}
         {% if details.outputs %}
         <div class="card mb-4">
@@ -111,7 +111,7 @@
                     <i class="bi bi-terminal"></i> Process Logs ({{ process_outputs|length }} tool{{ 's' if process_outputs|length != 1 else '' }})
                 </a>
             </div>
-            <div id="processLogs" class="collapse">
+            <div id="processLogs" class="collapse{% if analysis.status.value == 'failed' %} show{% endif %}">
                 <div class="card-body">
                     {% for item in process_outputs %}
                     <div class="mb-4">
