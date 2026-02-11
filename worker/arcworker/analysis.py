@@ -415,8 +415,9 @@ class AnalysisWorker:
         """
         Process PARTITION_DETECT analysis.
         Detects partitions and filesystem types in raw disc images.
-        Tries sfdisk for standard partition tables, then checks for
-        Acorn ADFS signatures, and falls back to the file command.
+        Checks for Acorn ADFS (Filecore) first -- a reformatted PC disc
+        may retain a stale MBR, so sfdisk is only used when no ADFS
+        signatures are found.
         """
         analysis_id = analysis['id']
         input_path = self.get_input_path(artefact, work_dir)
@@ -426,18 +427,14 @@ class AnalysisWorker:
         results = {}
         detected_partitions = []
 
-        # 1. Try sfdisk for standard partition tables (MBR/GPT)
-        sfdisk_result = detect_partitions_sfdisk(input_path)
-        results['sfdisk'] = sfdisk_result
-
-        if sfdisk_result['success']:
-            detected_partitions = sfdisk_result['partitions']
-
-        # 2. Check for Acorn ADFS signatures
+        # 1. Check for Acorn ADFS (Filecore) first.
+        # Filecore writes from byte 0xC00 onwards, so a disc reformatted
+        # from PC to Filecore may retain a stale MBR in the first 5 sectors.
+        # If we detect ADFS, skip sfdisk to avoid reporting that stale MBR.
         adfs_result = detect_acorn_adfs(input_path)
         results['adfs'] = adfs_result
 
-        if adfs_result.get('adfs_detected') and not detected_partitions:
+        if adfs_result.get('adfs_detected'):
             detected_partitions = [{
                 'index': 0,
                 'filesystem': 'adfs',
@@ -445,6 +442,14 @@ class AnalysisWorker:
                 'size_bytes': adfs_result.get('disc_size'),
                 'signatures': adfs_result.get('signatures', []),
             }]
+
+        # 2. If no ADFS detected, try sfdisk for standard partition tables (MBR/GPT)
+        if not detected_partitions:
+            sfdisk_result = detect_partitions_sfdisk(input_path)
+            results['sfdisk'] = sfdisk_result
+
+            if sfdisk_result['success']:
+                detected_partitions = sfdisk_result['partitions']
 
         # 3. Use file command for additional format info
         file_result = detect_format_file_cmd(input_path)
