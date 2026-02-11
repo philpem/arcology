@@ -16,6 +16,7 @@ from ..database import (
     Partition, ExtractedFile, FilesystemType, Platform, Category, Tag,
     ExternalSystem, ExternalReference, HashDatabase, KnownFile, StorageDirectory
 )
+from .artefacts import get_artefact_path
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -29,6 +30,18 @@ def init_app(app):
 
 def error_response(message, status_code=400):
     return jsonify({'error': message}), status_code
+
+
+def _delete_artefact_files(artefact):
+    """Recursively delete files for an artefact and all its derived artefacts."""
+    for derived in artefact.derived_artefacts:
+        _delete_artefact_files(derived)
+    try:
+        full_path = get_artefact_path(artefact)
+        if os.path.exists(full_path):
+            os.remove(full_path)
+    except Exception as e:
+        current_app.logger.warning(f"Failed to delete file for artefact {artefact.uuid}: {e}")
 
 
 # =============================================================================
@@ -134,6 +147,7 @@ def get_artefact(uuid):
 @blueprint.route('/artefacts/<string:uuid>', methods=['DELETE'])
 def delete_artefact(uuid):
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    _delete_artefact_files(artefact)
     db.session.delete(artefact)
     db.session.commit()
     return '', 204
