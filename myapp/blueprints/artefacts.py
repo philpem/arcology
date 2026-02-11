@@ -443,6 +443,18 @@ def edit(uuid):
                            item=artefact.item)
 
 
+def _delete_artefact_files(artefact):
+    """Recursively delete files for an artefact and all its derived artefacts."""
+    for derived in artefact.derived_artefacts:
+        _delete_artefact_files(derived)
+    try:
+        full_path = get_artefact_path(artefact)
+        if os.path.exists(full_path):
+            os.remove(full_path)
+    except Exception as e:
+        current_app.logger.warning(f"Failed to delete file for artefact {artefact.uuid}: {e}")
+
+
 @blueprint.route('/<string:uuid>/delete', methods=['POST'])
 @login_required
 def delete(uuid):
@@ -450,15 +462,10 @@ def delete(uuid):
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     item_uuid = artefact.item.uuid
     label = artefact.label
-    
-    # Delete the actual file
-    try:
-        full_path = get_artefact_path(artefact)
-        if os.path.exists(full_path):
-            os.remove(full_path)
-    except Exception as e:
-        current_app.logger.warning(f"Failed to delete file: {e}")
-    
+
+    # Delete files for this artefact and all derived artefacts
+    _delete_artefact_files(artefact)
+
     db.session.delete(artefact)
     db.session.commit()
 
