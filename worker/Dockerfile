@@ -26,7 +26,7 @@ FROM debian:stable AS build-hxcfe
 # Version to build
 ARG HXCFE_TAG=HxCFloppyEmulator_V2_16_13_1
 
-# Disable Prompt During Packages Installation
+# Disable prompt during package installation
 ARG DEBIAN_FRONTEND=noninteractive
 
 # Set number of parallel compiler instances
@@ -55,7 +55,7 @@ FROM debian:stable AS build-fluxfox
 # Version to build
 ARG FLUXFOX_TAG=main
 
-# Disable Prompt During Packages Installation
+# Disable prompt during package installation
 ARG DEBIAN_FRONTEND=noninteractive
 
 # Set number of parallel compiler instances
@@ -79,16 +79,20 @@ RUN apt -y update && apt -y upgrade && \
 FROM debian:stable AS build-discimagemanager
 
 # Version to build
-ARG DISCIMAGEMANAGER_VERSION=1.49
+#ARG DISCIMAGEMANAGER_VERSION=1.49
+ARG DISCIMAGEMANAGER_VERSION=claude/decouple-ui-processing-pE02f
 # Binary build location -- you shouldn't have to change this
 ARG DISCIMAGEMANAGER_URL=https://github.com/geraldholdsworth/DiscImageManager/releases/download/${DISCIMAGEMANAGER_VERSION}/Disc.Image.Manager.${DISCIMAGEMANAGER_VERSION}.Linux.64.bit.Intel.zip
+# Github repo location
+#ARG DISCIMAGEMANAGER_REPO=https://github.com/geraldholdsworth/DiscImageManager
+ARG DISCIMAGEMANAGER_REPO=https://github.com/philpem/DiscImageManager
 # If 1, build from source
 ARG DISCIMAGEMANAGER_SOURCEBUILD=1
 # SpriteToBitmap unit version, defaults to "main" which is the latest dev version
 ARG DISCIMAGEMANAGER_STB_VERSION=main
 ARG DISCIMAGEMANAGER_GJHCC_VERSION=main
 
-# Disable Prompt During Packages Installation
+# Disable prompt during package installation
 ARG DEBIAN_FRONTEND=noninteractive
 
 # This is split into two stages because the source build needs Lazarus,
@@ -107,7 +111,7 @@ RUN	\
 		echo "  DIM   branch: ${DISCIMAGEMANAGER_VERSION}" ; \
 		echo "  STB   branch: ${DISCIMAGEMANAGER_STB_VERSION}" ; \
 		echo "  GJHCC branch: ${DISCIMAGEMANAGER_GJHCC_VERSION}" ; \
-		git clone --branch "${DISCIMAGEMANAGER_VERSION}" --depth=1 https://github.com/geraldholdsworth/DiscImageManager && \
+		git clone --branch "${DISCIMAGEMANAGER_VERSION}" --depth=1 ${DISCIMAGEMANAGER_REPO} && \
 		git clone --branch "${DISCIMAGEMANAGER_STB_VERSION}" --depth=1 https://github.com/geraldholdsworth/SpriteToBitmap && \
 		git clone --branch "${DISCIMAGEMANAGER_GJHCC_VERSION}" --depth=1 https://github.com/geraldholdsworth/GJHCustomComponents && \
 		cd DiscImageManager && \
@@ -120,8 +124,8 @@ RUN	\
 		cd .. && \
 		cd LazarusSource && \
 		echo "--- Building DiscImageManager ---" && \
-		lazbuild DiscImageManager.lpi --build-mode="Release Linux 64 bit" && \
-		cp ./lib/Release/x86_64-linux/DiscImageManager /usr/local/bin && \
+		lazbuild DiscImageManagerCLI.lpi --build-mode="Release Linux 64 bit" && \
+		cp ./lib-cli/Release/x86_64-linux/DiscImageManagerCLI /usr/local/bin/DiscImageManager && \
 		echo ; \
 	else	\
 		echo "Binary of DiscImageManager -- version ${DISCIMAGEMANAGER_VERSION}" ; \
@@ -130,6 +134,26 @@ RUN	\
 		cp DiscImageManager /usr/local/bin && \
 		echo ; \
 	fi
+
+
+#################
+# Build local extraction tools
+#################
+FROM debian:stable AS build-arcology-tools
+
+# Disable prompt during package installation
+ARG DEBIAN_FRONTEND=noninteractive
+
+# This is split into two stages so we don't have to re-download the packages when the source code changes.
+RUN \
+	apt -y update && apt -y upgrade && \
+	apt -y install build-essential
+
+COPY worker/tools /src
+
+RUN \
+    cd /src && \
+    gcc -O3 -o /usr/local/bin/fcfs2raw fcfs2raw.c
 
 
 #################
@@ -153,10 +177,14 @@ COPY --from=build-fluxfox /usr/local/bin/fluxfox_cli /usr/local/bin/
 # Copy DiscImageManager
 COPY --from=build-discimagemanager /usr/local/bin/DiscImageManager /usr/local/bin/
 
+# Copy local tools
+COPY --from=build-arcology-tools /usr/local/bin/fcfs2raw /usr/local/bin/
+
+
 # Rebuild shared library cache (needed by hxcfe)
 RUN ldconfig
 
-# Disable Prompt During Packages Installation
+# Disable prompt during package installation
 ARG DEBIAN_FRONTEND=noninteractive
 
 # Install runtime dependencies:
@@ -167,7 +195,6 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN \
 	apt -y update && apt -y upgrade && \
 	apt -y install \
-		libgtk2.0-0 xvfb \
 		python3 python3-pip python3-dev git \
 		p7zip-full zstd gzip bzip2 \
 	&& rm -rf /var/lib/apt/lists/*
