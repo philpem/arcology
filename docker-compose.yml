@@ -25,7 +25,9 @@ services:
       context: .
       dockerfile: Dockerfile
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+        restart: true
     ports:
       - "8000:8000"
     volumes:
