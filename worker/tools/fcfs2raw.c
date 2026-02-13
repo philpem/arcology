@@ -60,28 +60,34 @@ static int verbose = 0;
  * Structures
  * ====================================================================== */
 
+/*
+ * FCFS trailer — 256 bytes at the end of every FCFS image file.
+ * Only the first 16 bytes are used; the rest are zero-padded.
+ */
 typedef struct {
     uint32_t magic;
     uint32_t type;
-    uint32_t map_disc_addr;     /* Disc address of zone 0 map block.
-                                 * This tells the FCFS module where to find
-                                 * the zone map (and embedded disc record) on
-                                 * the disc. On a partitioned hard disc it is
-                                 * typically the sector after the boot block
-                                 * (e.g. 0x1000 for 512B sectors). On a
-                                 * non-partitioned disc (floppy) it is 0,
-                                 * since zone 0 starts at the beginning.
-                                 *
-                                 * For type 0 (standard): disc address of zone 0.
-                                 * For type 1 (compacted): since file offsets
-                                 *   equal disc addresses, this doubles as the
-                                 *   file offset of zone 0 map block.
-                                 * For type 2 (compressed): disc address of zone 0
-                                 *   within the decompressed data. */
-    uint32_t offset_table_size; /* type 2 only: size of block offset table
-                                 * in bytes. Zero for types 0 and 1. */
+    uint32_t map_offset;         /* Disc address of zone 0's map block.
+                                  * On a hard disc this equals the start of
+                                  * the boot block area, e.g. 0x1000 for
+                                  * 512-byte sectors. On a floppy (nzones=1)
+                                  * it is 0.
+                                  *
+                                  * For type 0 this is a raw file offset
+                                  * (file offsets equal disc addresses).
+                                  * For types 1 and 2 it is an offset within
+                                  * the compacted (or decompressed) data
+                                  * stream — not a raw file offset. */
+    uint32_t offset_table_size; /* Type 2 only: size of block offset table
+                                 * in bytes. Not used for types 0 and 1. */
 } fcfs_trailer_t;
 
+/*
+ * FileCore disc record — describes disc geometry and layout.
+ * Found at +0x04 within zone 0's map block (floppy) or at +0x1C0 within
+ * the boot block at disc address 0xC00 (hard disc).
+ * See RISC OS PRM vol. 2, ch. 28 "FileCore", section "The disc record".
+ */
 typedef struct {
     uint8_t  log2_sector_size;   /* +0x00: log2 of sector size */
     uint8_t  sectors_per_track;  /* +0x01 */
@@ -98,7 +104,20 @@ typedef struct {
     uint32_t disc_size_lo;      /* +0x10: disc size in bytes (low word) */
 } __attribute__((packed)) filecore_disc_record_t;
 
-/* Per allocation-unit status for type 1 conversion */
+/* This struct must match the on-disc byte layout exactly.  The packed
+ * attribute ensures no padding on GCC/Clang; the static assert catches
+ * any compiler that silently ignores it.  If porting to a compiler that
+ * does not support __attribute__((packed)), replace the struct with
+ * field-by-field byte reads from a raw buffer. */
+_Static_assert(sizeof(filecore_disc_record_t) == 20,
+               "filecore_disc_record_t must be 20 bytes (packed)");
+
+/*
+ * Decoded zone allocation map — built by parsing all nzones map blocks.
+ * Contains disc geometry and a bitmap indicating which allocation units
+ * are occupied vs free, enabling type 1/2 compacted images to be
+ * expanded correctly.
+ */
 typedef struct {
     uint32_t disc_size;
     uint32_t bytes_per_map_bit;
@@ -141,41 +160,34 @@ typedef struct {
 } compacted_reader_t;
 
 /* ======================================================================
- * LZSS decompressor (matches FUN_000002b0)
+ * LZ77 decompressor (matches FUN_000002b0 in FCFS module)
  *
- * LZSS with a 4096-byte ring buffer pre-filled with spaces (0x20).
- * The initial write position is at 4096-18 = 4078.
+ * Reverse-engineered from the module's ARM disassembly.  The format is
+ * an LZ77 variant — NOT classic LZSS with a ring buffer:
  *
- * Back-references use a RELATIVE offset (distance back from current
- * ring position). The ring buffer allows early references to resolve
- * against the pre-filled space characters.
+ *   Control byte: 8 flag bits (MSB first).
+ *     bit=1 → literal: copy one byte from src to dst
+ *     bit=0 → back-reference: two bytes encode:
+ *       offset = b1 | ((b2 & 0x0F) << 8)   [12 bits, backward from dst]
+ *       length = (b2 >> 4) + 3              [3..18]
+ *       Copy `length` bytes from (dst − offset) to dst.
  *
- * Byte encoding for back-references:
- *   b1 = low 8 bits of distance
- *   b2 = LLLL DDDD — high nibble = length-3, low nibble = high 4 bits of distance
- *   distance = b1 | ((b2 & 0x0F) << 8)  [12 bits, 1..4095]
- *   length = (b2 >> 4) + 3              [3..18]
+ * The module's inner loop is unrolled 8× with 4-byte copy steps;
+ * we reproduce the same logic without unrolling.  There is no ring
+ * buffer — back-references point directly into previously-written
+ * output via  SUB r5, dst, r5.
  *
- * A control byte provides 8 flags (MSB first):
- *   bit=1 → literal byte
- *   bit=0 → back-reference
+ * The module has two code paths: a fast path (0x2BC) for when >= 17
+ * bytes of source remain (no bounds checks per bit), and a slow path
+ * (0x5C0) that checks src < srcend before each operation.
  * ====================================================================== */
 
-#define LZSS_RING_SIZE  4096
-#define LZSS_RING_MASK  (LZSS_RING_SIZE - 1)
-#define LZSS_INIT_POS   (LZSS_RING_SIZE - 18)
-#define LZSS_FILL_BYTE  0x20  /* space */
-
-static size_t lzss_decompress(const uint8_t *src, size_t src_len,
-                              uint8_t *dst, size_t dst_max)
+static size_t lz_decompress(const uint8_t *src, size_t src_len,
+                             uint8_t *dst, size_t dst_max)
 {
     const uint8_t *src_end = src + src_len;
     uint8_t *dst_start = dst;
     uint8_t *dst_limit = dst + dst_max;
-
-    uint8_t ring[LZSS_RING_SIZE];
-    memset(ring, LZSS_FILL_BYTE, LZSS_RING_SIZE);
-    uint32_t ring_pos = LZSS_INIT_POS;
 
     while (src < src_end && dst < dst_limit) {
         uint8_t ctrl = *src++;
@@ -186,30 +198,24 @@ static size_t lzss_decompress(const uint8_t *src, size_t src_len,
 
             if (ctrl & (1 << bit)) {
                 /* Literal byte */
-                uint8_t c = *src++;
-                *dst++ = c;
-                ring[ring_pos] = c;
-                ring_pos = (ring_pos + 1) & LZSS_RING_MASK;
+                *dst++ = *src++;
             } else {
-                /* Back-reference: relative offset from current position */
+                /* Back-reference into already-written output */
                 if (src + 1 >= src_end)
                     goto done;
 
                 uint8_t b1 = *src++;
                 uint8_t b2 = *src++;
 
-                uint32_t dist = (b1 | ((b2 & 0x0F) << 8));
+                uint32_t offset = b1 | ((b2 & 0x0F) << 8);
                 int length = (b2 >> 4) + 3;
 
-                /* Read from ring at (current_pos - distance) */
-                uint32_t read_pos = (ring_pos - dist) & LZSS_RING_MASK;
+                uint8_t *ref = dst - offset;
+                if (ref < dst_start)
+                    ref = dst_start;  /* safety clamp */
 
-                for (int i = 0; i < length && dst < dst_limit; i++) {
-                    uint8_t c = ring[(read_pos + i) & LZSS_RING_MASK];
-                    *dst++ = c;
-                    ring[ring_pos] = c;
-                    ring_pos = (ring_pos + 1) & LZSS_RING_MASK;
-                }
+                for (int i = 0; i < length && dst < dst_limit; i++)
+                    *dst++ = ref[i];
             }
         }
     }
@@ -265,14 +271,37 @@ static uint32_t read_map_bits(const uint8_t *map_data, uint32_t bit_offset,
  * After that, each log2_bpmb-bit entry represents one allocation unit.
  * ====================================================================== */
 
-static int dr_looks_valid(const filecore_disc_record_t *dr);
+/*
+ * Heuristic check: does this look like a plausible disc record?
+ * log2_sector_size 8..12 covers 256 bytes (ADFS D/L format, ST506)
+ * through 4096 bytes.  FCFS itself was tested on 512-byte and
+ * 1024-byte sector discs; 256-byte support is untested but accepted.
+ */
+static int dr_looks_valid(const filecore_disc_record_t *dr)
+{
+    if (dr->log2_sector_size < 8 || dr->log2_sector_size > 12)
+        return 0;
+    if (dr->log2_bpmb < 3 || dr->log2_bpmb > 16)
+        return 0;
+    int nz = dr->nzones;
+    if (nz == 0 || nz > 255)
+        return 0;
+    if (dr->disc_size_lo == 0 || dr->disc_size_lo > 0x80000000u)
+        return 0;
+    return 1;
+}
 static int reader_read(compacted_reader_t *r, size_t off, void *buf, size_t len);
+static filecore_disc_record_t *find_disc_record(const uint8_t *buf,
+                                                 size_t buflen,
+                                                 const fcfs_trailer_t *trailer);
 
 static disc_map_t *build_disc_map(compacted_reader_t *reader,
                                   const fcfs_trailer_t *trailer)
 {
     /*
-     * FileCore new map layout (from the PRM):
+     * FileCore new map layout.
+     * See RISC OS PRM vol. 2, ch. 28 "FileCore", sections "The map"
+     * and "The zone".
      *
      * The disc is divided into nzones zones. The map is nzones sectors
      * long, located at the beginning of zone nzones/2 (rounded down).
@@ -304,9 +333,9 @@ static disc_map_t *build_disc_map(compacted_reader_t *reader,
      * are free (part of free chain) vs allocated (everything else).
      */
 
-    /* Find the disc record. On a partitioned hard disc it's at
-     * 0xC00+0x1C0 = 0xDC0 (boot block). On a non-partitioned floppy
-     * it's at 0x04 (after the 4-byte zone 0 header). Try both.
+    /* Find the disc record. On a hard disc it's at
+     * 0xC00+0x1C0 = 0xDC0 (within the boot block).
+     * On a floppy it's at 0x04 (zone 0 map block + 4-byte header).
      * We only need the first 0x1000 bytes for this. */
     uint8_t head_buf[0x1000];
     size_t head_read = 0x1000;
@@ -323,26 +352,7 @@ static disc_map_t *build_disc_map(compacted_reader_t *reader,
     }
     head_read = (size_t)got;
 
-    filecore_disc_record_t *dr = NULL;
-
-    /* Try trailer hint first */
-    if (trailer->map_disc_addr != 0 &&
-        trailer->map_disc_addr + 4 + sizeof(filecore_disc_record_t) <= head_read) {
-        filecore_disc_record_t *cand =
-            (filecore_disc_record_t *)(head_buf + trailer->map_disc_addr + 4);
-        if (dr_looks_valid(cand)) dr = cand;
-    }
-
-    /* Then try standard locations */
-    if (!dr) {
-        uint32_t cands[] = { 0x0004, 0x0DC0, 0x0FC0, 0x0C04 };
-        for (int c = 0; c < 4; c++) {
-            if (cands[c] + sizeof(filecore_disc_record_t) > head_read) continue;
-            filecore_disc_record_t *cand =
-                (filecore_disc_record_t *)(head_buf + cands[c]);
-            if (dr_looks_valid(cand)) { dr = cand; break; }
-        }
-    }
+    filecore_disc_record_t *dr = find_disc_record(head_buf, head_read, trailer);
 
     if (!dr) {
         fprintf(stderr, "Error: could not find valid disc record\n");
@@ -404,87 +414,14 @@ static disc_map_t *build_disc_map(compacted_reader_t *reader,
     }
 
     /*
-     * Find the zone map in the compacted data. The map is an allocated
-     * object (ID=2) so it appears contiguously. We need to find its offset.
+     * Read the zone map from the compacted data stream.
      *
-     * Strategy 1: Use map_disc_addr from the trailer as a hint.
-     * Strategy 2: Search sector-by-sector for a sector containing the
-     *             disc record at +0x04, reading one sector at a time.
-     */
-    uint8_t *dr_bytes = (uint8_t *)dr;
-    uint32_t map_file_offset = 0;
-    int map_found = 0;
-
-    /* Try the trailer hint (works when all data before the map is allocated) */
-    if (trailer->map_disc_addr != 0) {
-        uint8_t sec_buf[4096];  /* max sector size */
-        if (sector_size <= sizeof(sec_buf)) {
-            int n = reader_read(reader, trailer->map_disc_addr, sec_buf, sector_size);
-            if (n >= 0x44) {
-                uint8_t *c = sec_buf + 0x04;
-                if (c[0] == dr_bytes[0] && c[4] == dr_bytes[4] &&
-                    c[5] == dr_bytes[5] && c[9] == dr_bytes[9] &&
-                    memcmp(c + 16, dr_bytes + 16, 4) == 0)
-                {
-                    uint16_t fl = sec_buf[1] | ((sec_buf[2] & 0x7F) << 8);
-                    if (fl > 0 && fl < sector_size * 8) {
-                        map_file_offset = trailer->map_disc_addr;
-                        map_found = 1;
-                        if (verbose)
-                            printf("  Map block 0 at file offset 0x%X "
-                                   "(from trailer hint, FreeLink=%u)\n",
-                                   map_file_offset, fl);
-                    }
-                }
-            }
-        }
-    }
-
-    /* Fallback: search sector-by-sector, reading one at a time */
-    if (!map_found) {
-        uint8_t sec_buf[4096];
-        size_t search_limit = reader->data_len;
-
-        for (size_t off = 0; off + sector_size <= search_limit; off += sector_size) {
-            int n = reader_read(reader, off, sec_buf, sector_size);
-            if (n < 0x44) break;
-
-            uint8_t *c = sec_buf + 0x04;
-            if (c[0] == dr_bytes[0] && c[1] == dr_bytes[1] &&
-                c[2] == dr_bytes[2] && c[4] == dr_bytes[4] &&
-                c[5] == dr_bytes[5] && c[9] == dr_bytes[9] &&
-                c[10] == dr_bytes[10] && c[11] == dr_bytes[11] &&
-                memcmp(c + 16, dr_bytes + 16, 4) == 0)
-            {
-                /* Skip the boot block itself */
-                if (off >= 0xC00 && off < 0xC00 + sector_size * 2)
-                    continue;
-
-                uint16_t fl = sec_buf[1] | ((sec_buf[2] & 0x7F) << 8);
-                if (fl > 0 && fl < sector_size * 8) {
-                    map_file_offset = (uint32_t)off;
-                    map_found = 1;
-                    if (verbose)
-                        printf("  Map block 0 found at file offset 0x%X "
-                               "(by search, FreeLink=%u)\n",
-                               map_file_offset, fl);
-                    break;
-                }
-            }
-        }
-    }
-
-    if (!map_found) {
-        fprintf(stderr, "Error: could not find map in compacted data\n");
-        free(dm->alloc_bitmap); free(dm);
-        return NULL;
-    }
-
-    /*
-     * Read the zone map: nzones consecutive sectors from map_file_offset.
+     * The trailer's map_offset field gives the offset of zone 0 map block.
+     * The map is nzones consecutive sectors starting there.
      * This is typically a few KB to a few hundred KB — never proportional
      * to disc size.
      */
+    uint32_t map_file_offset = trailer->map_offset;
     uint32_t map_total_size = sector_size * nzones;
     uint8_t *map_data = malloc(map_total_size);
     if (!map_data) {
@@ -494,10 +431,31 @@ static disc_map_t *build_disc_map(compacted_reader_t *reader,
 
     got = reader_read(reader, map_file_offset, map_data, map_total_size);
     if (got < (int)map_total_size) {
-        fprintf(stderr, "Error: could not read complete zone map "
-                "(got %d of %u bytes)\n", got, map_total_size);
+        fprintf(stderr, "Error: could not read zone map at offset 0x%X "
+                "(got %d of %u bytes)\n", map_file_offset, got, map_total_size);
         free(map_data); free(dm->alloc_bitmap); free(dm);
         return NULL;
+    }
+
+    /* Validate: disc record at +0x04 in map block 0 should match */
+    {
+        uint8_t *dr_bytes = (uint8_t *)dr;
+        uint8_t *c = map_data + 0x04;
+        if (c[0] != dr_bytes[0] || c[4] != dr_bytes[4] ||
+            c[5] != dr_bytes[5] || c[9] != dr_bytes[9] ||
+            memcmp(c + 16, dr_bytes + 16, 4) != 0)
+        {
+            fprintf(stderr, "Error: zone map at offset 0x%X does not contain "
+                    "expected disc record\n", map_file_offset);
+            free(map_data); free(dm->alloc_bitmap); free(dm);
+            return NULL;
+        }
+    }
+
+    if (verbose) {
+        uint16_t fl = map_data[1] | ((map_data[2] & 0x7F) << 8);
+        printf("  Map block 0 at offset 0x%X (FreeLink=%u)\n",
+               map_file_offset, fl);
     }
 
     /*
@@ -568,65 +526,35 @@ static disc_map_t *build_disc_map(compacted_reader_t *reader,
             zone_alloc_bits = dm->total_alloc_units - global_bit_offset;
 
         /*
-         * Follow the free chain for this zone.
-         * free_link gives the bit offset from the FreeLink field (byte 1 of
-         * the header, i.e. bit 8) to the first free fragment block.
-         * The fragment ID of each free fragment gives the offset to the next one.
-         * A value of 0 means end of chain.
+         * Follow the free chain for this zone and walk all fragments.
          *
-         * FreeLink is in the same format as a free-space fragment ID:
-         * "the unsigned offset, in bits, from the beginning of its fragment block 
-         * to the beginning of the next free space fragment block". But for FreeLink,
-         * it's from byte 1 of the sector (bit 8).
+         * FreeLink (bytes 1-2 of the zone header, 15 bits) gives the
+         * bit offset (from bit 8, i.e. byte 1) to the first free
+         * fragment in this zone.  Each free fragment's idlen-bit ID
+         * encodes the offset from that fragment's start to the next
+         * free fragment; an ID of 0 terminates the chain.
+         * See RISC OS PRM vol. 2, ch. 28 "FileCore", section
+         * "The zone".
          *
-         * So free_link is the bit offset from the start of allocation data to the
-         * first free fragment. Then each free fragment's idlen-bit ID gives the
-         * offset from THAT fragment's start to the NEXT free fragment's start.
-         */
-
-        /* Adjust free_link: it appears to be an offset from the start of the 
-         * map block, not from the allocation data start. The PRM says the 
-         * FreeLink "fragment block" is in the header. Looking at the header format:
-         * byte 0: ZoneCheck, bytes 1-2: FreeLink (15 bits), byte 3: CrossCheck.
-         * The FreeLink value is already an offset in bits from the start of 
-         * allocation bytes.
-         */
-
-        /*
-         * FreeLink interpretation:
-         * The PRM says FreeLink is "a fragment block" at bytes 1-2 of the header.
-         * It's 16 bits: 15-bit offset (idlen bits) + 1 terminating bit.
-         * The offset is measured from the start of the FreeLink fragment block
-         * (byte 1 of sector = bit 8) to the first free fragment.
-         *
-         * So first_free_absolute_bit = 8 + free_link
-         *
-         * Zone_spare bits:
-         * The first zone_spare bits of each zone's allocation area can't 
-         * start a new fragment — they continue a fragment from the previous
-         * zone (or, for zone 0, hold the initial system fragment). But they
-         * DO represent real allocation units on disc.
+         * We walk ALL fragments from the start of the allocation area,
+         * marking each as allocated or free.  zone_spare bits at the
+         * start of each zone continue a fragment from the previous zone
+         * (or hold the system fragment in zone 0) but still represent
+         * real allocation units on disc.
          */
         uint32_t free_bit_pos;
         
         if (free_link == 0) {
             free_bit_pos = 0;  /* no free fragments in this zone */
         } else {
-            /* FreeLink offset is from bit 8 (byte 1, start of FreeLink field) */
             free_bit_pos = 8 + free_link;
         }
 
-        /* Walk fragments starting from the beginning of the allocation area.
-         * Fragment data starts at alloc_start_bit.
-         * The first zone_spare bits continue a fragment from the previous zone
-         * but are still real allocation units on disc. */
         uint32_t bit = alloc_start_bit;
         uint32_t bits_consumed = 0;  /* total bits consumed in this zone */
         uint32_t unit_in_zone = 0;   /* allocation units counted */
         int frag_count = 0;
         int free_frag_count = 0;
-        
-        /* Total bits available in this zone's allocation area */
         uint32_t zone_total_alloc_bits = (sector_size * 8) - alloc_start_bit;
 
         while (bits_consumed < zone_total_alloc_bits && unit_in_zone < zone_alloc_bits) {
@@ -740,6 +668,7 @@ static disc_map_t *build_disc_map(compacted_reader_t *reader,
 
     return dm;
 }
+
 static void free_disc_map(disc_map_t *dm)
 {
     if (dm) {
@@ -751,6 +680,28 @@ static void free_disc_map(disc_map_t *dm)
 /* ======================================================================
  * Helper functions
  * ====================================================================== */
+
+/*
+ * Print a hex+ASCII dump of a buffer, 16 bytes per line.
+ * base_addr is the address label shown at the start of each line.
+ */
+static void hex_dump(const uint8_t *buf, size_t len, uint32_t base_addr)
+{
+    for (size_t i = 0; i < len; i++) {
+        if ((i & 0xF) == 0)
+            printf("  %04X: ", (unsigned)(base_addr + i));
+        printf("%02X ", buf[i]);
+        if ((i & 0xF) == 0xF) {
+            printf(" |");
+            for (size_t j = i - 15; j <= i; j++)
+                printf("%c", (buf[j] >= 0x20 && buf[j] < 0x7F)
+                       ? buf[j] : '.');
+            printf("|\n");
+        }
+    }
+    if (len & 0xF)
+        printf("\n");
+}
 
 static int read_trailer(FILE *fp, long file_size, fcfs_trailer_t *trailer)
 {
@@ -825,7 +776,7 @@ static int read_compressed_block(FILE *fp, const uint32_t *offset_table,
         memcpy(out_buf, comp_buf + 1, decomp_size);
         break;
     case COMP_FLAG_LZ77:
-        decomp_size = lzss_decompress(comp_buf + 1, comp_size - 1,
+        decomp_size = lz_decompress(comp_buf + 1, comp_size - 1,
                                       out_buf, BLOCK_SIZE);
         break;
     default:
@@ -961,98 +912,49 @@ static int reader_read(compacted_reader_t *r, size_t off, void *buf, size_t len)
 }
 
 /*
- * Find and read the FileCore disc record.
+ * Find the FileCore disc record in a buffer of image data.
  *
- * On a partitioned disc (with x86 MBR), the FileCore boot block is at
- * byte offset 0xC00 (sector 6 on a 512-byte sector disc, or sector 3
- * on a 1024-byte sector disc). The boot block contains a copy of the
- * disc record at offset +0x1C0 within it (i.e. file offset 0xDC0).
+ * On a hard disc the disc record is at 0xDC0 — within the boot block
+ * at disc address 0xC00 (see PRM vol. 2, ch. 28 "FileCore",
+ * "The boot block").  On a floppy with nzones=1 the zone 0 map block
+ * starts at disc address 0, and the disc record is at +0x04 (after the
+ * 4-byte zone header).
  *
- * On a non-partitioned FileCore disc, zone 0's map sector is at the
- * start of the disc. The disc record is at +0x04 within it (after the
- * 4-byte zone check header).
+ * If the trailer's map_offset is available and falls within the buffer
+ * it is tried first, since it gives the offset of zone 0 map block
+ * (and the disc record is at map_offset + 4).
  *
- * We try multiple candidate locations and validate which looks sane.
+ * Returns a pointer into buf, or NULL.
  */
-
-static int dr_looks_valid(const filecore_disc_record_t *dr)
+static filecore_disc_record_t *find_disc_record(const uint8_t *buf,
+                                                 size_t buflen,
+                                                 const fcfs_trailer_t *trailer)
 {
-    if (dr->log2_sector_size < 8 || dr->log2_sector_size > 12)
-        return 0;
-    if (dr->log2_bpmb < 3 || dr->log2_bpmb > 16)
-        return 0;
-    int nz = dr->nzones;
-    if (nz == 0 || nz > 255)
-        return 0;
-    if (dr->disc_size_lo == 0 || dr->disc_size_lo > 0x80000000u)
-        return 0;
-    return 1;
-}
-
-static uint32_t disc_record_file_offset;  /* set by read_disc_record_raw */
-
-static filecore_disc_record_t *read_disc_record_raw(FILE *fp,
-                                                     const fcfs_trailer_t *trailer)
-{
-    static uint8_t buf[16384];
-    fseek(fp, 0, SEEK_SET);
-    size_t got = fread(buf, 1, sizeof(buf), fp);
-    if (got < 0x100)
-        return NULL;
-
-    /* If the trailer gives us the zone 0 disc address, try DR at that + 4 */
-    if (trailer->map_disc_addr != 0 &&
-        trailer->map_disc_addr + 4 + sizeof(filecore_disc_record_t) <= got) {
+    /* Try trailer hint first: disc record at map_offset + 4 */
+    uint32_t hint = trailer->map_offset;
+    if (hint + 4 + sizeof(filecore_disc_record_t) <= buflen) {
         filecore_disc_record_t *dr =
-            (filecore_disc_record_t *)(buf + trailer->map_disc_addr + 4);
-        if (dr_looks_valid(dr)) {
-            if (verbose)
-                printf("  Found disc record at file offset 0x%04X "
-                       "(zone 0 map + 4)\n",
-                       (uint32_t)(trailer->map_disc_addr + 4));
-            disc_record_file_offset = trailer->map_disc_addr + 4;
+            (filecore_disc_record_t *)(buf + hint + 4);
+        if (dr_looks_valid(dr))
             return dr;
-        }
     }
 
-    /* Fallback: candidate offsets for the disc record.
-     *
-     * Non-partitioned disc (floppy, small HD):
-     *   Zone 0 map block at disc address 0x00.
-     *   Disc record at +0x04 (after 4-byte zone header).
-     *
-     * Partitioned disc (hard disc):
-     *   Boot block at disc address 0xC00.
-     *   Disc record at 0xC00 + 0x1C0 = 0xDC0 (512B sectors)
-     *   or 0xC00 + 0x3C0 = 0xFC0 (1024B sectors).
-     *
-     * Zone 0 may also start at 0xC00 on some disc formats.
-     */
-    struct { uint32_t off; const char *desc; } cands[] = {
-        { 0x0004, "zone 0 at start (non-partitioned)" },
-        { 0x0DC0, "boot block (partitioned, 512B sectors)" },
-        { 0x0FC0, "boot block (partitioned, 1024B sectors)" },
-        { 0x0C04, "zone 0 at 0xC00" },
-    };
-    int ncands = sizeof(cands) / sizeof(cands[0]);
-
-    for (int c = 0; c < ncands; c++) {
-        if (cands[c].off + sizeof(filecore_disc_record_t) > got)
+    /* Standard locations:
+     *   0x0004 — floppy: zone 0 map header (4 bytes) + disc record
+     *   0x0DC0 — hard disc: boot block at disc address 0xC00, disc record
+     *            at +0x1C0 within it.  This byte address is fixed regardless
+     *            of sector size.
+     *            See PRM vol 2, ch. 28, "The boot block". */
+    static const uint32_t cands[] = { 0x0004, 0x0DC0 };
+    for (int c = 0; c < 2; c++) {
+        if (cands[c] + sizeof(filecore_disc_record_t) > buflen)
             continue;
-
         filecore_disc_record_t *dr =
-            (filecore_disc_record_t *)(buf + cands[c].off);
-
-        if (dr_looks_valid(dr)) {
-            if (verbose)
-                printf("  Found disc record at file offset 0x%04X (%s)\n",
-                       cands[c].off, cands[c].desc);
-            disc_record_file_offset = cands[c].off;
+            (filecore_disc_record_t *)(buf + cands[c]);
+        if (dr_looks_valid(dr))
             return dr;
-        }
     }
 
-    fprintf(stderr, "Error: could not find valid FileCore disc record\n");
     return NULL;
 }
 
@@ -1064,7 +966,11 @@ static int convert_raw(FILE *fp_in, FILE *fp_out,
                        const fcfs_trailer_t *trailer,
                        long file_size, int sparse)
 {
-    filecore_disc_record_t *dr = read_disc_record_raw(fp_in, trailer);
+    uint8_t head[0x1000];
+    fseek(fp_in, 0, SEEK_SET);
+    size_t hread = fread(head, 1, sizeof(head), fp_in);
+    filecore_disc_record_t *dr = find_disc_record(head, hread, trailer);
+
     long data_end = file_size - TRAILER_SIZE;
     uint32_t disc_size = data_end;
     if (dr && dr->disc_size_lo > 0 && dr->disc_size_lo <= (uint32_t)data_end)
@@ -1212,11 +1118,10 @@ static int expand_compacted(compacted_reader_t *reader, FILE *fp_out,
  *
  * Both types store the same compacted data: only allocated sectors,
  * packed sequentially. Type 1 stores it verbatim; type 2 compresses
- * it in 64 KB LZSS blocks.
+ * it in 64 KB LZ77 blocks.
  *
- * Both paths read the compacted data into a memory buffer, then call
- * expand_compacted() which uses the FileCore zone allocation map to
- * place each unit at its correct disc address.
+ * Both paths initialise a compacted_reader_t (which streams data on
+ * demand) and call expand_compacted() to reconstruct the full disc.
  * ====================================================================== */
 
 static int convert_compacted(FILE *fp_in, FILE *fp_out,
@@ -1265,47 +1170,22 @@ static void show_info(FILE *fp, const fcfs_trailer_t *trailer, long file_size)
            file_size, file_size / (1024.0 * 1024.0));
     printf("  Type: %u - %s\n", trailer->type,
            trailer->type <= 2 ? type_names[trailer->type] : "Unknown");
-    if (trailer->map_disc_addr != 0)
-        printf("  Zone 0 map disc addr: 0x%08X (%u)\n",
-               trailer->map_disc_addr, trailer->map_disc_addr);
-    else
-        printf("  Zone 0 map disc addr: 0 (zone 0 at start of disc)\n");
+    printf("  Zone 0 map offset: 0x%X\n", trailer->map_offset);
     printf("  Offset table size: %u\n", trailer->offset_table_size);
 
     /* Hex dump the 256-byte trailer */
     printf("\nTrailer (last 0x100 bytes of file):\n");
     uint8_t trail_buf[TRAILER_SIZE];
     fseek(fp, file_size - TRAILER_SIZE, SEEK_SET);
-    if (fread(trail_buf, 1, TRAILER_SIZE, fp) == TRAILER_SIZE) {
-        for (int i = 0; i < TRAILER_SIZE; i++) {
-            if ((i & 0xF) == 0) printf("  %04X: ", i);
-            printf("%02X ", trail_buf[i]);
-            if ((i & 0xF) == 0xF) {
-                printf(" |");
-                for (int j = i - 15; j <= i; j++)
-                    printf("%c", (trail_buf[j] >= 0x20 && trail_buf[j] < 0x7F)
-                           ? trail_buf[j] : '.');
-                printf("|\n");
-            }
-        }
-    }
+    if (fread(trail_buf, 1, TRAILER_SIZE, fp) == TRAILER_SIZE)
+        hex_dump(trail_buf, TRAILER_SIZE, 0);
 
     /* Hex dump the first 0x100 bytes of the file */
     printf("\nFile start (first 0x100 bytes):\n");
     uint8_t start_buf[0x100];
     fseek(fp, 0, SEEK_SET);
     size_t got = fread(start_buf, 1, sizeof(start_buf), fp);
-    for (size_t i = 0; i < got; i++) {
-        if ((i & 0xF) == 0) printf("  %04X: ", (unsigned)i);
-        printf("%02X ", start_buf[i]);
-        if ((i & 0xF) == 0xF) {
-            printf(" |");
-            for (size_t j = i - 15; j <= i; j++)
-                printf("%c", (start_buf[j] >= 0x20 && start_buf[j] < 0x7F)
-                       ? start_buf[j] : '.');
-            printf("|\n");
-        }
-    }
+    hex_dump(start_buf, got, 0);
 
     /* Search for disc record at various locations.
      * For type 2, we must decompress before searching. */
@@ -1363,51 +1243,35 @@ static void show_info(FILE *fp, const fcfs_trailer_t *trailer, long file_size)
     if (!found)
         printf("  No valid disc record found in first %zuKB\n", big_read / 1024);
 
-    /* Hex dump at 0xC00 (FileCore boot block location) */
+    /* Hex dump at 0xC00 (FileCore boot block on hard discs) */
     if (big_read > 0xE00) {
         printf("\nBoot block area (disc address 0xC00, 0x200 bytes):\n");
-        for (size_t i = 0; i < 0x200; i++) {
-            size_t addr = 0xC00 + i;
-            if (addr >= big_read) break;
-            if ((i & 0xF) == 0) printf("  %04X: ", (unsigned)addr);
-            printf("%02X ", big_buf[addr]);
-            if ((i & 0xF) == 0xF) {
-                printf(" |");
-                for (size_t j = i - 15; j <= i; j++)
-                    printf("%c", (big_buf[0xC00 + j] >= 0x20 && big_buf[0xC00 + j] < 0x7F)
-                           ? big_buf[0xC00 + j] : '.');
-                printf("|\n");
-            }
-        }
+        hex_dump(big_buf + 0xC00, 0x200, 0xC00);
     }
 
-    /* Find disc record — for type 2 use decompressed big_buf,
-     * for types 0/1 use raw file data */
+    /* Find disc record using the same logic as conversion */
     filecore_disc_record_t *dr = NULL;
     filecore_disc_record_t dr_copy;
     
     if (big_read > 0) {
-        struct { uint32_t off; const char *desc; } dr_cands[] = {
-            { 0x0004, "zone 0 at start" },
-            { 0x0DC0, "boot block (512B)" },
-            { 0x0FC0, "boot block (1024B)" },
-            { 0x0C04, "zone 0 at 0xC00" },
-        };
-        for (int c = 0; c < 4; c++) {
-            if (dr_cands[c].off + sizeof(filecore_disc_record_t) > big_read)
-                continue;
-            filecore_disc_record_t *test =
-                (filecore_disc_record_t *)(big_buf + dr_cands[c].off);
-            if (dr_looks_valid(test)) {
-                memcpy(&dr_copy, test, sizeof(dr_copy));
-                dr = &dr_copy;
-                break;
-            }
+        filecore_disc_record_t *found = find_disc_record(big_buf, big_read,
+                                                          trailer);
+        if (found) {
+            memcpy(&dr_copy, found, sizeof(dr_copy));
+            dr = &dr_copy;
         }
     }
     if (!dr) {
-        /* Fallback for type 0/1: read raw file */
-        dr = read_disc_record_raw(fp, trailer);
+        /* For types 0/1 where big_buf was read from raw file, try again
+         * with a larger read if the first attempt was too small */
+        uint8_t rawhead[0x1000];
+        fseek(fp, 0, SEEK_SET);
+        size_t n = fread(rawhead, 1, sizeof(rawhead), fp);
+        filecore_disc_record_t *found = find_disc_record(rawhead, n, trailer);
+        if (found) {
+            memcpy(&dr_copy, found, sizeof(dr_copy));
+            dr = &dr_copy;
+        }
     }
     if (dr) {
         int nz = dr->nzones;
