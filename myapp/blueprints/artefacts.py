@@ -290,6 +290,57 @@ def get_all_derived_artefact_ids(artefact: Artefact) -> list[int]:
     return ids
 
 
+def get_most_recent_analyses(artefact: Artefact) -> list[Analysis]:
+    """
+    Get the most recent analysis of each type for an artefact.
+    Returns a list of Analysis objects, one per unique analysis_type.
+    """
+    from sqlalchemy import func
+
+    # Subquery to get the max ID (most recent) for each analysis_type
+    subquery = db.session.query(
+        Analysis.analysis_type,
+        func.max(Analysis.id).label('max_id')
+    ).filter(
+        Analysis.artefact_id == artefact.id
+    ).group_by(Analysis.analysis_type).subquery()
+
+    # Query the actual Analysis records
+    analyses = db.session.query(Analysis).join(
+        subquery,
+        db.and_(
+            Analysis.analysis_type == subquery.c.analysis_type,
+            Analysis.id == subquery.c.max_id
+        )
+    ).order_by(Analysis.created_at.desc()).all()
+
+    return analyses
+
+
+def cleanup_old_analyses(artefact: Artefact) -> int:
+    """
+    Delete all but the most recent analysis of each type for an artefact.
+    Returns the number of analyses deleted.
+    """
+    most_recent = get_most_recent_analyses(artefact)
+    most_recent_ids = {a.id for a in most_recent}
+
+    # Find all analyses that are NOT in the most recent set
+    old_analyses = Analysis.query.filter(
+        Analysis.artefact_id == artefact.id,
+        ~Analysis.id.in_(most_recent_ids)
+    ).all()
+
+    deleted_count = len(old_analyses)
+
+    for analysis in old_analyses:
+        db.session.delete(analysis)
+
+    db.session.commit()
+
+    return deleted_count
+
+
 @blueprint.route('/<string:uuid>')
 @login_required
 def view(uuid):
@@ -297,6 +348,19 @@ def view(uuid):
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
 
     file_form = FileSearchForm(request.args)
+
+    # Check if user wants to see all analyses or just the most recent
+    show_all_analyses = request.args.get('show_all_analyses', 'false').lower() == 'true'
+
+    # Get analyses - either all or most recent per type
+    if show_all_analyses:
+        analyses = artefact.analyses
+    else:
+        analyses = get_most_recent_analyses(artefact)
+
+    # Count total vs showing (for UI feedback)
+    total_analyses_count = len(artefact.analyses)
+    has_duplicate_analyses = total_analyses_count > len(set(a.analysis_type for a in artefact.analyses))
 
     # Collect all artefact IDs: current + all derived (recursively)
     all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
@@ -337,6 +401,10 @@ def view(uuid):
     
     return render_template('artefacts/view.html',
                            artefact=artefact,
+                           analyses=analyses,
+                           show_all_analyses=show_all_analyses,
+                           has_duplicate_analyses=has_duplicate_analyses,
+                           total_analyses_count=total_analyses_count,
                            file_form=file_form,
                            files=files_pagination.items,
                            files_pagination=files_pagination,
@@ -546,6 +614,27 @@ def compute_hashes_route(uuid):
         flash('Hashes computed successfully.', 'success')
     except Exception as e:
         flash(f'Error computing hashes: {e}', 'error')
+
+    return redirect(url_for(f'{ROUTENAME}.view', uuid=artefact.uuid))
+
+
+@blueprint.route('/<string:uuid>/cleanup-analyses', methods=['POST'])
+@login_required
+def cleanup_analyses_route(uuid):
+    """
+    Delete old duplicate analyses, keeping only the most recent of each type.
+    This helps reduce clutter when analysis has been run multiple times.
+    """
+    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+
+    try:
+        deleted_count = cleanup_old_analyses(artefact)
+        if deleted_count > 0:
+            flash(f'Cleaned up {deleted_count} old analysis record(s).', 'success')
+        else:
+            flash('No duplicate analyses to clean up.', 'info')
+    except Exception as e:
+        flash(f'Error cleaning up analyses: {e}', 'error')
 
     return redirect(url_for(f'{ROUTENAME}.view', uuid=artefact.uuid))
 
