@@ -9,6 +9,7 @@ COPY requirements.txt /
 RUN set -e; \
 	apk update \
 	&& apk add --virtual .build-deps gcc g++ libffi-dev python3-dev musl-dev \
+	&& apk add --no-cache curl \
 	&& pip install --no-cache-dir -r /requirements.txt \
 	&& pip install gunicorn \
 	&& apk del .build-deps

@@ -32,6 +32,22 @@ def error_response(message, status_code=400):
     return jsonify({'error': message}), status_code
 
 
+# =============================================================================
+# Health Check
+# =============================================================================
+
+@blueprint.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for container orchestration."""
+    try:
+        # Verify database connectivity by executing a simple query
+        db.session.execute(db.text('SELECT 1'))
+        return jsonify({'status': 'healthy'}), 200
+    except Exception as e:
+        current_app.logger.error(f"Health check failed: {e}")
+        return jsonify({'status': 'unhealthy', 'error': str(e)}), 503
+
+
 def _delete_artefact_files(artefact):
     """Recursively delete files for an artefact and all its derived artefacts."""
     for derived in artefact.derived_artefacts:
