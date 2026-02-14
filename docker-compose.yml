@@ -36,6 +36,12 @@ services:
       - ./data/db:/var/lib/myapp
     env_file:
       - .env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     restart: unless-stopped
 
   # Analysis worker(s)
@@ -45,7 +51,9 @@ services:
       context: .
       dockerfile: worker/Dockerfile
     depends_on:
-      - web
+      web:
+        condition: service_healthy
+        restart: true
     volumes:
       - ./data/uploads:/data/uploads
       - ./data/outputs:/data/outputs
