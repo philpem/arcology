@@ -63,6 +63,7 @@ services:
       - OUTPUT_DIR=/data/outputs
       - POLL_INTERVAL=10
       - LOG_LEVEL=INFO
+      - MAX_ARCHIVE_DEPTH=10  # Maximum recursion depth for nested archives
     restart: unless-stopped
     deploy:
       # Default to 1 replica, override with --scale worker=N

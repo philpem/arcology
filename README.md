@@ -67,6 +67,35 @@ echo "FLASK_ENV=production" > .env
 echo "SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
 ```
 
+### Configuration Options
+
+Arcology can be configured via environment variables. Create a `.env` file or set environment variables in docker-compose.yml:
+
+#### Archive Extraction
+
+```bash
+# Maximum depth for recursive archive extraction (default: 10)
+# Prevents infinite loops from self-referential archives (quines, trojans, matryoshka archives)
+MAX_ARCHIVE_DEPTH=10
+```
+
+When an archive contains nested archives (e.g., ZIP within ZIP within ZIP), extraction will stop at the configured depth. Files at the maximum depth are marked but not extracted.
+
+#### Other Settings
+
+```bash
+# Flask configuration
+FLASK_ENV=production              # production or development
+SECRET_KEY=<your-secret-key>      # Generate with: python3 -c 'import secrets; print(secrets.token_hex(32))'
+
+# Worker configuration (usually auto-configured in Docker)
+ARCOLOGY_API=http://web:5000/api  # API endpoint URL
+UPLOAD_DIR=/data/uploads          # Uploaded files directory
+OUTPUT_DIR=/data/outputs          # Analysis outputs directory
+POLL_INTERVAL=30                  # How often worker checks for jobs (seconds)
+LOG_LEVEL=INFO                    # Logging level: DEBUG, INFO, WARNING, ERROR
+```
+
 ## Quick Start (Development)
 
 ```bash
