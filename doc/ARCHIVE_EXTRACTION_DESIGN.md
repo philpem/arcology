@@ -6,23 +6,36 @@ This document describes the implementation of nested archive and disk image extr
 
 ## Requirements
 
-1. **Archive Format Support:**
-   - ArcFS (filetype &3FB)
-   - CFS (filetype &D96)
-   - PackDir (filetype &68E)
-   - Squash (filetype &FCA)
-   - Spark (filetype &DDC)
-   - TBAFS (filetype &B21)
-   - Zip with RISC OS filetypes (custom Info-Zip build)
+1. **RISC OS Archive Format Support:**
+   - **Multi-file archives:**
+     - ArcFS (filetype &3FB)
+     - PackDir (filetype &68E)
+     - Spark (filetype &DDC)
+     - TBAFS (filetype &B21)
+     - X-Files (filetype &B23) - requires custom extractor
+   - **Single-file compressors** (decompress to file with same name):
+     - CFS (filetype &D96) - Computer Concepts CFS
+     - Squash (filetype &FCA) - Squash compressed file
 
-2. **Nested Disk Images:**
+2. **PC Archive Format Support:**
+   - ZIP (including RISC OS filetype extensions)
+   - RAR
+   - 7-Zip (.7z)
+   - TAR (including .tar.gz, .tar.bz2, .tar.xz)
+   - Single-file compressors: .gz, .bz2, .xz, .zst
+
+3. **Nested Disk Images:**
    - FCFS (filetype &FCD) - convert with fcfs2raw, then extract as ADFS
    - DOSDisc (filetype &FC8) - extract as PC disk image
 
-3. **Long Filename Systems:**
+4. **Long Filename Systems:**
    - raFS (identified by `!Atterer` file)
    - LongFiles (identified by `!ZZ!!Z!LF` file)
-   - X-Files (filetype &B23) - requires custom extractor
+   - X-Files (filetype &B23) - archive format with long filename support
+
+5. **Direct Upload Support:**
+   - Archives uploaded directly (not from within disk images) should be processed the same way
+   - Existing ANALYSIS_MAP infrastructure already handles this
 
 4. **Output Directory Structure:**
    ```
@@ -200,67 +213,98 @@ def get_output_path(item, artefact, analysis, partition=None) -> Path:
     return path
 ```
 
-## RISC OS Archive Type Detection
+## Centralized Archive Format Definitions
 
+**Location:** `myapp/archive_formats.py`
+
+This module provides a single source of truth for all archive format definitions, used by both the web application and worker. Key features:
+
+1. **Archive Categories:**
+   - `ARCHIVE` - Multi-file archives that create a directory when extracted
+   - `COMPRESS` - Single-file compressors (e.g., CFS, Squash, .gz, .bz2)
+   - `DISK_IMAGE` - Nested disk images requiring special handling
+
+2. **Format Metadata:**
+   - RISC OS filetype (if applicable)
+   - File extensions
+   - Extraction tool
+   - Whether extraction creates a directory or single file
+   - Output filename behavior for compressors
+
+3. **Lookup Functions:**
+   ```python
+   from myapp.archive_formats import (
+       get_archive_by_filetype,   # '3fb' -> ArchiveType.ARCFS
+       get_archive_by_extension,  # 'file.zip' -> ArchiveType.ZIP
+       is_archive_filetype,        # Check if filetype is archive
+       is_archive_format,          # Check if multi-file archive
+       is_compressor_format,       # Check if single-file compressor
+       is_disk_image_format,       # Check if nested disk image
+       get_archive_info,           # Get full format metadata
+   )
+   ```
+
+4. **UI Integration:**
+   - Web templates import from `myapp.archive_formats`
+   - Worker imports from `myapp.archive_formats` (shared via volume mount)
+   - Single update point for adding new formats
+
+**Example Format Definition:**
 ```python
-# In worker/arcworker/tools/archives.py
-
-RISC_OS_ARCHIVE_TYPES = {
-    '3fb': {
-        'name': 'ArcFS',
-        'tool': 'riscosarc',
-        'description': 'ArcFS archive'
-    },
-    'd96': {
-        'name': 'CFS',
-        'tool': 'riscosarc',
-        'description': 'Computer Concepts CFS compressed file'
-    },
-    '68e': {
-        'name': 'PackDir',
-        'tool': 'riscosarc',
-        'description': 'PackDir archive'
-    },
-    'fca': {
-        'name': 'Squash',
-        'tool': 'riscosarc',
-        'description': 'Squash compressed file'
-    },
-    'ddc': {
-        'name': 'Spark',
-        'tool': 'riscosarc',
-        'description': 'Spark archive'
-    },
-    'b21': {
-        'name': 'TBAFS',
-        'tool': 'tbafs-extractor',
-        'description': 'TBAFS archive'
-    },
-    'fc8': {
-        'name': 'DOSDisc',
-        'tool': 'sfdisk+7z',
-        'description': 'PC hard disk image'
-    },
-    'fcd': {
-        'name': 'FCFS',
-        'tool': 'fcfs2raw',
-        'description': 'Filecore hard disk image'
-    },
-    'b23': {
-        'name': 'X-Files',
-        'tool': 'custom',
-        'description': 'X-Files archive'
-    },
+ArchiveType.CFS: {
+    'name': 'CFS Compressed File',
+    'category': ArchiveCategory.COMPRESS,
+    'risc_os_filetype': 'd96',
+    'extensions': [],
+    'tool': 'riscosarc',
+    'description': 'Computer Concepts CFS - decompresses to single file with same name',
+    'extract_creates_dir': False,
+    'output_filename': 'same_as_input',  # Special handling for compressors
 }
-
-def is_archive_filetype(filetype: str) -> bool:
-    """Check if RISC OS filetype is a known archive format."""
-    return filetype and filetype.lower() in RISC_OS_ARCHIVE_TYPES
-
-def get_archive_info(filetype: str) -> dict:
-    """Get archive format information."""
-    return RISC_OS_ARCHIVE_TYPES.get(filetype.lower())
 ```
+
+See `myapp/archive_formats.py` for complete definitions.
+
+## Direct Upload Handling
+
+Archives can be uploaded in two ways:
+
+1. **Found within disk images** - extracted during FILE_LISTING/FILE_EXTRACTION
+2. **Uploaded directly** - user uploads archive file as an Artefact
+
+Both paths converge on the same processing:
+
+### Direct Upload Flow
+
+```
+1. User uploads ZIP file → Artefact created with type=ZIP
+2. queue_analyses_for_artefact() checks ANALYSIS_MAP
+3. ANALYSIS_MAP[ArtefactType.ZIP] = [AnalysisType.FILE_LISTING]
+4. FILE_LISTING runs → extracts files, creates Partition + ExtractedFile records
+5. ARCHIVE_DETECT runs → scans for nested archives
+6. Process continues recursively
+```
+
+### Existing ANALYSIS_MAP (in myapp/blueprints/artefacts.py)
+
+Already supports direct archive uploads:
+```python
+ANALYSIS_MAP = {
+    ArtefactType.ZIP: [AnalysisType.FILE_LISTING],
+    ArtefactType.TARGZ: [AnalysisType.FILE_LISTING],
+    ArtefactType.RAR: [AnalysisType.FILE_LISTING],
+    # ... other types
+}
+```
+
+**New ArtefactType entries needed:**
+- Add RISC OS archive types (ARCFS, SPARK, PACKDIR, TBAFS, CFS, SQUASH)
+- Add FCFS and DOSDISC types
+- All map to [AnalysisType.FILE_LISTING] (or FILE_EXTRACTION for compressors)
+
+**Update needed in artefacts.py:**
+- Import from `myapp.archive_formats` instead of local definitions
+- Auto-queue ARCHIVE_DETECT after FILE_LISTING completes
 
 ## Archive Depth Tracking and Limits
 
@@ -307,9 +351,16 @@ def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path)
     """
     Scan partition for archive files and queue extraction.
 
-    Looks for RISC OS filetypes that indicate archives.
-    Marks files as archives and queues ARCHIVE_EXTRACT analysis.
+    Detects both RISC OS archives (by filetype) and PC archives (by extension).
+    Handles multi-file archives, single-file compressors, and nested disk images.
     """
+    from myapp.archive_formats import (
+        get_archive_by_filetype,
+        get_archive_by_extension,
+        get_archive_info,
+        is_compressor_format,
+    )
+
     analysis_id = analysis['id']
     partition_id = analysis.get('hints', {}).get('partition_id')
 
@@ -328,14 +379,26 @@ def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path)
     archive_count = 0
     queued_count = 0
     depth_limit_exceeded = 0
+    compressor_count = 0
 
     for file_data in files:
         filetype = file_data.get('risc_os_filetype')
+        filename = file_data.get('filename', '')
 
-        if not is_archive_filetype(filetype):
+        # Try detecting by RISC OS filetype first
+        archive_type = get_archive_by_filetype(filetype) if filetype else None
+
+        # Fall back to extension-based detection (for PC archives)
+        if not archive_type:
+            archive_type = get_archive_by_extension(filename)
+
+        if not archive_type:
             continue
 
-        archive_info = get_archive_info(filetype)
+        archive_info = get_archive_info(archive_type)
+
+        # Check if this is a single-file compressor (CFS, Squash, .gz, etc.)
+        is_compressor = is_compressor_format(archive_type)
 
         # Check depth limit
         current_depth = file_data.get('extraction_depth', 0)
@@ -349,13 +412,16 @@ def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path)
             )
             continue
 
-        # Mark as archive
+        # Mark as archive or compressor
         self.api.mark_file_as_archive(
             file_data['id'],
             is_archive=True,
-            archive_format=archive_info['name']
+            archive_format=archive_info['name'],
+            is_compressor=is_compressor  # Track if single-file compressor
         )
         archive_count += 1
+        if is_compressor:
+            compressor_count += 1
 
         # Queue extraction
         self.api.queue_analysis(
@@ -364,13 +430,15 @@ def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path)
             hints={
                 'file_id': file_data['id'],
                 'partition_id': partition_id,
+                'archive_type': archive_type.value,  # Pass full type info
                 'archive_format': archive_info['name'],
+                'is_compressor': is_compressor,
                 'extraction_depth': current_depth + 1
             }
         )
         queued_count += 1
 
-    summary = f"Detected {archive_count} archives, queued {queued_count} for extraction"
+    summary = f"Detected {archive_count} archives ({compressor_count} compressors), queued {queued_count} for extraction"
     if depth_limit_exceeded > 0:
         summary += f", {depth_limit_exceeded} at depth limit"
 
@@ -381,6 +449,7 @@ def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path)
         summary=summary,
         details=json.dumps({
             'archives_found': archive_count,
+            'compressors_found': compressor_count,
             'extractions_queued': queued_count,
             'depth_limit_exceeded': depth_limit_exceeded
         })
@@ -513,21 +582,46 @@ def convert_fcfs_to_raw(input_path: Path, output_path: Path) -> dict:
 ```python
 def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path):
     """
-    Extract a specific archive file.
+    Extract a specific archive file or decompress a compressed file.
 
-    Extracts archive contents, registers as ExtractedFile records with
-    parent_file_id set, and queues archive_detect for recursive processing.
+    Handles:
+    - Multi-file archives (creates directory with contents)
+    - Single-file compressors (creates single decompressed file)
+    - Nested disk images (converts then extracts)
+
+    Registers extracted files with parent_file_id set, and queues
+    archive_detect for recursive processing.
     """
+    from myapp.archive_formats import (
+        ArchiveType,
+        get_archive_info,
+        is_compressor_format,
+    )
+
     analysis_id = analysis['id']
     hints = json.loads(analysis.get('hints') or '{}')
 
     file_id = hints.get('file_id')
     partition_id = hints.get('partition_id')
-    archive_format = hints.get('archive_format')
+    archive_type_str = hints.get('archive_type')
+    is_compressor = hints.get('is_compressor', False)
     extraction_depth = hints.get('extraction_depth', 1)
 
+    # Get ArchiveType enum from string
+    try:
+        archive_type = ArchiveType(archive_type_str)
+        archive_info = get_archive_info(archive_type)
+    except (ValueError, KeyError):
+        self.api.update_analysis(
+            analysis_id,
+            status='failed',
+            success=False,
+            error_message=f'Unknown archive type: {archive_type_str}'
+        )
+        return
+
+    # Get the actual file path
     # TODO: Implement get_extracted_file_path to retrieve actual file
-    # For now, this is a placeholder
     archive_path = self.get_extracted_file_path(file_id, partition_id, artefact)
 
     if not archive_path or not archive_path.exists():
@@ -539,14 +633,27 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
         )
         return
 
-    output_dir = work_dir / 'archive_contents'
+    # Choose output location based on type
+    if is_compressor:
+        # Compressors create a single file, not a directory
+        output_file = work_dir / archive_path.stem  # Remove compression extension
+    else:
+        # Archives create a directory
+        output_dir = work_dir / 'archive_contents'
 
-    # Choose extraction method based on format
-    if archive_format in ['ArcFS', 'CFS', 'PackDir', 'Squash', 'Spark']:
-        result = extract_riscosarc(archive_path, output_dir)
-    elif archive_format == 'TBAFS':
+    # Choose extraction method based on archive type
+    if archive_type in [ArchiveType.ARCFS, ArchiveType.PACKDIR,
+                        ArchiveType.SPARK, ArchiveType.CFS, ArchiveType.SQUASH]:
+        # All handled by riscosarc
+        if is_compressor:
+            result = extract_riscosarc_single(archive_path, output_file)
+        else:
+            result = extract_riscosarc(archive_path, output_dir)
+
+    elif archive_type == ArchiveType.TBAFS:
         result = extract_tbafs(archive_path, output_dir)
-    elif archive_format == 'FCFS':
+
+    elif archive_type == ArchiveType.FCFS:
         # Convert to raw, then extract as ADFS
         raw_path = work_dir / 'converted.img'
         conv_result = convert_fcfs_to_raw(archive_path, raw_path)
@@ -554,14 +661,34 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
             result = conv_result
         else:
             result = list_files_dim(raw_path)  # Reuse existing function
-    elif archive_format == 'DOSDisc':
+
+    elif archive_type == ArchiveType.DOSDISC:
         result = extract_dos_7z(archive_path, output_dir)
+
+    elif archive_type == ArchiveType.ZIP:
+        result = extract_zip(archive_path, output_dir)
+
+    elif archive_type in [ArchiveType.TAR, ArchiveType.TARGZ,
+                          ArchiveType.TARBZ2, ArchiveType.TARXZ]:
+        result = extract_tar(archive_path, output_dir, archive_type)
+
+    elif archive_type == ArchiveType.RAR:
+        result = extract_rar(archive_path, output_dir)
+
+    elif archive_type == ArchiveType.SEVENZ:
+        result = extract_7z(archive_path, output_dir)
+
+    elif archive_type in [ArchiveType.GZIP, ArchiveType.BZIP2,
+                          ArchiveType.XZ, ArchiveType.ZSTD]:
+        # Single-file compressors
+        result = decompress_single_file(archive_path, output_file, archive_type)
+
     else:
         self.api.update_analysis(
             analysis_id,
             status='failed',
             success=False,
-            error_message=f'Unsupported archive format: {archive_format}'
+            error_message=f'Unsupported archive type: {archive_type.value}'
         )
         return
 
