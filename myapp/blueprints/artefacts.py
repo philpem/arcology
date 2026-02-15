@@ -320,6 +320,7 @@ def get_most_recent_analyses(artefact: Artefact) -> list[Analysis]:
 def cleanup_old_analyses(artefact: Artefact) -> int:
     """
     Delete all but the most recent analysis of each type for an artefact.
+    Also deletes associated output files referenced in the analysis details.
     Returns the number of analyses deleted.
     """
     most_recent = get_most_recent_analyses(artefact)
@@ -332,8 +333,28 @@ def cleanup_old_analyses(artefact: Artefact) -> int:
     ).all()
 
     deleted_count = len(old_analyses)
+    output_folder = get_output_folder()
 
     for analysis in old_analyses:
+        # Delete associated output files if they exist
+        if analysis.details:
+            try:
+                details = json.loads(analysis.details)
+                # Check for outputs array (used by flux_visualisation and similar)
+                if 'outputs' in details and isinstance(details['outputs'], list):
+                    for output in details['outputs']:
+                        if 'filename' in output:
+                            output_path = os.path.join(output_folder, output['filename'])
+                            if os.path.exists(output_path):
+                                try:
+                                    os.remove(output_path)
+                                    current_app.logger.info(f"Deleted output file: {output['filename']}")
+                                except Exception as e:
+                                    current_app.logger.warning(f"Failed to delete output file {output['filename']}: {e}")
+            except (json.JSONDecodeError, Exception) as e:
+                current_app.logger.warning(f"Failed to parse analysis details for cleanup: {e}")
+
+        # Delete the analysis record
         db.session.delete(analysis)
 
     db.session.commit()

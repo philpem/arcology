@@ -99,17 +99,18 @@ class AnalysisWorker:
     def process_flux_visualisation(self, analysis: dict, artefact: dict, work_dir: Path):
         """Process FLUX_VISUALISATION analysis."""
         analysis_id = analysis['id']
-        artefact_id = artefact['id']
+        analysis_uuid = analysis['uuid']
         input_path = self.get_input_path(artefact, work_dir)
 
         outputs = []
 
         # Try Fluxfox first (more detailed)
-        output_fluxfox = work_dir / f"{artefact_id}_fluxfox.png"
+        # Use analysis UUID to prevent overwrites when re-running analysis
+        output_fluxfox = work_dir / f"{analysis_uuid}_fluxfox.png"
         result_fluxfox = flux_visualisation_fluxfox(input_path, output_fluxfox)
 
         if result_fluxfox['success']:
-            saved_name = self.save_output_file(output_fluxfox, f"{artefact_id}_fluxfox.png")
+            saved_name = self.save_output_file(output_fluxfox, f"{analysis_uuid}_fluxfox.png")
             outputs.append({
                 'tool': 'fluxfox',
                 'type': 'image',
@@ -118,11 +119,11 @@ class AnalysisWorker:
             })
 
         # Also generate HxCFE visualisation (different style)
-        output_hxcfe = work_dir / f"{artefact_id}_hxcfe.png"
+        output_hxcfe = work_dir / f"{analysis_uuid}_hxcfe.png"
         result_hxcfe = flux_visualisation_hxcfe(input_path, output_hxcfe)
 
         if result_hxcfe['success']:
-            saved_name = self.save_output_file(output_hxcfe, f"{artefact_id}_hxcfe.png")
+            saved_name = self.save_output_file(output_hxcfe, f"{analysis_uuid}_hxcfe.png")
             outputs.append({
                 'tool': 'hxcfe',
                 'type': 'image',
