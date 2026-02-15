@@ -217,8 +217,9 @@ exit
                 'size': file_path.stat().st_size,
             }
 
+            # Store RISC OS filetype (hex string like '3fb') for archive detection
             if filetype:
-                file_entry['filetype'] = filetype
+                file_entry['risc_os_filetype'] = filetype
 
             files.append(file_entry)
 

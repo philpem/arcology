@@ -276,7 +276,7 @@ class AnalysisWorker:
             # Use filesystem from hints or 'unknown'
             fs_type = filesystem if filesystem else 'unknown'
 
-            self.api.register_file_listing(artefact_id, result['files'], fs_type)
+            partition = self.api.register_file_listing(artefact_id, result['files'], fs_type)
 
             self.api.update_analysis(
                 analysis_id,
@@ -286,6 +286,15 @@ class AnalysisWorker:
                 summary=result['summary'],
                 details=json.dumps({'file_count': result['file_count']})
             )
+
+            # Queue ARCHIVE_DETECT to scan for archives in extracted files
+            if partition:
+                from .types import AnalysisType
+                self.api.queue_analysis(
+                    artefact['uuid'],
+                    AnalysisType.ARCHIVE_DETECT.value,
+                    hints={'partition_id': partition.get('id')}
+                )
         else:
             self.api.update_analysis(
                 analysis_id,
@@ -488,6 +497,122 @@ class AnalysisWorker:
             })
         )
 
+    def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path):
+        """
+        Process ARCHIVE_DETECT analysis.
+        Scans partition files for archives and queues extraction jobs.
+        """
+        import json
+        from myapp.archive_formats import (
+            get_archive_by_filetype,
+            get_archive_by_extension,
+            get_archive_info,
+            is_compressor_format,
+        )
+        from .config import MAX_ARCHIVE_DEPTH
+
+        analysis_id = analysis['id']
+        hints = json.loads(analysis.get('hints') or '{}')
+        partition_id = hints.get('partition_id')
+
+        if not partition_id:
+            self.api.update_analysis(
+                analysis_id,
+                status='failed',
+                success=False,
+                error_message='No partition_id in analysis hints'
+            )
+            return
+
+        # Get all files in partition from API
+        partition_resp = self.api.get(f"/partitions/{partition_id}/files?per_page=10000")
+        if not partition_resp:
+            self.api.update_analysis(
+                analysis_id,
+                status='failed',
+                success=False,
+                error_message='Failed to get partition files'
+            )
+            return
+
+        files = partition_resp.get('files', [])
+
+        archive_count = 0
+        queued_count = 0
+        depth_limit_exceeded = 0
+        compressor_count = 0
+
+        for file_data in files:
+            filetype = file_data.get('risc_os_filetype')
+            filename = file_data.get('filename', '')
+
+            # Try detecting by RISC OS filetype first
+            archive_type = get_archive_by_filetype(filetype) if filetype else None
+
+            # Fall back to extension-based detection (for PC archives)
+            if not archive_type:
+                archive_type = get_archive_by_extension(filename)
+
+            if not archive_type:
+                continue
+
+            archive_info = get_archive_info(archive_type)
+
+            # Check if this is a single-file compressor
+            is_compressor = is_compressor_format(archive_type)
+
+            # Check depth limit
+            current_depth = file_data.get('extraction_depth', 0)
+            if current_depth >= MAX_ARCHIVE_DEPTH:
+                depth_limit_exceeded += 1
+                # Mark as archive but don't queue extraction
+                self.api.post(f"/files/{file_data['id']}/mark_archive", {
+                    'is_archive': True,
+                    'archive_format': archive_info['name']
+                })
+                continue
+
+            # Mark as archive
+            self.api.post(f"/files/{file_data['id']}/mark_archive", {
+                'is_archive': True,
+                'archive_format': archive_info['name']
+            })
+            archive_count += 1
+            if is_compressor:
+                compressor_count += 1
+
+            # Queue extraction (will be implemented in Phase 3/4)
+            # For now, just mark the files - extraction handlers will come later
+            # self.api.queue_analysis(
+            #     artefact['uuid'],
+            #     AnalysisType.ARCHIVE_EXTRACT.value,
+            #     hints={
+            #         'file_id': file_data['id'],
+            #         'partition_id': partition_id,
+            #         'archive_type': archive_type.value,
+            #         'archive_format': archive_info['name'],
+            #         'is_compressor': is_compressor,
+            #         'extraction_depth': current_depth + 1
+            #     }
+            # )
+            # queued_count += 1
+
+        summary = f"Detected {archive_count} archives ({compressor_count} compressors)"
+        if depth_limit_exceeded > 0:
+            summary += f", {depth_limit_exceeded} at depth limit"
+
+        self.api.update_analysis(
+            analysis_id,
+            status='completed',
+            success=True,
+            summary=summary,
+            details=json.dumps({
+                'archives_found': archive_count,
+                'compressors_found': compressor_count,
+                'depth_limit_exceeded': depth_limit_exceeded
+            })
+        )
+
     # =========================================================================
     # Job Processing
     # =========================================================================
@@ -517,6 +642,7 @@ class AnalysisWorker:
                     AnalysisType.METADATA_EXTRACT.value: self.process_metadata_extract,
                     AnalysisType.FORMAT_IDENTIFY.value: self.process_format_identify,
                     AnalysisType.PARTITION_DETECT.value: self.process_partition_detect,
+                    AnalysisType.ARCHIVE_DETECT.value: self.process_archive_detect,
                 }
 
                 handler = handlers.get(analysis_type)

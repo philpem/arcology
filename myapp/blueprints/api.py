@@ -190,9 +190,14 @@ def request_analysis(uuid):
         analysis_type = AnalysisType(data.get('analysis_type', 'metadata_extract'))
     except ValueError:
         return error_response('Invalid analysis_type')
-    
-    analysis = Analysis(artefact_id=artefact.id, analysis_type=analysis_type,
-                        status=AnalysisStatus.PENDING, tool_name=data.get('tool_name'))
+
+    analysis = Analysis(
+        artefact_id=artefact.id,
+        analysis_type=analysis_type,
+        status=AnalysisStatus.PENDING,
+        tool_name=data.get('tool_name'),
+        hints=data.get('hints')  # Store hints JSON
+    )
     db.session.add(analysis)
     db.session.commit()
     return jsonify(analysis_to_dict(analysis)), 201
@@ -392,10 +397,21 @@ def add_files(uuid):
     for f in data['files']:
         if 'path' not in f or 'filename' not in f:
             continue
-        ef = ExtractedFile(partition_id=partition.id, path=f['path'], filename=f['filename'],
-                           extension=f.get('extension'), file_size=f.get('file_size'),
-                           md5=f.get('md5'), sha1=f.get('sha1'), crc32=f.get('crc32'))
-        
+        ef = ExtractedFile(
+            partition_id=partition.id,
+            path=f['path'],
+            filename=f['filename'],
+            extension=f.get('extension'),
+            file_size=f.get('file_size'),
+            md5=f.get('md5'),
+            sha1=f.get('sha1'),
+            crc32=f.get('crc32'),
+            # Archive support fields
+            risc_os_filetype=f.get('risc_os_filetype'),
+            parent_file_id=f.get('parent_file_id'),
+            extraction_depth=f.get('extraction_depth', 0)
+        )
+
         if ef.md5 or ef.sha1:
             known = find_known_file(md5=ef.md5, sha1=ef.sha1, file_size=ef.file_size)
             if known:
@@ -416,16 +432,29 @@ def get_partition_files(uuid):
     show_known = request.args.get('show_known', 'false').lower() == 'true'
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 100, type=int)
-    
+
     query = ExtractedFile.query.filter_by(partition_id=partition.id)
     if not show_known:
         query = query.filter(ExtractedFile.is_known == False)
-    
+
     pagination = query.order_by(ExtractedFile.path).paginate(page=page, per_page=per_page)
     return jsonify({
         'files': [file_to_dict(f) for f in pagination.items],
         'total': pagination.total, 'page': page, 'per_page': per_page, 'pages': pagination.pages
     })
+
+
+@blueprint.route('/files/<int:file_id>/mark_archive', methods=['POST'])
+def mark_file_as_archive(file_id):
+    """Mark a file as an archive and update its metadata."""
+    file = ExtractedFile.query.get_or_404(file_id)
+    data = request.get_json()
+
+    file.is_archive = data.get('is_archive', True)
+    file.archive_format = data.get('archive_format')
+
+    db.session.commit()
+    return jsonify(file_to_dict(file))
 
 
 # =============================================================================
@@ -534,8 +563,23 @@ def partition_to_dict(partition):
 
 
 def file_to_dict(f):
-    return {'id': f.id, 'uuid': f.uuid, 'path': f.path, 'filename': f.filename, 'extension': f.extension,
-            'file_size': f.file_size, 'md5': f.md5, 'sha1': f.sha1, 'is_known': f.is_known}
+    return {
+        'id': f.id,
+        'uuid': f.uuid,
+        'path': f.path,
+        'filename': f.filename,
+        'extension': f.extension,
+        'file_size': f.file_size,
+        'md5': f.md5,
+        'sha1': f.sha1,
+        'is_known': f.is_known,
+        # Archive support fields
+        'risc_os_filetype': f.risc_os_filetype,
+        'is_archive': f.is_archive,
+        'archive_format': f.archive_format,
+        'parent_file_id': f.parent_file_id,
+        'extraction_depth': f.extraction_depth
+    }
 
 
 def known_file_to_dict(kf):
