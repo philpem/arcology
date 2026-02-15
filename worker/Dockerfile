@@ -33,7 +33,9 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG MINUSJ=-j3
 
 # Update apt repository and install needed packages
-RUN apt -y update && apt -y upgrade && \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt -y update && apt -y upgrade && \
 	apt -y install git gcc make
 
 # Build HxCFE
@@ -62,7 +64,9 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG MINUSJ=-j3
 
 # Update apt repository and install needed packages
-RUN apt -y update && apt -y upgrade && \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt -y update && apt -y upgrade && \
 	apt -y install git rustup gcc && \
 	rustup default stable && \
 	git clone --branch "${FLUXFOX_TAG}" --depth=1 https://github.com/dbalsom/fluxfox && \
@@ -98,7 +102,8 @@ ARG DEBIAN_FRONTEND=noninteractive
 # This is split into two stages because the source build needs Lazarus,
 # which in turn needs about 700 packages and a full X server.
 # It takes a long time to download and install these.
-RUN \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
 	apt -y update && apt -y upgrade && \
 	apt -y install unzip wget && \
 	if [ ${DISCIMAGEMANAGER_SOURCEBUILD} -eq 1 ]; then \
@@ -145,7 +150,8 @@ FROM debian:stable AS build-arcology-tools
 ARG DEBIAN_FRONTEND=noninteractive
 
 # This is split into two stages so we don't have to re-download the packages when the source code changes.
-RUN \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
 	apt -y update && apt -y upgrade && \
 	apt -y install build-essential
 
@@ -189,22 +195,20 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 # Install runtime dependencies:
 # - libgtk2.0-0, xvfb: for DiscImageManager
-# - python3, python3-pip: for Greaseweazle and worker
+# - python3, python3-pip, python3-requests: for Greaseweazle and worker
 # - p7zip-full: for file extraction
 # - zstd, gzip, bzip2: for decompression
-RUN \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
 	apt -y update && apt -y upgrade && \
 	apt -y install \
-		python3 python3-pip python3-dev git \
+		python3 python3-pip python3-dev python3-requests git \
 		p7zip-full zstd gzip bzip2 \
 	&& rm -rf /var/lib/apt/lists/*
 
-# Install Python packages:
-# - Greaseweazle for disk image conversion
-# - requests for API communication
+# Install Greaseweazle for disk image conversion
 RUN python3 -m pip install --break-system-packages \
-	git+https://github.com/keirf/greaseweazle@latest \
-	requests
+	git+https://github.com/keirf/greaseweazle@latest
 
 # Clean up build dependencies
 RUN apt -y remove python3-dev git && apt -y autoremove
