@@ -312,8 +312,14 @@ class AnalysisWorker:
         Process FILE_EXTRACTION analysis.
         Extracts files based on detected/hinted filesystem type.
         Only works on raw sector images (IMG) - not HFE or IMD formats.
+
+        Files are extracted to persistent hierarchical storage.
         """
+        from .utils.paths import get_output_path
+        from .config import OUTPUT_DIR
+
         analysis_id = analysis['id']
+        artefact_id = artefact['id']
         artefact_type = artefact.get('artefact_type', '')
 
         # Only raw sector images can be processed by 7z and DIM
@@ -338,9 +344,20 @@ class AnalysisWorker:
 
         input_path = self.get_input_path(artefact, work_dir)
         hints = json.loads(analysis.get('hints') or '{}')
-
         filesystem = hints.get('filesystem', '').lower()
-        extract_dir = work_dir / 'extracted'
+
+        # Get Item for hierarchical path (artefact should have item reference)
+        # For now, create a simple structure - can be enhanced later
+        item = artefact.get('item', {'uuid': 'default', 'slug': 'default'})
+
+        # Use hierarchical output path for persistent storage
+        extract_dir = get_output_path(
+            OUTPUT_DIR,
+            item,
+            artefact,
+            analysis,
+            partition=None  # Will be set after partition is created
+        )
 
         # Choose extraction method based on filesystem
         if filesystem in ('dfs', 'adfs', 'acorn'):
@@ -617,13 +634,14 @@ class AnalysisWorker:
         Process ARCHIVE_EXTRACT analysis.
         Extracts a specific archive file and registers the extracted files.
 
-        NOTE: This is Phase 3 implementation. File path resolution to be refined.
+        Performs actual extraction with file path resolution.
         """
         import json
         from myapp.archive_formats import (
             ArchiveType,
             get_archive_info,
             is_compressor_format,
+            is_disk_image_format,
         )
         from .tools import (
             extract_riscosarc,
@@ -635,9 +653,11 @@ class AnalysisWorker:
             decompress_single_file,
             extract_acorn_disc_image_manager,
             extract_dos_7z,
+            list_files_dim,
         )
-        from .tools.compression import decompress_if_needed
-        from .config import MAX_ARCHIVE_DEPTH
+        from .tools.extraction import convert_fcfs_to_raw
+        from .config import OUTPUT_DIR, MAX_ARCHIVE_DEPTH
+        from .utils.paths import get_output_path
 
         analysis_id = analysis['id']
         hints = json.loads(analysis.get('hints') or '{}')
@@ -661,21 +681,208 @@ class AnalysisWorker:
             )
             return
 
-        # TODO: Implement proper file path resolution
-        # For Phase 3, we're establishing the infrastructure
-        # File path resolution will be implemented when we integrate with
-        # the hierarchical output structure
+        # Get partition and item metadata from API
+        partition_resp = self.api.get(f"/partitions/{partition_id}")
+        if not partition_resp:
+            self.api.update_analysis(
+                analysis_id,
+                status='failed',
+                success=False,
+                error_message='Failed to get partition info'
+            )
+            return
+
+        partition = partition_resp.get('partition', {})
+
+        # Find the file in the partition
+        files_resp = self.api.get(f"/partitions/{partition_id}/files?per_page=10000")
+        if not files_resp:
+            self.api.update_analysis(
+                analysis_id,
+                status='failed',
+                success=False,
+                error_message='Failed to get partition files'
+            )
+            return
+
+        # Find our specific file
+        target_file = None
+        for f in files_resp.get('files', []):
+            if f['id'] == file_id:
+                target_file = f
+                break
+
+        if not target_file:
+            self.api.update_analysis(
+                analysis_id,
+                status='failed',
+                success=False,
+                error_message=f'File {file_id} not found in partition'
+            )
+            return
+
+        # Get the partition's parent artefact analyses to find extraction output_path
+        artefact_uuid = artefact.get('uuid')
+        analyses_resp = self.api.get(f"/artefacts/{artefact_uuid}/analysis")
+
+        # Find FILE_EXTRACTION, FILE_LISTING, or ARCHIVE_EXTRACT analysis for parent files
+        extraction_path = None
+        for a in analyses_resp.get('analyses', []):
+            if a.get('analysis_type') in ['file_extraction', 'file_listing', 'archive_extract']:
+                extraction_path = a.get('output_path')
+                if extraction_path:
+                    break
+
+        if not extraction_path:
+            self.api.update_analysis(
+                analysis_id,
+                status='failed',
+                success=False,
+                error_message='Could not determine extraction path for files'
+            )
+            return
+
+        # Construct full path to archive file
+        archive_path = Path(extraction_path) / target_file['path']
+
+        if not archive_path.exists():
+            self.api.update_analysis(
+                analysis_id,
+                status='failed',
+                success=False,
+                error_message=f'Archive file not found at {archive_path}'
+            )
+            return
+
+        # Get item for hierarchical path
+        item = artefact.get('item', {'uuid': 'default', 'slug': 'default'})
+
+        # Create persistent output directory using hierarchical structure
+        persistent_output = get_output_path(
+            OUTPUT_DIR,
+            item,
+            artefact,
+            analysis,
+            partition
+        )
+
+        # Extract archive to temporary directory first
+        temp_output_dir = work_dir / 'archive_contents'
+
+        # Choose extraction method based on archive type
+        if archive_type in [ArchiveType.ARCFS, ArchiveType.PACKDIR,
+                            ArchiveType.SPARK, ArchiveType.CFS, ArchiveType.SQUASH]:
+            result = extract_riscosarc(archive_path, temp_output_dir)
+
+        elif archive_type == ArchiveType.TBAFS:
+            result = extract_tbafs(archive_path, temp_output_dir)
+
+        elif archive_type == ArchiveType.FCFS:
+            # Convert FCFS to raw, then extract as ADFS
+            raw_path = work_dir / 'converted.img'
+            conv_result = convert_fcfs_to_raw(archive_path, raw_path)
+            if not conv_result['success']:
+                result = conv_result
+            else:
+                # Extract the converted image
+                result = extract_acorn_disc_image_manager(raw_path, temp_output_dir)
+
+        elif archive_type == ArchiveType.DOSDISC:
+            result = extract_dos_7z(archive_path, temp_output_dir)
+
+        elif archive_type == ArchiveType.ZIP:
+            result = extract_zip(archive_path, temp_output_dir)
+
+        elif archive_type in [ArchiveType.TAR, ArchiveType.TARGZ,
+                              ArchiveType.TARBZ2, ArchiveType.TARXZ]:
+            result = extract_tar(archive_path, temp_output_dir, archive_type.value)
+
+        elif archive_type == ArchiveType.RAR:
+            result = extract_rar(archive_path, temp_output_dir)
+
+        elif archive_type == ArchiveType.SEVENZ:
+            result = extract_7z(archive_path, temp_output_dir)
+
+        elif archive_type in [ArchiveType.GZIP, ArchiveType.BZIP2,
+                              ArchiveType.XZ, ArchiveType.ZSTD]:
+            # Single-file compressor - output with same name minus compression extension
+            output_file = temp_output_dir / archive_path.stem
+            result = decompress_single_file(archive_path, output_file, archive_type.value)
+
+        else:
+            self.api.update_analysis(
+                analysis_id,
+                status='failed',
+                success=False,
+                error_message=f'Unsupported archive type: {archive_type.value}'
+            )
+            return
+
+        if not result['success']:
+            self.api.update_analysis(
+                analysis_id,
+                status='failed',
+                success=False,
+                error_message=result.get('error', 'Extraction failed'),
+                tool_name=result.get('tool'),
+                details=json.dumps({'process_output': result.get('process_output')})
+            )
+            return
+
+        # Move extracted files from temp to persistent storage
+        if temp_output_dir.exists():
+            shutil.copytree(temp_output_dir, persistent_output, dirs_exist_ok=True)
+
+        # Scan extracted files from persistent storage
+        files = []
+        for file_path in persistent_output.rglob('*'):
+            if not file_path.is_file():
+                continue
+
+            rel_path = file_path.relative_to(persistent_output)
+            files.append({
+                'path': str(rel_path),
+                'size': file_path.stat().st_size,
+                'parent_file_id': file_id,
+                'extraction_depth': extraction_depth
+            })
+
+        # Register extracted files in the same partition with parent_file_id
+        if files:
+            # Register files (they'll be added to the same partition)
+            for i in range(0, len(files), 100):
+                batch = files[i:i+100]
+                file_records = []
+                for f in batch:
+                    file_records.append({
+                        'path': f['path'],
+                        'filename': Path(f['path']).name,
+                        'extension': Path(f['path']).suffix.lstrip('.').lower() or None,
+                        'file_size': f['size'],
+                        'parent_file_id': f['parent_file_id'],
+                        'extraction_depth': f['extraction_depth']
+                    })
+                self.api.post(f"/partitions/{partition_id}/files", {'files': file_records})
+
+        # Queue ARCHIVE_DETECT for nested archives (if under depth limit)
+        if extraction_depth < MAX_ARCHIVE_DEPTH:
+            self.api.queue_analysis(
+                artefact['uuid'],
+                AnalysisType.ARCHIVE_DETECT.value,
+                hints={'partition_id': partition_id}
+            )
 
         self.api.update_analysis(
             analysis_id,
             status='completed',
             success=True,
-            summary=f'Archive extraction infrastructure ready for {archive_info["name"]} (Phase 3)',
+            tool_name=result['tool'],
+            output_path=str(persistent_output),
+            summary=f"Extracted {len(files)} files from {archive_info['name']} archive",
             details=json.dumps({
-                'note': 'Archive extraction tools installed and tested',
-                'archive_type': archive_type.value,
+                'file_count': len(files),
                 'extraction_depth': extraction_depth,
-                'tools_available': True
+                'archive_type': archive_type.value
             })
         )
 

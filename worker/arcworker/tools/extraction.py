@@ -305,3 +305,34 @@ def list_files_7z(input_path: Path) -> dict:
         'summary': f'Found {len(files)} files',
         'process_output': process_output
     }
+
+
+def convert_fcfs_to_raw(input_path: Path, output_path: Path) -> dict:
+    """
+    Convert FCFS (Filecore) disk image to raw sector image using fcfs2raw.
+
+    Args:
+        input_path: Path to FCFS image file
+        output_path: Path to output raw image file
+
+    Returns:
+        Result dict with success status
+    """
+    cmd = ['fcfs2raw', '-v', str(input_path), str(output_path)]
+    result, process_output = run_tool_with_output(cmd)
+
+    if result != 0:
+        return {
+            'success': False,
+            'error': f'fcfs2raw failed with exit code {result}',
+            'tool': 'fcfs2raw',
+            'process_output': process_output
+        }
+
+    return {
+        'success': True,
+        'tool': 'fcfs2raw',
+        'output_path': str(output_path),
+        'summary': 'FCFS image converted to raw sector format',
+        'process_output': process_output
+    }
