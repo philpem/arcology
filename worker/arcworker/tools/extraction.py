@@ -45,7 +45,6 @@ exit
 
     try:
         cmd = [
-            'xvfb-run',
             'DiscImageManager',
             '-c', script_path
         ]
@@ -182,7 +181,6 @@ exit
 
     try:
         cmd = [
-            'xvfb-run',
             'DiscImageManager',
             '-c', script_path
         ]
