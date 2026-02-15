@@ -30,14 +30,15 @@ def flux_visualisation_fluxfox(input_path: Path, output_path: Path) -> dict:
         'imgviz',
         '-i', str(input_path),
         f'-o={output_path}',
-        '--angle=2.88',
-        '--hole_ratio=0.66',
+        #'--angle=2.88',
+        '--hole_ratio=0.3',
         '--index_hole',
         '--data',
         '--metadata',
         '--decode',
         '--resolution=2048',
-        '--ss=4'
+        '--ss=4',
+        '--rasterize_data'
     ]
     result, process_output = run_tool_with_output(cmd)
 
