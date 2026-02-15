@@ -24,6 +24,15 @@ from .partition import (
     detect_acorn_adfs,
     detect_format_file_cmd,
 )
+from .archives import (
+    extract_riscosarc,
+    extract_tbafs,
+    extract_zip,
+    extract_tar,
+    extract_rar,
+    extract_7z,
+    decompress_single_file,
+)
 
 __all__ = [
     'run_tool',
@@ -43,4 +52,11 @@ __all__ = [
     'detect_partitions_sfdisk',
     'detect_acorn_adfs',
     'detect_format_file_cmd',
+    'extract_riscosarc',
+    'extract_tbafs',
+    'extract_zip',
+    'extract_tar',
+    'extract_rar',
+    'extract_7z',
+    'decompress_single_file',
 ]

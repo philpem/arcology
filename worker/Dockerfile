@@ -163,6 +163,40 @@ RUN \
 
 
 #################
+# Build riscosarc
+#################
+FROM debian:stable AS build-riscosarc
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt -y update && apt -y upgrade && \
+    apt -y install git build-essential
+
+# Clone and build riscosarc
+RUN git clone https://github.com/mjwoodcock/riscosarc.git /src/riscosarc && \
+    cd /src/riscosarc && \
+    make && \
+    cp riscosarc /usr/local/bin/
+
+
+#################
+# Build TBAFS extractor
+#################
+FROM debian:stable AS build-tbafs
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt -y update && apt -y upgrade && \
+    apt -y install git build-essential
+
+# Clone and build tbafs extractor
+RUN git clone https://github.com/mattgodbolt/tbafs.git /src/tbafs && \
+    cd /src/tbafs && \
+    make && \
+    cp tbafs /usr/local/bin/tbafs-extractor
+
+
+#################
 # Assemble final image with tools + worker
 #################
 
@@ -186,6 +220,10 @@ COPY --from=build-discimagemanager /usr/local/bin/DiscImageManager /usr/local/bi
 # Copy local tools
 COPY --from=build-arcology-tools /usr/local/bin/fcfs2raw /usr/local/bin/
 
+# Copy archive extraction tools
+COPY --from=build-riscosarc /usr/local/bin/riscosarc /usr/local/bin/
+COPY --from=build-tbafs /usr/local/bin/tbafs-extractor /usr/local/bin/
+
 
 # Rebuild shared library cache (needed by hxcfe)
 RUN ldconfig
@@ -194,17 +232,19 @@ RUN ldconfig
 ARG DEBIAN_FRONTEND=noninteractive
 
 # Install runtime dependencies:
-# - libgtk2.0-0, xvfb: for DiscImageManager
 # - python3, python3-pip, python3-requests: for Greaseweazle and worker
-# - p7zip-full: for file extraction
-# - zstd, gzip, bzip2: for decompression
+# - p7zip-full: for file extraction and 7z archives
+# - zstd, gzip, bzip2, xz-utils: for decompression
+# - unzip, unrar: for ZIP and RAR archives
+# - tar: for TAR archives
+# - util-linux: for sfdisk (partition detection)
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
 	apt -y update && apt -y upgrade && \
 	apt -y install \
 		python3 python3-pip python3-dev python3-requests git \
-		p7zip-full zstd gzip bzip2 \
-	&& rm -rf /var/lib/apt/lists/*
+		p7zip-full zstd gzip bzip2 xz-utils \
+		unzip unrar tar util-linux
 
 # Install Greaseweazle for disk image conversion
 RUN python3 -m pip install --break-system-packages \
