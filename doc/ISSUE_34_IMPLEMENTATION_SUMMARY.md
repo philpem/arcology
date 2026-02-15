@@ -4,6 +4,12 @@
 
 This document summarizes the implementation plan for nested archive and disk image extraction in Arcology.
 
+**Key Updates:**
+- ✅ Centralized archive format definitions (`myapp/archive_formats.py`)
+- ✅ Distinction between multi-file archives and single-file compressors
+- ✅ Support for PC archives (ZIP, RAR, 7z, TAR.*, etc.)
+- ✅ Direct upload handling (archives uploaded as Artefacts, not just found in disk images)
+
 ## Design Approach
 
 We're implementing **Approach 1 (Post-Extraction Pipeline)** with your requested enhancements:
@@ -43,17 +49,37 @@ We're implementing **Approach 1 (Post-Extraction Pipeline)** with your requested
 
 ### 3. Archive Format Support
 
-| Filetype | Name | Tool | Status |
-|----------|------|------|--------|
-| &3FB | ArcFS | riscosarc | Phase 3 |
-| &D96 | CFS | riscosarc | Phase 3 |
-| &68E | PackDir | riscosarc | Phase 3 |
-| &FCA | Squash | riscosarc | Phase 3 |
-| &DDC | Spark | riscosarc | Phase 3 |
-| &B21 | TBAFS | tbafs-extractor | Phase 3 |
-| &FC8 | DOSDisc | sfdisk+7z | Phase 4 |
-| &FCD | FCFS | fcfs2raw (✓ installed) | Phase 4 |
-| &B23 | X-Files | custom | Phase 6 (future) |
+**RISC OS Formats:**
+
+| Filetype | Name | Type | Tool | Status |
+|----------|------|------|------|--------|
+| &3FB | ArcFS | Archive | riscosarc | Phase 3 |
+| &68E | PackDir | Archive | riscosarc | Phase 3 |
+| &DDC | Spark | Archive | riscosarc | Phase 3 |
+| &B21 | TBAFS | Archive | tbafs-extractor | Phase 3 |
+| &D96 | CFS | Compressor* | riscosarc | Phase 3 |
+| &FCA | Squash | Compressor* | riscosarc | Phase 3 |
+| &FC8 | DOSDisc | Disk Image | sfdisk+7z | Phase 4 |
+| &FCD | FCFS | Disk Image | fcfs2raw (✓ installed) | Phase 4 |
+| &B23 | X-Files | Archive | custom | Phase 6 (future) |
+
+_*Compressor = single-file, decompresses to file with same name (not a directory)_
+
+**PC Formats:**
+
+| Extension | Name | Type | Tool | Status |
+|-----------|------|------|------|--------|
+| .zip | ZIP | Archive | unzip/7z | Phase 3 |
+| .rar | RAR | Archive | unrar | Phase 3 |
+| .7z | 7-Zip | Archive | 7z | Phase 3 |
+| .tar | TAR | Archive | tar | Phase 3 |
+| .tar.gz/.tgz | TAR+GZIP | Archive | tar | Phase 3 |
+| .tar.bz2/.tbz2 | TAR+BZIP2 | Archive | tar | Phase 3 |
+| .tar.xz/.txz | TAR+XZ | Archive | tar | Phase 3 |
+| .gz | GZIP | Compressor | gzip | Phase 3 |
+| .bz2 | BZIP2 | Compressor | bzip2 | Phase 3 |
+| .xz | XZ | Compressor | xz | Phase 3 |
+| .zst | ZSTD | Compressor | zstd (✓ installed) | Phase 3 |
 
 ### 4. Safety Features
 
@@ -118,7 +144,83 @@ ARCHIVE_EXTRACT = "archive_extract"  # Extract specific archive
    - Circular reference detected
 ```
 
-### 7. DOS Partition Table Display
+### 7. Centralized Archive Definitions
+
+**New File:** `myapp/archive_formats.py`
+
+Single source of truth for all archive format definitions, used by both web UI and worker:
+
+```python
+from myapp.archive_formats import (
+    ArchiveType,              # Enum of all formats (ARCFS, ZIP, etc.)
+    ArchiveCategory,          # ARCHIVE, COMPRESS, or DISK_IMAGE
+    get_archive_by_filetype,  # '3fb' -> ArchiveType.ARCFS
+    get_archive_by_extension, # 'file.zip' -> ArchiveType.ZIP
+    is_archive_format,        # Multi-file archive?
+    is_compressor_format,     # Single-file compressor?
+    is_disk_image_format,     # Nested disk image?
+    get_archive_info,         # Get full metadata dict
+)
+```
+
+**Benefits:**
+- Consistent definitions across web app and worker
+- Easy to add new formats (single location)
+- Metadata includes: tool, category, extensions, RISC OS filetype, extraction behavior
+
+**Format Metadata Example:**
+```python
+ArchiveType.CFS: {
+    'name': 'CFS Compressed File',
+    'category': ArchiveCategory.COMPRESS,
+    'risc_os_filetype': 'd96',
+    'tool': 'riscosarc',
+    'description': 'Decompresses to single file with same name',
+    'extract_creates_dir': False,
+    'output_filename': 'same_as_input',
+}
+```
+
+### 8. Direct Upload Handling
+
+Archives can be uploaded two ways, both using the same pipeline:
+
+**Path 1: Found within disk images**
+```
+Extract ADFS image → FILE_LISTING finds "Archive,3fb"
+→ ExtractedFile(risc_os_filetype='3fb')
+→ ARCHIVE_DETECT identifies as ArcFS
+→ ARCHIVE_EXTRACT processes
+→ Recursive scan for nested archives
+```
+
+**Path 2: Uploaded directly**
+```
+User uploads file.zip → Artefact(type=ZIP)
+→ ANALYSIS_MAP[ZIP] = [FILE_LISTING]
+→ FILE_LISTING extracts → ExtractedFile records
+→ ARCHIVE_DETECT scans for nested archives
+→ Recursive processing
+```
+
+**Implementation:** Existing `ANALYSIS_MAP` in `myapp/blueprints/artefacts.py` already handles ZIP/RAR/TAR. Add new RISC OS archive types:
+
+```python
+ANALYSIS_MAP = {
+    # Existing
+    ArtefactType.ZIP: [AnalysisType.FILE_LISTING],
+    ArtefactType.TARGZ: [AnalysisType.FILE_LISTING],
+    ArtefactType.RAR: [AnalysisType.FILE_LISTING],
+
+    # Add RISC OS types
+    ArtefactType.ARCFS: [AnalysisType.FILE_LISTING],
+    ArtefactType.SPARK: [AnalysisType.FILE_LISTING],
+    ArtefactType.FCFS: [AnalysisType.FILE_EXTRACTION],  # Disk image
+    # ... etc
+}
+```
+
+### 9. DOS Partition Table Display
 
 **Storage:**
 - `Partition.detection_details` stores JSON from sfdisk
