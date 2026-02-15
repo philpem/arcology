@@ -249,15 +249,72 @@ arcology/
 
 ### Database Changes
 
-Use Flask-Migrate for schema changes:
+Database schema changes are managed with [Flask-Migrate](https://flask-migrate.readthedocs.io/), which wraps [Alembic](https://alembic.sqlalchemy.org/). All models live in `myapp/database.py`. When you change a model, you create a migration script that records the change, then apply it to the database.
+
+#### First-Time Setup
+
+If the `migrations/` directory doesn't exist yet (fresh clone), initialise it:
 
 ```bash
-# After modifying models in database.py:
-flask db migrate -m "Description of change"
+flask db init
+flask db migrate -m "Initial migration"
 flask db upgrade
 ```
 
-Review the generated migration in `migrations/versions/` before applying.
+This creates the `migrations/` directory structure and generates an initial migration from the current models.
+
+> **Note:** The Docker entrypoint uses `install.py` (which calls `db.create_all()`) for first-time database setup. Migrations are primarily used for ongoing schema evolution during development.
+
+#### Typical Workflow
+
+1. **Edit the models** in `myapp/database.py` (add columns, tables, change types, etc.).
+
+2. **Generate a migration** -- Alembic diffs the models against the database and creates a script:
+
+   ```bash
+   flask db migrate -m "Add description column to platforms"
+   ```
+
+3. **Review the migration** before applying. Auto-generated migrations are not perfect -- check the file in `migrations/versions/`:
+
+   ```bash
+   # The newest file is your migration
+   ls -t migrations/versions/*.py | head -1
+   ```
+
+   Things to watch for:
+   - Table or column renames are detected as a drop + create (data loss). Manually edit these to use `op.alter_column()` or `op.rename_table()`.
+   - Changes to enum values may need manual handling.
+   - Check that both `upgrade()` and `downgrade()` functions look correct.
+
+4. **Apply the migration:**
+
+   ```bash
+   flask db upgrade
+   ```
+
+#### Quick Reference
+
+| Command | What it Does |
+|---------|-------------|
+| `flask db init` | Create the `migrations/` directory (one-time only) |
+| `flask db migrate -m "message"` | Auto-generate a migration from model changes |
+| `flask db upgrade` | Apply all pending migrations to the database |
+| `flask db downgrade` | Undo the last migration |
+| `flask db current` | Show which migration the database is currently at |
+| `flask db history` | List all migrations in order |
+| `flask db heads` | Show the latest migration(s) |
+| `flask db show <revision>` | Show details of a specific migration |
+| `flask db stamp head` | Mark the database as up-to-date without running migrations (useful when the schema already matches the models, e.g. after `db.create_all()`) |
+
+#### Tips
+
+- **Always review generated migrations.** Alembic's auto-detection is good but not infallible. It cannot detect renamed columns/tables, changes within existing enum types, or changes to constraints that aren't reflected in the model metadata.
+- **Commit migrations to version control.** They are part of the project history and other developers will need them.
+- **One logical change per migration.** Don't batch unrelated schema changes into a single migration -- it makes rollbacks harder.
+- **If you get "Target database is not up to date"**, run `flask db upgrade` first to bring your database to the latest migration before generating a new one.
+- **If you get "Can't locate revision"** after pulling changes, you may need to `flask db upgrade` to apply migrations created by others.
+- **To start fresh** during development (throwing away all data), drop the database and re-run `flask db upgrade`, or use `install.py` for a clean `db.create_all()`.
 
 ### Code Style
 
