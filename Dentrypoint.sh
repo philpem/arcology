@@ -8,5 +8,5 @@ if [ ! -f /var/lib/myapp/database_initialised ]; then
 fi
 
 echo "Starting and daemonising Gunicorn..."
-gunicorn -b 0.0.0.0:8000 myapp.app
+gunicorn -b 0.0.0.0:8000 myapp.app --timeout 300
 
