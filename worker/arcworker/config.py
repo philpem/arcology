@@ -15,6 +15,9 @@ OUTPUT_DIR = Path(os.environ.get('OUTPUT_DIR', '/data/outputs'))
 POLL_INTERVAL = int(os.environ.get('POLL_INTERVAL', '30'))
 LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
 
+# Archive extraction configuration
+MAX_ARCHIVE_DEPTH = int(os.environ.get('MAX_ARCHIVE_DEPTH', '10'))
+
 # Configure logging
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL),

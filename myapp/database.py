@@ -79,16 +79,20 @@ class AnalysisType(enum.Enum):
     # Flux-level analyses
     FLUX_VISUALISATION = "flux_visualisation"    # Generate flux graphs
     FLUX_DECODE = "flux_decode"                  # Attempt to decode to sectors
-    
+
     # Sector/filesystem analyses
     SECTOR_DUMP = "sector_dump"                  # Raw sector extraction
     FILE_LISTING = "file_listing"                # Extract directory/file list
     FILE_EXTRACTION = "file_extraction"          # Extract actual files
-    
+
+    # Archive/nested file analyses
+    ARCHIVE_DETECT = "archive_detect"            # Scan for archives by filetype/extension
+    ARCHIVE_EXTRACT = "archive_extract"          # Extract specific archive file
+
     # Metadata
     METADATA_EXTRACT = "metadata_extract"        # Extract format metadata
     PARTITION_DETECT = "partition_detect"        # Detect partitions (HDD/CD)
-    
+
     # Verification
     CHECKSUM_COMPUTE = "checksum_compute"        # Compute hashes
     FORMAT_IDENTIFY = "format_identify"          # Identify exact format/variant
@@ -278,6 +282,7 @@ class Item(db.Model):
     id: Mapped[int] = mapped_column(primary_key=True)
     uuid: Mapped[str] = mapped_column(String(32), unique=True, index=True, default=generate_uuid)
     name: Mapped[str] = mapped_column(String(255), index=True)
+    slug: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     platform_id: Mapped[Optional[int]] = mapped_column(ForeignKey("platforms.id"), index=True, nullable=True)
     category_id: Mapped[Optional[int]] = mapped_column(ForeignKey("categories.id"), index=True, nullable=True)
@@ -305,6 +310,7 @@ class Artefact(db.Model):
     uuid: Mapped[str] = mapped_column(String(32), unique=True, index=True, default=generate_uuid)
     item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), index=True)
     label: Mapped[str] = mapped_column(String(255))
+    slug: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
     artefact_type: Mapped[ArtefactType] = mapped_column(SQLEnum(ArtefactType))
     type_overridden: Mapped[bool] = mapped_column(Boolean, default=False)  # Was type manually set?
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -365,6 +371,7 @@ class Analysis(db.Model):
     uuid: Mapped[str] = mapped_column(String(32), unique=True, index=True, default=generate_uuid)
     artefact_id: Mapped[int] = mapped_column(ForeignKey("artefacts.id"), index=True)
     analysis_type: Mapped[AnalysisType] = mapped_column(SQLEnum(AnalysisType))
+    slug: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
     status: Mapped[AnalysisStatus] = mapped_column(SQLEnum(AnalysisStatus), default=AnalysisStatus.PENDING)
     
     # Tool info (filled by worker)
@@ -411,6 +418,7 @@ class Partition(db.Model):
     artefact_id: Mapped[int] = mapped_column(ForeignKey("artefacts.id"), index=True)
     partition_index: Mapped[int] = mapped_column(Integer, default=0)
     label: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    slug: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
     filesystem: Mapped[FilesystemType] = mapped_column(SQLEnum(FilesystemType))
     start_sector: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     sector_count: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
@@ -419,6 +427,7 @@ class Partition(db.Model):
     total_directories: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     total_bytes: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     unique_files: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    detection_details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON from partition detection (sfdisk, etc.)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     artefact: Mapped["Artefact"] = relationship(back_populates="partitions")
@@ -447,10 +456,29 @@ class ExtractedFile(db.Model):
     known_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("known_files.id"), index=True, nullable=True)
     is_known: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
+    # Archive/nested file support
+    parent_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("extracted_files.id"), nullable=True, index=True)
+    is_archive: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    archive_format: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # e.g., 'ArcFS', 'ZIP', 'CFS'
+    risc_os_filetype: Mapped[Optional[str]] = mapped_column(String(3), nullable=True, index=True)  # Hex filetype (e.g., '3fb')
+    extraction_depth: Mapped[int] = mapped_column(Integer, default=0)  # Nesting level (0=top-level)
+
     partition: Mapped["Partition"] = relationship(back_populates="files")
     known_file: Mapped[Optional["KnownFile"]] = relationship()
 
-    __table_args__ = (Index("ix_extracted_files_partition_known", "partition_id", "is_known"),)
+    # Self-referential relationship for parent/child archives
+    parent_file: Mapped[Optional["ExtractedFile"]] = relationship(
+        "ExtractedFile",
+        remote_side=[id],
+        foreign_keys=[parent_file_id],
+        backref="child_files"
+    )
+
+    __table_args__ = (
+        Index("ix_extracted_files_partition_known", "partition_id", "is_known"),
+        Index("ix_extracted_files_archive", "is_archive", "risc_os_filetype"),
+        Index("ix_extracted_files_parent", "parent_file_id", "extraction_depth"),
+    )
 
 
 # =============================================================================
