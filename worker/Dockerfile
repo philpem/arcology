@@ -170,13 +170,17 @@ FROM debian:stable AS build-riscosarc
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt -y update && apt -y upgrade && \
-    apt -y install git build-essential
+    apt -y install git build-essential default-jdk
 
 # Clone and build riscosarc
 RUN git clone https://github.com/mjwoodcock/riscosarc.git /src/riscosarc && \
     cd /src/riscosarc && \
-    make && \
-    cp riscosarc /usr/local/bin/
+    mkdir build && \
+    javac -d ./build *.java riscos/archive/*.java riscos/archive/container/*.java && \
+    ( cd build && jar cvf ../riscosarc.jar * ) && \
+    cp riscosarc.jar /usr/local/bin/
+
+COPY worker/tools/riscosarc /usr/local/bin/
 
 
 #################
@@ -192,8 +196,7 @@ RUN apt -y update && apt -y upgrade && \
 # Clone and build tbafs extractor
 RUN git clone https://github.com/mattgodbolt/tbafs.git /src/tbafs && \
     cd /src/tbafs && \
-    make && \
-    cp tbafs /usr/local/bin/tbafs-extractor
+    cp tbafs.py /usr/local/bin/tbafs-extractor
 
 
 #################
@@ -221,6 +224,7 @@ COPY --from=build-discimagemanager /usr/local/bin/DiscImageManager /usr/local/bi
 COPY --from=build-arcology-tools /usr/local/bin/fcfs2raw /usr/local/bin/
 
 # Copy archive extraction tools
+COPY --from=build-riscosarc /usr/local/bin/riscosarc.jar /usr/local/bin/
 COPY --from=build-riscosarc /usr/local/bin/riscosarc /usr/local/bin/
 COPY --from=build-tbafs /usr/local/bin/tbafs-extractor /usr/local/bin/
 
@@ -239,7 +243,8 @@ ARG DEBIAN_FRONTEND=noninteractive
 # - tar: for TAR archives
 # - util-linux: for sfdisk (partition detection)
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+	--mount=type=cache,target=/var/lib/apt,sharing=locked \
+	sed -i -e 's/main/main non-free/' /etc/apt/sources.list.d/debian.sources && \
 	apt -y update && apt -y upgrade && \
 	apt -y install \
 		python3 python3-pip python3-dev python3-requests git \
