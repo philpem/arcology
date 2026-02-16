@@ -169,6 +169,8 @@ def list_files_dim(input_path: Path) -> dict:
         Result dict with success status, file list, count, and process_output.
         Each file entry includes 'path', 'size', and optionally 'filetype'.
     """
+    from ..utils.text import sanitize_path
+
     # Create a temp directory for extraction
     temp_dir = tempfile.mkdtemp(prefix='dim_list_')
 
@@ -216,6 +218,9 @@ exit
             else:
                 display_path = str(rel_path)
 
+            # Sanitize path for UTF-8 database storage (handles Acorn Latin-1, surrogates)
+            display_path = sanitize_path(display_path)
+
             file_entry = {
                 'path': display_path,
                 'size': file_path.stat().st_size,
@@ -261,6 +266,8 @@ def list_files_7z(input_path: Path) -> dict:
     Returns:
         Result dict with success status, file list, count, and process_output
     """
+    from ..utils.text import sanitize_path
+
     cmd = [
         '7z', 'l',
         '-slt',  # Technical listing format
@@ -272,20 +279,22 @@ def list_files_7z(input_path: Path) -> dict:
         return {
             'success': False,
             'tool': '7z',
-            'error': result.stderr.decode()[:1000],
+            'error': result.stderr.decode(errors='replace')[:1000],
             'process_output': process_output
         }
 
-    # Parse 7z output
+    # Parse 7z output (handle encoding issues)
     files = []
     current_file = {}
 
-    for line in result.stdout.decode().split('\n'):
+    for line in result.stdout.decode(errors='surrogateescape').split('\n'):
         line = line.strip()
         if line.startswith('Path = '):
             if current_file and 'path' in current_file:
                 files.append(current_file)
-            current_file = {'path': line[7:]}
+            # Sanitize path for UTF-8 database storage
+            path = sanitize_path(line[7:])
+            current_file = {'path': path}
         elif line.startswith('Size = '):
             try:
                 current_file['size'] = int(line[7:])
