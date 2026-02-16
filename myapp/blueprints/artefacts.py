@@ -207,6 +207,7 @@ class AnalyseForm(FlaskForm):
 class FileSearchForm(FlaskForm):
     filename = StringField('Filename', validators=[Optional()])
     extension = StringField('Extension', validators=[Optional()])
+    path = StringField('Path/Directory', validators=[Optional()])
     md5 = StringField('MD5 Hash', validators=[Optional()])
     sha1 = StringField('SHA1 Hash', validators=[Optional()])
     show_known = BooleanField('Show known files', default=False)
@@ -418,7 +419,14 @@ def view(uuid):
         files_query = files_query.filter(
             ExtractedFile.extension == file_form.extension.data.lower().lstrip('.')
         )
-    
+
+    if file_form.path.data:
+        # Support both exact directory match and "starts with" for browsing subdirectories
+        path_filter = file_form.path.data.strip()
+        files_query = files_query.filter(
+            ExtractedFile.path.ilike(f'{path_filter}%')
+        )
+
     if file_form.md5.data:
         files_query = files_query.filter(ExtractedFile.md5 == file_form.md5.data.lower())
     
@@ -433,7 +441,32 @@ def view(uuid):
     files_pagination = files_query.order_by(ExtractedFile.path).paginate(
         page=page, per_page=per_page
     )
-    
+
+    # Extract subdirectories at the current path level for directory browsing
+    current_path = file_form.path.data.strip() if file_form.path.data else ''
+    subdirectories = set()
+
+    if all_partitions:
+        # Get all file paths matching current filter
+        all_files = files_query.with_entities(ExtractedFile.path).all()
+
+        for (file_path,) in all_files:
+            # Remove the current path prefix
+            if current_path:
+                if not file_path.startswith(current_path):
+                    continue
+                relative_path = file_path[len(current_path):]
+            else:
+                relative_path = file_path
+
+            # Extract the first directory component
+            if '/' in relative_path:
+                first_dir = relative_path.split('/')[0]
+                if first_dir:  # Ignore empty strings
+                    subdirectories.add(first_dir)
+
+    subdirectories = sorted(subdirectories)
+
     return render_template('artefacts/view.html',
                            artefact=artefact,
                            analyses=analyses,
@@ -443,7 +476,9 @@ def view(uuid):
                            file_form=file_form,
                            files=files_pagination.items,
                            files_pagination=files_pagination,
-                           all_partitions=all_partitions)
+                           all_partitions=all_partitions,
+                           subdirectories=subdirectories,
+                           current_path=current_path)
 
 
 @blueprint.route('/item/<string:item_uuid>/upload', methods=['GET', 'POST'])
