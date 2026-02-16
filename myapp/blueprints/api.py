@@ -395,6 +395,7 @@ def add_partition(uuid):
 
     partition = Partition(artefact_id=artefact.id, partition_index=partition_index,
                           label=data.get('label'), filesystem=filesystem,
+                          container_format=data.get('container_format'),
                           total_files=data.get('total_files'), total_bytes=data.get('total_bytes'))
     db.session.add(partition)
     db.session.commit()
@@ -600,6 +601,7 @@ def analysis_to_dict(analysis, include_artefact=False):
 def partition_to_dict(partition):
     return {'id': partition.id, 'uuid': partition.uuid, 'partition_index': partition.partition_index,
             'label': partition.label, 'filesystem': partition.filesystem.value,
+            'container_format': partition.container_format,
             'total_files': partition.total_files, 'unique_files': partition.unique_files}
 
 

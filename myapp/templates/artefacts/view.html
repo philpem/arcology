@@ -123,19 +123,25 @@
         <div class="card mb-4">
             <div class="card-header"><i class="bi bi-hdd"></i> Partitions</div>
             <div class="table-responsive">
-                <table class="table table-sm mb-0">
+                <table class="table table-sm mb-0 table-hover">
                     <thead><tr><th>#</th><th>Label</th><th>Filesystem</th><th>Files</th><th>Unique</th><th>Source</th></tr></thead>
                     <tbody>
                         {% for p in all_partitions %}
-                        <tr>
+                        <tr style="cursor: pointer;" onclick="filterByPartition('{{ p.uuid }}')" title="Click to filter files by this partition">
                             <td>{{ p.partition_index }}</td>
                             <td>{{ p.label or '-' }}</td>
-                            <td><code>{{ p.filesystem.value }}</code></td>
+                            <td>
+                                {% if p.container_format %}
+                                <code style="border-bottom: 1px dotted #999; cursor: help;" title="{{ p.container_format }}">{{ p.filesystem.value }}</code>
+                                {% else %}
+                                <code>{{ p.filesystem.value }}</code>
+                                {% endif %}
+                            </td>
                             <td>{{ p.total_files or '-' }}</td>
                             <td>{% if p.unique_files is not none %}<span class="badge bg-info">{{ p.unique_files }}</span>{% else %}-{% endif %}</td>
                             <td>
                                 {% if p.artefact_id != artefact.id %}
-                                <a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=p.artefact.uuid) }}" class="badge bg-secondary text-decoration-none">{{ p.artefact.label }}</a>
+                                <a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=p.artefact.uuid) }}" class="badge bg-secondary text-decoration-none" onclick="event.stopPropagation()">{{ p.artefact.label }}</a>
                                 {% else %}-{% endif %}
                             </td>
                         </tr>
@@ -144,6 +150,18 @@
                 </table>
             </div>
         </div>
+
+        <script>
+        function filterByPartition(partitionUuid) {
+            // Get the form element
+            const form = document.querySelector('form[method="get"]');
+            // Set the partition_uuid select element
+            const partitionSelect = form.querySelector('select[name="partition_uuid"]');
+            partitionSelect.value = partitionUuid;
+            // Submit the form
+            form.submit();
+        }
+        </script>
         {% endif %}
         
         <div class="card">
@@ -195,10 +213,11 @@
             {% endif %}
             <div class="table-responsive">
                 <table class="table table-sm table-hover mb-0">
-                    <thead><tr><th>Path</th><th>Size</th><th>Partition</th><th>Known</th></tr></thead>
+                    <thead><tr><th>P</th><th>Path</th><th>Size</th><th>Filetype</th><th>Known</th></tr></thead>
                     <tbody>
                         {% for file in files %}
                         <tr class="{{ 'table-secondary' if file.is_known else '' }}{{ ' fst-italic' if file.is_directory else '' }}">
+                            <td><span class="badge bg-info" title="Partition {{ file.partition.partition_index }}">{{ file.partition.partition_index }}</span></td>
                             <td>
                                 {% if file.is_directory %}
                                     {# Directory - make it clickable to browse into it #}
@@ -227,11 +246,17 @@
                                 {% endif %}
                             </td>
                             <td>{% if file.is_directory %}<span class="text-muted">DIR</span>{% elif file.file_size %}{{ (file.file_size / 1024)|round(1) }} KB{% else %}-{% endif %}</td>
-                            <td><span class="badge bg-info">{{ file.partition.partition_index }}</span></td>
+                            <td>
+                                {% if file.risc_os_filetype %}
+                                    <span class="text-muted" title="{{ file.risc_os_filetype | format_filetype }}">
+                                        <small>{{ file.risc_os_filetype | filetype_name }}</small>
+                                    </span>
+                                {% else %}-{% endif %}
+                            </td>
                             <td>{% if file.is_known %}<span class="badge bg-secondary">{{ file.known_file.database.name }}</span>{% endif %}</td>
                         </tr>
                         {% else %}
-                        <tr><td colspan="3" class="text-center text-muted">No files{% if not all_partitions %} - run analysis to extract file listing{% endif %}</td></tr>
+                        <tr><td colspan="5" class="text-center text-muted">No files{% if not all_partitions %} - run analysis to extract file listing{% endif %}</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>

@@ -423,6 +423,7 @@ class Partition(db.Model):
     label: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     slug: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
     filesystem: Mapped[FilesystemType] = mapped_column(SQLEnum(FilesystemType))
+    container_format: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Detailed format from disc image tools (e.g., "Acorn ADFS E")
     start_sector: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     sector_count: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     block_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

@@ -276,14 +276,16 @@ class AnalysisWorker:
             # Use filesystem from hints or 'unknown'
             fs_type = filesystem if filesystem else 'unknown'
 
-            # Extract disc name from result (if available from DIM report)
+            # Extract disc name and container format from result (if available from DIM report)
             disc_name = result.get('disc_name')
+            container_format = result.get('container_format')
 
             partition = self.api.register_file_listing(
                 artefact['uuid'],
                 result['files'],
                 fs_type,
-                label=disc_name
+                label=disc_name,
+                container_format=container_format
             )
 
             self.api.update_analysis(

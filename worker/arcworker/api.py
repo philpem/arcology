@@ -153,7 +153,8 @@ class ArcologyAPI:
         artefact_uuid: str,
         files: list[dict],
         filesystem: str = 'unknown',
-        label: str = None
+        label: str = None,
+        container_format: str = None
     ):
         """
         Register extracted file listing in API.
@@ -163,6 +164,7 @@ class ArcologyAPI:
             files: List of file dicts with path, size, crc32, etc.
             filesystem: Filesystem type (e.g., 'fat', 'adfs')
             label: Optional partition label (e.g., disc name for ADFS)
+            container_format: Optional detailed format info (e.g., "Acorn ADFS E")
 
         Returns:
             Partition dict if successful, None otherwise
@@ -175,6 +177,8 @@ class ArcologyAPI:
         }
         if label:
             partition_data['label'] = label
+        if container_format:
+            partition_data['container_format'] = container_format
 
         partition_resp = self.post(f"/artefacts/{artefact_uuid}/partitions", partition_data)
 
