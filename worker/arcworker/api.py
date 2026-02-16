@@ -176,7 +176,7 @@ class ArcologyAPI:
             log.error("Failed to create partition")
             return None
 
-        partition_id = partition_resp.get('id')
+        partition_uuid = partition_resp.get('uuid')
 
         # Add files in batches
         batch_size = 100
@@ -199,7 +199,7 @@ class ArcologyAPI:
                     'extraction_depth': f.get('extraction_depth', 0)
                 })
 
-            self.post(f"/partitions/{partition_id}/files", {'files': file_records})
+            self.post(f"/partitions/{partition_uuid}/files", {'files': file_records})
 
         return partition_resp
 

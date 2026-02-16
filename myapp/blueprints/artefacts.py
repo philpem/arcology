@@ -332,10 +332,15 @@ def cleanup_old_analyses(artefact: Artefact) -> int:
         ~Analysis.id.in_(most_recent_ids)
     ).all()
 
-    deleted_count = len(old_analyses)
+    deleted_count = 0
     output_folder = get_output_folder()
 
     for analysis in old_analyses:
+        # Skip analyses that have produced artefacts (referenced by derived_from_analysis_id)
+        if analysis.produced_artefacts:
+            current_app.logger.info(f"Skipping analysis {analysis.id} - has {len(analysis.produced_artefacts)} derived artefact(s)")
+            continue
+
         # Delete associated output files if they exist
         if analysis.details:
             try:
@@ -356,6 +361,7 @@ def cleanup_old_analyses(artefact: Artefact) -> int:
 
         # Delete the analysis record
         db.session.delete(analysis)
+        deleted_count += 1
 
     db.session.commit()
 

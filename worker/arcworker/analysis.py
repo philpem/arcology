@@ -293,7 +293,7 @@ class AnalysisWorker:
                 self.api.queue_analysis(
                     artefact['uuid'],
                     AnalysisType.ARCHIVE_DETECT.value,
-                    hints={'partition_id': partition.get('id')}
+                    hints={'partition_uuid': partition.get('uuid')}
                 )
         else:
             self.api.update_analysis(
@@ -520,7 +520,7 @@ class AnalysisWorker:
         Scans partition files for archives and queues extraction jobs.
         """
         import json
-        from myapp.archive_formats import (
+        from .archive_formats import (
             get_archive_by_filetype,
             get_archive_by_extension,
             get_archive_info,
@@ -530,19 +530,19 @@ class AnalysisWorker:
 
         analysis_id = analysis['id']
         hints = json.loads(analysis.get('hints') or '{}')
-        partition_id = hints.get('partition_id')
+        partition_uuid = hints.get('partition_uuid')
 
-        if not partition_id:
+        if not partition_uuid:
             self.api.update_analysis(
                 analysis_id,
                 status='failed',
                 success=False,
-                error_message='No partition_id in analysis hints'
+                error_message='No partition_uuid in analysis hints'
             )
             return
 
         # Get all files in partition from API
-        partition_resp = self.api.get(f"/partitions/{partition_id}/files?per_page=10000")
+        partition_resp = self.api.get(f"/partitions/{partition_uuid}/files?per_page=10000")
         if not partition_resp:
             self.api.update_analysis(
                 analysis_id,
@@ -604,7 +604,7 @@ class AnalysisWorker:
                 AnalysisType.ARCHIVE_EXTRACT.value,
                 hints={
                     'file_id': file_data['id'],
-                    'partition_id': partition_id,
+                    'partition_uuid': partition_uuid,
                     'archive_type': archive_type.value,
                     'archive_format': archive_info['name'],
                     'is_compressor': is_compressor,
@@ -637,7 +637,7 @@ class AnalysisWorker:
         Performs actual extraction with file path resolution.
         """
         import json
-        from myapp.archive_formats import (
+        from .archive_formats import (
             ArchiveType,
             get_archive_info,
             is_compressor_format,
@@ -663,7 +663,7 @@ class AnalysisWorker:
         hints = json.loads(analysis.get('hints') or '{}')
 
         file_id = hints.get('file_id')
-        partition_id = hints.get('partition_id')
+        partition_uuid = hints.get('partition_uuid')
         archive_type_str = hints.get('archive_type')
         is_compressor = hints.get('is_compressor', False)
         extraction_depth = hints.get('extraction_depth', 1)
@@ -682,7 +682,7 @@ class AnalysisWorker:
             return
 
         # Get partition and item metadata from API
-        partition_resp = self.api.get(f"/partitions/{partition_id}")
+        partition_resp = self.api.get(f"/partitions/{partition_uuid}")
         if not partition_resp:
             self.api.update_analysis(
                 analysis_id,
@@ -695,7 +695,7 @@ class AnalysisWorker:
         partition = partition_resp.get('partition', {})
 
         # Find the file in the partition
-        files_resp = self.api.get(f"/partitions/{partition_id}/files?per_page=10000")
+        files_resp = self.api.get(f"/partitions/{partition_uuid}/files?per_page=10000")
         if not files_resp:
             self.api.update_analysis(
                 analysis_id,
@@ -862,14 +862,14 @@ class AnalysisWorker:
                         'parent_file_id': f['parent_file_id'],
                         'extraction_depth': f['extraction_depth']
                     })
-                self.api.post(f"/partitions/{partition_id}/files", {'files': file_records})
+                self.api.post(f"/partitions/{partition_uuid}/files", {'files': file_records})
 
         # Queue ARCHIVE_DETECT for nested archives (if under depth limit)
         if extraction_depth < MAX_ARCHIVE_DEPTH:
             self.api.queue_analysis(
                 artefact['uuid'],
                 AnalysisType.ARCHIVE_DETECT.value,
-                hints={'partition_id': partition_id}
+                hints={'partition_uuid': partition_uuid}
             )
 
         self.api.update_analysis(
