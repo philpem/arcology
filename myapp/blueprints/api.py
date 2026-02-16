@@ -380,17 +380,18 @@ def add_partition(uuid):
 
     partition_index = data.get('partition_index', 0)
 
-    # Check if a partition with this index already exists
-    existing = Partition.query.filter_by(
+    # Delete ALL existing partitions with this index (handles duplicates from previous runs)
+    existing_partitions = Partition.query.filter_by(
         artefact_id=artefact.id,
         partition_index=partition_index
-    ).first()
+    ).all()
 
-    if existing:
-        # Delete existing partition (cascade will delete all files)
-        current_app.logger.info(f"Deleting existing partition {existing.uuid} (index {partition_index}) for artefact {uuid}")
-        db.session.delete(existing)
-        db.session.flush()  # Ensure delete is processed before creating new one
+    if existing_partitions:
+        # Delete all existing partitions (cascade will delete all files)
+        for existing in existing_partitions:
+            current_app.logger.info(f"Deleting existing partition {existing.uuid} (index {partition_index}) for artefact {uuid}")
+            db.session.delete(existing)
+        db.session.flush()  # Ensure deletes are processed before creating new one
 
     partition = Partition(artefact_id=artefact.id, partition_index=partition_index,
                           label=data.get('label'), filesystem=filesystem,
@@ -406,11 +407,23 @@ def add_files(uuid):
     data = request.get_json()
     if 'files' not in data:
         return error_response('files array required')
-    
+
     added = 0
+    skipped = 0
     for f in data['files']:
         if 'path' not in f or 'filename' not in f:
             continue
+
+        # Check if this file already exists in the partition (prevents duplicates)
+        existing_file = ExtractedFile.query.filter_by(
+            partition_id=partition.id,
+            path=f['path']
+        ).first()
+
+        if existing_file:
+            skipped += 1
+            continue
+
         ef = ExtractedFile(
             partition_id=partition.id,
             path=f['path'],
@@ -433,11 +446,16 @@ def add_files(uuid):
                 ef.is_known = True
         db.session.add(ef)
         added += 1
-    
+
     partition.total_files = ExtractedFile.query.filter_by(partition_id=partition.id).count()
     partition.unique_files = ExtractedFile.query.filter_by(partition_id=partition.id, is_known=False).count()
     db.session.commit()
-    return jsonify({'added': added})
+
+    response = {'added': added}
+    if skipped > 0:
+        response['skipped'] = skipped
+        current_app.logger.info(f"Skipped {skipped} duplicate files for partition {uuid}")
+    return jsonify(response)
 
 
 @blueprint.route('/partitions/<string:uuid>/files', methods=['GET'])

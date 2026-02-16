@@ -412,6 +412,9 @@ class Analysis(db.Model):
 class Partition(db.Model):
     """A partition or filesystem within an artefact."""
     __tablename__ = "partitions"
+    __table_args__ = (
+        db.UniqueConstraint('artefact_id', 'partition_index', name='uq_partition_artefact_index'),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     uuid: Mapped[str] = mapped_column(String(32), unique=True, index=True, default=generate_uuid)
