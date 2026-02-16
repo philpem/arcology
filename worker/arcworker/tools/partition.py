@@ -106,14 +106,14 @@ def detect_acorn_adfs(input_path: Path) -> dict:
         # The sum of all 512 bytes in the boot block should be 0 mod 256
         if len(header) >= 512:
             boot_checksum = sum(header[0:512]) & 0xFF
-            if boot_checksum == 0 or boot_checksum_2 == 0:
+            if boot_checksum == 0:
                 signatures.append('Valid ADFS boot block checksum (sector 0)')
                 adfs_variant = 'new_map'
 
         # F-format (hard discs) has the block at disc address 0xC00
         if len(header) >= 0xC00+512:
-            boot_checksum = sum(header[0xC00:0xC00:512]) & 0xFF
-            if boot_checksum == 0 or boot_checksum_2 == 0:
+            boot_checksum = sum(header[0xC00:0xC00+512]) & 0xFF
+            if boot_checksum == 0:
                 signatures.append('Valid ADFS boot block checksum (disc address &C00)')
                 adfs_variant = 'new_map'
 
