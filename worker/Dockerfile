@@ -84,7 +84,7 @@ FROM debian:stable AS build-discimagemanager
 
 # Version to build
 #ARG DISCIMAGEMANAGER_VERSION=1.49
-ARG DISCIMAGEMANAGER_VERSION=claude/decouple-ui-processing-pE02f
+ARG DISCIMAGEMANAGER_VERSION=feature/decouple-ui-from-cli
 # Binary build location -- you shouldn't have to change this
 ARG DISCIMAGEMANAGER_URL=https://github.com/geraldholdsworth/DiscImageManager/releases/download/${DISCIMAGEMANAGER_VERSION}/Disc.Image.Manager.${DISCIMAGEMANAGER_VERSION}.Linux.64.bit.Intel.zip
 # Github repo location
