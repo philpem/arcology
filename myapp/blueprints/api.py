@@ -575,6 +575,7 @@ def analysis_to_dict(analysis, include_artefact=False):
         'tool_name': analysis.tool_name, 'hints': analysis.hints,
         'output_url': analysis.output_url,
         'success': analysis.success, 'summary': analysis.summary, 'error_message': analysis.error_message,
+        'details': analysis.details,
         'created_at': analysis.created_at.isoformat(),
         'started_at': analysis.started_at.isoformat() if analysis.started_at else None,
         'completed_at': analysis.completed_at.isoformat() if analysis.completed_at else None
