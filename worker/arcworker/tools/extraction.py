@@ -157,6 +157,36 @@ def _parse_acorn_filename(filename: str) -> tuple[str, str | None]:
     return filename, None
 
 
+def _parse_dim_report(output: str) -> dict:
+    """
+    Parse Disc Image Manager report output to extract disc metadata.
+
+    Args:
+        output: DIM process output containing report data
+
+    Returns:
+        Dict with 'disc_name' and 'container_format' if found
+    """
+    result = {}
+
+    for line in output.split('\n'):
+        line = line.strip()
+
+        # Extract disc name (e.g., "Disc Name: TheHacker")
+        if line.startswith('Disc Name:'):
+            disc_name = line.split(':', 1)[1].strip()
+            if disc_name:
+                result['disc_name'] = disc_name
+
+        # Extract container format (e.g., "Container format: Acorn ADFS E")
+        elif line.startswith('Container format:'):
+            container_format = line.split(':', 1)[1].strip()
+            if container_format:
+                result['container_format'] = container_format
+
+    return result
+
+
 def list_files_dim(input_path: Path) -> dict:
     """
     List files in an Acorn DFS/ADFS disc image using Disc Image Manager.
@@ -168,14 +198,16 @@ def list_files_dim(input_path: Path) -> dict:
     Returns:
         Result dict with success status, file list, count, and process_output.
         Each file entry includes 'path', 'size', and optionally 'filetype'.
+        Also includes 'disc_name' and 'container_format' if available.
     """
     from ..utils.text import sanitize_path
 
     # Create a temp directory for extraction
     temp_dir = tempfile.mkdtemp(prefix='dim_list_')
 
-    # Create DIM script to extract files
+    # Create DIM script to extract files (include report command)
     script_content = f"""insert {input_path}
+report
 chdir {temp_dir}
 extract *
 exit
@@ -244,8 +276,11 @@ exit
 
             files.append(file_entry)
 
+        # Parse DIM report output for disc metadata
+        metadata = _parse_dim_report(process_output)
+
         if files:
-            return {
+            result_dict = {
                 'success': True,
                 'tool': 'DiscImageManager',
                 'files': files,
@@ -253,6 +288,10 @@ exit
                 'summary': f'Found {len(files)} files in Acorn disc image',
                 'process_output': process_output
             }
+            # Include disc metadata if available
+            if metadata:
+                result_dict.update(metadata)
+            return result_dict
 
         return {
             'success': False,

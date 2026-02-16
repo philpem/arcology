@@ -401,6 +401,13 @@ def add_partition(uuid):
     return jsonify(partition_to_dict(partition)), 201
 
 
+@blueprint.route('/partitions/<string:uuid>', methods=['GET'])
+def get_partition(uuid):
+    """Get partition details by UUID."""
+    partition = Partition.query.filter_by(uuid=uuid).first_or_404()
+    return jsonify(partition_to_dict(partition))
+
+
 @blueprint.route('/partitions/<string:uuid>/files', methods=['POST'])
 def add_files(uuid):
     partition = Partition.query.filter_by(uuid=uuid).first_or_404()
