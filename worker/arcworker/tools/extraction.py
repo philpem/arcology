@@ -15,6 +15,9 @@ from pathlib import Path
 
 from .base import run_tool_with_output
 
+# Debugging option: if True, scripts and output files will not be deleted.
+_DEBUG_KEEP_OUTFILES = False
+
 
 def extract_acorn_disc_image_manager(input_path: Path, output_dir: Path) -> dict:
     """
@@ -35,7 +38,7 @@ def extract_acorn_disc_image_manager(input_path: Path, output_dir: Path) -> dict
 report
 chdir {output_dir}
 config CreateINF true
-extract * {output_dir}
+extract *
 exit
 """
 
@@ -46,7 +49,7 @@ exit
     try:
         cmd = [
             'DiscImageManager',
-            '-c', script_path
+            '-s', script_path
         ]
         result, process_output = run_tool_with_output(cmd)
 
@@ -72,7 +75,8 @@ exit
         }
 
     finally:
-        os.unlink(script_path)
+        if not _DEBUG_KEEP_OUTFILES:
+            os.unlink(script_path)
 
 
 def extract_dos_7z(input_path: Path, output_dir: Path) -> dict:
@@ -171,7 +175,7 @@ def list_files_dim(input_path: Path) -> dict:
     # Create DIM script to extract files
     script_content = f"""insert {input_path}
 chdir {temp_dir}
-extract * {temp_dir}
+extract *
 exit
 """
 
@@ -182,7 +186,7 @@ exit
     try:
         cmd = [
             'DiscImageManager',
-            '-c', script_path
+            '-s', script_path
         ]
         result, process_output = run_tool_with_output(cmd)
 
@@ -241,8 +245,9 @@ exit
         }
 
     finally:
-        os.unlink(script_path)
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        if not _DEBUG_KEEP_OUTFILES:
+            os.unlink(script_path)
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def list_files_7z(input_path: Path) -> dict:
