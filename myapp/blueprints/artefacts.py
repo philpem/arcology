@@ -333,13 +333,18 @@ def cleanup_old_analyses(artefact: Artefact) -> int:
     ).all()
 
     deleted_count = 0
+    deleted_artefacts = 0
     output_folder = get_output_folder()
 
     for analysis in old_analyses:
-        # Skip analyses that have produced artefacts (referenced by derived_from_analysis_id)
+        # Delete any artefacts produced by this analysis
+        # (e.g., sector images from flux decode, extracted files, etc.)
         if analysis.produced_artefacts:
-            current_app.logger.info(f"Skipping analysis {analysis.id} - has {len(analysis.produced_artefacts)} derived artefact(s)")
-            continue
+            for produced_artefact in list(analysis.produced_artefacts):
+                current_app.logger.info(f"Deleting produced artefact {produced_artefact.uuid} from old analysis {analysis.id}")
+                _delete_artefact_files(produced_artefact)
+                db.session.delete(produced_artefact)
+                deleted_artefacts += 1
 
         # Delete associated output files if they exist
         if analysis.details:
@@ -364,6 +369,9 @@ def cleanup_old_analyses(artefact: Artefact) -> int:
         deleted_count += 1
 
     db.session.commit()
+
+    if deleted_artefacts > 0:
+        current_app.logger.info(f"Deleted {deleted_artefacts} produced artefact(s) from old analyses")
 
     return deleted_count
 
