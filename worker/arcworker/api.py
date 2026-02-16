@@ -150,7 +150,7 @@ class ArcologyAPI:
 
     def register_file_listing(
         self,
-        artefact_id: int,
+        artefact_uuid: str,
         files: list[dict],
         filesystem: str = 'unknown'
     ):
@@ -158,7 +158,7 @@ class ArcologyAPI:
         Register extracted file listing in API.
 
         Args:
-            artefact_id: ID of the artefact containing the files
+            artefact_uuid: UUID of the artefact containing the files
             files: List of file dicts with path, size, crc32, etc.
             filesystem: Filesystem type (e.g., 'fat', 'adfs')
 
@@ -166,7 +166,7 @@ class ArcologyAPI:
             Partition dict if successful, None otherwise
         """
         # First create partition
-        partition_resp = self.post(f"/artefacts/{artefact_id}/partitions", {
+        partition_resp = self.post(f"/artefacts/{artefact_uuid}/partitions", {
             'partition_index': 0,
             'filesystem': filesystem,
             'total_files': len(files)

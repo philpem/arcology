@@ -276,7 +276,7 @@ class AnalysisWorker:
             # Use filesystem from hints or 'unknown'
             fs_type = filesystem if filesystem else 'unknown'
 
-            partition = self.api.register_file_listing(artefact_id, result['files'], fs_type)
+            partition = self.api.register_file_listing(artefact['uuid'], result['files'], fs_type)
 
             self.api.update_analysis(
                 analysis_id,
