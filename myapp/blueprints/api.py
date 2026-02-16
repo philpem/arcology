@@ -377,8 +377,22 @@ def add_partition(uuid):
         filesystem = FilesystemType(data.get('filesystem', 'unknown'))
     except ValueError:
         return error_response('Invalid filesystem')
-    
-    partition = Partition(artefact_id=artefact.id, partition_index=data.get('partition_index', 0),
+
+    partition_index = data.get('partition_index', 0)
+
+    # Check if a partition with this index already exists
+    existing = Partition.query.filter_by(
+        artefact_id=artefact.id,
+        partition_index=partition_index
+    ).first()
+
+    if existing:
+        # Delete existing partition (cascade will delete all files)
+        current_app.logger.info(f"Deleting existing partition {existing.uuid} (index {partition_index}) for artefact {uuid}")
+        db.session.delete(existing)
+        db.session.flush()  # Ensure delete is processed before creating new one
+
+    partition = Partition(artefact_id=artefact.id, partition_index=partition_index,
                           label=data.get('label'), filesystem=filesystem,
                           total_files=data.get('total_files'), total_bytes=data.get('total_bytes'))
     db.session.add(partition)
