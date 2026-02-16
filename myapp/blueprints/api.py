@@ -434,6 +434,7 @@ def add_files(uuid):
             sha1=f.get('sha1'),
             crc32=f.get('crc32'),
             # Archive support fields
+            is_directory=f.get('is_directory', False),
             risc_os_filetype=f.get('risc_os_filetype'),
             parent_file_id=f.get('parent_file_id'),
             extraction_depth=f.get('extraction_depth', 0)

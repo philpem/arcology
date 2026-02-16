@@ -205,12 +205,15 @@ class AnalyseForm(FlaskForm):
 
 
 class FileSearchForm(FlaskForm):
+    partition_uuid = StringField('Partition UUID', validators=[Optional()])
     filename = StringField('Filename', validators=[Optional()])
     extension = StringField('Extension', validators=[Optional()])
     path = StringField('Path/Directory', validators=[Optional()])
     md5 = StringField('MD5 Hash', validators=[Optional()])
     sha1 = StringField('SHA1 Hash', validators=[Optional()])
     show_known = BooleanField('Show known files', default=False)
+    show_directories = BooleanField('Show directories', default=False)
+    recursive = BooleanField('Recursive (show all subdirs)', default=True)
 
 
 # =============================================================================
@@ -409,7 +412,15 @@ def view(uuid):
     files_query = ExtractedFile.query.join(Partition).filter(
         Partition.artefact_id.in_(all_artefact_ids)
     )
-    
+
+    # Filter by specific partition if requested
+    if file_form.partition_uuid.data:
+        files_query = files_query.filter(Partition.uuid == file_form.partition_uuid.data)
+
+    # Hide directories by default (unless explicitly requested)
+    if not file_form.show_directories.data:
+        files_query = files_query.filter(ExtractedFile.is_directory == False)
+
     if file_form.filename.data:
         files_query = files_query.filter(
             ExtractedFile.filename.ilike(f'%{file_form.filename.data}%')
@@ -421,11 +432,22 @@ def view(uuid):
         )
 
     if file_form.path.data:
-        # Support both exact directory match and "starts with" for browsing subdirectories
         path_filter = file_form.path.data.strip()
-        files_query = files_query.filter(
-            ExtractedFile.path.ilike(f'{path_filter}%')
-        )
+        if file_form.recursive.data:
+            # Recursive: show all files under this path (starts with)
+            files_query = files_query.filter(
+                ExtractedFile.path.ilike(f'{path_filter}%')
+            )
+        else:
+            # Non-recursive: only files directly in this directory (no additional slashes after path)
+            # This shows files at the current level only
+            from sqlalchemy import and_, not_, func
+            files_query = files_query.filter(
+                and_(
+                    ExtractedFile.path.ilike(f'{path_filter}%'),
+                    not_(func.substr(ExtractedFile.path, len(path_filter) + 1).contains('/'))
+                )
+            )
 
     if file_form.md5.data:
         files_query = files_query.filter(ExtractedFile.md5 == file_form.md5.data.lower())

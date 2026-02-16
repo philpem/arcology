@@ -221,10 +221,22 @@ exit
             # Sanitize path for UTF-8 database storage (handles Acorn Latin-1, surrogates)
             display_path = sanitize_path(display_path)
 
+            file_size = file_path.stat().st_size
+
             file_entry = {
                 'path': display_path,
-                'size': file_path.stat().st_size,
+                'size': file_size,
             }
+
+            # Detect ADFS directories (typically 2KB/2048 bytes)
+            # RISC OS directories can also have filetype 'ddc' or attributes with 'D'
+            is_directory = (
+                file_size == 2048 or  # ADFS directory size
+                filetype == 'ddc'     # RISC OS directory filetype
+            )
+
+            if is_directory:
+                file_entry['is_directory'] = True
 
             # Store RISC OS filetype (hex string like '3fb') for archive detection
             if filetype:
