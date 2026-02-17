@@ -924,8 +924,9 @@ class AnalysisWorker:
             shutil.copytree(temp_output_dir, persistent_output, dirs_exist_ok=True)
 
         # Scan extracted files from persistent storage.
-        # Prefix paths with the archive's own path so that files appear
-        # nested inside the archive as if it were a directory.
+        # Paths are stored relative to the extraction output.  The API
+        # will automatically prefix them with the archive's path when
+        # registering (based on parent_file_id).
         archive_display_path = target_file['path']
         files = []
         for file_path in persistent_output.rglob('*'):
@@ -933,9 +934,8 @@ class AnalysisWorker:
                 continue
 
             rel_path = file_path.relative_to(persistent_output)
-            nested_path = archive_display_path + '/' + str(rel_path)
             files.append({
-                'path': nested_path,
+                'path': str(rel_path),
                 'size': file_path.stat().st_size,
                 'parent_file_id': file_id,
                 'extraction_depth': extraction_depth
