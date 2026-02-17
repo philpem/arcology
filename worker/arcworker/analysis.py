@@ -5,10 +5,12 @@ Contains the main AnalysisWorker class that polls for jobs and
 dispatches them to appropriate handlers.
 """
 
+import functools
 import json
 import shutil
 import tempfile
 import time
+import traceback
 from pathlib import Path
 
 from .config import log, POLL_INTERVAL
@@ -30,6 +32,36 @@ from .tools import (
     detect_acorn_adfs,
     detect_format_file_cmd,
 )
+
+
+def analysis_handler(description: str):
+    """
+    Decorator for analysis handler methods.
+
+    Catches unhandled exceptions and reports them to the API with a standard
+    error format including traceback, preventing jobs from getting stuck in
+    'running' state.
+    """
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapper(self, analysis: dict, artefact: dict, work_dir: Path):
+            analysis_id = analysis['id']
+            try:
+                return fn(self, analysis, artefact, work_dir)
+            except Exception as e:
+                log.exception(f"Analysis {analysis_id} failed during {description}")
+                self.api.update_analysis(
+                    analysis_id,
+                    status='failed',
+                    success=False,
+                    error_message=f'{description} failed: {str(e)[:500]}',
+                    details=json.dumps({
+                        'exception': str(e),
+                        'exception_trace': traceback.format_exc()[:5000],
+                    })
+                )
+        return wrapper
+    return decorator
 
 
 class AnalysisWorker:
@@ -96,10 +128,12 @@ class AnalysisWorker:
     # Analysis Handlers
     # =========================================================================
 
+    @analysis_handler("flux visualisation")
     def process_flux_visualisation(self, analysis: dict, artefact: dict, work_dir: Path):
         """Process FLUX_VISUALISATION analysis."""
         analysis_id = analysis['id']
         analysis_uuid = analysis['uuid']
+
         input_path = self.get_input_path(artefact, work_dir)
 
         outputs = []
@@ -152,16 +186,17 @@ class AnalysisWorker:
                 error_message=f"Fluxfox: {result_fluxfox.get('error', 'unknown')}; HxCFE: {result_hxcfe.get('error', 'unknown')}"
             )
 
+    @analysis_handler("flux decode")
     def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
         """
         Process FLUX_DECODE analysis.
         Attempts to decode flux to sector image, producing derived artefacts.
         """
         analysis_id = analysis['id']
+        results = []
+
         input_path = self.get_input_path(artefact, work_dir)
         artefact_label = artefact['label']
-
-        results = []
 
         # 1. Convert to IMD (preserves track metadata)
         imd_path = work_dir / f"{input_path.stem}.imd"
@@ -224,6 +259,7 @@ class AnalysisWorker:
             details=json.dumps({name: r for name, r in results})
         )
 
+    @analysis_handler("file listing")
     def process_file_listing(self, analysis: dict, artefact: dict, work_dir: Path):
         """
         Process FILE_LISTING analysis.
@@ -231,7 +267,6 @@ class AnalysisWorker:
         Only works on raw sector images (IMG) - not HFE or IMD formats.
         """
         analysis_id = analysis['id']
-        artefact_id = artefact['id']
         artefact_type = artefact.get('artefact_type', '')
 
         # Only raw sector images can be processed by 7z and DIM
@@ -339,6 +374,7 @@ class AnalysisWorker:
                 })
             )
 
+    @analysis_handler("file extraction")
     def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path):
         """
         Process FILE_EXTRACTION analysis.
@@ -351,7 +387,6 @@ class AnalysisWorker:
         from .config import OUTPUT_DIR
 
         analysis_id = analysis['id']
-        artefact_id = artefact['id']
         artefact_type = artefact.get('artefact_type', '')
 
         # Only raw sector images can be processed by 7z and DIM
@@ -436,12 +471,14 @@ class AnalysisWorker:
                 })
             )
 
+    @analysis_handler("metadata extraction")
     def process_metadata_extract(self, analysis: dict, artefact: dict, work_dir: Path):
         """
         Process METADATA_EXTRACT analysis.
         Extracts format-specific metadata.
         """
         analysis_id = analysis['id']
+
         input_path = self.get_input_path(artefact, work_dir)
         artefact_type = artefact['artefact_type']
 
@@ -463,12 +500,14 @@ class AnalysisWorker:
             details=json.dumps(metadata)
         )
 
+    @analysis_handler("format identification")
     def process_format_identify(self, analysis: dict, artefact: dict, work_dir: Path):
         """
         Process FORMAT_IDENTIFY analysis.
         Attempts to identify the exact format of an image.
         """
         analysis_id = analysis['id']
+
         input_path = self.get_input_path(artefact, work_dir)
 
         # Placeholder - format identification not yet implemented
@@ -480,6 +519,7 @@ class AnalysisWorker:
             details=json.dumps({'detected': 'unknown'})
         )
 
+    @analysis_handler("partition detection")
     def process_partition_detect(self, analysis: dict, artefact: dict, work_dir: Path):
         """
         Process PARTITION_DETECT analysis.
@@ -489,6 +529,7 @@ class AnalysisWorker:
         signatures are found.
         """
         analysis_id = analysis['id']
+
         input_path = self.get_input_path(artefact, work_dir)
         hints = json.loads(analysis.get('hints') or '{}')
         filesystem_hint = hints.get('filesystem', '').lower()
@@ -556,6 +597,7 @@ class AnalysisWorker:
             })
         )
 
+    @analysis_handler("archive detection")
     def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path):
         """
         Process ARCHIVE_DETECT analysis.
@@ -571,6 +613,7 @@ class AnalysisWorker:
         from .config import MAX_ARCHIVE_DEPTH
 
         analysis_id = analysis['id']
+
         hints = json.loads(analysis.get('hints') or '{}')
         partition_uuid = hints.get('partition_uuid')
 
@@ -671,6 +714,7 @@ class AnalysisWorker:
             })
         )
 
+    @analysis_handler("archive extraction")
     def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path):
         """
         Process ARCHIVE_EXTRACT analysis.
@@ -702,6 +746,7 @@ class AnalysisWorker:
         from .utils.paths import get_output_path
 
         analysis_id = analysis['id']
+
         hints = json.loads(analysis.get('hints') or '{}')
 
         file_id = hints.get('file_id')
