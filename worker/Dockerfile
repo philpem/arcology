@@ -177,7 +177,7 @@ RUN git clone https://github.com/mjwoodcock/riscosarc.git /src/riscosarc && \
     cd /src/riscosarc && \
     mkdir build && \
     javac -d ./build *.java riscos/archive/*.java riscos/archive/container/*.java && \
-    ( cd build && jar cvf ../riscosarc.jar * ) && \
+    ( cd build && jar --create --file ../riscosarc.jar --main-class riscosarc * ) && \
     cp riscosarc.jar /usr/local/bin/
 
 COPY worker/tools/riscosarc /usr/local/bin/
@@ -242,6 +242,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 # - unzip, unrar: for ZIP and RAR archives
 # - tar: for TAR archives
 # - util-linux: for sfdisk (partition detection)
+# - default-jre: Java JRE for riscosarc
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 	--mount=type=cache,target=/var/lib/apt,sharing=locked \
 	sed -i -e 's/main/main non-free/' /etc/apt/sources.list.d/debian.sources && \
@@ -249,7 +250,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 	apt -y install \
 		python3 python3-pip python3-dev python3-requests git \
 		p7zip-full zstd gzip bzip2 xz-utils \
-		unzip unrar tar util-linux
+		unzip unrar tar util-linux \
+		default-jre
 
 # Install Greaseweazle for disk image conversion
 RUN python3 -m pip install --break-system-packages \
