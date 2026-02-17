@@ -457,7 +457,10 @@ class AnalysisWorker:
                 self.api.queue_analysis(
                     artefact['uuid'],
                     AnalysisType.ARCHIVE_DETECT.value,
-                    hints={'partition_uuid': partition_uuid}
+                    hints={
+                        'partition_uuid': partition_uuid,
+                        'extraction_path': str(extract_dir),
+                    }
                 )
         else:
             self.api.update_analysis(
@@ -616,6 +619,7 @@ class AnalysisWorker:
 
         hints = json.loads(analysis.get('hints') or '{}')
         partition_uuid = hints.get('partition_uuid')
+        extraction_path = hints.get('extraction_path')
 
         if not partition_uuid:
             self.api.update_analysis(
@@ -684,17 +688,20 @@ class AnalysisWorker:
                 compressor_count += 1
 
             # Queue extraction
+            extract_hints = {
+                'file_id': file_data['id'],
+                'partition_uuid': partition_uuid,
+                'archive_type': archive_type.value,
+                'archive_format': archive_info['name'],
+                'is_compressor': is_compressor,
+                'extraction_depth': current_depth + 1,
+            }
+            if extraction_path:
+                extract_hints['extraction_path'] = extraction_path
             self.api.queue_analysis(
                 artefact['uuid'],
                 AnalysisType.ARCHIVE_EXTRACT.value,
-                hints={
-                    'file_id': file_data['id'],
-                    'partition_uuid': partition_uuid,
-                    'archive_type': archive_type.value,
-                    'archive_format': archive_info['name'],
-                    'is_compressor': is_compressor,
-                    'extraction_depth': current_depth + 1
-                }
+                hints=extract_hints
             )
             queued_count += 1
 
@@ -754,6 +761,7 @@ class AnalysisWorker:
         archive_type_str = hints.get('archive_type')
         is_compressor = hints.get('is_compressor', False)
         extraction_depth = hints.get('extraction_depth', 1)
+        hinted_extraction_path = hints.get('extraction_path')
 
         # Get ArchiveType enum from string
         try:
@@ -808,17 +816,28 @@ class AnalysisWorker:
             )
             return
 
-        # Get the partition's parent artefact analyses to find extraction output_path
-        artefact_uuid = artefact.get('uuid')
-        analyses_resp = self.api.get(f"/artefacts/{artefact_uuid}/analysis")
-
-        # Find FILE_EXTRACTION, FILE_LISTING, or ARCHIVE_EXTRACT analysis for parent files
-        extraction_path = None
-        for a in analyses_resp.get('analyses', []):
-            if a.get('analysis_type') in ['file_extraction', 'file_listing', 'archive_extract']:
-                extraction_path = a.get('output_path')
-                if extraction_path:
-                    break
+        # Determine extraction path: prefer value passed through hints (set by the
+        # analysis that triggered ARCHIVE_DETECT, which in turn queued this job).
+        # Fall back to searching analyses only for jobs created before this fix.
+        extraction_path = hinted_extraction_path
+        if not extraction_path:
+            artefact_uuid = artefact.get('uuid')
+            analyses_resp = self.api.get(f"/artefacts/{artefact_uuid}/analysis")
+            # Prefer file_extraction (always the disc-level extraction root);
+            # only fall through to archive_extract entries if there is no
+            # file_extraction with an output_path.
+            file_extraction_path = None
+            archive_extract_path = None
+            for a in analyses_resp.get('analyses', []):
+                atype = a.get('analysis_type')
+                opath = a.get('output_path')
+                if not opath:
+                    continue
+                if atype == 'file_extraction' and not file_extraction_path:
+                    file_extraction_path = opath
+                elif atype == 'archive_extract' and not archive_extract_path:
+                    archive_extract_path = opath
+            extraction_path = file_extraction_path or archive_extract_path
 
         if not extraction_path:
             self.api.update_analysis(
@@ -966,7 +985,10 @@ class AnalysisWorker:
             self.api.queue_analysis(
                 artefact['uuid'],
                 AnalysisType.ARCHIVE_DETECT.value,
-                hints={'partition_uuid': partition_uuid}
+                hints={
+                    'partition_uuid': partition_uuid,
+                    'extraction_path': str(persistent_output),
+                }
             )
 
         self.api.update_analysis(
