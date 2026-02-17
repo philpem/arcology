@@ -478,6 +478,11 @@ def get_partition_files(uuid):
     if not show_known:
         query = query.filter(ExtractedFile.is_known == False)
 
+    # Filter by is_archive if specified (used by ARCHIVE_DETECT to skip already-detected files)
+    is_archive_param = request.args.get('is_archive')
+    if is_archive_param is not None:
+        query = query.filter(ExtractedFile.is_archive == (is_archive_param.lower() == 'true'))
+
     pagination = query.order_by(ExtractedFile.path).paginate(page=page, per_page=per_page)
     return jsonify({
         'files': [file_to_dict(f) for f in pagination.items],
