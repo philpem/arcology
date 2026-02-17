@@ -46,6 +46,7 @@ exit
         f.write(script_content)
         script_path = f.name
 
+    process_output = None
     try:
         cmd = [
             'DiscImageManager',
@@ -74,6 +75,19 @@ exit
             'process_output': process_output
         }
 
+    except Exception as e:
+        # Ensure process output is logged even when extraction fails
+        import traceback
+        error_details = {
+            'success': False,
+            'tool': 'DiscImageManager',
+            'error': f'Error extracting from disc image: {str(e)}',
+            'exception_trace': traceback.format_exc()[:2000],
+        }
+        if process_output is not None:
+            error_details['process_output'] = process_output
+        return error_details
+
     finally:
         if not _DEBUG_KEEP_OUTFILES:
             os.unlink(script_path)
@@ -93,34 +107,48 @@ def extract_dos_7z(input_path: Path, output_dir: Path) -> dict:
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    cmd = [
-        '7z', 'x',
-        f'-o{output_dir}',
-        '-y',  # Yes to all
-        str(input_path)
-    ]
-    result, process_output = run_tool_with_output(cmd)
+    try:
+        cmd = [
+            '7z', 'x',
+            f'-o{output_dir}',
+            '-y',  # Yes to all
+            str(input_path)
+        ]
+        result, process_output = run_tool_with_output(cmd)
 
-    # Count extracted files
-    extracted_files = list(output_dir.rglob('*'))
-    file_count = sum(1 for f in extracted_files if f.is_file())
+        # Count extracted files
+        extracted_files = list(output_dir.rglob('*'))
+        file_count = sum(1 for f in extracted_files if f.is_file())
 
-    if file_count > 0:
+        if file_count > 0:
+            return {
+                'success': True,
+                'tool': '7z',
+                'output_dir': str(output_dir),
+                'file_count': file_count,
+                'summary': f'Extracted {file_count} files from DOS image',
+                'process_output': process_output
+            }
+
         return {
-            'success': True,
+            'success': False,
             'tool': '7z',
-            'output_dir': str(output_dir),
-            'file_count': file_count,
-            'summary': f'Extracted {file_count} files from DOS image',
+            'error': result.stderr.decode()[:1000] if result.returncode != 0 else 'No files extracted',
             'process_output': process_output
         }
 
-    return {
-        'success': False,
-        'tool': '7z',
-        'error': result.stderr.decode()[:1000] if result.returncode != 0 else 'No files extracted',
-        'process_output': process_output
-    }
+    except Exception as e:
+        # Ensure process output is logged even when extraction fails
+        import traceback
+        error_details = {
+            'success': False,
+            'tool': '7z',
+            'error': f'Error extracting from DOS image: {str(e)}',
+            'exception_trace': traceback.format_exc()[:2000],
+        }
+        if 'process_output' in locals():
+            error_details['process_output'] = process_output
+        return error_details
 
 
 def extract_iso_7z(input_path: Path, output_dir: Path) -> dict:
@@ -217,6 +245,7 @@ exit
         f.write(script_content)
         script_path = f.name
 
+    process_output = None
     try:
         cmd = [
             'DiscImageManager',
@@ -300,6 +329,20 @@ exit
             'process_output': process_output
         }
 
+    except Exception as e:
+        # Ensure process output is logged even when parsing fails
+        import traceback
+        error_details = {
+            'success': False,
+            'tool': 'DiscImageManager',
+            'error': f'Error processing disc image: {str(e)}',
+            'exception_trace': traceback.format_exc()[:2000],  # Limit trace length
+        }
+        # Include process_output if it was captured before the exception
+        if process_output is not None:
+            error_details['process_output'] = process_output
+        return error_details
+
     finally:
         if not _DEBUG_KEEP_OUTFILES:
             os.unlink(script_path)
@@ -324,52 +367,68 @@ def list_files_7z(input_path: Path) -> dict:
         '-slt',  # Technical listing format
         str(input_path)
     ]
-    result, process_output = run_tool_with_output(cmd)
 
-    if result.returncode != 0:
+    try:
+        result, process_output = run_tool_with_output(cmd)
+
+        if result.returncode != 0:
+            return {
+                'success': False,
+                'tool': '7z',
+                'error': result.stderr.decode(errors='replace')[:1000],
+                'process_output': process_output
+            }
+
+        # Parse 7z output (handle encoding issues)
+        files = []
+        current_file = {}
+
+        for line in result.stdout.decode(errors='surrogateescape').split('\n'):
+            line = line.strip()
+            if line.startswith('Path = '):
+                if current_file and 'path' in current_file:
+                    files.append(current_file)
+                # Sanitize path for UTF-8 database storage
+                path = sanitize_path(line[7:])
+                current_file = {'path': path}
+            elif line.startswith('Size = '):
+                try:
+                    current_file['size'] = int(line[7:])
+                except ValueError:
+                    pass
+            elif line.startswith('Modified = '):
+                current_file['modified'] = line[11:]
+            elif line.startswith('CRC = '):
+                current_file['crc32'] = line[6:].lower()
+
+        if current_file and 'path' in current_file:
+            files.append(current_file)
+
+        # Filter out directory entries (size 0 or no size)
+        files = [f for f in files if f.get('size', 0) > 0]
+
         return {
-            'success': False,
+            'success': True,
             'tool': '7z',
-            'error': result.stderr.decode(errors='replace')[:1000],
+            'files': files,
+            'file_count': len(files),
+            'summary': f'Found {len(files)} files',
             'process_output': process_output
         }
 
-    # Parse 7z output (handle encoding issues)
-    files = []
-    current_file = {}
-
-    for line in result.stdout.decode(errors='surrogateescape').split('\n'):
-        line = line.strip()
-        if line.startswith('Path = '):
-            if current_file and 'path' in current_file:
-                files.append(current_file)
-            # Sanitize path for UTF-8 database storage
-            path = sanitize_path(line[7:])
-            current_file = {'path': path}
-        elif line.startswith('Size = '):
-            try:
-                current_file['size'] = int(line[7:])
-            except ValueError:
-                pass
-        elif line.startswith('Modified = '):
-            current_file['modified'] = line[11:]
-        elif line.startswith('CRC = '):
-            current_file['crc32'] = line[6:].lower()
-
-    if current_file and 'path' in current_file:
-        files.append(current_file)
-
-    # Filter out directory entries (size 0 or no size)
-    files = [f for f in files if f.get('size', 0) > 0]
-
-    return {
-        'success': True,
-        'tool': '7z',
-        'files': files,
-        'file_count': len(files),
-        'summary': f'Found {len(files)} files',
-        'process_output': process_output
-    }
+    except Exception as e:
+        # Ensure process output is logged even when parsing fails
+        import traceback
+        error_details = {
+            'success': False,
+            'tool': '7z',
+            'error': f'Error processing 7z output: {str(e)}',
+            'exception_trace': traceback.format_exc()[:2000],
+        }
+        # Include process_output if it was captured
+        if 'process_output' in locals():
+            error_details['process_output'] = process_output
+        return error_details
 
 
 def convert_fcfs_to_raw(input_path: Path, output_path: Path) -> dict:
@@ -383,21 +442,35 @@ def convert_fcfs_to_raw(input_path: Path, output_path: Path) -> dict:
     Returns:
         Result dict with success status
     """
-    cmd = ['fcfs2raw', '-v', str(input_path), str(output_path)]
-    result, process_output = run_tool_with_output(cmd)
+    try:
+        cmd = ['fcfs2raw', '-v', str(input_path), str(output_path)]
+        result, process_output = run_tool_with_output(cmd)
 
-    if result.returncode != 0:
+        if result.returncode != 0:
+            return {
+                'success': False,
+                'error': f'fcfs2raw failed with exit code {result.returncode}',
+                'tool': 'fcfs2raw',
+                'process_output': process_output
+            }
+
         return {
-            'success': False,
-            'error': f'fcfs2raw failed with exit code {result.returncode}',
+            'success': True,
             'tool': 'fcfs2raw',
+            'output_path': str(output_path),
+            'summary': 'FCFS image converted to raw sector format',
             'process_output': process_output
         }
 
-    return {
-        'success': True,
-        'tool': 'fcfs2raw',
-        'output_path': str(output_path),
-        'summary': 'FCFS image converted to raw sector format',
-        'process_output': process_output
-    }
+    except Exception as e:
+        # Ensure process output is logged even when conversion fails
+        import traceback
+        error_details = {
+            'success': False,
+            'tool': 'fcfs2raw',
+            'error': f'Error converting FCFS image: {str(e)}',
+            'exception_trace': traceback.format_exc()[:2000],
+        }
+        if 'process_output' in locals():
+            error_details['process_output'] = process_output
+        return error_details
