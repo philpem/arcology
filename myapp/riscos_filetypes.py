@@ -14,81 +14,48 @@ sometimes picked arbitrary numbers.
 # Format: 'xxx': 'Name' or 'xxx': ['Name1', 'Name2'] for multiple
 FILETYPE_MAP = {
     # Archives and Compression
+    '3fb': 'ArcFSArc',
+    '68e': 'PackdDir',
     'a91': 'Zip',
-    'c46': 'ArcFS',
+    'b21': 'TBAFSarc',
+    'b23': 'X-File',
+    'c46': 'Tar',
     'ddc': 'Archive',
-    'f89': 'PackDir',
-    '68e': 'ArcFS+',
+    'fca': 'Squash',
 
-    # Documents
-    'aff': 'Draw',
-    'b60': 'PNG',
-    'c85': 'JPEG',
-    'fff': 'Text',
-    '1ad': 'WordPerfect',
-    'f8c': 'MessageTrans',
-    'aca': 'PDF',
-
-    # Spreadsheets and Databases
-    'db0': 'Lotus123',
-    'dfe': 'CSV',
-    '1d3': ['DBaseII', 'ParadoxDB'],
-    'db2': 'DBaseII',
-    'db3': 'DBaseIII',
-    'dbe': 'DBaseIV',
-
-    # Programming
-    'ffd': 'Data',
-    'ffe': 'Command',
-    'feb': 'Obey',
-    'fea': 'Desktop',
-    'faf': 'HTML',
-    'f81': 'Squash',
-    '102': 'Sprite',
-    'ff9': 'Sprite',
-    'fae': ['TeX', 'LaTeX'],
-    'ce5': 'Makefile',
-    'ddc': 'Archive',
+    # Documents and DTP
+    'b27': 'OvnPro (Ovation Pro)',
+    'cdd': 'Ovation',
+    'd01': 'EasiDoc (Easiwriter/Techwriter)',
+    'd87': 'DocData (Impression)',
+    'd88': 'Stories (Impression)',
 
     # Music and Sound
-    'cb6': 'Maestro',
-    'f96': 'SoundPro',
-    'fb1': 'WaveForm',
-    '1ad': 'MIDI',
-    'd3c': 'Tracker',
+    'af1': 'Maestro',
 
-    # Images
-    '695': 'GIF',
-    'b60': 'PNG',
-    'c85': 'JPEG',
-    'ff0': 'BBC',
+    # Images and multimedia
     'aff': 'DrawFile',
-    '69c': 'SVG',
-    'afd': 'ArtWorks',
+    'd94': 'ArtWorks',
+    'ae7': 'ARMovie',
 
-    # BASIC and Source
-    'ffb': 'BASIC',
-    'fff': ['Text', 'Source'],
-    'f79': 'ARMovie',
-
-    # System
-    'ffd': 'Data',
-    'ffc': 'Utility',
-    'ffb': 'BASIC',
-    'ffa': 'Module',
-    'ff9': 'Sprite',
+    # Generic RISC OS data formats
+    'fe1': 'Makefile',
+    'fe4': 'DOS',
+    'fea': 'Desktop',
+    'feb': 'Obey',
+    'fec': 'Template',
+    'fed': 'Palette',
+    'ff5': 'PostScript',
+    'ff6': 'Font',
+    'ff7': 'BBCFont',
     'ff8': 'Absolute',
-
-    # Applications
-    '2000': 'Application',
-
-    # Fonts
-    'f00': 'BBCFont',
-    'f0b': 'IntMetric',
-    'f0c': 'IntFont',
-    'f0d': 'OutlFont',
-    'f0e': 'OutlMetr',
-    'ffd': 'FontCache',
+    'ff9': 'Sprite',
+    'ffa': 'Module',
+    'ffb': 'BASIC',
+    'ffc': 'Utility',
+    'ffd': 'Data',
+    'ffe': 'Command',
+    'fff': 'Text',
 }
 
 
