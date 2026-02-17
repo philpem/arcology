@@ -277,7 +277,7 @@ exit
             files.append(file_entry)
 
         # Parse DIM report output for disc metadata
-        metadata = _parse_dim_report(process_output)
+        metadata = _parse_dim_report(process_output['stdout'])
 
         if files:
             result_dict = {
