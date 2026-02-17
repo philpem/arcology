@@ -10,22 +10,24 @@ from pathlib import Path
 from ..config import log
 
 
-def run_tool(cmd: list[str], timeout: int = 3600) -> subprocess.CompletedProcess:
+def run_tool(cmd: list[str], timeout: int = 3600, cwd: str = None) -> subprocess.CompletedProcess:
     """
     Run a tool command with logging.
 
     Args:
         cmd: Command and arguments to run
         timeout: Maximum execution time in seconds
+        cwd: Working directory for the command (optional)
 
     Returns:
         CompletedProcess with stdout, stderr, and returncode
     """
-    log.debug(f"Running: {' '.join(cmd)}")
+    log.debug(f"Running: {' '.join(cmd)}" + (f" (cwd={cwd})" if cwd else ""))
     result = subprocess.run(
         cmd,
         capture_output=True,
-        timeout=timeout
+        timeout=timeout,
+        cwd=cwd
     )
     if result.returncode != 0:
         log.warning(f"Tool returned {result.returncode}: {result.stderr.decode()[:500]}")
@@ -70,7 +72,7 @@ def get_process_output(result: subprocess.CompletedProcess, cmd: list[str],
     return output
 
 
-def run_tool_with_output(cmd: list[str], timeout: int = 3600) -> tuple[subprocess.CompletedProcess, dict]:
+def run_tool_with_output(cmd: list[str], timeout: int = 3600, cwd: str = None) -> tuple[subprocess.CompletedProcess, dict]:
     """
     Run a tool command and return both the result and structured output info.
 
@@ -80,12 +82,13 @@ def run_tool_with_output(cmd: list[str], timeout: int = 3600) -> tuple[subproces
     Args:
         cmd: Command and arguments to run
         timeout: Maximum execution time in seconds
+        cwd: Working directory for the command (optional)
 
     Returns:
         Tuple of (CompletedProcess, process_output_dict)
     """
     start_time = time.time()
-    result = run_tool(cmd, timeout)
+    result = run_tool(cmd, timeout, cwd=cwd)
     duration = time.time() - start_time
 
     output = get_process_output(result, cmd, duration)
