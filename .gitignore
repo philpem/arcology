@@ -21,3 +21,6 @@ venv/*
 # Application configuration
 *.cfg
 .env
+
+# Data directory
+data
