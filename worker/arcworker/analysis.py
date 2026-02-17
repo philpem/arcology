@@ -832,6 +832,16 @@ class AnalysisWorker:
         # Construct full path to archive file
         archive_path = Path(extraction_path) / target_file['path']
 
+        # If not found, try with RISC OS filetype suffix (DIM extracts files as
+        # "filename,xxx" where xxx is the hex filetype, but FILE_LISTING strips
+        # that suffix when recording paths in the database)
+        if not archive_path.exists():
+            risc_os_filetype = target_file.get('risc_os_filetype')
+            if risc_os_filetype:
+                candidate = Path(str(archive_path) + ',' + risc_os_filetype)
+                if candidate.exists():
+                    archive_path = candidate
+
         if not archive_path.exists():
             self.api.update_analysis(
                 analysis_id,
