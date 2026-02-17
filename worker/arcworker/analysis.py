@@ -273,12 +273,29 @@ class AnalysisWorker:
                 result = list_files_dim(input_path)
 
         if result['success'] and result.get('files'):
-            # Use filesystem from hints or 'unknown'
-            fs_type = filesystem if filesystem else 'unknown'
-
             # Extract disc name and container format from result (if available from DIM report)
             disc_name = result.get('disc_name')
             container_format = result.get('container_format')
+
+            # Determine filesystem type:
+            # 1. Use filesystem from hints if provided
+            # 2. Else if DIM was used and returned container_format, parse it
+            # 3. Else use 'unknown'
+            if filesystem:
+                fs_type = filesystem
+            elif container_format:
+                # Parse container format (e.g., "Acorn ADFS E", "Acorn DFS")
+                container_lower = container_format.lower()
+                if 'adfs' in container_lower:
+                    fs_type = 'adfs'
+                elif 'dfs' in container_lower:
+                    fs_type = 'dfs'
+                elif 'acorn' in container_lower:
+                    fs_type = 'acorn'
+                else:
+                    fs_type = 'unknown'
+            else:
+                fs_type = 'unknown'
 
             partition = self.api.register_file_listing(
                 artefact['uuid'],
