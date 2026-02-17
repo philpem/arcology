@@ -851,18 +851,22 @@ class AnalysisWorker:
         # Construct full path to archive file
         archive_path = Path(extraction_path) / target_file['path']
 
-        # If not found, try with a RISC OS filetype suffix.  DIM extracts Acorn
-        # files as "name,XXX" (e.g. "Palette,DDC") but FILE_LISTING strips that
-        # suffix when recording paths in the database and lowercases the code.
-        # DIM uses either all-lowercase or all-uppercase, so try both.
-        if not archive_path.exists():
-            risc_os_filetype = target_file.get('risc_os_filetype')
-            if risc_os_filetype:
-                for suffix in (risc_os_filetype.lower(), risc_os_filetype.upper()):
-                    candidate = Path(str(archive_path) + ',' + suffix)
-                    if candidate.exists():
-                        archive_path = candidate
-                        break
+        # Build a list of name variants to try in order.  DIM writes Acorn
+        # files with a RISC OS filetype suffix (e.g. "Palette,DDC") in either
+        # all-lowercase or all-uppercase.  Non-Acorn tools (7z, etc.) write the
+        # plain name with no suffix.  Try the suffix variants first (when a
+        # filetype is known), then the plain name as the final fallback.
+        risc_os_filetype = target_file.get('risc_os_filetype')
+        candidates = []
+        if risc_os_filetype:
+            candidates.append(Path(str(archive_path) + ',' + risc_os_filetype.lower()))
+            candidates.append(Path(str(archive_path) + ',' + risc_os_filetype.upper()))
+        candidates.append(archive_path)  # plain name: DOS, UNIX, or no-suffix fallback
+
+        for candidate in candidates:
+            if candidate.exists():
+                archive_path = candidate
+                break
 
         if not archive_path.exists():
             self.api.update_analysis(
