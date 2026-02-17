@@ -582,6 +582,7 @@ def analysis_to_dict(analysis, include_artefact=False):
         'analysis_type': analysis.analysis_type.value, 'status': analysis.status.value,
         'tool_name': analysis.tool_name, 'hints': analysis.hints,
         'output_url': analysis.output_url,
+        'output_path': analysis.output_path,
         'success': analysis.success, 'summary': analysis.summary, 'error_message': analysis.error_message,
         'details': analysis.details,
         'created_at': analysis.created_at.isoformat(),
