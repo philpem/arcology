@@ -242,7 +242,7 @@ class AnalysisWorker:
                 analysis_id,
                 f"{artefact_label} (raw sectors)",
                 img_path,
-                ArtefactType.IMG
+                ArtefactType.RAW_SECTOR
             )
             log.info(f"Created derived IMG artefact: {derived}")
 
@@ -273,9 +273,8 @@ class AnalysisWorker:
         # HFE is an emulator container format, IMD is track-based with metadata
         # These need to be converted to IMG first via flux_decode
         supported_types = (
-            ArtefactType.IMG.value,
             ArtefactType.ISO.value,
-            ArtefactType.DD.value,
+            ArtefactType.RAW_SECTOR.value,
             ArtefactType.DD_ZST.value,
             ArtefactType.DD_GZ.value,
             ArtefactType.DD_BZ2.value,
@@ -393,9 +392,8 @@ class AnalysisWorker:
         # HFE is an emulator container format, IMD is track-based with metadata
         # These need to be converted to IMG first via flux_decode
         supported_types = (
-            ArtefactType.IMG.value,
             ArtefactType.ISO.value,
-            ArtefactType.DD.value,
+            ArtefactType.RAW_SECTOR.value,
             ArtefactType.DD_ZST.value,
             ArtefactType.DD_GZ.value,
             ArtefactType.DD_BZ2.value,

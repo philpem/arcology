@@ -10,43 +10,35 @@ from enum import Enum
 class ArtefactType(str, Enum):
     """Types of artefacts that can be stored and analysed."""
 
-    # Flux-level
-    SCP = "scp"
-    KF = "kf"
-    IPF = "ipf"
-    FLUX_RAW = "flux_raw"
+    # Flux-level floppy images
+    SCP = "scp"                  # SuperCard Pro
+    
+    # Sector-level floppy images
+    IMD = "imd"                  # ImageDisk
+    HFE = "hfe"                  # HxC Floppy Emulator
 
-    # Sector-level floppy
-    IMD = "imd"
-    TD0 = "td0"
-    D64 = "d64"
-    ADF = "adf"
-    DSK = "dsk"
-    IMG = "img"
-    HFE = "hfe"
-
-    # CD/DVD
-    ISO = "iso"
-    BIN_CUE = "bin_cue"
-
-    # Hard drive
-    HDD_RAW = "hdd_raw"
-    DD = "dd"
-    DD_ZST = "dd_zst"
-    DD_GZ = "dd_gz"
-    DD_BZ2 = "dd_bz2"
-
-    # Documents/images
+    # Sector-level floppy or hard disc images
+    RAW_SECTOR = "raw_sector"    # Raw sector image (a lot of things squash into this)
+    
+    # CD/DVD images
+    ISO = "iso"                  # ISO 9660
+    
+    # Compressed raw sector images -- usually hard drives or mass-storage
+    DD_ZST = "raw_sector_zst"            # Compressed with zstd
+    DD_GZ = "raw_sector_gz"              # Compressed with gzip
+    DD_BZ2 = "raw_sector_bz2"            # Compressed with bzip2
+    
+    # Documents / scans
     PDF = "pdf"
-    JPEG = "jpeg"
-    PNG = "png"
-    TIFF = "tiff"
-
-    # Archives
+        
+    # Archives (containing other artefacts)
     ZIP = "zip"
     TARGZ = "tar_gz"
-
+    RAR = "rar"
+    
+    # Unknown - needs manual identification
     UNKNOWN = "unknown"
+
 
 
 class AnalysisType(str, Enum):

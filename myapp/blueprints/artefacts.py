@@ -36,43 +36,26 @@ blueprint = Blueprint(ROUTENAME, __name__, url_prefix='/artefacts', template_fol
 EXTENSION_MAP = {
     # Flux-level
     '.scp': ArtefactType.SCP,
-    '.kf': ArtefactType.KF,
-    '.kfraw': ArtefactType.KF,
-    '.ipf': ArtefactType.IPF,
-    '.raw': ArtefactType.FLUX_RAW,
     
-    # Sector-level floppy
-    '.imd': ArtefactType.IMD,
-    '.td0': ArtefactType.TD0,
-    '.hfe': ArtefactType.HFE,
-    '.d64': ArtefactType.D64,
-    '.adf': ArtefactType.ADF,
-    '.dsk': ArtefactType.DSK,
-    '.img': ArtefactType.IMG,
-    '.ima': ArtefactType.IMG,
+    # Cooked sector-level floppy or hard disc
+    '.imd': ArtefactType.IMD,   # needs conversion to sectors
+    '.hfe': ArtefactType.HFE,   # needs conversion to sectors
+
+    # Raw sector images
+    '.adf': ArtefactType.RAW_SECTOR,
+    '.img': ArtefactType.RAW_SECTOR,
+    '.ima': ArtefactType.RAW_SECTOR,
+    '.dsk': ArtefactType.RAW_SECTOR,
     
     # CD/DVD
     '.iso': ArtefactType.ISO,
-    '.bin': ArtefactType.BIN_CUE,
-    '.cue': ArtefactType.BIN_CUE,
-    '.mdf': ArtefactType.MDF_MDS,
-    '.mds': ArtefactType.MDF_MDS,
-    '.nrg': ArtefactType.NRG,
     
     # Hard drive raw images
-    '.dd': ArtefactType.DD,
+    '.dd': ArtefactType.RAW_SECTOR,
     
     # Documents
     '.pdf': ArtefactType.PDF,
-    '.djvu': ArtefactType.DJVU,
-    
-    # Images
-    '.jpg': ArtefactType.JPEG,
-    '.jpeg': ArtefactType.JPEG,
-    '.png': ArtefactType.PNG,
-    '.tif': ArtefactType.TIFF,
-    '.tiff': ArtefactType.TIFF,
-    
+        
     # Archives
     '.zip': ArtefactType.ZIP,
     '.tar.gz': ArtefactType.TARGZ,
@@ -105,39 +88,34 @@ def detect_artefact_type(filename: str) -> ArtefactType:
 ANALYSIS_MAP = {
     # Flux images - visualisation and decode attempt
     ArtefactType.SCP: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
-    ArtefactType.KF: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
-    ArtefactType.IPF: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_LISTING],
-    ArtefactType.FLUX_RAW: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE],
+    #ArtefactType.KF: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
+    #ArtefactType.FLUX_RAW: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE],
     
     # Sector-level floppy - file listing only works on raw sector images
     # IMD is track-based format with metadata, HFE is an emulator container format
     # These need conversion to IMG (raw sectors) before file listing/extraction can work
     ArtefactType.IMD: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY],
-    ArtefactType.TD0: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY],
     ArtefactType.HFE: [AnalysisType.FORMAT_IDENTIFY],
-    ArtefactType.D64: [AnalysisType.FILE_LISTING],
-    ArtefactType.ADF: [AnalysisType.FILE_LISTING],
-    ArtefactType.DSK: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_LISTING],
-    ArtefactType.IMG: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_LISTING],
+    #ArtefactType.TD0: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY],
+    #ArtefactType.D64: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_LISTING],
+    #ArtefactType.ADF: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_LISTING],
+    #ArtefactType.DSK: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_LISTING],
     
     # CD/DVD - file listing
     ArtefactType.ISO: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_LISTING],
-    ArtefactType.BIN_CUE: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_LISTING],
-    ArtefactType.MDF_MDS: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_LISTING],
-    ArtefactType.NRG: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_LISTING],
+    #ArtefactType.BIN_CUE: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_LISTING],
+    #ArtefactType.MDF_MDS: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_LISTING],
+    #ArtefactType.NRG: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_LISTING],
     
     # Hard drive raw images - partition detection then file listing
-    ArtefactType.DD: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_LISTING],
+    #ArtefactType.RAW_SECTOR: [AnalysisType.PARTITION_DETECT, AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_LISTING],
+    ArtefactType.RAW_SECTOR: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_LISTING],
     ArtefactType.DD_ZST: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_LISTING],
     ArtefactType.DD_GZ: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_LISTING],
     ArtefactType.DD_BZ2: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_LISTING],
     
     # Documents/images - just metadata/checksums
     ArtefactType.PDF: [AnalysisType.METADATA_EXTRACT],
-    ArtefactType.DJVU: [AnalysisType.METADATA_EXTRACT],
-    ArtefactType.JPEG: [AnalysisType.METADATA_EXTRACT],
-    ArtefactType.PNG: [AnalysisType.METADATA_EXTRACT],
-    ArtefactType.TIFF: [AnalysisType.METADATA_EXTRACT],
     
     # Archives - list contents
     ArtefactType.ZIP: [AnalysisType.FILE_LISTING],

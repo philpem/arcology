@@ -31,40 +31,25 @@ class ArtefactType(enum.Enum):
     """Types of digital artefacts - auto-detected or manually specified."""
     # Flux-level floppy images
     SCP = "scp"                  # SuperCard Pro
-    KF = "kf"                    # Kryoflux
-    IPF = "ipf"                  # SPS/IPF
-    FLUX_RAW = "flux_raw"        # Raw flux (e.g., .raw from Greaseweazle)
     
     # Sector-level floppy images
     IMD = "imd"                  # ImageDisk
-    TD0 = "td0"                  # Teledisk
     HFE = "hfe"                  # HxC Floppy Emulator
-    D64 = "d64"                  # C64 disk image
-    ADF = "adf"                  # Amiga Disk File
-    DSK = "dsk"                  # Various (CPC, Spectrum, etc.)
-    IMG = "img"                  # Raw sector image
+
+    # Sector-level floppy or hard disc images
+    RAW_SECTOR = "raw_sector"    # Raw sector image (a lot of things squash into this)
     
     # CD/DVD images
     ISO = "iso"                  # ISO 9660
-    BIN_CUE = "bin_cue"          # BIN/CUE pair
-    MDF_MDS = "mdf_mds"          # Alcohol 120%
-    NRG = "nrg"                  # Nero
     
-    # Hard drive / mass storage (raw sector images)
-    DD = "dd"                    # Raw disk dump (.dd)
-    DD_ZST = "dd_zst"            # Compressed with zstd
-    DD_GZ = "dd_gz"              # Compressed with gzip
-    DD_BZ2 = "dd_bz2"            # Compressed with bzip2
+    # Compressed raw sector images -- usually hard drives or mass-storage
+    DD_ZST = "raw_sector_zst"            # Compressed with zstd
+    DD_GZ = "raw_sector_gz"              # Compressed with gzip
+    DD_BZ2 = "raw_sector_bz2"            # Compressed with bzip2
     
     # Documents / scans
     PDF = "pdf"
-    DJVU = "djvu"
-    
-    # Images
-    JPEG = "jpeg"
-    PNG = "png"
-    TIFF = "tiff"
-    
+        
     # Archives (containing other artefacts)
     ZIP = "zip"
     TARGZ = "tar_gz"
