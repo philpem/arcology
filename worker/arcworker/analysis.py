@@ -575,6 +575,7 @@ class AnalysisWorker:
         hints = json.loads(analysis.get('hints') or '{}')
         partition_uuid = hints.get('partition_uuid')
         extraction_path = hints.get('extraction_path')
+        path_prefix = hints.get('path_prefix', '')
 
         if not partition_uuid:
             self.api.update_analysis(
@@ -653,6 +654,8 @@ class AnalysisWorker:
             }
             if extraction_path:
                 extract_hints['extraction_path'] = extraction_path
+            if path_prefix:
+                extract_hints['path_prefix'] = path_prefix
             self.api.queue_analysis(
                 artefact['uuid'],
                 AnalysisType.ARCHIVE_EXTRACT.value,
@@ -716,6 +719,7 @@ class AnalysisWorker:
         is_compressor = hints.get('is_compressor', False)
         extraction_depth = hints.get('extraction_depth', 1)
         hinted_extraction_path = hints.get('extraction_path')
+        path_prefix = hints.get('path_prefix', '')
 
         # Get ArchiveType enum from string
         try:
@@ -802,8 +806,17 @@ class AnalysisWorker:
             )
             return
 
-        # Construct full path to archive file
-        archive_path = Path(extraction_path) / target_file['path']
+        # Construct full path to archive file.
+        # For nested archives, the DB path includes parent archive prefixes
+        # (e.g. "OuterArchive/InnerArchive.zip") but on disk the file is
+        # relative to the extraction directory without those prefixes.
+        # Strip the path_prefix to get the on-disk relative path.
+        db_path = target_file['path']
+        if path_prefix and db_path.startswith(path_prefix + '/'):
+            disk_relative_path = db_path[len(path_prefix) + 1:]
+        else:
+            disk_relative_path = db_path
+        archive_path = Path(extraction_path) / disk_relative_path
 
         # Build a list of name variants to try in order.  DIM writes Acorn
         # files with a RISC OS filetype suffix (e.g. "Palette,DDC") in either
@@ -910,15 +923,19 @@ class AnalysisWorker:
         if temp_output_dir.exists():
             shutil.copytree(temp_output_dir, persistent_output, dirs_exist_ok=True)
 
-        # Scan extracted files from persistent storage
+        # Scan extracted files from persistent storage.
+        # Prefix paths with the archive's own path so that files appear
+        # nested inside the archive as if it were a directory.
+        archive_display_path = target_file['path']
         files = []
         for file_path in persistent_output.rglob('*'):
             if not file_path.is_file():
                 continue
 
             rel_path = file_path.relative_to(persistent_output)
+            nested_path = archive_display_path + '/' + str(rel_path)
             files.append({
-                'path': str(rel_path),
+                'path': nested_path,
                 'size': file_path.stat().st_size,
                 'parent_file_id': file_id,
                 'extraction_depth': extraction_depth
@@ -941,7 +958,9 @@ class AnalysisWorker:
                     })
                 self.api.post(f"/partitions/{partition_uuid}/files", {'files': file_records})
 
-        # Queue ARCHIVE_DETECT for nested archives (if under depth limit)
+        # Queue ARCHIVE_DETECT for nested archives (if under depth limit).
+        # Pass the archive's display path as path_prefix so that nested
+        # ARCHIVE_EXTRACT jobs can strip it to locate files on disk.
         if extraction_depth < MAX_ARCHIVE_DEPTH:
             self.api.queue_analysis(
                 artefact['uuid'],
@@ -949,6 +968,7 @@ class AnalysisWorker:
                 hints={
                     'partition_uuid': partition_uuid,
                     'extraction_path': str(persistent_output),
+                    'path_prefix': archive_display_path,
                 }
             )
 
