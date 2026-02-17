@@ -566,8 +566,8 @@ class AnalysisWorker:
             )
             return
 
-        # Get all files in partition from API
-        partition_resp = self.api.get(f"/partitions/{partition_uuid}/files?per_page=10000")
+        # Get files not yet marked as archives (skip already-detected ones)
+        partition_resp = self.api.get(f"/partitions/{partition_uuid}/files?per_page=10000&is_archive=false")
         if not partition_resp:
             self.api.update_analysis(
                 analysis_id,
