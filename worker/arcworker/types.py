@@ -57,6 +57,8 @@ class AnalysisType(str, Enum):
     SECTOR_DUMP = "sector_dump"
     FILE_LISTING = "file_listing"
     FILE_EXTRACTION = "file_extraction"
+    ARCHIVE_DETECT = "archive_detect"
+    ARCHIVE_EXTRACT = "archive_extract"
     METADATA_EXTRACT = "metadata_extract"
     PARTITION_DETECT = "partition_detect"
     CHECKSUM_COMPUTE = "checksum_compute"

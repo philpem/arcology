@@ -110,6 +110,13 @@ def detect_acorn_adfs(input_path: Path) -> dict:
                 signatures.append('Valid ADFS boot block checksum (sector 0)')
                 adfs_variant = 'new_map'
 
+        # F-format (hard discs) has the block at disc address 0xC00
+        if len(header) >= 0xC00+512:
+            boot_checksum = sum(header[0xC00:0xC00+512]) & 0xFF
+            if boot_checksum == 0:
+                signatures.append('Valid ADFS boot block checksum (disc address &C00)')
+                adfs_variant = 'new_map'
+
         # Check for old-format directory signature "Hugo"
         # Old-map root directory starts at byte 0x200 (sector 2 at 256 bytes/sector)
         # "Hugo" appears at end of directory: offset depends on directory size

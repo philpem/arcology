@@ -150,30 +150,43 @@ class ArcologyAPI:
 
     def register_file_listing(
         self,
-        artefact_id: int,
+        artefact_uuid: str,
         files: list[dict],
-        filesystem: str = 'unknown'
+        filesystem: str = 'unknown',
+        label: str = None,
+        container_format: str = None
     ):
         """
         Register extracted file listing in API.
 
         Args:
-            artefact_id: ID of the artefact containing the files
+            artefact_uuid: UUID of the artefact containing the files
             files: List of file dicts with path, size, crc32, etc.
             filesystem: Filesystem type (e.g., 'fat', 'adfs')
+            label: Optional partition label (e.g., disc name for ADFS)
+            container_format: Optional detailed format info (e.g., "Acorn ADFS E")
+
+        Returns:
+            Partition dict if successful, None otherwise
         """
         # First create partition
-        partition_resp = self.post(f"/artefacts/{artefact_id}/partitions", {
+        partition_data = {
             'partition_index': 0,
             'filesystem': filesystem,
             'total_files': len(files)
-        })
+        }
+        if label:
+            partition_data['label'] = label
+        if container_format:
+            partition_data['container_format'] = container_format
+
+        partition_resp = self.post(f"/artefacts/{artefact_uuid}/partitions", partition_data)
 
         if not partition_resp:
             log.error("Failed to create partition")
-            return
+            return None
 
-        partition_id = partition_resp.get('id')
+        partition_uuid = partition_resp.get('uuid')
 
         # Add files in batches
         batch_size = 100
@@ -189,10 +202,40 @@ class ArcologyAPI:
                     'file_size': f.get('size'),
                     'crc32': f.get('crc32'),
                     'md5': f.get('md5'),
-                    'sha1': f.get('sha1')
+                    'sha1': f.get('sha1'),
+                    # Archive support fields
+                    'risc_os_filetype': f.get('risc_os_filetype'),
+                    'parent_file_id': f.get('parent_file_id'),
+                    'extraction_depth': f.get('extraction_depth', 0)
                 })
 
-            self.post(f"/partitions/{partition_id}/files", {'files': file_records})
+            self.post(f"/partitions/{partition_uuid}/files", {'files': file_records})
+
+        return partition_resp
+
+    def queue_analysis(
+        self,
+        artefact_uuid: str,
+        analysis_type: str,
+        hints: dict = None
+    ) -> Optional[dict]:
+        """
+        Queue a new analysis for an artefact.
+
+        Args:
+            artefact_uuid: UUID of the artefact to analyze
+            analysis_type: Type of analysis (e.g., 'archive_detect')
+            hints: Optional hints dict (will be JSON-encoded)
+
+        Returns:
+            Analysis dict if successful, None otherwise
+        """
+        import json
+        data = {'analysis_type': analysis_type}
+        if hints:
+            data['hints'] = json.dumps(hints)
+
+        return self.post(f"/artefacts/{artefact_uuid}/analysis", data)
 
     def get_pending_analyses(self) -> list[dict]:
         """

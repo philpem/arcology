@@ -123,19 +123,28 @@
         <div class="card mb-4">
             <div class="card-header"><i class="bi bi-hdd"></i> Partitions</div>
             <div class="table-responsive">
-                <table class="table table-sm mb-0">
+                <table class="table table-sm mb-0 table-hover">
                     <thead><tr><th>#</th><th>Label</th><th>Filesystem</th><th>Files</th><th>Unique</th><th>Source</th></tr></thead>
                     <tbody>
                         {% for p in all_partitions %}
-                        <tr>
-                            <td>{{ p.partition_index }}</td>
+                        {# Color-code partition badges for visual distinction #}
+                        {% set partition_colors = ['primary', 'success', 'warning', 'danger', 'info', 'secondary'] %}
+                        {% set partition_color = partition_colors[p.partition_index % partition_colors|length] %}
+                        <tr style="cursor: pointer;" onclick="filterByPartition('{{ p.uuid }}')" title="Click to filter files by this partition">
+                            <td><span class="badge bg-{{ partition_color }}">{{ p.partition_index }}</span></td>
                             <td>{{ p.label or '-' }}</td>
-                            <td><code>{{ p.filesystem.value }}</code></td>
+                            <td>
+                                {% if p.container_format %}
+                                <code style="border-bottom: 1px dotted #999; cursor: help;" title="{{ p.container_format }}">{{ p.filesystem.value }}</code>
+                                {% else %}
+                                <code>{{ p.filesystem.value }}</code>
+                                {% endif %}
+                            </td>
                             <td>{{ p.total_files or '-' }}</td>
                             <td>{% if p.unique_files is not none %}<span class="badge bg-info">{{ p.unique_files }}</span>{% else %}-{% endif %}</td>
                             <td>
                                 {% if p.artefact_id != artefact.id %}
-                                <a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=p.artefact.uuid) }}" class="badge bg-secondary text-decoration-none">{{ p.artefact.label }}</a>
+                                <a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=p.artefact.uuid) }}" class="badge bg-secondary text-decoration-none" onclick="event.stopPropagation()">{{ p.artefact.label }}</a>
                                 {% else %}-{% endif %}
                             </td>
                         </tr>
@@ -144,31 +153,116 @@
                 </table>
             </div>
         </div>
+
+        <script>
+        function filterByPartition(partitionUuid) {
+            // Get the form element
+            const form = document.querySelector('form[method="get"]');
+            // Set the partition_uuid select element
+            const partitionSelect = form.querySelector('select[name="partition_uuid"]');
+            partitionSelect.value = partitionUuid;
+            // Submit the form
+            form.submit();
+        }
+        </script>
         {% endif %}
         
         <div class="card">
-            <div class="card-header"><i class="bi bi-folder2-open"></i> Extracted Files</div>
+            <div class="card-header">
+                <i class="bi bi-folder2-open"></i> Extracted Files
+                {% if file_form.path.data %}
+                    <span class="text-muted ms-2">
+                        <i class="bi bi-arrow-right-short"></i>
+                        <code class="text-primary">{{ file_form.path.data }}</code>
+                        <a href="?" class="btn btn-sm btn-outline-secondary ms-2" title="Clear path filter">
+                            <i class="bi bi-x"></i> Clear
+                        </a>
+                    </span>
+                {% endif %}
+            </div>
             <div class="card-body border-bottom">
                 <form method="get" class="row g-2">
-                    <div class="col-md-3">{{ file_form.filename(class="form-control form-control-sm", placeholder="Filename") }}</div>
-                    <div class="col-md-2">{{ file_form.extension(class="form-control form-control-sm", placeholder="Ext") }}</div>
-                    <div class="col-md-3">{{ file_form.md5(class="form-control form-control-sm", placeholder="MD5") }}</div>
-                    <div class="col-md-2"><div class="form-check">{{ file_form.show_known(class="form-check-input") }}{{ file_form.show_known.label(class="form-check-label") }}</div></div>
-                    <div class="col-md-2"><button type="submit" class="btn btn-sm btn-secondary w-100">Filter</button></div>
+                    <div class="col-md-2">
+                        <select name="partition_uuid" class="form-select form-select-sm">
+                            <option value="">All Partitions</option>
+                            {% for p in all_partitions %}
+                            <option value="{{ p.uuid }}" {{ 'selected' if file_form.partition_uuid.data == p.uuid else '' }}>
+                                Partition {{ p.partition_index }}: {{ p.label or p.filesystem.value }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-2">{{ file_form.filename(class="form-control form-control-sm", placeholder="Filename") }}</div>
+                    <div class="col-md-1">{{ file_form.extension(class="form-control form-control-sm", placeholder="Ext") }}</div>
+                    <div class="col-md-2">{{ file_form.path(class="form-control form-control-sm", placeholder="Path (e.g., Games/)") }}</div>
+                    <div class="col-md-2">{{ file_form.md5(class="form-control form-control-sm", placeholder="MD5") }}</div>
+                    <div class="col-md-1"><div class="form-check form-check-sm">{{ file_form.show_known(class="form-check-input") }}<label class="form-check-label small">Known</label></div></div>
+                    <div class="col-md-1"><div class="form-check form-check-sm">{{ file_form.show_directories(class="form-check-input") }}<label class="form-check-label small">Dirs</label></div></div>
+                    <div class="col-md-1"><button type="submit" class="btn btn-sm btn-secondary w-100">Filter</button></div>
                 </form>
             </div>
+            {% if subdirectories and file_form.recursive.data %}
+            <div class="card-body border-bottom bg-light">
+                <div class="small text-muted mb-2"><i class="bi bi-folder"></i> Subdirectories at this level:</div>
+                <div class="d-flex flex-wrap gap-2">
+                    {% for subdir in subdirectories %}
+                    <a href="?partition_uuid={{ file_form.partition_uuid.data }}&path={{ (current_path + subdir + '/')|urlencode }}&recursive=true"
+                       class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-folder-fill"></i> {{ subdir }}
+                    </a>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
             <div class="table-responsive">
                 <table class="table table-sm table-hover mb-0">
-                    <thead><tr><th>Path</th><th>Size</th><th>Known</th></tr></thead>
+                    <thead><tr><th>P</th><th>Path</th><th>Size</th><th>Filetype</th><th>Known</th></tr></thead>
                     <tbody>
                         {% for file in files %}
-                        <tr class="{{ 'table-secondary' if file.is_known else '' }}">
-                            <td><code>{{ file.path }}</code></td>
-                            <td>{% if file.file_size %}{{ (file.file_size / 1024)|round(1) }} KB{% else %}-{% endif %}</td>
+                        {# Color-code partition badges - cycle through colors for easy visual distinction #}
+                        {% set partition_colors = ['primary', 'success', 'warning', 'danger', 'info', 'secondary'] %}
+                        {% set partition_color = partition_colors[file.partition.partition_index % partition_colors|length] %}
+                        <tr class="{{ 'table-secondary' if file.is_known else '' }}{{ ' fst-italic' if file.is_directory else '' }}">
+                            <td><span class="badge bg-{{ partition_color }}" title="Partition {{ file.partition.partition_index }}">{{ file.partition.partition_index }}</span></td>
+                            <td>
+                                {% if file.is_directory %}
+                                    {# Directory - make it clickable to browse into it #}
+                                    <a href="?partition_uuid={{ file.partition.uuid }}&path={{ (file.path + '/')|urlencode }}&recursive={{ file_form.recursive.data|default(true)|lower }}"
+                                       class="text-primary text-decoration-none"
+                                       title="Browse directory">
+                                        <i class="bi bi-folder-fill"></i> <strong>{{ file.path }}</strong>
+                                    </a>
+                                {% else %}
+                                    {% set path_parts = file.path.split('/') %}
+                                    {% if path_parts|length > 1 %}
+                                        {# Show directory path as clickable links #}
+                                        {% set build_path = '' %}
+                                        {% for i in range(path_parts|length - 1) %}
+                                            {% set build_path = build_path + path_parts[i] + '/' %}
+                                            <a href="?partition_uuid={{ file.partition.uuid }}&path={{ build_path|urlencode }}&recursive={{ file_form.recursive.data|default(true)|lower }}"
+                                               class="text-muted text-decoration-none"
+                                               title="Browse {{ build_path }}">
+                                                <i class="bi bi-folder"></i> {{ path_parts[i] }}
+                                            </a> /
+                                        {% endfor %}
+                                        <code>{{ path_parts[-1] }}</code>
+                                    {% else %}
+                                        <code>{{ file.path }}</code>
+                                    {% endif %}
+                                {% endif %}
+                            </td>
+                            <td>{% if file.is_directory %}<span class="text-muted">DIR</span>{% elif file.file_size %}{{ (file.file_size / 1024)|round(1) }} KB{% else %}-{% endif %}</td>
+                            <td>
+                                {% if file.risc_os_filetype %}
+                                    <span class="text-muted" title="{{ file.risc_os_filetype | format_filetype }}">
+                                        <small>{{ file.risc_os_filetype | filetype_name }}</small>
+                                    </span>
+                                {% else %}-{% endif %}
+                            </td>
                             <td>{% if file.is_known %}<span class="badge bg-secondary">{{ file.known_file.database.name }}</span>{% endif %}</td>
                         </tr>
                         {% else %}
-                        <tr><td colspan="3" class="text-center text-muted">No files{% if not all_partitions %} - run analysis to extract file listing{% endif %}</td></tr>
+                        <tr><td colspan="5" class="text-center text-muted">No files{% if not all_partitions %} - run analysis to extract file listing{% endif %}</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>

@@ -71,6 +71,11 @@ def create_app(config_name=None):
 	import json
 	app.jinja_env.filters['fromjson'] = lambda s: json.loads(s) if s else {}
 
+	# RISC OS filetype formatting
+	from .riscos_filetypes import format_filetype, get_filetype_name
+	app.jinja_env.filters['format_filetype'] = format_filetype
+	app.jinja_env.filters['filetype_name'] = get_filetype_name
+
 	# enable database logging (if enabled)
 	if app.config.get('DEBUG_DB_LOG', False):
 		from flask.logging import default_handler
