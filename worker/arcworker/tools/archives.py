@@ -30,10 +30,10 @@ def extract_riscosarc(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     cmd = ['riscosarc', '-x', str(input_path)]
     result, output = run_tool_with_output(cmd, cwd=str(output_dir))
 
-    if result != 0:
+    if result.returncode != 0:
         return {
             'success': False,
-            'error': f'riscosarc failed with exit code {result}',
+            'error': f'riscosarc failed with exit code {result.returncode}',
             'tool': 'riscosarc',
             'process_output': output
         }
@@ -66,10 +66,10 @@ def extract_tbafs(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     cmd = ['tbafs-extractor', str(input_path), str(output_dir)]
     result, output = run_tool_with_output(cmd)
 
-    if result != 0:
+    if result.returncode != 0:
         return {
             'success': False,
-            'error': f'tbafs-extractor failed with exit code {result}',
+            'error': f'tbafs-extractor failed with exit code {result.returncode}',
             'tool': 'tbafs-extractor',
             'process_output': output
         }
@@ -101,10 +101,10 @@ def extract_zip(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     cmd = ['unzip', '-q', str(input_path), '-d', str(output_dir)]
     result, output = run_tool_with_output(cmd)
 
-    if result != 0:
+    if result.returncode != 0:
         return {
             'success': False,
-            'error': f'unzip failed with exit code {result}',
+            'error': f'unzip failed with exit code {result.returncode}',
             'tool': 'unzip',
             'process_output': output
         }
@@ -147,10 +147,10 @@ def extract_tar(input_path: Path, output_dir: Path, archive_type: str = 'tar') -
 
     result, output = run_tool_with_output(cmd)
 
-    if result != 0:
+    if result.returncode != 0:
         return {
             'success': False,
-            'error': f'tar failed with exit code {result}',
+            'error': f'tar failed with exit code {result.returncode}',
             'tool': 'tar',
             'process_output': output
         }
@@ -182,10 +182,10 @@ def extract_rar(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     cmd = ['unrar', 'x', '-y', str(input_path), str(output_dir) + '/']
     result, output = run_tool_with_output(cmd)
 
-    if result != 0:
+    if result.returncode != 0:
         return {
             'success': False,
-            'error': f'unrar failed with exit code {result}',
+            'error': f'unrar failed with exit code {result.returncode}',
             'tool': 'unrar',
             'process_output': output
         }
@@ -217,10 +217,10 @@ def extract_7z(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     cmd = ['7z', 'x', '-y', f'-o{output_dir}', str(input_path)]
     result, output = run_tool_with_output(cmd)
 
-    if result != 0:
+    if result.returncode != 0:
         return {
             'success': False,
-            'error': f'7z failed with exit code {result}',
+            'error': f'7z failed with exit code {result.returncode}',
             'tool': '7z',
             'process_output': output
         }

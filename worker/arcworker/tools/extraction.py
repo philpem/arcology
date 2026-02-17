@@ -386,10 +386,10 @@ def convert_fcfs_to_raw(input_path: Path, output_path: Path) -> dict:
     cmd = ['fcfs2raw', '-v', str(input_path), str(output_path)]
     result, process_output = run_tool_with_output(cmd)
 
-    if result != 0:
+    if result.returncode != 0:
         return {
             'success': False,
-            'error': f'fcfs2raw failed with exit code {result}',
+            'error': f'fcfs2raw failed with exit code {result.returncode}',
             'tool': 'fcfs2raw',
             'process_output': process_output
         }
