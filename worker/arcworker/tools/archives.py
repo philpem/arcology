@@ -143,7 +143,7 @@ def extract_tar(input_path: Path, output_dir: Path, archive_type: str = 'tar') -
     }
 
     flags = compression_flags.get(archive_type, [])
-    cmd = ['tar', '-xf', str(input_path), '-C', str(output_dir)] + flags
+    cmd = ['tar'] + flags + ['-xf', str(input_path), '-C', str(output_dir)]
 
     result, output = run_tool_with_output(cmd)
 
