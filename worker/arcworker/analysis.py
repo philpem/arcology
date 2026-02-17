@@ -851,20 +851,17 @@ class AnalysisWorker:
         # Construct full path to archive file
         archive_path = Path(extraction_path) / target_file['path']
 
-        # If not found, search the parent directory for a file with a RISC OS
-        # filetype suffix.  DIM extracts Acorn files as "name,XXX" (e.g.
-        # "Palette,DDC") but FILE_LISTING strips that suffix when recording
-        # paths in the database and lowercases the filetype code.  The suffix
-        # case on disk may be upper or mixed, so an exact name match fails on
-        # the case-sensitive Linux filesystem.  A directory scan handles both
-        # the suffix presence and any case variation.
+        # If not found, try with a RISC OS filetype suffix.  DIM extracts Acorn
+        # files as "name,XXX" (e.g. "Palette,DDC") but FILE_LISTING strips that
+        # suffix when recording paths in the database and lowercases the code.
+        # DIM uses either all-lowercase or all-uppercase, so try both.
         if not archive_path.exists():
-            parent = archive_path.parent
-            stem_lower = archive_path.name.lower()
-            if parent.is_dir():
-                for entry in sorted(parent.iterdir()):
-                    if entry.is_file() and entry.name.lower().startswith(stem_lower + ','):
-                        archive_path = entry
+            risc_os_filetype = target_file.get('risc_os_filetype')
+            if risc_os_filetype:
+                for suffix in (risc_os_filetype.lower(), risc_os_filetype.upper()):
+                    candidate = Path(str(archive_path) + ',' + suffix)
+                    if candidate.exists():
+                        archive_path = candidate
                         break
 
         if not archive_path.exists():
