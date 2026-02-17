@@ -297,13 +297,18 @@ class AnalysisWorker:
                 details=json.dumps({'file_count': result['file_count']})
             )
 
-            # Queue ARCHIVE_DETECT to scan for archives in extracted files
+            # Queue FILE_EXTRACTION to persist files to disk
+            # (ARCHIVE_DETECT will be queued after extraction completes,
+            # so archive files exist on disk for ARCHIVE_EXTRACT to find)
             if partition:
                 from .types import AnalysisType
                 self.api.queue_analysis(
                     artefact['uuid'],
-                    AnalysisType.ARCHIVE_DETECT.value,
-                    hints={'partition_uuid': partition.get('uuid')}
+                    AnalysisType.FILE_EXTRACTION.value,
+                    hints={
+                        'filesystem': fs_type,
+                        'partition_uuid': partition.get('uuid'),
+                    }
                 )
         else:
             self.api.update_analysis(
@@ -392,6 +397,16 @@ class AnalysisWorker:
                 output_path=str(extract_dir),
                 details=json.dumps({'file_count': result.get('file_count', 0)})
             )
+
+            # Queue ARCHIVE_DETECT to scan extracted files for nested archives
+            # Files are now persisted on disk, so ARCHIVE_EXTRACT can find them
+            partition_uuid = hints.get('partition_uuid')
+            if partition_uuid:
+                self.api.queue_analysis(
+                    artefact['uuid'],
+                    AnalysisType.ARCHIVE_DETECT.value,
+                    hints={'partition_uuid': partition_uuid}
+                )
         else:
             self.api.update_analysis(
                 analysis_id,
