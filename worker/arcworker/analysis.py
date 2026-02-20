@@ -288,7 +288,11 @@ class AnalysisWorker:
                 analysis_id,
                 status='completed',
                 success=False,
-                error_message=f'File extraction not supported for {artefact_type} format. Only raw sector images are supported.'
+                error_message=f'File extraction not supported for {artefact_type} format. Only raw sector images are supported.',
+                details=json.dumps({
+                    'artefact_type': artefact_type,
+                    'supported_types': list(supported_types),
+                })
             )
             return
 

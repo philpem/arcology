@@ -38,6 +38,15 @@
                     <dt>Created</dt><dd>{{ analysis.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</dd>
                     <dt>Started</dt><dd>{{ analysis.started_at.strftime('%Y-%m-%d %H:%M:%S') if analysis.started_at else '-' }}</dd>
                     <dt>Completed</dt><dd>{{ analysis.completed_at.strftime('%Y-%m-%d %H:%M:%S') if analysis.completed_at else '-' }}</dd>
+                    {% if analysis.hints %}
+                    {% set hints_data = analysis.hints | fromjson %}
+                    <dt>Hints</dt>
+                    <dd>
+                        {% for key, val in hints_data.items() %}
+                        <span class="badge bg-secondary me-1">{{ key }}: {{ val }}</span>
+                        {% endfor %}
+                    </dd>
+                    {% endif %}
                 </dl>
             </div>
         </div>
@@ -45,14 +54,25 @@
         <div class="card mb-4">
             <div class="card-header"><i class="bi bi-clipboard-check"></i> Results</div>
             <div class="card-body">
-                {% if analysis.status.value == 'completed' %}
+                {% if analysis.status.value in ('completed', 'failed') %}
                     <dl class="mb-0">
-                        <dt>Success</dt><dd>{% if analysis.success %}<span class="badge bg-success">Yes</span>{% else %}<span class="badge bg-warning">Partial</span>{% endif %}</dd>
+                        <dt>Success</dt>
+                        <dd>
+                            {% if analysis.success %}
+                                <span class="badge bg-success">Yes</span>
+                            {% elif analysis.status.value == 'failed' %}
+                                <span class="badge bg-danger">No</span>
+                            {% else %}
+                                <span class="badge bg-warning">Partial</span>
+                            {% endif %}
+                        </dd>
                         {% if analysis.summary %}<dt>Summary</dt><dd>{{ analysis.summary }}</dd>{% endif %}
+                        {% if analysis.error_message %}
+                        <dt>Error</dt>
+                        <dd><span class="text-danger">{{ analysis.error_message }}</span></dd>
+                        {% endif %}
                         {% if analysis.output_url %}<dt>Output</dt><dd><a href="{{ analysis.output_url }}" target="_blank">{{ analysis.output_url }}</a></dd>{% endif %}
                     </dl>
-                {% elif analysis.status.value == 'failed' %}
-                    <div class="alert alert-danger mb-0"><strong>Error:</strong> {{ analysis.error_message or 'Unknown' }}</div>
                 {% elif analysis.status.value == 'running' %}
                     <div class="d-flex align-items-center"><div class="spinner-border spinner-border-sm me-2"></div> In progress...</div>
                 {% else %}
