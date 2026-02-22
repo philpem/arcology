@@ -288,7 +288,11 @@ class AnalysisWorker:
                 analysis_id,
                 status='completed',
                 success=False,
-                error_message=f'File extraction not supported for {artefact_type} format. Only raw sector images are supported.'
+                error_message=f'File extraction not supported for {artefact_type} format. Only raw sector images are supported.',
+                details=json.dumps({
+                    'artefact_type': artefact_type,
+                    'supported_types': list(supported_types),
+                })
             )
             return
 
@@ -308,22 +312,39 @@ class AnalysisWorker:
             partition=None
         )
 
+        # Track every tool attempted so all process_output ends up in details.
+        all_results: dict[str, dict] = {}
+
         # Choose extraction method based on filesystem hint
         is_acorn = False
         if filesystem in ('dfs', 'adfs', 'acorn'):
             result = extract_acorn_disc_image_manager(input_path, extract_dir)
+            all_results['dim'] = result
             is_acorn = True
         elif filesystem in ('fat', 'fat12', 'fat16', 'fat32', 'dos', 'msdos'):
             result = extract_dos_7z(input_path, extract_dir)
+            all_results['7z'] = result
         else:
             # Try 7z as default (handles many formats)
             result = extract_dos_7z(input_path, extract_dir)
+            all_results['7z'] = result
 
             # If that fails and no filesystem hint, try Acorn
             if not result['success'] and not filesystem:
                 result = extract_acorn_disc_image_manager(input_path, extract_dir)
+                all_results['dim'] = result
                 if result['success']:
                     is_acorn = True
+
+        def _build_details(extra: dict | None = None) -> str:
+            d: dict = {}
+            if extra:
+                d.update(extra)
+            for tool_key, tool_result in all_results.items():
+                po = tool_result.get('process_output')
+                if po:
+                    d[tool_key] = {'process_output': po}
+            return json.dumps(d)
 
         if not result['success']:
             self.api.update_analysis(
@@ -332,9 +353,7 @@ class AnalysisWorker:
                 success=False,
                 tool_name=result.get('tool'),
                 error_message=result.get('error', 'Extraction failed'),
-                details=json.dumps({
-                    'process_output': result.get('process_output')
-                })
+                details=_build_details()
             )
             return
 
@@ -381,7 +400,7 @@ class AnalysisWorker:
             tool_name=result['tool'],
             summary=f'Extracted {len(files)} files ({fs_type})',
             output_path=str(extract_dir),
-            details=json.dumps({'file_count': len(files)})
+            details=_build_details({'file_count': len(files)})
         )
 
         # Queue ARCHIVE_DETECT to scan extracted files for nested archives
@@ -509,17 +528,32 @@ class AnalysisWorker:
         if file_result.get('file_type'):
             summary += f' [file: {file_result["file_type"][:200]}]'
 
+        # Store each tool's result at the top level so the template's Process Logs
+        # section can find process_output for sfdisk and file (adfs detection is
+        # pure-Python and produces no subprocess output).
+        details: dict = {'partitions': detected_partitions}
+        details.update(results)
+
         self.api.update_analysis(
             analysis_id,
             status='completed',
             success=True,
             tool_name='sfdisk,adfs_detect,file',
             summary=summary,
-            details=json.dumps({
-                'partitions': detected_partitions,
-                'results': results
-            })
+            details=json.dumps(details)
         )
+
+        # Queue FILE_EXTRACTION for each detected partition now that we know the
+        # filesystem type.  This ensures the correct tool is used (e.g. DIM for
+        # ADFS, 7z for FAT) rather than letting FILE_EXTRACTION guess blindly.
+        for partition in detected_partitions:
+            fs = partition.get('filesystem', 'unknown')
+            extraction_hints: dict = {'filesystem': fs}
+            self.api.queue_analysis(
+                artefact['uuid'],
+                AnalysisType.FILE_EXTRACTION.value,
+                hints=extraction_hints,
+            )
 
     @analysis_handler("archive detection")
     def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path):
@@ -918,6 +952,16 @@ class AnalysisWorker:
                 }
             )
 
+        tool_key = result.get('tool', 'tool').lower().replace(' ', '_')
+        po = result.get('process_output')
+        details: dict = {
+            'file_count': len(files),
+            'extraction_depth': extraction_depth,
+            'archive_type': archive_type.value,
+        }
+        if po:
+            details[tool_key] = {'process_output': po}
+
         self.api.update_analysis(
             analysis_id,
             status='completed',
@@ -925,11 +969,7 @@ class AnalysisWorker:
             tool_name=result['tool'],
             output_path=str(persistent_output),
             summary=f"Extracted {len(files)} files from {archive_info['name']} archive",
-            details=json.dumps({
-                'file_count': len(files),
-                'extraction_depth': extraction_depth,
-                'archive_type': archive_type.value
-            })
+            details=json.dumps(details)
         )
 
     # =========================================================================

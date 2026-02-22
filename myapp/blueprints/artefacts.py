@@ -107,12 +107,15 @@ ANALYSIS_MAP = {
     #ArtefactType.MDF_MDS: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_EXTRACTION],
     #ArtefactType.NRG: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_EXTRACTION],
     
-    # Hard drive raw images - partition detection then file extraction
-    #ArtefactType.RAW_SECTOR: [AnalysisType.PARTITION_DETECT, AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_EXTRACTION],
-    ArtefactType.RAW_SECTOR: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_EXTRACTION],
-    ArtefactType.DD_ZST: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_EXTRACTION],
-    ArtefactType.DD_GZ: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_EXTRACTION],
-    ArtefactType.DD_BZ2: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_EXTRACTION],
+    # Raw sector images - run PARTITION_DETECT first; it queues FILE_EXTRACTION
+    # with the detected filesystem hint so the right tool (DIM vs 7z) is used.
+    # FILE_EXTRACTION must NOT be queued here directly, as it would race with
+    # PARTITION_DETECT and fall back to the wrong tool (7z for ADFS discs, etc.).
+    #ArtefactType.RAW_SECTOR: [AnalysisType.PARTITION_DETECT, AnalysisType.FORMAT_IDENTIFY],
+    ArtefactType.RAW_SECTOR: [AnalysisType.PARTITION_DETECT],
+    ArtefactType.DD_ZST: [AnalysisType.PARTITION_DETECT],
+    ArtefactType.DD_GZ: [AnalysisType.PARTITION_DETECT],
+    ArtefactType.DD_BZ2: [AnalysisType.PARTITION_DETECT],
     
     # Documents/images - just metadata/checksums
     ArtefactType.PDF: [AnalysisType.METADATA_EXTRACT],
