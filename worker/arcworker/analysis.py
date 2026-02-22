@@ -543,6 +543,18 @@ class AnalysisWorker:
             details=json.dumps(details)
         )
 
+        # Queue FILE_EXTRACTION for each detected partition now that we know the
+        # filesystem type.  This ensures the correct tool is used (e.g. DIM for
+        # ADFS, 7z for FAT) rather than letting FILE_EXTRACTION guess blindly.
+        for partition in detected_partitions:
+            fs = partition.get('filesystem', 'unknown')
+            extraction_hints: dict = {'filesystem': fs}
+            self.api.queue_analysis(
+                artefact['uuid'],
+                AnalysisType.FILE_EXTRACTION.value,
+                hints=extraction_hints,
+            )
+
     @analysis_handler("archive detection")
     def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path):
         """
