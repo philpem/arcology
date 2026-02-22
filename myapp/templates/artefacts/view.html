@@ -298,13 +298,41 @@
                     </tbody>
                 </table>
             </div>
-            {% if files_pagination.pages > 1 %}
+            {% if files_pagination.total > 0 %}
             <div class="card-footer">
-                <nav><ul class="pagination pagination-sm justify-content-center mb-0">
-                    {% if files_pagination.has_prev %}<li class="page-item"><a class="page-link" href="?{{ dict(pagination_args, page=files_pagination.prev_num) | urlencode }}">Prev</a></li>{% endif %}
-                    <li class="page-item disabled"><span class="page-link">{{ files_pagination.page }}/{{ files_pagination.pages }}</span></li>
-                    {% if files_pagination.has_next %}<li class="page-item"><a class="page-link" href="?{{ dict(pagination_args, page=files_pagination.next_num) | urlencode }}">Next</a></li>{% endif %}
-                </ul></nav>
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    {# Page navigation – only shown when there is more than one page #}
+                    {% if files_pagination.pages > 1 %}
+                    <nav><ul class="pagination pagination-sm mb-0">
+                        {% if files_pagination.has_prev %}<li class="page-item"><a class="page-link" href="?{{ dict(pagination_args, page=files_pagination.prev_num) | urlencode }}">‹</a></li>
+                        {% else %}<li class="page-item disabled"><span class="page-link">‹</span></li>{% endif %}
+                        {% for pg in files_pagination.iter_pages(left_edge=1, left_current=2, right_current=3, right_edge=1) %}
+                            {% if pg %}
+                            <li class="page-item {{ 'active' if pg == files_pagination.page else '' }}">
+                                <a class="page-link" href="?{{ dict(pagination_args, page=pg) | urlencode }}">{{ pg }}</a>
+                            </li>
+                            {% else %}
+                            <li class="page-item disabled"><span class="page-link">…</span></li>
+                            {% endif %}
+                        {% endfor %}
+                        {% if files_pagination.has_next %}<li class="page-item"><a class="page-link" href="?{{ dict(pagination_args, page=files_pagination.next_num) | urlencode }}">›</a></li>
+                        {% else %}<li class="page-item disabled"><span class="page-link">›</span></li>{% endif %}
+                    </ul></nav>
+                    {% else %}
+                    <span class="text-muted small">{{ files_pagination.total }} file{{ 's' if files_pagination.total != 1 else '' }}</span>
+                    {% endif %}
+
+                    {# Per-page selector #}
+                    <div class="d-flex align-items-center gap-1">
+                        <span class="text-muted small me-1">Per page:</span>
+                        {% for pp in valid_per_page %}
+                        <a class="btn btn-sm {{ 'btn-secondary' if (not view_all and files_pagination.per_page == pp) else 'btn-outline-secondary' }}"
+                           href="?{{ dict(pagination_args, per_page=pp) | urlencode }}">{{ pp }}</a>
+                        {% endfor %}
+                        <a class="btn btn-sm {{ 'btn-secondary' if view_all else 'btn-outline-secondary' }}"
+                           href="?{{ dict(pagination_args, per_page=0) | urlencode }}">All</a>
+                    </div>
+                </div>
             </div>
             {% endif %}
         </div>

@@ -506,7 +506,16 @@ def view(uuid):
         )
     
     page = request.args.get('page', 1, type=int)
-    per_page = current_app.config.get('FILES_PER_PAGE', 100)
+    valid_per_page = [25, 50, 100, 250]
+    per_page_param = request.args.get('per_page', None, type=int)
+    view_all = per_page_param == 0
+    if per_page_param in valid_per_page:
+        per_page = per_page_param
+    elif view_all:
+        per_page = 10000  # "view all" – large cap to avoid unbounded queries
+        page = 1
+    else:
+        per_page = current_app.config.get('FILES_PER_PAGE', 100)
     files_pagination = files_query.order_by(ExtractedFile.path).paginate(
         page=page, per_page=per_page, max_per_page=per_page
     )
@@ -560,6 +569,8 @@ def view(uuid):
                            files=files_pagination.items,
                            files_pagination=files_pagination,
                            pagination_args=pagination_args,
+                           valid_per_page=valid_per_page,
+                           view_all=view_all,
                            all_partitions=all_partitions,
                            subdirectories=subdirectories,
                            current_path=current_path,
