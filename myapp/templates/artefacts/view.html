@@ -295,7 +295,7 @@
                             <td>
                                 {% if file.risc_os_filetype %}
                                     <span class="text-muted" title="{{ file.risc_os_filetype | format_filetype }}">
-                                        <small>{{ file.risc_os_filetype | filetype_name }}</small>
+                                        <small>{{ (file.risc_os_filetype | filetype_name) or ('&' ~ file.risc_os_filetype | upper) }}</small>
                                     </span>
                                 {% else %}-{% endif %}
                             </td>
