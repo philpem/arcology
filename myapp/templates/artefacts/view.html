@@ -192,8 +192,8 @@
                             {% endfor %}
                         </select>
                     </div>
-                    <div class="col-md-2">{{ file_form.filename(class="form-control form-control-sm", placeholder="Filename") }}</div>
-                    <div class="col-md-1">{{ file_form.extension(class="form-control form-control-sm", placeholder="Ext") }}</div>
+                    <div class="col-md-2">{{ file_form.filename(class="form-control form-control-sm", placeholder="Filename (glob: *.txt)") }}</div>
+                    <div class="col-md-1">{{ file_form.filetype(class="form-control form-control-sm", placeholder="Filetype") }}</div>
                     <div class="col-md-2">{{ file_form.path(class="form-control form-control-sm", placeholder="Path (e.g., Games/)") }}</div>
                     <div class="col-md-2">{{ file_form.md5(class="form-control form-control-sm", placeholder="MD5") }}</div>
                     <div class="col-md-1"><div class="form-check form-check-sm">{{ file_form.show_known(class="form-check-input") }}<label class="form-check-label small">Known</label></div></div>

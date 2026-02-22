@@ -188,7 +188,7 @@ class AnalyseForm(FlaskForm):
 class FileSearchForm(FlaskForm):
     partition_uuid = StringField('Partition UUID', validators=[Optional()])
     filename = StringField('Filename', validators=[Optional()])
-    extension = StringField('Extension', validators=[Optional()])
+    filetype = StringField('Filetype', validators=[Optional()])
     path = StringField('Path/Directory', validators=[Optional()])
     md5 = StringField('MD5 Hash', validators=[Optional()])
     sha1 = StringField('SHA1 Hash', validators=[Optional()])
@@ -464,14 +464,19 @@ def view(uuid):
         files_query = files_query.filter(ExtractedFile.is_directory == False)
 
     if file_form.filename.data:
-        files_query = files_query.filter(
-            ExtractedFile.filename.ilike(f'%{file_form.filename.data}%')
-        )
-    
-    if file_form.extension.data:
-        files_query = files_query.filter(
-            ExtractedFile.extension == file_form.extension.data.lower().lstrip('.')
-        )
+        fn = file_form.filename.data
+        if '*' in fn or '?' in fn:
+            # Glob pattern: escape SQL special chars then convert glob wildcards
+            like_pat = fn.replace('%', r'\%').replace('_', r'\_').replace('*', '%').replace('?', '_')
+            files_query = files_query.filter(ExtractedFile.filename.ilike(like_pat))
+        else:
+            # Plain text: substring match (backward-compatible behaviour)
+            files_query = files_query.filter(ExtractedFile.filename.ilike(f'%{fn}%'))
+
+    if file_form.filetype.data:
+        # Strip a leading '#' or '&' that users might include with the hex value
+        ft = file_form.filetype.data.lower().lstrip('#&')
+        files_query = files_query.filter(ExtractedFile.risc_os_filetype == ft)
 
     if file_form.path.data:
         path_filter = file_form.path.data.strip()
