@@ -76,9 +76,11 @@
         <div class="card mb-4">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span><i class="bi bi-gear"></i> Analyses
-                    {% if not show_all_analyses and has_duplicate_analyses %}
-                    <span class="badge bg-info" title="Showing most recent only">{{ analyses|length }} of {{ total_analyses_count }}</span>
-                    {% endif %}
+                    <span class="badge bg-primary ms-1" title="{{ total_analyses_count }} total analyses">{{ total_analyses_count }}</span>
+                    {% if status_counts.completed %}<span class="badge bg-success ms-1" title="{{ status_counts.completed }} completed">{{ status_counts.completed }}</span>{% endif %}
+                    {% if status_counts.failed %}<span class="badge bg-danger ms-1" title="{{ status_counts.failed }} failed">{{ status_counts.failed }}</span>{% endif %}
+                    {% if status_counts.running %}<span class="badge bg-info ms-1" title="{{ status_counts.running }} running">{{ status_counts.running }}</span>{% endif %}
+                    {% if status_counts.pending %}<span class="badge bg-warning text-dark ms-1" title="{{ status_counts.pending }} pending">{{ status_counts.pending }}</span>{% endif %}
                 </span>
                 <div>
                     <a href="{{ url_for('myapp_blueprints_artefacts.analyse', uuid=artefact.uuid) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-plus"></i></a>
@@ -99,25 +101,27 @@
                 <li class="list-group-item text-muted">No analyses</li>
                 {% endfor %}
             </ul>
-            {% if has_duplicate_analyses %}
+            {% if has_hidden_analyses or show_all_analyses or has_duplicate_analyses %}
             <div class="card-footer d-flex justify-content-between align-items-center">
                 <div>
                     {% if show_all_analyses %}
                     <a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=artefact.uuid) }}" class="btn btn-sm btn-outline-secondary">
                         <i class="bi bi-funnel"></i> Show Recent Only
                     </a>
-                    {% else %}
+                    {% elif has_hidden_analyses %}
                     <a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=artefact.uuid, show_all_analyses='true') }}" class="btn btn-sm btn-outline-secondary">
                         <i class="bi bi-list"></i> Show All ({{ total_analyses_count }})
                     </a>
                     {% endif %}
                 </div>
+                {% if has_duplicate_analyses %}
                 <form action="{{ url_for('myapp_blueprints_artefacts.cleanup_analyses_route', uuid=artefact.uuid) }}" method="post" class="d-inline" onsubmit="return confirm('This will delete analyses from older runs, keeping the most recent run intact. Continue?');">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-sm btn-outline-warning" title="Delete analyses from older runs, keeping the most recent run intact">
                         <i class="bi bi-trash"></i> Cleanup Duplicates
                     </button>
                 </form>
+                {% endif %}
             </div>
             {% endif %}
         </div>
