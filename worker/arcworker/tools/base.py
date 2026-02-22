@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from ..config import log
+from ..utils.text import sanitize_filename
 
 
 def run_tool(cmd: list[str], timeout: int = 3600, cwd: str = None) -> subprocess.CompletedProcess:
@@ -30,7 +31,7 @@ def run_tool(cmd: list[str], timeout: int = 3600, cwd: str = None) -> subprocess
         cwd=cwd
     )
     if result.returncode != 0:
-        log.warning(f"Tool returned {result.returncode}: {result.stderr.decode()[:500]}")
+        log.warning(f"Tool returned {result.returncode}: {result.stderr.decode(errors='replace')[:500]}")
     return result
 
 
@@ -51,6 +52,13 @@ def get_process_output(result: subprocess.CompletedProcess, cmd: list[str],
     stdout = result.stdout.decode(errors='replace')
     stderr = result.stderr.decode(errors='replace')
 
+    # Sanitize the command string: paths containing raw Latin-1 bytes (e.g.
+    # Acorn hard space 0xA0) are represented in Python as surrogate-escaped
+    # characters (\udca0).  These cannot be UTF-8 encoded and would cause
+    # UnicodeEncodeError when the stored JSON is later rendered in the web UI.
+    # Convert them to their Unicode equivalents (e.g. U+00A0) for safe storage.
+    command_str = sanitize_filename(' '.join(cmd))
+
     # Truncate if too long (keep first and last portions)
     if len(stdout) > max_output_len:
         half = max_output_len // 2
@@ -60,7 +68,7 @@ def get_process_output(result: subprocess.CompletedProcess, cmd: list[str],
         stderr = stderr[:half] + f"\n\n... [truncated {len(stderr) - max_output_len} bytes] ...\n\n" + stderr[-half:]
 
     output = {
-        'command': ' '.join(cmd),
+        'command': command_str,
         'returncode': result.returncode,
         'stdout': stdout,
         'stderr': stderr,
