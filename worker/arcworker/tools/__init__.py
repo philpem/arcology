@@ -21,6 +21,7 @@ from .extraction import (
 from .partition import (
     detect_partitions_sfdisk,
     detect_acorn_adfs,
+    detect_acorn_partitions,
     detect_format_file_cmd,
 )
 from .archives import (
@@ -49,6 +50,7 @@ __all__ = [
     'enumerate_extracted_files',
     'detect_partitions_sfdisk',
     'detect_acorn_adfs',
+    'detect_acorn_partitions',
     'detect_format_file_cmd',
     'extract_riscosarc',
     'extract_tbafs',

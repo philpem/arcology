@@ -29,6 +29,7 @@ from .tools import (
     enumerate_extracted_files,
     detect_partitions_sfdisk,
     detect_acorn_adfs,
+    detect_acorn_partitions,
     detect_format_file_cmd,
 )
 
@@ -502,6 +503,16 @@ class AnalysisWorker:
         may retain a stale MBR, so sfdisk is only used when no ADFS
         signatures are found.
 
+        When ADFS is detected, Acorn partition schemes (HCCS, Simtec, etc.)
+        are checked.  Fully-decoded schemes (HCCS) provide per-partition
+        metadata including disc names, passwords and access rights.
+        Signature-only schemes (Simtec) are noted but fall through to
+        whole-disc ADFS handling.
+
+        All partition schemes normalise to byte-based offsets (start_byte /
+        size_bytes) so the carving and gap-detection code below is
+        addressing-mode agnostic.
+
         When multiple partitions are detected (or a single partition that
         doesn't span the whole disc), each partition is extracted and
         registered as a derived artefact with FILE_EXTRACTION queued
@@ -541,25 +552,47 @@ class AnalysisWorker:
         results['adfs'] = adfs_result
 
         if adfs_result.get('adfs_detected'):
-            detected_partitions = [{
-                'index': 0,
-                'filesystem': 'adfs',
-                'description': f'Acorn ADFS ({adfs_result.get("adfs_variant", "unknown variant")})',
-                'size_bytes': adfs_result.get('disc_size'),
-                'signatures': adfs_result.get('signatures', []),
-            }]
+            # 2a. Try Acorn partition schemes (HCCS, Simtec, etc.)
+            acorn_result = detect_acorn_partitions(input_path)
+            results['acorn_partitions'] = acorn_result
 
-        # 2. If no ADFS detected, try sfdisk for standard partition tables (MBR/GPT)
+            if acorn_result['detected'] and acorn_result.get('partitions'):
+                # Fully decoded scheme (e.g. HCCS) with partition list
+                detected_partitions = acorn_result['partitions']
+            elif acorn_result['detected']:
+                # Signature-only scheme (e.g. Simtec) — no decoded partitions.
+                # Treat as single ADFS partition spanning the whole disc.
+                detected_partitions = [{
+                    'index': 0,
+                    'start_byte': 0,
+                    'filesystem': 'adfs',
+                    'description': (
+                        f'Acorn ADFS ({adfs_result.get("adfs_variant", "unknown variant")})'
+                        f' \u2014 {acorn_result.get("description", "")}'
+                    ),
+                    'size_bytes': input_path.stat().st_size,
+                    'signatures': adfs_result.get('signatures', []),
+                }]
+            else:
+                # No partition scheme — single ADFS partition
+                detected_partitions = [{
+                    'index': 0,
+                    'start_byte': 0,
+                    'filesystem': 'adfs',
+                    'description': f'Acorn ADFS ({adfs_result.get("adfs_variant", "unknown variant")})',
+                    'size_bytes': input_path.stat().st_size,
+                    'signatures': adfs_result.get('signatures', []),
+                }]
+
+        # 2b. If no ADFS detected, try sfdisk for standard partition tables (MBR/GPT)
         if not detected_partitions:
             sfdisk_result = detect_partitions_sfdisk(input_path)
             results['sfdisk'] = sfdisk_result
 
             if sfdisk_result['success']:
-                sector_size = sfdisk_result.get('sector_size', 512)
                 detected_partitions = sfdisk_result['partitions']
                 # Enrich sfdisk partitions with filesystem hints from type codes
                 for p in detected_partitions:
-                    p['sector_size'] = sector_size
                     ptype = p.get('type', '').lower()
                     p['filesystem'] = _MBR_TYPE_TO_FS.get(ptype, 'unknown')
 
@@ -572,6 +605,7 @@ class AnalysisWorker:
             file_size = input_path.stat().st_size
             detected_partitions = [{
                 'index': 0,
+                'start_byte': 0,
                 'filesystem': filesystem_hint or 'unknown',
                 'description': 'No partition table detected (whole disc)',
                 'size_bytes': file_size,
@@ -582,22 +616,21 @@ class AnalysisWorker:
         # -----------------------------------------------------------------
         disc_size = input_path.stat().st_size
         is_compressed = decompression_info is not None
-        has_sfdisk_partitions = any('start_sector' in p for p in detected_partitions)
 
         # Register partitions as derived artefacts when there are multiple
         # partitions, or a single partition that doesn't span the whole disc.
         # This also lets us extract and preserve unpartitioned space (gaps).
+        # All partition schemes normalise to start_byte / size_bytes so the
+        # logic below is addressing-mode agnostic.
         should_register_derived = False
-        if has_sfdisk_partitions:
-            if len(detected_partitions) > 1:
+        if len(detected_partitions) > 1:
+            should_register_derived = True
+        elif len(detected_partitions) == 1:
+            p = detected_partitions[0]
+            p_start = p.get('start_byte', 0)
+            p_end = p_start + p.get('size_bytes', disc_size)
+            if p_start > 0 or p_end < disc_size:
                 should_register_derived = True
-            elif len(detected_partitions) == 1:
-                p = detected_partitions[0]
-                sect_sz = p.get('sector_size', 512)
-                p_start = p['start_sector'] * sect_sz
-                p_end = p_start + p['size_sectors'] * sect_sz
-                if p_start > 0 or p_end < disc_size:
-                    should_register_derived = True
 
         unpartitioned_notes: list[str] = []
         partition_image_paths: dict[int, str] = {}
@@ -606,20 +639,24 @@ class AnalysisWorker:
         if should_register_derived:
             # ---- Extract each partition as a derived artefact ----
             for partition in detected_partitions:
-                if 'start_sector' not in partition:
-                    continue
                 idx = partition['index']
                 fs = partition.get('filesystem', 'unknown')
-                sect_sz = partition.get('sector_size', 512)
-                start_byte = partition['start_sector'] * sect_sz
-                size_bytes = partition['size_sectors'] * sect_sz
+                start_byte = partition.get('start_byte', 0)
+                size_bytes = partition.get('size_bytes', 0)
+
+                # Build a descriptive label including disc name when available
+                disc_name = partition.get('disc_name')
+                if disc_name:
+                    part_label = f"{artefact_label} (partition {idx}: {disc_name}, {fs})"
+                else:
+                    part_label = f"{artefact_label} (partition {idx}, {fs})"
 
                 partition_path = work_dir / f"partition_{idx}.img"
                 extract_partition_range(input_path, partition_path, start_byte, size_bytes)
 
                 derived = self.api.register_derived_artefact(
                     analysis_id,
-                    f"{artefact_label} (partition {idx}, {fs})",
+                    part_label,
                     partition_path,
                     ArtefactType.RAW_SECTOR,
                     auto_analyse=False
@@ -636,14 +673,13 @@ class AnalysisWorker:
 
             # ---- Handle unpartitioned space (gaps) ----
             sorted_parts = sorted(
-                [p for p in detected_partitions if 'start_sector' in p],
-                key=lambda p: p['start_sector']
+                detected_partitions,
+                key=lambda p: p.get('start_byte', 0)
             )
-            sect_sz = sorted_parts[0].get('sector_size', 512)
 
             gaps: list[dict] = []
             # Space before first partition
-            first_start = sorted_parts[0]['start_sector'] * sect_sz
+            first_start = sorted_parts[0].get('start_byte', 0)
             if first_start > 0:
                 gaps.append({
                     'start': 0, 'size': first_start,
@@ -651,15 +687,15 @@ class AnalysisWorker:
                 })
             # Space between consecutive partitions
             for i in range(len(sorted_parts) - 1):
-                end_curr = (sorted_parts[i]['start_sector'] + sorted_parts[i]['size_sectors']) * sect_sz
-                start_next = sorted_parts[i + 1]['start_sector'] * sect_sz
+                end_curr = sorted_parts[i].get('start_byte', 0) + sorted_parts[i].get('size_bytes', 0)
+                start_next = sorted_parts[i + 1].get('start_byte', 0)
                 if start_next > end_curr:
                     gaps.append({
                         'start': end_curr, 'size': start_next - end_curr,
                         'label': f'Gap between partitions {sorted_parts[i]["index"]} and {sorted_parts[i + 1]["index"]}',
                     })
             # Space after last partition
-            last_end = (sorted_parts[-1]['start_sector'] + sorted_parts[-1]['size_sectors']) * sect_sz
+            last_end = sorted_parts[-1].get('start_byte', 0) + sorted_parts[-1].get('size_bytes', 0)
             if last_end < disc_size:
                 gaps.append({
                     'start': last_end, 'size': disc_size - last_end,
@@ -728,7 +764,20 @@ class AnalysisWorker:
 
         summary += f'Detected {len(detected_partitions)} partition(s): {", ".join(fs_types)}'
 
-        if adfs_result.get('adfs_detected'):
+        # Acorn partition scheme info
+        acorn_result = results.get('acorn_partitions', {})
+        if acorn_result.get('detected'):
+            scheme = acorn_result.get('scheme', 'unknown')
+            if acorn_result.get('partitions'):
+                summary += f' [{scheme.upper()} partitioning]'
+                # Include disc names in summary
+                names = [p.get('disc_name', '') for p in acorn_result['partitions'] if p.get('disc_name')]
+                if names:
+                    summary += f' (volumes: {", ".join(names)})'
+            elif acorn_result.get('description'):
+                summary += f'. {acorn_result["description"]}'
+
+        if adfs_result.get('adfs_detected') and not acorn_result.get('detected'):
             summary += f' (ADFS signatures: {", ".join(adfs_result.get("signatures", []))})'
 
         if file_result.get('file_type'):
