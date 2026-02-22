@@ -17,6 +17,7 @@ from .extraction import (
     extract_dos_7z,
     extract_iso_7z,
     enumerate_extracted_files,
+    parse_acorn_filename,
 )
 from .partition import (
     detect_partitions_sfdisk,
@@ -48,6 +49,7 @@ __all__ = [
     'extract_dos_7z',
     'extract_iso_7z',
     'enumerate_extracted_files',
+    'parse_acorn_filename',
     'detect_partitions_sfdisk',
     'detect_acorn_adfs',
     'detect_acorn_partitions',

@@ -384,7 +384,15 @@ def view(uuid):
     """View an artefact and its partitions/files."""
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
 
-    file_form = FileSearchForm(request.args)
+    # Only bind to request.args when the user has actively submitted a filter,
+    # so that BooleanField defaults (e.g. recursive=True) apply on first load.
+    # Without this, WTForms treats missing checkbox keys as False.
+    _file_filter_keys = {'partition_uuid', 'filename', 'extension', 'path', 'md5', 'sha1',
+                         'show_known', 'show_directories', 'recursive'}
+    if _file_filter_keys & set(request.args.keys()):
+        file_form = FileSearchForm(request.args)
+    else:
+        file_form = FileSearchForm()
 
     # Check if user wants to see all analyses or just the most recent
     show_all_analyses = request.args.get('show_all_analyses', 'false').lower() == 'true'
@@ -413,7 +421,11 @@ def view(uuid):
         Partition.artefact_id.in_(all_artefact_ids)
     )
 
-    # Filter by specific partition if requested
+    # Filter by specific partition if requested.
+    # Guard against the string "None" which can arrive when Jinja2
+    # renders a None value into a URL parameter.
+    if file_form.partition_uuid.data in (None, '', 'None'):
+        file_form.partition_uuid.data = None
     if file_form.partition_uuid.data:
         files_query = files_query.filter(Partition.uuid == file_form.partition_uuid.data)
 
@@ -456,7 +468,12 @@ def view(uuid):
         files_query = files_query.filter(ExtractedFile.sha1 == file_form.sha1.data.lower())
     
     if not file_form.show_known.data:
-        files_query = files_query.filter(ExtractedFile.is_known == False)
+        # Always show archive files even when hiding known files, because
+        # archives serve as navigational pseudo-directories in the UI.
+        from sqlalchemy import or_
+        files_query = files_query.filter(
+            or_(ExtractedFile.is_known == False, ExtractedFile.is_archive == True)
+        )
     
     page = request.args.get('page', 1, type=int)
     per_page = current_app.config.get('FILES_PER_PAGE', 100)

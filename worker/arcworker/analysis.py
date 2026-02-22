@@ -27,6 +27,7 @@ from .tools import (
     extract_acorn_disc_image_manager,
     extract_dos_7z,
     enumerate_extracted_files,
+    parse_acorn_filename,
     detect_partitions_sfdisk,
     detect_acorn_adfs,
     detect_acorn_partitions,
@@ -843,8 +844,10 @@ class AnalysisWorker:
             )
             return
 
-        # Get files not yet marked as archives (skip already-detected ones)
-        partition_resp = self.api.get(f"/partitions/{partition_uuid}/files?per_page=10000&is_archive=false")
+        # Get files not yet marked as archives (skip already-detected ones).
+        # Must include known files (show_known=true) because archive files
+        # can match the known-files database and would otherwise be hidden.
+        partition_resp = self.api.get(f"/partitions/{partition_uuid}/files?per_page=10000&is_archive=false&show_known=true")
         if not partition_resp:
             self.api.update_analysis(
                 analysis_id,
@@ -1185,18 +1188,48 @@ class AnalysisWorker:
         # will automatically prefix them with the archive's path when
         # registering (based on parent_file_id).
         archive_display_path = target_file['path']
+
+        # RISC OS archive extractors preserve ,xxx filetype suffixes on
+        # filenames.  Parse these to populate risc_os_filetype and strip
+        # the suffix from display paths (same logic as FILE_EXTRACTION).
+        is_acorn_archive = archive_type in (
+            ArchiveType.ARCFS, ArchiveType.SPARK, ArchiveType.PACKDIR,
+            ArchiveType.TBAFS, ArchiveType.CFS, ArchiveType.SQUASH,
+            ArchiveType.FCFS,
+        )
+
         files = []
         for file_path in persistent_output.rglob('*'):
             if not file_path.is_file():
                 continue
 
+            # Skip .inf metadata files (Acorn extraction artifacts)
+            if is_acorn_archive and file_path.suffix == '.inf':
+                continue
+
             rel_path = file_path.relative_to(persistent_output)
-            files.append({
-                'path': str(rel_path),
+
+            file_entry = {
                 'size': file_path.stat().st_size,
                 'parent_file_id': file_id,
-                'extraction_depth': extraction_depth
-            })
+                'extraction_depth': extraction_depth,
+            }
+
+            if is_acorn_archive:
+                true_name, filetype = parse_acorn_filename(file_path.name)
+                if filetype and len(rel_path.parts) > 1:
+                    display_path = str(Path(*rel_path.parts[:-1]) / true_name)
+                elif filetype:
+                    display_path = true_name
+                else:
+                    display_path = str(rel_path)
+                file_entry['path'] = display_path
+                if filetype:
+                    file_entry['risc_os_filetype'] = filetype
+            else:
+                file_entry['path'] = str(rel_path)
+
+            files.append(file_entry)
 
         # Register extracted files in the same partition with parent_file_id
         if files:
@@ -1205,14 +1238,17 @@ class AnalysisWorker:
                 batch = files[i:i+100]
                 file_records = []
                 for f in batch:
-                    file_records.append({
+                    record = {
                         'path': f['path'],
                         'filename': Path(f['path']).name,
                         'extension': Path(f['path']).suffix.lstrip('.').lower() or None,
                         'file_size': f['size'],
                         'parent_file_id': f['parent_file_id'],
-                        'extraction_depth': f['extraction_depth']
-                    })
+                        'extraction_depth': f['extraction_depth'],
+                    }
+                    if f.get('risc_os_filetype'):
+                        record['risc_os_filetype'] = f['risc_os_filetype']
+                    file_records.append(record)
                 self.api.post(f"/partitions/{partition_uuid}/files", {'files': file_records})
 
         # Queue ARCHIVE_DETECT for nested archives (if under depth limit).
