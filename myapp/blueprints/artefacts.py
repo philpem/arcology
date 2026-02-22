@@ -421,7 +421,11 @@ def view(uuid):
         Partition.artefact_id.in_(all_artefact_ids)
     )
 
-    # Filter by specific partition if requested
+    # Filter by specific partition if requested.
+    # Guard against the string "None" which can arrive when Jinja2
+    # renders a None value into a URL parameter.
+    if file_form.partition_uuid.data in (None, '', 'None'):
+        file_form.partition_uuid.data = None
     if file_form.partition_uuid.data:
         files_query = files_query.filter(Partition.uuid == file_form.partition_uuid.data)
 
