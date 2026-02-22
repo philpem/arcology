@@ -231,7 +231,7 @@
                             <td>
                                 {% if file.is_directory %}
                                     {# Directory - make it clickable to browse into it #}
-                                    <a href="?partition_uuid={{ file.partition.uuid }}&path={{ (file.path + '/')|urlencode }}&recursive={{ file_form.recursive.data|default(true)|lower }}"
+                                    <a href="?partition_uuid={{ file.partition.uuid }}&path={{ (file.path + '/')|urlencode }}&recursive={{ file_form.recursive.data|default(true, true)|lower }}"
                                        class="text-primary text-decoration-none"
                                        title="Browse directory">
                                         <i class="bi bi-folder-fill"></i> <strong>{{ file.path }}</strong>
@@ -243,7 +243,7 @@
                                         {% set build_path = '' %}
                                         {% for i in range(path_parts|length - 1) %}
                                             {% set build_path = build_path + path_parts[i] + '/' %}
-                                            <a href="?partition_uuid={{ file.partition.uuid }}&path={{ build_path|urlencode }}&recursive={{ file_form.recursive.data|default(true)|lower }}"
+                                            <a href="?partition_uuid={{ file.partition.uuid }}&path={{ build_path|urlencode }}&recursive={{ file_form.recursive.data|default(true, true)|lower }}"
                                                class="text-muted text-decoration-none"
                                                title="Browse {{ build_path }}">
                                                 {% if build_path.rstrip('/') in archive_paths %}
@@ -255,7 +255,7 @@
                                             </a> /
                                         {% endfor %}
                                     {% endif %}
-                                    <a href="?partition_uuid={{ file.partition.uuid }}&path={{ (file.path + '/')|urlencode }}&recursive={{ file_form.recursive.data|default(true)|lower }}"
+                                    <a href="?partition_uuid={{ file.partition.uuid }}&path={{ (file.path + '/')|urlencode }}&recursive={{ file_form.recursive.data|default(true, true)|lower }}"
                                        class="text-primary text-decoration-none"
                                        title="Browse archive contents">
                                         <i class="bi bi-file-zip-fill"></i> <strong>{{ path_parts[-1] }}</strong>
@@ -267,7 +267,7 @@
                                         {% set build_path = '' %}
                                         {% for i in range(path_parts|length - 1) %}
                                             {% set build_path = build_path + path_parts[i] + '/' %}
-                                            <a href="?partition_uuid={{ file.partition.uuid }}&path={{ build_path|urlencode }}&recursive={{ file_form.recursive.data|default(true)|lower }}"
+                                            <a href="?partition_uuid={{ file.partition.uuid }}&path={{ build_path|urlencode }}&recursive={{ file_form.recursive.data|default(true, true)|lower }}"
                                                class="text-muted text-decoration-none"
                                                title="Browse {{ build_path }}">
                                                 {% if build_path.rstrip('/') in archive_paths %}

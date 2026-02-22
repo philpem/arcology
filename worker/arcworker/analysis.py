@@ -843,8 +843,10 @@ class AnalysisWorker:
             )
             return
 
-        # Get files not yet marked as archives (skip already-detected ones)
-        partition_resp = self.api.get(f"/partitions/{partition_uuid}/files?per_page=10000&is_archive=false")
+        # Get files not yet marked as archives (skip already-detected ones).
+        # Must include known files (show_known=true) because archive files
+        # can match the known-files database and would otherwise be hidden.
+        partition_resp = self.api.get(f"/partitions/{partition_uuid}/files?per_page=10000&is_archive=false&show_known=true")
         if not partition_resp:
             self.api.update_analysis(
                 analysis_id,
