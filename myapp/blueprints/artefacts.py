@@ -508,8 +508,12 @@ def view(uuid):
     page = request.args.get('page', 1, type=int)
     per_page = current_app.config.get('FILES_PER_PAGE', 100)
     files_pagination = files_query.order_by(ExtractedFile.path).paginate(
-        page=page, per_page=per_page
+        page=page, per_page=per_page, max_per_page=per_page
     )
+
+    # Build query args for pagination links, preserving all active filters
+    pagination_args = request.args.to_dict()
+    pagination_args.pop('page', None)
 
     # Extract subdirectories at the current path level for directory browsing
     current_path = file_form.path.data.strip() if file_form.path.data else ''
@@ -555,6 +559,7 @@ def view(uuid):
                            file_form=file_form,
                            files=files_pagination.items,
                            files_pagination=files_pagination,
+                           pagination_args=pagination_args,
                            all_partitions=all_partitions,
                            subdirectories=subdirectories,
                            current_path=current_path,
