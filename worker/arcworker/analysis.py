@@ -499,15 +499,18 @@ class AnalysisWorker:
         """
         Process PARTITION_DETECT analysis.
         Detects partitions and filesystem types in raw disc images.
-        Checks for Acorn ADFS (Filecore) first -- a reformatted PC disc
-        may retain a stale MBR, so sfdisk is only used when no ADFS
-        signatures are found.
 
-        When ADFS is detected, Acorn partition schemes (HCCS, Simtec, etc.)
-        are checked.  Fully-decoded schemes (HCCS) provide per-partition
-        metadata including disc names, passwords and access rights.
-        Signature-only schemes (Simtec) are noted but fall through to
-        whole-disc ADFS handling.
+        Detection order:
+        1. Acorn partition schemes (HCCS, Simtec, etc.) — checked first
+           because they have specific magic bytes and don't depend on
+           ADFS boot block checksums.  A PC disc reformatted as Acorn
+           may retain a stale MBR, so sfdisk must come after.
+        2. ADFS filesystem signatures — for unpartitioned Acorn discs.
+        3. sfdisk — standard MBR/GPT partition tables.
+
+        Fully-decoded schemes (HCCS) provide per-partition metadata
+        including disc names, passwords and access rights.  Signature-only
+        schemes (Simtec) are noted but fall through to whole-disc handling.
 
         All partition schemes normalise to byte-based offsets (start_byte /
         size_bytes) so the carving and gap-detection code below is
@@ -544,47 +547,47 @@ class AnalysisWorker:
         results = {}
         detected_partitions = []
 
-        # 1. Check for Acorn ADFS (Filecore) first.
-        # Filecore writes from byte 0xC00 onwards, so a disc reformatted
-        # from PC to Filecore may retain a stale MBR in the first 5 sectors.
-        # If we detect ADFS, skip sfdisk to avoid reporting that stale MBR.
+        # 1. Try Acorn partition schemes (HCCS, Simtec, etc.) first.
+        # These check for specific magic bytes at known boot block offsets
+        # and must run before sfdisk, which would report stale MBR partition
+        # tables left behind when a PC disc is reformatted as Acorn.
+        # This does NOT depend on ADFS signature detection — the boot block
+        # checksum can fail even on a valid HCCS disc (e.g. if the checksum
+        # byte is missing or the first sector contains a stale MBR).
+        acorn_result = detect_acorn_partitions(input_path)
+        results['acorn_partitions'] = acorn_result
+
+        if acorn_result['detected'] and acorn_result.get('partitions'):
+            # Fully decoded scheme (e.g. HCCS) with partition list
+            detected_partitions = acorn_result['partitions']
+        elif acorn_result['detected']:
+            # Signature-only scheme (e.g. Simtec) — no decoded partitions.
+            # Treat as single ADFS partition spanning the whole disc.
+            detected_partitions = [{
+                'index': 0,
+                'start_byte': 0,
+                'filesystem': 'adfs',
+                'description': acorn_result.get('description', ''),
+                'size_bytes': input_path.stat().st_size,
+            }]
+
+        # 2. Check for ADFS filesystem signatures.
+        # Always run for metadata (signatures are useful in the summary),
+        # but only use for partitioning if no Acorn scheme was found above.
         adfs_result = detect_acorn_adfs(input_path)
         results['adfs'] = adfs_result
 
-        if adfs_result.get('adfs_detected'):
-            # 2a. Try Acorn partition schemes (HCCS, Simtec, etc.)
-            acorn_result = detect_acorn_partitions(input_path)
-            results['acorn_partitions'] = acorn_result
+        if not detected_partitions and adfs_result.get('adfs_detected'):
+            detected_partitions = [{
+                'index': 0,
+                'start_byte': 0,
+                'filesystem': 'adfs',
+                'description': f'Acorn ADFS ({adfs_result.get("adfs_variant", "unknown variant")})',
+                'size_bytes': input_path.stat().st_size,
+                'signatures': adfs_result.get('signatures', []),
+            }]
 
-            if acorn_result['detected'] and acorn_result.get('partitions'):
-                # Fully decoded scheme (e.g. HCCS) with partition list
-                detected_partitions = acorn_result['partitions']
-            elif acorn_result['detected']:
-                # Signature-only scheme (e.g. Simtec) — no decoded partitions.
-                # Treat as single ADFS partition spanning the whole disc.
-                detected_partitions = [{
-                    'index': 0,
-                    'start_byte': 0,
-                    'filesystem': 'adfs',
-                    'description': (
-                        f'Acorn ADFS ({adfs_result.get("adfs_variant", "unknown variant")})'
-                        f' \u2014 {acorn_result.get("description", "")}'
-                    ),
-                    'size_bytes': input_path.stat().st_size,
-                    'signatures': adfs_result.get('signatures', []),
-                }]
-            else:
-                # No partition scheme — single ADFS partition
-                detected_partitions = [{
-                    'index': 0,
-                    'start_byte': 0,
-                    'filesystem': 'adfs',
-                    'description': f'Acorn ADFS ({adfs_result.get("adfs_variant", "unknown variant")})',
-                    'size_bytes': input_path.stat().st_size,
-                    'signatures': adfs_result.get('signatures', []),
-                }]
-
-        # 2b. If no ADFS detected, try sfdisk for standard partition tables (MBR/GPT)
+        # 3. If no Acorn formats, try sfdisk for standard partition tables (MBR/GPT)
         if not detected_partitions:
             sfdisk_result = detect_partitions_sfdisk(input_path)
             results['sfdisk'] = sfdisk_result
@@ -596,11 +599,11 @@ class AnalysisWorker:
                     ptype = p.get('type', '').lower()
                     p['filesystem'] = _MBR_TYPE_TO_FS.get(ptype, 'unknown')
 
-        # 3. Use file command for additional format info
+        # 4. Use file command for additional format info
         file_result = detect_format_file_cmd(input_path)
         results['file'] = file_result
 
-        # 4. If nothing detected, report whole disc as single unknown partition
+        # 5. If nothing detected, report whole disc as single unknown partition
         if not detected_partitions:
             file_size = input_path.stat().st_size
             detected_partitions = [{
