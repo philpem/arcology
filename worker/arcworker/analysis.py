@@ -17,6 +17,7 @@ from .config import log, POLL_INTERVAL
 from .types import ArtefactType, AnalysisType
 from .compression import decompress_if_needed, extract_partition_range, is_region_uniform
 from .api import ArcologyAPI
+from .utils.text import make_latin1_fspath
 from .tools import (
     compute_file_hash,
     flux_visualisation_fluxfox,
@@ -1090,7 +1091,20 @@ class AnalysisWorker:
             candidates.append(Path(str(archive_path) + ',' + risc_os_filetype.upper()))
         candidates.append(archive_path)  # plain name: DOS, UNIX, or no-suffix fallback
 
+        # For each candidate also try a Latin-1 byte variant.  Acorn filenames
+        # can contain raw Latin-1 bytes (e.g. hard space 0xA0); sanitize_path()
+        # converts these to proper Unicode (U+00A0) for the database, but the
+        # file on disk still has the single raw byte.  Python would encode
+        # U+00A0 as two UTF-8 bytes (0xC2 0xA0) when calling exists(), so we
+        # also try a surrogate-escaped path that maps back to the raw byte.
+        all_candidates = []
         for candidate in candidates:
+            all_candidates.append(candidate)
+            latin1_variant = make_latin1_fspath(str(candidate))
+            if latin1_variant is not None:
+                all_candidates.append(Path(latin1_variant))
+
+        for candidate in all_candidates:
             if candidate.exists():
                 archive_path = candidate
                 break
