@@ -5,12 +5,15 @@ Wraps external archive extraction tools (riscosarc, tbafs-extractor, etc.)
 for use by the worker.
 """
 
+import os
 import subprocess
 import re
+import tempfile
 from pathlib import Path
 from typing import Dict, Any
 
 from .base import run_tool_with_output
+from ..utils.text import sanitize_filename
 
 
 def extract_riscosarc(input_path: Path, output_dir: Path) -> Dict[str, Any]:
@@ -28,8 +31,32 @@ def extract_riscosarc(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    cmd = ['riscosarc', '-x', '-F', str(input_path)]
-    result, output = run_tool_with_output(cmd, cwd=str(output_dir))
+    # riscosarc is a Java program; the JVM decodes command-line argument bytes
+    # using the default charset (UTF-8 on modern Linux).  Acorn filenames may
+    # contain raw Latin-1 bytes (e.g. hard space 0xA0), which Python represents
+    # as surrogate-escaped characters (\udca0).  When subprocess passes such a
+    # path to the JVM, the invalid UTF-8 byte 0xA0 is replaced with U+FFFD so
+    # Java cannot open the file.  Work around this by creating a temporary
+    # symlink with the sanitised (valid UTF-8) filename and passing that path
+    # to riscosarc instead; the kernel resolves the symlink transparently.
+    path_str = str(input_path)
+    tmp_dir = None
+    invoke_path = input_path
+    if any(0xD800 <= ord(c) <= 0xDFFF for c in path_str):
+        clean_name = sanitize_filename(input_path.name)
+        tmp_dir = Path(tempfile.mkdtemp())
+        symlink_path = tmp_dir / clean_name
+        os.symlink(input_path, symlink_path)
+        invoke_path = symlink_path
+
+    try:
+        cmd = ['riscosarc', '-x', '-F', str(invoke_path)]
+        result, output = run_tool_with_output(cmd, cwd=str(output_dir))
+    finally:
+        if tmp_dir is not None:
+            if invoke_path.is_symlink():
+                invoke_path.unlink()
+            tmp_dir.rmdir()
 
     if result.returncode != 0:
         return {
