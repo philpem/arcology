@@ -10,6 +10,7 @@ from wtforms.validators import DataRequired
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 import os
 import secrets
+from urllib.parse import urlparse
 
 from .extensions import db, migrate, login_manager, bootstrap, csrf
 
@@ -200,7 +201,13 @@ def _register_login_handlers(app):
 				if userrec.checkPassword(form.password.data):
 					login_user(userrec)
 					#flash("Logged in successfully", "success")
-					return redirect(request.args.get("next") or url_for("myapp_blueprints_dashboard.index"))
+					# Redirect to the page the user was trying to reach, or the dashboard.
+					# SECURITY: reject any next= URL with a netloc (host) component to
+					# prevent open-redirect attacks that send users to external sites.
+					next_url = request.args.get("next")
+					if next_url and urlparse(next_url).netloc != '':
+						next_url = None
+					return redirect(next_url or url_for("myapp_blueprints_dashboard.index"))
 
 		if request.method == 'POST':
 			flash("Error logging in - please check your username and password and ensure that CAPS LOCK is turned off.", "error")
