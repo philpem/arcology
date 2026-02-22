@@ -422,10 +422,21 @@ def add_files(uuid):
         if 'path' not in f or 'filename' not in f:
             continue
 
+        # If this file was extracted from an archive (has parent_file_id),
+        # nest it under the parent archive's path so the archive appears
+        # as a virtual directory in the UI.
+        path = f['path']
+        parent_file_id = f.get('parent_file_id')
+        if parent_file_id:
+            parent_file = ExtractedFile.query.get(parent_file_id)
+            if parent_file and parent_file.is_archive:
+                if not path.startswith(parent_file.path + '/'):
+                    path = parent_file.path + '/' + path
+
         # Check if this file already exists in the partition (prevents duplicates)
         existing_file = ExtractedFile.query.filter_by(
             partition_id=partition.id,
-            path=f['path']
+            path=path
         ).first()
 
         if existing_file:
@@ -434,7 +445,7 @@ def add_files(uuid):
 
         ef = ExtractedFile(
             partition_id=partition.id,
-            path=f['path'],
+            path=path,
             filename=f['filename'],
             extension=f.get('extension'),
             file_size=f.get('file_size'),

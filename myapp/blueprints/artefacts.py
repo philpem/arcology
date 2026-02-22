@@ -470,6 +470,16 @@ def view(uuid):
 
     subdirectories = sorted(subdirectories)
 
+    # Build a set of archive file paths so the template can show archive
+    # icons for "directories" that are actually archives.
+    archive_paths = set()
+    if all_partitions:
+        archive_files = ExtractedFile.query.join(Partition).filter(
+            Partition.artefact_id.in_(all_artefact_ids),
+            ExtractedFile.is_archive == True
+        ).with_entities(ExtractedFile.path).all()
+        archive_paths = {af.path for af in archive_files}
+
     return render_template('artefacts/view.html',
                            artefact=artefact,
                            analyses=analyses,
@@ -481,7 +491,8 @@ def view(uuid):
                            files_pagination=files_pagination,
                            all_partitions=all_partitions,
                            subdirectories=subdirectories,
-                           current_path=current_path)
+                           current_path=current_path,
+                           archive_paths=archive_paths)
 
 
 @blueprint.route('/item/<string:item_uuid>/upload', methods=['GET', 'POST'])
