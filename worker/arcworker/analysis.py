@@ -17,7 +17,7 @@ from .config import log, POLL_INTERVAL
 from .types import ArtefactType, AnalysisType
 from .compression import decompress_if_needed, extract_partition_range, is_region_uniform
 from .api import ArcologyAPI
-from .utils.text import make_latin1_fspath
+from .utils.text import make_latin1_fspath, sanitize_path
 from .tools import (
     compute_file_hash,
     flux_visualisation_fluxfox,
@@ -1237,11 +1237,11 @@ class AnalysisWorker:
                     display_path = true_name
                 else:
                     display_path = str(rel_path)
-                file_entry['path'] = display_path
+                file_entry['path'] = sanitize_path(display_path)
                 if filetype:
                     file_entry['risc_os_filetype'] = filetype
             else:
-                file_entry['path'] = str(rel_path)
+                file_entry['path'] = sanitize_path(str(rel_path))
 
             files.append(file_entry)
 
