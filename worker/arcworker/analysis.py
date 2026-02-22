@@ -325,16 +325,18 @@ class AnalysisWorker:
             result = extract_dos_7z(input_path, extract_dir)
             all_results['7z'] = result
         else:
-            # Try 7z as default (handles many formats)
-            result = extract_dos_7z(input_path, extract_dir)
-            all_results['7z'] = result
-
-            # If that fails and no filesystem hint, try Acorn
-            if not result['success'] and not filesystem:
-                result = extract_acorn_disc_image_manager(input_path, extract_dir)
-                all_results['dim'] = result
-                if result['success']:
-                    is_acorn = True
+            # No filesystem hint - try Acorn DIM first (it will fail quickly
+            # and cleanly on non-Acorn images), then fall back to 7z.
+            # We must NOT try 7z first because it will "succeed" on ADFS
+            # images containing ZIP files by extracting the embedded ZIP
+            # instead of the actual disc filesystem.
+            result = extract_acorn_disc_image_manager(input_path, extract_dir)
+            all_results['dim'] = result
+            if result['success']:
+                is_acorn = True
+            else:
+                result = extract_dos_7z(input_path, extract_dir)
+                all_results['7z'] = result
 
         def _build_details(extra: dict | None = None) -> str:
             d: dict = {}
