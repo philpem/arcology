@@ -91,13 +91,11 @@ def _parse_filecore_disc_record(disc_record: bytes) -> dict:
 # HCCS partition detection
 # =========================================================================
 
-
 def _decode_hccs_password(obfuscated: bytes) -> str:
 	"""Decode an HCCS XOR-obfuscated partition password."""
 	xor_key = bytes([0x06, 0x14, 0x1F, 0x07, 0x02, 0x1D, 0x17, 0x17])
 	decoded = bytes(b ^ k for b, k in zip(obfuscated[:8], xor_key))
 	return decoded.rstrip(b'\x00').decode('latin-1', errors='replace')
-
 
 def _decode_hccs_access_flags(flags: int) -> dict:
 	"""
@@ -127,7 +125,6 @@ def _decode_hccs_access_flags(flags: int) -> dict:
 		'summary': summary,
 	}
 
-
 def _detect_hccs_partitions(input_path: Path) -> dict:
 	"""
 	Detect HCCS-format Acorn partitions.
@@ -142,7 +139,6 @@ def _detect_hccs_partitions(input_path: Path) -> dict:
 	Returns:
 		Dict with ``detected``, ``scheme``, ``partitions`` list.
 	"""
-	hccs_magic = b'Andy'
 	file_size = input_path.stat().st_size
 	partitions = []
 	current_offset = 0
@@ -158,7 +154,7 @@ def _detect_hccs_partitions(input_path: Path) -> dict:
 
 			# Check magic
 			magic = boot_block[FILECORE_BB_HWDEP_OFFSET:FILECORE_BB_HWDEP_OFFSET + 4]
-			if magic != hccs_magic:
+			if magic != b'Andy':
 				break
 
 			# --- Partition header (at 0x1B0) ---
@@ -206,9 +202,6 @@ def _detect_hccs_partitions(input_path: Path) -> dict:
 # Simtec signature detection (decode not implemented)
 # =========================================================================
 
-_SIMTEC_MAGIC = b'andy'
-
-
 def _detect_simtec_signature(input_path: Path) -> dict:
 	"""
 	Detect the Simtec IDEFS partition table signature.
@@ -228,7 +221,7 @@ def _detect_simtec_signature(input_path: Path) -> dict:
 		f.seek(FILECORE_BOOT_BLOCK_OFFSET + FILECORE_BB_HWDEP_OFFSET)
 		magic = f.read(4)
 
-	if magic != _SIMTEC_MAGIC:
+	if magic != b'andy':
 		return {'detected': False, 'scheme': 'simtec'}
 
 	return {
