@@ -331,6 +331,38 @@ def produce_artefact(id):
     except ValueError:
         storage_directory = StorageDirectory.OUTPUTS
 
+    # On the first produce_artefact call for this analysis, remove any derived
+    # artefacts that were created by a previous analysis of the same type on the
+    # same source artefact (e.g. re-running PARTITION_DETECT).  We detect "first
+    # call" by checking whether any artefacts are already linked to this analysis;
+    # subsequent calls within the same run are harmless because the old ones are
+    # already gone by then.
+    already_produced = Artefact.query.filter_by(
+        derived_from_analysis_id=analysis.id
+    ).count()
+
+    if already_produced == 0:
+        prior_derived = (
+            Artefact.query
+            .join(Analysis, Artefact.derived_from_analysis_id == Analysis.id)
+            .filter(
+                Artefact.parent_artefact_id == analysis.artefact_id,
+                Analysis.analysis_type == analysis.analysis_type,
+                Artefact.derived_from_analysis_id != analysis.id,
+            )
+            .all()
+        )
+        for prior in prior_derived:
+            current_app.logger.info(
+                f"Removing prior derived artefact {prior.uuid} "
+                f"(from previous {analysis.analysis_type.value} analysis) "
+                f"before re-run"
+            )
+            _delete_artefact_files(prior)
+            db.session.delete(prior)
+        if prior_derived:
+            db.session.flush()
+
     # Create derived artefact
     artefact = Artefact(
         item_id=analysis.artefact.item_id,
