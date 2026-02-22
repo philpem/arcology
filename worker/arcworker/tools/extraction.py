@@ -192,7 +192,7 @@ def enumerate_extracted_files(output_dir: Path, acorn: bool = False) -> list[dic
 
         if acorn:
             # Parse Acorn filename to extract filetype
-            true_name, filetype = _parse_acorn_filename(file_path.name)
+            true_name, filetype = parse_acorn_filename(file_path.name)
 
             # Reconstruct path with true filename (without filetype suffix)
             if filetype and len(rel_path.parts) > 1:
@@ -233,7 +233,7 @@ def enumerate_extracted_files(output_dir: Path, acorn: bool = False) -> list[dic
     return files
 
 
-def _parse_acorn_filename(filename: str) -> tuple[str, str | None]:
+def parse_acorn_filename(filename: str) -> tuple[str, str | None]:
     """
     Parse Acorn filename to extract the true filename and filetype.
 
