@@ -12,7 +12,7 @@ The partition header is 16 bytes and starts at the beginning of the sector.
 Ofs   Len   Content
 0     4     Magic number. ASCII: "Net1"
 4     1     Network number
-5     1     ? (possibly station number)
+5     1     ? (possibly disc sharer station number)
 6     1     Delay Low
 7     1     Delay High
 8     8     0,0,0,0,0,0,0,0
