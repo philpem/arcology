@@ -6,6 +6,7 @@ for use by the worker.
 """
 
 import subprocess
+import re
 from pathlib import Path
 from typing import Dict, Any
 
@@ -27,7 +28,7 @@ def extract_riscosarc(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    cmd = ['riscosarc', '-x', str(input_path)]
+    cmd = ['riscosarc', '-x', '-F', str(input_path)]
     result, output = run_tool_with_output(cmd, cwd=str(output_dir))
 
     if result.returncode != 0:
@@ -37,6 +38,15 @@ def extract_riscosarc(input_path: Path, output_dir: Path) -> Dict[str, Any]:
             'tool': 'riscosarc',
             'process_output': output
         }
+
+    # Scan for files with double extensions and rename them.
+    # This generally happens with Squash.
+    de_re = re.compile(r'(.*),([0-9A-Fa-f]+),([0-9A-Fa-f]+)')
+    for f in output_dir.rglob('*'):
+        if f.is_file():
+            m = de_re.match(f.name)
+            if m is not None:
+                f.rename(f'{m.group(1)},{m.group(3)}')
 
     # Count extracted files
     file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
