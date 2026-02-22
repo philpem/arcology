@@ -600,7 +600,9 @@ def analysis_to_dict(analysis, include_artefact=False):
                              'original_filename': analysis.artefact.original_filename,
                              'storage_path': analysis.artefact.storage_path,
                              'storage_directory': analysis.artefact.storage_directory.value,
-                             'artefact_type': analysis.artefact.artefact_type.value}
+                             'artefact_type': analysis.artefact.artefact_type.value,
+                             'item': {'uuid': analysis.artefact.item.uuid,
+                                      'slug': analysis.artefact.item.slug}}
     return result
 
 
