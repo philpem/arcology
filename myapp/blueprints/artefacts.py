@@ -292,7 +292,7 @@ def get_all_derived_artefact_ids(artefact: Artefact) -> list[int]:
     return ids
 
 
-def get_current_run_analyses(artefact: Artefact) -> list[Analysis]:
+def get_current_run_analyses(artefact: Artefact, artefact_ids: list[int] = None) -> list[Analysis]:
     """
     Get all analyses that belong to the most recent run for an artefact.
 
@@ -308,9 +308,17 @@ def get_current_run_analyses(artefact: Artefact) -> list[Analysis]:
     distinct type (by highest id), then take the minimum of those ids.
     Everything at or above that minimum belongs to the current run;
     everything below it belongs to an older run.
+
+    When artefact_ids is provided, analyses across all of those artefacts
+    (e.g. the original plus all derived partition artefacts) are considered
+    together so that follow-on jobs queued against derived artefacts are
+    included in the current run.
     """
-    all_analyses = Analysis.query.filter_by(
-        artefact_id=artefact.id
+    if artefact_ids is None:
+        artefact_ids = [artefact.id]
+
+    all_analyses = Analysis.query.filter(
+        Analysis.artefact_id.in_(artefact_ids)
     ).order_by(Analysis.id).all()
 
     if not all_analyses:
@@ -427,20 +435,25 @@ def view(uuid):
     # Check if user wants to see all analyses or just the most recent
     show_all_analyses = request.args.get('show_all_analyses', 'false').lower() == 'true'
 
-    # Get analyses - either all or most recent per type
+    # Collect all artefact IDs: current + all derived (recursively).
+    # Used for both partitions/files and analyses so that follow-on jobs
+    # queued against derived partition artefacts are visible here.
+    all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+
+    # Get analyses - either all or most recent per type, across all related artefacts
     if show_all_analyses:
-        analyses = Analysis.query.filter_by(
-            artefact_id=artefact.id
+        analyses = Analysis.query.filter(
+            Analysis.artefact_id.in_(all_artefact_ids)
         ).order_by(Analysis.created_at.desc()).all()
     else:
-        analyses = get_most_recent_analyses(artefact)
+        analyses = get_current_run_analyses(artefact, all_artefact_ids)
 
-    # Count total vs showing (for UI feedback)
-    total_analyses_count = len(artefact.analyses)
-    has_duplicate_analyses = total_analyses_count > len(set(a.analysis_type for a in artefact.analyses))
-
-    # Collect all artefact IDs: current + all derived (recursively)
-    all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    # Count total vs showing (for UI feedback), across all related artefacts
+    all_related_analyses = Analysis.query.filter(
+        Analysis.artefact_id.in_(all_artefact_ids)
+    ).all()
+    total_analyses_count = len(all_related_analyses)
+    has_duplicate_analyses = total_analyses_count > len(set(a.analysis_type for a in all_related_analyses))
 
     # Query partitions from all artefacts (for display)
     all_partitions = Partition.query.filter(
