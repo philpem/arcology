@@ -242,6 +242,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 # - unzip, unrar: for ZIP and RAR archives
 # - tar: for TAR archives
 # - util-linux: for sfdisk (partition detection)
+# - file: GNU File for file format identification (TODO, look at replacing with Dexvert)
 # - default-jre: Java JRE for riscosarc
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 	--mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -251,6 +252,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 		python3 python3-pip python3-dev python3-requests git \
 		p7zip-full zstd gzip bzip2 xz-utils \
 		unzip unrar tar util-linux \
+		file \
 		default-jre
 
 # Install Greaseweazle for disk image conversion
