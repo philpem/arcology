@@ -91,36 +91,36 @@ ANALYSIS_MAP = {
     #ArtefactType.KF: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
     #ArtefactType.FLUX_RAW: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE],
     
-    # Sector-level floppy - file listing only works on raw sector images
+    # Sector-level floppy - file extraction only works on raw sector images
     # IMD is track-based format with metadata, HFE is an emulator container format
-    # These need conversion to IMG (raw sectors) before file listing/extraction can work
+    # These need conversion to IMG (raw sectors) before file extraction can work
     ArtefactType.IMD: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY],
     ArtefactType.HFE: [AnalysisType.FORMAT_IDENTIFY],
     #ArtefactType.TD0: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY],
-    #ArtefactType.D64: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_LISTING],
-    #ArtefactType.ADF: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_LISTING],
-    #ArtefactType.DSK: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_LISTING],
+    #ArtefactType.D64: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_EXTRACTION],
+    #ArtefactType.ADF: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_EXTRACTION],
+    #ArtefactType.DSK: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_EXTRACTION],
     
-    # CD/DVD - file listing
-    ArtefactType.ISO: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_LISTING],
-    #ArtefactType.BIN_CUE: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_LISTING],
-    #ArtefactType.MDF_MDS: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_LISTING],
-    #ArtefactType.NRG: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_LISTING],
+    # CD/DVD - file extraction
+    ArtefactType.ISO: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_EXTRACTION],
+    #ArtefactType.BIN_CUE: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_EXTRACTION],
+    #ArtefactType.MDF_MDS: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_EXTRACTION],
+    #ArtefactType.NRG: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_EXTRACTION],
     
-    # Hard drive raw images - partition detection then file listing
-    #ArtefactType.RAW_SECTOR: [AnalysisType.PARTITION_DETECT, AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_LISTING],
-    ArtefactType.RAW_SECTOR: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_LISTING],
-    ArtefactType.DD_ZST: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_LISTING],
-    ArtefactType.DD_GZ: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_LISTING],
-    ArtefactType.DD_BZ2: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_LISTING],
+    # Hard drive raw images - partition detection then file extraction
+    #ArtefactType.RAW_SECTOR: [AnalysisType.PARTITION_DETECT, AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_EXTRACTION],
+    ArtefactType.RAW_SECTOR: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_EXTRACTION],
+    ArtefactType.DD_ZST: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_EXTRACTION],
+    ArtefactType.DD_GZ: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_EXTRACTION],
+    ArtefactType.DD_BZ2: [AnalysisType.PARTITION_DETECT, AnalysisType.FILE_EXTRACTION],
     
     # Documents/images - just metadata/checksums
     ArtefactType.PDF: [AnalysisType.METADATA_EXTRACT],
     
-    # Archives - list contents
-    ArtefactType.ZIP: [AnalysisType.FILE_LISTING],
-    ArtefactType.TARGZ: [AnalysisType.FILE_LISTING],
-    ArtefactType.RAR: [AnalysisType.FILE_LISTING],
+    # Archives - extract contents
+    ArtefactType.ZIP: [AnalysisType.FILE_EXTRACTION],
+    ArtefactType.TARGZ: [AnalysisType.FILE_EXTRACTION],
+    ArtefactType.RAR: [AnalysisType.FILE_EXTRACTION],
     
     # Unknown - try to identify
     ArtefactType.UNKNOWN: [AnalysisType.FORMAT_IDENTIFY],

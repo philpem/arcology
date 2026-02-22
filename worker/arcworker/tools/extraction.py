@@ -165,6 +165,75 @@ def extract_iso_7z(input_path: Path, output_dir: Path) -> dict:
     return extract_dos_7z(input_path, output_dir)  # Same process
 
 
+def enumerate_extracted_files(output_dir: Path, acorn: bool = False) -> list[dict]:
+    """
+    Enumerate files in an extraction directory and return structured file list.
+
+    Args:
+        output_dir: Directory containing extracted files
+        acorn: If True, parse Acorn filetype suffixes from filenames
+
+    Returns:
+        List of file dicts with path, size, and optional filetype/directory info
+    """
+    from ..utils.text import sanitize_path
+
+    files = []
+
+    for file_path in output_dir.rglob('*'):
+        if not file_path.is_file():
+            continue
+
+        # Skip .inf metadata files (Acorn DIM extraction artifacts)
+        if file_path.suffix == '.inf':
+            continue
+
+        rel_path = file_path.relative_to(output_dir)
+        file_size = file_path.stat().st_size
+
+        if acorn:
+            # Parse Acorn filename to extract filetype
+            true_name, filetype = _parse_acorn_filename(file_path.name)
+
+            # Reconstruct path with true filename (without filetype suffix)
+            if filetype and len(rel_path.parts) > 1:
+                display_path = str(Path(*rel_path.parts[:-1]) / true_name)
+            elif filetype:
+                display_path = true_name
+            else:
+                display_path = str(rel_path)
+
+            display_path = sanitize_path(display_path)
+
+            file_entry = {
+                'path': display_path,
+                'size': file_size,
+            }
+
+            # Detect ADFS directories (typically 2KB/2048 bytes)
+            is_directory = (
+                file_size == 2048 or  # ADFS directory size
+                filetype == 'ddc'     # RISC OS directory filetype
+            )
+
+            if is_directory:
+                file_entry['is_directory'] = True
+
+            # Store RISC OS filetype (hex string like '3fb') for archive detection
+            if filetype:
+                file_entry['risc_os_filetype'] = filetype
+        else:
+            display_path = sanitize_path(str(rel_path))
+            file_entry = {
+                'path': display_path,
+                'size': file_size,
+            }
+
+        files.append(file_entry)
+
+    return files
+
+
 def _parse_acorn_filename(filename: str) -> tuple[str, str | None]:
     """
     Parse Acorn filename to extract the true filename and filetype.
@@ -213,222 +282,6 @@ def _parse_dim_report(output: str) -> dict:
                 result['container_format'] = container_format
 
     return result
-
-
-def list_files_dim(input_path: Path) -> dict:
-    """
-    List files in an Acorn DFS/ADFS disc image using Disc Image Manager.
-    Extracts to a temp directory to enumerate files and parse Acorn filetypes.
-
-    Args:
-        input_path: Path to Acorn disc image
-
-    Returns:
-        Result dict with success status, file list, count, and process_output.
-        Each file entry includes 'path', 'size', and optionally 'filetype'.
-        Also includes 'disc_name' and 'container_format' if available.
-    """
-    from ..utils.text import sanitize_path
-
-    # Create a temp directory for extraction
-    temp_dir = tempfile.mkdtemp(prefix='dim_list_')
-
-    # Create DIM script to extract files (include report command)
-    script_content = f"""insert {input_path}
-report
-chdir {temp_dir}
-extract *
-exit
-"""
-
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.dim', delete=False) as f:
-        f.write(script_content)
-        script_path = f.name
-
-    process_output = None
-    try:
-        cmd = [
-            'DiscImageManager',
-            '-s', script_path
-        ]
-        result, process_output = run_tool_with_output(cmd)
-
-        # Enumerate extracted files using Python
-        files = []
-        temp_path = Path(temp_dir)
-
-        for file_path in temp_path.rglob('*'):
-            if not file_path.is_file():
-                continue
-
-            # Skip .inf metadata files
-            if file_path.suffix == '.inf':
-                continue
-
-            # Get relative path from temp directory
-            rel_path = file_path.relative_to(temp_path)
-
-            # Parse Acorn filename to extract filetype
-            true_name, filetype = _parse_acorn_filename(file_path.name)
-
-            # Reconstruct path with true filename (without filetype suffix)
-            if filetype and len(rel_path.parts) > 1:
-                display_path = str(Path(*rel_path.parts[:-1]) / true_name)
-            elif filetype:
-                display_path = true_name
-            else:
-                display_path = str(rel_path)
-
-            # Sanitize path for UTF-8 database storage (handles Acorn Latin-1, surrogates)
-            display_path = sanitize_path(display_path)
-
-            file_size = file_path.stat().st_size
-
-            file_entry = {
-                'path': display_path,
-                'size': file_size,
-            }
-
-            # Detect ADFS directories (typically 2KB/2048 bytes)
-            # RISC OS directories can also have filetype 'ddc' or attributes with 'D'
-            is_directory = (
-                file_size == 2048 or  # ADFS directory size
-                filetype == 'ddc'     # RISC OS directory filetype
-            )
-
-            if is_directory:
-                file_entry['is_directory'] = True
-
-            # Store RISC OS filetype (hex string like '3fb') for archive detection
-            if filetype:
-                file_entry['risc_os_filetype'] = filetype
-
-            files.append(file_entry)
-
-        # Parse DIM report output for disc metadata
-        metadata = _parse_dim_report(process_output['stdout'])
-
-        if files:
-            result_dict = {
-                'success': True,
-                'tool': 'DiscImageManager',
-                'files': files,
-                'file_count': len(files),
-                'summary': f'Found {len(files)} files in Acorn disc image',
-                'process_output': process_output
-            }
-            # Include disc metadata if available
-            if metadata:
-                result_dict.update(metadata)
-            return result_dict
-
-        return {
-            'success': False,
-            'tool': 'DiscImageManager',
-            'error': 'No files found - may not be Acorn format',
-            'process_output': process_output
-        }
-
-    except Exception as e:
-        # Ensure process output is logged even when parsing fails
-        import traceback
-        error_details = {
-            'success': False,
-            'tool': 'DiscImageManager',
-            'error': f'Error processing disc image: {str(e)}',
-            'exception_trace': traceback.format_exc()[:2000],  # Limit trace length
-        }
-        # Include process_output if it was captured before the exception
-        if process_output is not None:
-            error_details['process_output'] = process_output
-        return error_details
-
-    finally:
-        if not _DEBUG_KEEP_OUTFILES:
-            os.unlink(script_path)
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-def list_files_7z(input_path: Path) -> dict:
-    """
-    List files in an image using 7z without extracting.
-    Returns structured file listing.
-
-    Args:
-        input_path: Path to image file
-
-    Returns:
-        Result dict with success status, file list, count, and process_output
-    """
-    from ..utils.text import sanitize_path
-
-    cmd = [
-        '7z', 'l',
-        '-slt',  # Technical listing format
-        str(input_path)
-    ]
-
-    try:
-        result, process_output = run_tool_with_output(cmd)
-
-        if result.returncode != 0:
-            return {
-                'success': False,
-                'tool': '7z',
-                'error': result.stderr.decode(errors='replace')[:1000],
-                'process_output': process_output
-            }
-
-        # Parse 7z output (handle encoding issues)
-        files = []
-        current_file = {}
-
-        for line in result.stdout.decode(errors='surrogateescape').split('\n'):
-            line = line.strip()
-            if line.startswith('Path = '):
-                if current_file and 'path' in current_file:
-                    files.append(current_file)
-                # Sanitize path for UTF-8 database storage
-                path = sanitize_path(line[7:])
-                current_file = {'path': path}
-            elif line.startswith('Size = '):
-                try:
-                    current_file['size'] = int(line[7:])
-                except ValueError:
-                    pass
-            elif line.startswith('Modified = '):
-                current_file['modified'] = line[11:]
-            elif line.startswith('CRC = '):
-                current_file['crc32'] = line[6:].lower()
-
-        if current_file and 'path' in current_file:
-            files.append(current_file)
-
-        # Filter out directory entries (size 0 or no size)
-        files = [f for f in files if f.get('size', 0) > 0]
-
-        return {
-            'success': True,
-            'tool': '7z',
-            'files': files,
-            'file_count': len(files),
-            'summary': f'Found {len(files)} files',
-            'process_output': process_output
-        }
-
-    except Exception as e:
-        # Ensure process output is logged even when parsing fails
-        import traceback
-        error_details = {
-            'success': False,
-            'tool': '7z',
-            'error': f'Error processing 7z output: {str(e)}',
-            'exception_trace': traceback.format_exc()[:2000],
-        }
-        # Include process_output if it was captured
-        if 'process_output' in locals():
-            error_details['process_output'] = process_output
-        return error_details
 
 
 def convert_fcfs_to_raw(input_path: Path, output_path: Path) -> dict:

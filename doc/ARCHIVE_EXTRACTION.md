@@ -87,7 +87,7 @@ _*Compressor = single-file, decompresses to file with same name (not a directory
 
 ```
 1. User uploads ADFS disk image → Artefact created
-2. FILE_LISTING runs → ExtractedFile records with risc_os_filetype
+2. FILE_EXTRACTION runs → Extracts files, creates ExtractedFile records with risc_os_filetype
 3. ARCHIVE_DETECT runs → Identifies archives, marks is_archive=True
 4. For each archive:
    a. Queue ARCHIVE_EXTRACT with file_id, depth

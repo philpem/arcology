@@ -16,8 +16,7 @@ from .extraction import (
     extract_acorn_disc_image_manager,
     extract_dos_7z,
     extract_iso_7z,
-    list_files_7z,
-    list_files_dim,
+    enumerate_extracted_files,
 )
 from .partition import (
     detect_partitions_sfdisk,
@@ -47,8 +46,7 @@ __all__ = [
     'extract_acorn_disc_image_manager',
     'extract_dos_7z',
     'extract_iso_7z',
-    'list_files_7z',
-    'list_files_dim',
+    'enumerate_extracted_files',
     'detect_partitions_sfdisk',
     'detect_acorn_adfs',
     'detect_format_file_cmd',

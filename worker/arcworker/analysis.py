@@ -26,8 +26,7 @@ from .tools import (
     sector_image_to_raw_greaseweazle,
     extract_acorn_disc_image_manager,
     extract_dos_7z,
-    list_files_7z,
-    list_files_dim,
+    enumerate_extracted_files,
     detect_partitions_sfdisk,
     detect_acorn_adfs,
     detect_format_file_cmd,
@@ -259,129 +258,15 @@ class AnalysisWorker:
             details=json.dumps({name: r for name, r in results})
         )
 
-    @analysis_handler("file listing")
-    def process_file_listing(self, analysis: dict, artefact: dict, work_dir: Path):
-        """
-        Process FILE_LISTING analysis.
-        Lists files in sector image without extracting.
-        Only works on raw sector images (IMG) - not HFE or IMD formats.
-        """
-        analysis_id = analysis['id']
-        artefact_type = artefact.get('artefact_type', '')
-
-        # Only raw sector images can be processed by 7z and DIM
-        # HFE is an emulator container format, IMD is track-based with metadata
-        # These need to be converted to IMG first via flux_decode
-        supported_types = (
-            ArtefactType.ISO.value,
-            ArtefactType.RAW_SECTOR.value,
-            ArtefactType.DD_ZST.value,
-            ArtefactType.DD_GZ.value,
-            ArtefactType.DD_BZ2.value,
-        )
-        if artefact_type not in supported_types:
-            self.api.update_analysis(
-                analysis_id,
-                status='completed',
-                success=False,
-                error_message=f'File listing not supported for {artefact_type} format. Only raw sector images are supported.'
-            )
-            return
-
-        input_path = self.get_input_path(artefact, work_dir)
-        hints = json.loads(analysis.get('hints') or '{}')
-
-        filesystem = hints.get('filesystem', '').lower()
-
-        # Choose listing method based on filesystem hint
-        if filesystem in ('dfs', 'adfs', 'acorn'):
-            result = list_files_dim(input_path)
-        elif filesystem in ('fat', 'fat12', 'fat16', 'fat32', 'dos', 'msdos'):
-            result = list_files_7z(input_path)
-        else:
-            # Try 7z as default (handles many formats)
-            result = list_files_7z(input_path)
-
-            # If that fails and no filesystem hint, try Acorn
-            if not (result['success'] and result.get('files')) and not filesystem:
-                result = list_files_dim(input_path)
-
-        if result['success'] and result.get('files'):
-            # Extract disc name and container format from result (if available from DIM report)
-            disc_name = result.get('disc_name')
-            container_format = result.get('container_format')
-
-            # Determine filesystem type:
-            # 1. Use filesystem from hints if provided
-            # 2. Else if DIM was used and returned container_format, parse it
-            # 3. Else use 'unknown'
-            if filesystem:
-                fs_type = filesystem
-            elif container_format:
-                # Parse container format (e.g., "Acorn ADFS E", "Acorn DFS")
-                container_lower = container_format.lower()
-                if 'adfs' in container_lower:
-                    fs_type = 'adfs'
-                elif 'dfs' in container_lower:
-                    fs_type = 'dfs'
-                elif 'acorn' in container_lower:
-                    fs_type = 'acorn'
-                else:
-                    fs_type = 'unknown'
-            else:
-                fs_type = 'unknown'
-
-            partition = self.api.register_file_listing(
-                artefact['uuid'],
-                result['files'],
-                fs_type,
-                label=disc_name,
-                container_format=container_format
-            )
-
-            self.api.update_analysis(
-                analysis_id,
-                status='completed',
-                success=True,
-                tool_name=result['tool'],
-                summary=result['summary'],
-                details=json.dumps({'file_count': result['file_count']})
-            )
-
-            # Queue FILE_EXTRACTION to persist files to disk
-            # (ARCHIVE_DETECT will be queued after extraction completes,
-            # so archive files exist on disk for ARCHIVE_EXTRACT to find)
-            if partition:
-                from .types import AnalysisType
-                self.api.queue_analysis(
-                    artefact['uuid'],
-                    AnalysisType.FILE_EXTRACTION.value,
-                    hints={
-                        'filesystem': fs_type,
-                        'partition_uuid': partition.get('uuid'),
-                    }
-                )
-        else:
-            self.api.update_analysis(
-                analysis_id,
-                status='failed',
-                success=False,
-                tool_name=result.get('tool'),
-                error_message=result.get('error', 'Could not list files'),
-                details=json.dumps({
-                    'process_output': result.get('process_output')
-                })
-            )
-
     @analysis_handler("file extraction")
     def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path):
         """
         Process FILE_EXTRACTION analysis.
-        Extracts files based on detected/hinted filesystem type.
+        Extracts files from a disc/sector image to persistent storage,
+        registers the file listing in the database, and queues archive detection.
         Only works on raw sector images (IMG) - not HFE or IMD formats.
-
-        Files are extracted to persistent hierarchical storage.
         """
+        from .tools.extraction import _parse_dim_report
         from .utils.paths import get_output_path
         from .config import OUTPUT_DIR
 
@@ -411,8 +296,7 @@ class AnalysisWorker:
         hints = json.loads(analysis.get('hints') or '{}')
         filesystem = hints.get('filesystem', '').lower()
 
-        # Get Item for hierarchical path (artefact should have item reference)
-        # For now, create a simple structure - can be enhanced later
+        # Get Item for hierarchical path
         item = artefact.get('item', {'uuid': 'default', 'slug': 'default'})
 
         # Use hierarchical output path for persistent storage
@@ -421,12 +305,14 @@ class AnalysisWorker:
             item,
             artefact,
             analysis,
-            partition=None  # Will be set after partition is created
+            partition=None
         )
 
-        # Choose extraction method based on filesystem
+        # Choose extraction method based on filesystem hint
+        is_acorn = False
         if filesystem in ('dfs', 'adfs', 'acorn'):
             result = extract_acorn_disc_image_manager(input_path, extract_dir)
+            is_acorn = True
         elif filesystem in ('fat', 'fat12', 'fat16', 'fat32', 'dos', 'msdos'):
             result = extract_dos_7z(input_path, extract_dir)
         else:
@@ -436,31 +322,10 @@ class AnalysisWorker:
             # If that fails and no filesystem hint, try Acorn
             if not result['success'] and not filesystem:
                 result = extract_acorn_disc_image_manager(input_path, extract_dir)
+                if result['success']:
+                    is_acorn = True
 
-        if result['success']:
-            self.api.update_analysis(
-                analysis_id,
-                status='completed',
-                success=True,
-                tool_name=result['tool'],
-                summary=result['summary'],
-                output_path=str(extract_dir),
-                details=json.dumps({'file_count': result.get('file_count', 0)})
-            )
-
-            # Queue ARCHIVE_DETECT to scan extracted files for nested archives
-            # Files are now persisted on disk, so ARCHIVE_EXTRACT can find them
-            partition_uuid = hints.get('partition_uuid')
-            if partition_uuid:
-                self.api.queue_analysis(
-                    artefact['uuid'],
-                    AnalysisType.ARCHIVE_DETECT.value,
-                    hints={
-                        'partition_uuid': partition_uuid,
-                        'extraction_path': str(extract_dir),
-                    }
-                )
-        else:
+        if not result['success']:
             self.api.update_analysis(
                 analysis_id,
                 status='failed',
@@ -470,6 +335,64 @@ class AnalysisWorker:
                 details=json.dumps({
                     'process_output': result.get('process_output')
                 })
+            )
+            return
+
+        # Enumerate extracted files to build file listing
+        files = enumerate_extracted_files(extract_dir, acorn=is_acorn)
+
+        # Extract disc metadata from DIM report output (if Acorn)
+        disc_name = None
+        container_format = None
+        if is_acorn and result.get('process_output'):
+            metadata = _parse_dim_report(result['process_output'].get('stdout', ''))
+            disc_name = metadata.get('disc_name')
+            container_format = metadata.get('container_format')
+
+        # Determine filesystem type
+        if filesystem:
+            fs_type = filesystem
+        elif container_format:
+            container_lower = container_format.lower()
+            if 'adfs' in container_lower:
+                fs_type = 'adfs'
+            elif 'dfs' in container_lower:
+                fs_type = 'dfs'
+            elif 'acorn' in container_lower:
+                fs_type = 'acorn'
+            else:
+                fs_type = 'unknown'
+        else:
+            fs_type = 'unknown'
+
+        # Register partition and file listing in the database
+        partition = self.api.register_file_listing(
+            artefact['uuid'],
+            files,
+            fs_type,
+            label=disc_name,
+            container_format=container_format
+        )
+
+        self.api.update_analysis(
+            analysis_id,
+            status='completed',
+            success=True,
+            tool_name=result['tool'],
+            summary=f'Extracted {len(files)} files ({fs_type})',
+            output_path=str(extract_dir),
+            details=json.dumps({'file_count': len(files)})
+        )
+
+        # Queue ARCHIVE_DETECT to scan extracted files for nested archives
+        if partition:
+            self.api.queue_analysis(
+                artefact['uuid'],
+                AnalysisType.ARCHIVE_DETECT.value,
+                hints={
+                    'partition_uuid': partition.get('uuid'),
+                    'extraction_path': str(extract_dir),
+                }
             )
 
     @analysis_handler("metadata extraction")
@@ -744,7 +667,6 @@ class AnalysisWorker:
             decompress_single_file,
             extract_acorn_disc_image_manager,
             extract_dos_7z,
-            list_files_dim,
         )
         from .tools.extraction import convert_fcfs_to_raw
         from .config import OUTPUT_DIR, MAX_ARCHIVE_DEPTH
@@ -1034,7 +956,6 @@ class AnalysisWorker:
                 handlers = {
                     AnalysisType.FLUX_VISUALISATION.value: self.process_flux_visualisation,
                     AnalysisType.FLUX_DECODE.value: self.process_flux_decode,
-                    AnalysisType.FILE_LISTING.value: self.process_file_listing,
                     AnalysisType.FILE_EXTRACTION.value: self.process_file_extraction,
                     AnalysisType.METADATA_EXTRACT.value: self.process_metadata_extract,
                     AnalysisType.FORMAT_IDENTIFY.value: self.process_format_identify,
