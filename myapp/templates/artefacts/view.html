@@ -240,9 +240,8 @@
                                     {# Archive - render like a directory but with an archive icon #}
                                     {% set path_parts = file.path.split('/') %}
                                     {% if path_parts|length > 1 %}
-                                        {% set build_path = '' %}
                                         {% for i in range(path_parts|length - 1) %}
-                                            {% set build_path = build_path + path_parts[i] + '/' %}
+                                            {% set build_path = path_parts[:i+1]|join('/') + '/' %}
                                             <a href="?partition_uuid={{ file.partition.uuid }}&path={{ build_path|urlencode }}&recursive={{ file_form.recursive.data|default(true, true)|lower }}"
                                                class="text-muted text-decoration-none"
                                                title="Browse {{ build_path }}">
@@ -264,9 +263,8 @@
                                     {% set path_parts = file.path.split('/') %}
                                     {% if path_parts|length > 1 %}
                                         {# Show directory path as clickable links, with archive icon for archive components #}
-                                        {% set build_path = '' %}
                                         {% for i in range(path_parts|length - 1) %}
-                                            {% set build_path = build_path + path_parts[i] + '/' %}
+                                            {% set build_path = path_parts[:i+1]|join('/') + '/' %}
                                             <a href="?partition_uuid={{ file.partition.uuid }}&path={{ build_path|urlencode }}&recursive={{ file_form.recursive.data|default(true, true)|lower }}"
                                                class="text-muted text-decoration-none"
                                                title="Browse {{ build_path }}">
