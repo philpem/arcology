@@ -113,3 +113,45 @@ def extract_partition_range(
         f"Extracted partition image: {output_path.name} "
         f"({actual_size:,} bytes from offset {start_byte:#x})"
     )
+
+
+def is_region_uniform(file_path: Path, start_byte: int, size_bytes: int) -> tuple[bool, int]:
+    """
+    Check whether a byte range in a file is filled with a single repeated value.
+
+    Used to decide whether unpartitioned disc space is worth preserving:
+    regions that are entirely zero (or any other uniform fill) are omitted.
+
+    Args:
+        file_path: Path to the disc image
+        start_byte: Byte offset of the region to check
+        size_bytes: Length of the region in bytes
+
+    Returns:
+        (is_uniform, fill_byte) -- fill_byte is the repeated value when
+        uniform, or -1 when the region contains mixed data.
+    """
+    if size_bytes == 0:
+        return True, 0
+
+    CHUNK_SIZE = 1024 * 1024  # 1 MB
+    with open(file_path, 'rb') as f:
+        f.seek(start_byte)
+        first = f.read(1)
+        if not first:
+            return True, 0
+
+        fill_value = first[0]
+        reference = bytes([fill_value]) * CHUNK_SIZE
+        remaining = size_bytes - 1
+
+        while remaining > 0:
+            chunk = f.read(min(remaining, CHUNK_SIZE))
+            if not chunk:
+                break
+            expected = reference if len(chunk) == CHUNK_SIZE else reference[:len(chunk)]
+            if chunk != expected:
+                return False, -1
+            remaining -= len(chunk)
+
+    return True, fill_value

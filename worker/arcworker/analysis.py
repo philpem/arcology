@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .config import log, POLL_INTERVAL
 from .types import ArtefactType, AnalysisType
-from .compression import decompress_if_needed, extract_partition_range
+from .compression import decompress_if_needed, extract_partition_range, is_region_uniform
 from .api import ArcologyAPI
 from .tools import (
     compute_file_hash,
@@ -502,10 +502,18 @@ class AnalysisWorker:
         may retain a stale MBR, so sfdisk is only used when no ADFS
         signatures are found.
 
-        For each detected partition, a separate partition image is persisted
-        to a cache directory so that downstream FILE_EXTRACTION jobs can
-        operate on individual partitions without re-decompressing the
-        original file.
+        When multiple partitions are detected (or a single partition that
+        doesn't span the whole disc), each partition is extracted and
+        registered as a derived artefact with FILE_EXTRACTION queued
+        against it.  Any unpartitioned gaps between/around partitions are
+        also preserved as derived artefacts unless the gap is uniform
+        (every byte the same value), in which case it is omitted with a
+        note in the summary.
+
+        For single-partition whole-disc images (ADFS, no partition table),
+        FILE_EXTRACTION is queued against the original artefact.  When the
+        original file was compressed, a decompressed copy is cached so
+        that FILE_EXTRACTION doesn't have to decompress again.
         """
         # Common MBR partition type codes -> filesystem hints
         _MBR_TYPE_TO_FS = {
@@ -569,47 +577,151 @@ class AnalysisWorker:
                 'size_bytes': file_size,
             }]
 
-        # Persist partition images so FILE_EXTRACTION can work on individual
-        # partitions without re-decompressing the original file.
-        # Needed when: (a) file was compressed, or (b) multiple partitions
-        # that need splitting from a single disc image.
+        # -----------------------------------------------------------------
+        # Decide how to persist partition images for FILE_EXTRACTION
+        # -----------------------------------------------------------------
+        disc_size = input_path.stat().st_size
         is_compressed = decompression_info is not None
         has_sfdisk_partitions = any('start_sector' in p for p in detected_partitions)
-        needs_partition_cache = is_compressed or has_sfdisk_partitions
 
+        # Register partitions as derived artefacts when there are multiple
+        # partitions, or a single partition that doesn't span the whole disc.
+        # This also lets us extract and preserve unpartitioned space (gaps).
+        should_register_derived = False
+        if has_sfdisk_partitions:
+            if len(detected_partitions) > 1:
+                should_register_derived = True
+            elif len(detected_partitions) == 1:
+                p = detected_partitions[0]
+                sect_sz = p.get('sector_size', 512)
+                p_start = p['start_sector'] * sect_sz
+                p_end = p_start + p['size_sectors'] * sect_sz
+                if p_start > 0 or p_end < disc_size:
+                    should_register_derived = True
+
+        unpartitioned_notes: list[str] = []
         partition_image_paths: dict[int, str] = {}
-        if needs_partition_cache:
-            cache_dir = self.outputs / '.cache' / artefact['uuid']
-            cache_dir.mkdir(parents=True, exist_ok=True)
+        artefact_label = artefact.get('label', 'Unknown')
 
+        if should_register_derived:
+            # ---- Extract each partition as a derived artefact ----
             for partition in detected_partitions:
+                if 'start_sector' not in partition:
+                    continue
                 idx = partition['index']
-                partition_path = cache_dir / f"partition_{idx}.img"
+                fs = partition.get('filesystem', 'unknown')
+                sect_sz = partition.get('sector_size', 512)
+                start_byte = partition['start_sector'] * sect_sz
+                size_bytes = partition['size_sectors'] * sect_sz
 
-                if 'start_sector' in partition and 'size_sectors' in partition:
-                    # MBR/GPT partition -- extract the specific byte range
-                    sect_sz = partition.get('sector_size', 512)
-                    start_byte = partition['start_sector'] * sect_sz
-                    size_bytes = partition['size_sectors'] * sect_sz
-                    extract_partition_range(
-                        input_path, partition_path, start_byte, size_bytes
+                partition_path = work_dir / f"partition_{idx}.img"
+                extract_partition_range(input_path, partition_path, start_byte, size_bytes)
+
+                derived = self.api.register_derived_artefact(
+                    analysis_id,
+                    f"{artefact_label} (partition {idx}, {fs})",
+                    partition_path,
+                    ArtefactType.RAW_SECTOR,
+                    auto_analyse=False
+                )
+                if derived:
+                    derived_uuid = derived['artefact']['uuid']
+                    self.api.queue_analysis(
+                        derived_uuid,
+                        AnalysisType.FILE_EXTRACTION.value,
+                        hints={'filesystem': fs}
                     )
                 else:
-                    # Whole disc (ADFS, no partition table) -- copy the
-                    # decompressed file so it is available after the temp
-                    # working directory is cleaned up.
+                    log.error(f"Failed to register partition {idx} as derived artefact")
+
+            # ---- Handle unpartitioned space (gaps) ----
+            sorted_parts = sorted(
+                [p for p in detected_partitions if 'start_sector' in p],
+                key=lambda p: p['start_sector']
+            )
+            sect_sz = sorted_parts[0].get('sector_size', 512)
+
+            gaps: list[dict] = []
+            # Space before first partition
+            first_start = sorted_parts[0]['start_sector'] * sect_sz
+            if first_start > 0:
+                gaps.append({
+                    'start': 0, 'size': first_start,
+                    'label': 'Pre-partition space',
+                })
+            # Space between consecutive partitions
+            for i in range(len(sorted_parts) - 1):
+                end_curr = (sorted_parts[i]['start_sector'] + sorted_parts[i]['size_sectors']) * sect_sz
+                start_next = sorted_parts[i + 1]['start_sector'] * sect_sz
+                if start_next > end_curr:
+                    gaps.append({
+                        'start': end_curr, 'size': start_next - end_curr,
+                        'label': f'Gap between partitions {sorted_parts[i]["index"]} and {sorted_parts[i + 1]["index"]}',
+                    })
+            # Space after last partition
+            last_end = (sorted_parts[-1]['start_sector'] + sorted_parts[-1]['size_sectors']) * sect_sz
+            if last_end < disc_size:
+                gaps.append({
+                    'start': last_end, 'size': disc_size - last_end,
+                    'label': 'Post-partition space',
+                })
+
+            for gap in gaps:
+                uniform, fill_byte = is_region_uniform(input_path, gap['start'], gap['size'])
+                if uniform:
+                    note = (
+                        f'{gap["label"]} ({gap["size"]:,} bytes) omitted: '
+                        f'uniform fill 0x{fill_byte:02X}'
+                    )
+                    unpartitioned_notes.append(note)
+                    log.info(f"Skipping {note}")
+                else:
+                    gap_path = work_dir / f"unpartitioned_{gap['start']:#x}.img"
+                    extract_partition_range(input_path, gap_path, gap['start'], gap['size'])
+                    self.api.register_derived_artefact(
+                        analysis_id,
+                        f"{artefact_label} ({gap['label']})",
+                        gap_path,
+                        ArtefactType.UNKNOWN,
+                        auto_analyse=False
+                    )
+        else:
+            # Single partition covering the whole disc (ADFS, no partition
+            # table, or sfdisk single-partition spanning entire image).
+            # For compressed files, cache the decompressed image so
+            # FILE_EXTRACTION doesn't have to decompress again.
+            if is_compressed:
+                cache_dir = self.outputs / '.cache' / artefact['uuid']
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                for partition in detected_partitions:
+                    idx = partition['index']
+                    partition_path = cache_dir / f"partition_{idx}.img"
                     shutil.copy(input_path, partition_path)
+                    partition_image_paths[idx] = str(partition_path)
                     log.info(f"Cached decompressed image as {partition_path}")
 
-                partition_image_paths[idx] = str(partition_path)
+            # Queue FILE_EXTRACTION against the original artefact
+            for partition in detected_partitions:
+                idx = partition['index']
+                fs = partition.get('filesystem', 'unknown')
+                extraction_hints: dict = {'filesystem': fs}
+                if idx in partition_image_paths:
+                    extraction_hints['partition_image_path'] = partition_image_paths[idx]
+                self.api.queue_analysis(
+                    artefact['uuid'],
+                    AnalysisType.FILE_EXTRACTION.value,
+                    hints=extraction_hints,
+                )
 
-        # Build summary
+        # -----------------------------------------------------------------
+        # Build summary and details
+        # -----------------------------------------------------------------
         fs_types = [p.get('filesystem', 'unknown') for p in detected_partitions]
         summary = ''
 
         if decompression_info:
             summary += (
-                f'Decompressed {decompression_info["compressed_name"]} → '
+                f'Decompressed {decompression_info["compressed_name"]} \u2192 '
                 f'{decompression_info["decompressed_name"]} '
                 f'({decompression_info["decompressed_size"]:,} bytes). '
             )
@@ -622,6 +734,9 @@ class AnalysisWorker:
         if file_result.get('file_type'):
             summary += f' [file: {file_result["file_type"][:200]}]'
 
+        if unpartitioned_notes:
+            summary += '. ' + '; '.join(unpartitioned_notes)
+
         # Store each tool's result at the top level so the template's Process Logs
         # section can find process_output for sfdisk and file (adfs detection is
         # pure-Python and produces no subprocess output).
@@ -631,6 +746,8 @@ class AnalysisWorker:
             details['decompression'] = decompression_info
         if partition_image_paths:
             details['cached_partitions'] = partition_image_paths
+        if unpartitioned_notes:
+            details['unpartitioned_notes'] = unpartitioned_notes
 
         self.api.update_analysis(
             analysis_id,
@@ -640,23 +757,6 @@ class AnalysisWorker:
             summary=summary,
             details=json.dumps(details)
         )
-
-        # Queue FILE_EXTRACTION for each detected partition now that we know the
-        # filesystem type.  This ensures the correct tool is used (e.g. DIM for
-        # ADFS, 7z for FAT) rather than letting FILE_EXTRACTION guess blindly.
-        # When a cached partition image is available, pass its path so that
-        # FILE_EXTRACTION can use it directly (avoiding re-decompression).
-        for partition in detected_partitions:
-            idx = partition['index']
-            fs = partition.get('filesystem', 'unknown')
-            extraction_hints: dict = {'filesystem': fs}
-            if idx in partition_image_paths:
-                extraction_hints['partition_image_path'] = partition_image_paths[idx]
-            self.api.queue_analysis(
-                artefact['uuid'],
-                AnalysisType.FILE_EXTRACTION.value,
-                hints=extraction_hints,
-            )
 
     @analysis_handler("archive detection")
     def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path):

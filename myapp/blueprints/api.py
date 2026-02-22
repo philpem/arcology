@@ -351,21 +351,24 @@ def produce_artefact(id):
     
     db.session.add(artefact)
     db.session.commit()
-    
-    # Queue follow-on analyses for the new artefact
-    from .artefacts import queue_analyses_for_artefact, ANALYSIS_MAP
-    
-    # Pass through any hints from parent analysis
-    hints = None
-    if analysis.hints:
-        import json
-        hints = json.loads(analysis.hints)
-    
-    queue_analyses_for_artefact(artefact, hints)
-    
+
+    # Queue follow-on analyses unless the caller will handle that explicitly
+    queued_analyses = []
+    if data.get('auto_analyse', True):
+        from .artefacts import queue_analyses_for_artefact, ANALYSIS_MAP
+
+        # Pass through any hints from parent analysis
+        hints = None
+        if analysis.hints:
+            import json
+            hints = json.loads(analysis.hints)
+
+        queue_analyses_for_artefact(artefact, hints)
+        queued_analyses = [t.value for t in ANALYSIS_MAP.get(artefact_type, [])]
+
     return jsonify({
         'artefact': artefact_to_dict(artefact),
-        'queued_analyses': [t.value for t in ANALYSIS_MAP.get(artefact_type, [])]
+        'queued_analyses': queued_analyses
     }), 201
 
 
