@@ -37,7 +37,6 @@ def extract_acorn_disc_image_manager(input_path: Path, output_dir: Path) -> dict
     script_content = f"""insert {input_path}
 report
 chdir {output_dir}
-config CreateINF true
 extract *
 exit
 """
