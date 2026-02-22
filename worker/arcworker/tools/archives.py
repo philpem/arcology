@@ -40,13 +40,16 @@ def extract_riscosarc(input_path: Path, output_dir: Path) -> Dict[str, Any]:
         }
 
     # Scan for files with double extensions and rename them.
-    # This generally happens with Squash.
+    # This generally happens with Squash, where riscosarc produces a file
+    # like "MyFile,FCA,BBC" (input filetype + original filetype).
+    # We strip the input filetype, leaving "MyFile,BBC".
+    # IMPORTANT: use f.parent to keep the file in output_dir, not CWD.
     de_re = re.compile(r'(.*),([0-9A-Fa-f]+),([0-9A-Fa-f]+)')
     for f in output_dir.rglob('*'):
         if f.is_file():
             m = de_re.match(f.name)
             if m is not None:
-                f.rename(f'{m.group(1)},{m.group(3)}')
+                f.rename(f.parent / f'{m.group(1)},{m.group(3)}')
 
     # Count extracted files
     file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
