@@ -391,7 +391,9 @@ def view(uuid):
 
     # Get analyses - either all or most recent per type
     if show_all_analyses:
-        analyses = artefact.analyses
+        analyses = Analysis.query.filter_by(
+            artefact_id=artefact.id
+        ).order_by(Analysis.created_at.desc()).all()
     else:
         analyses = get_most_recent_analyses(artefact)
 
