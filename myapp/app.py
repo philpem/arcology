@@ -201,6 +201,9 @@ def _register_login_handlers(app):
 				if userrec.checkPassword(form.password.data):
 					login_user(userrec)
 					#flash("Logged in successfully", "success")
+					# Redirect to the page the user was trying to reach, or the dashboard.
+					# SECURITY: reject any next= URL with a netloc (host) component to
+					# prevent open-redirect attacks that send users to external sites.
 					next_url = request.args.get("next")
 					if next_url and urlparse(next_url).netloc != '':
 						next_url = None
