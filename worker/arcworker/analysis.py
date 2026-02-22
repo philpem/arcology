@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .config import log, POLL_INTERVAL
 from .types import ArtefactType, AnalysisType
-from .compression import decompress_if_needed
+from .compression import decompress_if_needed, extract_partition_range
 from .api import ArcologyAPI
 from .tools import (
     compute_file_hash,
@@ -79,10 +79,15 @@ class AnalysisWorker:
         self.outputs = output_dir
         self.outputs.mkdir(parents=True, exist_ok=True)
         self.api = ArcologyAPI(api_url, upload_dir, output_dir)
+        self._decompression_info = None  # Set by get_input_path() when decompression occurs
 
     def get_input_path(self, artefact: dict, work_dir: Path) -> Path:
         """
         Get input file path, decompressing if needed.
+
+        After calling this method, self._decompression_info is set to a dict
+        with decompression details if the file was compressed, or None otherwise.
+        Handlers can use this to include decompression info in their output.
 
         Args:
             artefact: Artefact dict from API
@@ -106,7 +111,22 @@ class AnalysisWorker:
         if not input_path.exists():
             raise FileNotFoundError(f"Input file not found: {input_path}")
 
-        return decompress_if_needed(input_path, work_dir)
+        result = decompress_if_needed(input_path, work_dir)
+
+        # Track decompression metadata for handlers that need it
+        if result != input_path:
+            self._decompression_info = {
+                'was_decompressed': True,
+                'compressed_name': input_path.name,
+                'compressed_size': input_path.stat().st_size,
+                'decompressed_name': result.name,
+                'decompressed_size': result.stat().st_size,
+                'compression_format': input_path.suffix.lower(),
+            }
+        else:
+            self._decompression_info = None
+
+        return result
 
     def save_output_file(self, source_path: Path, filename: str) -> str:
         """
@@ -265,6 +285,9 @@ class AnalysisWorker:
         Extracts files from a disc/sector image to persistent storage,
         registers the file listing in the database, and queues archive detection.
         Only works on raw sector images (IMG) - not HFE or IMD formats.
+
+        When a 'partition_image_path' hint is provided (set by PARTITION_DETECT),
+        uses that file directly instead of re-decompressing the original artefact.
         """
         from .tools.extraction import _parse_dim_report
         from .utils.paths import get_output_path
@@ -296,9 +319,17 @@ class AnalysisWorker:
             )
             return
 
-        input_path = self.get_input_path(artefact, work_dir)
         hints = json.loads(analysis.get('hints') or '{}')
         filesystem = hints.get('filesystem', '').lower()
+
+        # Use cached partition image from PARTITION_DETECT when available,
+        # avoiding redundant decompression of the original artefact.
+        partition_image_path = hints.get('partition_image_path')
+        if partition_image_path and Path(partition_image_path).exists():
+            input_path = Path(partition_image_path)
+            log.info(f"Using cached partition image: {input_path}")
+        else:
+            input_path = self.get_input_path(artefact, work_dir)
 
         # Get Item for hierarchical path
         item = artefact.get('item', {'uuid': 'default', 'slug': 'default'})
@@ -470,10 +501,24 @@ class AnalysisWorker:
         Checks for Acorn ADFS (Filecore) first -- a reformatted PC disc
         may retain a stale MBR, so sfdisk is only used when no ADFS
         signatures are found.
+
+        For each detected partition, a separate partition image is persisted
+        to a cache directory so that downstream FILE_EXTRACTION jobs can
+        operate on individual partitions without re-decompressing the
+        original file.
         """
+        # Common MBR partition type codes -> filesystem hints
+        _MBR_TYPE_TO_FS = {
+            '1': 'fat12', '4': 'fat16', '6': 'fat16',
+            'b': 'fat32', 'c': 'fat32', 'e': 'fat16',
+            '7': 'ntfs',
+            '11': 'fat32', '14': 'fat16',
+        }
+
         analysis_id = analysis['id']
 
         input_path = self.get_input_path(artefact, work_dir)
+        decompression_info = self._decompression_info  # Capture before it's overwritten
         hints = json.loads(analysis.get('hints') or '{}')
         filesystem_hint = hints.get('filesystem', '').lower()
 
@@ -502,7 +547,13 @@ class AnalysisWorker:
             results['sfdisk'] = sfdisk_result
 
             if sfdisk_result['success']:
+                sector_size = sfdisk_result.get('sector_size', 512)
                 detected_partitions = sfdisk_result['partitions']
+                # Enrich sfdisk partitions with filesystem hints from type codes
+                for p in detected_partitions:
+                    p['sector_size'] = sector_size
+                    ptype = p.get('type', '').lower()
+                    p['filesystem'] = _MBR_TYPE_TO_FS.get(ptype, 'unknown')
 
         # 3. Use file command for additional format info
         file_result = detect_format_file_cmd(input_path)
@@ -518,9 +569,52 @@ class AnalysisWorker:
                 'size_bytes': file_size,
             }]
 
+        # Persist partition images so FILE_EXTRACTION can work on individual
+        # partitions without re-decompressing the original file.
+        # Needed when: (a) file was compressed, or (b) multiple partitions
+        # that need splitting from a single disc image.
+        is_compressed = decompression_info is not None
+        has_sfdisk_partitions = any('start_sector' in p for p in detected_partitions)
+        needs_partition_cache = is_compressed or has_sfdisk_partitions
+
+        partition_image_paths: dict[int, str] = {}
+        if needs_partition_cache:
+            cache_dir = self.outputs / '.cache' / artefact['uuid']
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
+            for partition in detected_partitions:
+                idx = partition['index']
+                partition_path = cache_dir / f"partition_{idx}.img"
+
+                if 'start_sector' in partition and 'size_sectors' in partition:
+                    # MBR/GPT partition -- extract the specific byte range
+                    sect_sz = partition.get('sector_size', 512)
+                    start_byte = partition['start_sector'] * sect_sz
+                    size_bytes = partition['size_sectors'] * sect_sz
+                    extract_partition_range(
+                        input_path, partition_path, start_byte, size_bytes
+                    )
+                else:
+                    # Whole disc (ADFS, no partition table) -- copy the
+                    # decompressed file so it is available after the temp
+                    # working directory is cleaned up.
+                    shutil.copy(input_path, partition_path)
+                    log.info(f"Cached decompressed image as {partition_path}")
+
+                partition_image_paths[idx] = str(partition_path)
+
         # Build summary
         fs_types = [p.get('filesystem', 'unknown') for p in detected_partitions]
-        summary = f'Detected {len(detected_partitions)} partition(s): {", ".join(fs_types)}'
+        summary = ''
+
+        if decompression_info:
+            summary += (
+                f'Decompressed {decompression_info["compressed_name"]} → '
+                f'{decompression_info["decompressed_name"]} '
+                f'({decompression_info["decompressed_size"]:,} bytes). '
+            )
+
+        summary += f'Detected {len(detected_partitions)} partition(s): {", ".join(fs_types)}'
 
         if adfs_result.get('adfs_detected'):
             summary += f' (ADFS signatures: {", ".join(adfs_result.get("signatures", []))})'
@@ -533,6 +627,10 @@ class AnalysisWorker:
         # pure-Python and produces no subprocess output).
         details: dict = {'partitions': detected_partitions}
         details.update(results)
+        if decompression_info:
+            details['decompression'] = decompression_info
+        if partition_image_paths:
+            details['cached_partitions'] = partition_image_paths
 
         self.api.update_analysis(
             analysis_id,
@@ -546,9 +644,14 @@ class AnalysisWorker:
         # Queue FILE_EXTRACTION for each detected partition now that we know the
         # filesystem type.  This ensures the correct tool is used (e.g. DIM for
         # ADFS, 7z for FAT) rather than letting FILE_EXTRACTION guess blindly.
+        # When a cached partition image is available, pass its path so that
+        # FILE_EXTRACTION can use it directly (avoiding re-decompression).
         for partition in detected_partitions:
+            idx = partition['index']
             fs = partition.get('filesystem', 'unknown')
             extraction_hints: dict = {'filesystem': fs}
+            if idx in partition_image_paths:
+                extraction_hints['partition_image_path'] = partition_image_paths[idx]
             self.api.queue_analysis(
                 artefact['uuid'],
                 AnalysisType.FILE_EXTRACTION.value,

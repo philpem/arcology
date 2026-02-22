@@ -219,16 +219,33 @@ def get_output_folder():
     return folder
 
 
+def _get_storage_extension(filename: str) -> str:
+    """
+    Get the full extension for storage, preserving compound extensions.
+
+    For compound extensions like .dd.zst, .dd.gz, .dd.bz2, .tar.gz,
+    returns the full compound extension instead of just the last part.
+    E.g., 'drive.dd.zst' -> '.dd.zst' (not '.zst').
+    """
+    filename_lower = filename.lower()
+    for compound_ext in ('.dd.zst', '.dd.gz', '.dd.bz2', '.tar.gz'):
+        if filename_lower.endswith(compound_ext):
+            return filename[-len(compound_ext):]
+    _, ext = os.path.splitext(filename)
+    return ext
+
+
 def save_uploaded_file(file) -> tuple[str, int]:
     """
     Save an uploaded file and return (storage_path, file_size).
     Files are stored in UPLOAD_FOLDER with a UUID-based name to avoid conflicts.
     """
     folder = get_upload_folder()
-    
+
     # Generate unique storage name while preserving extension
+    # Uses compound extension detection so drive.dd.zst -> <uuid>.dd.zst
     original_name = secure_filename(file.filename)
-    _, ext = os.path.splitext(original_name)
+    ext = _get_storage_extension(original_name)
     storage_name = f"{uuid.uuid4().hex}{ext}"
     storage_path = os.path.join(folder, storage_name)
     
