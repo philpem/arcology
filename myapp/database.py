@@ -67,8 +67,7 @@ class AnalysisType(enum.Enum):
 
     # Sector/filesystem analyses
     SECTOR_DUMP = "sector_dump"                  # Raw sector extraction
-    FILE_LISTING = "file_listing"                # Extract directory/file list
-    FILE_EXTRACTION = "file_extraction"          # Extract actual files
+    FILE_EXTRACTION = "file_extraction"          # Extract files and register listing
 
     # Archive/nested file analyses
     ARCHIVE_DETECT = "archive_detect"            # Scan for archives by filetype/extension

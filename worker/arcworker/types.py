@@ -47,7 +47,6 @@ class AnalysisType(str, Enum):
     FLUX_VISUALISATION = "flux_visualisation"
     FLUX_DECODE = "flux_decode"
     SECTOR_DUMP = "sector_dump"
-    FILE_LISTING = "file_listing"
     FILE_EXTRACTION = "file_extraction"
     ARCHIVE_DETECT = "archive_detect"
     ARCHIVE_EXTRACT = "archive_extract"

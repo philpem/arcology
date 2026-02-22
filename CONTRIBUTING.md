@@ -83,8 +83,7 @@ The worker is a standalone Python process that polls the web app's REST API for 
 |---------------|-------|-------------|
 | `FLUX_VISUALISATION` | Fluxfox, HxCFE | Generates graphical plots of magnetic flux data |
 | `FLUX_DECODE` | HxCFE, Greaseweazle | Converts flux images to sector formats (IMD, HFE, IMG) |
-| `FILE_LISTING` | 7z, DiscImageManager | Lists files in a disk image without extracting |
-| `FILE_EXTRACTION` | 7z, DiscImageManager | Extracts files from disk images |
+| `FILE_EXTRACTION` | 7z, DiscImageManager | Extracts files from disk images and registers file listing |
 | `METADATA_EXTRACT` | (built-in) | Computes hashes and extracts format metadata |
 | `PARTITION_DETECT` | sfdisk, ADFS signature detection, `file` | Detects partitions and filesystem types |
 | `FORMAT_IDENTIFY` | (placeholder) | Identifies exact format/variant |
