@@ -309,6 +309,7 @@ def detect_partitions_sfdisk(input_path: Path) -> dict:
         data = json.loads(result.stdout)
         table = data.get('partitiontable', {})
         sector_size = table.get('sectorsize', 512)
+        table_type = table.get('label', 'unknown')
         partitions = []
 
         for i, part in enumerate(table.get('partitions', [])):
@@ -325,10 +326,25 @@ def detect_partitions_sfdisk(input_path: Path) -> dict:
                 'node': part.get('node', ''),
             })
 
+        # Check for an empty DOS/MBR partition table: the 55 AA signature
+        # is present but all partition entries have type 0 and/or size 0.
+        # This happens on discs reformatted from PC to another format
+        # (e.g. Acorn) that retain a stale MBR in the first sector.
+        # Log the situation and report no usable partitions so the caller
+        # can fall through to other detection methods.
+        if table_type == 'dos' and partitions:
+            non_empty = [p for p in partitions if p['type'] != '0' and p['size_bytes'] > 0]
+            if not non_empty:
+                log.info(
+                    f"sfdisk found a DOS partition table but all {len(partitions)} "
+                    f"entry/entries are empty (type 0 / size 0) — likely a stale MBR"
+                )
+                partitions = []
+
         return {
             'success': len(partitions) > 0,
             'tool': 'sfdisk',
-            'table_type': table.get('label', 'unknown'),
+            'table_type': table_type,
             'sector_size': sector_size,
             'partitions': partitions,
             'process_output': process_output
