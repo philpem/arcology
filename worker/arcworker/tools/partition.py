@@ -83,9 +83,10 @@ def _parse_filecore_disc_record(disc_record: bytes) -> dict:
 # HCCS partition detection
 # =========================================================================
 
-# Offset within the Filecore boot block where Acorn partition schemes
-# (HCCS, Simtec, etc.) store their header.  Shared across schemes.
-_PARTITION_HEADER_OFFSET = 0x1B0
+# Offset of the hardware-dependent information field within the
+# Filecore boot block.  Partition schemes (HCCS, Simtec, etc.) store
+# their magic and metadata here.
+_HWDEP_INFO_OFFSET = 0x1B0
 
 
 def _decode_hccs_password(obfuscated: bytes) -> str:
@@ -153,12 +154,12 @@ def _detect_hccs_partitions(input_path: Path) -> dict:
 				break
 
 			# Check magic
-			magic = boot_block[_PARTITION_HEADER_OFFSET:_PARTITION_HEADER_OFFSET + 4]
+			magic = boot_block[_HWDEP_INFO_OFFSET:_HWDEP_INFO_OFFSET + 4]
 			if magic != hccs_magic:
 				break
 
 			# --- Partition header (at 0x1B0) ---
-			hdr_off = _PARTITION_HEADER_OFFSET
+			hdr_off = _HWDEP_INFO_OFFSET
 			password = _decode_hccs_password(boot_block[hdr_off + 4:hdr_off + 12])
 			access_before = struct.unpack_from('<H', boot_block, hdr_off + 12)[0]
 			access_after = struct.unpack_from('<H', boot_block, hdr_off + 14)[0]
@@ -221,7 +222,7 @@ def _detect_simtec_signature(input_path: Path) -> dict:
 		return {'detected': False, 'scheme': 'simtec'}
 
 	with open(input_path, 'rb') as f:
-		f.seek(FILECORE_BOOT_BLOCK_OFFSET + _PARTITION_HEADER_OFFSET)
+		f.seek(FILECORE_BOOT_BLOCK_OFFSET + _HWDEP_INFO_OFFSET)
 		magic = f.read(4)
 
 	if magic != _SIMTEC_MAGIC:
