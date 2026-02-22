@@ -24,3 +24,4 @@ OUTPUT_FOLDER = "outputs"           # For analysis outputs (visualisations, etc.
 MAX_CONTENT_LENGTH = 4 * 1024 * 1024 * 1024  # 4GB max upload
 ITEMS_PER_PAGE = 25
 FILES_PER_PAGE = 100
+ANALYSES_SHOWN = 5      # Max completed analyses shown per artefact before "Show All" appears

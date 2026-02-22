@@ -432,7 +432,7 @@ def view(uuid):
     else:
         file_form = FileSearchForm()
 
-    # Check if user wants to see all analyses or just the most recent
+    # Check if user wants to see all analyses or just the most recent N successful
     show_all_analyses = request.args.get('show_all_analyses', 'false').lower() == 'true'
 
     # Collect all artefact IDs: current + all derived (recursively).
@@ -440,20 +440,39 @@ def view(uuid):
     # queued against derived partition artefacts are visible here.
     all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
 
-    # Get analyses - either all or most recent per type, across all related artefacts
-    if show_all_analyses:
-        analyses = Analysis.query.filter(
-            Analysis.artefact_id.in_(all_artefact_ids)
-        ).order_by(Analysis.created_at.desc()).all()
-    else:
-        analyses = get_current_run_analyses(artefact, all_artefact_ids)
+    # How many recent successful analyses to show in the default (non-show-all) view.
+    # Configurable via ANALYSES_SHOWN in myapp.cfg (default: 5).
+    analyses_shown_limit = current_app.config.get('ANALYSES_SHOWN', 5)
 
-    # Count total vs showing (for UI feedback), across all related artefacts
+    # Fetch all related analyses for stats, newest first
     all_related_analyses = Analysis.query.filter(
         Analysis.artefact_id.in_(all_artefact_ids)
-    ).all()
+    ).order_by(Analysis.id.desc()).all()
     total_analyses_count = len(all_related_analyses)
+
+    # Status breakdown counts (displayed in the card header)
+    status_counts = {s.value: 0 for s in AnalysisStatus}
+    for a in all_related_analyses:
+        status_counts[a.status.value] += 1
+
+    # Whether there are multiple analyses of the same type (for "Cleanup Duplicates" button)
     has_duplicate_analyses = total_analyses_count > len(set(a.analysis_type for a in all_related_analyses))
+
+    if show_all_analyses:
+        analyses = all_related_analyses  # already sorted newest first
+    else:
+        # Default view: always show active analyses (pending/running),
+        # plus the N most recent completed (successful) analyses.
+        # Failed and older analyses are hidden; click "Show All" to see them.
+        active = [a for a in all_related_analyses
+                  if a.status in (AnalysisStatus.PENDING, AnalysisStatus.RUNNING)]
+        completed = [a for a in all_related_analyses
+                     if a.status == AnalysisStatus.COMPLETED][:analyses_shown_limit]
+        seen_ids = {a.id for a in active + completed}
+        analyses = [a for a in all_related_analyses if a.id in seen_ids]
+        # all_related_analyses is already newest-first, so analyses inherits that order
+
+    has_hidden_analyses = not show_all_analyses and total_analyses_count > len(analyses)
 
     # Query partitions from all artefacts (for display)
     all_partitions = Partition.query.filter(
@@ -581,8 +600,10 @@ def view(uuid):
                            artefact=artefact,
                            analyses=analyses,
                            show_all_analyses=show_all_analyses,
+                           has_hidden_analyses=has_hidden_analyses,
                            has_duplicate_analyses=has_duplicate_analyses,
                            total_analyses_count=total_analyses_count,
+                           status_counts=status_counts,
                            file_form=file_form,
                            files=files_pagination.items,
                            files_pagination=files_pagination,
