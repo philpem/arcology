@@ -107,9 +107,9 @@
                     </a>
                     {% endif %}
                 </div>
-                <form action="{{ url_for('myapp_blueprints_artefacts.cleanup_analyses_route', uuid=artefact.uuid) }}" method="post" class="d-inline" onsubmit="return confirm('This will delete all but the most recent analysis of each type. Continue?');">
+                <form action="{{ url_for('myapp_blueprints_artefacts.cleanup_analyses_route', uuid=artefact.uuid) }}" method="post" class="d-inline" onsubmit="return confirm('This will delete analyses from older runs, keeping the most recent run intact. Continue?');">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-sm btn-outline-warning" title="Delete all but the most recent analysis of each type">
+                    <button type="submit" class="btn btn-sm btn-outline-warning" title="Delete analyses from older runs, keeping the most recent run intact">
                         <i class="bi bi-trash"></i> Cleanup Duplicates
                     </button>
                 </form>

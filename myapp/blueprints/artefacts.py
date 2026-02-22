@@ -292,47 +292,77 @@ def get_all_derived_artefact_ids(artefact: Artefact) -> list[int]:
     return ids
 
 
+def get_current_run_analyses(artefact: Artefact) -> list[Analysis]:
+    """
+    Get all analyses that belong to the most recent run for an artefact.
+
+    A "run" is the set of analyses triggered together (e.g. by clicking
+    Analyse again, or by a worker queuing follow-on jobs after completing
+    an earlier step).  Because a single run can legitimately produce
+    *multiple* analyses of the same type (e.g. PARTITION_DETECT triggering
+    one FILE_EXTRACTION per discovered partition), returning only the
+    single most-recent analysis per type would silently discard valid
+    results from the same run.
+
+    The run boundary is: find the most recently created analysis of each
+    distinct type (by highest id), then take the minimum of those ids.
+    Everything at or above that minimum belongs to the current run;
+    everything below it belongs to an older run.
+    """
+    all_analyses = Analysis.query.filter_by(
+        artefact_id=artefact.id
+    ).order_by(Analysis.id).all()
+
+    if not all_analyses:
+        return []
+
+    # For each type, find the highest (most recent) id seen
+    most_recent_id_per_type: dict = {}
+    for a in all_analyses:
+        t = a.analysis_type
+        if t not in most_recent_id_per_type or a.id > most_recent_id_per_type[t]:
+            most_recent_id_per_type[t] = a.id
+
+    # The current run begins at the lowest of those per-type maximums.
+    # Any analysis with id >= this threshold is part of the current run.
+    min_keep_id = min(most_recent_id_per_type.values())
+
+    return [a for a in reversed(all_analyses) if a.id >= min_keep_id]
+
+
 def get_most_recent_analyses(artefact: Artefact) -> list[Analysis]:
-    """
-    Get the most recent analysis of each type for an artefact.
-    Returns a list of Analysis objects, one per unique analysis_type.
-    """
-    from sqlalchemy import func
-
-    # Subquery to get the max ID (most recent) for each analysis_type
-    subquery = db.session.query(
-        Analysis.analysis_type,
-        func.max(Analysis.id).label('max_id')
-    ).filter(
-        Analysis.artefact_id == artefact.id
-    ).group_by(Analysis.analysis_type).subquery()
-
-    # Query the actual Analysis records
-    analyses = db.session.query(Analysis).join(
-        subquery,
-        db.and_(
-            Analysis.analysis_type == subquery.c.analysis_type,
-            Analysis.id == subquery.c.max_id
-        )
-    ).order_by(Analysis.created_at.desc()).all()
-
-    return analyses
+    """Kept for compatibility; delegates to get_current_run_analyses."""
+    return get_current_run_analyses(artefact)
 
 
 def cleanup_old_analyses(artefact: Artefact) -> int:
     """
-    Delete all but the most recent analysis of each type for an artefact.
+    Delete analyses from older runs, keeping the most recent run intact.
+
+    Uses the same run-boundary logic as get_current_run_analyses: find the
+    minimum id among the most-recently-created analysis of each type, then
+    delete every analysis whose id is below that threshold.  This preserves
+    all analyses from the current run even when one step triggers multiple
+    analyses of the same type (e.g. FILE_EXTRACTION run once per partition).
+
     Also deletes associated output files referenced in the analysis details.
     Returns the number of analyses deleted.
     """
-    most_recent = get_most_recent_analyses(artefact)
-    most_recent_ids = {a.id for a in most_recent}
+    all_analyses = Analysis.query.filter_by(artefact_id=artefact.id).all()
 
-    # Find all analyses that are NOT in the most recent set
-    old_analyses = Analysis.query.filter(
-        Analysis.artefact_id == artefact.id,
-        ~Analysis.id.in_(most_recent_ids)
-    ).all()
+    if not all_analyses:
+        return 0
+
+    # Determine the run boundary (same logic as get_current_run_analyses)
+    most_recent_id_per_type: dict = {}
+    for a in all_analyses:
+        t = a.analysis_type
+        if t not in most_recent_id_per_type or a.id > most_recent_id_per_type[t]:
+            most_recent_id_per_type[t] = a.id
+
+    min_keep_id = min(most_recent_id_per_type.values())
+
+    old_analyses = [a for a in all_analyses if a.id < min_keep_id]
 
     deleted_count = 0
     deleted_artefacts = 0
