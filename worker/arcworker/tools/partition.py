@@ -37,8 +37,16 @@ from ..config import log
 # Absolute disc offset of the Filecore boot block (512 bytes)
 FILECORE_BOOT_BLOCK_OFFSET = 0xC00
 
+# Size of the Filecore boot block
+FILECORE_BOOT_BLOCK_SIZE = 0x200
+
+# Offset of the hardware-dependent information field within the
+# Filecore boot block.  Partition schemes (HCCS, Simtec, etc.) store
+# their magic and metadata here.
+FILECORE_BB_HWDEP_OFFSET = 0x1B0
+
 # Offset of the disc record within the boot block
-FILECORE_DISC_RECORD_OFFSET = 0x1C0
+FILECORE_BB_DISC_RECORD_OFFSET = 0x1C0
 
 # Disc record field offsets (relative to disc record start)
 _DR_DISC_SIZE = 0x10      # ui32le: disc/partition size in bytes
@@ -82,11 +90,6 @@ def _parse_filecore_disc_record(disc_record: bytes) -> dict:
 # =========================================================================
 # HCCS partition detection
 # =========================================================================
-
-# Offset of the hardware-dependent information field within the
-# Filecore boot block.  Partition schemes (HCCS, Simtec, etc.) store
-# their magic and metadata here.
-_HWDEP_INFO_OFFSET = 0x1B0
 
 
 def _decode_hccs_password(obfuscated: bytes) -> str:
@@ -146,26 +149,26 @@ def _detect_hccs_partitions(input_path: Path) -> dict:
 	index = 0
 
 	with open(input_path, 'rb') as f:
-		while current_offset + FILECORE_BOOT_BLOCK_OFFSET + 0x200 <= file_size:
+		while current_offset + FILECORE_BOOT_BLOCK_OFFSET + FILECORE_BOOT_BLOCK_SIZE <= file_size:
 			# Read boot block (512 bytes at 0xC00 from partition start)
 			f.seek(current_offset + FILECORE_BOOT_BLOCK_OFFSET)
-			boot_block = f.read(0x200)
-			if len(boot_block) < 0x200:
+			boot_block = f.read(FILECORE_BOOT_BLOCK_SIZE)
+			if len(boot_block) < FILECORE_BOOT_BLOCK_SIZE:
 				break
 
 			# Check magic
-			magic = boot_block[_HWDEP_INFO_OFFSET:_HWDEP_INFO_OFFSET + 4]
+			magic = boot_block[FILECORE_BB_HWDEP_OFFSET:FILECORE_BB_HWDEP_OFFSET + 4]
 			if magic != hccs_magic:
 				break
 
 			# --- Partition header (at 0x1B0) ---
-			hdr_off = _HWDEP_INFO_OFFSET
+			hdr_off = FILECORE_BB_HWDEP_OFFSET
 			password = _decode_hccs_password(boot_block[hdr_off + 4:hdr_off + 12])
 			access_before = struct.unpack_from('<H', boot_block, hdr_off + 12)[0]
 			access_after = struct.unpack_from('<H', boot_block, hdr_off + 14)[0]
 
 			# --- Disc record (at 0x1C0) ---
-			disc_record = boot_block[FILECORE_DISC_RECORD_OFFSET:]
+			disc_record = boot_block[FILECORE_BB_DISC_RECORD_OFFSET:]
 			dr = _parse_filecore_disc_record(disc_record)
 			partition_size = dr['disc_size']
 			if partition_size == 0:
@@ -218,11 +221,11 @@ def _detect_simtec_signature(input_path: Path) -> dict:
 		Dict with ``detected``, ``scheme``, and a ``description``.
 	"""
 	file_size = input_path.stat().st_size
-	if file_size < FILECORE_BOOT_BLOCK_OFFSET + 0x200:
+	if file_size < FILECORE_BOOT_BLOCK_OFFSET + FILECORE_BOOT_BLOCK_SIZE:
 		return {'detected': False, 'scheme': 'simtec'}
 
 	with open(input_path, 'rb') as f:
-		f.seek(FILECORE_BOOT_BLOCK_OFFSET + _HWDEP_INFO_OFFSET)
+		f.seek(FILECORE_BOOT_BLOCK_OFFSET + FILECORE_BB_HWDEP_OFFSET)
 		magic = f.read(4)
 
 	if magic != _SIMTEC_MAGIC:
