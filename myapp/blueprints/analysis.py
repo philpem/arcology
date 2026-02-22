@@ -4,6 +4,8 @@ Arcology - Analysis Blueprint
 View and manage analysis jobs.
 """
 
+import re
+
 from flask import Blueprint, render_template, redirect, url_for, flash, request
 from flask_login import login_required
 
@@ -57,6 +59,18 @@ def index():
 def view(uuid):
     """View analysis details."""
     analysis = Analysis.query.filter_by(uuid=uuid).first_or_404()
+    # Sanitize any JSON-escaped Python surrogates (\udcNN) in stored details.
+    # These arise from Acorn filenames with raw Latin-1 bytes (e.g. 0xA0 hard
+    # space) appearing in the command field of process_output records written
+    # before get_process_output started sanitising the command string.  Replace
+    # \udcNN with \u00NN (the Latin-1 Unicode equivalent) so the template can
+    # render them without triggering a UnicodeEncodeError in Werkzeug.
+    if analysis.details:
+        analysis.details = re.sub(
+            r'\\udc([0-9a-f]{2})',
+            lambda m: f'\\u00{m.group(1)}',
+            analysis.details
+        )
     return render_template('analysis/view.html', analysis=analysis)
 
 
