@@ -112,7 +112,8 @@ class ArcologyAPI:
         analysis_id: int,
         label: str,
         source_path: Path,
-        artefact_type: ArtefactType
+        artefact_type: ArtefactType,
+        auto_analyse: bool = True
     ) -> Optional[dict]:
         """
         Register a derived artefact produced by an analysis.
@@ -123,6 +124,8 @@ class ArcologyAPI:
             label: Human-readable label for the artefact
             source_path: Path to the generated file
             artefact_type: Type of the artefact
+            auto_analyse: Whether to auto-queue follow-on analyses (default True).
+                Set to False when the caller will explicitly queue specific analyses.
 
         Returns:
             API response dict, or None on error
@@ -145,7 +148,8 @@ class ArcologyAPI:
             'artefact_type': artefact_type.value,
             'file_size': file_size,
             'md5': md5,
-            'sha256': sha256
+            'sha256': sha256,
+            'auto_analyse': auto_analyse
         })
 
     def register_file_listing(
