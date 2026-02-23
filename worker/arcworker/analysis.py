@@ -866,6 +866,20 @@ class AnalysisWorker:
 
         files = partition_resp.get('files', [])
 
+        # Filter files to only those belonging to this archive's extraction
+        # context.  Without this, nested ARCHIVE_DETECT jobs pick up files
+        # from unrelated archives in the same partition and pass them wrong
+        # extraction_path / path_prefix hints, causing "file not found" in
+        # the subsequent ARCHIVE_EXTRACT.
+        if path_prefix:
+            # Nested detection: only process files extracted from this archive
+            # (their DB paths are prefixed with the archive's own path).
+            files = [f for f in files if f.get('path', '').startswith(path_prefix + '/')]
+        else:
+            # Top-level detection (after FILE_EXTRACTION): only process files
+            # that came directly from the disc image, not from nested archives.
+            files = [f for f in files if f.get('extraction_depth', 0) == 0]
+
         archive_count = 0
         queued_count = 0
         depth_limit_exceeded = 0
