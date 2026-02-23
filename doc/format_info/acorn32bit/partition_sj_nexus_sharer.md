@@ -28,10 +28,10 @@ Each partition entry occupies 16 bytes.
 0     1     Flag (status)
 1     1     Station
 2     2     0,0
-4     4     Address on disk (in sectors), ui32le, shifted left 1 bit. Bit 0 is unused.
+4     4     Address on disk, ui32le, in sectors.
 8     4     Size on disk (in sectors) and drive number, ui32le. Size (in sectors)
-            occupies bits 23–1 (i.e. (word & 0x00FFFFFF) >> 1). Drive number is
-            in bits 31–24 (the MSbyte). Bit 0 is unused.
+            occupies bits 23–0 (i.e. word & 0x00FFFFFF). Drive number is
+            in bits 31–24 (the MSbyte).
 12    4     0,0,0,0
 ```
 
