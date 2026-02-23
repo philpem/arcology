@@ -88,6 +88,24 @@ exit
                 'process_output': process_output
             }
 
+        # No files extracted.  Distinguish a valid-but-empty disc (DIM read
+        # the image successfully) from a genuine failure (unrecognised format).
+        # DIM prints "… image read OK." on success regardless of file count.
+        stdout = ''
+        if process_output:
+            stdout = process_output.get('stdout', '')
+        dim_read_ok = result.returncode == 0 and 'read OK' in stdout
+
+        if dim_read_ok:
+            return {
+                'success': True,
+                'tool': 'DiscImageManager',
+                'output_dir': str(output_dir),
+                'file_count': 0,
+                'summary': 'Acorn disc image is valid but contains no files',
+                'process_output': process_output
+            }
+
         return {
             'success': False,
             'tool': 'DiscImageManager',

@@ -53,6 +53,52 @@ _DR_DISC_SIZE = 0x10      # ui32le: disc/partition size in bytes
 _DR_DISC_NAME = 0x16      # 10 bytes, CR or null terminated
 
 
+# =========================================================================
+# SJ Research Nexus Disc Sharer constants
+# =========================================================================
+
+# Absolute byte offset of the Nexus partition table on disc
+NEXUS_TABLE_OFFSET = 0x20000
+
+# Four-byte magic at offset 0 of the partition table
+NEXUS_TABLE_MAGIC = b'Net1'
+
+# Size of the partition table header
+NEXUS_TABLE_HEADER_SIZE = 16
+
+# Size of each partition entry
+NEXUS_TABLE_ENTRY_SIZE = 16
+
+# Maximum partition entries: 240 data bytes / 16 bytes each
+NEXUS_TABLE_MAX_ENTRIES = 15
+
+# Sector size (bytes) assumed for all Nexus disc images
+NEXUS_SECTOR_SIZE = 512
+
+# Filesystem label used for Printer partitions (flag bit 3, mask 0x08).
+# Printer partitions are checked against the Filecore boot block checksum
+# to confirm ADFS; this constant provides both the expected label and the
+# fallback when that check fails.
+# • 'adfs'  — assume ADFS (default; will also log if checksum fails)
+# • None    — omit printer partitions from the partition list entirely
+#             (they will appear as unpartitioned gaps in the output)
+# • any str — use that string as the filesystem label without checking
+NEXUS_PRINTER_FILESYSTEM = 'adfs'
+
+
+def _decode_nexus_flags(flags: int) -> dict:
+	"""Decode a Nexus partition flags byte into a human-readable dict."""
+	return {
+		'writable': bool(flags & 0x01),
+		'multiple': bool(flags & 0x02),
+		'fixed':    bool(flags & 0x04),
+		'printer':  bool(flags & 0x08),
+		'local':    bool(flags & 0x10),
+		'last':     bool(flags & 0x80),
+		'raw':      f'0x{flags:02X}',
+	}
+
+
 def _parse_filecore_disc_record(disc_record: bytes) -> dict:
 	"""
 	Parse a Filecore disc record into a dict of useful fields.
@@ -199,6 +245,172 @@ def _detect_hccs_partitions(input_path: Path) -> dict:
 
 
 # =========================================================================
+# SJ Research Nexus Disc Sharer partition detection
+# =========================================================================
+
+def _detect_nexus_partitions(input_path: Path) -> dict:
+	"""
+	Detect an SJ Research Nexus Disc Sharer partition table.
+
+	The table sits at a fixed offset (NEXUS_TABLE_OFFSET = 0x20000,
+	i.e. 256 × 512-byte sectors from the start of the disc) and is
+	identified by the four-byte magic ``Net1``.  The 0x20000 bytes before
+	the table contain the disc sharer firmware; this region is captured in
+	the returned dict so that the caller can label it appropriately when
+	carving unpartitioned space.
+
+	Partition addresses are stored as plain sector numbers (ui32le).
+	The combined size/drive word stores the drive number in bits 31–24
+	and the size in sectors in bits 23–0.
+
+	Printer partitions (flag bit 3) are checked against the Filecore boot
+	block checksum as a quick ADFS sanity test.  If the check passes the
+	filesystem is set to ``adfs``; if it fails an informational message is
+	logged and the filesystem is still set to NEXUS_PRINTER_FILESYSTEM
+	(default ``'adfs'``).  Set NEXUS_PRINTER_FILESYSTEM to a different
+	string to override the label, or to None to omit printer partitions
+	from the output entirely (they will appear as unpartitioned gaps).
+
+	Disc names are read from the Filecore disc record inside the boot block
+	at ``partition_start + 0xC00`` when the boot block is present.
+
+	Returns:
+		Dict with ``detected`` (bool).  When True, also includes
+		``scheme`` (``'nexus'``), ``partitions`` (list of dicts with at
+		least ``index``, ``start_byte``, ``size_bytes``, ``filesystem``),
+		and ``nexus_header`` with disc-level Nexus metadata.
+	"""
+	file_size = input_path.stat().st_size
+
+	# Minimum size: table offset + header + at least one entry
+	if file_size < NEXUS_TABLE_OFFSET + NEXUS_TABLE_HEADER_SIZE + NEXUS_TABLE_ENTRY_SIZE:
+		return {'detected': False, 'scheme': 'nexus'}
+
+	partitions = []
+	network_number = header_unknown_5 = delay = 0
+
+	with open(input_path, 'rb') as f:
+		f.seek(NEXUS_TABLE_OFFSET)
+		table_bytes = f.read(256)
+
+		if len(table_bytes) < NEXUS_TABLE_HEADER_SIZE or table_bytes[:4] != NEXUS_TABLE_MAGIC:
+			return {'detected': False, 'scheme': 'nexus'}
+
+		# --- Partition table header ---
+		network_number    = table_bytes[4]
+		header_unknown_5  = table_bytes[5]
+		delay             = (table_bytes[7] << 8) | table_bytes[6]  # delay_high, delay_low
+
+		for i in range(NEXUS_TABLE_MAX_ENTRIES):
+			eo = NEXUS_TABLE_HEADER_SIZE + i * NEXUS_TABLE_ENTRY_SIZE
+			if eo + NEXUS_TABLE_ENTRY_SIZE > len(table_bytes):
+				break
+
+			flags_byte      = table_bytes[eo]
+			station         = table_bytes[eo + 1]
+			# eo+2, eo+3 are reserved
+			addr_word       = struct.unpack_from('<I', table_bytes, eo + 4)[0]
+			size_drive_word = struct.unpack_from('<I', table_bytes, eo + 8)[0]
+			# eo+12..eo+15 are reserved
+
+			decoded_flags = _decode_nexus_flags(flags_byte)
+			is_last    = decoded_flags['last']
+			is_printer = decoded_flags['printer']
+
+			start_sector    = addr_word
+			drive_number    = (size_drive_word >> 24) & 0xFF
+			size_in_sectors = size_drive_word & 0x00FFFFFF
+			start_byte_val  = start_sector    * NEXUS_SECTOR_SIZE
+			size_bytes_val  = size_in_sectors * NEXUS_SECTOR_SIZE
+
+			if size_bytes_val == 0:
+				if is_last:
+					break
+				continue
+
+			# Respect NEXUS_PRINTER_FILESYSTEM = None to omit printer partitions
+			if is_printer and NEXUS_PRINTER_FILESYSTEM is None:
+				log.debug(f"Nexus partition {i}: printer partition omitted (NEXUS_PRINTER_FILESYSTEM=None)")
+				if is_last:
+					break
+				continue
+
+			# Clamp to image size
+			if start_byte_val + size_bytes_val > file_size:
+				size_bytes_val = max(0, file_size - start_byte_val)
+
+			# --- Filecore boot block: read once, used for ADFS check and disc name ---
+			bb_abs     = start_byte_val + FILECORE_BOOT_BLOCK_OFFSET
+			boot_block = b''
+			if bb_abs + FILECORE_BOOT_BLOCK_SIZE <= file_size:
+				f.seek(bb_abs)
+				boot_block = f.read(FILECORE_BOOT_BLOCK_SIZE)
+
+			# --- Determine filesystem ---
+			if is_printer:
+				if NEXUS_PRINTER_FILESYSTEM == 'adfs':
+					# Confirm ADFS by checking the Filecore boot block checksum.
+					# Log a note when it fails so that the operator knows ADFS
+					# is being assumed without confirmation.
+					adfs_ok = (
+						len(boot_block) == FILECORE_BOOT_BLOCK_SIZE
+						and sum(boot_block) & 0xFF == 0
+					)
+					if not adfs_ok:
+						log.info(
+							f"Nexus partition {i} (printer): Filecore boot block "
+							f"checksum not valid — boot block absent or partition "
+							f"may not be ADFS (assuming '{NEXUS_PRINTER_FILESYSTEM}')"
+						)
+				filesystem = NEXUS_PRINTER_FILESYSTEM
+			else:
+				filesystem = 'adfs'
+
+			# --- Parse disc name from Filecore disc record ---
+			disc_name = ''
+			if len(boot_block) >= FILECORE_BOOT_BLOCK_SIZE:
+				dr = _parse_filecore_disc_record(boot_block[FILECORE_BB_DISC_RECORD_OFFSET:])
+				disc_name = dr.get('disc_name', '')
+
+			partition = {
+				'index':                  i,
+				'start_byte':             start_byte_val,
+				'size_bytes':             size_bytes_val,
+				'filesystem':             filesystem,
+				'scheme':                 'nexus',
+				'description':            f'Nexus partition {i}',
+				'nexus_drive_number':     drive_number,
+				'nexus_station':          station,
+				'nexus_flags':            decoded_flags,
+				'nexus_network_number':   network_number,
+				'nexus_header_unknown_5': header_unknown_5,
+				'nexus_delay':            delay,
+			}
+			if disc_name:
+				partition['disc_name'] = disc_name
+
+			partitions.append(partition)
+
+			if is_last:
+				break
+
+	if not partitions:
+		# Magic matched but no usable entries — treat as not detected
+		return {'detected': False, 'scheme': 'nexus'}
+
+	return {
+		'detected': True,
+		'scheme': 'nexus',
+		'partitions': partitions,
+		'nexus_header': {
+			'nexus_network_number':   network_number,
+			'nexus_header_unknown_5': header_unknown_5,
+			'nexus_delay':            delay,
+		},
+	}
+
+
+# =========================================================================
 # Simtec signature detection (decode not implemented)
 # =========================================================================
 
@@ -256,6 +468,15 @@ def detect_acorn_partitions(input_path: Path) -> dict:
 		Schemes that are detected but cannot be decoded (e.g. Simtec)
 		return ``partitions: []`` with a ``description``.
 	"""
+	# SJ Research Nexus Disc Sharer (checked first: the 'Net1' magic is at
+	# a fixed location 0x20000 bytes in, well away from the Filecore boot
+	# block at 0xC00.  On a Nexus disc the 0xC00 area holds the disc
+	# sharer firmware, so HCCS detection (which looks for 'Andy' there)
+	# will naturally fail — but checking Nexus first is faster.)
+	result = _detect_nexus_partitions(input_path)
+	if result['detected']:
+		return result
+
 	# HCCS (most common Acorn hard-disc partitioning)
 	result = _detect_hccs_partitions(input_path)
 	if result['detected']:
@@ -266,7 +487,7 @@ def detect_acorn_partitions(input_path: Path) -> dict:
 	if result['detected']:
 		return result
 
-	# (Future: SJ Nexus, RISC iX, ICS, etc.)
+	# (Future: RISC iX, ICS, etc.)
 
 	return {'detected': False}
 

@@ -158,7 +158,8 @@ class ArcologyAPI:
         files: list[dict],
         filesystem: str = 'unknown',
         label: str = None,
-        container_format: str = None
+        container_format: str = None,
+        partition_index: int = 0,
     ):
         """
         Register extracted file listing in API.
@@ -169,13 +170,14 @@ class ArcologyAPI:
             filesystem: Filesystem type (e.g., 'fat', 'adfs')
             label: Optional partition label (e.g., disc name for ADFS)
             container_format: Optional detailed format info (e.g., "Acorn ADFS E")
+            partition_index: Partition index within the parent disc image
 
         Returns:
             Partition dict if successful, None otherwise
         """
         # First create partition
         partition_data = {
-            'partition_index': 0,
+            'partition_index': partition_index,
             'filesystem': filesystem,
             'total_files': len(files)
         }
