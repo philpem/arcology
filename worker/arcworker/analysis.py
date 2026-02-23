@@ -324,6 +324,7 @@ class AnalysisWorker:
 
         hints = json.loads(analysis.get('hints') or '{}')
         filesystem = hints.get('filesystem', '').lower()
+        partition_index = hints.get('partition_index', 0)
 
         # Use cached partition image from PARTITION_DETECT when available,
         # avoiding redundant decompression of the original artefact.
@@ -426,7 +427,8 @@ class AnalysisWorker:
             files,
             fs_type,
             label=disc_name,
-            container_format=container_format
+            container_format=container_format,
+            partition_index=partition_index,
         )
 
         self.api.update_analysis(
@@ -675,7 +677,7 @@ class AnalysisWorker:
                     self.api.queue_analysis(
                         derived_uuid,
                         AnalysisType.FILE_EXTRACTION.value,
-                        hints={'filesystem': fs}
+                        hints={'filesystem': fs, 'partition_index': idx}
                     )
                 else:
                     log.error(f"Failed to register partition {idx} as derived artefact")
@@ -751,7 +753,7 @@ class AnalysisWorker:
             for partition in detected_partitions:
                 idx = partition['index']
                 fs = partition.get('filesystem', 'unknown')
-                extraction_hints: dict = {'filesystem': fs}
+                extraction_hints: dict = {'filesystem': fs, 'partition_index': idx}
                 if idx in partition_image_paths:
                     extraction_hints['partition_image_path'] = partition_image_paths[idx]
                 self.api.queue_analysis(
