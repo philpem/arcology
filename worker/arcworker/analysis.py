@@ -505,15 +505,17 @@ class AnalysisWorker:
         Detects partitions and filesystem types in raw disc images.
 
         Detection order:
-        1. Acorn partition schemes (HCCS, Simtec, etc.) — checked first
-           because they have specific magic bytes and don't depend on
-           ADFS boot block checksums.  A PC disc reformatted as Acorn
-           may retain a stale MBR, so sfdisk must come after.
+        1. Acorn partition schemes (Nexus, HCCS, Simtec, etc.) — checked
+           first because they have specific magic bytes and don't depend on
+           ADFS boot block checksums.  Nexus is tried before HCCS because
+           on Nexus discs the area at 0xC00 holds sharer firmware (not an
+           HCCS boot block).  A PC disc reformatted as Acorn may retain a
+           stale MBR, so sfdisk must come after.
         2. ADFS filesystem signatures — for unpartitioned Acorn discs.
         3. sfdisk — standard MBR/GPT partition tables.
 
-        Fully-decoded schemes (HCCS) provide per-partition metadata
-        including disc names, passwords and access rights.  Signature-only
+        Fully-decoded schemes (Nexus, HCCS) provide per-partition metadata
+        including disc names and access information.  Signature-only
         schemes (Simtec) are noted but fall through to whole-disc handling.
 
         All partition schemes normalise to byte-based offsets (start_byte /
@@ -685,13 +687,15 @@ class AnalysisWorker:
             )
 
             gaps: list[dict] = []
-            # Space before first partition
+            # Space before first partition.
+            # On Nexus discs this region contains the disc sharer firmware.
             first_start = sorted_parts[0].get('start_byte', 0)
             if first_start > 0:
-                gaps.append({
-                    'start': 0, 'size': first_start,
-                    'label': 'Pre-partition space',
-                })
+                if acorn_result.get('scheme') == 'nexus':
+                    pre_label = 'Nexus firmware'
+                else:
+                    pre_label = 'Pre-partition space'
+                gaps.append({'start': 0, 'size': first_start, 'label': pre_label})
             # Space between consecutive partitions
             for i in range(len(sorted_parts) - 1):
                 end_curr = sorted_parts[i].get('start_byte', 0) + sorted_parts[i].get('size_bytes', 0)
