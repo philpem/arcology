@@ -404,11 +404,23 @@ def detect_acorn_adfs(input_path: Path) -> dict:
                 signatures.append('Valid ADFS boot block checksum (disc address &C00)')
                 adfs_variant = 'new_map'
 
-        # Check for old-format directory signature "Hugo"
-        # Old-map root directory starts at byte 0x200 (sector 2 at 256 bytes/sector)
-        # "Hugo" appears at end of directory: offset depends on directory size
-        # Common offsets: 0x4CB (small dir), 0x6CB (large dir)
-        for offset in [0x4CB, 0x6CB]:
+        # Check for old-format directory signature "Hugo".
+        # "Hugo" appears at byte 1 of the directory header (after the master
+        # sequence number) and again near the end of the directory tail.
+        #
+        # Root directory location depends on sector size:
+        #   - 256-byte sectors (floppy S/M/L/D): root at 0x200
+        #       header Hugo: 0x201
+        #       tail Hugo (1280-byte dir): 0x6CB  (0x200 + 0x4CB)
+        #       tail Hugo (2048-byte dir): 0x9FB  (0x200 + 0x7FB)
+        #   - 512-byte sectors (hard disc, D+ variants): root at 0x400
+        #       header Hugo: 0x401
+        #       tail Hugo (1280-byte dir): 0x8CB  (0x400 + 0x4CB)
+        #       tail Hugo (2048-byte dir): 0xBFB  (0x400 + 0x7FB)
+        #
+        # 0x4CB is also checked for images where the directory starts at byte 0
+        # (non-standard but seen in some extracted/synthetic images).
+        for offset in [0x201, 0x401, 0x4CB, 0x6CB, 0x8CB, 0x9FB, 0xBFB]:
             if offset + 4 <= len(header) and header[offset:offset + 4] == b"Hugo":
                 signatures.append(f'"Hugo" at 0x{offset:X} (old-format directory)')
                 adfs_variant = 'old_map'
@@ -422,8 +434,10 @@ def detect_acorn_adfs(input_path: Path) -> dict:
                     adfs_variant = 'new_map'
                 break
 
-        # Check for new-format directory tail "Nick"
-        for offset in [0x4CB, 0x6CB, 0x7FF, 0xBFF]:
+        # Check for new-format directory tail "Nick".
+        # Offsets mirror the Hugo tail offsets above, covering both 256-byte
+        # and 512-byte sector layouts.
+        for offset in [0x4CB, 0x6CB, 0x7FF, 0x8CB, 0x9FB, 0xBFF, 0xBFB]:
             if offset + 4 <= len(header) and header[offset:offset + 4] == b"Nick":
                 signatures.append(f'"Nick" at 0x{offset:X} (new-format directory tail)')
                 if not adfs_variant:
