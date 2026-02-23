@@ -259,10 +259,9 @@ def _detect_nexus_partitions(input_path: Path) -> dict:
 	the returned dict so that the caller can label it appropriately when
 	carving unpartitioned space.
 
-	Partition addresses and sizes are stored in sectors (512 bytes each)
-	left-shifted by one bit; bit 0 of each field is unused and ignored.
-	The drive number occupies the most-significant byte of the combined
-	size/drive word.
+	Partition addresses are stored as plain sector numbers (ui32le).
+	The combined size/drive word stores the drive number in bits 31–24
+	and the size in sectors in bits 23–0.
 
 	Printer partitions (flag bit 3) are checked against the Filecore boot
 	block checksum as a quick ADFS sanity test.  If the check passes the
@@ -318,10 +317,9 @@ def _detect_nexus_partitions(input_path: Path) -> dict:
 			is_last    = decoded_flags['last']
 			is_printer = decoded_flags['printer']
 
-			# Address and size are stored shifted left 1 bit; bit 0 is unused.
-			start_sector    = addr_word >> 1
+			start_sector    = addr_word
 			drive_number    = (size_drive_word >> 24) & 0xFF
-			size_in_sectors = (size_drive_word & 0x00FFFFFF) >> 1
+			size_in_sectors = size_drive_word & 0x00FFFFFF
 			start_byte_val  = start_sector    * NEXUS_SECTOR_SIZE
 			size_bytes_val  = size_in_sectors * NEXUS_SECTOR_SIZE
 
