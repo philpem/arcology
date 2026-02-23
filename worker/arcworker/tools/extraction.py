@@ -14,6 +14,23 @@ import tempfile
 from pathlib import Path
 
 from .base import run_tool_with_output
+from ..utils.text import normalize_extracted_filenames
+
+
+def _decode_dos_cp850(data: bytes) -> str:
+	"""
+	Best-effort CP850 decode for Western European DOS filenames.
+
+	7z passes raw FAT directory-entry bytes through to the Linux filesystem
+	when extracting DOS disc images.  DOS systems in Western Europe typically
+	used CP850; US-only systems used CP437.  CP850 is chosen as the default
+	because this collection is UK/European-focused and the two encodings agree
+	on the ASCII range (0x00–0x7F) and are close in 0x80–0xFF.
+
+	If a disc is known to use a different code page, pass an explicit decoder
+	to normalize_extracted_filenames() instead.
+	"""
+	return data.decode('cp850')
 
 # Debugging option: if True, scripts and output files will not be deleted.
 _DEBUG_KEEP_OUTFILES = False
@@ -58,6 +75,10 @@ exit
         file_count = sum(1 for f in extracted_files if f.is_file() and not f.suffix == '.inf')
 
         if file_count > 0:
+            # Rename any files whose names contain raw RISC OS Latin1 bytes to
+            # their correct Unicode equivalents.  This must happen before
+            # enumerate_extracted_files() or any tool receives these paths.
+            normalize_extracted_filenames(output_dir)
             return {
                 'success': True,
                 'tool': 'DiscImageManager',
@@ -120,6 +141,10 @@ def extract_dos_7z(input_path: Path, output_dir: Path) -> dict:
         file_count = sum(1 for f in extracted_files if f.is_file())
 
         if file_count > 0:
+            # Normalise raw DOS/FAT byte sequences in filenames to Unicode.
+            # CP850 (Western European DOS) is used as the default; see
+            # _decode_dos_cp850() for rationale and limitations.
+            normalize_extracted_filenames(output_dir, decoder=_decode_dos_cp850)
             return {
                 'success': True,
                 'tool': '7z',
@@ -175,8 +200,6 @@ def enumerate_extracted_files(output_dir: Path, acorn: bool = False) -> list[dic
     Returns:
         List of file dicts with path, size, and optional filetype/directory info
     """
-    from ..utils.text import sanitize_path
-
     files = []
 
     for file_path in output_dir.rglob('*'):
@@ -202,8 +225,6 @@ def enumerate_extracted_files(output_dir: Path, acorn: bool = False) -> list[dic
             else:
                 display_path = str(rel_path)
 
-            display_path = sanitize_path(display_path)
-
             file_entry = {
                 'path': display_path,
                 'size': file_size,
@@ -222,7 +243,7 @@ def enumerate_extracted_files(output_dir: Path, acorn: bool = False) -> list[dic
             if filetype:
                 file_entry['risc_os_filetype'] = filetype
         else:
-            display_path = sanitize_path(str(rel_path))
+            display_path = str(rel_path)
             file_entry = {
                 'path': display_path,
                 'size': file_size,
