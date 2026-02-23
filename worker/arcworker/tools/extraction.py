@@ -14,6 +14,7 @@ import tempfile
 from pathlib import Path
 
 from .base import run_tool_with_output
+from ..utils.text import normalize_extracted_filenames
 
 # Debugging option: if True, scripts and output files will not be deleted.
 _DEBUG_KEEP_OUTFILES = False
@@ -58,6 +59,10 @@ exit
         file_count = sum(1 for f in extracted_files if f.is_file() and not f.suffix == '.inf')
 
         if file_count > 0:
+            # Rename any files whose names contain raw RISC OS Latin1 bytes to
+            # their correct Unicode equivalents.  This must happen before
+            # enumerate_extracted_files() or any tool receives these paths.
+            normalize_extracted_filenames(output_dir)
             return {
                 'success': True,
                 'tool': 'DiscImageManager',

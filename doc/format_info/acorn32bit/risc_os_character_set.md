@@ -2,178 +2,120 @@
 
 ## Background
 
-RISC OS uses its own 8-bit character set — "RISC OS Latin1" — for filenames and text. It is based on ISO 8859-1 (Latin-1) but diverges significantly in the `0x80`–`0x9F` range: where ISO 8859-1 defines C1 control codes, RISC OS places printable characters, many of them typographic symbols similar to Windows CP1252, alongside a handful of RISC OS-specific GUI glyphs with no Unicode equivalent.
+RISC OS uses its own 8-bit character set — "RISC OS Latin1" — for filenames and text. It is based on ISO 8859-1 (Latin-1) but diverges in the `0x80`–`0x9F` range: where ISO 8859-1 defines C1 control codes, RISC OS places printable characters. These include typographic symbols, Welsh-specific letters added by Acorn for UK language support, and a handful of RISC OS-specific GUI glyphs with no standard Unicode equivalent.
 
 The `0xA0`–`0xFF` range is **identical** between RISC OS Latin1 and ISO 8859-1, which in turn maps byte-for-byte to the Unicode Latin-1 Supplement block (U+00A0–U+00FF). This covers all common accented Latin letters and punctuation (©, é, ñ, etc.).
 
 ## The Problem: Python Surrogate Escaping
 
-On Linux, filenames are arbitrary byte sequences. Python's filesystem APIs (e.g. `os.listdir()`, `Path.rglob()`) decode filenames using the `surrogateescape` error handler (PEP 383): each byte `0xXX` that is not valid UTF-8 is mapped to the Unicode surrogate code point `U+DCXX`. For example:
+On Linux, filenames are arbitrary byte sequences. Python's filesystem APIs decode filenames using the `surrogateescape` error handler (PEP 383): each byte `0xXX` that is not valid UTF-8 is mapped to the Unicode surrogate code point `U+DCXX`. For example:
 
 - Byte `0xA0` (RISC OS hard space / non-breaking space) → Python string `\udca0`
 - Byte `0xA9` (copyright sign `©`) → Python string `\udca9`
-- Byte `0x80` (Euro sign `€` in RISC OS 3.5+) → Python string `\udc80`
+- Byte `0x81` (RISC OS Ŵ Welsh W with circumflex) → Python string `\udc81`
 
-Surrogate code points (U+D800–U+DFFF) are **not valid UTF-8**, so they cannot be stored in a UTF-8 PostgreSQL database. Attempting to do so raises:
+Surrogate code points (U+D800–U+DFFF) are not valid UTF-8, so they cannot be stored in a UTF-8 PostgreSQL database, and they cannot be passed as arguments to external tools (such as riscosarc, a Java program that expects UTF-8).
 
-```
-UnicodeEncodeError: 'utf-8' codec can't encode character '\udca0': surrogates not allowed
-```
+## How We Handle It: Normalise at Extraction Time
 
-## Current Handling
+The correct fix is to rename extracted files from their raw-byte names to their correct Unicode equivalents **immediately after extraction**, before any downstream code sees the filenames. This eliminates all surrogate-escape issues in one place.
 
-The function `sanitize_filename()` in `worker/arcworker/utils/text.py` resolves this:
+`normalize_extracted_filenames(root)` in `worker/arcworker/utils/text.py` performs this walk. It is called:
 
-1. Attempt to encode the filename as UTF-8. If it succeeds, return it unchanged (fast path for clean ASCII/UTF-8 names).
-2. Otherwise, reverse the surrogate escaping: `filename.encode('utf-8', errors='surrogateescape')` recovers the original raw bytes.
-3. Decode those bytes as ISO 8859-1. Since ISO 8859-1 maps every byte `0x00`–`0xFF` to the identical Unicode code point, this always succeeds and produces valid UTF-8 output.
-4. Fallback chain to `cp1252` and then `errors='replace'` if step 3 somehow fails.
+- Inside `extract_acorn_disc_image_manager()` after DiscImageManager finishes
+- Inside `extract_riscosarc()` and `extract_tbafs()` after archive extraction
 
-`sanitize_path()` wraps `sanitize_filename()`, splitting on the OS path separator and sanitising each component separately.
+After normalisation:
 
-### What is handled correctly
+- All filenames in the output directory are valid UTF-8
+- The database stores the correct Unicode string
+- `Path(name).exists()` returns True directly — no conversion required
+- External tools that need a path (riscosarc, etc.) receive a valid UTF-8 string
 
-Every byte in the **`0xA0`–`0xFF` range** is handled correctly, because ISO 8859-1 and RISC OS Latin1 are identical there. Examples:
+The walk is bottom-up (`os.walk(topdown=False)`) so directory entries are only renamed after their contents, keeping all path operations consistent.
 
-| Byte | RISC OS character | Unicode result | UTF-8 bytes |
-|------|-------------------|----------------|-------------|
-| 0xA0 | Hard space (NBSP) | U+00A0 | C2 A0 |
-| 0xA9 | © Copyright sign  | U+00A9 | C2 A9 |
-| 0xC9 | É                 | U+00C9 | C3 89 |
-| 0xE9 | é                 | U+00E9 | C3 A9 |
+## The RISC OS Latin1 → Unicode Mapping
 
-### What is handled incorrectly (but safely)
+`decode_riscos_latin1(data: bytes) -> str` and `encode_riscos_latin1(text: str) -> bytes` in `utils/text.py` implement the full codec.
 
-Bytes in the **`0x80`–`0x9F` range** are decoded as ISO 8859-1 C1 control codes (U+0080–U+009F), rather than their RISC OS-intended characters. This will not crash, and those code points are valid UTF-8, but the resulting characters will appear wrong in the web interface.
+### Ranges that are straightforward
 
-The correct RISC OS meanings for these bytes are:
+| Range | Treatment |
+|-------|-----------|
+| `0x00`–`0x7F` | ASCII — code point equals byte value |
+| `0xA0`–`0xFF` | Identical to ISO 8859-1 / Unicode Latin-1 Supplement |
 
-| Byte | RISC OS meaning | Correct Unicode | Current output (ISO 8859-1) |
-|------|-----------------|-----------------|-----------------------------|
-| 0x80 | € Euro sign (RISC OS 3.5+) | U+20AC | U+0080 (C1 control) |
-| 0x81 | Undefined (early RISC OS) | — | U+0081 |
-| 0x82 | ‚ Single low-9 quotation mark | U+201A | U+0082 |
-| 0x83 | Window resize icon | *(no Unicode equivalent)* | U+0083 |
-| 0x84 | Window close icon | *(no Unicode equivalent)* | U+0084 |
-| 0x85 | … Horizontal ellipsis | U+2026 | U+0085 |
-| 0x86 | † Dagger | U+2020 | U+0086 |
-| 0x87 | RISC OS-specific glyph ("87") | *(not proposed for Unicode)* | U+0087 |
-| 0x88 | ← Left scroll bubble arrow | U+2190 (approx.) | U+0088 |
-| 0x89 | → Right scroll bubble arrow | U+2192 (approx.) | U+0089 |
-| 0x8A | ↑ Up scroll bubble arrow | U+2191 (approx.) | U+008A |
-| 0x8B | ↓ Down scroll bubble arrow | U+2193 (approx.) | U+008B |
-| 0x8C | Œ Latin capital ligature OE | U+0152 | U+008C |
-| 0x8D | Undefined | — | U+008D |
-| 0x8E | Ž Latin capital Z with caron | U+017D | U+008E |
-| 0x8F | Undefined | — | U+008F |
-| 0x91 | ' Left single quotation mark | U+2018 | U+0091 |
-| 0x92 | ' Right single quotation mark | U+2019 | U+0092 |
-| 0x93 | " Left double quotation mark | U+201C | U+0093 |
-| 0x94 | " Right double quotation mark | U+201D | U+0094 |
-| 0x95 | • Bullet | U+2022 | U+0095 |
-| 0x96 | – En dash | U+2013 | U+0096 |
-| 0x97 | — Em dash | U+2014 | U+0097 |
-| 0x99 | ™ Trade mark sign | U+2122 | U+0099 |
-| 0x9A | š Latin small s with caron | U+0161 | U+009A |
-| 0x9B | › Single right angle quotation | U+203A | U+009B |
-| 0x9C | œ Latin small ligature oe | U+0153 | U+009C |
-| 0x9E | ž Latin small z with caron | U+017E | U+009E |
-| 0x9F | Ÿ Latin capital Y with diaeresis | U+0178 | U+009F |
+### The `0x80`–`0x9F` C1 range
 
-> **Note:** Bytes 0x83, 0x84, and 0x87 are RISC OS-specific glyphs (window decorations and a special glyph) with no standard Unicode equivalent. 0x87 is explicitly noted as not proposed for Unicode. Scroll arrows (0x88–0x8B) have approximate Unicode equivalents but the RISC OS glyphs are stylistically distinct "bubble arrows" specific to the RISC OS desktop.
->
-> **Note on version variation:** The 0x80–0x9F mapping was extended over successive RISC OS releases. In RISC OS 2, all 0x80–0x9F bytes are undefined. The Euro sign at 0x80 was only added in RISC OS 3.5 (RiscPC era). The exact mapping for some positions may vary between RISC OS versions. The authoritative reference and a ready-to-use Python implementation are: [gerph/python-codecs-riscos](https://github.com/gerph/python-codecs-riscos).
+| Byte | Unicode | Character | Notes |
+|------|---------|-----------|-------|
+| 0x80 | U+20AC | € | Euro Sign (added RISC OS 3.5+; undefined in earlier versions) |
+| 0x81 | U+0174 | Ŵ | Latin Capital Letter W with Circumflex (Welsh) |
+| 0x82 | U+0175 | ŵ | Latin Small Letter W with Circumflex (Welsh) |
+| 0x83 | U+25F0 | ◰ | White Square with Upper Left Quadrant — window resize icon (nearest geometric approximation; [Wikipedia](https://en.wikipedia.org/wiki/RISC_OS_character_set)) |
+| 0x84 | U+1FBC0 | 🯀 | White Heavy Saltire with Rounded Corners — window close icon (Unicode "Symbols for Legacy Computing" block, added Unicode 13.0) |
+| 0x85 | U+0176 | Ŷ | Latin Capital Letter Y with Circumflex (Welsh) |
+| 0x86 | U+0177 | ŷ | Latin Small Letter Y with Circumflex (Welsh) |
+| 0x87 | U+E087 | (PUA) | RISC OS "87 glyph" (subscript-8 superscript-7 ligature, not proposed for Unicode); mapped to a Private Use Area code point |
+| 0x88 | U+2190 | ← | Leftwards Arrow (left scroll bubble — best standard approximation) |
+| 0x89 | U+2192 | → | Rightwards Arrow (right scroll bubble) |
+| 0x8A | U+2191 | ↑ | Upwards Arrow (up scroll bubble) |
+| 0x8B | U+2193 | ↓ | Downwards Arrow (down scroll bubble) |
+| 0x8C | U+2026 | … | Horizontal Ellipsis |
+| 0x8D | U+2122 | ™ | Trade Mark Sign |
+| 0x8E | U+2030 | ‰ | Per Mille Sign |
+| 0x8F | U+2022 | • | Bullet |
+| 0x90 | U+2018 | ' | Left Single Quotation Mark |
+| 0x91 | U+2019 | ' | Right Single Quotation Mark |
+| 0x92 | U+2039 | ‹ | Single Left-Pointing Angle Quotation Mark |
+| 0x93 | U+203A | › | Single Right-Pointing Angle Quotation Mark |
+| 0x94 | U+201C | " | Left Double Quotation Mark |
+| 0x95 | U+201D | " | Right Double Quotation Mark |
+| 0x96 | U+201E | „ | Double Low-9 Quotation Mark |
+| 0x97 | U+2013 | – | En Dash |
+| 0x98 | U+2014 | — | Em Dash |
+| 0x99 | U+2212 | − | Minus Sign (distinct from HYPHEN-MINUS U+002D) |
+| 0x9A | U+0152 | Œ | Latin Capital Ligature OE |
+| 0x9B | U+0153 | œ | Latin Small Ligature OE |
+| 0x9C | U+2020 | † | Dagger |
+| 0x9D | U+2021 | ‡ | Double Dagger |
+| 0x9E | U+FB01 | ﬁ | Latin Small Ligature FI |
+| 0x9F | U+FB02 | ﬂ | Latin Small Ligature FL |
 
-### Practical impact of the current limitation
+### Bijectivity
 
-In practice, **these characters almost never appear in RISC OS disc image filenames**. The `0x80`–`0x9F` characters are:
+The mapping is bijective: every target code point in the table is distinct, and none fall within either the ASCII range (U+0000–U+007F) or the Latin-1 Supplement (U+00A0–U+00FF). There is therefore no collision between the three ranges, and `encode_riscos_latin1()` can invert `decode_riscos_latin1()` losslessly for any string that originated from RISC OS bytes.
 
-- GUI widget symbols (0x83, 0x84, 0x87, 0x88–0x8B): meaningful only within the RISC OS desktop environment, never used as filename characters
-- Typographic marks (0x82, 0x85–0x86, 0x91–0x97, etc.): could theoretically appear in filenames but are rare in practice
+The only caveat is U+E087 (the PUA entry for 0x87), which has no standardised rendering in any font. It round-trips correctly but will display as a placeholder glyph in the web interface.
 
-Accented letters used in Western European languages (French, German, Spanish, etc.) are all in the `0xA0`–`0xFF` range and are already handled correctly.
+### Version variation
 
----
+The `0x80`–`0x9F` mapping was extended across RISC OS releases:
 
-## Adding Proper RISC OS → Unicode Remapping
+- **RISC OS 2**: all of `0x80`–`0x9F` are undefined
+- **RISC OS 3.0**: `0x80`–`0x8B` are undefined; the remaining positions are as in the table above
+- **RISC OS 3.5+**: `0x80` = Euro sign (€) added
 
-A correct remapping could be added with modest effort.
+Discs imaged from RISC OS 2 systems may contain filenames where bytes in the `0x80`–`0x9F` range were used informally (e.g. hard-coded by specific applications). The codec will still decode them; the character displayed may not match what the original RISC OS application intended for those undefined positions.
 
-### What would change
+## Adding Support for Other Filesystems
 
-`sanitize_filename()` in `worker/arcworker/utils/text.py` would need to try a RISC OS-specific decode **before** ISO 8859-1. The change is localised to that one function.
-
-```python
-# RISC OS Latin1: mapping for 0x80-0x9F (replaces C1 control code interpretation).
-# 0xA0-0xFF are identical to ISO 8859-1 and need no special handling.
-# None entries indicate bytes with no Unicode equivalent; they are replaced with U+FFFD.
-_RISCOS_LATIN1_MAP = {
-    0x80: '\u20ac',  # €
-    0x82: '\u201a',  # ‚
-    0x83: None,      # Window resize icon (no Unicode)
-    0x84: None,      # Window close icon (no Unicode)
-    0x85: '\u2026',  # …
-    0x86: '\u2020',  # †
-    0x87: None,      # RISC OS "87" glyph (not in Unicode)
-    0x88: '\u2190',  # ← (best approximation for left scroll bubble)
-    0x89: '\u2192',  # →
-    0x8a: '\u2191',  # ↑
-    0x8b: '\u2193',  # ↓
-    0x8c: '\u0152',  # Œ
-    0x8e: '\u017d',  # Ž
-    0x91: '\u2018',  # '
-    0x92: '\u2019',  # '
-    0x93: '\u201c',  # "
-    0x94: '\u201d',  # "
-    0x95: '\u2022',  # •
-    0x96: '\u2013',  # –
-    0x97: '\u2014',  # —
-    0x99: '\u2122',  # ™
-    0x9a: '\u0161',  # š
-    0x9b: '\u203a',  # ›
-    0x9c: '\u0153',  # œ
-    0x9e: '\u017e',  # ž
-    0x9f: '\u0178',  # Ÿ
-}
-
-def _decode_riscos_latin1(byte_string: bytes) -> str:
-    """Decode bytes using the RISC OS Latin1 character set."""
-    chars = []
-    for b in byte_string:
-        if b < 0x80:
-            chars.append(chr(b))
-        elif b in _RISCOS_LATIN1_MAP:
-            mapped = _RISCOS_LATIN1_MAP[b]
-            chars.append(mapped if mapped is not None else '\ufffd')
-        else:
-            # 0xA0-0xFF: identical to ISO 8859-1 / Unicode
-            chars.append(chr(b))
-    return ''.join(chars)
-```
-
-`sanitize_filename()` would then call `_decode_riscos_latin1(byte_string)` instead of (or before) `byte_string.decode('iso-8859-1')`.
-
-### Scope of the change
-
-- **`worker/arcworker/utils/text.py`**: add the mapping table and update `sanitize_filename()`
-- **`make_latin1_fspath()`**: no change needed — it works on Unicode characters in the U+0000–U+00FF range (the Latin-1 block). Characters produced by the RISC OS mapping that fall *outside* this range (e.g. U+20AC €, U+2026 …) would simply cause `make_latin1_fspath()` to return `None` (the `encode('latin-1')` step would raise `UnicodeEncodeError` for chars > U+00FF). This is correct behaviour: if the database stores `€` (U+20AC) for a file with byte `0x80` in its name, the corresponding filesystem file still has raw byte `0x80` in its name, and a surrogate-based lookup path would be needed. This edge case only affects **archive extraction lookups for files whose names contain `0x80`–`0x9F` bytes** — already an extremely rare scenario.
-
-### Alternatively: use the existing Python codec
-
-The third-party [gerph/python-codecs-riscos](https://github.com/gerph/python-codecs-riscos) library provides a fully-tested `riscos_latin1` codec that can be registered with Python's codec system. Using it would be as simple as:
+`normalize_extracted_filenames()` accepts an optional `decoder` argument:
 
 ```python
-import rocodecs  # registers 'riscos-latin1' codec
-decoded = byte_string.decode('riscos-latin1', errors='replace')
+def normalize_extracted_filenames(
+    root: Path,
+    decoder: Callable[[bytes], str] = decode_riscos_latin1,
+) -> None: ...
 ```
 
-This avoids maintaining the table in-tree and benefits from any upstream corrections to the mapping, at the cost of an additional dependency.
+When adding support for DOS/Windows disc images with CP437 or CP850 filenames, implement a `decode_cp437(data: bytes) -> str` function and pass it as `decoder=decode_cp437` in the relevant extraction function. The rest of the pipeline — bottom-up walk, collision handling, OS-level rename — remains identical.
 
-### Priority assessment
+## `sanitize_filename()` and `make_latin1_fspath()`
 
-The practical benefit is very low: characters in `0x80`–`0x9F` essentially never appear in Acorn disc image filenames. If this is ever implemented, the lookup-table approach is self-contained and carries no new dependencies.
+`sanitize_filename()` is still used for non-path strings (e.g. command strings in log output) and as a fallback for any path that was not processed by `normalize_extracted_filenames()`. It now uses `decode_riscos_latin1` as its primary codec.
 
----
+`make_latin1_fspath()` is retained for backward compatibility: analyses run before normalisation was introduced stored surrogate-decoded ISO 8859-1 Unicode paths in the database, and need the reverse conversion to locate files on disk. It is not needed for any analysis run after this fix was deployed.
 
 ## References
 
@@ -182,6 +124,7 @@ The practical benefit is very low: characters in `0x80`–`0x9F` essentially nev
 - [RISC OS Open: Character Sets](https://www.riscosopen.org/wiki/documentation/pages/Character+Sets)
 - [gerph/python-codecs-riscos — Python Codecs for RISC OS alphabets](https://github.com/gerph/python-codecs-riscos)
 - [Unicode in RISC OS — riscos.info](https://www.riscos.info/index.php/Unicode_in_RISC_OS)
-- PEP 383 — Non-decodable bytes in system character interfaces (Python surrogateescape)
+- [U+1FBC0 — Symbols for Legacy Computing](https://codepoints.net/U+1FBC0)
+- PEP 383 — Non-decodable bytes in system character interfaces (Python `surrogateescape`)
 
 # vim: ts=4 sw=4 noet
