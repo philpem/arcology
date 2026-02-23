@@ -200,8 +200,6 @@ def enumerate_extracted_files(output_dir: Path, acorn: bool = False) -> list[dic
     Returns:
         List of file dicts with path, size, and optional filetype/directory info
     """
-    from ..utils.text import sanitize_path
-
     files = []
 
     for file_path in output_dir.rglob('*'):
@@ -227,8 +225,6 @@ def enumerate_extracted_files(output_dir: Path, acorn: bool = False) -> list[dic
             else:
                 display_path = str(rel_path)
 
-            display_path = sanitize_path(display_path)
-
             file_entry = {
                 'path': display_path,
                 'size': file_size,
@@ -247,7 +243,7 @@ def enumerate_extracted_files(output_dir: Path, acorn: bool = False) -> list[dic
             if filetype:
                 file_entry['risc_os_filetype'] = filetype
         else:
-            display_path = sanitize_path(str(rel_path))
+            display_path = str(rel_path)
             file_entry = {
                 'path': display_path,
                 'size': file_size,
