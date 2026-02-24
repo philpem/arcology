@@ -367,10 +367,23 @@ def _detect_nexus_partitions(input_path: Path) -> dict:
 				filesystem = 'adfs'
 
 			# --- Parse disc name from Filecore disc record ---
+			# Only extract the disc name when the boot block has a valid ADFS
+			# checksum.  If the checksum fails the boot block is either absent
+			# or contains garbage (e.g. because the Nexus partition table's
+			# sector addresses placed this partition at the wrong location on
+			# disc), and decoding the name field from garbage bytes can produce
+			# strings with embedded NUL characters that PostgreSQL rejects.
 			disc_name = ''
 			if len(boot_block) >= FILECORE_BOOT_BLOCK_SIZE:
-				dr = _parse_filecore_disc_record(boot_block[FILECORE_BB_DISC_RECORD_OFFSET:])
-				disc_name = dr.get('disc_name', '')
+				bb_checksum_ok = (sum(boot_block) & 0xFF == 0)
+				if bb_checksum_ok:
+					dr = _parse_filecore_disc_record(boot_block[FILECORE_BB_DISC_RECORD_OFFSET:])
+					disc_name = dr.get('disc_name', '')
+				else:
+					log.warning(
+						f"Nexus partition {i}: boot block checksum invalid"
+						f" — disc name not extracted (partition boundaries may be incorrect)"
+					)
 
 			partition = {
 				'index':                  i,
