@@ -113,12 +113,28 @@ class ArcologyAPI:
                 analysis_handler decorator, which will catch it and attempt
                 a minimal failure report.
         """
-        result = self.put(f"/analysis/{analysis_id}", kwargs)
-        if result is None:
+        try:
+            resp = requests.put(
+                f"{self.api}/analysis/{analysis_id}",
+                json=kwargs,
+                timeout=30
+            )
+            if resp.status_code == 404:
+                log.warning(
+                    f"Analysis {analysis_id} no longer exists on the server "
+                    f"(it was probably deleted by a re-analyse). Discarding result."
+                )
+                return
+            resp.raise_for_status()
+        except requests.HTTPError as e:
+            raise RuntimeError(
+                f"update_analysis failed for analysis {analysis_id}: {e}"
+            )
+        except Exception as e:
             raise RuntimeError(
                 f"update_analysis failed for analysis {analysis_id} "
                 f"(API returned no response — see worker log for details)"
-            )
+            ) from e
 
     def register_derived_artefact(
         self,
