@@ -1144,6 +1144,14 @@ class AnalysisWorker:
                             ArchiveType.SPARK, ArchiveType.CFS, ArchiveType.SQUASH]:
             result = extract_riscosarc(archive_path, temp_output_dir)
 
+            # SparkFS filetypes Zip files as &DDC (Archive), which is also
+            # used for Spark. If riscosarc unpacking fails, try Zip.
+            # Note: archive_type is intentionally kept as SPARK so that
+            # is_acorn_archive remains True and RISC OS ,xxx filetype suffixes
+            # are still parsed from the extracted filenames.
+            if not result['success'] and archive_type == ArchiveType.SPARK:
+                result = extract_zip(archive_path, temp_output_dir)
+
         elif archive_type == ArchiveType.TBAFS:
             result = extract_tbafs(archive_path, temp_output_dir)
 
