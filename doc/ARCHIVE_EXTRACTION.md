@@ -16,13 +16,16 @@ Support for extracting nested archives from RISC OS disk images and directly upl
 |----------|------|------|------|-------|
 | &3FB | ArcFS | Archive | riscosarc | 3 |
 | &68E | PackDir | Archive | riscosarc | 3 |
-| &DDC | Spark | Archive | riscosarc | 3 |
+| &A91 | ZIP (RISC OS) | Archive | unzip | 3 |
+| &DDC | Spark / ZIP (RISC OS)† | Archive | riscosarc / unzip | 3 |
 | &B21 | TBAFS | Archive | tbafs-extractor | 3 |
 | &D96 | CFS | Compressor* | riscosarc | 3 |
 | &FCA | Squash | Compressor* | riscosarc | 3 |
 | &FC8 | DOSDisc | Disk Image | sfdisk+7z | 4 |
 | &FCD | FCFS | Disk Image | fcfs2raw (✓ installed) | 4 |
 | &B23 | X-Files | Archive | custom | 6 (future) |
+
+_†SparkFS filetypes ZIP archives as &DDC. If riscosarc extraction fails, the worker falls back to unzip and reclassifies the archive as ZIP (RISC OS) so that RISC OS `,xxx` filetype suffixes are still parsed from extracted filenames._
 
 _*Compressor = single-file, decompresses to file with same name (not a directory)_
 

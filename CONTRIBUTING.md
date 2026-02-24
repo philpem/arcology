@@ -246,6 +246,30 @@ arcology/
 3. Add entries to `ANALYSIS_MAP` to specify which analyses should auto-run.
 4. Add the type to `worker/arcworker/types.py`.
 
+### Adding a New Archive Format
+
+Archive format definitions live in **two files that must be kept in sync**:
+`myapp/archive_formats.py` and `worker/arcworker/archive_formats.py`.
+
+1. Add the new type to the `ArchiveType` enum in **both** `archive_formats.py` copies.
+2. Add an entry to `ARCHIVE_FORMATS` in **both** copies, including:
+   - `name` -- display string shown in the GUI (e.g. `"ZIP (RISC OS)"`)
+   - `category` -- `ArchiveCategory.ARCHIVE`, `.COMPRESS`, or `.DISK_IMAGE`
+   - `risc_os_filetype` -- lowercase hex string if detected by RISC OS filetype (e.g. `'a91'`), otherwise `None`
+   - `extensions` -- list of file extensions for fallback detection (e.g. `['.zip']`), or `[]`
+   - `tool` -- name of the extraction tool (informational)
+   - `extract_creates_dir` -- `True` for multi-file archives, `False` for single-file compressors
+3. Add an extraction branch for the new type inside `process_archive_extract` in
+   `worker/arcworker/analysis.py`, calling the appropriate tool wrapper.
+4. **`is_acorn_archive`** -- if the format stores RISC OS `,xxx` filetype suffixes
+   on filenames (e.g. `ReadMe,fff`), add the new `ArchiveType` to the
+   `is_acorn_archive` set near the top of the file-registration loop in
+   `process_archive_extract`. This enables suffix parsing and strips the `,xxx`
+   from display paths. Formats that need this: any RISC OS native archive
+   (`ARCFS`, `SPARK`, `ZIP_RISCOS`, `PACKDIR`, `TBAFS`, `CFS`, `SQUASH`, `FCFS`).
+   Plain PC archives do **not** need it.
+5. Update the format table in `doc/ARCHIVE_EXTRACTION.md`.
+
 ### Database Changes
 
 Database schema changes are managed with [Flask-Migrate](https://flask-migrate.readthedocs.io/), which wraps [Alembic](https://alembic.sqlalchemy.org/). All models live in `myapp/database.py`. When you change a model, you create a migration script that records the change, then apply it to the database.
