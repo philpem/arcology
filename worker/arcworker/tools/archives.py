@@ -120,7 +120,7 @@ def extract_zip(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    cmd = ['unzip', '-q', str(input_path), '-d', str(output_dir)]
+    cmd = ['unzip', -F', '-q', str(input_path), '-d', str(output_dir)]
     result, output = run_tool_with_output(cmd)
 
     if result.returncode != 0:
