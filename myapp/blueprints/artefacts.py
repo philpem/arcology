@@ -6,6 +6,7 @@ CRUD operations for digital artefacts with file upload and auto-analysis.
 
 import os
 import hashlib
+import shutil
 import uuid
 import json
 import mimetypes
@@ -292,128 +293,91 @@ def get_all_derived_artefact_ids(artefact: Artefact) -> list[int]:
     return ids
 
 
-def get_current_run_analyses(artefact: Artefact, artefact_ids: list[int] = None) -> list[Analysis]:
+def _collect_all_analyses(artefact: Artefact) -> list:
+    """Recursively collect all analyses for an artefact and its derived artefacts."""
+    analyses = list(artefact.analyses)
+    for derived in artefact.derived_artefacts:
+        analyses.extend(_collect_all_analyses(derived))
+    return analyses
+
+
+def reset_artefact_for_reanalysis(artefact: Artefact):
     """
-    Get all analyses that belong to the most recent run for an artefact.
+    Reset an artefact to its just-uploaded state ready for re-analysis.
 
-    A "run" is the set of analyses triggered together (e.g. by clicking
-    Analyse again, or by a worker queuing follow-on jobs after completing
-    an earlier step).  Because a single run can legitimately produce
-    *multiple* analyses of the same type (e.g. PARTITION_DETECT triggering
-    one FILE_EXTRACTION per discovered partition), returning only the
-    single most-recent analysis per type would silently discard valid
-    results from the same run.
+    Deletes all analyses, derived artefacts, and partitions (with their
+    extracted file listings) for this artefact, then removes the associated
+    files from disk.  The artefact's own uploaded file is preserved.
 
-    The run boundary is: find the most recently created analysis of each
-    distinct type (by highest id), then take the minimum of those ids.
-    Everything at or above that minimum belongs to the current run;
-    everything below it belongs to an older run.
-
-    When artefact_ids is provided, analyses across all of those artefacts
-    (e.g. the original plus all derived partition artefacts) are considered
-    together so that follow-on jobs queued against derived artefacts are
-    included in the current run.
+    This must be called before queueing new analyses when the user triggers
+    a re-analyse, so that stale results from previous runs are fully cleared.
     """
-    if artefact_ids is None:
-        artefact_ids = [artefact.id]
-
-    all_analyses = Analysis.query.filter(
-        Analysis.artefact_id.in_(artefact_ids)
-    ).order_by(Analysis.id).all()
-
-    if not all_analyses:
-        return []
-
-    # For each type, find the highest (most recent) id seen
-    most_recent_id_per_type: dict = {}
-    for a in all_analyses:
-        t = a.analysis_type
-        if t not in most_recent_id_per_type or a.id > most_recent_id_per_type[t]:
-            most_recent_id_per_type[t] = a.id
-
-    # The current run begins at the lowest of those per-type maximums.
-    # Any analysis with id >= this threshold is part of the current run.
-    min_keep_id = min(most_recent_id_per_type.values())
-
-    return [a for a in reversed(all_analyses) if a.id >= min_keep_id]
-
-
-def get_most_recent_analyses(artefact: Artefact) -> list[Analysis]:
-    """Kept for compatibility; delegates to get_current_run_analyses."""
-    return get_current_run_analyses(artefact)
-
-
-def cleanup_old_analyses(artefact: Artefact) -> int:
-    """
-    Delete analyses from older runs, keeping the most recent run intact.
-
-    Uses the same run-boundary logic as get_current_run_analyses: find the
-    minimum id among the most-recently-created analysis of each type, then
-    delete every analysis whose id is below that threshold.  This preserves
-    all analyses from the current run even when one step triggers multiple
-    analyses of the same type (e.g. FILE_EXTRACTION run once per partition).
-
-    Also deletes associated output files referenced in the analysis details.
-    Returns the number of analyses deleted.
-    """
-    all_analyses = Analysis.query.filter_by(artefact_id=artefact.id).all()
-
-    if not all_analyses:
-        return 0
-
-    # Determine the run boundary (same logic as get_current_run_analyses)
-    most_recent_id_per_type: dict = {}
-    for a in all_analyses:
-        t = a.analysis_type
-        if t not in most_recent_id_per_type or a.id > most_recent_id_per_type[t]:
-            most_recent_id_per_type[t] = a.id
-
-    min_keep_id = min(most_recent_id_per_type.values())
-
-    old_analyses = [a for a in all_analyses if a.id < min_keep_id]
-
-    deleted_count = 0
-    deleted_artefacts = 0
     output_folder = get_output_folder()
 
-    for analysis in old_analyses:
-        # Delete any artefacts produced by this analysis
-        # (e.g., sector images from flux decode, extracted files, etc.)
-        if analysis.produced_artefacts:
-            for produced_artefact in list(analysis.produced_artefacts):
-                current_app.logger.info(f"Deleting produced artefact {produced_artefact.uuid} from old analysis {analysis.id}")
-                _delete_artefact_files(produced_artefact)
-                db.session.delete(produced_artefact)
-                deleted_artefacts += 1
-
-        # Delete associated output files if they exist
+    # Collect filesystem paths to clean up before deleting DB records.
+    # analysis.output_path: extraction output directories (FILE_EXTRACTION etc.)
+    # analysis.details outputs[]: named output files (flux visualisations etc.)
+    all_analyses = _collect_all_analyses(artefact)
+    output_dirs = [a.output_path for a in all_analyses if a.output_path]
+    output_files = []
+    for analysis in all_analyses:
         if analysis.details:
             try:
                 details = json.loads(analysis.details)
-                # Check for outputs array (used by flux_visualisation and similar)
                 if 'outputs' in details and isinstance(details['outputs'], list):
                     for output in details['outputs']:
                         if 'filename' in output:
-                            output_path = os.path.join(output_folder, output['filename'])
-                            if os.path.exists(output_path):
-                                try:
-                                    os.remove(output_path)
-                                    current_app.logger.info(f"Deleted output file: {output['filename']}")
-                                except Exception as e:
-                                    current_app.logger.warning(f"Failed to delete output file {output['filename']}: {e}")
+                            output_files.append(output['filename'])
             except (json.JSONDecodeError, Exception) as e:
-                current_app.logger.warning(f"Failed to parse analysis details for cleanup: {e}")
+                current_app.logger.warning(f"Failed to parse analysis details during reset: {e}")
 
-        # Delete the analysis record
+    # Delete storage files for all derived artefacts (recursively).
+    # Must happen before the DB delete so we can still walk the ORM tree.
+    for derived in artefact.derived_artefacts:
+        _delete_artefact_files(derived)
+
+    # Delete derived artefacts; cascades handle their analyses, partitions,
+    # and extracted file records.
+    for derived in list(artefact.derived_artefacts):
+        db.session.delete(derived)
+
+    # Delete analyses directly on this artefact.
+    for analysis in list(artefact.analyses):
         db.session.delete(analysis)
-        deleted_count += 1
+
+    # Delete partitions directly on this artefact; cascade handles ExtractedFile.
+    for partition in list(artefact.partitions):
+        db.session.delete(partition)
 
     db.session.commit()
 
-    if deleted_artefacts > 0:
-        current_app.logger.info(f"Deleted {deleted_artefacts} produced artefact(s) from old analyses")
+    # Remove named output files (e.g., flux visualisation PNGs).
+    for filename in output_files:
+        path = os.path.join(output_folder, filename)
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+                current_app.logger.info(f"Deleted output file: {filename}")
+            except Exception as e:
+                current_app.logger.warning(f"Failed to delete output file {filename}: {e}")
 
-    return deleted_count
+    # Remove extraction output directories (e.g., extracted disc file trees).
+    for path in output_dirs:
+        if os.path.exists(path):
+            try:
+                shutil.rmtree(path)
+                current_app.logger.info(f"Deleted output directory: {path}")
+            except Exception as e:
+                current_app.logger.warning(f"Failed to delete output directory {path}: {e}")
+
+    # Remove cached decompressed partition images created by PARTITION_DETECT.
+    cache_dir = os.path.join(output_folder, '.cache', artefact.uuid)
+    if os.path.exists(cache_dir):
+        try:
+            shutil.rmtree(cache_dir)
+            current_app.logger.info(f"Deleted partition cache: {cache_dir}")
+        except Exception as e:
+            current_app.logger.warning(f"Failed to delete partition cache {cache_dir}: {e}")
 
 
 @blueprint.route('/<string:uuid>')
@@ -454,9 +418,6 @@ def view(uuid):
     status_counts = {s.value: 0 for s in AnalysisStatus}
     for a in all_related_analyses:
         status_counts[a.status.value] += 1
-
-    # Whether there are multiple analyses of the same type (for "Cleanup Duplicates" button)
-    has_duplicate_analyses = total_analyses_count > len(set(a.analysis_type for a in all_related_analyses))
 
     if show_all_analyses:
         analyses = all_related_analyses  # already sorted newest first
@@ -601,7 +562,6 @@ def view(uuid):
                            analyses=analyses,
                            show_all_analyses=show_all_analyses,
                            has_hidden_analyses=has_hidden_analyses,
-                           has_duplicate_analyses=has_duplicate_analyses,
                            total_analyses_count=total_analyses_count,
                            status_counts=status_counts,
                            file_form=file_form,
@@ -767,13 +727,14 @@ def download(uuid):
 @blueprint.route('/<string:uuid>/analyse', methods=['GET', 'POST'])
 @login_required
 def analyse(uuid):
-    """Run analysis on an artefact with optional hints."""
+    """Re-run analysis on an artefact, clearing all previous results first."""
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     form = AnalyseForm()
 
     # Platform choices for hints
+    platforms = Platform.query.order_by(Platform.name).all()
     form.platform_id.choices = [(0, '-- No hint --')] + [
-        (p.id, p.name) for p in Platform.query.order_by(Platform.name).all()
+        (p.id, p.name) for p in platforms
     ]
 
     if form.validate_on_submit():
@@ -787,10 +748,31 @@ def analyse(uuid):
         if form.notes.data:
             hints['notes'] = form.notes.data
 
+        reset_artefact_for_reanalysis(artefact)
         queue_analyses_for_artefact(artefact, hints if hints else None)
 
-        flash('Analysis queued.', 'success')
+        flash('Re-analysis queued. Previous results have been cleared.', 'success')
         return redirect(url_for(f'{ROUTENAME}.view', uuid=artefact.uuid))
+
+    # Pre-populate form with hints from the most recent analysis that had hints.
+    if request.method == 'GET':
+        last_with_hints = Analysis.query.filter(
+            Analysis.artefact_id == artefact.id,
+            Analysis.hints.isnot(None)
+        ).order_by(Analysis.id.desc()).first()
+        if last_with_hints:
+            try:
+                last_hints = json.loads(last_with_hints.hints)
+                if 'platform' in last_hints:
+                    platform = Platform.query.filter_by(name=last_hints['platform']).first()
+                    if platform:
+                        form.platform_id.data = platform.id
+                if 'filesystem' in last_hints:
+                    form.filesystem_hint.data = last_hints['filesystem']
+                if 'notes' in last_hints:
+                    form.notes.data = last_hints['notes']
+            except (json.JSONDecodeError, Exception):
+                pass
 
     # Show what analyses will be queued
     pending_types = ANALYSIS_MAP.get(artefact.artefact_type, [AnalysisType.FORMAT_IDENTIFY])
@@ -822,26 +804,6 @@ def compute_hashes_route(uuid):
 
     return redirect(url_for(f'{ROUTENAME}.view', uuid=artefact.uuid))
 
-
-@blueprint.route('/<string:uuid>/cleanup-analyses', methods=['POST'])
-@login_required
-def cleanup_analyses_route(uuid):
-    """
-    Delete old duplicate analyses, keeping only the most recent of each type.
-    This helps reduce clutter when analysis has been run multiple times.
-    """
-    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
-
-    try:
-        deleted_count = cleanup_old_analyses(artefact)
-        if deleted_count > 0:
-            flash(f'Cleaned up {deleted_count} old analysis record(s).', 'success')
-        else:
-            flash('No duplicate analyses to clean up.', 'info')
-    except Exception as e:
-        flash(f'Error cleaning up analyses: {e}', 'error')
-
-    return redirect(url_for(f'{ROUTENAME}.view', uuid=artefact.uuid))
 
 
 # vim: ts=4 sw=4 noet

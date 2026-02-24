@@ -1,5 +1,5 @@
 {% extends "_base.html" %}
-{% block page_title %}Analyse Artefact{% endblock %}
+{% block page_title %}Re-analyse Artefact{% endblock %}
 
 {% block content %}
 <nav aria-label="breadcrumb" class="mb-3">
@@ -7,52 +7,58 @@
         <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.index') }}">Items</a></li>
         <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=artefact.item.uuid) }}">{{ artefact.item.name }}</a></li>
         <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=artefact.uuid) }}">{{ artefact.label }}</a></li>
-        <li class="breadcrumb-item active">Analyse</li>
+        <li class="breadcrumb-item active">Re-analyse</li>
     </ol>
 </nav>
 
 <div class="row justify-content-center">
     <div class="col-md-8">
         <div class="card">
-            <div class="card-header"><h4 class="mb-0"><i class="bi bi-gear"></i> Run Analysis</h4></div>
+            <div class="card-header"><h4 class="mb-0"><i class="bi bi-gear"></i> Re-analyse</h4></div>
             <div class="card-body">
                 <div class="alert alert-info">
                     <strong>File:</strong> {{ artefact.original_filename }}<br>
                     <strong>Type:</strong> {{ artefact.artefact_type.value.upper().replace('_', ' ') }}
                 </div>
-                
+
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <strong>Previous results will be cleared.</strong>
+                    All existing analyses, derived artefacts, and extracted file listings for this artefact will be deleted before the new analysis is queued.
+                </div>
+
                 <h5>Analyses to be queued:</h5>
                 <ul class="mb-4">
                     {% for atype in pending_types %}
                     <li>{{ atype.value.replace('_', ' ').title() }}</li>
                     {% endfor %}
                 </ul>
-                
+
                 <form method="post">
                     {{ form.hidden_tag() }}
-                    
+
                     <h5>Optional Hints</h5>
                     <p class="text-muted">These help the analysis tools identify the format more accurately.</p>
-                    
+
                     <div class="mb-3">
                         {{ form.platform_id.label(class="form-label") }}
                         {{ form.platform_id(class="form-select") }}
                         <div class="form-text">{{ form.platform_id.description }}</div>
                     </div>
-                    
+
                     <div class="mb-3">
                         {{ form.filesystem_hint.label(class="form-label") }}
                         {{ form.filesystem_hint(class="form-control") }}
                         <div class="form-text">{{ form.filesystem_hint.description }}</div>
                     </div>
-                    
+
                     <div class="mb-3">
                         {{ form.notes.label(class="form-label") }}
                         {{ form.notes(class="form-control", rows=2) }}
                     </div>
-                    
+
                     <div class="d-flex gap-2">
-                        <button type="submit" class="btn btn-primary"><i class="bi bi-play"></i> Queue Analysis</button>
+                        <button type="submit" class="btn btn-primary"><i class="bi bi-play"></i> Queue Re-analysis</button>
                         <a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=artefact.uuid) }}" class="btn btn-outline-secondary">Cancel</a>
                     </div>
                 </form>
