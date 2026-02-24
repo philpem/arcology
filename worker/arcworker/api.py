@@ -104,8 +104,21 @@ class ArcologyAPI:
         Args:
             analysis_id: ID of the analysis to update
             **kwargs: Fields to update (status, success, error_message, etc.)
+
+        Raises:
+            RuntimeError: If the API call fails (e.g. network error, server
+                error, or the server rejected the data).  Callers that want
+                the job to be marked as failed rather than left stuck in
+                'running' state should let this propagate to the
+                analysis_handler decorator, which will catch it and attempt
+                a minimal failure report.
         """
-        self.put(f"/analysis/{analysis_id}", kwargs)
+        result = self.put(f"/analysis/{analysis_id}", kwargs)
+        if result is None:
+            raise RuntimeError(
+                f"update_analysis failed for analysis {analysis_id} "
+                f"(API returned no response — see worker log for details)"
+            )
 
     def register_derived_artefact(
         self,

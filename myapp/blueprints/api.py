@@ -32,6 +32,23 @@ def error_response(message, status_code=400):
     return jsonify({'error': message}), status_code
 
 
+def _check_nul_bytes(data: dict, fields: list) -> str | None:
+    """
+    Check a flat dict for NUL characters (0x00) in string fields.
+
+    PostgreSQL TEXT columns reject strings that contain NUL bytes, which
+    causes an unhandled 500 rather than a clear error.  Calling this before
+    any DB write lets the API return a descriptive 400 instead.
+
+    Returns the first offending field name, or None if all fields are clean.
+    """
+    for field in fields:
+        val = data.get(field)
+        if isinstance(val, str) and '\x00' in val:
+            return field
+    return None
+
+
 # =============================================================================
 # Health Check
 # =============================================================================
@@ -227,6 +244,15 @@ def update_analysis(id):
     """
     data = request.get_json()
 
+    bad_field = _check_nul_bytes(data, [
+        'tool_name', 'tool_version', 'output_url', 'output_path',
+        'summary', 'details', 'error_message',
+    ])
+    if bad_field:
+        return error_response(
+            f"Field '{bad_field}' contains NUL characters (0x00) which are not permitted in text fields"
+        )
+
     # Handle atomic claim attempt using database-level atomicity
     if data.get('claim_worker') and data.get('status') == 'running':
         # Use atomic UPDATE with WHERE clause to prevent race conditions
@@ -318,7 +344,13 @@ def produce_artefact(id):
     for field in required:
         if field not in data:
             return error_response(f'{field} is required')
-    
+
+    bad_field = _check_nul_bytes(data, ['label', 'original_filename', 'description'])
+    if bad_field:
+        return error_response(
+            f"Field '{bad_field}' contains NUL characters (0x00) which are not permitted in text fields"
+        )
+
     try:
         artefact_type = ArtefactType(data['artefact_type'])
     except ValueError:

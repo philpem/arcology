@@ -40,9 +40,15 @@ def analysis_handler(description: str):
     """
     Decorator for analysis handler methods.
 
-    Catches unhandled exceptions and reports them to the API with a standard
-    error format including traceback, preventing jobs from getting stuck in
-    'running' state.
+    Catches unhandled exceptions — including failures from the final
+    update_analysis call inside the handler — and reports them to the API
+    with a standard error format including traceback, preventing jobs from
+    getting stuck in 'running' state.
+
+    If the fallback failure report also fails (e.g. the server is down or
+    still rejecting the payload), the error is logged and the function
+    returns normally.  The job will remain in 'running' state in that case,
+    but the worker will not loop or block on it.
     """
     def decorator(fn):
         @functools.wraps(fn)
@@ -52,16 +58,22 @@ def analysis_handler(description: str):
                 return fn(self, analysis, artefact, work_dir)
             except Exception as e:
                 log.exception(f"Analysis {analysis_id} failed during {description}")
-                self.api.update_analysis(
-                    analysis_id,
-                    status='failed',
-                    success=False,
-                    error_message=f'{description} failed: {str(e)[:500]}',
-                    details=json.dumps({
-                        'exception': str(e),
-                        'exception_trace': traceback.format_exc()[:5000],
-                    })
-                )
+                try:
+                    self.api.update_analysis(
+                        analysis_id,
+                        status='failed',
+                        success=False,
+                        error_message=f'{description} failed: {str(e)[:500]}',
+                        details=json.dumps({
+                            'exception': str(e),
+                            'exception_trace': traceback.format_exc()[:5000],
+                        })
+                    )
+                except Exception:
+                    log.exception(
+                        f"Analysis {analysis_id}: failed to report failure to API "
+                        f"— job may remain in 'running' state"
+                    )
         return wrapper
     return decorator
 
@@ -1374,11 +1386,17 @@ class AnalysisWorker:
 
             except Exception as e:
                 log.exception(f"Analysis {analysis_id} failed with exception")
-                self.api.update_analysis(
-                    analysis_id,
-                    status='failed',
-                    error_message=str(e)[:1000]
-                )
+                try:
+                    self.api.update_analysis(
+                        analysis_id,
+                        status='failed',
+                        error_message=str(e)[:1000]
+                    )
+                except Exception:
+                    log.exception(
+                        f"Analysis {analysis_id}: failed to report failure to API "
+                        f"— job may remain in 'running' state"
+                    )
 
     def claim_and_process(self) -> int:
         """
