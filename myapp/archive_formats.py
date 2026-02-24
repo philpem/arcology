@@ -18,6 +18,7 @@ class ArchiveType(Enum):
     # RISC OS Archives (multi-file)
     ARCFS = "arcfs"          # ArcFS archive (filetype &3FB)
     SPARK = "spark"          # Spark archive (filetype &DDC)
+    ZIP_RISC_OS = "zip_risc_os"  # ZIP archive with RISC OS filetypes (filetype &A91, or &DDC fallback)
     PACKDIR = "packdir"      # PackDir archive (filetype &68E)
     TBAFS = "tbafs"          # TBAFS archive (filetype &B21)
     XFILES = "xfiles"        # X-Files archive (filetype &B23)
@@ -72,6 +73,15 @@ ARCHIVE_FORMATS = {
         'extensions': ['.spk', '.spark'],
         'tool': 'riscosarc',
         'description': 'Spark archive format (PKZIP-like)',
+        'extract_creates_dir': True,
+    },
+    ArchiveType.ZIP_RISC_OS: {
+        'name': 'ZIP (RISC OS)',
+        'category': ArchiveCategory.ARCHIVE,
+        'risc_os_filetype': 'a91',
+        'extensions': [],
+        'tool': 'unzip',
+        'description': 'ZIP archive containing RISC OS files with ,xxx filetype suffixes',
         'extract_creates_dir': True,
     },
     ArchiveType.PACKDIR: {

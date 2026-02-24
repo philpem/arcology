@@ -1146,11 +1146,13 @@ class AnalysisWorker:
 
             # SparkFS filetypes Zip files as &DDC (Archive), which is also
             # used for Spark. If riscosarc unpacking fails, try Zip.
-            # Note: archive_type is intentionally kept as SPARK so that
-            # is_acorn_archive remains True and RISC OS ,xxx filetype suffixes
-            # are still parsed from the extracted filenames.
+            # Upgrade archive_type to ZIP_RISC_OS so the display name reflects
+            # the actual container format while keeping is_acorn_archive True.
             if not result['success'] and archive_type == ArchiveType.SPARK:
                 result = extract_zip(archive_path, temp_output_dir)
+                if result['success']:
+                    archive_type = ArchiveType.ZIP_RISC_OS
+                    archive_info = get_archive_info(archive_type)
 
         elif archive_type == ArchiveType.TBAFS:
             result = extract_tbafs(archive_path, temp_output_dir)
@@ -1168,7 +1170,7 @@ class AnalysisWorker:
         elif archive_type == ArchiveType.DOSDISC:
             result = extract_dos_7z(archive_path, temp_output_dir)
 
-        elif archive_type == ArchiveType.ZIP:
+        elif archive_type in [ArchiveType.ZIP, ArchiveType.ZIP_RISC_OS]:
             result = extract_zip(archive_path, temp_output_dir)
 
         elif archive_type in [ArchiveType.TAR, ArchiveType.TARGZ,
@@ -1221,9 +1223,9 @@ class AnalysisWorker:
         # filenames.  Parse these to populate risc_os_filetype and strip
         # the suffix from display paths (same logic as FILE_EXTRACTION).
         is_acorn_archive = archive_type in (
-            ArchiveType.ARCFS, ArchiveType.SPARK, ArchiveType.PACKDIR,
-            ArchiveType.TBAFS, ArchiveType.CFS, ArchiveType.SQUASH,
-            ArchiveType.FCFS,
+            ArchiveType.ARCFS, ArchiveType.SPARK, ArchiveType.ZIP_RISC_OS,
+            ArchiveType.PACKDIR, ArchiveType.TBAFS, ArchiveType.CFS,
+            ArchiveType.SQUASH, ArchiveType.FCFS,
         )
 
         files = []
