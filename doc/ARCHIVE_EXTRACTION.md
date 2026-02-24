@@ -25,7 +25,7 @@ Support for extracting nested archives from RISC OS disk images and directly upl
 | &FCD | FCFS | Disk Image | fcfs2raw (✓ installed) | 4 |
 | &B23 | X-Files | Archive | custom | 6 (future) |
 
-_†SparkFS filetypes ZIP archives as &DDC. If riscosarc extraction fails, the worker falls back to unzip and reclassifies the archive as ZIP (RISC OS) so that RISC OS `,xxx` filetype suffixes are still parsed from extracted filenames._
+_†SparkFS filetypes ZIP archives as &DDC. If `riscosarc` extraction fails, the worker falls back to `unzip` and reclassifies the archive as `ZIP (RISC OS)` so that RISC OS `,xxx` filetype suffixes are still parsed from extracted filenames._
 
 _*Compressor = single-file, decompresses to file with same name (not a directory)_
 
