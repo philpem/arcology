@@ -19,6 +19,25 @@ from wtforms.validators import DataRequired, Optional
 from werkzeug.utils import secure_filename
 
 from ..extensions import db
+
+
+def safe_original_filename(filename: str) -> str:
+	"""
+	Sanitize a filename for safe storage as original_filename.
+
+	Unlike Werkzeug's secure_filename(), this preserves characters found in
+	RISC OS filenames, notably the comma used for filetype suffixes
+	(e.g. ``CF-D1,FCD`` where ``,FCD`` encodes RISC OS filetype &FCD).
+
+	Path separators and null bytes are stripped to prevent directory
+	traversal; everything else is kept as-is so the original name is
+	faithfully recorded.
+	"""
+	# Strip null bytes and path separators (security-critical)
+	for ch in ('\x00', '/', '\\'):
+		filename = filename.replace(ch, '')
+	filename = filename.strip()
+	return filename or 'upload'
 from ..database import (
     Item, Artefact, ArtefactType, Partition, ExtractedFile,
     Analysis, AnalysisType, AnalysisStatus, Platform, StorageDirectory
@@ -590,7 +609,7 @@ def upload(item_uuid):
     
     if form.validate_on_submit():
         file = form.file.data
-        original_filename = secure_filename(file.filename)
+        original_filename = safe_original_filename(file.filename)
         
         # Detect or use specified type
         if form.artefact_type.data == 'auto':

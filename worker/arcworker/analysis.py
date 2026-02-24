@@ -498,17 +498,82 @@ class AnalysisWorker:
         """
         Process FORMAT_IDENTIFY analysis.
         Attempts to identify the exact format of an image.
+
+        Currently handles:
+        - FCFS hard disk images (FileCore Filing System, RISC OS filetype &FCD).
+          Detected via the 4-byte magic "FCFS" at file_size - 256.
+          Converts to a raw sector image with fcfs2raw, then registers the
+          result as a derived RAW_SECTOR artefact so that PARTITION_DETECT
+          and FILE_EXTRACTION run automatically.
         """
+        from .tools.extraction import convert_fcfs_to_raw
+
         analysis_id = analysis['id']
-
         input_path = self.get_input_path(artefact, work_dir)
+        artefact_label = artefact.get('label', 'image')
 
-        # Placeholder - format identification not yet implemented
+        # -------------------------------------------------------------------
+        # FCFS detection: 4-byte magic "FCFS" at offset file_size - 256.
+        # This is the standard FCFS trailer location documented in fcfs2raw.c.
+        # -------------------------------------------------------------------
+        detected_format = 'unknown'
+        file_size = input_path.stat().st_size
+        if file_size >= 256:
+            try:
+                with open(input_path, 'rb') as f:
+                    f.seek(file_size - 256)
+                    magic = f.read(4)
+                if magic == b'FCFS':
+                    detected_format = 'fcfs'
+            except OSError:
+                pass
+
+        if detected_format == 'fcfs':
+            raw_path = work_dir / 'converted.img'
+            conv_result = convert_fcfs_to_raw(input_path, raw_path)
+
+            if not conv_result['success']:
+                self.api.update_analysis(
+                    analysis_id,
+                    status='failed',
+                    success=False,
+                    tool_name='fcfs2raw',
+                    error_message=f'FCFS detected but conversion failed: {conv_result.get("error", "unknown")}',
+                    details=json.dumps({'detected': 'fcfs', 'fcfs2raw': conv_result})
+                )
+                return
+
+            # Register derived RAW_SECTOR artefact.  auto_analyse=True causes
+            # the web app to queue PARTITION_DETECT automatically, which in
+            # turn queues FILE_EXTRACTION once partitions are mapped.
+            derived = self.api.register_derived_artefact(
+                analysis_id,
+                f"{artefact_label} (raw sectors)",
+                raw_path,
+                ArtefactType.RAW_SECTOR,
+                auto_analyse=True
+            )
+
+            self.api.update_analysis(
+                analysis_id,
+                status='completed',
+                success=True,
+                tool_name='fcfs2raw',
+                summary='Identified as FCFS hard disk image; converted to raw sectors',
+                details=json.dumps({
+                    'detected': 'fcfs',
+                    'fcfs2raw': conv_result,
+                    'derived_artefact': derived,
+                })
+            )
+            return
+
+        # No format recognised yet.
         self.api.update_analysis(
             analysis_id,
             status='completed',
             success=True,
-            summary='Format identification not yet implemented',
+            summary='Format not identified',
             details=json.dumps({'detected': 'unknown'})
         )
 
