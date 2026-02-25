@@ -230,10 +230,4 @@ def _register_error_handlers(app):
 		return render_template('errors/500.html'), 500
 
 
-# create the application
-app = create_app()
-# provide a link to the application for gunicorn
-application = app
-
-
 # vim: ts=4 sw=4 noet
