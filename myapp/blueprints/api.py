@@ -16,7 +16,7 @@ from ..database import (
     Partition, ExtractedFile, FilesystemType, Platform, Category, Tag,
     ExternalSystem, ExternalReference, HashDatabase, KnownFile, StorageDirectory
 )
-from .artefacts import get_artefact_path
+from .artefacts import get_artefact_path, _delete_artefact_files
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -63,18 +63,6 @@ def health_check():
     except Exception as e:
         current_app.logger.error(f"Health check failed: {e}")
         return jsonify({'status': 'unhealthy', 'error': str(e)}), 503
-
-
-def _delete_artefact_files(artefact):
-    """Recursively delete files for an artefact and all its derived artefacts."""
-    for derived in artefact.derived_artefacts:
-        _delete_artefact_files(derived)
-    try:
-        full_path = get_artefact_path(artefact)
-        if os.path.exists(full_path):
-            os.remove(full_path)
-    except Exception as e:
-        current_app.logger.warning(f"Failed to delete file for artefact {artefact.uuid}: {e}")
 
 
 # =============================================================================
