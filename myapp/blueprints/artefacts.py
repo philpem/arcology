@@ -38,6 +38,7 @@ def safe_original_filename(filename: str) -> str:
 		filename = filename.replace(ch, '')
 	filename = filename.strip()
 	return filename or 'upload'
+
 from ..database import (
     Item, Artefact, ArtefactType, Partition, ExtractedFile,
     Analysis, AnalysisType, AnalysisStatus, Platform, StorageDirectory
