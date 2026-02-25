@@ -155,16 +155,22 @@ def delete_item(uuid):
 def add_artefact(item_uuid):
     item = Item.query.filter_by(uuid=item_uuid).first_or_404()
     data = request.get_json()
-    if not data or 'label' not in data or 'file_path' not in data:
-        return error_response('Label and file_path are required')
-    
+    if not data or 'label' not in data or 'storage_path' not in data or 'original_filename' not in data:
+        return error_response('Label, storage_path and original_filename are required')
+
     try:
         artefact_type = ArtefactType(data.get('artefact_type', 'other'))
     except ValueError:
         return error_response('Invalid artefact_type')
-    
+
+    try:
+        storage_directory = StorageDirectory(data.get('storage_directory', 'uploads'))
+    except ValueError:
+        return error_response('Invalid storage_directory')
+
     artefact = Artefact(item_id=item.id, label=data['label'], artefact_type=artefact_type,
-                        description=data.get('description'), file_path=data['file_path'],
+                        description=data.get('description'), original_filename=data['original_filename'],
+                        storage_path=data['storage_path'], storage_directory=storage_directory,
                         file_size=data.get('file_size'), md5=data.get('md5'), sha256=data.get('sha256'))
     db.session.add(artefact)
     db.session.commit()
@@ -189,10 +195,10 @@ def delete_artefact(uuid):
 @blueprint.route('/artefacts/<string:uuid>/download', methods=['GET'])
 def download_artefact(uuid):
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
-    full_path = os.path.join(current_app.config.get('NAS_BASE_PATH', ''), artefact.file_path.lstrip('/'))
+    full_path = get_artefact_path(artefact)
     if not os.path.exists(full_path):
         return error_response('File not found', 404)
-    return send_file(full_path, as_attachment=True, download_name=os.path.basename(artefact.file_path))
+    return send_file(full_path, as_attachment=True, download_name=artefact.original_filename)
 
 
 # =============================================================================
