@@ -8,8 +8,10 @@ from flask_wtf import FlaskForm
 from wtforms import PasswordField, SubmitField, StringField
 from wtforms.validators import DataRequired
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
+import click
 import os
 import secrets
+import sys
 from urllib.parse import urlparse
 
 from .extensions import db, migrate, login_manager, bootstrap, csrf
@@ -126,10 +128,11 @@ def create_app(config_name=None):
 		return dict(menu=sorted(app._myapp_menudata,
 								key=lambda mi: (mi['sortorder'], mi['label'].lower())))
 
-	# Register login handlers, error handlers and blueprints
+	# Register login handlers, error handlers, blueprints, and CLI commands
 	_register_login_handlers(app)
 	_register_error_handlers(app)
 	_register_blueprints(app)
+	_register_cli_commands(app)
 
 	return app
 
@@ -228,6 +231,75 @@ def _register_error_handlers(app):
 	@app.errorhandler(500)
 	def internal_error(e):
 		return render_template('errors/500.html'), 500
+
+
+def _register_cli_commands(app):
+	from .database import User
+
+	@app.cli.command('create-admin')
+	@click.option('--username', default=None, help='Admin username (or set ADMIN_USERNAME env var)')
+	@click.option('--password', default=None, help='Admin password (or set ADMIN_PASSWORD env var)')
+	def create_admin(username, password):
+		"""Create an administrator user account.
+
+		Credentials are taken from --username/--password options, or from the
+		ADMIN_USERNAME/ADMIN_PASSWORD environment variables. If neither is
+		provided and a TTY is available the command prompts interactively.
+
+		The command is idempotent: it exits without error if any user already
+		exists. Run it again with --username to add a second admin.
+		"""
+		# Idempotency: skip if any user exists already
+		if User.query.first() is not None:
+			click.echo("Admin user already exists — skipping.")
+			return
+
+		# Resolve credentials: flag > env var > interactive prompt / give up
+		username = username or os.environ.get('ADMIN_USERNAME')
+		password = password or os.environ.get('ADMIN_PASSWORD')
+
+		has_tty = sys.stdin.isatty()
+
+		if not username:
+			if has_tty:
+				username = click.prompt('Admin username')
+			else:
+				click.echo(
+					"WARNING: No admin user created. "
+					"Set ADMIN_USERNAME/ADMIN_PASSWORD env vars, or run "
+					"'flask create-admin' interactively.",
+					err=True,
+				)
+				return
+
+		if not password:
+			if has_tty:
+				password = click.prompt(
+					'Admin password',
+					hide_input=True,
+					confirmation_prompt='Confirm password',
+				)
+			else:
+				click.echo(
+					"WARNING: No admin user created. "
+					"Set ADMIN_USERNAME/ADMIN_PASSWORD env vars, or run "
+					"'flask create-admin' interactively.",
+					err=True,
+				)
+				return
+
+		if len(password) < 12:
+			raise click.BadParameter(
+				"Password must be at least 12 characters.",
+				param_hint="'--password'",
+			)
+
+		user = User()
+		user.username = username
+		user.setPassword(password)
+		db.session.add(user)
+		db.session.commit()
+		click.echo(f"Admin user '{username}' created successfully.")
 
 
 # vim: ts=4 sw=4 noet
