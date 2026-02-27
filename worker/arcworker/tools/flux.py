@@ -195,7 +195,7 @@ def sector_image_to_raw_greaseweazle(input_path: Path, output_path: Path) -> dic
             'success': True,
             'tool': 'greaseweazle',
             'output_path': str(output_path),
-            'output_type': ArtefactType.IMG,
+            'output_type': ArtefactType.RAW_SECTOR,
             'summary': 'Converted to raw sector image (bad sectors filled)',
             'process_output': process_output
         }
