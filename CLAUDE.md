@@ -53,8 +53,7 @@ arcology/
 │       └── tools/              # Wrappers for external analysis tools
 ├── docker-compose.yml          # Full stack: web + worker + PostgreSQL + Adminer
 ├── Dockerfile                  # Web container (Python 3 Alpine + Gunicorn)
-├── Dentrypoint.sh              # Web container startup (db init + gunicorn)
-├── install.py                  # Database initialization (db.create_all)
+├── Dentrypoint.sh              # Web container startup (db migrate + gunicorn)
 ├── requirements.txt            # Python dependencies
 ├── doc/                        # Additional documentation
 ├── devtools/                   # Development utilities
@@ -71,7 +70,8 @@ python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 cp myapp/myapp.cfg.example myapp/myapp.cfg
 # Edit myapp.cfg as needed (SECRET_KEY auto-generates in dev mode)
-flask db init && flask db migrate -m "Initial" && flask db upgrade
+flask db upgrade                   # Apply committed migrations to create schema
+flask create-admin                 # Prompts for admin username and password
 python -m myapp                    # Runs on http://localhost:5000
 ```
 
@@ -88,6 +88,11 @@ docker compose down                # Stop
 
 - Web UI: http://localhost:8000
 - Adminer (DB browser): http://localhost:8080
+
+For non-interactive admin creation (Docker / CI), set `ADMIN_USERNAME` and
+`ADMIN_PASSWORD` in your `.env` file before first start. The `flask create-admin`
+command reads these automatically. If no users exist after startup, run:
+`docker compose exec web flask create-admin`
 
 ### Database migrations (Flask-Migrate / Alembic)
 
@@ -182,6 +187,6 @@ Worker external tools (compiled in worker Dockerfile): Fluxfox (Rust), HxCFE (C)
 - The worker Dockerfile multi-stage build compiles several tools from source and is slow to build
 - `SECRET_KEY` auto-generates in development but must be explicitly set for production (`FLASK_ENV=production`)
 - Alembic auto-generated migrations need manual review for renames and enum changes
-- The `migrations/` directory is not committed - run `flask db init` on fresh clones
-- Docker entrypoint (`Dentrypoint.sh`) runs `install.py` (which calls `db.create_all()`) on startup
+- Docker entrypoint (`Dentrypoint.sh`) runs `flask db upgrade` and `flask create-admin` on every start (both are idempotent)
+- `flask create-admin` reads `ADMIN_USERNAME`/`ADMIN_PASSWORD` env vars non-interactively; prompts if a TTY is available; warns and exits cleanly if neither
 - Upload limit is 4GB (`MAX_CONTENT_LENGTH` in config)
