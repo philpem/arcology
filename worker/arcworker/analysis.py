@@ -688,13 +688,23 @@ class AnalysisWorker:
         file_result = detect_format_file_cmd(input_path)
         results['file'] = file_result
 
-        # 5. If nothing detected, report whole disc as single unknown partition
+        # 5. If nothing detected, report whole disc as single unknown partition.
+        # Try to infer the filesystem from the 'file' command output before
+        # falling back to 'unknown'.
         if not detected_partitions:
             file_size = input_path.stat().st_size
+            inferred_fs = 'unknown'
+            file_type_str = file_result.get('file_type', '').lower()
+            if 'fat (12 bit)' in file_type_str or 'bits/fat 12' in file_type_str:
+                inferred_fs = 'fat12'
+            elif 'fat (16 bit)' in file_type_str or 'bits/fat 16' in file_type_str:
+                inferred_fs = 'fat16'
+            elif 'fat (32 bit)' in file_type_str or 'bits/fat 32' in file_type_str:
+                inferred_fs = 'fat32'
             detected_partitions = [{
                 'index': 0,
                 'start_byte': 0,
-                'filesystem': filesystem_hint or 'unknown',
+                'filesystem': filesystem_hint or inferred_fs,
                 'description': 'No partition table detected (whole disc)',
                 'size_bytes': file_size,
             }]
