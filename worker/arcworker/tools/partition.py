@@ -575,6 +575,26 @@ def detect_partitions_sfdisk(input_path: Path) -> dict:
                 )
                 partitions = []
 
+        # Validate partition offsets against the actual image file size.
+        # A DOS floppy (e.g. FAT12/FAT16) has a valid 55 AA signature in
+        # sector 0 that sfdisk interprets as an MBR, but the FAT BPB bytes
+        # in the partition-table area (0x1BE-0x1FD) decode to absurdly large
+        # sector numbers that start well beyond the image.  Discard any
+        # partition whose start sector lies outside the image; if none remain,
+        # report no usable partitions so the caller can fall through to other
+        # detection methods (e.g. unpartitioned FAT detection).
+        if partitions:
+            file_size = input_path.stat().st_size
+            in_range = [p for p in partitions if p['start_byte'] < file_size]
+            if len(in_range) < len(partitions):
+                n_dropped = len(partitions) - len(in_range)
+                log.info(
+                    f"sfdisk: dropped {n_dropped} partition(s) whose start offset "
+                    f"exceeds image size ({file_size} bytes) — "
+                    f"likely a DOS floppy misidentified as a partitioned disc"
+                )
+                partitions = in_range
+
         return {
             'success': len(partitions) > 0,
             'tool': 'sfdisk',
