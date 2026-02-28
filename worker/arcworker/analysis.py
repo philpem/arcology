@@ -433,6 +433,20 @@ class AnalysisWorker:
         else:
             fs_type = 'unknown'
 
+        # For DOS/FAT filesystems processed by 7z, construct a human-readable
+        # container_format so the UI hover tooltip is populated.  DIM sets this
+        # automatically for Acorn images; for DOS images DIM is never used.
+        if not container_format:
+            _fat_labels = {
+                'fat12': 'DOS FAT12',
+                'fat16': 'DOS FAT16',
+                'fat32': 'DOS FAT32',
+                'fat':   'DOS FAT',
+                'dos':   'DOS',
+                'msdos': 'MS-DOS',
+            }
+            container_format = _fat_labels.get(fs_type)
+
         # Register partition and file listing in the database
         partition = self.api.register_file_listing(
             artefact['uuid'],
