@@ -509,6 +509,51 @@ def detect_acorn_partitions(input_path: Path) -> dict:
 # Standard (PC) partition detection — sfdisk
 # =========================================================================
 
+def _is_fat_bpb(data: bytes) -> bool:
+	"""
+	Return True if *data* (the first 512 bytes of a disc image) looks like
+	a valid FAT BIOS Parameter Block (BPB).
+
+	Five structural BPB fields are validated.  The x86 jump instruction at
+	byte 0 is intentionally NOT checked: non-bootable FAT volumes may write
+	zeroes there, and FAT volumes on non-x86 platforms (Atari, Amiga,
+	digital cameras, ARM devices, etc.) carry platform-native code — or
+	nothing — at byte 0, not an x86 JMP.  The five BPB fields alone are a
+	sufficiently tight filter: BPB_BytsPerSec must be exactly one of
+	{512, 1024, 2048, 4096} as a LE uint16, a pattern that essentially
+	never appears in real MBR bootstrap code.
+
+	  Offset     Field              Valid values
+	  0x0B–0x0C  Bytes/sector       512, 1024, 2048, or 4096
+	  0x0D       Sectors/cluster    Non-zero power of 2, 1–128
+	  0x0E–0x0F  Reserved sectors   >= 1
+	  0x10       Number of FATs     1 or 2
+	  0x15       Media descriptor   0xF0 or 0xF8–0xFF
+	"""
+	if len(data) < 0x1A:
+		return False
+	# Bytes per sector: 512 / 1024 / 2048 / 4096
+	bps = struct.unpack_from('<H', data, 0x0B)[0]
+	if bps not in (512, 1024, 2048, 4096):
+		return False
+	# Sectors per cluster: non-zero power of 2, 1–128
+	spc = data[0x0D]
+	if spc == 0 or spc > 128 or (spc & (spc - 1)) != 0:
+		return False
+	# Reserved sectors: at least 1
+	reserved = struct.unpack_from('<H', data, 0x0E)[0]
+	if reserved < 1:
+		return False
+	# Number of FATs: 1 or 2
+	if data[0x10] not in (1, 2):
+		return False
+	# Media descriptor: 0xF0 (removable) or 0xF8–0xFF
+	media = data[0x15]
+	if media != 0xF0 and not (0xF8 <= media <= 0xFF):
+		return False
+	return True
+
+
 def detect_partitions_sfdisk(input_path: Path) -> dict:
     """
     Detect partitions using sfdisk (handles MBR and GPT).
@@ -575,14 +620,87 @@ def detect_partitions_sfdisk(input_path: Path) -> dict:
                 )
                 partitions = []
 
-        return {
+        warnings = []
+        dropped_partitions = []
+
+        # PRIMARY CHECK: Does the boot sector look like a FAT BPB?
+        # A DOS floppy/volume starts with a FAT BPB, not an MBR.  The bytes
+        # sfdisk interprets as the partition table (0x1BE–0x1FD) are actually
+        # BPB / bootstrap data, producing bogus entries with absurd sector
+        # numbers.  If the BPB fields all validate, discard every sfdisk
+        # partition and let the caller fall through to unpartitioned handling.
+        if table_type == 'dos' and partitions:
+            try:
+                with open(input_path, 'rb') as f:
+                    boot_sector = f.read(512)
+                if _is_fat_bpb(boot_sector):
+                    msg = (
+                        "sfdisk: DOS partition table rejected — boot sector "
+                        "contains a valid FAT BPB (unpartitioned FAT volume)"
+                    )
+                    log.info(msg)
+                    warnings.append(msg)
+                    dropped_partitions = partitions
+                    partitions = []
+            except OSError as e:
+                log.warning(f"sfdisk: could not read boot sector for BPB check: {e}")
+
+        # SECONDARY CHECK: discard partitions that start beyond the image.
+        # A partition whose start offset is >= file_size does not exist in
+        # the image at all and must be dropped.  A partition that starts
+        # within the image but ends beyond it belongs to a truncated image
+        # (e.g. bad sectors at the end of a disc); it is kept so that the
+        # downstream extraction can recover whatever data is present.
+        if partitions:
+            file_size = input_path.stat().st_size
+            in_range = []
+            for p in partitions:
+                if p['start_byte'] >= file_size:
+                    msg = (
+                        f"sfdisk: dropped partition {p['index']} — "
+                        f"start {p['start_byte']} >= image size {file_size}"
+                    )
+                    log.info(msg)
+                    warnings.append(msg)
+                    dropped_partitions.append(p)
+                else:
+                    in_range.append(p)
+            partitions = in_range
+
+        # TERTIARY CHECK: reject overlapping partitions.
+        # Two partitions whose byte ranges overlap cannot both be valid;
+        # this indicates a corrupt or misinterpreted partition table.
+        # Reject the entire table so the caller can fall through to other
+        # detection methods rather than extracting nonsensical ranges.
+        if len(partitions) > 1:
+            sorted_parts = sorted(partitions, key=lambda p: p['start_byte'])
+            for a, b in zip(sorted_parts, sorted_parts[1:]):
+                a_end = a['start_byte'] + a['size_bytes']
+                if a_end > b['start_byte']:
+                    msg = (
+                        f"sfdisk: partitions {a['index']} and {b['index']} overlap "
+                        f"(end {a_end} > start {b['start_byte']}) — "
+                        "rejecting partition table"
+                    )
+                    log.warning(msg)
+                    warnings.append(msg)
+                    dropped_partitions.extend(partitions)
+                    partitions = []
+                    break
+
+        result_dict = {
             'success': len(partitions) > 0,
             'tool': 'sfdisk',
             'table_type': table_type,
             'sector_size': sector_size,
             'partitions': partitions,
-            'process_output': process_output
+            'process_output': process_output,
         }
+        if warnings:
+            result_dict['warnings'] = warnings
+        if dropped_partitions:
+            result_dict['dropped_partitions'] = dropped_partitions
+        return result_dict
     except (json.JSONDecodeError, KeyError) as e:
         return {
             'success': False,
