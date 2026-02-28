@@ -33,53 +33,6 @@ def _decode_dos_cp850(data: bytes) -> str:
 	return data.decode('cp850')
 
 
-def _fix_dos_duplicate_extensions(root: Path) -> None:
-	"""
-	Rename files and directories that have a duplicated extension appended by 7z.
-
-	Some versions of 7z, when extracting a VFAT (Long File Name) disk image,
-	append the short 8.3 extension to the long filename.  This produces names
-	like ``E002.ZIP.ZIP`` instead of ``E002.ZIP``.  The pattern is easy to
-	detect: the file's stem already ends with the same extension as the file
-	itself (case-insensitively).  In that case this function strips the extra
-	suffix, restoring the intended name.
-
-	The walk is bottom-up so that files inside a directory are fixed before
-	the directory name itself is corrected.
-	"""
-	import logging
-	log = logging.getLogger(__name__)
-
-	for dirpath, dirnames, filenames in os.walk(str(root), topdown=False):
-		dir_path = Path(dirpath)
-		for name in filenames + dirnames:
-			p = Path(name)
-			suffix = p.suffix
-			if not suffix:
-				continue
-			# Duplicate: stem already ends with the same extension (case-insensitive).
-			# Example: 'E002.ZIP.ZIP' — stem 'E002.ZIP' ends with '.ZIP'.
-			if not p.stem.lower().endswith(suffix.lower()):
-				continue
-
-			old_path = dir_path / name
-			new_path = dir_path / p.stem  # strip the repeated extension
-
-			if new_path.exists():
-				log.warning(
-					'_fix_dos_duplicate_extensions: skipping %r → %r: target exists',
-					str(old_path), str(new_path),
-				)
-				continue
-
-			try:
-				old_path.rename(new_path)
-			except OSError as exc:
-				log.warning(
-					'_fix_dos_duplicate_extensions: could not rename %r → %r: %s',
-					str(old_path), str(new_path), exc,
-				)
-
 # Debugging option: if True, scripts and output files will not be deleted.
 _DEBUG_KEEP_OUTFILES = False
 
@@ -117,6 +70,22 @@ exit
             '-s', script_path
         ]
         result, process_output = run_tool_with_output(cmd)
+
+        # DIM can read DOS FAT12/16/32 images but produces double-extension
+        # filenames (e.g. E002.ZIP → E002.ZIP.ZIP).  Detect this via the
+        # 'report' output line "Container format: DOS ..." and reject it so
+        # the caller falls through to extract_dos_7z.  The check is line-based
+        # to avoid false positives from files named e.g. "The DOS FAT".
+        stdout_text = process_output.get('stdout', '') if process_output else ''
+        if any(line.strip().startswith('Container format: DOS')
+               for line in stdout_text.splitlines()):
+            shutil.rmtree(output_dir, ignore_errors=True)
+            return {
+                'success': False,
+                'tool': 'DiscImageManager',
+                'error': 'DOS FAT filesystem — not an Acorn image',
+                'process_output': process_output,
+            }
 
         # Count extracted files
         extracted_files = list(output_dir.rglob('*'))
@@ -207,10 +176,6 @@ def extract_dos_7z(input_path: Path, output_dir: Path) -> dict:
         file_count = sum(1 for f in extracted_files if f.is_file())
 
         if file_count > 0:
-            # Some versions of 7z append the short 8.3 extension to the VFAT
-            # long filename, producing double extensions like E002.ZIP.ZIP.
-            # Fix these before any further processing.
-            _fix_dos_duplicate_extensions(output_dir)
             # Normalise raw DOS/FAT byte sequences in filenames to Unicode.
             # CP850 (Western European DOS) is used as the default; see
             # _decode_dos_cp850() for rationale and limitations.
