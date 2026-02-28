@@ -514,27 +514,23 @@ def _is_fat_bpb(data: bytes) -> bool:
 	Return True if *data* (the first 512 bytes of a disc image) looks like
 	a valid FAT BIOS Parameter Block (BPB).
 
-	A FAT boot sector begins with a short (0xEB) or near (0xE9) jump
-	instruction, immediately followed by an 8-byte OEM identifier and then
-	the BPB fields.  An MBR, by contrast, starts with bootstrap code
-	(typically 0x33 0xC0 — XOR AX,AX) and has its partition table at
-	0x1BE–0x1FD, not a BPB.
+	Five structural BPB fields are validated.  The x86 jump instruction at
+	byte 0 is intentionally NOT checked: non-bootable FAT volumes may write
+	zeroes there, and FAT volumes on non-x86 platforms (Atari, Amiga,
+	digital cameras, ARM devices, etc.) carry platform-native code — or
+	nothing — at byte 0, not an x86 JMP.  The five BPB fields alone are a
+	sufficiently tight filter: BPB_BytsPerSec must be exactly one of
+	{512, 1024, 2048, 4096} as a LE uint16, a pattern that essentially
+	never appears in real MBR bootstrap code.
 
-	All six checks must pass for the function to return True; a single
-	failure is enough to conclude the sector is not a FAT BPB:
-
-	  Offset  Field               Valid values
-	  0x00    Jump instruction    0xEB (short) or 0xE9 (near)
-	  0x0B–0x0C Bytes/sector      512, 1024, 2048, or 4096
-	  0x0D    Sectors/cluster     Non-zero power of 2, 1–128
-	  0x0E–0x0F Reserved sectors  >= 1
-	  0x10    Number of FATs      1 or 2
-	  0x15    Media descriptor    0xF0 or 0xF8–0xFF
+	  Offset     Field              Valid values
+	  0x0B–0x0C  Bytes/sector       512, 1024, 2048, or 4096
+	  0x0D       Sectors/cluster    Non-zero power of 2, 1–128
+	  0x0E–0x0F  Reserved sectors   >= 1
+	  0x10       Number of FATs     1 or 2
+	  0x15       Media descriptor   0xF0 or 0xF8–0xFF
 	"""
 	if len(data) < 0x1A:
-		return False
-	# Jump instruction (short or near)
-	if data[0] not in (0xEB, 0xE9):
 		return False
 	# Bytes per sector: 512 / 1024 / 2048 / 4096
 	bps = struct.unpack_from('<H', data, 0x0B)[0]
