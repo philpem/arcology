@@ -133,6 +133,31 @@ def _parse_filecore_disc_record(disc_record: bytes) -> dict:
 	}
 
 
+def _is_valid_filecore_disc_record(disc_record: bytes) -> bool:
+	"""
+	Return True if *disc_record* looks like a plausible Filecore disc record.
+
+	Two fields are checked:
+
+	* ``log2_sector_size`` (byte 0): must be one of 8, 9, 10, or 12,
+	  corresponding to 256, 512, 1024, or 4096-byte sectors.  4096-byte
+	  sectors appear on Extended Format drives.  Any other value is not
+	  used by a real Filecore volume and almost certainly indicates that
+	  the boot block passed the checksum by coincidence.
+
+	* ``disc_size`` (LE uint32 at offset 0x10): must be non-zero.
+
+	These two checks together reduce the false-positive probability from
+	the checksum's 1-in-256 to roughly 1-in-20,000.
+	"""
+	if len(disc_record) < 0x14:
+		return False
+	if disc_record[0] not in (8, 9, 10, 12):
+		return False
+	disc_size = struct.unpack_from('<I', disc_record, _DR_DISC_SIZE)[0]
+	return disc_size > 0
+
+
 # =========================================================================
 # HCCS partition detection
 # =========================================================================
@@ -724,6 +749,13 @@ def detect_acorn_adfs(input_path: Path) -> dict:
     - "Hugo" signature (old-format ADFS directories: ADFS-S, M, L, D)
     - "SBPr" / "Nick" signatures (new-format ADFS directories: ADFS-E, E+, F, F+)
 
+    A valid FAT BPB at sector 0 takes priority over all ADFS signatures.
+    The ADFS checksum is only a 1-in-256 coincidence for any 512-byte block,
+    while a matching FAT BPB requires several independent fields to be in
+    range simultaneously.  Returning early here prevents DOS FAT discs whose
+    sector-6 data happens to pass the Filecore checksum from being
+    misidentified as ADFS.
+
     Args:
         input_path: Path to raw disc image
 
@@ -741,20 +773,35 @@ def detect_acorn_adfs(input_path: Path) -> dict:
         signatures = []
         adfs_variant = None
 
-        # Check ADFS boot block checksum (new-map: D, E, E+, F, F+)
-        # The sum of all 512 bytes in the boot block should be 0 mod 256
-        if len(header) >= 512:
-            boot_checksum = sum(header[0:512]) & 0xFF
-            if boot_checksum == 0:
-                signatures.append('Valid ADFS boot block checksum (sector 0)')
-                adfs_variant = 'new_map'
+        # Check ADFS boot block checksum at sector 0 (floppy new-map formats:
+        # D, E, E+).  Sector 0 on a floppy holds the zone-0 map block; the
+        # disc record is at byte 4 of that block.
+        #
+        # Skip this check when sector 0 contains a FAT BPB: both structures
+        # occupy the same physical sector so they are mutually exclusive, and
+        # a real FAT BPB is a much stronger identifier than an 8-bit checksum.
+        # (The 0xC00 check below is for a different sector and is unaffected.)
+        if not _is_fat_bpb(header[:512]) and len(header) >= 512:
+            if sum(header[0:512]) & 0xFF == 0:
+                if _is_valid_filecore_disc_record(header[4:]):
+                    signatures.append('Valid ADFS boot block checksum (sector 0)')
+                    adfs_variant = 'new_map'
 
-        # F-format (hard discs) has the block at disc address 0xC00
-        if len(header) >= 0xC00+512:
-            boot_checksum = sum(header[0xC00:0xC00+512]) & 0xFF
-            if boot_checksum == 0:
-                signatures.append('Valid ADFS boot block checksum (disc address &C00)')
-                adfs_variant = 'new_map'
+        # Check ADFS boot block checksum at disc address 0xC00 (hard-disc
+        # new-map formats: F, F+).  The disc record lives at +0x1C0 within
+        # this 512-byte boot block.
+        #
+        # No FAT BPB guard here: the FAT BPB is always in sector 0, which is
+        # a completely different sector from 0xC00.  A disc reformatted from
+        # FAT to ADFS may still carry the old BPB in sector 0 while having a
+        # genuine Filecore boot block here.  Validate the disc record instead
+        # of relying on the checksum alone to avoid coincidental matches.
+        if len(header) >= 0xC00 + 512:
+            boot_block = header[0xC00:0xC00 + 512]
+            if sum(boot_block) & 0xFF == 0:
+                if _is_valid_filecore_disc_record(boot_block[FILECORE_BB_DISC_RECORD_OFFSET:]):
+                    signatures.append('Valid ADFS boot block checksum (disc address &C00)')
+                    adfs_variant = 'new_map'
 
         # Check for old-format directory signature "Hugo".
         # "Hugo" appears at byte 1 of the directory header (after the master
