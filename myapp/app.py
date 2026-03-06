@@ -96,7 +96,7 @@ def create_app(config_name=None):
 			if app.config.get('DEBUG_DB_PROFILING', False) and not request.path.startswith('/static'):
 				# filter out any statistics which aren't for this request
 				stats_all = sqltap_sess.collect()
-				stats_req = list(filter(lambda x: x.user_context == g.req_id, sqltap_sess.collect()))
+				stats_req = list(filter(lambda x: x.user_context == g.req_id, stats_all))
 				sqltap.report(stats_all, os.path.join(os.path.dirname(os.path.realpath(__file__)), "static/db_profile_report_all.html"))
 				sqltap.report(stats_req, os.path.join(os.path.dirname(os.path.realpath(__file__)), "static/db_profile_report_req.html"))
 
