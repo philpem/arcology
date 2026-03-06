@@ -64,6 +64,15 @@ class ExternalSystemForm(FlaskForm):
     description = TextAreaField('Description', validators=[Optional()])
 
 
+def _collect_descendant_ids(node):
+	"""Return the set of IDs of all descendants of node (recursive)."""
+	ids = set()
+	for child in node.children:
+		ids.add(child.id)
+		ids |= _collect_descendant_ids(child)
+	return ids
+
+
 class HashDatabaseForm(FlaskForm):
     name = StringField('Name', validators=[DataRequired(), Length(max=100)])
     description = TextAreaField('Description', validators=[Optional()])
@@ -111,7 +120,7 @@ def edit_platform(id):
     platform = Platform.query.get_or_404(id)
     form = PlatformForm(obj=platform)
     
-    exclude_ids = {platform.id} | {c.id for c in platform.children}
+    exclude_ids = {platform.id} | _collect_descendant_ids(platform)
     form.parent_id.choices = [(0, '-- No Parent --')] + [
         (p.id, p.name) for p in Platform.query.order_by(Platform.name).all()
         if p.id not in exclude_ids
@@ -187,7 +196,7 @@ def edit_category(id):
     category = Category.query.get_or_404(id)
     form = CategoryForm(obj=category)
     
-    exclude_ids = {category.id} | {c.id for c in category.children}
+    exclude_ids = {category.id} | _collect_descendant_ids(category)
     form.parent_id.choices = [(0, '-- No Parent --')] + [
         (c.id, c.name) for c in Category.query.order_by(Category.name).all()
         if c.id not in exclude_ids
