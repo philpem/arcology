@@ -752,10 +752,14 @@ def detect_fat_filesystem(path: Path) -> str | None:
 	intentionally conservative: every checked BPB field must be within its
 	legal range so that Acorn, ISO and other formats are never misclassified.
 
+	References:
+	  Microsoft "FAT: General Overview of On-Disk Format" v1.03 (Dec 2000)
+	  https://download.microsoft.com/download/1/6/1/161ba512-40e2-4cc9-843a-923143f3456c/fatgen103.doc
+
 	FAT type is determined in order:
 	  1. Explicit type string at offset 54–61 (FAT12/16) or 82–89 (FAT32).
-	  2. Cluster-count method from the FAT specification (§3.5) for images
-	     where the formatter did not write a type string.
+	  2. Cluster-count method (spec §3.5) for images where the formatter did
+	     not write a type string.
 	"""
 	try:
 		with open(path, 'rb') as f:
@@ -768,35 +772,41 @@ def detect_fat_filesystem(path: Path) -> str | None:
 
 	# ── Structural checks ────────────────────────────────────────────────
 
-	# Boot-sector signature (0x55 0xAA at bytes 510–511)
+	# Boot-sector signature (0x55 0xAA at bytes 510–511).
+	# Spec §3.1: "This signature is present in all FAT boot sectors."
 	if sector[510] != 0x55 or sector[511] != 0xAA:
 		return None
 
-	# Jump instruction at byte 0: short jump (0xEB) or near jump (0xE9)
-	if sector[0] not in (0xEB, 0xE9):
-		return None
-
-	# BPB_BytsPerSec (LE 16-bit, offset 11): 512 / 1024 / 2048 / 4096
+	# BPB_BytsPerSec (LE 16-bit, offset 11): 512 / 1024 / 2048 / 4096.
+	# Spec §3.1: "Legal values for this field are 512, 1024, 2048, or 4096."
+	# (Not relying on BS_jmpBoot / byte 0: the jump instruction is a PC BIOS
+	# artefact and may differ or be absent in non-PC FAT images.)
 	bps = int.from_bytes(sector[11:13], 'little')
 	if bps not in _FAT_VALID_BPS:
 		return None
 
-	# BPB_SecPerClus (offset 13): must be a non-zero power of two ≤ 128
+	# BPB_SecPerClus (offset 13): must be a non-zero power of two ≤ 128.
+	# Spec §3.1: "Legal values are 1, 2, 4, 8, 16, 32, 64, and 128."
 	spc = sector[13]
 	if spc == 0 or (spc & (spc - 1)) != 0 or spc > 128:
 		return None
 
-	# BPB_RsvdSecCnt (LE 16-bit, offset 14): at least 1
+	# BPB_RsvdSecCnt (LE 16-bit, offset 14): at least 1.
+	# Spec §3.1: "Must not be 0."
 	rsvd = int.from_bytes(sector[14:16], 'little')
 	if rsvd < 1:
 		return None
 
-	# BPB_NumFATs (offset 16): 1 or 2
+	# BPB_NumFATs (offset 16): 1 or 2.
+	# Spec §3.1: "Any FAT volume must have at least 1 FAT … strongly
+	# recommend … always 2."
 	num_fats = sector[16]
 	if num_fats not in (1, 2):
 		return None
 
-	# BPB_Media (offset 21): 0xF0 or 0xF8–0xFF
+	# BPB_Media (offset 21): 0xF0 or 0xF8–0xFF.
+	# Spec §3.1: "Legal values for this field are 0xF0, 0xF8, 0xF9, 0xFA,
+	# 0xFB, 0xFC, 0xFD, 0xFE, and 0xFF."
 	if sector[21] not in _FAT_VALID_MEDIA:
 		return None
 
@@ -824,7 +834,7 @@ def detect_fat_filesystem(path: Path) -> str | None:
 		return 'fat16'
 
 	# No type string (common for pre-DOS 4.0 formatters) — use the cluster
-	# count method from the FAT specification §3.5 to distinguish FAT12/16.
+	# count method from spec §3.5 to distinguish FAT12/16.
 	root_ent_cnt  = int.from_bytes(sector[17:19], 'little')
 	tot_sec16     = int.from_bytes(sector[19:21], 'little')
 	tot_sec32     = int.from_bytes(sector[32:36], 'little')
