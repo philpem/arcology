@@ -151,6 +151,31 @@ flask db stamp head                           # Mark as up-to-date without runni
 3. **Review the generated migration** - Alembic cannot detect renames (shows drop+create), enum changes, or some constraint changes
 4. Run `flask db upgrade`
 
+#### Adding values to a PostgreSQL enum
+
+`ALTER TYPE ... ADD VALUE` **cannot run inside a transaction**. Alembic wraps
+migrations in a transaction by default, so a naive `bind.execute(...)` call
+will appear to succeed (Alembic stamps the revision) but the new enum value
+will **not** be persisted.
+
+Always use an autocommit connection for these statements:
+
+```python
+def upgrade():
+    bind = op.get_bind()
+    if bind.dialect.name == 'postgresql':
+        conn = bind.execution_options(isolation_level='AUTOCOMMIT')
+        conn.execute(sa.text("ALTER TYPE myenum ADD VALUE IF NOT EXISTS 'NEW_VALUE'"))
+```
+
+If a migration was already stamped but the enum was never actually updated,
+stamp back to the previous revision and re-run:
+
+```bash
+flask db stamp <previous_revision_id>
+flask db upgrade
+```
+
 ### Analysis pipeline flow
 
 Upload triggers auto-analysis based on `ANALYSIS_MAP` -> worker claims job atomically -> processes with external tools -> reports results via API -> derived artefacts trigger follow-on analyses (e.g., flux -> decode -> file listing).
@@ -187,6 +212,7 @@ Worker external tools (compiled in worker Dockerfile): Fluxfox (Rust), HxCFE (C)
 - The worker Dockerfile multi-stage build compiles several tools from source and is slow to build
 - `SECRET_KEY` auto-generates in development but must be explicitly set for production (`FLASK_ENV=production`)
 - Alembic auto-generated migrations need manual review for renames and enum changes
+- **PostgreSQL enum pitfall**: `ALTER TYPE ... ADD VALUE` cannot run inside a transaction. Use `bind.execution_options(isolation_level='AUTOCOMMIT')` in migrations that add enum values — otherwise Alembic stamps the revision as applied but the new value is never persisted (see "Adding values to a PostgreSQL enum" above)
 - Docker entrypoint (`Dentrypoint.sh`) runs `flask db upgrade` and `flask create-admin` on every start (both are idempotent)
 - `flask create-admin` reads `ADMIN_USERNAME`/`ADMIN_PASSWORD` env vars non-interactively; prompts if a TTY is available; warns and exits cleanly if neither
 - Upload limit is 4GB (`MAX_CONTENT_LENGTH` in config)
