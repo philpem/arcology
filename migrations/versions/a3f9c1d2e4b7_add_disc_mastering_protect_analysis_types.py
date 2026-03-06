@@ -22,10 +22,10 @@ def upgrade():
     bind = op.get_bind()
     if bind.dialect.name == 'postgresql':
         bind.execute(sa.text(
-            "ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'disc_mastering_detect'"
+            "ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'DISC_MASTERING_DETECT'"
         ))
         bind.execute(sa.text(
-            "ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'disc_protection_detect'"
+            "ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'DISC_PROTECTION_DETECT'"
         ))
 
 
