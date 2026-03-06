@@ -724,6 +724,13 @@ def detect_acorn_adfs(input_path: Path) -> dict:
     - "Hugo" signature (old-format ADFS directories: ADFS-S, M, L, D)
     - "SBPr" / "Nick" signatures (new-format ADFS directories: ADFS-E, E+, F, F+)
 
+    A valid FAT BPB at sector 0 takes priority over all ADFS signatures.
+    The ADFS checksum is only a 1-in-256 coincidence for any 512-byte block,
+    while a matching FAT BPB requires several independent fields to be in
+    range simultaneously.  Returning early here prevents DOS FAT discs whose
+    sector-6 data happens to pass the Filecore checksum from being
+    misidentified as ADFS.
+
     Args:
         input_path: Path to raw disc image
 
@@ -737,6 +744,15 @@ def detect_acorn_adfs(input_path: Path) -> dict:
 
         with open(input_path, 'rb') as f:
             header = f.read(read_size)
+
+        # A valid FAT BPB at sector 0 takes priority over ADFS signatures.
+        if _is_fat_bpb(header[:512]):
+            return {
+                'adfs_detected': False,
+                'adfs_variant': None,
+                'disc_size': file_size,
+                'signatures': [],
+            }
 
         signatures = []
         adfs_variant = None
