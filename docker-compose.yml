@@ -11,8 +11,7 @@
 #
 # The web app runs on port 8000 by default.
 #
-# For production, create a .env file:
-#   echo "ARCOLOGY_ENV=production" >> .env
+# For production, set a persistent SECRET_KEY in a .env file:
 #   echo "SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
 #
 # Note: Building the worker image takes a long time due to compiling
