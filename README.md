@@ -57,6 +57,26 @@ docker compose down
 docker compose down -v
 ```
 
+### Database browser (Adminer)
+
+Adminer is not started by default (it provides unauthenticated direct database
+access and must never run in production). Use the separate override file when
+you need it for debugging:
+
+```bash
+# Start adminer alongside the main stack (localhost only — port 8080)
+docker compose -f docker-compose.yml -f docker-compose.adminer.yml up -d
+
+# Or attach adminer to an already-running stack
+docker compose -f docker-compose.yml -f docker-compose.adminer.yml up -d adminer
+
+# One-liner — no compose file required
+docker run --rm -p 127.0.0.1:8080:8080 --network arcology_default adminer
+```
+
+Access at http://localhost:8080 — connect with server `db`, username
+`arcology_user`, database `arcology`.
+
 ### Production Configuration
 
 Create a `.env` file for production:
