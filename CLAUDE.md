@@ -185,7 +185,7 @@ Worker external tools (compiled in worker Dockerfile): Fluxfox (Rust), HxCFE (C)
 
 - Worker enums in `types.py` must match web app enums in `database.py` - they are separate copies
 - The worker Dockerfile multi-stage build compiles several tools from source and is slow to build
-- `SECRET_KEY` auto-generates in development but must be explicitly set for production (`FLASK_ENV=production`)
+- `SECRET_KEY` auto-generates with a warning if missing, left at the default placeholder, or too short — set it explicitly in `myapp.cfg` or `.env` for persistent sessions
 - Alembic auto-generated migrations need manual review for renames and enum changes
 - Docker entrypoint (`Dentrypoint.sh`) runs `flask db upgrade` and `flask create-admin` on every start (both are idempotent)
 - `flask create-admin` reads `ADMIN_USERNAME`/`ADMIN_PASSWORD` env vars non-interactively; prompts if a TTY is available; warns and exits cleanly if neither

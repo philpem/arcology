@@ -79,13 +79,13 @@ Access at http://localhost:8080 — connect with server `db`, username
 
 ### Production Configuration
 
-Create a `.env` file for production:
+Set a persistent `SECRET_KEY` to avoid losing user sessions on restart:
 
 ```bash
-# Generate a secret key
-echo "FLASK_ENV=production" > .env
 echo "SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
 ```
+
+If `SECRET_KEY` is not set (or left at the default placeholder), Arcology generates a random key at startup and logs a warning. Sessions will not survive a restart in that case.
 
 ### Configuration Options
 
@@ -105,7 +105,6 @@ When an archive contains nested archives (e.g., ZIP within ZIP within ZIP), extr
 
 ```bash
 # Flask configuration
-FLASK_ENV=production              # production or development
 SECRET_KEY=<your-secret-key>      # Generate with: python3 -c 'import secrets; print(secrets.token_hex(32))'
 
 # Worker configuration (usually auto-configured in Docker)

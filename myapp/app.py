@@ -33,27 +33,12 @@ def create_app(config_name=None):
 	app = AppClass(__name__)
 	app.config.from_pyfile(config_name or 'myapp.cfg')
 
-	# Auto-generate SECRET_KEY in development if missing/default
+	# Warn and auto-generate SECRET_KEY if missing, left at the default placeholder, or too short
 	secret_key = app.config.get('SECRET_KEY', '')
-	is_production = os.environ.get('FLASK_ENV') == 'production'
-
-	if not secret_key or secret_key in ['0123456789ABCDEF', 'CHANGE_ME', '']:
-		if is_production:
-			raise ValueError(
-				"SECRET_KEY must be set in production!\n"
-				"Generate one with: python -c 'import secrets; print(secrets.token_hex(32))'"
-			)
-		else:
-			# Development mode - auto-generate
-			app.logger.warning("!!! SECRET_KEY not set - generating random key for this session")
-			app.logger.warning("!!! Users will be logged out when server restarts!")
-			app.config['SECRET_KEY'] = secrets.token_hex(32)
-
-	elif is_production and len(secret_key) < 32:
-		raise ValueError(
-			f"SECRET_KEY too short ({len(secret_key)} chars). "
-			f"Must be at least 32 characters in production."
-		)
+	if not secret_key or secret_key in ['0123456789ABCDEF', 'CHANGE_ME'] or len(secret_key) < 32:
+		app.logger.warning("!!! SECRET_KEY not set, left at default, or too short - generating random key for this session")
+		app.logger.warning("!!! Sessions will be lost on server restart - set SECRET_KEY in myapp.cfg for persistence")
+		app.config['SECRET_KEY'] = secrets.token_hex(32)
 
 	# Initialise extensions
 	db.init_app(app)
