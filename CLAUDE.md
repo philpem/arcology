@@ -32,6 +32,8 @@ arcology/
 │   ├── extensions.py           # Flask extension instances (db, migrate, login_manager, bootstrap, csrf)
 │   ├── __main__.py             # Dev server entry point (python -m myapp)
 │   ├── myapp.cfg.example       # Config template
+│   ├── archive_formats.py      # Archive type definitions (must match worker copy)
+│   ├── riscos_filetypes.py     # RISC OS filetype mapping
 │   ├── blueprints/             # Feature modules (auto-discovered)
 │   │   ├── dashboard.py        # Homepage with collection stats
 │   │   ├── items.py            # Item CRUD (search, filter, pagination)
@@ -39,6 +41,7 @@ arcology/
 │   │   ├── taxonomy.py         # Platforms, categories, tags, external systems
 │   │   ├── analysis.py         # Analysis queue UI
 │   │   └── api.py              # REST API for workers and external tools
+│   ├── utils/                  # Utility modules
 │   ├── templates/              # Jinja2 templates (Bootstrap 5)
 │   └── static/                 # CSS
 ├── worker/                     # Analysis worker (separate container)
@@ -48,12 +51,16 @@ arcology/
 │       ├── analysis.py         # AnalysisWorker class and job handlers
 │       ├── api.py              # HTTP client for web API
 │       ├── types.py            # Enum copies (must match database.py)
+│       ├── archive_formats.py  # Archive format definitions (must match web copy)
 │       ├── config.py           # Environment-based config
 │       ├── compression.py      # Decompression utilities
 │       └── tools/              # Wrappers for external analysis tools
-├── docker-compose.yml          # Full stack: web + worker + PostgreSQL + Adminer
+├── docker-compose.yml          # Full stack: web + worker + PostgreSQL
+├── docker-compose.adminer.yml  # Optional Adminer database browser (separate file)
 ├── Dockerfile                  # Web container (Python 3 Alpine + Gunicorn)
 ├── Dentrypoint.sh              # Web container startup (db migrate + gunicorn)
+├── .env.example                # Environment variable template
+├── .flaskenv                   # Flask environment defaults
 ├── requirements.txt            # Python dependencies
 ├── doc/                        # Additional documentation
 ├── devtools/                   # Development utilities
@@ -87,7 +94,7 @@ docker compose down                # Stop
 ```
 
 - Web UI: http://localhost:8000
-- Adminer (DB browser): http://localhost:8080
+- Adminer (DB browser): not started by default; use `docker compose -f docker-compose.yml -f docker-compose.adminer.yml up -d` to enable on http://localhost:8080
 
 For non-interactive admin creation (Docker / CI), set `ADMIN_USERNAME` and
 `ADMIN_PASSWORD` in your `.env` file before first start. The `flask create-admin`
@@ -119,6 +126,7 @@ flask db stamp head                           # Mark as up-to-date without runni
 - **Blueprint auto-discovery**: Any module in `myapp/blueprints/` with a `blueprint` variable is auto-registered. Optional `init_app(app)` for additional setup.
 - **Single database model file**: All models and enums live in `myapp/database.py` (source of truth)
 - **Enum duplication**: Worker has its own copy of enums in `worker/arcworker/types.py` - these must be kept in sync with `database.py`
+- **Archive format duplication**: `myapp/archive_formats.py` and `worker/arcworker/archive_formats.py` must be kept in sync
 - **CSRF**: Enabled globally via Flask-WTF. The API blueprint exempts itself in `init_app()`.
 - **Security**: bcrypt password hashing, CSRF protection, UUID-based URLs (no IDOR)
 
@@ -144,6 +152,13 @@ flask db stamp head                           # Mark as up-to-date without runni
 3. Add entries to `ANALYSIS_MAP` for auto-queued analyses
 4. Add enum to `worker/arcworker/types.py`
 
+### Adding a new archive format
+
+1. Add the new type to `ArchiveType` enum in **both** `myapp/archive_formats.py` and `worker/arcworker/archive_formats.py`
+2. Add entry to `ARCHIVE_FORMATS` in **both** copies
+3. Add extraction branch in `process_archive_extract` in `worker/arcworker/analysis.py`
+4. Update format table in `doc/ARCHIVE_EXTRACTION.md`
+
 ### Database changes
 
 1. Edit models in `myapp/database.py`
@@ -162,8 +177,10 @@ Upload triggers auto-analysis based on `ANALYSIS_MAP` -> worker claims job atomi
 | `myapp/database.py` | All models and enums - schema source of truth |
 | `myapp/blueprints/artefacts.py` | `EXTENSION_MAP` (type detection) and `ANALYSIS_MAP` (auto-analysis rules) |
 | `myapp/blueprints/api.py` | REST API consumed by workers |
+| `myapp/archive_formats.py` | Archive type definitions (must match worker copy) |
 | `worker/arcworker/analysis.py` | Worker job handlers |
 | `worker/arcworker/types.py` | Worker-side enum copies (must match `database.py`) |
+| `worker/arcworker/archive_formats.py` | Worker-side archive format definitions (must match web copy) |
 | `myapp/app.py` | Application factory, login/error handlers, blueprint registration |
 | `myapp/myapp.cfg.example` | Configuration template with all settings |
 
@@ -177,16 +194,17 @@ There is no automated test suite. Changes are tested manually via the web UI and
 
 ## Dependencies
 
-Python packages (from `requirements.txt`): Flask, SQLAlchemy, Flask-SQLAlchemy, Flask-Migrate, Flask-Login, Flask-WTF, bootstrap-flask, bcrypt, simplejson, python-dotenv, requests, psycopg2-binary, watchdog.
+Python packages (from `requirements.txt`): Flask, SQLAlchemy, Flask-SQLAlchemy, Flask-Migrate, Flask-Login, Flask-WTF, bootstrap-flask, bcrypt, python-dotenv, requests, psycopg2-binary, watchdog. Note: `simplejson` is listed in requirements.txt but currently unused.
 
 Worker external tools (compiled in worker Dockerfile): Fluxfox (Rust), HxCFE (C), Greaseweazle (Python), DiscImageManager (Lazarus/Pascal), 7z, fcfs2raw (C utility in `worker/tools/`).
 
 ## Common Gotchas
 
 - Worker enums in `types.py` must match web app enums in `database.py` - they are separate copies
+- Archive format definitions in `myapp/archive_formats.py` and `worker/arcworker/archive_formats.py` must also be kept in sync
 - The worker Dockerfile multi-stage build compiles several tools from source and is slow to build
 - `SECRET_KEY` auto-generates with a warning if missing, left at the default placeholder, or too short — set it explicitly in `myapp.cfg` or `.env` for persistent sessions
 - Alembic auto-generated migrations need manual review for renames and enum changes
 - Docker entrypoint (`Dentrypoint.sh`) runs `flask db upgrade` and `flask create-admin` on every start (both are idempotent)
-- `flask create-admin` reads `ADMIN_USERNAME`/`ADMIN_PASSWORD` env vars non-interactively; prompts if a TTY is available; warns and exits cleanly if neither
+- `flask create-admin` reads `ADMIN_USERNAME`/`ADMIN_PASSWORD` env vars non-interactively; prompts if a TTY is available; warns and exits cleanly if neither. Passwords must be at least 12 characters
 - Upload limit is 4GB (`MAX_CONTENT_LENGTH` in config)

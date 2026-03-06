@@ -1,5 +1,5 @@
 #
-# Dockerfile for Archivist
+# Dockerfile for Arcology
 #
 
 FROM python:3-alpine

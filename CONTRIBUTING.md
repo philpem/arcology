@@ -67,7 +67,7 @@ The worker is a standalone Python process that polls the web app's REST API for 
 
 **How workers process jobs:**
 
-1. The worker polls `GET /api/analysis/pending` on a configurable interval (default 10s).
+1. The worker polls `GET /api/analysis/pending` on a configurable interval (default 30s).
 2. It attempts to **claim** a job atomically via `PUT /api/analysis/{id}` with `claim_worker: true`. The server uses an atomic `UPDATE ... WHERE status = 'pending'` query so only one worker can claim each job, even with multiple workers running.
 3. A temporary working directory is created for the job.
 4. The appropriate handler method runs external tools and processes the artefact.
@@ -139,19 +139,11 @@ cp myapp/myapp.cfg.example myapp/myapp.cfg
 #   - Set SECRET_KEY (or leave the default for dev -- it auto-generates one)
 #   - Set SQLALCHEMY_DATABASE_URI for your database
 
-# Initialize the database
-flask db init
-flask db migrate -m "Initial"
+# Apply database migrations
 flask db upgrade
 
-# Create an admin user
-flask shell
->>> from myapp.database import User, db
->>> u = User(username='admin')
->>> u.setPassword('changeme')
->>> db.session.add(u)
->>> db.session.commit()
->>> exit()
+# Create an admin user (interactive -- prompts for username and password)
+flask create-admin
 
 # Run the development server
 python -m myapp
@@ -177,7 +169,7 @@ docker compose logs -f web
 docker compose logs -f worker
 
 # Access the web UI at http://localhost:8000
-# Access Adminer (database browser) at http://localhost:8080
+# For database browsing with Adminer, see docker-compose.adminer.yml
 
 # Rebuild after code changes
 docker compose up --build --force-recreate -d
@@ -219,7 +211,6 @@ arcology/
 ├── docker-compose.yml          # Full stack orchestration
 ├── Dockerfile                  # Web container
 ├── Dentrypoint.sh              # Web container startup script
-├── install.py                  # Database initialisation script
 ├── requirements.txt            # Python dependencies
 └── doc/                        # Additional documentation
 ```
@@ -286,7 +277,7 @@ flask db upgrade
 
 This creates the `migrations/` directory structure and generates an initial migration from the current models.
 
-> **Note:** The Docker entrypoint uses `install.py` (which calls `db.create_all()`) for first-time database setup. Migrations are primarily used for ongoing schema evolution during development.
+> **Note:** The Docker entrypoint (`Dentrypoint.sh`) runs `flask db upgrade` and `flask create-admin` on every start (both are idempotent).
 
 #### Typical Workflow
 
@@ -337,7 +328,7 @@ This creates the `migrations/` directory structure and generates an initial migr
 - **One logical change per migration.** Don't batch unrelated schema changes into a single migration -- it makes rollbacks harder.
 - **If you get "Target database is not up to date"**, run `flask db upgrade` first to bring your database to the latest migration before generating a new one.
 - **If you get "Can't locate revision"** after pulling changes, you may need to `flask db upgrade` to apply migrations created by others.
-- **To start fresh** during development (throwing away all data), drop the database and re-run `flask db upgrade`, or use `install.py` for a clean `db.create_all()`.
+- **To start fresh** during development (throwing away all data), drop the database and re-run `flask db upgrade`.
 
 ### Code Style
 

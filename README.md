@@ -130,19 +130,11 @@ pip install -r requirements.txt
 cp myapp/myapp.cfg.example myapp/myapp.cfg
 # Edit myapp/myapp.cfg - set SECRET_KEY
 
-# Initialize database
-flask db init
-flask db migrate -m "Initial"
+# Apply database migrations
 flask db upgrade
 
-# Create admin user (use Flask shell)
-flask shell
->>> from myapp.database import User, db
->>> u = User(username='admin')
->>> u.setPassword('changeme')
->>> db.session.add(u)
->>> db.session.commit()
->>> exit()
+# Create admin user (interactive prompt)
+flask create-admin
 
 # Run development server
 python -m myapp
