@@ -32,6 +32,7 @@ def _decode_dos_cp850(data: bytes) -> str:
 	"""
 	return data.decode('cp850')
 
+
 # Debugging option: if True, scripts and output files will not be deleted.
 _DEBUG_KEEP_OUTFILES = False
 
@@ -69,6 +70,22 @@ exit
             '-s', script_path
         ]
         result, process_output = run_tool_with_output(cmd)
+
+        # DIM can read DOS FAT12/16/32 images but produces double-extension
+        # filenames (e.g. E002.ZIP → E002.ZIP.ZIP).  Detect this via the
+        # 'report' output line "Container format: DOS ..." and reject it so
+        # the caller falls through to extract_dos_7z.  The check is line-based
+        # to avoid false positives from files named e.g. "The DOS FAT".
+        stdout_text = process_output.get('stdout', '') if process_output else ''
+        if any(line.strip().startswith('Container format: DOS')
+               for line in stdout_text.splitlines()):
+            shutil.rmtree(output_dir, ignore_errors=True)
+            return {
+                'success': False,
+                'tool': 'DiscImageManager',
+                'error': 'DOS FAT filesystem — not an Acorn image',
+                'process_output': process_output,
+            }
 
         # Count extracted files
         extracted_files = list(output_dir.rglob('*'))
