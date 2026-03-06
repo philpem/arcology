@@ -732,18 +732,129 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# High-level: protection analysis (Phase 2 — stub)
+# High-level: protection analysis
 # ---------------------------------------------------------------------------
 
 def analyse_hfe_protection(path: Path) -> dict:
-	"""(Phase 2) Scan all HFE tracks for copy protection indicators.
+	"""Scan all HFE tracks for copy protection indicators.
 
-	Not yet implemented; returns empty indicator list.
+	Detects the following per-track anomalies:
+
+	  weak_bits       RAND opcodes present (v2/v3 HFE), indicating fuzzy/
+	                  uncertain bits used by some protection schemes.
+	  bad_crc         Sector with an invalid data-field CRC — may be
+	                  intentional (protection reads and *expects* the error).
+	  id_mismatch     Sector IDAM cylinder does not match the physical track
+	                  number — a classic copy protection trick.
+	  ddam            Sector uses a Deleted Data Address Mark (0xF8) — used
+	                  by some protection schemes to trigger CRC errors in
+	                  standard DOS but still carry readable data.
+	  duplicate_id    Same C/H/R/N sector ID appears more than once on a
+	                  track — some protections use duplicate IDs to confuse
+	                  copy programs.
+
+	Returns:
+	  hfe_version   str    ('v1', 'v2', 'v3', 'unknown')
+	  indicators    list   of indicator dicts (see above)
 	"""
 	header = parse_hfe_header(path)
+	n_tracks   = header['n_tracks']
+	n_sides    = header['n_sides']
+	hfe_ver    = header['version']
+	encoding   = header['track_encoding']
+	track_list = header['track_list']
+
+	indicators: list[dict] = []
+
+	with open(path, 'rb') as f:
+		for t_idx in range(n_tracks):
+			if t_idx >= len(track_list):
+				break
+			entry = track_list[t_idx]
+
+			for side in range(n_sides):
+				try:
+					track_bytes, weak_offsets = get_track_bytes(
+						f, entry, side,
+						hfe_version=hfe_ver if isinstance(hfe_ver, int) else 1,
+					)
+				except Exception as e:
+					log.warning("HFE protection: failed to read track %d side %d: %s", t_idx, side, e)
+					continue
+
+				# Weak / fuzzy bits (RAND opcodes in v2/v3 only)
+				if weak_offsets:
+					indicators.append({
+						'type':    'weak_bits',
+						'track':   t_idx,
+						'side':    side,
+						'count':   len(weak_offsets),
+						'offsets': weak_offsets[:16],  # cap for report size
+					})
+
+				sectors = walk_track(track_bytes, encoding)
+
+				seen_ids: dict[tuple, int] = {}
+
+				for sector in sectors:
+					cyl  = sector.get('cyl')
+					head = sector.get('head')
+					sect = sector.get('sect')
+					size_code = sector.get('size_code')
+
+					# Deleted data address mark
+					if sector.get('dam_type') == 'DDAM':
+						indicators.append({
+							'type':  'ddam',
+							'track': t_idx,
+							'side':  side,
+							'cyl':   cyl,
+							'head':  head,
+							'sect':  sect,
+						})
+
+					# Bad CRC (only flag when data was actually read)
+					if not sector.get('crc_valid', True) and sector.get('data') is not None:
+						indicators.append({
+							'type':  'bad_crc',
+							'track': t_idx,
+							'side':  side,
+							'cyl':   cyl,
+							'head':  head,
+							'sect':  sect,
+						})
+
+					# Cylinder mismatch — sector ID claims a different track
+					if cyl is not None and cyl != t_idx:
+						indicators.append({
+							'type':       'id_mismatch',
+							'track':      t_idx,
+							'side':       side,
+							'sector_cyl': cyl,
+							'sect':       sect,
+						})
+
+					# Collect IDs for duplicate detection
+					sid = (cyl, head, sect, size_code)
+					seen_ids[sid] = seen_ids.get(sid, 0) + 1
+
+				# Duplicate sector IDs
+				for (cyl, head, sect, size_code), count in seen_ids.items():
+					if count > 1:
+						indicators.append({
+							'type':      'duplicate_id',
+							'track':     t_idx,
+							'side':      side,
+							'cyl':       cyl,
+							'head':      head,
+							'sect':      sect,
+							'size_code': size_code,
+							'count':     count,
+						})
+
 	return {
 		'hfe_version': header['hfe_version_str'],
-		'indicators':  [],
+		'indicators':  indicators,
 	}
 
 # vim: ts=4 sw=4 noet

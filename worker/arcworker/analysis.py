@@ -1433,6 +1433,34 @@ class AnalysisWorker:
             details=json.dumps(result),
         )
 
+    @analysis_handler("disc copy protection detection")
+    def process_disc_protection_detect(self, analysis: dict, artefact: dict, work_dir: Path):
+        """Process DISC_PROTECTION_DETECT analysis.
+
+        Scans all tracks of an HFE image for copy protection indicators:
+        weak/fuzzy bits, intentional bad CRCs, cylinder ID mismatches,
+        deleted data address marks, and duplicate sector IDs.
+        """
+        from .tools.hfe import analyse_hfe_protection
+
+        analysis_id = analysis['id']
+        input_path = self.get_input_path(artefact, work_dir)
+        result = analyse_hfe_protection(input_path)
+        indicators = result.get('indicators', [])
+        if indicators:
+            types_found = ', '.join(sorted({i['type'] for i in indicators}))
+            summary = f"Protection indicators found: {types_found}"
+        else:
+            summary = "No protection indicators found"
+        self.api.update_analysis(
+            analysis_id,
+            status='completed',
+            success=True,
+            tool_name='hfe_parser',
+            summary=summary,
+            details=json.dumps(result),
+        )
+
     # =========================================================================
     # Job Processing
     # =========================================================================
@@ -1464,6 +1492,7 @@ class AnalysisWorker:
                     AnalysisType.ARCHIVE_DETECT.value: self.process_archive_detect,
                     AnalysisType.ARCHIVE_EXTRACT.value: self.process_archive_extract,
                     AnalysisType.DISC_MASTERING_DETECT.value: self.process_disc_mastering_detect,
+                    AnalysisType.DISC_PROTECTION_DETECT.value: self.process_disc_protection_detect,
                 }
 
                 handler = handlers.get(analysis_type)
