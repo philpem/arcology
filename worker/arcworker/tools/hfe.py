@@ -331,13 +331,160 @@ def _decode_fm_byte(raw16: int) -> int:
 	return data
 
 
+def _build_bits(data: bytes, lsb_first: bool = False) -> list[int]:
+	"""Unpack bytes into a flat list of bits.
+
+	lsb_first=False (default): bit 7 (MSB) of each byte is first in time.
+	lsb_first=True:            bit 0 (LSB) of each byte is first in time.
+	"""
+	bits: list[int] = []
+	if lsb_first:
+		for b in data:
+			for shift in range(8):
+				bits.append((b >> shift) & 1)
+	else:
+		for b in data:
+			for shift in range(7, -1, -1):
+				bits.append((b >> shift) & 1)
+	return bits
+
+
+def _walk_fm_bits(bits: list[int]) -> list[dict]:
+	"""Decode FM bitstream at bit level.
+
+	Slides a 16-bit window over the bit stream and identifies FM address
+	marks by their combined clock+data patterns (_FM_IDAM / _FM_DAM /
+	_FM_DDAM).  After each address mark the subsequent bits are decoded
+	16 at a time using _decode_fm_byte.
+
+	FM CRC covers the address-mark byte + data (no preceding sync bytes).
+	"""
+	n = len(bits)
+
+	# Collect all address-mark events: (bit_pos_after_am, decoded_data_byte)
+	window = 0
+	events: list[tuple[int, int]] = []
+	for i, b in enumerate(bits):
+		window = ((window << 1) | b) & 0xFFFF
+		if i >= 15:
+			bit_after = i + 1
+			if window == _FM_IDAM:
+				events.append((bit_after, 0xFE))
+			elif window == _FM_DAM:
+				events.append((bit_after, 0xFB))
+			elif window == _FM_DDAM:
+				events.append((bit_after, 0xF8))
+
+	log.debug("_walk_fm_bits: %d bits → %d FM address mark(s)", n, len(events))
+
+	def _fm_byte(start: int) -> tuple[int | None, int]:
+		"""Decode one FM byte from bit position start (16 raw bits → 8 data bits)."""
+		if start + 16 > n:
+			return None, start
+		raw16 = 0
+		for bit in bits[start:start + 16]:
+			raw16 = (raw16 << 1) | bit
+		return _decode_fm_byte(raw16), start + 16
+
+	def _fm_read(start: int, count: int) -> tuple[bytes | None, int]:
+		buf = bytearray()
+		pos = start
+		for _ in range(count):
+			b, pos = _fm_byte(pos)
+			if b is None:
+				return None, start
+			buf.append(b)
+		return bytes(buf), pos
+
+	sectors: list[dict] = []
+	pending_idam: dict | None = None
+
+	for bit_after, am_byte in events:
+		if am_byte == 0xFE:
+			# IDAM: C H R N CRC_H CRC_L  (6 decoded bytes follow the address mark)
+			tail, _ = _fm_read(bit_after, 6)
+			if tail is None:
+				continue
+			cyl, head, sect, size_code = tail[0], tail[1], tail[2], tail[3]
+			declared_size = 128 << size_code
+			# FM IDAM CRC covers: FE C H R N (no A1 sync prefix for FM)
+			stored_crc  = (tail[4] << 8) | tail[5]
+			idam_crc_ok = (_crc16(bytes([0xFE]) + tail[:4]) == stored_crc)
+			log.debug("  FM IDAM @bit%d: C=%d H=%d R=%d N=%d idam_crc=%s",
+			          bit_after, cyl, head, sect, size_code,
+			          'ok' if idam_crc_ok else 'FAIL')
+			pending_idam = {
+				'cyl': cyl, 'head': head, 'sect': sect,
+				'size_code': size_code, 'declared_size': declared_size,
+				'byte_offset_idam': bit_after >> 4,
+				'byte_offset_dam': None,
+				'dam_type': None,
+				'data': None,
+				'crc_valid': False,
+				'size_used': declared_size,
+				'size_was_overridden': False,
+			}
+
+		else:
+			# DAM or DDAM
+			dam_type = 'DAM' if am_byte == 0xFB else 'DDAM'
+			declared_size = pending_idam['declared_size'] if pending_idam else 128
+
+			# Try declared_size first; if CRC fails, search other valid sizes.
+			# FM CRC: CRC(am_byte + data)  — no A1 prefix for FM.
+			p_and_crc, _ = _fm_read(bit_after, declared_size + 2)
+			if p_and_crc is not None:
+				stored  = (p_and_crc[declared_size] << 8) | p_and_crc[declared_size + 1]
+				payload = p_and_crc[:declared_size]
+				crc_valid = (_crc16(bytes([am_byte]) + payload) == stored)
+			else:
+				payload, crc_valid = b'', False
+			size_used         = declared_size
+			size_was_overridden = False
+
+			if not crc_valid:
+				for sz in _VALID_SECTOR_SIZES:
+					if sz == declared_size:
+						continue
+					alt_pc, _ = _fm_read(bit_after, sz + 2)
+					if alt_pc is None:
+						continue
+					stored2 = (alt_pc[sz] << 8) | alt_pc[sz + 1]
+					if _crc16(bytes([am_byte]) + alt_pc[:sz]) == stored2:
+						payload, crc_valid = alt_pc[:sz], True
+						size_used, size_was_overridden = sz, True
+						break
+
+			log.debug("  FM DAM  @bit%d: type=%s size=%d crc=%s%s",
+			          bit_after, dam_type, size_used,
+			          'ok' if crc_valid else 'FAIL',
+			          ' [overridden]' if size_was_overridden else '')
+			record = {
+				'dam_type': dam_type,
+				'data': payload,
+				'crc_valid': crc_valid,
+				'size_used': size_used,
+				'size_was_overridden': size_was_overridden,
+				'byte_offset_dam': bit_after >> 4,
+			}
+			if pending_idam is not None:
+				pending_idam.update(record)
+				sectors.append(pending_idam)
+				pending_idam = None
+			# else: orphan DAM — skip
+
+	if pending_idam is not None:
+		sectors.append(pending_idam)
+
+	return sectors
+
+
 def _walk_fm_stream(track_bytes: bytes) -> list[dict]:
 	"""Decode FM bitstream.
 
-	FM represents each bit as two stream bits (clock + data).  Each decoded
-	byte therefore occupies 2 raw bytes (16 bits).  Address marks are
-	identified by special clock patterns; we scan for the known 16-bit
-	patterns for IDAM, DAM, DDAM.
+	Converts the raw bytes to a bitstream and scans at bit level for FM
+	address-mark patterns (see _walk_fm_bits).  Tries MSB-first byte order
+	first (standard HFE convention), then LSB-first as a fallback.
 
 	Returns list of sector dicts:
 	  cyl, head, sect, size_code, declared_size
@@ -346,196 +493,95 @@ def _walk_fm_stream(track_bytes: bytes) -> list[dict]:
 	  crc_valid  bool
 	  size_used  int
 	  size_was_overridden  bool
-	  byte_offset_idam  int   (raw byte index in track_bytes)
+	  byte_offset_idam  int   (approximate bit_pos >> 4)
 	  byte_offset_dam   int or None
 	"""
-	sectors: list[dict] = []
-	n = len(track_bytes)
-
-	# We'll track IDAM info while looking for the following DAM
-	pending_idam: dict | None = None
-
-	i = 0
-	while i < n - 1:
-		raw16 = (track_bytes[i] << 8) | track_bytes[i + 1]
-
-		if raw16 == _FM_IDAM:
-			# IDAM: next 4 decoded bytes = C H R N, then 2 CRC bytes
-			# Each decoded byte = 2 raw bytes
-			idam_data_start = i + 2
-			if idam_data_start + 10 > n:
-				i += 2
-				continue
-			cyl   = _decode_fm_byte((track_bytes[idam_data_start]     << 8) | track_bytes[idam_data_start + 1])
-			head  = _decode_fm_byte((track_bytes[idam_data_start + 2] << 8) | track_bytes[idam_data_start + 3])
-			sect  = _decode_fm_byte((track_bytes[idam_data_start + 4] << 8) | track_bytes[idam_data_start + 5])
-			size_code = _decode_fm_byte((track_bytes[idam_data_start + 6] << 8) | track_bytes[idam_data_start + 7])
-			# 2 CRC raw bytes (each CRC byte = 2 raw bytes = 4 raw bytes total)
-			declared_size = 128 << size_code
-			log.debug("  FM IDAM @%d: C=%d H=%d R=%d N=%d", i, cyl, head, sect, size_code)
-			pending_idam = {
-				'cyl': cyl, 'head': head, 'sect': sect,
-				'size_code': size_code, 'declared_size': declared_size,
-				'byte_offset_idam': i,
-				'byte_offset_dam': None,
-				'dam_type': None,
-				'data': None,
-				'crc_valid': False,
-				'size_used': declared_size,
-				'size_was_overridden': False,
-			}
-			i += 2
-			continue
-
-		if raw16 in (_FM_DAM, _FM_DDAM):
-			dam_type = 'DAM' if raw16 == _FM_DAM else 'DDAM'
-			dam_raw_offset = i
-			# Data starts at i+2 (raw bytes); each decoded byte = 2 raw bytes
-			data_raw_start = i + 2
-			# Determine sector size from pending IDAM (or default 128 bytes)
-			declared_size = 128
-			if pending_idam is not None:
-				declared_size = pending_idam['declared_size']
-
-			# Decode sector data: declared_size decoded bytes = declared_size*2 raw bytes
-			decoded_payload = bytearray()
-			for j in range(declared_size):
-				pos = data_raw_start + j * 2
-				if pos + 1 >= n:
-					break
-				decoded_payload.append(_decode_fm_byte((track_bytes[pos] << 8) | track_bytes[pos + 1]))
-
-			# CRC: 2 decoded bytes = 4 raw bytes after data
-			crc_raw_start = data_raw_start + declared_size * 2
-			crc_bytes_decoded = bytearray()
-			for j in range(2):
-				pos = crc_raw_start + j * 2
-				if pos + 1 >= n:
-					break
-				crc_bytes_decoded.append(_decode_fm_byte((track_bytes[pos] << 8) | track_bytes[pos + 1]))
-
-			# Verify CRC: covers DAM byte + data
-			dam_byte = 0xFB if dam_type == 'DAM' else 0xF8
-			crc_valid = False
-			size_used = declared_size
-			size_was_overridden = False
-			if len(crc_bytes_decoded) == 2:
-				stored = (crc_bytes_decoded[0] << 8) | crc_bytes_decoded[1]
-				computed = _crc16(bytes([dam_byte]) + bytes(decoded_payload))
-				crc_valid = (computed == stored)
-
-			if not crc_valid:
-				# Try other sizes
-				for sz in _VALID_SECTOR_SIZES:
-					if sz == declared_size:
-						continue
-					alt_payload = bytearray()
-					for j in range(sz):
-						pos = data_raw_start + j * 2
-						if pos + 1 >= n:
-							break
-						alt_payload.append(_decode_fm_byte((track_bytes[pos] << 8) | track_bytes[pos + 1]))
-					alt_crc_raw = data_raw_start + sz * 2
-					alt_crc = bytearray()
-					for j in range(2):
-						pos = alt_crc_raw + j * 2
-						if pos + 1 >= n:
-							break
-						alt_crc.append(_decode_fm_byte((track_bytes[pos] << 8) | track_bytes[pos + 1]))
-					if len(alt_crc) == 2:
-						stored2 = (alt_crc[0] << 8) | alt_crc[1]
-						comp2 = _crc16(bytes([dam_byte]) + bytes(alt_payload))
-						if comp2 == stored2:
-							decoded_payload = alt_payload
-							crc_valid = True
-							size_used = sz
-							size_was_overridden = True
-							break
-
-			log.debug("  FM DAM  @%d: type=%s size_used=%d crc=%s%s",
-			          dam_raw_offset, dam_type, size_used,
-			          'ok' if crc_valid else 'FAIL',
-			          ' [overridden]' if size_was_overridden else '')
-			record = {
-				'dam_type': dam_type,
-				'data': bytes(decoded_payload),
-				'crc_valid': crc_valid,
-				'size_used': size_used,
-				'size_was_overridden': size_was_overridden,
-				'byte_offset_dam': dam_raw_offset,
-			}
-			if pending_idam is not None:
-				pending_idam.update(record)
-				sectors.append(pending_idam)
-				pending_idam = None
-			# else: orphan DAM with no preceding IDAM — skip
-
-			i += 2
-			continue
-
-		i += 2
-
-	# Flush any IDAM with no DAM
-	if pending_idam is not None:
-		sectors.append(pending_idam)
-
-	return sectors
+	sectors = _walk_fm_bits(_build_bits(track_bytes))
+	if sectors:
+		return sectors
+	log.debug("_walk_fm_stream: no sectors with MSB-first, retrying LSB-first")
+	return _walk_fm_bits(_build_bits(track_bytes, lsb_first=True))
 
 
-def _walk_mfm_stream(track_bytes: bytes) -> list[dict]:
-	"""Decode MFM bitstream.
+def _walk_mfm_bits(bits: list[int]) -> list[dict]:
+	"""Decode MFM bitstream at bit level.
 
-	Scans for three consecutive 0x4489 sync words followed by an address
-	mark byte.  Reads IDAM (C H R N + CRC) and DAM/DDAM (data + CRC).
+	Slides a 16-bit window over the entire bitstream looking for the A1
+	sync pattern (0x4489 — MFM encoding of 0xA1 with a missing clock bit).
+	MFM word boundaries are not necessarily aligned to byte boundaries in
+	the HFE file, so the search operates one bit at a time.
 
-	Returns list of sector dicts in the same schema as _walk_fm_stream().
+	Three consecutive 0x4489 syncs delimit each sector header (IDAM) and
+	data field (DAM/DDAM).  After locating a triple sync, subsequent 16-bit
+	MFM words are decoded (data bits are at odd positions 1,3,5,...,15) to
+	recover the address-mark byte, CHRN, CRC, and sector data.
+
+	MFM CRC covers A1 A1 A1 + address-mark-byte + data/CHRN bytes.
 	"""
+	n = len(bits)
+
+	# Find every bit position where the 16-bit sliding window == 0x4489.
+	window = 0
+	sync_starts: set[int] = set()
+	for i, b in enumerate(bits):
+		window = ((window << 1) | b) & 0xFFFF
+		if i >= 15 and window == 0x4489:
+			sync_starts.add(i - 15)
+
+	# Triple sync: three consecutive syncs at offsets 0, 16, 32 bits.
+	# The address mark (or IAM) byte starts at offset 48 from the first sync.
+	triple_data_bits: list[int] = sorted(
+		s + 48 for s in sync_starts
+		if (s + 16) in sync_starts and (s + 32) in sync_starts
+	)
+
+	log.debug("_walk_mfm_bits: %d bits → %d raw syncs, %d triple sync(s)",
+	          n, len(sync_starts), len(triple_data_bits))
+
+	def _mfm_byte(start: int) -> tuple[int | None, int]:
+		"""Decode one MFM byte: data bits at positions 1,3,5,...,15 of a 16-bit window."""
+		if start + 16 > n:
+			return None, start
+		val = 0
+		for i in range(8):
+			val = (val << 1) | bits[start + 1 + i * 2]
+		return val, start + 16
+
+	def _mfm_read(start: int, count: int) -> tuple[bytes | None, int]:
+		buf = bytearray()
+		pos = start
+		for _ in range(count):
+			b, pos = _mfm_byte(pos)
+			if b is None:
+				return None, start
+			buf.append(b)
+		return bytes(buf), pos
+
 	sectors: list[dict] = []
-	n = len(track_bytes)
-
-	# Build list of sync positions: runs of 3+ consecutive 0x4489 words
-	i = 0
-	sync_positions: list[int] = []
-	while i < n - 5:
-		if (track_bytes[i] == 0x44 and track_bytes[i + 1] == 0x89 and
-		    track_bytes[i + 2] == 0x44 and track_bytes[i + 3] == 0x89 and
-		    track_bytes[i + 4] == 0x44 and track_bytes[i + 5] == 0x89):
-			# Three sync words; mark position after the third
-			sync_positions.append(i + 6)
-			i += 6
-		else:
-			i += 1
-
-	log.debug("_walk_mfm_stream: %d bytes → %d sync position(s)", n, len(sync_positions))
 	pending_idam: dict | None = None
 
-	for sync_end in sync_positions:
-		if sync_end >= n:
+	for data_bit in triple_data_bits:
+		mark, pos = _mfm_byte(data_bit)
+		if mark is None:
 			continue
-		mark = track_bytes[sync_end]
 
 		if mark == 0xFE:
-			# IDAM: C H R N + 2 CRC bytes
-			if sync_end + 7 >= n:
+			# IDAM: C H R N CRC_H CRC_L  (6 decoded bytes after the mark)
+			tail, _ = _mfm_read(pos, 6)
+			if tail is None:
 				continue
-			cyl       = track_bytes[sync_end + 1]
-			head      = track_bytes[sync_end + 2]
-			sect      = track_bytes[sync_end + 3]
-			size_code = track_bytes[sync_end + 4]
+			cyl, head, sect, size_code = tail[0], tail[1], tail[2], tail[3]
 			declared_size = 128 << size_code
-
-			# CRC check for IDAM itself (3 sync A1 bytes + mark + 4 bytes)
-			idam_crc_input = b'\xA1\xA1\xA1' + bytes([0xFE, cyl, head, sect, size_code])
-			stored_crc = struct.unpack('>H', track_bytes[sync_end + 5:sync_end + 7])[0]
-			idam_crc_valid = (_crc16(idam_crc_input) == stored_crc)
-			log.debug("  MFM IDAM @%d: C=%d H=%d R=%d N=%d idam_crc=%s",
-			          sync_end, cyl, head, sect, size_code,
-			          'ok' if idam_crc_valid else 'FAIL')
-
+			# MFM IDAM CRC covers: A1 A1 A1 FE C H R N
+			stored_crc    = (tail[4] << 8) | tail[5]
+			idam_crc_ok   = (_crc16(b'\xA1\xA1\xA1\xFE' + tail[:4]) == stored_crc)
+			log.debug("  MFM IDAM @bit%d: C=%d H=%d R=%d N=%d idam_crc=%s",
+			          data_bit, cyl, head, sect, size_code,
+			          'ok' if idam_crc_ok else 'FAIL')
 			pending_idam = {
 				'cyl': cyl, 'head': head, 'sect': sect,
 				'size_code': size_code, 'declared_size': declared_size,
-				'byte_offset_idam': sync_end,
+				'byte_offset_idam': data_bit >> 3,
 				'byte_offset_dam': None,
 				'dam_type': None,
 				'data': None,
@@ -545,35 +591,75 @@ def _walk_mfm_stream(track_bytes: bytes) -> list[dict]:
 			}
 
 		elif mark in (0xFB, 0xF8):
-			dam_type = 'DAM' if mark == 0xFB else 'DDAM'
-			data_start = sync_end + 1
-			declared_size = 128
-			if pending_idam is not None:
-				declared_size = pending_idam['declared_size']
+			# DAM or DDAM
+			dam_type      = 'DAM' if mark == 0xFB else 'DDAM'
+			declared_size = pending_idam['declared_size'] if pending_idam else 128
 
-			sr = read_sector_search_size(track_bytes, data_start, declared_size)
-			log.debug("  MFM DAM  @%d: type=%s size_used=%d crc=%s%s",
-			          sync_end, dam_type, sr['size_used'],
-			          'ok' if sr['crc_valid'] else 'FAIL',
-			          ' [overridden]' if sr['size_was_overridden'] else '')
+			# Try declared_size first; search other sizes if CRC fails.
+			# MFM DAM CRC covers: A1 A1 A1 mark data
+			p_and_crc, _ = _mfm_read(pos, declared_size + 2)
+			if p_and_crc is not None:
+				stored    = (p_and_crc[declared_size] << 8) | p_and_crc[declared_size + 1]
+				payload   = p_and_crc[:declared_size]
+				crc_valid = (_crc16(b'\xA1\xA1\xA1' + bytes([mark]) + payload) == stored)
+			else:
+				payload, crc_valid = b'', False
+			size_used          = declared_size
+			size_was_overridden = False
 
+			if not crc_valid:
+				for sz in _VALID_SECTOR_SIZES:
+					if sz == declared_size:
+						continue
+					alt_pc, _ = _mfm_read(pos, sz + 2)
+					if alt_pc is None:
+						continue
+					stored2 = (alt_pc[sz] << 8) | alt_pc[sz + 1]
+					if _crc16(b'\xA1\xA1\xA1' + bytes([mark]) + alt_pc[:sz]) == stored2:
+						payload, crc_valid = alt_pc[:sz], True
+						size_used, size_was_overridden = sz, True
+						break
+
+			log.debug("  MFM DAM  @bit%d: type=%s size=%d crc=%s%s",
+			          data_bit, dam_type, size_used,
+			          'ok' if crc_valid else 'FAIL',
+			          ' [overridden]' if size_was_overridden else '')
 			record = {
 				'dam_type': dam_type,
-				'data': sr['data'],
-				'crc_valid': sr['crc_valid'],
-				'size_used': sr['size_used'],
-				'size_was_overridden': sr['size_was_overridden'],
-				'byte_offset_dam': sync_end,
+				'data': payload,
+				'crc_valid': crc_valid,
+				'size_used': size_used,
+				'size_was_overridden': size_was_overridden,
+				'byte_offset_dam': data_bit >> 3,
 			}
 			if pending_idam is not None:
 				pending_idam.update(record)
 				sectors.append(pending_idam)
 				pending_idam = None
+		# 0xFC (IAM) and other marks are ignored — no data follows
 
 	if pending_idam is not None:
 		sectors.append(pending_idam)
 
 	return sectors
+
+
+def _walk_mfm_stream(track_bytes: bytes) -> list[dict]:
+	"""Decode MFM bitstream.
+
+	Converts the raw bytes to a bitstream and scans at bit level for A1
+	sync patterns (0x4489) at any bit-phase alignment (see _walk_mfm_bits).
+	Tries MSB-first byte order first (standard HFE convention), then
+	LSB-first as a fallback for HFE files produced by tools that invert
+	the bit order within each byte.
+
+	Returns list of sector dicts (same schema as _walk_fm_stream).
+	"""
+	sectors = _walk_mfm_bits(_build_bits(track_bytes))
+	if sectors:
+		return sectors
+	log.debug("_walk_mfm_stream: no sectors with MSB-first, retrying LSB-first")
+	return _walk_mfm_bits(_build_bits(track_bytes, lsb_first=True))
 
 
 def walk_track(track_bytes: bytes, encoding: str) -> list[dict]:
