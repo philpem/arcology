@@ -11,6 +11,8 @@
 #
 # The web app runs on port 8000 by default.
 #
+# To run Adminer (database browser) for debugging, see docker-compose.adminer.yml.
+#
 # For production, create a .env file:
 #   echo "FLASK_ENV=production" >> .env
 #   echo "SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
@@ -87,9 +89,4 @@ services:
     volumes:
       - ./data/db/pg:/var/lib/postgresql
 
-  adminer:
-    image: adminer
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
 

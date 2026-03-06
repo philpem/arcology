@@ -1,0 +1,31 @@
+# Adminer database browser — local development use only.
+#
+# Adminer is NOT included in the main docker-compose.yml because it exposes
+# direct database access with no additional authentication layer. Only run it
+# when you need to inspect the database, and never in production.
+#
+# Usage:
+#
+#   Start alongside the main stack:
+#     docker compose -f docker-compose.yml -f docker-compose.adminer.yml up -d
+#
+#   Start adminer against an already-running stack:
+#     docker compose -f docker-compose.yml -f docker-compose.adminer.yml up -d adminer
+#
+#   Stop adminer only:
+#     docker compose -f docker-compose.yml -f docker-compose.adminer.yml stop adminer
+#
+#   One-liner (no compose file required):
+#     docker run --rm -p 127.0.0.1:8080:8080 --network arcology_default adminer
+#
+# Adminer is accessible at http://localhost:8080
+# Connect with: server=db, username=arcology_user, database=arcology
+#
+# WARNING: Never expose this service on 0.0.0.0 or in a production environment.
+
+services:
+  adminer:
+    image: adminer
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: "no"
