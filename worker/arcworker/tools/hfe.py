@@ -234,6 +234,8 @@ def get_track_bytes(f: BinaryIO, track_entry: dict, side: int,
 		# v1 or unknown: no opcodes, pass through
 		clean = bytearray(src)
 
+	log.debug("get_track_bytes: side %d → %d bytes, %d weak-bit position(s)",
+	          side, len(clean), len(weak_offsets))
 	return bytes(clean), weak_offsets
 
 
@@ -370,6 +372,7 @@ def _walk_fm_stream(track_bytes: bytes) -> list[dict]:
 			size_code = _decode_fm_byte((track_bytes[idam_data_start + 6] << 8) | track_bytes[idam_data_start + 7])
 			# 2 CRC raw bytes (each CRC byte = 2 raw bytes = 4 raw bytes total)
 			declared_size = 128 << size_code
+			log.debug("  FM IDAM @%d: C=%d H=%d R=%d N=%d", i, cyl, head, sect, size_code)
 			pending_idam = {
 				'cyl': cyl, 'head': head, 'sect': sect,
 				'size_code': size_code, 'declared_size': declared_size,
@@ -449,6 +452,10 @@ def _walk_fm_stream(track_bytes: bytes) -> list[dict]:
 							size_was_overridden = True
 							break
 
+			log.debug("  FM DAM  @%d: type=%s size_used=%d crc=%s%s",
+			          dam_raw_offset, dam_type, size_used,
+			          'ok' if crc_valid else 'FAIL',
+			          ' [overridden]' if size_was_overridden else '')
 			record = {
 				'dam_type': dam_type,
 				'data': bytes(decoded_payload),
@@ -499,6 +506,7 @@ def _walk_mfm_stream(track_bytes: bytes) -> list[dict]:
 		else:
 			i += 1
 
+	log.debug("_walk_mfm_stream: %d bytes → %d sync position(s)", n, len(sync_positions))
 	pending_idam: dict | None = None
 
 	for sync_end in sync_positions:
@@ -520,8 +528,9 @@ def _walk_mfm_stream(track_bytes: bytes) -> list[dict]:
 			idam_crc_input = b'\xA1\xA1\xA1' + bytes([0xFE, cyl, head, sect, size_code])
 			stored_crc = struct.unpack('>H', track_bytes[sync_end + 5:sync_end + 7])[0]
 			idam_crc_valid = (_crc16(idam_crc_input) == stored_crc)
-			if not idam_crc_valid:
-				log.debug("MFM IDAM CRC mismatch at offset %d", sync_end)
+			log.debug("  MFM IDAM @%d: C=%d H=%d R=%d N=%d idam_crc=%s",
+			          sync_end, cyl, head, sect, size_code,
+			          'ok' if idam_crc_valid else 'FAIL')
 
 			pending_idam = {
 				'cyl': cyl, 'head': head, 'sect': sect,
@@ -543,6 +552,10 @@ def _walk_mfm_stream(track_bytes: bytes) -> list[dict]:
 				declared_size = pending_idam['declared_size']
 
 			sr = read_sector_search_size(track_bytes, data_start, declared_size)
+			log.debug("  MFM DAM  @%d: type=%s size_used=%d crc=%s%s",
+			          sync_end, dam_type, sr['size_used'],
+			          'ok' if sr['crc_valid'] else 'FAIL',
+			          ' [overridden]' if sr['size_was_overridden'] else '')
 
 			record = {
 				'dam_type': dam_type,
@@ -572,6 +585,7 @@ def walk_track(track_bytes: bytes, encoding: str) -> list[dict]:
 	Returns list of sector dicts (see _walk_mfm_stream / _walk_fm_stream
 	for the schema).
 	"""
+	log.debug("walk_track: %d bytes, encoding=%r", len(track_bytes), encoding)
 	if encoding in ('mfm', 'amiga_mfm', 'unknown'):
 		return _walk_mfm_stream(track_bytes)
 	elif encoding == 'fm':
@@ -694,6 +708,9 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 					log.warning("HFE mastering: failed to read track %d side %d: %s", t_idx, side, e)
 					continue
 
+				log.debug("mastering scan: track %d side %d (%d bytes)",
+				          t_idx, side, len(track_bytes))
+
 				# Walk the track with whatever encoding the header declares.
 				# TRACEBACK is MFM; BCD timestamp is FM.  A mastering track
 				# could contain either format (or both), so we try both walkers
@@ -781,6 +798,9 @@ def analyse_hfe_protection(path: Path) -> dict:
 				except Exception as e:
 					log.warning("HFE protection: failed to read track %d side %d: %s", t_idx, side, e)
 					continue
+
+				log.debug("protection scan: track %d side %d (%d bytes, %d weak)",
+				          t_idx, side, len(track_bytes), len(weak_offsets))
 
 				# Weak / fuzzy bits (RAND opcodes in v2/v3 only)
 				if weak_offsets:
