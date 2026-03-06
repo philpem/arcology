@@ -105,6 +105,13 @@ def retry(uuid):
     analysis.error_message = None
     analysis.started_at = None
     analysis.completed_at = None
+    analysis.tool_name = None
+    analysis.tool_version = None
+    analysis.output_url = None
+    analysis.output_path = None
+    analysis.success = None
+    analysis.summary = None
+    analysis.details = None
 
     db.session.commit()
 
