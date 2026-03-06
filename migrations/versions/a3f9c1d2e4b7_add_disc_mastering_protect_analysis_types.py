@@ -18,13 +18,16 @@ depends_on = None
 
 def upgrade():
     # PostgreSQL: extend the analysistype enum with the two new values.
+    # ALTER TYPE ADD VALUE cannot run inside a transaction, so we use an
+    # autocommit connection to step outside Alembic's transaction block.
     # SQLite stores enums as VARCHAR so no DDL change is needed there.
     bind = op.get_bind()
     if bind.dialect.name == 'postgresql':
-        bind.execute(sa.text(
+        conn = bind.execution_options(isolation_level='AUTOCOMMIT')
+        conn.execute(sa.text(
             "ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'DISC_MASTERING_DETECT'"
         ))
-        bind.execute(sa.text(
+        conn.execute(sa.text(
             "ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'DISC_PROTECTION_DETECT'"
         ))
 
