@@ -35,7 +35,7 @@ def create_app(config_name=None):
 
 	# Auto-generate SECRET_KEY in development if missing/default
 	secret_key = app.config.get('SECRET_KEY', '')
-	is_production = os.environ.get('FLASK_ENV') == 'production'
+	is_production = os.environ.get('ARCOLOGY_ENV') == 'production'
 
 	if not secret_key or secret_key in ['0123456789ABCDEF', 'CHANGE_ME', '']:
 		if is_production:

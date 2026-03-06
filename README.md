@@ -63,7 +63,7 @@ Create a `.env` file for production:
 
 ```bash
 # Generate a secret key
-echo "FLASK_ENV=production" > .env
+echo "ARCOLOGY_ENV=production" > .env
 echo "SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
 ```
 
@@ -85,7 +85,7 @@ When an archive contains nested archives (e.g., ZIP within ZIP within ZIP), extr
 
 ```bash
 # Flask configuration
-FLASK_ENV=production              # production or development
+ARCOLOGY_ENV=production           # production or development
 SECRET_KEY=<your-secret-key>      # Generate with: python3 -c 'import secrets; print(secrets.token_hex(32))'
 
 # Worker configuration (usually auto-configured in Docker)
