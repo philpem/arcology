@@ -725,3 +725,121 @@ def detect_format_file_cmd(input_path: Path) -> dict:
         'process_output': process_output
     }
 
+
+
+# =========================================================================
+# FAT filesystem identification (boot sector BPB)
+# =========================================================================
+
+# Valid bytes-per-sector values (powers of 2 from 512 to 4096)
+_FAT_VALID_BPS = frozenset({512, 1024, 2048, 4096})
+
+# Valid media-descriptor byte values (FAT spec §3)
+_FAT_VALID_MEDIA = frozenset({
+	0xF0, 0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF,
+})
+
+
+def detect_fat_filesystem(path: Path) -> str | None:
+	"""
+	Identify a FAT12/16/32 filesystem by reading the BIOS Parameter Block
+	in the first 512-byte sector.
+
+	Returns ``'fat12'``, ``'fat16'`` or ``'fat32'``, or ``None`` if the image
+	does not look like a FAT volume.
+
+	Pure Python — reads exactly 512 bytes, no subprocesses.  The function is
+	intentionally conservative: every checked BPB field must be within its
+	legal range so that Acorn, ISO and other formats are never misclassified.
+
+	FAT type is determined in order:
+	  1. Explicit type string at offset 54–61 (FAT12/16) or 82–89 (FAT32).
+	  2. Cluster-count method from the FAT specification (§3.5) for images
+	     where the formatter did not write a type string.
+	"""
+	try:
+		with open(path, 'rb') as f:
+			sector = f.read(512)
+	except OSError:
+		return None
+
+	if len(sector) < 512:
+		return None
+
+	# ── Structural checks ────────────────────────────────────────────────
+
+	# Boot-sector signature (0x55 0xAA at bytes 510–511)
+	if sector[510] != 0x55 or sector[511] != 0xAA:
+		return None
+
+	# Jump instruction at byte 0: short jump (0xEB) or near jump (0xE9)
+	if sector[0] not in (0xEB, 0xE9):
+		return None
+
+	# BPB_BytsPerSec (LE 16-bit, offset 11): 512 / 1024 / 2048 / 4096
+	bps = int.from_bytes(sector[11:13], 'little')
+	if bps not in _FAT_VALID_BPS:
+		return None
+
+	# BPB_SecPerClus (offset 13): must be a non-zero power of two ≤ 128
+	spc = sector[13]
+	if spc == 0 or (spc & (spc - 1)) != 0 or spc > 128:
+		return None
+
+	# BPB_RsvdSecCnt (LE 16-bit, offset 14): at least 1
+	rsvd = int.from_bytes(sector[14:16], 'little')
+	if rsvd < 1:
+		return None
+
+	# BPB_NumFATs (offset 16): 1 or 2
+	num_fats = sector[16]
+	if num_fats not in (1, 2):
+		return None
+
+	# BPB_Media (offset 21): 0xF0 or 0xF8–0xFF
+	if sector[21] not in _FAT_VALID_MEDIA:
+		return None
+
+	# ── FAT variant determination ─────────────────────────────────────────
+
+	# BPB_FATSz16 (LE 16-bit, offset 22): zero only on FAT32
+	fat_sz16 = int.from_bytes(sector[22:24], 'little')
+
+	if fat_sz16 == 0:
+		# FAT32: BS_FilSysType at offset 82–89
+		fs_type = sector[82:90].rstrip(b' \x00')
+		if fs_type == b'FAT32':
+			return 'fat32'
+		# No type string — trust the BPB structure (fat_sz16 == 0 implies FAT32)
+		fat_sz32 = int.from_bytes(sector[36:40], 'little')
+		if fat_sz32 == 0:
+			return None  # Neither FAT size field set; reject
+		return 'fat32'
+
+	# FAT12 or FAT16: BS_FilSysType at offset 54–61
+	fs_type = sector[54:62].rstrip(b' \x00')
+	if fs_type == b'FAT12':
+		return 'fat12'
+	if fs_type == b'FAT16':
+		return 'fat16'
+
+	# No type string (common for pre-DOS 4.0 formatters) — use the cluster
+	# count method from the FAT specification §3.5 to distinguish FAT12/16.
+	root_ent_cnt  = int.from_bytes(sector[17:19], 'little')
+	tot_sec16     = int.from_bytes(sector[19:21], 'little')
+	tot_sec32     = int.from_bytes(sector[32:36], 'little')
+	total_sectors = tot_sec16 if tot_sec16 != 0 else tot_sec32
+	if total_sectors == 0:
+		return None
+
+	root_dir_sectors   = (root_ent_cnt * 32 + bps - 1) // bps
+	data_sectors       = total_sectors - rsvd - (num_fats * fat_sz16) - root_dir_sectors
+	count_of_clusters  = data_sectors // spc
+
+	if count_of_clusters < 4085:
+		return 'fat12'
+	if count_of_clusters < 65525:
+		return 'fat16'
+	return 'fat32'  # fat_sz16 non-zero but cluster count says FAT32: unusual
+
+# vim: ts=4 sw=4 noet

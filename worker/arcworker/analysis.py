@@ -33,6 +33,7 @@ from .tools import (
     detect_acorn_adfs,
     detect_acorn_partitions,
     detect_format_file_cmd,
+    detect_fat_filesystem,
 )
 
 
@@ -372,18 +373,23 @@ class AnalysisWorker:
             result = extract_dos_7z(input_path, extract_dir)
             all_results['7z'] = result
         else:
-            # No filesystem hint - try Acorn DIM first (it will fail quickly
-            # and cleanly on non-Acorn images), then fall back to 7z.
-            # We must NOT try 7z first because it will "succeed" on ADFS
-            # images containing ZIP files by extracting the embedded ZIP
-            # instead of the actual disc filesystem.
-            result = extract_acorn_disc_image_manager(input_path, extract_dir)
-            all_results['dim'] = result
-            if result['success']:
-                is_acorn = True
-            else:
+            # No filesystem hint — read the boot-sector BPB first.  If the
+            # image is FAT12/16/32, skip DIM entirely and go straight to 7z:
+            # DIM can read DOS FAT images but produces double-extension names.
+            # We must NOT try 7z first without this check because 7z will
+            # "succeed" on ADFS images containing ZIP files by extracting the
+            # embedded ZIP rather than the actual disc filesystem.
+            if detect_fat_filesystem(input_path):
                 result = extract_dos_7z(input_path, extract_dir)
                 all_results['7z'] = result
+            else:
+                result = extract_acorn_disc_image_manager(input_path, extract_dir)
+                all_results['dim'] = result
+                if result['success']:
+                    is_acorn = True
+                else:
+                    result = extract_dos_7z(input_path, extract_dir)
+                    all_results['7z'] = result
 
         def _build_details(extra: dict | None = None) -> str:
             d: dict = {}
@@ -703,18 +709,13 @@ class AnalysisWorker:
         results['file'] = file_result
 
         # 5. If nothing detected, report whole disc as single unknown partition.
-        # Try to infer the filesystem from the 'file' command output before
-        # falling back to 'unknown'.
+        # Use boot-sector BPB parsing to identify FAT12/16/32 before falling
+        # back to 'unknown'.  The 'file' command output is intentionally not
+        # used for this decision because its output format is not stable enough
+        # for machine parsing.
         if not detected_partitions:
             file_size = input_path.stat().st_size
-            inferred_fs = 'unknown'
-            file_type_str = file_result.get('file_type', '').lower()
-            if 'fat (12 bit)' in file_type_str or 'bits/fat 12' in file_type_str:
-                inferred_fs = 'fat12'
-            elif 'fat (16 bit)' in file_type_str or 'bits/fat 16' in file_type_str:
-                inferred_fs = 'fat16'
-            elif 'fat (32 bit)' in file_type_str or 'bits/fat 32' in file_type_str:
-                inferred_fs = 'fat32'
+            inferred_fs = detect_fat_filesystem(input_path) or 'unknown'
             detected_partitions = [{
                 'index': 0,
                 'start_byte': 0,
