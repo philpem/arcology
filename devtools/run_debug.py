@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# Run regsys in debug mode
+# Run Arcology in debug mode
 #
 # run: python3 devtools/run_debug.py
 
@@ -9,7 +9,7 @@ import os, os.path, sys
 sys.path.append(
     os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir)))
 
-from regsys.app import app
+from myapp.app import create_app
 
 if __name__ == '__main__':
 	def walk(path, ext=None):
@@ -25,8 +25,9 @@ if __name__ == '__main__':
 
 	# create a list of extra files to watch
 	extra_files = []
-	extra_files.extend(walk('regsys/blueprints', '.py'))
-	extra_files.extend(walk('regsys/templates', '.html'))
+	extra_files.extend(walk('myapp/blueprints', '.py'))
+	extra_files.extend(walk('myapp/templates', '.html'))
 
 	# start the application
+	app = create_app()
 	app.run(debug=True, extra_files=extra_files)

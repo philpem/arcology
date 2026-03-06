@@ -6,21 +6,25 @@
 python -m venv venv
 . venv/bin/activate
 pip3 install -r requirements.txt
-cp regsys/regsys.cfg.example regsys/regsys.cfg
+cp myapp/myapp.cfg.example myapp/myapp.cfg
 
-# edit regsys.cfg -- specifically change the secret key and enable a
+# edit myapp.cfg -- specifically change the secret key and enable a
 # database backend.
 #
 # to generate a secret key:
-#   dd if=/dev/urandom count=32k status=none | sha256sum | awk '{ print $1 }'
+#   python3 -c 'import secrets; print(secrets.token_hex(32))'
 
-# initialise the database
-python3 install.py
+# apply database migrations
+flask db upgrade
 
-export FLASK_ENV=development
-export FLASK_APP=regsys
-flask run
+# create an admin user
+flask create-admin
+
+# run the development server
+python -m myapp
 ```
+
+See also `CONTRIBUTING.md` in the project root for a more detailed guide.
 
 
 ## Database profiling and debugging
@@ -34,5 +38,4 @@ To log all queries which are sent to the database, enable `DEBUG_DB_LOG`.
 
 ## Running under Gunicorn
 
-`gunicorn -b 0.0.0.0:5000 regsys.app`
-
+`gunicorn -b 0.0.0.0:5000 'myapp.app:create_app()'`
