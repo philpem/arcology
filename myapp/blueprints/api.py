@@ -4,6 +4,7 @@ Arcology - API Blueprint
 RESTful API for external integrations.
 """
 
+import hmac
 import os
 from datetime import datetime, timezone
 from functools import wraps
@@ -65,7 +66,7 @@ def require_auth(permission: str = 'read_only'):
 
 			# Pre-shared worker key — always grants read_write, no DB hit needed
 			worker_key = current_app.config.get('WORKER_API_KEY', '')
-			if worker_key and raw == worker_key:
+			if worker_key and hmac.compare_digest(raw, worker_key):
 				return f(*args, **kwargs)
 
 			# User application key

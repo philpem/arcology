@@ -6,7 +6,6 @@ Models for the digital artefact catalogue system.
 
 from datetime import datetime, timezone
 from typing import Optional
-import hashlib
 import secrets
 import uuid as uuid_module
 from sqlalchemy import (
@@ -204,7 +203,7 @@ class ApiKey(db.Model):
     user_id:      Mapped[int]                  = mapped_column(ForeignKey("user.id"), index=True)
     name:         Mapped[str]                  = mapped_column(String(100))
     key_prefix:   Mapped[str]                  = mapped_column(String(8))   # First 8 hex chars; display only
-    key_hash:     Mapped[str]                  = mapped_column(String(64), unique=True, index=True)
+    key_hash:     Mapped[str]                  = mapped_column(String(72), unique=True, index=True)
     permission:   Mapped[ApiKeyPermission]     = mapped_column(SQLEnum(ApiKeyPermission))
     is_active:    Mapped[bool]                 = mapped_column(Boolean, default=True)
     created_at:   Mapped[datetime]             = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -222,13 +221,13 @@ class ApiKey(db.Model):
     def create(cls, user_id: int, name: str, permission: ApiKeyPermission) -> tuple["ApiKey", str]:
         """
         Create a new ApiKey.  Returns (key_object, raw_key).
-        The raw_key is shown to the user exactly once; only the SHA-256 hash is stored.
+        The raw_key is shown to the user exactly once; only the bcrypt hash is stored.
         """
         raw    = f"arc_{secrets.token_hex(32)}"
         prefix = raw[4:12]
-        digest = hashlib.sha256(raw.encode()).hexdigest()
+        hashed = bcrypt.hashpw(raw.encode(), bcrypt.gensalt()).decode('utf-8')
         return cls(user_id=user_id, name=name, key_prefix=prefix,
-                   key_hash=digest, permission=permission), raw
+                   key_hash=hashed, permission=permission), raw
 
     @classmethod
     def verify(cls, raw_key: str) -> Optional["ApiKey"]:
@@ -238,8 +237,15 @@ class ApiKey(db.Model):
         """
         if not raw_key or not raw_key.startswith('arc_'):
             return None
-        digest = hashlib.sha256(raw_key.encode()).hexdigest()
-        return cls.query.filter_by(key_hash=digest, is_active=True).first()
+        prefix = raw_key[4:12]
+        candidates = cls.query.filter_by(key_prefix=prefix, is_active=True).all()
+        for key in candidates:
+            try:
+                if bcrypt.checkpw(raw_key.encode(), key.key_hash.encode()):
+                    return key
+            except (ValueError, TypeError):
+                continue
+        return None
 
 
 # =============================================================================
