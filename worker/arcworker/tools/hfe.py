@@ -1069,6 +1069,17 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 			continue  # multiple distinct sectors — not a single mastering record
 		data, crc_valid = next(iter(unique.items()))
 		t_idx, side = sk
+		# Skip sectors filled entirely with a single repeated byte.  These
+		# are format-fill / blank sectors (e.g. 0xF6 IBM fill, 0xE5, 0x00)
+		# that appear at the end of a disc when all sectors on the track are
+		# identical but carry no meaningful content.  A real mastering record
+		# always contains varied data.
+		if data and len(set(data)) <= 1:
+			log.debug(
+				"mastering: track %d side %d: skipping uniform-fill sector "
+				"(0x%02X × %d bytes) — not mastering data",
+				t_idx, side, data[0], len(data))
+			continue
 		strings = _extract_strings(data)
 		# Store up to 512 bytes of hex for examination; record actual size.
 		max_hex_bytes = 512
