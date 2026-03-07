@@ -12,7 +12,7 @@ cp myapp/myapp.cfg.example myapp/myapp.cfg
 # database backend.
 #
 # to generate a secret key:
-#   python3 -c 'import secrets; print(secrets.token_hex(32))'
+#   python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
 
 # apply database migrations
 flask db upgrade

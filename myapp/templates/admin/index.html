@@ -1,0 +1,93 @@
+{% extends "_base.html" %}
+{% block page_title %}Admin{% endblock %}
+
+{% block content %}
+<h2>Administration</h2>
+
+<!-- Worker API Key -->
+<div class="card mb-4">
+	<div class="card-header"><h5 class="mb-0">Worker API Key</h5></div>
+	<div class="card-body">
+		<p class="text-muted mb-2">
+			This pre-shared key authenticates analysis worker containers.
+			Set it as <code>WORKER_API_KEY</code> in your <code>.env</code> file — the same value
+			must be configured on both the web container and every worker container.
+		</p>
+		{% if worker_key %}
+		<pre class="bg-light border rounded p-2 user-select-all"><code>{{ worker_key }}</code></pre>
+		<p class="text-muted small mb-0">
+			<i class="bi bi-info-circle"></i>
+			To generate a new key: <code>python3 -c "import secrets; print('wrk_' + secrets.token_hex(32))"</code>
+			— then update <code>.env</code> and restart both services.
+		</p>
+		{% else %}
+		<div class="alert alert-danger mb-0">
+			<i class="bi bi-exclamation-triangle-fill"></i>
+			<strong>WORKER_API_KEY is not configured.</strong>
+			Workers will fail to authenticate. Set it in your <code>.env</code> file and restart.
+		</div>
+		{% endif %}
+	</div>
+</div>
+
+<!-- Users -->
+<div class="card mb-4">
+	<div class="card-header"><h5 class="mb-0">Users</h5></div>
+	<div class="card-body p-0">
+		<table class="table table-sm mb-0">
+			<thead class="table-light">
+				<tr>
+					<th>Username</th>
+					<th>Admin</th>
+					<th>Permission</th>
+					<th>API Keys</th>
+					<th>API Key Access</th>
+					<th></th>
+				</tr>
+			</thead>
+			<tbody>
+			{% for user in users %}
+			<tr>
+				<td class="align-middle">{{ user.username }}</td>
+				<td class="align-middle">
+					{% if user.is_admin %}<span class="badge bg-dark">Admin</span>{% endif %}
+				</td>
+				<td>
+					<form method="post" action="{{ url_for('myapp_blueprints_admin.set_permission', user_id=user.id) }}"
+						  class="d-flex gap-1 align-items-center">
+						{{ perm_forms[user.id].hidden_tag() }}
+						{{ perm_forms[user.id].permission(class="form-select form-select-sm", style="max-width:220px") }}
+						<button type="submit" class="btn btn-sm btn-outline-primary">Save</button>
+					</form>
+					<small class="text-muted">
+						Lowering permission automatically restricts existing API keys.
+					</small>
+				</td>
+				<td class="align-middle">
+					{% set kc = key_counts[user.id] %}
+					{% if kc %}<span class="badge bg-secondary">{{ kc }} active</span>{% else %}<span class="text-muted">—</span>{% endif %}
+				</td>
+				<td class="align-middle">
+					{% if user.can_use_api %}
+					<span class="badge bg-success">Enabled</span>
+					{% else %}
+					<span class="badge bg-light text-muted border">Disabled</span>
+					{% endif %}
+				</td>
+				<td class="align-middle">
+					<form method="post" action="{{ url_for('myapp_blueprints_admin.toggle_api', user_id=user.id) }}">
+						{{ perm_forms[user.id].hidden_tag() }}
+						{% if user.can_use_api %}
+						<button type="submit" class="btn btn-sm btn-outline-secondary">Disable API</button>
+						{% else %}
+						<button type="submit" class="btn btn-sm btn-outline-success">Enable API</button>
+						{% endif %}
+					</form>
+				</td>
+			</tr>
+			{% endfor %}
+			</tbody>
+		</table>
+	</div>
+</div>
+{% endblock %}

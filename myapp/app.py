@@ -15,6 +15,7 @@ import sys
 from urllib.parse import urlparse
 
 from .extensions import db, migrate, login_manager, bootstrap, csrf
+from .database import UserPermission, ApiKeyPermission
 
 # Subclass the application so we can add the menu management functions
 class AppClass(Flask):
@@ -31,14 +32,30 @@ class AppClass(Flask):
 def create_app(config_name=None):
 	# create and configure the application
 	app = AppClass(__name__)
-	app.config.from_pyfile(config_name or 'myapp.cfg')
+	app.config.from_pyfile(config_name or 'myapp.cfg', silent=True)
+
+	# Load settings from environment, overriding config file where set
+	for env_key in ('SECRET_KEY', 'SQLALCHEMY_DATABASE_URI', 'WORKER_API_KEY'):
+		env_val = os.environ.get(env_key)
+		if env_val:
+			app.config[env_key] = env_val
+
+	# Abort if no database URI is configured
+	if not app.config.get('SQLALCHEMY_DATABASE_URI'):
+		raise RuntimeError(
+			"SQLALCHEMY_DATABASE_URI is not set — configure it in myapp.cfg or as an environment variable"
+		)
+
+	# Warn if WORKER_API_KEY is missing
+	if not app.config.get('WORKER_API_KEY'):
+		app.logger.warning("WORKER_API_KEY is not configured — worker API authentication will fail")
 
 	# Warn and auto-generate SECRET_KEY if missing, left at the default placeholder, or too short
 	secret_key = app.config.get('SECRET_KEY', '')
 	if not secret_key or secret_key in ['0123456789ABCDEF', 'CHANGE_ME'] or len(secret_key) < 32:
 		app.logger.warning("!!! SECRET_KEY not set, left at default, or too short - generating random key for this session")
-		app.logger.warning("!!! Sessions will be lost on server restart - set SECRET_KEY in myapp.cfg for persistence")
-		app.config['SECRET_KEY'] = secrets.token_hex(32)
+		app.logger.warning("!!! Sessions will be lost on server restart - set SECRET_KEY in myapp.cfg or as an environment variable")
+		app.config['SECRET_KEY'] = secrets.token_urlsafe(32)
 
 	# Initialise extensions
 	db.init_app(app)
@@ -112,6 +129,14 @@ def create_app(config_name=None):
 		"""
 		return dict(menu=sorted(app._myapp_menudata,
 								key=lambda mi: (mi['sortorder'], mi['label'].lower())))
+
+	# -- user permission context processor --
+	@app.context_processor
+	def inject_user_permissions():
+		"""Inject user_can_write into every template context."""
+		can_write = (current_user.is_authenticated and
+					 current_user.has_permission(UserPermission.READ_WRITE))
+		return dict(user_can_write=can_write)
 
 	# Register login handlers, error handlers, blueprints, and CLI commands
 	_register_login_handlers(app)
@@ -282,6 +307,9 @@ def _register_cli_commands(app):
 		user = User()
 		user.username = username
 		user.setPassword(password)
+		user.is_admin = True
+		user.permission = UserPermission.READ_WRITE
+		user.can_use_api = True
 		db.session.add(user)
 		db.session.commit()
 		click.echo(f"Admin user '{username}' created successfully.")

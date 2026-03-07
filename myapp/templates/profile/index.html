@@ -1,0 +1,121 @@
+{% extends "_base.html" %}
+{% block page_title %}Profile{% endblock %}
+
+{% block content %}
+<div class="row">
+	<div class="col-md-6">
+
+		<!-- Change Password -->
+		<div class="card mb-4">
+			<div class="card-header"><h5 class="mb-0">Change Password</h5></div>
+			<div class="card-body">
+				<form method="post" action="{{ url_for('myapp_blueprints_profile.change_password') }}">
+					{{ pwd_form.hidden_tag() }}
+					<div class="mb-3">
+						{{ pwd_form.current_password.label(class="form-label") }}
+						{{ pwd_form.current_password(class="form-control") }}
+					</div>
+					<div class="mb-3">
+						{{ pwd_form.new_password.label(class="form-label") }}
+						{{ pwd_form.new_password(class="form-control") }}
+						<div class="form-text">Minimum 12 characters.</div>
+					</div>
+					<div class="mb-3">
+						{{ pwd_form.confirm_password.label(class="form-label") }}
+						{{ pwd_form.confirm_password(class="form-control") }}
+					</div>
+					<button type="submit" class="btn btn-primary">
+						<i class="bi bi-key"></i> Change Password
+					</button>
+				</form>
+			</div>
+		</div>
+
+	</div>
+</div>
+
+{% if current_user.can_use_api %}
+<!-- API Keys -->
+<div class="card mb-4">
+	<div class="card-header d-flex justify-content-between align-items-center">
+		<h5 class="mb-0">API Application Keys</h5>
+	</div>
+	<div class="card-body">
+		<p class="text-muted">
+			Use these keys to access the Arcology REST API from external applications.
+			Send the key in the <code>Authorization: Bearer &lt;key&gt;</code> request header.
+			Keys are shown once on creation and cannot be recovered — revoke and recreate if lost.
+		</p>
+
+		{% if keys %}
+		<table class="table table-sm">
+			<thead>
+				<tr>
+					<th>Name</th>
+					<th>Key prefix</th>
+					<th>Permission</th>
+					<th>Created</th>
+					<th>Last used</th>
+					<th></th>
+				</tr>
+			</thead>
+			<tbody>
+			{% for key in keys %}
+				<tr>
+					<td>{{ key.name }}</td>
+					<td><code>arc_{{ key.key_prefix }}…</code></td>
+					<td>
+						{% if key.effective_permission().value == 'read_only' %}
+							<span class="badge bg-secondary">Read Only</span>
+						{% elif key.effective_permission().value == 'read_upload' %}
+							<span class="badge bg-info text-dark">Read + Upload</span>
+						{% else %}
+							<span class="badge bg-primary">Full Read/Write</span>
+						{% endif %}
+						{% if key.permission != key.effective_permission() %}
+							<small class="text-muted ms-1" title="Capped by your account permission">(capped)</small>
+						{% endif %}
+					</td>
+					<td><small class="text-muted">{{ key.created_at.strftime('%Y-%m-%d') }}</small></td>
+					<td>
+						<small class="text-muted">
+							{{ key.last_used_at.strftime('%Y-%m-%d %H:%M') if key.last_used_at else 'Never' }}
+						</small>
+					</td>
+					<td>
+						<form method="post" action="{{ url_for('myapp_blueprints_profile.revoke_key', key_id=key.id) }}"
+							  onsubmit="return confirm('Revoke key \'{{ key.name }}\'? Applications using it will stop working.')">
+							{{ pwd_form.hidden_tag() }}
+							<button type="submit" class="btn btn-sm btn-outline-danger">Revoke</button>
+						</form>
+					</td>
+				</tr>
+			{% endfor %}
+			</tbody>
+		</table>
+		{% else %}
+		<p class="text-muted">No active API keys.</p>
+		{% endif %}
+
+		<hr>
+		<h6>Create New Key</h6>
+		<form method="post" action="{{ url_for('myapp_blueprints_profile.create_key') }}" class="row g-2 align-items-end">
+			{{ key_form.hidden_tag() }}
+			<div class="col-md-4">
+				{{ key_form.name.label(class="form-label") }}
+				{{ key_form.name(class="form-control", placeholder="e.g. My Import Script") }}
+			</div>
+			<div class="col-md-4">
+				{{ key_form.permission.label(class="form-label") }}
+				{{ key_form.permission(class="form-select") }}
+			</div>
+			<div class="col-md-2">
+				<button type="submit" class="btn btn-success w-100">
+					<i class="bi bi-plus-lg"></i> Create Key
+				</button>
+			</div>
+		</form>
+	</div>
+</div>
+{% endif %}
+{% endblock %}

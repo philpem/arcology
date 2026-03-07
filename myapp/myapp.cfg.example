@@ -25,3 +25,8 @@ MAX_CONTENT_LENGTH = 4 * 1024 * 1024 * 1024  # 4GB max upload
 ITEMS_PER_PAGE = 25
 FILES_PER_PAGE = 100
 ANALYSES_SHOWN = 5      # Max completed analyses shown per artefact before "Show All" appears
+
+# Pre-shared key used by analysis workers.
+# Generate: python3 -c 'import secrets; print(f"wrk_{secrets.token_urlsafe(32)}")'
+# Must match the WORKER_API_KEY environment variable set on all worker containers.
+WORKER_API_KEY = ""

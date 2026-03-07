@@ -12,6 +12,7 @@ from wtforms.validators import DataRequired, Optional, URL, Length
 
 from ..extensions import db
 from ..database import Platform, Category, Tag, ExternalSystem, HashDatabase
+from ..permissions import require_permission
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -94,6 +95,7 @@ def platforms():
 
 @blueprint.route('/platforms/new', methods=['GET', 'POST'])
 @login_required
+@require_permission('read_write')
 def new_platform():
     form = PlatformForm()
     form.parent_id.choices = [(0, '-- No Parent --')] + [
@@ -116,6 +118,7 @@ def new_platform():
 
 @blueprint.route('/platforms/<int:id>/edit', methods=['GET', 'POST'])
 @login_required
+@require_permission('read_write')
 def edit_platform(id):
     platform = Platform.query.get_or_404(id)
     form = PlatformForm(obj=platform)
@@ -139,6 +142,7 @@ def edit_platform(id):
 
 @blueprint.route('/platforms/<int:id>/delete', methods=['POST'])
 @login_required
+@require_permission('read_write')
 def delete_platform(id):
     platform = Platform.query.get_or_404(id)
     
@@ -170,6 +174,7 @@ def categories():
 
 @blueprint.route('/categories/new', methods=['GET', 'POST'])
 @login_required
+@require_permission('read_write')
 def new_category():
     form = CategoryForm()
     form.parent_id.choices = [(0, '-- No Parent --')] + [
@@ -192,6 +197,7 @@ def new_category():
 
 @blueprint.route('/categories/<int:id>/edit', methods=['GET', 'POST'])
 @login_required
+@require_permission('read_write')
 def edit_category(id):
     category = Category.query.get_or_404(id)
     form = CategoryForm(obj=category)
@@ -215,6 +221,7 @@ def edit_category(id):
 
 @blueprint.route('/categories/<int:id>/delete', methods=['POST'])
 @login_required
+@require_permission('read_write')
 def delete_category(id):
     category = Category.query.get_or_404(id)
     
@@ -246,6 +253,7 @@ def tags():
 
 @blueprint.route('/tags/new', methods=['GET', 'POST'])
 @login_required
+@require_permission('read_write')
 def new_tag():
     form = TagForm()
     
@@ -261,6 +269,7 @@ def new_tag():
 
 @blueprint.route('/tags/<int:id>/delete', methods=['POST'])
 @login_required
+@require_permission('read_write')
 def delete_tag(id):
     tag = Tag.query.get_or_404(id)
     name = tag.name
@@ -283,6 +292,7 @@ def external_systems():
 
 @blueprint.route('/external-systems/new', methods=['GET', 'POST'])
 @login_required
+@require_permission('read_write')
 def new_external_system():
     form = ExternalSystemForm()
     
@@ -304,6 +314,7 @@ def new_external_system():
 
 @blueprint.route('/external-systems/<int:id>/edit', methods=['GET', 'POST'])
 @login_required
+@require_permission('read_write')
 def edit_external_system(id):
     system = ExternalSystem.query.get_or_404(id)
     form = ExternalSystemForm(obj=system)
@@ -323,6 +334,7 @@ def edit_external_system(id):
 
 @blueprint.route('/external-systems/<int:id>/delete', methods=['POST'])
 @login_required
+@require_permission('read_write')
 def delete_external_system(id):
     system = ExternalSystem.query.get_or_404(id)
     
@@ -350,6 +362,7 @@ def hash_databases():
 
 @blueprint.route('/hash-databases/new', methods=['GET', 'POST'])
 @login_required
+@require_permission('read_write')
 def new_hash_database():
     form = HashDatabaseForm()
     form.platform_id.choices = [(0, '-- All Platforms --')] + [
@@ -386,6 +399,7 @@ def view_hash_database(id):
 
 @blueprint.route('/hash-databases/<int:id>/delete', methods=['POST'])
 @login_required
+@require_permission('read_write')
 def delete_hash_database(id):
     database = HashDatabase.query.get_or_404(id)
     name = database.name

@@ -1,0 +1,31 @@
+{% extends "_base.html" %}
+{% block page_title %}API Key Created{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+	<div class="col-md-8">
+		<div class="alert alert-warning" role="alert">
+			<h4 class="alert-heading"><i class="bi bi-exclamation-triangle-fill"></i> Copy your key now</h4>
+			<p>This is the <strong>only time</strong> your API key will be shown.
+			It is not stored in plaintext and cannot be recovered.
+			If you lose it, you will need to revoke it and create a new one.</p>
+		</div>
+
+		<div class="card mb-4">
+			<div class="card-header">Your new API key</div>
+			<div class="card-body">
+				<pre class="mb-0 user-select-all"><code>{{ raw_key }}</code></pre>
+			</div>
+		</div>
+
+		<p class="text-muted">
+			Use this key in the <code>Authorization</code> HTTP header:
+		</p>
+		<pre><code>Authorization: Bearer {{ raw_key }}</code></pre>
+
+		<a href="{{ url_for('myapp_blueprints_profile.index') }}" class="btn btn-primary">
+			<i class="bi bi-arrow-left"></i> Back to Profile
+		</a>
+	</div>
+</div>
+{% endblock %}

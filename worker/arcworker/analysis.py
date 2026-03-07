@@ -82,7 +82,7 @@ def analysis_handler(description: str):
 class AnalysisWorker:
     """Main worker class that processes analysis jobs."""
 
-    def __init__(self, api_url: str, upload_dir: Path, output_dir: Path):
+    def __init__(self, api_url: str, upload_dir: Path, output_dir: Path, api_key: str = ''):
         """
         Initialize the worker.
 
@@ -90,11 +90,12 @@ class AnalysisWorker:
             api_url: Base URL for the Arcology API
             upload_dir: Directory where uploaded artefacts are stored
             output_dir: Directory for analysis outputs (e.g., visualisations)
+            api_key: Worker API key for authentication
         """
         self.uploads = upload_dir
         self.outputs = output_dir
         self.outputs.mkdir(parents=True, exist_ok=True)
-        self.api = ArcologyAPI(api_url, upload_dir, output_dir)
+        self.api = ArcologyAPI(api_url, upload_dir, output_dir, api_key=api_key)
         self._decompression_info = None  # Set by get_input_path() when decompression occurs
 
     def get_input_path(self, artefact: dict, work_dir: Path) -> Path:

@@ -19,6 +19,7 @@ from wtforms.validators import DataRequired, Optional
 from werkzeug.utils import secure_filename
 
 from ..extensions import db
+from ..permissions import require_permission
 
 
 def safe_original_filename(filename: str) -> str:
@@ -598,6 +599,7 @@ def view(uuid):
 
 @blueprint.route('/item/<string:item_uuid>/upload', methods=['GET', 'POST'])
 @login_required
+@require_permission('read_write')
 def upload(item_uuid):
     """Upload a new artefact."""
     item = Item.query.filter_by(uuid=item_uuid).first_or_404()
@@ -665,6 +667,7 @@ def upload(item_uuid):
 
 @blueprint.route('/<string:uuid>/edit', methods=['GET', 'POST'])
 @login_required
+@require_permission('read_write')
 def edit(uuid):
     """Edit artefact metadata."""
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
@@ -767,6 +770,7 @@ def _delete_item_files(item):
 
 @blueprint.route('/<string:uuid>/delete', methods=['POST'])
 @login_required
+@require_permission('read_write')
 def delete(uuid):
     """Delete an artefact and its file."""
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
@@ -803,6 +807,7 @@ def download(uuid):
 
 @blueprint.route('/<string:uuid>/analyse', methods=['GET', 'POST'])
 @login_required
+@require_permission('read_write')
 def analyse(uuid):
     """Re-run analysis on an artefact, clearing all previous results first."""
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
@@ -862,6 +867,7 @@ def analyse(uuid):
 
 @blueprint.route('/<string:uuid>/compute-hashes', methods=['POST'])
 @login_required
+@require_permission('read_write')
 def compute_hashes_route(uuid):
     """Compute file hashes for an artefact."""
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()

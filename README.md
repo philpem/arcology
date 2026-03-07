@@ -82,10 +82,20 @@ Access at http://localhost:8080 — connect with server `db`, username
 Set a persistent `SECRET_KEY` to avoid losing user sessions on restart:
 
 ```bash
-echo "SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
+python3 -c 'import secrets; print(f"SECRET_KEY={secrets.token_urlsafe(32)}")' >> .env
 ```
 
 If `SECRET_KEY` is not set (or left at the default placeholder), Arcology generates a random key at startup and logs a warning. Sessions will not survive a restart in that case.
+
+### Worker API Key
+
+Workers authenticate to the web API using a pre-shared key. You must generate one and set it on **both** the web and worker containers before starting the stack:
+
+```bash
+python3 -c 'import secrets; print(f"WORKER_API_KEY=wrk_{secrets.token_urlsafe(32)}")' >> .env
+```
+
+Both services read `WORKER_API_KEY` from the `.env` file automatically via Docker Compose. The worker will refuse to start if this variable is not set. Admins can view the configured key in the Admin panel (useful for adding additional workers later).
 
 ### Configuration Options
 
@@ -105,7 +115,10 @@ When an archive contains nested archives (e.g., ZIP within ZIP within ZIP), extr
 
 ```bash
 # Flask configuration
-SECRET_KEY=<your-secret-key>      # Generate with: python3 -c 'import secrets; print(secrets.token_hex(32))'
+SECRET_KEY=<your-secret-key>      # Generate with: python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+
+# Worker authentication (required - set on both web and worker containers)
+WORKER_API_KEY=<your-worker-key>  # Generate with: python3 -c 'import secrets; print(f"wrk_{secrets.token_urlsafe(32)}")'
 
 # Worker configuration (usually auto-configured in Docker)
 ARCOLOGY_API=http://web:5000/api  # API endpoint URL
@@ -150,7 +163,7 @@ arcology/
 │   ├── app.py              # Application factory
 │   ├── database.py         # SQLAlchemy models
 │   ├── extensions.py       # Flask extensions
-│   ├── myapp.cfg           # Configuration
+│   ├── myapp.cfg           # Configuration (optional; env vars take precedence)
 │   ├── blueprints/         # Feature modules
 │   │   ├── dashboard.py    # Homepage
 │   │   ├── items.py        # Item CRUD
