@@ -907,7 +907,8 @@ def _force_read_sector_256(track_bytes: bytes, sector: dict) -> tuple[bytes | No
 # High-level: mastering analysis
 # ---------------------------------------------------------------------------
 
-def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
+def analyse_hfe_mastering(path: Path, scan_count: int = 5,
+                          include_raw_data: bool = False) -> dict:
 	"""Decode sector content of the last scan_count tracks; detect mastering.
 
 	Scans both known mastering formats:
@@ -923,6 +924,11 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 	This finds mastering metadata quickly without reading every data
 	track.  Set MASTERING_SCAN_OPTIMISE = False to always scan a fixed
 	forward window of scan_count tracks.
+
+	When include_raw_data is True each indicator dict will contain a
+	'raw_data' key whose value is the raw sector bytes (bytes object).
+	This is intentionally off by default because the bytes are not
+	JSON-serialisable and would break the worker API pipeline.
 
 	Returns:
 	  hfe_version          str   ('v1', 'v2', 'v3', 'unknown')
@@ -1000,6 +1006,8 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 
 						ind = _try_traceback(data, t_idx, side)
 						if ind:
+							if include_raw_data:
+								ind['raw_data'] = data
 							indicators.append(ind)
 							side_recognised.add(sk)
 							continue
@@ -1035,6 +1043,8 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 							crc_valid=bcd_crc_valid,
 						)
 						if ind:
+							if include_raw_data:
+								ind['raw_data'] = bcd_data
 							indicators.append(ind)
 							side_recognised.add(sk)
 						else:
@@ -1083,7 +1093,7 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 		strings = _extract_strings(data)
 		# Store up to 512 bytes of hex for examination; record actual size.
 		max_hex_bytes = 512
-		indicators.append({
+		_ind = {
 			'type':      'unknown_mastering',
 			'track':     t_idx,
 			'side':      side,
@@ -1092,7 +1102,10 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 			'strings':   strings,
 			'data_hex':  data[:max_hex_bytes].hex(),
 			'truncated': len(data) > max_hex_bytes,
-		})
+		}
+		if include_raw_data:
+			_ind['raw_data'] = data
+		indicators.append(_ind)
 		log.debug("mastering: track %d side %d: unknown single-sector format (%d bytes, %d string(s))", t_idx, side, len(data), len(strings))
 
 	# Deduplicate: if the same mastering data appears on both sides (or on
