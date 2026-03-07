@@ -35,12 +35,14 @@ v1 (HXCPICFE rev 0): no opcodes; 0xFF is plain data.
 v2 (HXCPICFE rev 1): 0xFF is escape; next byte is opcode:
   0xF8 = RAND (weak bits) — followed by a length byte
   others — skip per spec
-v3 (HXCHFEV3):  any byte with high nibble 0xF is an opcode:
-  0xF0 = NOP
-  0xF1 = SETINDEX
-  0xF2 = SETBITRATE  — 1 payload byte
-  0xF3 = SKIPBITS    — 1 payload byte
-  0xF4 = RAND        — 1 payload byte (weak bits)
+v3 (HXCHFEV3):  any byte with LOW nibble 0xF is an opcode (file stores
+                bits LSB-first within each byte; data bytes are bit-reversed
+                before use):
+  0x0F = NOP
+  0x8F = SETINDEX
+  0x4F = SETBITRATE  — 1 payload byte
+  0xCF = SKIPBITS    — 1 payload byte (bits to skip in following byte)
+  0x2F = RAND        — 1 payload byte (weak bits)
 """
 
 import binascii
@@ -73,6 +75,10 @@ _MFM_SYNC = 0x4489   # A1 with missing clock
 # _POWERS8:  weight vector for assembling a uint8 from 8 data bits.
 _POWERS16 = np.array([1 << (15 - i) for i in range(16)], dtype=np.uint32)
 _POWERS8  = np.array([128, 64, 32, 16, 8, 4, 2, 1],      dtype=np.uint16)
+
+# Byte-reversal lookup: _BYTE_REVERSE[b] is byte b with its bits mirrored.
+# Used to convert HFEv3 data bytes from LSB-first to MSB-first order.
+_BYTE_REVERSE = bytes(int(f'{b:08b}'[::-1], 2) for b in range(256))
 
 
 # ---------------------------------------------------------------------------
@@ -203,19 +209,24 @@ def get_track_bytes(f: BinaryIO, track_entry: dict, side: int,
 				clean.append(b)
 				i += 1
 	elif hfe_version == 3:
+		# In HFEv3 data bytes are stored LSB-first within each byte.
+		# Any byte whose LOW nibble is 0xF is an opcode; all others are data.
+		# Opcode values (as stored in the file, before bit-reversal):
+		#   0x0F NOP, 0x8F SETINDEX, 0x4F SETBITRATE (+1 payload),
+		#   0xCF SKIPBITS (+1 payload), 0x2F RAND (+1 payload)
 		while i < n:
 			b = src[i]
-			if (b & 0xF0) == 0xF0:
+			if (b & 0x0F) == 0x0F:
 				opcode = b
-				if opcode == 0xF0:    # NOP
+				if opcode == 0x0F:    # NOP
 					i += 1
-				elif opcode == 0xF1:  # SETINDEX
+				elif opcode == 0x8F:  # SETINDEX
 					i += 1
-				elif opcode == 0xF2:  # SETBITRATE
+				elif opcode == 0x4F:  # SETBITRATE
 					i += 2
-				elif opcode == 0xF3:  # SKIPBITS
+				elif opcode == 0xCF:  # SKIPBITS
 					i += 2
-				elif opcode == 0xF4:  # RAND (weak bits)
+				elif opcode == 0x2F:  # RAND (weak bits)
 					weak_offsets.append(len(clean))
 					i += 2
 				else:
@@ -223,6 +234,8 @@ def get_track_bytes(f: BinaryIO, track_entry: dict, side: int,
 			else:
 				clean.append(b)
 				i += 1
+		# Convert from file's LSB-first bit order to MSB-first for the walker.
+		clean = bytearray(_BYTE_REVERSE[b] for b in clean)
 	else:
 		# v1 or unknown: no opcodes, pass through
 		log.debug("get_track_bytes: side %d → %d bytes, %d weak-bit position(s)",
