@@ -1,0 +1,71 @@
+{% extends "_base.html" %}
+{% block page_title %}Create User{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+	<div class="col-lg-6">
+		<h2>Create User</h2>
+		<div class="card">
+			<div class="card-body">
+				<form method="post">
+					{{ form.hidden_tag() }}
+
+					<div class="mb-3">
+						{{ form.username.label(class="form-label") }}
+						{{ form.username(class="form-control" + (" is-invalid" if form.username.errors else ""), autocomplete="off") }}
+						{% for error in form.username.errors %}
+						<div class="invalid-feedback">{{ error }}</div>
+						{% endfor %}
+					</div>
+
+					<div class="mb-3">
+						{{ form.password.label(class="form-label") }}
+						{{ form.password(class="form-control" + (" is-invalid" if form.password.errors else ""), autocomplete="new-password") }}
+						{% for error in form.password.errors %}
+						<div class="invalid-feedback">{{ error }}</div>
+						{% endfor %}
+						<div class="form-text">Minimum 12 characters.</div>
+					</div>
+
+					<div class="mb-3">
+						{{ form.confirm_password.label(class="form-label") }}
+						{{ form.confirm_password(class="form-control" + (" is-invalid" if form.confirm_password.errors else ""), autocomplete="new-password") }}
+						{% for error in form.confirm_password.errors %}
+						<div class="invalid-feedback">{{ error }}</div>
+						{% endfor %}
+					</div>
+
+					<div class="mb-3">
+						{{ form.permission.label(class="form-label") }}
+						{{ form.permission(class="form-select" + (" is-invalid" if form.permission.errors else "")) }}
+						{% for error in form.permission.errors %}
+						<div class="invalid-feedback">{{ error }}</div>
+						{% endfor %}
+					</div>
+
+					<div class="mb-3">
+						<div class="form-check">
+							{{ form.is_admin(class="form-check-input") }}
+							{{ form.is_admin.label(class="form-check-label") }}
+						</div>
+						<div class="form-text">Grants access to this admin panel and all administrative functions.</div>
+					</div>
+
+					<div class="mb-4">
+						<div class="form-check">
+							{{ form.can_use_api(class="form-check-input") }}
+							{{ form.can_use_api.label(class="form-check-label") }}
+						</div>
+						<div class="form-text">Allows the user to create API keys for programmatic access.</div>
+					</div>
+
+					<div class="d-flex gap-2">
+						<button type="submit" class="btn btn-primary">Create User</button>
+						<a href="{{ url_for('myapp_blueprints_admin.index') }}" class="btn btn-secondary">Cancel</a>
+					</div>
+				</form>
+			</div>
+		</div>
+	</div>
+</div>
+{% endblock %}
