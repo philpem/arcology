@@ -708,6 +708,63 @@ def _delete_artefact_files(artefact):
         current_app.logger.warning(f"Failed to delete file for artefact {artefact.uuid}: {e}")
 
 
+def _delete_item_files(item):
+    """Delete all files associated with an item's artefacts before DB cascade delete.
+
+    For each artefact, removes the stored file (recursing into derived artefacts),
+    analysis output directories, named output files, and cached partition images.
+    Must be called while the ORM relationships are still intact (before db.session.delete).
+    """
+    output_folder = get_output_folder()
+
+    for artefact in item.artefacts:
+        # Collect analysis outputs before we lose the ORM tree.
+        all_analyses = _collect_all_analyses(artefact)
+        output_dirs = [a.output_path for a in all_analyses if a.output_path]
+        output_files = []
+        for analysis in all_analyses:
+            if analysis.details:
+                try:
+                    details = json.loads(analysis.details)
+                    if 'outputs' in details and isinstance(details['outputs'], list):
+                        for output in details['outputs']:
+                            if 'filename' in output:
+                                output_files.append(output['filename'])
+                except (json.JSONDecodeError, Exception) as e:
+                    current_app.logger.warning(f"Failed to parse analysis details during item delete: {e}")
+
+        # Delete stored files for this artefact and all its derived artefacts.
+        _delete_artefact_files(artefact)
+
+        # Remove named output files (e.g., flux visualisation PNGs).
+        for filename in output_files:
+            path = os.path.join(output_folder, filename)
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                    current_app.logger.info(f"Deleted output file: {filename}")
+                except Exception as e:
+                    current_app.logger.warning(f"Failed to delete output file {filename}: {e}")
+
+        # Remove extraction output directories (e.g., extracted disc file trees).
+        for path in output_dirs:
+            if os.path.exists(path):
+                try:
+                    shutil.rmtree(path)
+                    current_app.logger.info(f"Deleted output directory: {path}")
+                except Exception as e:
+                    current_app.logger.warning(f"Failed to delete output directory {path}: {e}")
+
+        # Remove cached decompressed partition images.
+        cache_dir = os.path.join(output_folder, '.cache', artefact.uuid)
+        if os.path.exists(cache_dir):
+            try:
+                shutil.rmtree(cache_dir)
+                current_app.logger.info(f"Deleted partition cache: {cache_dir}")
+            except Exception as e:
+                current_app.logger.warning(f"Failed to delete partition cache {cache_dir}: {e}")
+
+
 @blueprint.route('/<string:uuid>/delete', methods=['POST'])
 @login_required
 def delete(uuid):

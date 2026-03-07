@@ -13,6 +13,7 @@ from sqlalchemy import or_
 
 from ..extensions import db
 from ..database import Item, Platform, Category, Tag, ExternalSystem, ExternalReference
+from .artefacts import _delete_item_files
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -188,10 +189,13 @@ def delete(uuid):
     """Delete an item."""
     item = Item.query.filter_by(uuid=uuid).first_or_404()
     name = item.name
-    
+
+    # Delete all files on disk before the cascade removes DB records.
+    _delete_item_files(item)
+
     db.session.delete(item)
     db.session.commit()
-    
+
     flash(f'Item "{name}" deleted.', 'success')
     return redirect(url_for(f'{ROUTENAME}.index'))
 

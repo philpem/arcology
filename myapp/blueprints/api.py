@@ -16,7 +16,7 @@ from ..database import (
     Partition, ExtractedFile, FilesystemType, Platform, Category, Tag,
     ExternalSystem, ExternalReference, HashDatabase, KnownFile, StorageDirectory
 )
-from .artefacts import get_artefact_path, _delete_artefact_files
+from .artefacts import get_artefact_path, _delete_artefact_files, _delete_item_files
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -130,6 +130,7 @@ def update_item(uuid):
 @blueprint.route('/items/<string:uuid>', methods=['DELETE'])
 def delete_item(uuid):
     item = Item.query.filter_by(uuid=uuid).first_or_404()
+    _delete_item_files(item)
     db.session.delete(item)
     db.session.commit()
     return '', 204
