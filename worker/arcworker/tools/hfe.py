@@ -507,10 +507,14 @@ def _walk_fm_stream(track_bytes: bytes) -> list[dict]:
 	Converts the raw bytes to a bitstream and scans at bit level for FM
 	address-mark patterns (see _walk_fm_bits).
 
-	Tries four combinations of bit order (MSB/LSB-first) and bit-stream
-	step (1 = native density, 2 = FM data captured at MFM sample rate where
-	each FM bit cell occupies 2 HFE sample bits).  Returns whichever
-	combination yields the most sectors.
+	get_track_bytes() normalises all HFE variants to MSB-first before calling
+	here, so only MSB-first is tried.  LSB-first is not a valid state after
+	that normalisation.
+
+	Two step values are still attempted because some HFE files store FM
+	tracks sampled at MFM bit-rate (step=2: each FM bit cell occupies 2 HFE
+	sample bits) while others use native FM density (step=1).  The step that
+	yields more sectors is kept.
 
 	Returns list of sector dicts:
 	  cyl, head, sect, size_code, declared_size
@@ -523,15 +527,14 @@ def _walk_fm_stream(track_bytes: bytes) -> list[dict]:
 	  byte_offset_dam   int or None
 	"""
 	best: list[dict] = []
-	best_lsb_first, best_step = False, 1
-	for lsb_first in (False, True):
-		for step in (1, 2):
-			sectors = _walk_fm_bits(_build_bits(track_bytes, lsb_first=lsb_first, step=step))
-			if len(sectors) > len(best):
-				best = sectors
-				best_lsb_first, best_step = lsb_first, step
+	best_step = 1
+	for step in (1, 2):
+		sectors = _walk_fm_bits(_build_bits(track_bytes, step=step))
+		if len(sectors) > len(best):
+			best = sectors
+			best_step = step
 	for s in best:
-		s['_bits_lsb_first'] = best_lsb_first
+		s['_bits_lsb_first'] = False
 		s['_bits_step'] = best_step
 	return best
 
@@ -683,24 +686,18 @@ def _walk_mfm_stream(track_bytes: bytes) -> list[dict]:
 
 	Converts the raw bytes to a bitstream and scans at bit level for A1
 	sync patterns (0x4489) at any bit-phase alignment (see _walk_mfm_bits).
-	Tries both MSB-first (standard HFEv1/v2 convention) and LSB-first (used
-	by HFEv3 and some other tools) and returns whichever yields more sectors.
+
+	get_track_bytes() normalises all HFE variants to MSB-first before calling
+	here, so only MSB-first is tried.  LSB-first is not a valid state after
+	that normalisation.
 
 	Returns list of sector dicts (same schema as _walk_fm_stream).
 	"""
-	msb_sectors = _walk_mfm_bits(_build_bits(track_bytes))
-	lsb_sectors = _walk_mfm_bits(_build_bits(track_bytes, lsb_first=True))
-	if len(lsb_sectors) > len(msb_sectors):
-		log.debug("_walk_mfm_stream: LSB-first gives more sectors (%d vs %d), using LSB-first",
-		          len(lsb_sectors), len(msb_sectors))
-		for s in lsb_sectors:
-			s['_bits_lsb_first'] = True
-			s['_bits_step'] = 1
-		return lsb_sectors
-	for s in msb_sectors:
+	sectors = _walk_mfm_bits(_build_bits(track_bytes))
+	for s in sectors:
 		s['_bits_lsb_first'] = False
 		s['_bits_step'] = 1
-	return msb_sectors
+	return sectors
 
 
 def walk_track(track_bytes: bytes, encoding: str) -> list[dict]:
