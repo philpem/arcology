@@ -14,9 +14,8 @@
 # To run Adminer (database browser) for debugging, see docker-compose.adminer.yml.
 #
 # For production, create a .env file:
-#   echo "FLASK_ENV=production" >> .env
-#   echo "SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
-#   python3 -c 'import secrets; print(f"WORKER_API_KEY=wrk_{secrets.token_hex(32)}")' >> .env
+#   python3 -c 'import secrets; print(f"SECRET_KEY={secrets.token_urlsafe(32)}")' >> .env
+#   python3 -c 'import secrets; print(f"WORKER_API_KEY=wrk_{secrets.token_urlsafe(32)}")' >> .env
 #
 # WORKER_API_KEY must be the same value in both the web and worker containers.
 #

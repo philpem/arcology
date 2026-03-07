@@ -32,11 +32,19 @@ class AppClass(Flask):
 def create_app(config_name=None):
 	# create and configure the application
 	app = AppClass(__name__)
-	app.config.from_pyfile(config_name or 'myapp.cfg')
+	app.config.from_pyfile(config_name or 'myapp.cfg', silent=True)
 
-	# Load WORKER_API_KEY from environment if not set in config file
-	if not app.config.get('WORKER_API_KEY'):
-		app.config['WORKER_API_KEY'] = os.environ.get('WORKER_API_KEY', '')
+	# Load settings from environment, overriding config file where set
+	for env_key in ('SECRET_KEY', 'SQLALCHEMY_DATABASE_URI', 'WORKER_API_KEY'):
+		env_val = os.environ.get(env_key)
+		if env_val:
+			app.config[env_key] = env_val
+
+	# Warn if no database URI is configured at all
+	if not app.config.get('SQLALCHEMY_DATABASE_URI'):
+		app.logger.warning("SQLALCHEMY_DATABASE_URI is not set — set it in myapp.cfg or as an environment variable")
+
+	# Warn if WORKER_API_KEY is missing
 	if not app.config.get('WORKER_API_KEY'):
 		app.logger.warning("WORKER_API_KEY is not configured — worker API authentication will fail")
 
@@ -44,8 +52,8 @@ def create_app(config_name=None):
 	secret_key = app.config.get('SECRET_KEY', '')
 	if not secret_key or secret_key in ['0123456789ABCDEF', 'CHANGE_ME'] or len(secret_key) < 32:
 		app.logger.warning("!!! SECRET_KEY not set, left at default, or too short - generating random key for this session")
-		app.logger.warning("!!! Sessions will be lost on server restart - set SECRET_KEY in myapp.cfg for persistence")
-		app.config['SECRET_KEY'] = secrets.token_hex(32)
+		app.logger.warning("!!! Sessions will be lost on server restart - set SECRET_KEY in myapp.cfg or as an environment variable")
+		app.config['SECRET_KEY'] = secrets.token_urlsafe(32)
 
 	# Initialise extensions
 	db.init_app(app)

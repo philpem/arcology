@@ -228,7 +228,8 @@ Worker external tools (compiled in worker Dockerfile): Fluxfox (Rust), HxCFE (C)
 - Worker enums in `types.py` must match web app enums in `database.py` - they are separate copies
 - Archive format definitions in `myapp/archive_formats.py` and `worker/arcworker/archive_formats.py` must also be kept in sync
 - The worker Dockerfile multi-stage build compiles several tools from source and is slow to build
-- `SECRET_KEY` auto-generates with a warning if missing, left at the default placeholder, or too short — set it explicitly in `myapp.cfg` or `.env` for persistent sessions
+- `myapp.cfg` is optional — environment variables take precedence and suffice for Docker deployments. `SQLALCHEMY_DATABASE_URI`, `SECRET_KEY`, and `WORKER_API_KEY` are all read from the environment if not set in `myapp.cfg`
+- `SECRET_KEY` auto-generates with a warning if missing, left at the default placeholder, or too short — set it explicitly in `.env` or `myapp.cfg` for persistent sessions
 - Alembic auto-generated migrations need manual review for renames and enum changes
 - **PostgreSQL enum pitfall**: `ALTER TYPE ... ADD VALUE` cannot run inside a transaction. Use `bind.execution_options(isolation_level='AUTOCOMMIT')` in migrations that add enum values — otherwise Alembic stamps the revision as applied but the new value is never persisted (see "Adding values to a PostgreSQL enum" above)
 - Docker entrypoint (`Dentrypoint.sh`) runs `flask db upgrade` and `flask create-admin` on every start (both are idempotent)
