@@ -68,6 +68,12 @@ _FM_DDAM  = 0xF56A   # clock 0xC7, data 0xF8
 # MFM sync word
 _MFM_SYNC = 0x4489   # A1 with missing clock
 
+# Pre-computed power-of-2 arrays shared by the vectorised bit walkers.
+# _POWERS16: weight vector for assembling a uint16 from 16 individual bits.
+# _POWERS8:  weight vector for assembling a uint8 from 8 data bits.
+_POWERS16 = np.array([1 << (15 - i) for i in range(16)], dtype=np.uint32)
+_POWERS8  = np.array([128, 64, 32, 16, 8, 4, 2, 1],      dtype=np.uint16)
+
 
 # ---------------------------------------------------------------------------
 # Low-level: file structure
@@ -164,13 +170,13 @@ def get_track_bytes(f: BinaryIO, track_entry: dict, side: int,
 	f.seek(offset_bytes)
 	raw = f.read(total_bytes)
 
-	# De-interleave: pick the relevant 256-byte half of each 512-byte block
-	side_bytes = bytearray()
-	block_count = (len(raw) + 511) // 512
-	for b in range(block_count):
-		start = b * 512 + (side * 256)
-		chunk = raw[start:start + 256]
-		side_bytes.extend(chunk)
+	# De-interleave: pick the relevant 256-byte half of each 512-byte block.
+	# Pad to a multiple of 512 then reshape to (blocks, 512) and slice the side.
+	raw_arr = np.frombuffer(raw, dtype=np.uint8)
+	pad = (-len(raw_arr)) % 512
+	if pad:
+		raw_arr = np.concatenate([raw_arr, np.zeros(pad, dtype=np.uint8)])
+	side_bytes = raw_arr.reshape(-1, 512)[:, side * 256:(side + 1) * 256].ravel()
 
 	# Strip opcodes and collect weak-bit positions
 	clean = bytearray()
@@ -219,7 +225,9 @@ def get_track_bytes(f: BinaryIO, track_entry: dict, side: int,
 				i += 1
 	else:
 		# v1 or unknown: no opcodes, pass through
-		clean = bytearray(src)
+		log.debug("get_track_bytes: side %d → %d bytes, %d weak-bit position(s)",
+		          side, len(src), 0)
+		return src, []
 
 	log.debug("get_track_bytes: side %d → %d bytes, %d weak-bit position(s)",
 	          side, len(clean), len(weak_offsets))
@@ -335,9 +343,8 @@ def _walk_fm_bits(bits: list[int]) -> list[dict]:
 	# within each 16-bit word, giving the same layout as MFM for bit extraction.
 	events: list[tuple[int, int]] = []
 	if n >= 16:
-		_powers = np.array([1 << (15 - i) for i in range(16)], dtype=np.uint32)
 		windows = np.lib.stride_tricks.sliding_window_view(bits, 16)
-		window_vals = windows @ _powers
+		window_vals = windows @ _POWERS16
 		for am_val, am_byte in ((_FM_IDAM, 0xFE), (_FM_DAM, 0xFB), (_FM_DDAM, 0xF8)):
 			for pos in np.where(window_vals == am_val)[0]:
 				events.append((int(pos) + 16, am_byte))
@@ -354,9 +361,8 @@ def _walk_fm_bits(bits: list[int]) -> list[dict]:
 		end = start + count * 16
 		if end > n:
 			return None, start
-		_bp = np.array([128, 64, 32, 16, 8, 4, 2, 1], dtype=np.uint16)
 		words = bits[start:end].reshape(count, 16)[:, 1::2]
-		return bytes((words @ _bp).astype(np.uint8)), end
+		return bytes((words @ _POWERS8).astype(np.uint8)), end
 
 	sectors: list[dict] = []
 	pending_idam: dict | None = None
@@ -484,9 +490,8 @@ def _walk_mfm_bits(bits: list[int]) -> list[dict]:
 
 	# Vectorised 16-bit sliding window scan for the 0x4489 sync pattern.
 	if n >= 16:
-		_powers = np.array([1 << (15 - i) for i in range(16)], dtype=np.uint32)
 		windows = np.lib.stride_tricks.sliding_window_view(bits, 16)
-		window_vals = windows @ _powers
+		window_vals = windows @ _POWERS16
 		sync_starts: set[int] = set(np.where(window_vals == _MFM_SYNC)[0].tolist())
 	else:
 		sync_starts = set()
@@ -501,13 +506,11 @@ def _walk_mfm_bits(bits: list[int]) -> list[dict]:
 	log.debug("_walk_mfm_bits: %d bits → %d raw syncs, %d triple sync(s)",
 	          n, len(sync_starts), len(triple_data_bits))
 
-	_bp = np.array([128, 64, 32, 16, 8, 4, 2, 1], dtype=np.uint16)
-
 	def _mfm_byte(start: int) -> tuple[int | None, int]:
 		"""Decode one MFM byte: data bits at positions 1,3,5,...,15 of a 16-bit window."""
 		if start + 16 > n:
 			return None, start
-		val = int((bits[start + 1:start + 16:2] * np.array([128, 64, 32, 16, 8, 4, 2, 1], dtype=np.uint8)).sum())
+		val = int(bits[start + 1:start + 16:2] @ _POWERS8)
 		return val, start + 16
 
 	def _mfm_read(start: int, count: int) -> tuple[bytes | None, int]:
@@ -515,7 +518,7 @@ def _walk_mfm_bits(bits: list[int]) -> list[dict]:
 		if end > n:
 			return None, start
 		words = bits[start:end].reshape(count, 16)[:, 1::2]
-		return bytes((words @ _bp).astype(np.uint8)), end
+		return bytes((words @ _POWERS8).astype(np.uint8)), end
 
 	sectors: list[dict] = []
 	pending_idam: dict | None = None
@@ -660,12 +663,15 @@ def _try_traceback(data: bytes, track: int, side: int) -> dict | None:
 	idx = data.find(_TRACEBACK_SIG)
 	if idx < 0:
 		return None
-	# Collect null-separated fields starting after the signature
+	# Collect null-separated fields starting after the signature.
+	# Discard fields that contain no alphanumeric characters (e.g. lone
+	# trademark/copyright symbols that appear immediately after the signature
+	# in some Traceback versions).
 	rest = data[idx + len(_TRACEBACK_SIG):]
 	fields = []
 	for raw_field in rest.split(b'\x00'):
 		text = raw_field.decode('latin-1', errors='replace').strip()
-		if text:
+		if text and any(c.isalnum() for c in text):
 			fields.append(text)
 	return {
 		'type':   'traceback',
@@ -787,10 +793,37 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 						if ind:
 							indicators.append(ind)
 
+	# Deduplicate: if the same mastering data appears on both sides (or on
+	# multiple tracks), keep only one copy.  When two copies differ only in
+	# crc_valid, prefer the valid-CRC copy.
+	deduped: list[dict] = []
+	seen: dict[tuple, int] = {}   # content_key → index in deduped
+
+	for ind in indicators:
+		t = ind['type']
+		if t == 'traceback':
+			key = ('traceback', tuple(ind['fields']))
+		elif t == 'bcd_timestamp_record':
+			key = ('bcd_timestamp_record', ind['timestamp'], ind['text_a'], ind['text_b'])
+		else:
+			key = None
+
+		if key is None:
+			deduped.append(ind)
+		elif key not in seen:
+			seen[key] = len(deduped)
+			deduped.append(ind)
+		else:
+			# Already seen — upgrade to this copy if it has a valid CRC and
+			# the stored copy does not.
+			existing = deduped[seen[key]]
+			if ind.get('crc_valid') and not existing.get('crc_valid'):
+				deduped[seen[key]] = ind
+
 	return {
 		'hfe_version':          header['hfe_version_str'],
 		'trailing_track_count': scanned,
-		'indicators':           indicators,
+		'indicators':           deduped,
 	}
 
 
