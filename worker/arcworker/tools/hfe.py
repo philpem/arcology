@@ -316,14 +316,18 @@ def read_sector_search_size(
 # Mid-level: stream walkers
 # ---------------------------------------------------------------------------
 
-def _build_bits(data: bytes, lsb_first: bool = False) -> np.ndarray:
+def _build_bits(data: bytes, lsb_first: bool = False, step: int = 1) -> np.ndarray:
 	"""Unpack bytes into a flat array of bits.
 
 	lsb_first=False (default): bit 7 (MSB) of each byte is first in time.
 	lsb_first=True:            bit 0 (LSB) of each byte is first in time.
+	step > 1:                  decimate the bit stream (take every step-th bit).
+	                           step=2 recovers FM data captured at MFM sample
+	                           rate, where each FM bit cell occupies 2 HFE bits.
 	"""
 	arr = np.frombuffer(data, dtype=np.uint8)
-	return np.unpackbits(arr, bitorder='little' if lsb_first else 'big')
+	bits = np.unpackbits(arr, bitorder='little' if lsb_first else 'big')
+	return bits[::step] if step > 1 else bits
 
 
 def _walk_fm_bits(bits: list[int]) -> list[dict]:
@@ -451,8 +455,12 @@ def _walk_fm_stream(track_bytes: bytes) -> list[dict]:
 	"""Decode FM bitstream.
 
 	Converts the raw bytes to a bitstream and scans at bit level for FM
-	address-mark patterns (see _walk_fm_bits).  Tries MSB-first byte order
-	first (standard HFE convention), then LSB-first as a fallback.
+	address-mark patterns (see _walk_fm_bits).
+
+	Tries four combinations of bit order (MSB/LSB-first) and bit-stream
+	step (1 = native density, 2 = FM data captured at MFM sample rate where
+	each FM bit cell occupies 2 HFE sample bits).  Returns whichever
+	combination yields the most sectors.
 
 	Returns list of sector dicts:
 	  cyl, head, sect, size_code, declared_size
@@ -464,11 +472,13 @@ def _walk_fm_stream(track_bytes: bytes) -> list[dict]:
 	  byte_offset_idam  int   (approximate bit_pos >> 4)
 	  byte_offset_dam   int or None
 	"""
-	sectors = _walk_fm_bits(_build_bits(track_bytes))
-	if sectors:
-		return sectors
-	log.debug("_walk_fm_stream: no sectors with MSB-first, retrying LSB-first")
-	return _walk_fm_bits(_build_bits(track_bytes, lsb_first=True))
+	best: list[dict] = []
+	for lsb_first in (False, True):
+		for step in (1, 2):
+			sectors = _walk_fm_bits(_build_bits(track_bytes, lsb_first=lsb_first, step=step))
+			if len(sectors) > len(best):
+				best = sectors
+	return best
 
 
 def _walk_mfm_bits(bits: list[int]) -> list[dict]:
@@ -612,17 +622,18 @@ def _walk_mfm_stream(track_bytes: bytes) -> list[dict]:
 
 	Converts the raw bytes to a bitstream and scans at bit level for A1
 	sync patterns (0x4489) at any bit-phase alignment (see _walk_mfm_bits).
-	Tries MSB-first byte order first (standard HFE convention), then
-	LSB-first as a fallback for HFE files produced by tools that invert
-	the bit order within each byte.
+	Tries both MSB-first (standard HFEv1/v2 convention) and LSB-first (used
+	by HFEv3 and some other tools) and returns whichever yields more sectors.
 
 	Returns list of sector dicts (same schema as _walk_fm_stream).
 	"""
-	sectors = _walk_mfm_bits(_build_bits(track_bytes))
-	if sectors:
-		return sectors
-	log.debug("_walk_mfm_stream: no sectors with MSB-first, retrying LSB-first")
-	return _walk_mfm_bits(_build_bits(track_bytes, lsb_first=True))
+	msb_sectors = _walk_mfm_bits(_build_bits(track_bytes))
+	lsb_sectors = _walk_mfm_bits(_build_bits(track_bytes, lsb_first=True))
+	if len(lsb_sectors) > len(msb_sectors):
+		log.debug("_walk_mfm_stream: LSB-first gives more sectors (%d vs %d), using LSB-first",
+		          len(lsb_sectors), len(msb_sectors))
+		return lsb_sectors
+	return msb_sectors
 
 
 def walk_track(track_bytes: bytes, encoding: str) -> list[dict]:
