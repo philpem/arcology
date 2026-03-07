@@ -248,6 +248,18 @@ def main() -> None:
 					print(f"    serial_number={serial!r}")
 					if text_c is not None:
 						print(f"    text_c={text_c!r}")
+				elif itype == 'unknown_mastering':
+					size     = ind.get('size', '?')
+					crc_note = 'CRC OK' if ind.get('crc_valid') else 'BAD CRC'
+					trunc    = ' [truncated]' if ind.get('truncated') else ''
+					strings  = ind.get('strings', [])
+					data_hex = ind.get('data_hex', '')
+					print(f"  [unknown_mastering] track {t} side {s}: "
+					      f"{size}B  {crc_note}")
+					if strings:
+						for s_val in strings:
+							print(f"    string: {s_val!r}")
+					print(f"    hex: {data_hex[:64]}{'...' if len(data_hex) > 64 else ''}{trunc}")
 				else:
 					print(f"  [{itype}] track {t} side {s}")
 		print()

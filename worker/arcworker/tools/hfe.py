@@ -792,6 +792,30 @@ def _try_bcd_timestamp(data: bytes, track: int, side: int,
 
 
 # ---------------------------------------------------------------------------
+# String extraction helper
+# ---------------------------------------------------------------------------
+
+def _extract_strings(data: bytes, min_len: int = 4) -> list[str]:
+	"""Extract runs of printable characters from raw sector data.
+
+	Finds sequences of printable Latin-1 characters (ASCII printable
+	0x20-0x7E plus Latin-1 extended 0xA0-0xFF) of at least min_len
+	chars.  Equivalent to the strings(1) utility.
+	"""
+	results: list[str] = []
+	current: list[str] = []
+	for b in data:
+		if 0x20 <= b <= 0x7E or 0xA0 <= b <= 0xFF:
+			current.append(chr(b))
+		else:
+			if len(current) >= min_len:
+				results.append(''.join(current))
+			current = []
+	if len(current) >= min_len:
+		results.append(''.join(current))
+	return results
+
+# ---------------------------------------------------------------------------
 # BCD timestamp forced-read helper
 # ---------------------------------------------------------------------------
 
@@ -877,6 +901,12 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 
 	indicators: list[dict] = []
 
+	# Per (track, side): list of (data, crc_valid) for unrecognised sectors.
+	# Used after the scan to detect single-sector tracks with unknown format.
+	side_unrecognised: dict[tuple[int, int], list[tuple[bytes, bool]]] = {}
+	# Sides where at least one sector matched a known mastering format.
+	side_recognised: set[tuple[int, int]] = set()
+
 	with open(path, 'rb') as f:
 		for t_idx in range(first_scan, n_tracks):
 			if t_idx >= len(track_list):
@@ -904,9 +934,12 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 						if not data:
 							continue
 
+						sk = (t_idx, side)  # side key for tracking
+
 						ind = _try_traceback(data, t_idx, side)
 						if ind:
 							indicators.append(ind)
+							side_recognised.add(sk)
 							continue
 
 						# For BCD timestamp records the sector may be declared as
@@ -941,6 +974,44 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 						)
 						if ind:
 							indicators.append(ind)
+							side_recognised.add(sk)
+						else:
+							# Sector not matched by any known format.
+							# Record the original (pre-force-read) data; dedup by
+							# content so MFM and FM decoding the same sector only
+							# counts once.
+							side_unrecognised.setdefault(sk, []).append(
+								(data, sector.get('crc_valid', False)))
+
+	# Emit unknown_mastering for sides that yielded exactly one unique
+	# sector with data and had no recognised mastering format.  A track
+	# with multiple sectors is likely a normal data track near the end
+	# of the disc; we ignore those to avoid false positives.
+	for sk, sector_list in side_unrecognised.items():
+		if sk in side_recognised:
+			continue
+		# Deduplicate by data content; last crc_valid for each content wins.
+		unique: dict[bytes, bool] = {}
+		for d, crc in sector_list:
+			unique[d] = crc
+		if len(unique) != 1:
+			continue  # multiple distinct sectors — not a single mastering record
+		data, crc_valid = next(iter(unique.items()))
+		t_idx, side = sk
+		strings = _extract_strings(data)
+		# Store up to 512 bytes of hex for examination; record actual size.
+		max_hex_bytes = 512
+		indicators.append({
+			'type':      'unknown_mastering',
+			'track':     t_idx,
+			'side':      side,
+			'size':      len(data),
+			'crc_valid': crc_valid,
+			'strings':   strings,
+			'data_hex':  data[:max_hex_bytes].hex(),
+			'truncated': len(data) > max_hex_bytes,
+		})
+		log.debug("mastering: track %d side %d: unknown single-sector format (%d bytes, %d string(s))", t_idx, side, len(data), len(strings))
 
 	# Deduplicate: if the same mastering data appears on both sides (or on
 	# multiple tracks), keep only one copy.  When two copies differ only in
@@ -955,6 +1026,8 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 		elif t == 'bcd_timestamp_record':
 			key = ('bcd_timestamp_record', ind['timestamp'],
 			       ind.get('format_code', ''), ind.get('serial_number', ''))
+		elif t == 'unknown_mastering':
+			key = ('unknown_mastering', ind.get('data_hex', ''))
 		else:
 			key = None
 
