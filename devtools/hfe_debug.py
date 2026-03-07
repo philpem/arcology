@@ -233,8 +233,10 @@ def main() -> None:
 					print(f"  [traceback] track {t} side {s}: {fields}")
 				elif itype == 'bcd_timestamp_record':
 					ts       = ind.get('timestamp', '?')
-					text_a   = ind.get('text_a', '')
-					text_b   = ind.get('text_b', '')
+					fmt_code = ind.get('format_code', '')
+					fmt_desc = ind.get('format_description', '')
+					serial   = ind.get('serial_number', '')
+					text_c   = ind.get('text_c')
 					decl     = ind.get('declared_size', '?')
 					actual   = ind.get('actual_size', '?')
 					crc_note = 'CRC OK' if ind.get('crc_valid') else 'BAD CRC'
@@ -242,7 +244,10 @@ def main() -> None:
 					            else f'{decl}→{actual}B [overridden]')
 					print(f"  [bcd_timestamp_record] track {t} side {s}: "
 					      f"{ts}  size={sz_note}  {crc_note}")
-					print(f"    text_a={text_a!r}  text_b={text_b!r}")
+					print(f"    format_code={fmt_code!r}  format_desc={fmt_desc!r}")
+					print(f"    serial_number={serial!r}")
+					if text_c is not None:
+						print(f"    text_c={text_c!r}")
 				else:
 					print(f"  [{itype}] track {t} side {s}")
 		print()

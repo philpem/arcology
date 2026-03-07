@@ -428,14 +428,18 @@ def _walk_fm_bits(bits: list[int]) -> list[dict]:
 			size_was_overridden = False
 
 			if not crc_valid:
+				log.debug("  FM size-search: declared %dB CRC failed; trying alternatives", declared_size)
 				for sz in _VALID_SECTOR_SIZES:
 					if sz == declared_size:
 						continue
 					alt_pc, _ = _fm_read(bit_after, sz + 2)
 					if alt_pc is None:
+						log.debug("  FM size-search: %dB — not enough bits in track", sz)
 						continue
 					stored2 = (alt_pc[sz] << 8) | alt_pc[sz + 1]
-					if binascii.crc_hqx(bytes([am_byte]) + alt_pc[:sz], 0xFFFF) == stored2:
+					alt_ok = (binascii.crc_hqx(bytes([am_byte]) + alt_pc[:sz], 0xFFFF) == stored2)
+					log.debug("  FM size-search: %dB → CRC %s", sz, 'ok' if alt_ok else 'FAIL')
+					if alt_ok:
 						payload, crc_valid = alt_pc[:sz], True
 						size_used, size_was_overridden = sz, True
 						break
@@ -451,6 +455,8 @@ def _walk_fm_bits(bits: list[int]) -> list[dict]:
 				'size_used': size_used,
 				'size_was_overridden': size_was_overridden,
 				'byte_offset_dam': bit_after >> 4,
+				'_data_start_bit': bit_after,
+				'_enc': 'fm',
 			}
 			if pending_idam is not None:
 				pending_idam.update(record)
@@ -486,11 +492,16 @@ def _walk_fm_stream(track_bytes: bytes) -> list[dict]:
 	  byte_offset_dam   int or None
 	"""
 	best: list[dict] = []
+	best_lsb_first, best_step = False, 1
 	for lsb_first in (False, True):
 		for step in (1, 2):
 			sectors = _walk_fm_bits(_build_bits(track_bytes, lsb_first=lsb_first, step=step))
 			if len(sectors) > len(best):
 				best = sectors
+				best_lsb_first, best_step = lsb_first, step
+	for s in best:
+		s['_bits_lsb_first'] = best_lsb_first
+		s['_bits_step'] = best_step
 	return best
 
 
@@ -594,14 +605,18 @@ def _walk_mfm_bits(bits: list[int]) -> list[dict]:
 			size_was_overridden = False
 
 			if not crc_valid:
+				log.debug("  MFM size-search: declared %dB CRC failed; trying alternatives", declared_size)
 				for sz in _VALID_SECTOR_SIZES:
 					if sz == declared_size:
 						continue
 					alt_pc, _ = _mfm_read(pos, sz + 2)
 					if alt_pc is None:
+						log.debug("  MFM size-search: %dB — not enough bits in track", sz)
 						continue
 					stored2 = (alt_pc[sz] << 8) | alt_pc[sz + 1]
-					if binascii.crc_hqx(b'\xA1\xA1\xA1' + bytes([mark]) + alt_pc[:sz], 0xFFFF) == stored2:
+					alt_ok = (binascii.crc_hqx(b'\xA1\xA1\xA1' + bytes([mark]) + alt_pc[:sz], 0xFFFF) == stored2)
+					log.debug("  MFM size-search: %dB → CRC %s", sz, 'ok' if alt_ok else 'FAIL')
+					if alt_ok:
 						payload, crc_valid = alt_pc[:sz], True
 						size_used, size_was_overridden = sz, True
 						break
@@ -617,6 +632,8 @@ def _walk_mfm_bits(bits: list[int]) -> list[dict]:
 				'size_used': size_used,
 				'size_was_overridden': size_was_overridden,
 				'byte_offset_dam': data_bit >> 3,
+				'_data_start_bit': pos,
+				'_enc': 'mfm',
 			}
 			if pending_idam is not None:
 				pending_idam.update(record)
@@ -645,7 +662,13 @@ def _walk_mfm_stream(track_bytes: bytes) -> list[dict]:
 	if len(lsb_sectors) > len(msb_sectors):
 		log.debug("_walk_mfm_stream: LSB-first gives more sectors (%d vs %d), using LSB-first",
 		          len(lsb_sectors), len(msb_sectors))
+		for s in lsb_sectors:
+			s['_bits_lsb_first'] = True
+			s['_bits_step'] = 1
 		return lsb_sectors
+	for s in msb_sectors:
+		s['_bits_lsb_first'] = False
+		s['_bits_step'] = 1
 	return msb_sectors
 
 
@@ -710,7 +733,16 @@ def _try_traceback(data: bytes, track: int, side: int) -> dict | None:
 def _try_bcd_timestamp(data: bytes, track: int, side: int,
                        declared_size: int, size_used: int,
                        size_was_overridden: bool, crc_valid: bool) -> dict | None:
-	"""Return a bcd_timestamp_record indicator if the format matches."""
+	"""Return a bcd_timestamp_record indicator if the format matches.
+
+	Field layout (offsets in the sector data):
+	  0x00-0x04  signature (5 bytes: \x01\x02\x03\x04\x05)
+	  0x0E-0x13  BCD timestamp (year, month, day, hour, minute, second)
+	  0x17-0x26  format_code (16 bytes, space-padded)
+	  0x27-0x56  format_description (48 bytes, space-padded, null-terminated)
+	  0x5B-0x62  serial_number (8 bytes)
+	  0x82-0xB1  text_c (48 bytes, space-padded, null-terminated; 256-byte record only)
+	"""
 	if len(data) < _BCD_TS_MIN_SIZE:
 		return None
 	if data[0:5] != _BCD_TS_SIG:
@@ -725,13 +757,19 @@ def _try_bcd_timestamp(data: bytes, track: int, side: int,
 
 	timestamp = f"{year:02d}-{month:02d}-{day:02d} {hour:02d}:{minute:02d}:{second:02d}"
 
-	text_a_raw = data[23:23 + 64]
-	text_a = text_a_raw.split(b'\x00')[0].decode('latin-1', errors='replace')
+	# text_a is two sub-fields: 16-byte space-padded format code followed
+	# by 48-byte space-padded, null-terminated format description.
+	format_code_raw = data[0x17:0x27]
+	format_code = format_code_raw.rstrip(b' \x00').decode('latin-1', errors='replace')
 
-	text_b_raw = data[0x5B:0x5B + 8]
-	text_b = text_b_raw.decode('latin-1', errors='replace').rstrip()
+	format_desc_raw = data[0x27:0x57]
+	format_description = format_desc_raw.split(b'\x00')[0].decode('latin-1', errors='replace').rstrip()
 
-	return {
+	# text_b is a machine serial number (8 bytes)
+	serial_number_raw = data[0x5B:0x5B + 8]
+	serial_number = serial_number_raw.decode('latin-1', errors='replace').rstrip()
+
+	result = {
 		'type':               'bcd_timestamp_record',
 		'track':              track,
 		'side':               side,
@@ -740,10 +778,76 @@ def _try_bcd_timestamp(data: bytes, track: int, side: int,
 		'size_was_overridden': size_was_overridden,
 		'crc_valid':          crc_valid,
 		'timestamp':          timestamp,
-		'text_a':             text_a,
-		'text_b':             text_b,
+		'format_code':        format_code,
+		'format_description': format_description,
+		'serial_number':      serial_number,
 	}
 
+	# Extended fields present in 256-byte record
+	if len(data) >= 0x82 + 48:
+		text_c_raw = data[0x82:0x82 + 48]
+		result['text_c'] = text_c_raw.split(b'\x00')[0].decode('latin-1', errors='replace').rstrip()
+
+	return result
+
+
+# ---------------------------------------------------------------------------
+# BCD timestamp forced-read helper
+# ---------------------------------------------------------------------------
+
+def _force_read_sector_256(track_bytes: bytes, sector: dict) -> tuple[bytes | None, bool]:
+	"""Re-decode exactly 256 bytes from a sector's data-start bit position.
+
+	Used by the mastering scanner to force a 256-byte read for BCD timestamp
+	records when the IDAM declares a smaller sector size or the CRC fails at
+	256 bytes.  The sector dict must contain the '_data_start_bit',
+	'_enc', '_bits_lsb_first', and '_bits_step' fields added by the walkers.
+
+	Returns (data_256, crc_valid).  Returns (None, False) when the sector
+	meta-data is missing or there are not enough track bits to decode 256 bytes.
+	"""
+	data_start_bit = sector.get('_data_start_bit')
+	if data_start_bit is None:
+		return None, False
+
+	lsb_first = sector.get('_bits_lsb_first', False)
+	step      = sector.get('_bits_step', 1)
+	enc       = sector.get('_enc', 'mfm')
+
+	bits = _build_bits(track_bytes, lsb_first=lsb_first, step=step)
+
+	# Decode 256 data bytes (each decoded byte = 16 bits; data at odd positions)
+	n   = 256
+	end = data_start_bit + n * 16
+	if end > len(bits):
+		log.debug("_force_read_sector_256: not enough bits (need %d, have %d from pos %d)",
+		          end, len(bits), data_start_bit)
+		return None, False
+	words    = bits[data_start_bit:end].reshape(n, 16)[:, 1::2]
+	data_256 = bytes((words @ _POWERS8).astype(np.uint8))
+
+	# Recover the mark byte (one decoded byte = 16 bits before data start)
+	mark_start = data_start_bit - 16
+	if mark_start >= 0:
+		mk = bits[mark_start:data_start_bit].reshape(1, 16)[:, 1::2]
+		mark_byte = int((mk @ _POWERS8).astype(np.uint8)[0])
+	else:
+		mark_byte = 0xFB  # fallback: assume normal DAM
+
+	# Decode and verify the 2 CRC bytes that follow the data
+	if end + 32 > len(bits):
+		return data_256, False
+	crc_words  = bits[end:end + 32].reshape(2, 16)[:, 1::2]
+	crc_bytes  = (crc_words @ _POWERS8).astype(np.uint8)
+	stored_crc = (int(crc_bytes[0]) << 8) | int(crc_bytes[1])
+
+	if enc == 'fm':
+		crc_input = bytes([mark_byte]) + data_256
+	else:
+		crc_input = b'\xA1\xA1\xA1' + bytes([mark_byte]) + data_256
+
+	crc_valid = (binascii.crc_hqx(crc_input, 0xFFFF) == stored_crc)
+	return data_256, crc_valid
 
 # ---------------------------------------------------------------------------
 # High-level: mastering analysis
@@ -805,12 +909,35 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 							indicators.append(ind)
 							continue
 
+						# For BCD timestamp records the sector may be declared as
+						# smaller than 256 bytes (e.g. N=0 → 128B) yet the actual
+						# record is always 256 bytes.  Force a 256-byte re-read
+						# even when the CRC at that size fails.
+						bcd_data          = data
+						bcd_crc_valid     = sector.get('crc_valid', False)
+						bcd_size_used     = sector.get('size_used', sector.get('declared_size', 0))
+						bcd_was_overridden = sector.get('size_was_overridden', False)
+
+						if (len(data) >= 5 and data[0:5] == _BCD_TS_SIG
+								and len(data) < 256 and '_data_start_bit' in sector):
+							forced, forced_crc = _force_read_sector_256(track_bytes, sector)
+							if forced is not None:
+								log.debug(
+									"mastering: BCD sector track %d side %d: "
+									"forced 256-byte read (was %d bytes, crc=%s)",
+									t_idx, side, len(data), 'ok' if forced_crc else 'FAIL')
+								bcd_data           = forced
+								bcd_crc_valid      = forced_crc
+								bcd_size_used      = 256
+								bcd_was_overridden = (sector.get('size_used',
+														  sector.get('declared_size', 0)) != 256)
+
 						ind = _try_bcd_timestamp(
-							data, t_idx, side,
+							bcd_data, t_idx, side,
 							declared_size=sector['declared_size'],
-							size_used=sector['size_used'],
-							size_was_overridden=sector['size_was_overridden'],
-							crc_valid=sector['crc_valid'],
+							size_used=bcd_size_used,
+							size_was_overridden=bcd_was_overridden,
+							crc_valid=bcd_crc_valid,
 						)
 						if ind:
 							indicators.append(ind)
@@ -826,7 +953,8 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 		if t == 'traceback':
 			key = ('traceback', tuple(ind['fields']))
 		elif t == 'bcd_timestamp_record':
-			key = ('bcd_timestamp_record', ind['timestamp'], ind['text_a'], ind['text_b'])
+			key = ('bcd_timestamp_record', ind['timestamp'],
+			       ind.get('format_code', ''), ind.get('serial_number', ''))
 		else:
 			key = None
 
