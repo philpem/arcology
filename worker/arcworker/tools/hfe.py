@@ -43,28 +43,15 @@ v3 (HXCHFEV3):  any byte with high nibble 0xF is an opcode:
   0xF4 = RAND        — 1 payload byte (weak bits)
 """
 
+import binascii
 import logging
 import struct
 from pathlib import Path
 from typing import BinaryIO
 
+import numpy as np
+
 log = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# CRC-CCITT (IBM floppy variant): poly 0x1021, init 0xFFFF
-# ---------------------------------------------------------------------------
-
-def _crc16(data: bytes) -> int:
-	crc = 0xFFFF
-	for byte in data:
-		crc ^= byte << 8
-		for _ in range(8):
-			if crc & 0x8000:
-				crc = (crc << 1) ^ 0x1021
-			else:
-				crc <<= 1
-			crc &= 0xFFFF
-	return crc
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +268,7 @@ def read_sector_search_size(
 			crc_input = track_bytes[dam_offset - 1:dam_offset + size]
 		else:
 			crc_input = payload
-		computed = _crc16(crc_input)
+		computed = binascii.crc_hqx(crc_input, 0xFFFF)
 		return payload, (computed == stored_crc)
 
 	payload, ok = _try(declared_size)
@@ -321,32 +308,14 @@ def read_sector_search_size(
 # Mid-level: stream walkers
 # ---------------------------------------------------------------------------
 
-def _decode_fm_byte(raw16: int) -> int:
-	"""Extract the 8 data bits from a 16-bit FM clock+data word."""
-	data = 0
-	for i in range(8):
-		# Bit positions: clock at bit 15,13,11,... data at bit 14,12,10,...
-		shift = 14 - (i * 2)
-		data = (data << 1) | ((raw16 >> shift) & 1)
-	return data
-
-
-def _build_bits(data: bytes, lsb_first: bool = False) -> list[int]:
-	"""Unpack bytes into a flat list of bits.
+def _build_bits(data: bytes, lsb_first: bool = False) -> np.ndarray:
+	"""Unpack bytes into a flat array of bits.
 
 	lsb_first=False (default): bit 7 (MSB) of each byte is first in time.
 	lsb_first=True:            bit 0 (LSB) of each byte is first in time.
 	"""
-	bits: list[int] = []
-	if lsb_first:
-		for b in data:
-			for shift in range(8):
-				bits.append((b >> shift) & 1)
-	else:
-		for b in data:
-			for shift in range(7, -1, -1):
-				bits.append((b >> shift) & 1)
-	return bits
+	arr = np.frombuffer(data, dtype=np.uint8)
+	return np.unpackbits(arr, bitorder='little' if lsb_first else 'big')
 
 
 def _walk_fm_bits(bits: list[int]) -> list[dict]:
@@ -361,40 +330,33 @@ def _walk_fm_bits(bits: list[int]) -> list[dict]:
 	"""
 	n = len(bits)
 
-	# Collect all address-mark events: (bit_pos_after_am, decoded_data_byte)
-	window = 0
+	# Vectorised 16-bit sliding window scan for FM address marks.
+	# FM clock bits are at even positions (0,2,...,14); data bits at odd (1,3,...,15)
+	# within each 16-bit word, giving the same layout as MFM for bit extraction.
 	events: list[tuple[int, int]] = []
-	for i, b in enumerate(bits):
-		window = ((window << 1) | b) & 0xFFFF
-		if i >= 15:
-			bit_after = i + 1
-			if window == _FM_IDAM:
-				events.append((bit_after, 0xFE))
-			elif window == _FM_DAM:
-				events.append((bit_after, 0xFB))
-			elif window == _FM_DDAM:
-				events.append((bit_after, 0xF8))
+	if n >= 16:
+		_powers = np.array([1 << (15 - i) for i in range(16)], dtype=np.uint32)
+		windows = np.lib.stride_tricks.sliding_window_view(bits, 16)
+		window_vals = windows @ _powers
+		for am_val, am_byte in ((_FM_IDAM, 0xFE), (_FM_DAM, 0xFB), (_FM_DDAM, 0xF8)):
+			for pos in np.where(window_vals == am_val)[0]:
+				events.append((int(pos) + 16, am_byte))
+		events.sort()
 
 	log.debug("_walk_fm_bits: %d bits → %d FM address mark(s)", n, len(events))
 
-	def _fm_byte(start: int) -> tuple[int | None, int]:
-		"""Decode one FM byte from bit position start (16 raw bits → 8 data bits)."""
-		if start + 16 > n:
-			return None, start
-		raw16 = 0
-		for bit in bits[start:start + 16]:
-			raw16 = (raw16 << 1) | bit
-		return _decode_fm_byte(raw16), start + 16
-
 	def _fm_read(start: int, count: int) -> tuple[bytes | None, int]:
-		buf = bytearray()
-		pos = start
-		for _ in range(count):
-			b, pos = _fm_byte(pos)
-			if b is None:
-				return None, start
-			buf.append(b)
-		return bytes(buf), pos
+		"""Decode count FM bytes from bit position start.
+
+		FM data bits are at odd positions within each 16-bit clock+data word
+		(positions 1,3,5,...,15), identical layout to MFM.
+		"""
+		end = start + count * 16
+		if end > n:
+			return None, start
+		_bp = np.array([128, 64, 32, 16, 8, 4, 2, 1], dtype=np.uint16)
+		words = bits[start:end].reshape(count, 16)[:, 1::2]
+		return bytes((words @ _bp).astype(np.uint8)), end
 
 	sectors: list[dict] = []
 	pending_idam: dict | None = None
@@ -409,7 +371,7 @@ def _walk_fm_bits(bits: list[int]) -> list[dict]:
 			declared_size = 128 << size_code
 			# FM IDAM CRC covers: FE C H R N (no A1 sync prefix for FM)
 			stored_crc  = (tail[4] << 8) | tail[5]
-			idam_crc_ok = (_crc16(bytes([0xFE]) + tail[:4]) == stored_crc)
+			idam_crc_ok = (binascii.crc_hqx(bytes([0xFE]) + tail[:4], 0xFFFF) == stored_crc)
 			log.debug("  FM IDAM @bit%d: C=%d H=%d R=%d N=%d idam_crc=%s",
 			          bit_after, cyl, head, sect, size_code,
 			          'ok' if idam_crc_ok else 'FAIL')
@@ -436,7 +398,7 @@ def _walk_fm_bits(bits: list[int]) -> list[dict]:
 			if p_and_crc is not None:
 				stored  = (p_and_crc[declared_size] << 8) | p_and_crc[declared_size + 1]
 				payload = p_and_crc[:declared_size]
-				crc_valid = (_crc16(bytes([am_byte]) + payload) == stored)
+				crc_valid = (binascii.crc_hqx(bytes([am_byte]) + payload, 0xFFFF) == stored)
 			else:
 				payload, crc_valid = b'', False
 			size_used         = declared_size
@@ -450,7 +412,7 @@ def _walk_fm_bits(bits: list[int]) -> list[dict]:
 					if alt_pc is None:
 						continue
 					stored2 = (alt_pc[sz] << 8) | alt_pc[sz + 1]
-					if _crc16(bytes([am_byte]) + alt_pc[:sz]) == stored2:
+					if binascii.crc_hqx(bytes([am_byte]) + alt_pc[:sz], 0xFFFF) == stored2:
 						payload, crc_valid = alt_pc[:sz], True
 						size_used, size_was_overridden = sz, True
 						break
@@ -520,13 +482,14 @@ def _walk_mfm_bits(bits: list[int]) -> list[dict]:
 	"""
 	n = len(bits)
 
-	# Find every bit position where the 16-bit sliding window == 0x4489.
-	window = 0
-	sync_starts: set[int] = set()
-	for i, b in enumerate(bits):
-		window = ((window << 1) | b) & 0xFFFF
-		if i >= 15 and window == 0x4489:
-			sync_starts.add(i - 15)
+	# Vectorised 16-bit sliding window scan for the 0x4489 sync pattern.
+	if n >= 16:
+		_powers = np.array([1 << (15 - i) for i in range(16)], dtype=np.uint32)
+		windows = np.lib.stride_tricks.sliding_window_view(bits, 16)
+		window_vals = windows @ _powers
+		sync_starts: set[int] = set(np.where(window_vals == _MFM_SYNC)[0].tolist())
+	else:
+		sync_starts = set()
 
 	# Triple sync: three consecutive syncs at offsets 0, 16, 32 bits.
 	# The address mark (or IAM) byte starts at offset 48 from the first sync.
@@ -538,24 +501,21 @@ def _walk_mfm_bits(bits: list[int]) -> list[dict]:
 	log.debug("_walk_mfm_bits: %d bits → %d raw syncs, %d triple sync(s)",
 	          n, len(sync_starts), len(triple_data_bits))
 
+	_bp = np.array([128, 64, 32, 16, 8, 4, 2, 1], dtype=np.uint16)
+
 	def _mfm_byte(start: int) -> tuple[int | None, int]:
 		"""Decode one MFM byte: data bits at positions 1,3,5,...,15 of a 16-bit window."""
 		if start + 16 > n:
 			return None, start
-		val = 0
-		for i in range(8):
-			val = (val << 1) | bits[start + 1 + i * 2]
+		val = int((bits[start + 1:start + 16:2] * np.array([128, 64, 32, 16, 8, 4, 2, 1], dtype=np.uint8)).sum())
 		return val, start + 16
 
 	def _mfm_read(start: int, count: int) -> tuple[bytes | None, int]:
-		buf = bytearray()
-		pos = start
-		for _ in range(count):
-			b, pos = _mfm_byte(pos)
-			if b is None:
-				return None, start
-			buf.append(b)
-		return bytes(buf), pos
+		end = start + count * 16
+		if end > n:
+			return None, start
+		words = bits[start:end].reshape(count, 16)[:, 1::2]
+		return bytes((words @ _bp).astype(np.uint8)), end
 
 	sectors: list[dict] = []
 	pending_idam: dict | None = None
@@ -574,7 +534,7 @@ def _walk_mfm_bits(bits: list[int]) -> list[dict]:
 			declared_size = 128 << size_code
 			# MFM IDAM CRC covers: A1 A1 A1 FE C H R N
 			stored_crc    = (tail[4] << 8) | tail[5]
-			idam_crc_ok   = (_crc16(b'\xA1\xA1\xA1\xFE' + tail[:4]) == stored_crc)
+			idam_crc_ok   = (binascii.crc_hqx(b'\xA1\xA1\xA1\xFE' + tail[:4], 0xFFFF) == stored_crc)
 			log.debug("  MFM IDAM @bit%d: C=%d H=%d R=%d N=%d idam_crc=%s",
 			          data_bit, cyl, head, sect, size_code,
 			          'ok' if idam_crc_ok else 'FAIL')
@@ -601,7 +561,7 @@ def _walk_mfm_bits(bits: list[int]) -> list[dict]:
 			if p_and_crc is not None:
 				stored    = (p_and_crc[declared_size] << 8) | p_and_crc[declared_size + 1]
 				payload   = p_and_crc[:declared_size]
-				crc_valid = (_crc16(b'\xA1\xA1\xA1' + bytes([mark]) + payload) == stored)
+				crc_valid = (binascii.crc_hqx(b'\xA1\xA1\xA1' + bytes([mark]) + payload, 0xFFFF) == stored)
 			else:
 				payload, crc_valid = b'', False
 			size_used          = declared_size
@@ -615,7 +575,7 @@ def _walk_mfm_bits(bits: list[int]) -> list[dict]:
 					if alt_pc is None:
 						continue
 					stored2 = (alt_pc[sz] << 8) | alt_pc[sz + 1]
-					if _crc16(b'\xA1\xA1\xA1' + bytes([mark]) + alt_pc[:sz]) == stored2:
+					if binascii.crc_hqx(b'\xA1\xA1\xA1' + bytes([mark]) + alt_pc[:sz], 0xFFFF) == stored2:
 						payload, crc_valid = alt_pc[:sz], True
 						size_used, size_was_overridden = sz, True
 						break
