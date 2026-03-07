@@ -5,7 +5,7 @@ RESTful API for external integrations.
 """
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request, current_app, send_file
 from flask_wtf.csrf import CSRFProtect
 from sqlalchemy import update
@@ -256,7 +256,7 @@ def update_analysis(id):
             update(Analysis)
             .where(Analysis.id == id)
             .where(Analysis.status == AnalysisStatus.PENDING)
-            .values(status=AnalysisStatus.RUNNING, started_at=datetime.utcnow())
+            .values(status=AnalysisStatus.RUNNING, started_at=datetime.now(timezone.utc))
         )
         db.session.commit()
 
@@ -282,9 +282,9 @@ def update_analysis(id):
             setattr(analysis, field, data[field])
 
     if data.get('status') == 'running' and not analysis.started_at:
-        analysis.started_at = datetime.utcnow()
+        analysis.started_at = datetime.now(timezone.utc)
     if data.get('status') in ('completed', 'failed'):
-        analysis.completed_at = datetime.utcnow()
+        analysis.completed_at = datetime.now(timezone.utc)
 
     db.session.commit()
     return jsonify(analysis_to_dict(analysis))

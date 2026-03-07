@@ -4,7 +4,7 @@ Arcology Database Models
 Models for the digital artefact catalogue system.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 import uuid as uuid_module
 from sqlalchemy import (
@@ -196,7 +196,7 @@ class ExternalReference(db.Model):
     external_id: Mapped[str] = mapped_column(String(200), index=True)
     external_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     item: Mapped["Item"] = relationship(back_populates="external_references")
     system: Mapped["ExternalSystem"] = relationship(back_populates="references")
@@ -270,8 +270,8 @@ class Item(db.Model):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     platform_id: Mapped[Optional[int]] = mapped_column(ForeignKey("platforms.id"), index=True, nullable=True)
     category_id: Mapped[Optional[int]] = mapped_column(ForeignKey("categories.id"), index=True, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     platform: Mapped[Optional["Platform"]] = relationship(back_populates="items")
     category: Mapped[Optional["Category"]] = relationship(back_populates="items")
@@ -323,8 +323,8 @@ class Artefact(db.Model):
         ForeignKey("analyses.id"), index=True, nullable=True
     )
     
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     item: Mapped["Item"] = relationship(back_populates="artefacts")
     analyses: Mapped[list["Analysis"]] = relationship(
@@ -374,7 +374,7 @@ class Analysis(db.Model):
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
@@ -416,7 +416,7 @@ class Partition(db.Model):
     total_bytes: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     unique_files: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     detection_details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON from partition detection (sfdisk, etc.)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     artefact: Mapped["Artefact"] = relationship(back_populates="partitions")
     files: Mapped[list["ExtractedFile"]] = relationship(back_populates="partition", cascade="all, delete-orphan")
@@ -485,8 +485,8 @@ class HashDatabase(db.Model):
     version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     platform_id: Mapped[Optional[int]] = mapped_column(ForeignKey("platforms.id"), nullable=True)
     file_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     platform: Mapped[Optional["Platform"]] = relationship()
     known_files: Mapped[list["KnownFile"]] = relationship(back_populates="database", cascade="all, delete-orphan")
