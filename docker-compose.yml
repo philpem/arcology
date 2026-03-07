@@ -16,6 +16,9 @@
 # For production, create a .env file:
 #   echo "FLASK_ENV=production" >> .env
 #   echo "SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
+#   echo "WORKER_API_KEY=$(python3 -c 'import secrets; print(\"wrk_\" + secrets.token_hex(32))')" >> .env
+#
+# WORKER_API_KEY must be the same value in both the web and worker containers.
 #
 # Note: Building the worker image takes a long time due to compiling
 # HxCFE, Fluxfox (Rust), and optionally DiscImageManager (Lazarus).
@@ -66,6 +69,7 @@ services:
       - POLL_INTERVAL=10
       - LOG_LEVEL=INFO
       - MAX_ARCHIVE_DEPTH=10  # Maximum recursion depth for nested archives
+      - WORKER_API_KEY=${WORKER_API_KEY}
     restart: unless-stopped
     deploy:
       # Default to 1 replica, override with --scale worker=N

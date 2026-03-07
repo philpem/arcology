@@ -17,14 +17,15 @@ This script is the entry point. The actual implementation is in the
 arcworker package which provides a modular, maintainable structure.
 """
 
-from arcworker import AnalysisWorker, ARCOLOGY_API, UPLOAD_DIR, OUTPUT_DIR
+from arcworker import AnalysisWorker, ARCOLOGY_API, UPLOAD_DIR, OUTPUT_DIR, WORKER_API_KEY
 
 
 def main():
     worker = AnalysisWorker(
         api_url=ARCOLOGY_API,
         upload_dir=UPLOAD_DIR,
-        output_dir=OUTPUT_DIR
+        output_dir=OUTPUT_DIR,
+        api_key=WORKER_API_KEY
     )
     worker.run()
 

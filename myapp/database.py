@@ -6,6 +6,8 @@ Models for the digital artefact catalogue system.
 
 from datetime import datetime, timezone
 from typing import Optional
+import hashlib
+import os
 import uuid as uuid_module
 from sqlalchemy import (
     Column, ForeignKey, Sequence, Text, BigInteger, Index, Table
@@ -26,6 +28,26 @@ def generate_uuid() -> str:
 # =============================================================================
 # Enums
 # =============================================================================
+
+class UserPermission(enum.Enum):
+    """Permission level for a web UI user. Controls all actions in both the web UI and the API."""
+    READ_ONLY  = "read_only"   # View everything; no modifications
+    READ_WRITE = "read_write"  # Full CRUD access
+
+
+class ApiKeyPermission(enum.Enum):
+    """Permission level for an application API key."""
+    READ_ONLY   = "read_only"    # GET requests only
+    READ_UPLOAD = "read_upload"  # GET + create items/artefacts/analysis (no DELETE or PUT-to-update)
+    READ_WRITE  = "read_write"   # Full access (GET + POST + PUT + DELETE)
+
+
+_API_KEY_PERMISSION_ORDER = [
+    ApiKeyPermission.READ_ONLY,
+    ApiKeyPermission.READ_UPLOAD,
+    ApiKeyPermission.READ_WRITE,
+]
+
 
 class ArtefactType(enum.Enum):
     """Types of digital artefacts - auto-detected or manually specified."""
@@ -138,9 +160,14 @@ item_tags = Table(
 
 class User(db.Model):
     __tablename__ = 'user'
-    id = Column(Integer, Sequence('user_id_seq'), primary_key=True)
-    username = Column(String(50), nullable=False, unique=True)
+    id            = Column(Integer, Sequence('user_id_seq'), primary_key=True)
+    username      = Column(String(50), nullable=False, unique=True)
     password_hash = Column(String(72), nullable=False)
+    is_admin      = Column(Boolean, nullable=False, default=False)
+    permission    = Column(SQLEnum(UserPermission), nullable=False, default=UserPermission.READ_WRITE)
+    can_use_api   = Column(Boolean, nullable=False, default=False)
+
+    api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
     def is_authenticated(self):
         return True
@@ -155,6 +182,10 @@ class User(db.Model):
         if self.id is not None:
             return str(self.id)
 
+    def has_permission(self, required: UserPermission) -> bool:
+        order = [UserPermission.READ_ONLY, UserPermission.READ_WRITE]
+        return order.index(self.permission) >= order.index(required)
+
     def setPassword(self, password):
         self.password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
@@ -163,6 +194,52 @@ class User(db.Model):
             return bcrypt.checkpw(password.encode('utf-8'), self.password_hash.encode('utf-8'))
         except (ValueError, TypeError):
             return False
+
+
+class ApiKey(db.Model):
+    """An application key granting programmatic access to the REST API."""
+    __tablename__ = 'api_keys'
+
+    id:           Mapped[int]                  = mapped_column(primary_key=True)
+    user_id:      Mapped[int]                  = mapped_column(ForeignKey("user.id"), index=True)
+    name:         Mapped[str]                  = mapped_column(String(100))
+    key_prefix:   Mapped[str]                  = mapped_column(String(8))   # First 8 hex chars; display only
+    key_hash:     Mapped[str]                  = mapped_column(String(64), unique=True, index=True)
+    permission:   Mapped[ApiKeyPermission]     = mapped_column(SQLEnum(ApiKeyPermission))
+    is_active:    Mapped[bool]                 = mapped_column(Boolean, default=True)
+    created_at:   Mapped[datetime]             = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_used_at: Mapped[Optional[datetime]]   = mapped_column(DateTime, nullable=True)
+
+    user: Mapped["User"] = relationship(back_populates="api_keys")
+
+    def effective_permission(self) -> ApiKeyPermission:
+        """Return the key's permission capped by the owning user's permission."""
+        if self.user.permission == UserPermission.READ_ONLY:
+            return ApiKeyPermission.READ_ONLY
+        return self.permission
+
+    @classmethod
+    def create(cls, user_id: int, name: str, permission: ApiKeyPermission) -> tuple["ApiKey", str]:
+        """
+        Create a new ApiKey.  Returns (key_object, raw_key).
+        The raw_key is shown to the user exactly once; only the SHA-256 hash is stored.
+        """
+        raw    = f"arc_{os.urandom(32).hex()}"
+        prefix = raw[4:12]
+        digest = hashlib.sha256(raw.encode()).hexdigest()
+        return cls(user_id=user_id, name=name, key_prefix=prefix,
+                   key_hash=digest, permission=permission), raw
+
+    @classmethod
+    def verify(cls, raw_key: str) -> Optional["ApiKey"]:
+        """
+        Look up an active key by its raw value.
+        Returns the ApiKey, or None if missing/invalid/inactive.
+        """
+        if not raw_key or not raw_key.startswith('arc_'):
+            return None
+        digest = hashlib.sha256(raw_key.encode()).hexdigest()
+        return cls.query.filter_by(key_hash=digest, is_active=True).first()
 
 
 # =============================================================================

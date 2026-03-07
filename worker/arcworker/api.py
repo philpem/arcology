@@ -20,7 +20,7 @@ from .tools import compute_file_hash
 class ArcologyAPI:
     """Client for the Arcology REST API."""
 
-    def __init__(self, api_url: str, upload_dir: Path, output_dir: Path):
+    def __init__(self, api_url: str, upload_dir: Path, output_dir: Path, api_key: str = ''):
         """
         Initialize the API client.
 
@@ -28,10 +28,12 @@ class ArcologyAPI:
             api_url: Base URL for the Arcology API
             upload_dir: Directory where uploaded files are stored
             output_dir: Directory where derived/output files are stored
+            api_key: Worker API key for authentication
         """
         self.api = api_url.rstrip('/')
         self.uploads = upload_dir
         self.outputs = output_dir
+        self._auth = {'Authorization': f'Bearer {api_key}'} if api_key else {}
 
     def get(self, endpoint: str) -> Optional[dict]:
         """
@@ -44,7 +46,7 @@ class ArcologyAPI:
             JSON response as dict, or None on error
         """
         try:
-            resp = requests.get(f"{self.api}{endpoint}", timeout=30)
+            resp = requests.get(f"{self.api}{endpoint}", headers=self._auth, timeout=30)
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
@@ -66,6 +68,7 @@ class ArcologyAPI:
             resp = requests.put(
                 f"{self.api}{endpoint}",
                 json=data,
+                headers=self._auth,
                 timeout=30
             )
             resp.raise_for_status()
@@ -89,6 +92,7 @@ class ArcologyAPI:
             resp = requests.post(
                 f"{self.api}{endpoint}",
                 json=data,
+                headers=self._auth,
                 timeout=30
             )
             resp.raise_for_status()
@@ -117,6 +121,7 @@ class ArcologyAPI:
             resp = requests.put(
                 f"{self.api}/analysis/{analysis_id}",
                 json=kwargs,
+                headers=self._auth,
                 timeout=30
             )
             if resp.status_code == 404:

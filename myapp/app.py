@@ -15,6 +15,7 @@ import sys
 from urllib.parse import urlparse
 
 from .extensions import db, migrate, login_manager, bootstrap, csrf
+from .database import UserPermission, ApiKeyPermission
 
 # Subclass the application so we can add the menu management functions
 class AppClass(Flask):
@@ -32,6 +33,12 @@ def create_app(config_name=None):
 	# create and configure the application
 	app = AppClass(__name__)
 	app.config.from_pyfile(config_name or 'myapp.cfg')
+
+	# Load WORKER_API_KEY from environment if not set in config file
+	if not app.config.get('WORKER_API_KEY'):
+		app.config['WORKER_API_KEY'] = os.environ.get('WORKER_API_KEY', '')
+	if not app.config.get('WORKER_API_KEY'):
+		app.logger.warning("WORKER_API_KEY is not configured — worker API authentication will fail")
 
 	# Warn and auto-generate SECRET_KEY if missing, left at the default placeholder, or too short
 	secret_key = app.config.get('SECRET_KEY', '')
@@ -112,6 +119,14 @@ def create_app(config_name=None):
 		"""
 		return dict(menu=sorted(app._myapp_menudata,
 								key=lambda mi: (mi['sortorder'], mi['label'].lower())))
+
+	# -- user permission context processor --
+	@app.context_processor
+	def inject_user_permissions():
+		"""Inject user_can_write into every template context."""
+		can_write = (current_user.is_authenticated and
+					 current_user.has_permission(UserPermission.READ_WRITE))
+		return dict(user_can_write=can_write)
 
 	# Register login handlers, error handlers, blueprints, and CLI commands
 	_register_login_handlers(app)
@@ -282,6 +297,9 @@ def _register_cli_commands(app):
 		user = User()
 		user.username = username
 		user.setPassword(password)
+		user.is_admin = True
+		user.permission = UserPermission.READ_WRITE
+		user.can_use_api = True
 		db.session.add(user)
 		db.session.commit()
 		click.echo(f"Admin user '{username}' created successfully.")

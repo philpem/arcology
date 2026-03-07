@@ -11,6 +11,7 @@ from flask_login import login_required
 
 from ..extensions import db
 from ..database import Analysis, AnalysisStatus
+from ..permissions import require_permission
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -76,6 +77,7 @@ def view(uuid):
 
 @blueprint.route('/<string:uuid>/cancel', methods=['POST'])
 @login_required
+@require_permission('read_write')
 def cancel(uuid):
     """Cancel a pending analysis."""
     analysis = Analysis.query.filter_by(uuid=uuid).first_or_404()
@@ -93,6 +95,7 @@ def cancel(uuid):
 
 @blueprint.route('/<string:uuid>/retry', methods=['POST'])
 @login_required
+@require_permission('read_write')
 def retry(uuid):
     """Retry a failed analysis."""
     analysis = Analysis.query.filter_by(uuid=uuid).first_or_404()

@@ -5,6 +5,7 @@ Loads settings from environment variables with sensible defaults.
 """
 
 import os
+import sys
 import logging
 from pathlib import Path
 
@@ -14,6 +15,12 @@ UPLOAD_DIR = Path(os.environ.get('UPLOAD_DIR', '/data/uploads'))
 OUTPUT_DIR = Path(os.environ.get('OUTPUT_DIR', '/data/outputs'))
 POLL_INTERVAL = int(os.environ.get('POLL_INTERVAL', '30'))
 LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
+
+# Worker API key for authenticating with the web application
+WORKER_API_KEY = os.environ.get('WORKER_API_KEY', '')
+if not WORKER_API_KEY:
+    logging.critical("WORKER_API_KEY is not set. Exiting.")
+    sys.exit(1)
 
 # Archive extraction configuration
 MAX_ARCHIVE_DEPTH = int(os.environ.get('MAX_ARCHIVE_DEPTH', '10'))

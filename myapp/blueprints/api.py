@@ -6,6 +6,7 @@ RESTful API for external integrations.
 
 import os
 from datetime import datetime, timezone
+from functools import wraps
 from flask import Blueprint, jsonify, request, current_app, send_file
 from flask_wtf.csrf import CSRFProtect
 from sqlalchemy import update
@@ -14,7 +15,8 @@ from ..extensions import db, csrf
 from ..database import (
     Item, Artefact, ArtefactType, Analysis, AnalysisType, AnalysisStatus,
     Partition, ExtractedFile, FilesystemType, Platform, Category, Tag,
-    ExternalSystem, ExternalReference, HashDatabase, KnownFile, StorageDirectory
+    ExternalSystem, ExternalReference, HashDatabase, KnownFile, StorageDirectory,
+    ApiKey, ApiKeyPermission, _API_KEY_PERMISSION_ORDER,
 )
 from .artefacts import get_artefact_path, _delete_artefact_files, _delete_item_files
 
@@ -29,7 +31,56 @@ def init_app(app):
 
 
 def error_response(message, status_code=400):
-    return jsonify({'error': message}), status_code
+	return jsonify({'error': message}), status_code
+
+
+# =============================================================================
+# API Key Authentication
+# =============================================================================
+
+def _get_raw_key() -> str:
+	"""Extract API key from Authorization: Bearer or X-API-Key header."""
+	auth = request.headers.get('Authorization', '')
+	if auth.startswith('Bearer '):
+		return auth[7:]
+	return request.headers.get('X-API-Key', '')
+
+
+def require_auth(permission: str = 'read_only'):
+	"""
+	Decorator that requires a valid API key with at least *permission* level.
+
+	Checks the WORKER_API_KEY pre-shared secret first (always read_write),
+	then falls back to user application keys stored in the database.
+
+	The health check endpoint is intentionally left unauthenticated so that
+	Docker / container orchestrators can reach it without credentials.
+	"""
+	required_idx = _API_KEY_PERMISSION_ORDER.index(ApiKeyPermission(permission))
+
+	def decorator(f):
+		@wraps(f)
+		def wrapper(*args, **kwargs):
+			raw = _get_raw_key()
+
+			# Pre-shared worker key — always grants read_write, no DB hit needed
+			worker_key = current_app.config.get('WORKER_API_KEY', '')
+			if worker_key and raw == worker_key:
+				return f(*args, **kwargs)
+
+			# User application key
+			key = ApiKey.verify(raw)
+			if not key:
+				return error_response('Valid API key required', 401)
+			eff_idx = _API_KEY_PERMISSION_ORDER.index(key.effective_permission())
+			if eff_idx < required_idx:
+				return error_response('Insufficient permissions', 403)
+			key.last_used_at = datetime.now(timezone.utc)
+			db.session.commit()
+			return f(*args, **kwargs)
+
+		return wrapper
+	return decorator
 
 
 def _check_nul_bytes(data: dict, fields: list) -> str | None:
@@ -62,7 +113,7 @@ def health_check():
         return jsonify({'status': 'healthy'}), 200
     except Exception as e:
         current_app.logger.error(f"Health check failed: {e}")
-        return jsonify({'status': 'unhealthy', 'error': str(e)}), 503
+        return jsonify({'status': 'unhealthy', 'error': 'Database unavailable'}), 503
 
 
 # =============================================================================
@@ -70,6 +121,7 @@ def health_check():
 # =============================================================================
 
 @blueprint.route('/items', methods=['GET'])
+@require_auth('read_only')
 def list_items():
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 25, type=int)
@@ -88,6 +140,7 @@ def list_items():
 
 
 @blueprint.route('/items', methods=['POST'])
+@require_auth('read_upload')
 def create_item():
     data = request.get_json()
     if not data or 'name' not in data:
@@ -110,12 +163,14 @@ def create_item():
 
 
 @blueprint.route('/items/<string:uuid>', methods=['GET'])
+@require_auth('read_only')
 def get_item(uuid):
     item = Item.query.filter_by(uuid=uuid).first_or_404()
     return jsonify(item_to_dict(item, include_artefacts=True))
 
 
 @blueprint.route('/items/<string:uuid>', methods=['PUT'])
+@require_auth('read_write')
 def update_item(uuid):
     item = Item.query.filter_by(uuid=uuid).first_or_404()
     data = request.get_json()
@@ -128,6 +183,7 @@ def update_item(uuid):
 
 
 @blueprint.route('/items/<string:uuid>', methods=['DELETE'])
+@require_auth('read_write')
 def delete_item(uuid):
     item = Item.query.filter_by(uuid=uuid).first_or_404()
     _delete_item_files(item)
@@ -141,6 +197,7 @@ def delete_item(uuid):
 # =============================================================================
 
 @blueprint.route('/items/<string:item_uuid>/artefacts', methods=['POST'])
+@require_auth('read_upload')
 def add_artefact(item_uuid):
     item = Item.query.filter_by(uuid=item_uuid).first_or_404()
     data = request.get_json()
@@ -167,12 +224,14 @@ def add_artefact(item_uuid):
 
 
 @blueprint.route('/artefacts/<string:uuid>', methods=['GET'])
+@require_auth('read_only')
 def get_artefact(uuid):
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     return jsonify(artefact_to_dict(artefact, include_partitions=True))
 
 
 @blueprint.route('/artefacts/<string:uuid>', methods=['DELETE'])
+@require_auth('read_write')
 def delete_artefact(uuid):
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     _delete_artefact_files(artefact)
@@ -182,6 +241,7 @@ def delete_artefact(uuid):
 
 
 @blueprint.route('/artefacts/<string:uuid>/download', methods=['GET'])
+@require_auth('read_only')
 def download_artefact(uuid):
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     full_path = get_artefact_path(artefact)
@@ -195,6 +255,7 @@ def download_artefact(uuid):
 # =============================================================================
 
 @blueprint.route('/artefacts/<string:uuid>/analysis', methods=['POST'])
+@require_auth('read_upload')
 def request_analysis(uuid):
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     data = request.get_json() or {}
@@ -216,18 +277,21 @@ def request_analysis(uuid):
 
 
 @blueprint.route('/artefacts/<string:uuid>/analysis', methods=['GET'])
+@require_auth('read_only')
 def get_artefact_analyses(uuid):
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     return jsonify({'analyses': [analysis_to_dict(a) for a in artefact.analyses]})
 
 
 @blueprint.route('/analysis/<string:uuid>', methods=['GET'])
+@require_auth('read_only')
 def get_analysis(uuid):
     analysis = Analysis.query.filter_by(uuid=uuid).first_or_404()
     return jsonify(analysis_to_dict(analysis))
 
 
 @blueprint.route('/analysis/<int:id>', methods=['PUT'])
+@require_auth('read_write')
 def update_analysis(id):
     """
     Update analysis (used by worker).
@@ -291,6 +355,7 @@ def update_analysis(id):
 
 
 @blueprint.route('/analysis/pending', methods=['GET'])
+@require_auth('read_only')
 def get_pending_analyses():
     """Get pending analyses (for worker)."""
     analyses = Analysis.query.filter(Analysis.status == AnalysisStatus.PENDING).order_by(Analysis.created_at).all()
@@ -302,6 +367,7 @@ def get_pending_analyses():
 # =============================================================================
 
 @blueprint.route('/outputs/<path:filename>', methods=['GET'])
+@require_auth('read_only')
 def get_output_file(filename):
     """Serve an output file (visualisation, etc.)."""
     output_dir = current_app.config.get('OUTPUT_FOLDER', 'outputs')
@@ -323,6 +389,7 @@ def get_output_file(filename):
 # =============================================================================
 
 @blueprint.route('/analysis/<int:id>/produce-artefact', methods=['POST'])
+@require_auth('read_upload')
 def produce_artefact(id):
     """
     Create a derived artefact from an analysis result.
@@ -432,6 +499,7 @@ def produce_artefact(id):
 
 
 @blueprint.route('/artefacts/<string:uuid>/partitions', methods=['POST'])
+@require_auth('read_upload')
 def add_partition(uuid):
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     data = request.get_json()
@@ -465,6 +533,7 @@ def add_partition(uuid):
 
 
 @blueprint.route('/partitions/<string:uuid>', methods=['GET'])
+@require_auth('read_only')
 def get_partition(uuid):
     """Get partition details by UUID."""
     partition = Partition.query.filter_by(uuid=uuid).first_or_404()
@@ -472,6 +541,7 @@ def get_partition(uuid):
 
 
 @blueprint.route('/partitions/<string:uuid>/files', methods=['POST'])
+@require_auth('read_upload')
 def add_files(uuid):
     partition = Partition.query.filter_by(uuid=uuid).first_or_404()
     data = request.get_json()
@@ -541,6 +611,7 @@ def add_files(uuid):
 
 
 @blueprint.route('/partitions/<string:uuid>/files', methods=['GET'])
+@require_auth('read_only')
 def get_partition_files(uuid):
     partition = Partition.query.filter_by(uuid=uuid).first_or_404()
     show_known = request.args.get('show_known', 'false').lower() == 'true'
@@ -564,6 +635,7 @@ def get_partition_files(uuid):
 
 
 @blueprint.route('/files/<int:file_id>/mark_archive', methods=['POST'])
+@require_auth('read_upload')
 def mark_file_as_archive(file_id):
     """Mark a file as an archive and update its metadata."""
     file = ExtractedFile.query.get_or_404(file_id)
@@ -581,6 +653,7 @@ def mark_file_as_archive(file_id):
 # =============================================================================
 
 @blueprint.route('/lookup', methods=['GET'])
+@require_auth('read_only')
 def lookup_by_external():
     system_name = request.args.get('system')
     external_id = request.args.get('external_id')
@@ -599,6 +672,7 @@ def lookup_by_external():
 
 
 @blueprint.route('/hash-lookup', methods=['GET'])
+@require_auth('read_only')
 def hash_lookup():
     md5 = request.args.get('md5')
     sha1 = request.args.get('sha1')

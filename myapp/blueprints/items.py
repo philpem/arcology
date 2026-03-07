@@ -14,6 +14,7 @@ from sqlalchemy import or_
 from ..extensions import db
 from ..database import Item, Platform, Category, Tag, ExternalSystem, ExternalReference
 from .artefacts import _delete_item_files
+from ..permissions import require_permission
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -97,6 +98,7 @@ def index():
 
 @blueprint.route('/new', methods=['GET', 'POST'])
 @login_required
+@require_permission('read_write')
 def new():
     """Create a new item."""
     form = ItemForm()
@@ -144,6 +146,7 @@ def view(uuid):
 
 @blueprint.route('/<string:uuid>/edit', methods=['GET', 'POST'])
 @login_required
+@require_permission('read_write')
 def edit(uuid):
     """Edit an item."""
     item = Item.query.filter_by(uuid=uuid).first_or_404()
@@ -185,6 +188,7 @@ def edit(uuid):
 
 @blueprint.route('/<string:uuid>/delete', methods=['POST'])
 @login_required
+@require_permission('read_write')
 def delete(uuid):
     """Delete an item."""
     item = Item.query.filter_by(uuid=uuid).first_or_404()
@@ -202,6 +206,7 @@ def delete(uuid):
 
 @blueprint.route('/<string:uuid>/references/add', methods=['GET', 'POST'])
 @login_required
+@require_permission('read_write')
 def add_reference(uuid):
     """Add an external reference to an item."""
     item = Item.query.filter_by(uuid=uuid).first_or_404()
@@ -235,6 +240,7 @@ def add_reference(uuid):
 
 @blueprint.route('/<string:item_uuid>/references/<int:ref_id>/delete', methods=['POST'])
 @login_required
+@require_permission('read_write')
 def delete_reference(item_uuid, ref_id):
     """Delete an external reference."""
     item = Item.query.filter_by(uuid=item_uuid).first_or_404()
