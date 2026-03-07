@@ -18,11 +18,11 @@
 <div class="card">
     <div class="table-responsive">
         <table class="table table-hover mb-0">
-            <thead><tr><th>ID</th><th>Type</th><th>Artefact</th><th>Status</th><th>Created</th></tr></thead>
+            <thead><tr><th>UUID</th><th>Type</th><th>Artefact</th><th>Status</th><th>Created</th></tr></thead>
             <tbody>
                 {% for a in analyses %}
                 <tr>
-                    <td><a href="{{ url_for('myapp_blueprints_analysis.view', uuid=a.uuid) }}">#{{ a.id }}</a></td>
+                    <td><a href="{{ url_for('myapp_blueprints_analysis.view', uuid=a.uuid) }}">{{ a.uuid[:8] }}</a></td>
                     <td>{{ a.analysis_type.value|replace('_', ' ')|title }}</td>
                     <td><a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=a.artefact.uuid) }}">{{ a.artefact.label }}</a></td>
                     <td><span class="badge {% if a.status.value == 'completed' %}bg-success{% elif a.status.value == 'failed' %}bg-danger{% elif a.status.value == 'running' %}bg-info{% else %}bg-warning{% endif %}">{{ a.status.value }}</span></td>
@@ -35,4 +35,14 @@
         </table>
     </div>
 </div>
+
+{% if pagination.pages > 1 %}
+<nav class="mt-4">
+    <ul class="pagination justify-content-center">
+        {% if pagination.has_prev %}<li class="page-item"><a class="page-link" href="{{ url_for('myapp_blueprints_analysis.index', page=pagination.prev_num, status=status_filter) }}">Previous</a></li>{% endif %}
+        <li class="page-item disabled"><span class="page-link">Page {{ pagination.page }} of {{ pagination.pages }}</span></li>
+        {% if pagination.has_next %}<li class="page-item"><a class="page-link" href="{{ url_for('myapp_blueprints_analysis.index', page=pagination.next_num, status=status_filter) }}">Next</a></li>{% endif %}
+    </ul>
+</nav>
+{% endif %}
 {% endblock %}

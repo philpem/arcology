@@ -4,7 +4,7 @@
 {% block content %}
 <nav aria-label="breadcrumb" class="mb-3">
     <ol class="breadcrumb">
-        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_taxonomy.platforms') }}">Taxonomy</a></li>
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_taxonomy.index') }}">Taxonomy</a></li>
         <li class="breadcrumb-item active">{{ title }}</li>
     </ol>
 </nav>
@@ -46,7 +46,7 @@
                     {% endif %}
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save</button>
-                        <a href="{{ request.referrer or url_for('myapp_blueprints_taxonomy.platforms') }}" class="btn btn-outline-secondary">Cancel</a>
+                        <a href="{{ request.referrer or url_for('myapp_blueprints_taxonomy.index') }}" class="btn btn-outline-secondary">Cancel</a>
                     </div>
                 </form>
             </div>
