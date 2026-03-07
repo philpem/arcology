@@ -663,13 +663,15 @@ def _try_traceback(data: bytes, track: int, side: int) -> dict | None:
 	idx = data.find(_TRACEBACK_SIG)
 	if idx < 0:
 		return None
-	# Collect null-separated fields starting after the signature.
-	# Discard fields that contain no alphanumeric characters (e.g. lone
-	# trademark/copyright symbols that appear immediately after the signature
-	# in some Traceback versions).
-	rest = data[idx + len(_TRACEBACK_SIG):]
+	# Walk back to the start of the null-terminated field that contains the
+	# signature (e.g. b'$TRACEBACK\x99') so we include the complete string
+	# rather than just what follows the keyword.
+	field_start = data.rfind(b'\x00', 0, idx)
+	field_start = field_start + 1 if field_start >= 0 else 0
+	# Collect null-separated fields from there onward.
+	# Discard entries that contain no alphanumeric characters.
 	fields = []
-	for raw_field in rest.split(b'\x00'):
+	for raw_field in data[field_start:].split(b'\x00'):
 		text = raw_field.decode('latin-1', errors='replace').strip()
 		if text and any(c.isalnum() for c in text):
 			fields.append(text)
@@ -763,15 +765,11 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 				log.debug("mastering scan: track %d side %d (%d bytes)",
 				          t_idx, side, len(track_bytes))
 
-				# Walk the track with whatever encoding the header declares.
-				# TRACEBACK is MFM; BCD timestamp is FM.  A mastering track
-				# could contain either format (or both), so we try both walkers
-				# when encoding is ambiguous.
-				encodings_to_try = [encoding]
-				if encoding == 'unknown':
-					encodings_to_try = ['mfm', 'fm']
+				# Mastering tracks routinely use a different encoding to the
+				# data tracks (e.g. FM mastering on an otherwise MFM disk).
+				# Always try both walkers regardless of the header encoding.
 
-				for enc in encodings_to_try:
+				for enc in ('mfm', 'fm'):
 					sectors = walk_track(track_bytes, enc)
 					for sector in sectors:
 						data = sector.get('data')
