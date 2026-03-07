@@ -239,6 +239,9 @@ def get_track_bytes(f: BinaryIO, track_entry: dict, side: int,
 			else:
 				clean.append(b)
 				i += 1
+		# Convert from file's LSB-first bit order to MSB-first for the walker
+		# (same normalisation applied to v3 below).
+		clean = bytearray(_BYTE_REVERSE[b] for b in clean)
 	elif hfe_version == 3:
 		# In HFEv3 data bytes are stored LSB-first within each byte.
 		# Any byte whose LOW nibble is 0xF is an opcode; all others are data.
@@ -268,10 +271,9 @@ def get_track_bytes(f: BinaryIO, track_entry: dict, side: int,
 		# Convert from file's LSB-first bit order to MSB-first for the walker.
 		clean = bytearray(_BYTE_REVERSE[b] for b in clean)
 	else:
-		# v1 or unknown: no opcodes, pass through
-		log.debug("get_track_bytes: side %d → %d bytes, %d weak-bit position(s)",
-		          side, len(src), 0)
-		return src, []
+		# v1 or unknown: no opcodes, but data bytes are stored LSB-first within
+		# each byte; reverse to MSB-first for the walker.
+		clean = bytearray(_BYTE_REVERSE[b] for b in src)
 
 	log.debug("get_track_bytes: side %d → %d bytes, %d weak-bit position(s)",
 	          side, len(clean), len(weak_offsets))
