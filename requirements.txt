@@ -19,6 +19,7 @@ bcrypt
 
 # Worker dependencies
 requests
+numpy
 
 # Production server (optional)
 # gunicorn

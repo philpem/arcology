@@ -116,7 +116,7 @@ ANALYSIS_MAP = {
     # IMD is track-based format with metadata, HFE is an emulator container format
     # These need conversion to IMG (raw sectors) before file extraction can work
     ArtefactType.IMD: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY],
-    ArtefactType.HFE: [AnalysisType.FORMAT_IDENTIFY],
+    ArtefactType.HFE: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.DISC_MASTERING_DETECT, AnalysisType.DISC_PROTECTION_DETECT],
     #ArtefactType.TD0: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY],
     #ArtefactType.D64: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_EXTRACTION],
     #ArtefactType.ADF: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_EXTRACTION],

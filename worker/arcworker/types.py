@@ -54,3 +54,5 @@ class AnalysisType(str, Enum):
     PARTITION_DETECT = "partition_detect"
     CHECKSUM_COMPUTE = "checksum_compute"
     FORMAT_IDENTIFY = "format_identify"
+    DISC_MASTERING_DETECT  = "disc_mastering_detect"
+    DISC_PROTECTION_DETECT = "disc_protection_detect"

@@ -250,7 +250,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 	sed -i -e 's/main/main non-free/' /etc/apt/sources.list.d/debian.sources && \
 	apt -y update && apt -y upgrade && \
 	apt -y install \
-		python3 python3-pip python3-dev python3-requests git \
+		python3 python3-pip python3-dev python3-requests python3-numpy git \
 		p7zip-full zstd gzip bzip2 xz-utils \
 		unzip unrar tar util-linux \
 		file fdisk \

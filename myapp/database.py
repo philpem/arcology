@@ -81,6 +81,10 @@ class AnalysisType(enum.Enum):
     CHECKSUM_COMPUTE = "checksum_compute"        # Compute hashes
     FORMAT_IDENTIFY = "format_identify"          # Identify exact format/variant
 
+    # Disc image analysis
+    DISC_MASTERING_DETECT  = "disc_mastering_detect"   # Mastering/duplicator fingerprint data
+    DISC_PROTECTION_DETECT = "disc_protection_detect"  # Copy protection signals
+
 
 class AnalysisStatus(enum.Enum):
     """Status of an analysis job."""

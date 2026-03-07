@@ -18,6 +18,9 @@ LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
 # Archive extraction configuration
 MAX_ARCHIVE_DEPTH = int(os.environ.get('MAX_ARCHIVE_DEPTH', '10'))
 
+# Mastering detection: number of trailing tracks to scan
+MASTERING_TRACK_SCAN_COUNT = int(os.environ.get('MASTERING_TRACK_SCAN_COUNT', '5'))
+
 # Configure logging
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL),

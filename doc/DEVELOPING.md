@@ -27,6 +27,31 @@ python -m myapp
 See also `CONTRIBUTING.md` in the project root for a more detailed guide.
 
 
+## Database migrations: adding values to a PostgreSQL enum
+
+`ALTER TYPE ... ADD VALUE` **cannot run inside a transaction**. Alembic wraps
+all migrations in a transaction by default, so using `bind.execute()` directly
+will appear to succeed (Alembic stamps the revision) but the new enum value
+will **not** actually be persisted in the database.
+
+Always use an autocommit connection for these statements:
+
+```python
+def upgrade():
+    bind = op.get_bind()
+    if bind.dialect.name == 'postgresql':
+        conn = bind.execution_options(isolation_level='AUTOCOMMIT')
+        conn.execute(sa.text("ALTER TYPE myenum ADD VALUE IF NOT EXISTS 'NEW_VALUE'"))
+```
+
+If a migration was already stamped but the enum value is missing, roll the
+stamp back to the previous revision and re-run the upgrade:
+
+```bash
+flask db stamp <previous_revision_id>
+flask db upgrade
+```
+
 ## Database profiling and debugging
 
 Database profiling requires the `sqltap` library.
