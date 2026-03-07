@@ -64,7 +64,7 @@
             <ul class="list-group list-group-flush">
                 {% for analysis in recent_analyses %}
                 <li class="list-group-item d-flex justify-content-between">
-                    <span>{{ analysis.analysis_type.value|replace('_', ' ')|title }} - {{ analysis.artefact.label }}</span>
+                    <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=analysis.uuid) }}">{{ analysis.analysis_type.value|replace('_', ' ')|title }} - {{ analysis.artefact.label }}</a>
                     <span class="badge {% if analysis.status.value == 'completed' %}bg-success{% elif analysis.status.value == 'failed' %}bg-danger{% elif analysis.status.value == 'running' %}bg-info{% else %}bg-warning{% endif %}">{{ analysis.status.value }}</span>
                 </li>
                 {% else %}

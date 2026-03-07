@@ -18,7 +18,7 @@
             <div class="card-body">
                 <div class="alert alert-info">
                     <strong>File:</strong> {{ artefact.original_filename }}
-                    ({{ (artefact.file_size / 1024 / 1024)|round(2) }} MB)
+                    {% if artefact.file_size is not none %}({{ (artefact.file_size / 1024 / 1024)|round(2) }} MB){% endif %}
                 </div>
                 
                 <form method="post">
