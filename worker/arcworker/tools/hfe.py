@@ -72,9 +72,12 @@ _VALID_SECTOR_SIZES = (128, 256, 512, 1024, 2048, 4096, 8192)
 WEAK_BITS_MIN_COUNT = 8
 
 # Protection scan — whole-track weak suppression
-# If the ratio of RAND-opcode positions to decoded track length meets or
-# exceeds this value the track is assumed to be fully erased / unformatted
-# and no weak_bits indicator is emitted.
+# Ratio of weak-bit positions to total decoded events (clean bytes +
+# weak positions).  If this fraction meets or exceeds the threshold the
+# track is assumed to be fully erased / unformatted and no weak_bits
+# indicator is emitted.  The denominator is (n_weak + n_clean) rather
+# than n_clean alone, because RAND opcodes are stripped from the clean
+# output so n_weak can exceed len(track_bytes) on heavily-weak tracks.
 WEAK_BITS_WHOLE_TRACK_RATIO = 0.75
 
 # Mastering scan — backwards optimisation
@@ -1177,9 +1180,14 @@ def analyse_hfe_protection(path: Path) -> dict:
 				# Filter out noise (too few positions) and fully-erased tracks
 				# (almost all positions weak) before emitting an indicator.
 				if weak_offsets:
-					n_weak     = len(weak_offsets)
-					track_len  = len(track_bytes)
-					weak_ratio = n_weak / track_len if track_len else 1.0
+					n_weak    = len(weak_offsets)
+					track_len = len(track_bytes)
+					# Denominator is "total decoded events" (clean bytes + weak
+					# positions).  Using only track_len would give ratios > 100%
+					# because RAND opcodes are stripped from clean output, so
+					# n_weak can exceed len(track_bytes) on heavily-weak tracks.
+					events     = n_weak + track_len
+					weak_ratio = n_weak / events if events else 1.0
 					if n_weak < WEAK_BITS_MIN_COUNT:
 						log.debug(
 							"protection: track %d side %d: %d weak-bit position(s) "
@@ -1187,9 +1195,11 @@ def analyse_hfe_protection(path: Path) -> dict:
 							t_idx, side, n_weak, WEAK_BITS_MIN_COUNT)
 					elif weak_ratio >= WEAK_BITS_WHOLE_TRACK_RATIO:
 						log.debug(
-							"protection: track %d side %d: weak-bit density %.0f%% "
-							">= threshold %.0f%% — treating as unformatted track, skipping",
-							t_idx, side, weak_ratio * 100, WEAK_BITS_WHOLE_TRACK_RATIO * 100)
+							"protection: track %d side %d: %.0f%% of decoded events "
+							"are weak (%d weak + %d clean) >= threshold %.0f%% — "
+							"treating as unformatted track, skipping",
+							t_idx, side, weak_ratio * 100,
+							n_weak, track_len, WEAK_BITS_WHOLE_TRACK_RATIO * 100)
 					else:
 						indicators.append({
 							'type':    'weak_bits',
