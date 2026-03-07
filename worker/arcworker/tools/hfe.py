@@ -62,6 +62,34 @@ log = logging.getLogger(__name__)
 
 _VALID_SECTOR_SIZES = (128, 256, 512, 1024, 2048, 4096, 8192)
 
+# ---------------------------------------------------------------------------
+# Tunable analysis thresholds
+# ---------------------------------------------------------------------------
+
+# Protection scan — weak-bit noise filtering
+# Tracks with fewer than this many RAND-opcode positions are treated as
+# noise or a write-splice artifact and no weak_bits indicator is emitted.
+WEAK_BITS_MIN_COUNT = 8
+
+# Protection scan — whole-track weak suppression
+# If the ratio of RAND-opcode positions to decoded track length meets or
+# exceeds this value the track is assumed to be fully erased / unformatted
+# and no weak_bits indicator is emitted.
+WEAK_BITS_WHOLE_TRACK_RATIO = 0.75
+
+# Mastering scan — backwards optimisation
+# When True the scan iterates from the last track backwards, stopping as
+# soon as a track whose sector-data fill ratio exceeds MASTERING_SCAN_STOP_FILL
+# is seen (a normal data track reached).  Set to False to always scan a
+# fixed forward window of scan_count tracks.
+MASTERING_SCAN_OPTIMISE = True
+
+# Mastering scan — data-track detection threshold
+# Fill ratio (sum of declared sector data bytes / raw track byte length) at
+# or above which a track is considered a normal data track, triggering the
+# early-exit when MASTERING_SCAN_OPTIMISE is True.
+MASTERING_SCAN_STOP_FILL = 0.50
+
 # FM address mark raw 16-bit patterns (clock|data interleaved)
 _FM_IDAM  = 0xF57E   # clock 0xC7, data 0xFE
 _FM_DAM   = 0xF56F   # clock 0xC7, data 0xFB
@@ -884,9 +912,19 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 	  - TRACEBACK  (MFM, null-separated text, magic b'TRACEBACK')
 	  - BCD timestamp record  (FM, PC-format, signature 01 02 03 04 05)
 
+	Single-sector tracks with unrecognised content are captured as
+	'unknown_mastering' indicators (with extracted printable strings).
+
+	When MASTERING_SCAN_OPTIMISE is True (default) the scan iterates
+	backwards from the last track, stopping as soon as a track whose
+	sector-data fill ratio exceeds MASTERING_SCAN_STOP_FILL is seen.
+	This finds mastering metadata quickly without reading every data
+	track.  Set MASTERING_SCAN_OPTIMISE = False to always scan a fixed
+	forward window of scan_count tracks.
+
 	Returns:
 	  hfe_version          str   ('v1', 'v2', 'v3', 'unknown')
-	  trailing_track_count int   how many tracks were scanned
+	  trailing_track_count int   how many tracks were actually scanned
 	  indicators           list  of indicator dicts
 	"""
 	header = parse_hfe_header(path)
@@ -897,7 +935,6 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 	track_list = header['track_list']
 
 	first_scan = max(0, n_tracks - scan_count)
-	scanned    = n_tracks - first_scan
 
 	indicators: list[dict] = []
 
@@ -907,11 +944,24 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 	# Sides where at least one sector matched a known mastering format.
 	side_recognised: set[tuple[int, int]] = set()
 
+	# With MASTERING_SCAN_OPTIMISE enabled we iterate backwards from the
+	# last track so we encounter mastering tracks before data tracks and can
+	# stop as soon as we hit a track that looks fully populated with sectors.
+	track_range = range(first_scan, n_tracks)
+	track_iter  = reversed(track_range) if MASTERING_SCAN_OPTIMISE else iter(track_range)
+	tracks_scanned = 0
+
 	with open(path, 'rb') as f:
-		for t_idx in range(first_scan, n_tracks):
+		for t_idx in track_iter:
 			if t_idx >= len(track_list):
-				break
+				continue
 			entry = track_list[t_idx]
+			tracks_scanned += 1
+
+			# Track the maximum sector-data fill seen across all (side, encoding)
+			# combinations for this track.  Used to detect normal data tracks
+			# during the backwards-optimised scan.
+			track_max_fill = 0.0
 
 			for side in range(n_sides):
 				try:
@@ -929,6 +979,16 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 
 				for enc in ('mfm', 'fm'):
 					sectors = walk_track(track_bytes, enc)
+
+					# Measure sector-data fill for this (side, encoding) pass.
+					if MASTERING_SCAN_OPTIMISE and track_bytes:
+						sector_data_bytes = sum(
+							s.get('declared_size', 0) for s in sectors
+							if s.get('data') is not None)
+						fill = sector_data_bytes / len(track_bytes)
+						if fill > track_max_fill:
+							track_max_fill = fill
+
 					for sector in sectors:
 						data = sector.get('data')
 						if not data:
@@ -982,6 +1042,15 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 							# counts once.
 							side_unrecognised.setdefault(sk, []).append(
 								(data, sector.get('crc_valid', False)))
+
+			# Stop the backwards scan when a normally-populated data track is
+			# reached; mastering tracks should all be beyond this point.
+			if MASTERING_SCAN_OPTIMISE and track_max_fill >= MASTERING_SCAN_STOP_FILL:
+				log.debug(
+					"mastering: track %d sector-data fill %.0f%% >= %.0f%% threshold — "
+					"looks like a data track, stopping backwards scan",
+					t_idx, track_max_fill * 100, MASTERING_SCAN_STOP_FILL * 100)
+				break
 
 	# Emit unknown_mastering for sides that yielded exactly one unique
 	# sector with data and had no recognised mastering format.  A track
@@ -1045,7 +1114,7 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5) -> dict:
 
 	return {
 		'hfe_version':          header['hfe_version_str'],
-		'trailing_track_count': scanned,
+		'trailing_track_count': tracks_scanned,
 		'indicators':           deduped,
 	}
 
@@ -1105,14 +1174,30 @@ def analyse_hfe_protection(path: Path) -> dict:
 				          t_idx, side, len(track_bytes), len(weak_offsets))
 
 				# Weak / fuzzy bits (RAND opcodes in v2/v3 only)
+				# Filter out noise (too few positions) and fully-erased tracks
+				# (almost all positions weak) before emitting an indicator.
 				if weak_offsets:
-					indicators.append({
-						'type':    'weak_bits',
-						'track':   t_idx,
-						'side':    side,
-						'count':   len(weak_offsets),
-						'offsets': weak_offsets[:16],  # cap for report size
-					})
+					n_weak     = len(weak_offsets)
+					track_len  = len(track_bytes)
+					weak_ratio = n_weak / track_len if track_len else 1.0
+					if n_weak < WEAK_BITS_MIN_COUNT:
+						log.debug(
+							"protection: track %d side %d: %d weak-bit position(s) "
+							"< threshold %d — treating as noise, skipping",
+							t_idx, side, n_weak, WEAK_BITS_MIN_COUNT)
+					elif weak_ratio >= WEAK_BITS_WHOLE_TRACK_RATIO:
+						log.debug(
+							"protection: track %d side %d: weak-bit density %.0f%% "
+							">= threshold %.0f%% — treating as unformatted track, skipping",
+							t_idx, side, weak_ratio * 100, WEAK_BITS_WHOLE_TRACK_RATIO * 100)
+					else:
+						indicators.append({
+							'type':    'weak_bits',
+							'track':   t_idx,
+							'side':    side,
+							'count':   n_weak,
+							'offsets': weak_offsets[:16],  # cap for report size
+						})
 
 				sectors = walk_track(track_bytes, encoding)
 
