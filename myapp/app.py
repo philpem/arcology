@@ -40,9 +40,11 @@ def create_app(config_name=None):
 		if env_val:
 			app.config[env_key] = env_val
 
-	# Warn if no database URI is configured at all
+	# Abort if no database URI is configured
 	if not app.config.get('SQLALCHEMY_DATABASE_URI'):
-		app.logger.warning("SQLALCHEMY_DATABASE_URI is not set — set it in myapp.cfg or as an environment variable")
+		raise RuntimeError(
+			"SQLALCHEMY_DATABASE_URI is not set — configure it in myapp.cfg or as an environment variable"
+		)
 
 	# Warn if WORKER_API_KEY is missing
 	if not app.config.get('WORKER_API_KEY'):

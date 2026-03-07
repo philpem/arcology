@@ -7,7 +7,7 @@ Models for the digital artefact catalogue system.
 from datetime import datetime, timezone
 from typing import Optional
 import hashlib
-import os
+import secrets
 import uuid as uuid_module
 from sqlalchemy import (
     Column, ForeignKey, Sequence, Text, BigInteger, Index, Table
@@ -224,7 +224,7 @@ class ApiKey(db.Model):
         Create a new ApiKey.  Returns (key_object, raw_key).
         The raw_key is shown to the user exactly once; only the SHA-256 hash is stored.
         """
-        raw    = f"arc_{os.urandom(32).hex()}"
+        raw    = f"arc_{secrets.token_hex(32)}"
         prefix = raw[4:12]
         digest = hashlib.sha256(raw.encode()).hexdigest()
         return cls(user_id=user_id, name=name, key_prefix=prefix,
