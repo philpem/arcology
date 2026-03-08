@@ -7,6 +7,23 @@ on:
     branches: [master]
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      migrations: ${{ steps.filter.outputs.migrations }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            migrations:
+              - 'migrations/**'
+              - 'myapp/database.py'
+              - 'shared/enums.py'
+              - 'requirements.txt'
+
   lint:
     name: Static Checks
     runs-on: ubuntu-latest
@@ -28,8 +45,9 @@ jobs:
     runs-on: ubuntu-latest
     # Toggle via repository variable: Settings > Secrets and variables > Actions > Variables
     # Set ENABLE_MIGRATION_TESTS to "true" to enable this job.
-    if: vars.ENABLE_MIGRATION_TESTS == 'true'
-    needs: lint
+    # Only runs when migration-related files have changed.
+    if: vars.ENABLE_MIGRATION_TESTS == 'true' && needs.changes.outputs.migrations == 'true'
+    needs: [lint, changes]
 
     services:
       postgres:
