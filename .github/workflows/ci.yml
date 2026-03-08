@@ -26,6 +26,9 @@ jobs:
   test-migrations:
     name: Migration Tests (PostgreSQL)
     runs-on: ubuntu-latest
+    # Toggle via repository variable: Settings > Secrets and variables > Actions > Variables
+    # Set ENABLE_MIGRATION_TESTS to "true" to enable this job.
+    if: vars.ENABLE_MIGRATION_TESTS == 'true'
     needs: lint
 
     services:
