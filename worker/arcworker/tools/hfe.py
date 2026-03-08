@@ -814,8 +814,8 @@ def _try_bcd_timestamp(data: bytes, track: int, side: int,
 	}
 
 	# Extended fields present in 256-byte record
-	if len(data) >= 0x82 + 48:
-		text_c_raw = data[0x82:0x82 + 48]
+	if len(data) >= 0x81 + 48:
+		text_c_raw = data[0x81:0x81 + 48]
 		result['text_c'] = text_c_raw.split(b'\x00')[0].decode('latin-1', errors='replace').rstrip()
 
 	return result
