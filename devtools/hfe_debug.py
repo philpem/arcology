@@ -11,6 +11,8 @@ Options:
     -t N / --track N     Also print a detailed sector listing for track N
     --no-protection      Skip copy-protection analysis
     --no-mastering       Skip mastering-data analysis
+    --export-sectors DIR Save each mastering sector to a separate .bin file
+                         in DIR (directory is created if it does not exist)
 
 Run from the repository root.  No worker stack or database required.
 """
@@ -105,6 +107,8 @@ def main() -> None:
 	                help='Skip copy-protection analysis')
 	ap.add_argument('--no-mastering', action='store_true',
 	                help='Skip mastering-data analysis')
+	ap.add_argument('--export-sectors', metavar='DIR',
+	                help='Save each mastering sector to a .bin file in DIR')
 	args = ap.parse_args()
 
 	if args.verbose:
@@ -216,8 +220,10 @@ def main() -> None:
 	# ── Mastering analysis ───────────────────────────────────────────────────
 	if not args.no_mastering:
 		print("=== Mastering Analysis ===")
+		export_dir = Path(args.export_sectors) if args.export_sectors else None
 		try:
-			result = hfe.analyse_hfe_mastering(path)
+			result = hfe.analyse_hfe_mastering(path,
+			                                   include_raw_data=export_dir is not None)
 		except Exception as exc:
 			print(f"  ERROR: {exc}")
 		else:
@@ -262,6 +268,16 @@ def main() -> None:
 					print(f"    hex: {data_hex[:64]}{'...' if len(data_hex) > 64 else ''}{trunc}")
 				else:
 					print(f"  [{itype}] track {t} side {s}")
+
+				# Export raw sector data to a file if requested
+				if export_dir is not None:
+					raw = ind.get('raw_data')
+					if raw is not None:
+						export_dir.mkdir(parents=True, exist_ok=True)
+						fname = f"mastering_track{t:03d}_side{s}_{itype}.bin"
+						out_path = export_dir / fname
+						out_path.write_bytes(raw)
+						print(f"    → saved {len(raw)}B to {out_path}")
 		print()
 
 
