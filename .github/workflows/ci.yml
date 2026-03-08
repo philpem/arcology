@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      migrations: ${{ steps.filter.outputs.migrations }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            migrations:
+              - 'migrations/**'
+              - 'myapp/database.py'
+              - 'shared/enums.py'
+              - 'requirements.txt'
+
+  lint:
+    name: Static Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Check Python syntax
+        run: python ci/check_syntax.py
+
+      - name: Check migration sanity
+        run: python ci/check_migration_sanity.py
+
+  test-migrations:
+    name: Migration Tests (PostgreSQL)
+    runs-on: ubuntu-latest
+    # Toggle via repository variable: Settings > Secrets and variables > Actions > Variables
+    # Set ENABLE_MIGRATION_TESTS to "true" to enable this job.
+    # Only runs when migration-related files have changed.
+    if: vars.ENABLE_MIGRATION_TESTS == 'true' && needs.changes.outputs.migrations == 'true'
+    needs: [lint, changes]
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: arcology_test
+          POSTGRES_USER: arcology_test
+          POSTGRES_PASSWORD: arcology_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U arcology_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      SQLALCHEMY_DATABASE_URI: postgresql://arcology_test:arcology_test@localhost:5432/arcology_test
+      SECRET_KEY: ci-test-secret-key-not-for-production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check imports
+        run: python ci/check_imports.py
+
+      - name: Upgrade database (fresh)
+        run: flask db upgrade
+
+      - name: Downgrade database (full)
+        run: flask db downgrade base
+
+      - name: Re-upgrade database (idempotency)
+        run: flask db upgrade
+
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    # Toggle via repository variable: Settings > Secrets and variables > Actions > Variables
+    # Set ENABLE_DOCKER_BUILD to "true" to enable this job.
+    # Recommended to enable after open-sourcing (unlimited free minutes for public repos).
+    if: vars.ENABLE_DOCKER_BUILD == 'true'
+    needs: lint
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build web image
+        run: docker build -t arcology-web:test .
+
+      - name: Build worker image
+        run: docker build -t arcology-worker:test -f worker/Dockerfile .

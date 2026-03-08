@@ -20,6 +20,10 @@ down_revision = 'b2e4f6a8c0d1'
 branch_labels = None
 depends_on = None
 
+# ALTER TYPE RENAME VALUE cannot run inside a transaction in PostgreSQL.
+# env.py uses transaction_per_migration=True; this flag opts out.
+autocommit = True
+
 
 def upgrade():
     bind = op.get_bind()
