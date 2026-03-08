@@ -18,22 +18,28 @@ depends_on = None
 
 # Define PostgreSQL enum types once, with create_type=False so that
 # SQLAlchemy never implicitly issues CREATE TYPE behind our back.
-userpermission = PG_ENUM('read_only', 'read_write', name='userpermission', create_type=False)
-apikeypermission = PG_ENUM('read_only', 'read_upload', 'read_write', name='apikeypermission', create_type=False)
+# Values must be UPPERCASE to match SQLAlchemy's convention of storing
+# Python enum member names (not values).
+userpermission = PG_ENUM('READ_ONLY', 'READ_WRITE', name='userpermission', create_type=False)
+apikeypermission = PG_ENUM('READ_ONLY', 'READ_UPLOAD', 'READ_WRITE', name='apikeypermission', create_type=False)
 
 
 def upgrade():
-	# Explicitly create the enum types (checkfirst=True for idempotency
-	# in case a previous failed run already created them).
+	# Explicitly create the enum types.
+	# Drop first in case a previous failed run left behind enum types with
+	# incorrect (lowercase) values — nothing depends on them yet since the
+	# migration never completed successfully.
 	bind = op.get_bind()
 	if bind.dialect.name == 'postgresql':
-		PG_ENUM('read_only', 'read_write', name='userpermission').create(bind, checkfirst=True)
-		PG_ENUM('read_only', 'read_upload', 'read_write', name='apikeypermission').create(bind, checkfirst=True)
+		PG_ENUM(name='userpermission').drop(bind, checkfirst=True)
+		PG_ENUM(name='apikeypermission').drop(bind, checkfirst=True)
+		PG_ENUM('READ_ONLY', 'READ_WRITE', name='userpermission').create(bind)
+		PG_ENUM('READ_ONLY', 'READ_UPLOAD', 'READ_WRITE', name='apikeypermission').create(bind)
 
 	# Add new columns to user table
 	with op.batch_alter_table('user', schema=None) as batch_op:
 		batch_op.add_column(sa.Column('is_admin', sa.Boolean(), nullable=False, server_default='false'))
-		batch_op.add_column(sa.Column('permission', userpermission, nullable=False, server_default='read_write'))
+		batch_op.add_column(sa.Column('permission', userpermission, nullable=False, server_default='READ_WRITE'))
 		batch_op.add_column(sa.Column('can_use_api', sa.Boolean(), nullable=False, server_default='false'))
 
 	# Create api_keys table
