@@ -22,6 +22,9 @@ if not WORKER_API_KEY:
     logging.critical("WORKER_API_KEY is not set. Exiting.")
     sys.exit(1)
 
+# Subprocess timeout for tool execution and decompression (seconds)
+TOOL_TIMEOUT = int(os.environ.get('TOOL_TIMEOUT', '3600'))
+
 # Archive extraction configuration
 MAX_ARCHIVE_DEPTH = int(os.environ.get('MAX_ARCHIVE_DEPTH', '10'))
 

@@ -7,11 +7,11 @@ import subprocess
 import time
 from pathlib import Path
 
-from ..config import log
+from ..config import log, TOOL_TIMEOUT
 from ..utils.text import sanitize_filename
 
 
-def run_tool(cmd: list[str], timeout: int = 3600, cwd: str = None) -> subprocess.CompletedProcess:
+def run_tool(cmd: list[str], timeout: int = None, cwd: str = None) -> subprocess.CompletedProcess:
     """
     Run a tool command with logging.
 
@@ -23,6 +23,8 @@ def run_tool(cmd: list[str], timeout: int = 3600, cwd: str = None) -> subprocess
     Returns:
         CompletedProcess with stdout, stderr, and returncode
     """
+    if timeout is None:
+        timeout = TOOL_TIMEOUT
     log.debug(f"Running: {' '.join(cmd)}" + (f" (cwd={cwd})" if cwd else ""))
     result = subprocess.run(
         cmd,
@@ -80,7 +82,7 @@ def get_process_output(result: subprocess.CompletedProcess, cmd: list[str],
     return output
 
 
-def run_tool_with_output(cmd: list[str], timeout: int = 3600, cwd: str = None) -> tuple[subprocess.CompletedProcess, dict]:
+def run_tool_with_output(cmd: list[str], timeout: int = None, cwd: str = None) -> tuple[subprocess.CompletedProcess, dict]:
     """
     Run a tool command and return both the result and structured output info.
 
