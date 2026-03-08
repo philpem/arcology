@@ -25,3 +25,5 @@ __all__ = [
     'decode_riscos_latin1',
     'encode_riscos_latin1',
 ]
+
+# vim: ts=4 sw=4 et

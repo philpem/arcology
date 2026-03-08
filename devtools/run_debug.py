@@ -12,22 +12,24 @@ sys.path.append(
 from myapp.app import create_app
 
 if __name__ == '__main__':
-	def walk(path, ext=None):
-		extra_files=[path,]
-		for dirname, dirs, files in os.walk(path):
-			for filename in files:
-				if ext != None and filename[-len(ext):] != ext:
-					continue
-				filename = os.path.join(dirname, filename)
-				if os.path.isfile(filename):
-					extra_files.append(filename)
-		return extra_files
+    def walk(path, ext=None):
+        extra_files=[path,]
+        for dirname, dirs, files in os.walk(path):
+            for filename in files:
+                if ext != None and filename[-len(ext):] != ext:
+                    continue
+                filename = os.path.join(dirname, filename)
+                if os.path.isfile(filename):
+                    extra_files.append(filename)
+        return extra_files
 
-	# create a list of extra files to watch
-	extra_files = []
-	extra_files.extend(walk('myapp/blueprints', '.py'))
-	extra_files.extend(walk('myapp/templates', '.html'))
+    # create a list of extra files to watch
+    extra_files = []
+    extra_files.extend(walk('myapp/blueprints', '.py'))
+    extra_files.extend(walk('myapp/templates', '.html'))
 
-	# start the application
-	app = create_app()
-	app.run(debug=True, extra_files=extra_files)
+    # start the application
+    app = create_app()
+    app.run(debug=True, extra_files=extra_files)
+
+# vim: ts=4 sw=4 et

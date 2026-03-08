@@ -313,3 +313,5 @@ def decompress_single_file(input_path: Path, output_file: Path, compressor: str)
             'error': f'{compressor} failed: {str(e)}',
             'tool': compressor
         }
+
+# vim: ts=4 sw=4 et

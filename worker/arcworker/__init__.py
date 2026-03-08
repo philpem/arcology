@@ -19,3 +19,5 @@ __all__ = [
     'WORKER_API_KEY',
     'log',
 ]
+
+# vim: ts=4 sw=4 et

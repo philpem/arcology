@@ -22,76 +22,76 @@ depends_on = None
 
 
 def upgrade():
-	bind = op.get_bind()
-	if bind.dialect.name == 'postgresql':
-		# Rename userpermission values from lowercase to uppercase.
-		# Use a DO block to silently skip values that are already uppercase.
-		op.execute(sa.text("""
-			DO $$ BEGIN
-				ALTER TYPE userpermission RENAME VALUE 'read_only' TO 'READ_ONLY';
-			EXCEPTION WHEN invalid_parameter_value THEN NULL;
-			END $$
-		"""))
-		op.execute(sa.text("""
-			DO $$ BEGIN
-				ALTER TYPE userpermission RENAME VALUE 'read_write' TO 'READ_WRITE';
-			EXCEPTION WHEN invalid_parameter_value THEN NULL;
-			END $$
-		"""))
+    bind = op.get_bind()
+    if bind.dialect.name == 'postgresql':
+        # Rename userpermission values from lowercase to uppercase.
+        # Use a DO block to silently skip values that are already uppercase.
+        op.execute(sa.text("""
+            DO $$ BEGIN
+                ALTER TYPE userpermission RENAME VALUE 'read_only' TO 'READ_ONLY';
+            EXCEPTION WHEN invalid_parameter_value THEN NULL;
+            END $$
+        """))
+        op.execute(sa.text("""
+            DO $$ BEGIN
+                ALTER TYPE userpermission RENAME VALUE 'read_write' TO 'READ_WRITE';
+            EXCEPTION WHEN invalid_parameter_value THEN NULL;
+            END $$
+        """))
 
-		# Rename apikeypermission values from lowercase to uppercase.
-		op.execute(sa.text("""
-			DO $$ BEGIN
-				ALTER TYPE apikeypermission RENAME VALUE 'read_only' TO 'READ_ONLY';
-			EXCEPTION WHEN invalid_parameter_value THEN NULL;
-			END $$
-		"""))
-		op.execute(sa.text("""
-			DO $$ BEGIN
-				ALTER TYPE apikeypermission RENAME VALUE 'read_upload' TO 'READ_UPLOAD';
-			EXCEPTION WHEN invalid_parameter_value THEN NULL;
-			END $$
-		"""))
-		op.execute(sa.text("""
-			DO $$ BEGIN
-				ALTER TYPE apikeypermission RENAME VALUE 'read_write' TO 'READ_WRITE';
-			EXCEPTION WHEN invalid_parameter_value THEN NULL;
-			END $$
-		"""))
+        # Rename apikeypermission values from lowercase to uppercase.
+        op.execute(sa.text("""
+            DO $$ BEGIN
+                ALTER TYPE apikeypermission RENAME VALUE 'read_only' TO 'READ_ONLY';
+            EXCEPTION WHEN invalid_parameter_value THEN NULL;
+            END $$
+        """))
+        op.execute(sa.text("""
+            DO $$ BEGIN
+                ALTER TYPE apikeypermission RENAME VALUE 'read_upload' TO 'READ_UPLOAD';
+            EXCEPTION WHEN invalid_parameter_value THEN NULL;
+            END $$
+        """))
+        op.execute(sa.text("""
+            DO $$ BEGIN
+                ALTER TYPE apikeypermission RENAME VALUE 'read_write' TO 'READ_WRITE';
+            EXCEPTION WHEN invalid_parameter_value THEN NULL;
+            END $$
+        """))
 
 
 def downgrade():
-	bind = op.get_bind()
-	if bind.dialect.name == 'postgresql':
-		op.execute(sa.text("""
-			DO $$ BEGIN
-				ALTER TYPE userpermission RENAME VALUE 'READ_ONLY' TO 'read_only';
-			EXCEPTION WHEN invalid_parameter_value THEN NULL;
-			END $$
-		"""))
-		op.execute(sa.text("""
-			DO $$ BEGIN
-				ALTER TYPE userpermission RENAME VALUE 'READ_WRITE' TO 'read_write';
-			EXCEPTION WHEN invalid_parameter_value THEN NULL;
-			END $$
-		"""))
-		op.execute(sa.text("""
-			DO $$ BEGIN
-				ALTER TYPE apikeypermission RENAME VALUE 'READ_ONLY' TO 'read_only';
-			EXCEPTION WHEN invalid_parameter_value THEN NULL;
-			END $$
-		"""))
-		op.execute(sa.text("""
-			DO $$ BEGIN
-				ALTER TYPE apikeypermission RENAME VALUE 'READ_UPLOAD' TO 'read_upload';
-			EXCEPTION WHEN invalid_parameter_value THEN NULL;
-			END $$
-		"""))
-		op.execute(sa.text("""
-			DO $$ BEGIN
-				ALTER TYPE apikeypermission RENAME VALUE 'READ_WRITE' TO 'read_write';
-			EXCEPTION WHEN invalid_parameter_value THEN NULL;
-			END $$
-		"""))
+    bind = op.get_bind()
+    if bind.dialect.name == 'postgresql':
+        op.execute(sa.text("""
+            DO $$ BEGIN
+                ALTER TYPE userpermission RENAME VALUE 'READ_ONLY' TO 'read_only';
+            EXCEPTION WHEN invalid_parameter_value THEN NULL;
+            END $$
+        """))
+        op.execute(sa.text("""
+            DO $$ BEGIN
+                ALTER TYPE userpermission RENAME VALUE 'READ_WRITE' TO 'read_write';
+            EXCEPTION WHEN invalid_parameter_value THEN NULL;
+            END $$
+        """))
+        op.execute(sa.text("""
+            DO $$ BEGIN
+                ALTER TYPE apikeypermission RENAME VALUE 'READ_ONLY' TO 'read_only';
+            EXCEPTION WHEN invalid_parameter_value THEN NULL;
+            END $$
+        """))
+        op.execute(sa.text("""
+            DO $$ BEGIN
+                ALTER TYPE apikeypermission RENAME VALUE 'READ_UPLOAD' TO 'read_upload';
+            EXCEPTION WHEN invalid_parameter_value THEN NULL;
+            END $$
+        """))
+        op.execute(sa.text("""
+            DO $$ BEGIN
+                ALTER TYPE apikeypermission RENAME VALUE 'READ_WRITE' TO 'read_write';
+            EXCEPTION WHEN invalid_parameter_value THEN NULL;
+            END $$
+        """))
 
-# vim: ts=4 sw=4 noet
+# vim: ts=4 sw=4 et

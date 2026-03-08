@@ -119,7 +119,7 @@ flask db stamp head                           # Mark as up-to-date without runni
 
 ## Code Style and Conventions
 
-- **Indentation**: Tabs (not spaces). Files end with `# vim: ts=4 sw=4 noet`.
+- **Indentation**: 4 spaces per level (PEP 8 standard). Files end with `# vim: ts=4 sw=4 et`.
 - **Python version**: 3.10+ (uses PEP 585 type hints in newer code)
 - **UUIDs for public identifiers**: URLs and API responses use UUID hex strings, not sequential integer IDs
 - **Application factory pattern**: `create_app()` in `app.py`; extensions bound in factory, not at import time

@@ -1604,3 +1604,5 @@ class AnalysisWorker:
             except Exception as e:
                 log.exception("Unexpected error in main loop")
                 time.sleep(POLL_INTERVAL)
+
+# vim: ts=4 sw=4 et

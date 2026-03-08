@@ -350,7 +350,12 @@ This creates the `migrations/` directory structure and generates an initial migr
 
 ### Code Style
 
-- The project uses tabs for indentation.
+- **Indentation**: 4 spaces per level (PEP 8). Do not use tabs.
+- **Vim modeline**: every Python file ends with a blank line followed by `# vim: ts=4 sw=4 et`. This ensures editors with modeline support respect the project style automatically.
+- **Editor setup**: configure your editor to use spaces, not tabs, with a tab width of 4:
+  - Vim/Neovim: `set ts=4 sw=4 et` (or rely on the modeline)
+  - VS Code: `"editor.insertSpaces": true, "editor.tabSize": 4`
+  - PyCharm: Preferences → Code Style → Python → Use tab character (off), Tab size: 4
 - Python 3.10+ type hints are used in newer code.
 - Keep blueprints focused -- each module should handle one feature area.
 - Use UUIDs for public-facing identifiers (URLs, API responses) rather than sequential IDs.

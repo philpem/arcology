@@ -257,4 +257,4 @@ def delete_reference(item_uuid, ref_id):
     return redirect(url_for(f'{ROUTENAME}.view', uuid=item_uuid))
 
 
-# vim: ts=4 sw=4 noet
+# vim: ts=4 sw=4 et

@@ -206,3 +206,5 @@ def sector_image_to_raw_greaseweazle(input_path: Path, output_path: Path) -> dic
         'error': result.stderr.decode()[:1000],
         'process_output': process_output
     }
+
+# vim: ts=4 sw=4 et

@@ -112,3 +112,5 @@ def format_filetype(filetype_hex: str) -> str:
         return f"{hex_display} ({name})"
 
     return hex_display
+
+# vim: ts=4 sw=4 et

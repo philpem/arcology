@@ -21,25 +21,25 @@ depends_on = None
 
 
 def upgrade():
-	# Deactivate all existing keys — their SHA-256 hashes cannot be verified
-	# with the new bcrypt scheme.  Users must regenerate their API keys.
-	op.execute(sa.text("UPDATE api_keys SET is_active = false"))
+    # Deactivate all existing keys — their SHA-256 hashes cannot be verified
+    # with the new bcrypt scheme.  Users must regenerate their API keys.
+    op.execute(sa.text("UPDATE api_keys SET is_active = false"))
 
-	# Widen key_hash to hold bcrypt hashes (60 chars; 72 gives headroom).
-	with op.batch_alter_table('api_keys', schema=None) as batch_op:
-		batch_op.alter_column('key_hash',
-			existing_type=sa.String(length=64),
-			type_=sa.String(length=72),
-			existing_nullable=False)
+    # Widen key_hash to hold bcrypt hashes (60 chars; 72 gives headroom).
+    with op.batch_alter_table('api_keys', schema=None) as batch_op:
+        batch_op.alter_column('key_hash',
+            existing_type=sa.String(length=64),
+            type_=sa.String(length=72),
+            existing_nullable=False)
 
 
 def downgrade():
-	# Re-widening back is safe; old SHA-256 hashes (64 chars) still fit in 72.
-	# Keys deactivated during upgrade are not restored.
-	with op.batch_alter_table('api_keys', schema=None) as batch_op:
-		batch_op.alter_column('key_hash',
-			existing_type=sa.String(length=72),
-			type_=sa.String(length=64),
-			existing_nullable=False)
+    # Re-widening back is safe; old SHA-256 hashes (64 chars) still fit in 72.
+    # Keys deactivated during upgrade are not restored.
+    with op.batch_alter_table('api_keys', schema=None) as batch_op:
+        batch_op.alter_column('key_hash',
+            existing_type=sa.String(length=72),
+            type_=sa.String(length=64),
+            existing_nullable=False)
 
-# vim: ts=4 sw=4 noet
+# vim: ts=4 sw=4 et

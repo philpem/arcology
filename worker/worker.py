@@ -22,7 +22,7 @@ import os as _os, sys as _sys
 # that 'shared' is importable when running the worker outside Docker.
 _repo_root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
 if _repo_root not in _sys.path:
-	_sys.path.insert(0, _repo_root)
+    _sys.path.insert(0, _repo_root)
 del _os, _sys, _repo_root
 
 from arcworker import AnalysisWorker, ARCOLOGY_API, UPLOAD_DIR, OUTPUT_DIR, WORKER_API_KEY
@@ -40,3 +40,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+# vim: ts=4 sw=4 et

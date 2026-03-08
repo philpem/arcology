@@ -126,3 +126,5 @@ def compute_file_hash(filepath: Path) -> tuple[str, str, int]:
             size += len(chunk)
 
     return md5.hexdigest(), sha256.hexdigest(), size
+
+# vim: ts=4 sw=4 et

@@ -87,75 +87,75 @@ NEXUS_PRINTER_FILESYSTEM = 'adfs'
 
 
 def _decode_nexus_flags(flags: int) -> dict:
-	"""Decode a Nexus partition flags byte into a human-readable dict."""
-	return {
-		'writable': bool(flags & 0x01),
-		'multiple': bool(flags & 0x02),
-		'fixed':    bool(flags & 0x04),
-		'printer':  bool(flags & 0x08),
-		'local':    bool(flags & 0x10),
-		'last':     bool(flags & 0x80),
-		'raw':      f'0x{flags:02X}',
-	}
+    """Decode a Nexus partition flags byte into a human-readable dict."""
+    return {
+        'writable': bool(flags & 0x01),
+        'multiple': bool(flags & 0x02),
+        'fixed':    bool(flags & 0x04),
+        'printer':  bool(flags & 0x08),
+        'local':    bool(flags & 0x10),
+        'last':     bool(flags & 0x80),
+        'raw':      f'0x{flags:02X}',
+    }
 
 
 def _parse_filecore_disc_record(disc_record: bytes) -> dict:
-	"""
-	Parse a Filecore disc record into a dict of useful fields.
+    """
+    Parse a Filecore disc record into a dict of useful fields.
 
-	Args:
-		disc_record: At least 64 bytes starting at the disc record
-		             (boot_block[0x1C0:0x200]).
+    Args:
+        disc_record: At least 64 bytes starting at the disc record
+                     (boot_block[0x1C0:0x200]).
 
-	Returns:
-		Dict with ``disc_size``, ``disc_name``, and raw ``log2_sector_size``.
-	"""
-	if len(disc_record) < 0x14:
-		return {'disc_size': 0, 'disc_name': ''}
+    Returns:
+        Dict with ``disc_size``, ``disc_name``, and raw ``log2_sector_size``.
+    """
+    if len(disc_record) < 0x14:
+        return {'disc_size': 0, 'disc_name': ''}
 
-	disc_size = struct.unpack_from('<I', disc_record, _DR_DISC_SIZE)[0]
+    disc_size = struct.unpack_from('<I', disc_record, _DR_DISC_SIZE)[0]
 
-	disc_name = ''
-	if len(disc_record) >= _DR_DISC_NAME + 10:
-		raw = disc_record[_DR_DISC_NAME:_DR_DISC_NAME + 10]
-		# Terminated by CR (0x0D) or null
-		for terminator in (b'\r', b'\x00'):
-			idx = raw.find(terminator)
-			if idx != -1:
-				raw = raw[:idx]
-				break
-		disc_name = raw.decode('latin-1', errors='replace').strip()
+    disc_name = ''
+    if len(disc_record) >= _DR_DISC_NAME + 10:
+        raw = disc_record[_DR_DISC_NAME:_DR_DISC_NAME + 10]
+        # Terminated by CR (0x0D) or null
+        for terminator in (b'\r', b'\x00'):
+            idx = raw.find(terminator)
+            if idx != -1:
+                raw = raw[:idx]
+                break
+        disc_name = raw.decode('latin-1', errors='replace').strip()
 
-	return {
-		'disc_size': disc_size,
-		'disc_name': disc_name,
-		'log2_sector_size': disc_record[0] if disc_record else 0,
-	}
+    return {
+        'disc_size': disc_size,
+        'disc_name': disc_name,
+        'log2_sector_size': disc_record[0] if disc_record else 0,
+    }
 
 
 def _is_valid_filecore_disc_record(disc_record: bytes) -> bool:
-	"""
-	Return True if *disc_record* looks like a plausible Filecore disc record.
+    """
+    Return True if *disc_record* looks like a plausible Filecore disc record.
 
-	Two fields are checked:
+    Two fields are checked:
 
-	* ``log2_sector_size`` (byte 0): must be one of 8, 9, 10, or 12,
-	  corresponding to 256, 512, 1024, or 4096-byte sectors.  4096-byte
-	  sectors appear on Extended Format drives.  Any other value is not
-	  used by a real Filecore volume and almost certainly indicates that
-	  the boot block passed the checksum by coincidence.
+    * ``log2_sector_size`` (byte 0): must be one of 8, 9, 10, or 12,
+      corresponding to 256, 512, 1024, or 4096-byte sectors.  4096-byte
+      sectors appear on Extended Format drives.  Any other value is not
+      used by a real Filecore volume and almost certainly indicates that
+      the boot block passed the checksum by coincidence.
 
-	* ``disc_size`` (LE uint32 at offset 0x10): must be non-zero.
+    * ``disc_size`` (LE uint32 at offset 0x10): must be non-zero.
 
-	These two checks together reduce the false-positive probability from
-	the checksum's 1-in-256 to roughly 1-in-20,000.
-	"""
-	if len(disc_record) < 0x14:
-		return False
-	if disc_record[0] not in (8, 9, 10, 12):
-		return False
-	disc_size = struct.unpack_from('<I', disc_record, _DR_DISC_SIZE)[0]
-	return disc_size > 0
+    These two checks together reduce the false-positive probability from
+    the checksum's 1-in-256 to roughly 1-in-20,000.
+    """
+    if len(disc_record) < 0x14:
+        return False
+    if disc_record[0] not in (8, 9, 10, 12):
+        return False
+    disc_size = struct.unpack_from('<I', disc_record, _DR_DISC_SIZE)[0]
+    return disc_size > 0
 
 
 # =========================================================================
@@ -163,110 +163,110 @@ def _is_valid_filecore_disc_record(disc_record: bytes) -> bool:
 # =========================================================================
 
 def _decode_hccs_password(obfuscated: bytes) -> str:
-	"""Decode an HCCS XOR-obfuscated partition password."""
-	xor_key = bytes([0x06, 0x14, 0x1F, 0x07, 0x02, 0x1D, 0x17, 0x17])
-	decoded = bytes(b ^ k for b, k in zip(obfuscated[:8], xor_key))
-	return decoded.rstrip(b'\x00').decode('latin-1', errors='replace')
+    """Decode an HCCS XOR-obfuscated partition password."""
+    xor_key = bytes([0x06, 0x14, 0x1F, 0x07, 0x02, 0x1D, 0x17, 0x17])
+    decoded = bytes(b ^ k for b, k in zip(obfuscated[:8], xor_key))
+    return decoded.rstrip(b'\x00').decode('latin-1', errors='replace')
 
 def _decode_hccs_access_flags(flags: int) -> dict:
-	"""
-	Decode an HCCS / Simtec access-flags word.
+    """
+    Decode an HCCS / Simtec access-flags word.
 
-	Returns a dict with boolean ``read``, ``write``, and ``not_mounted``
-	fields plus a human-readable ``summary`` string.
-	"""
-	read = bool(flags & 0x10)
-	write = bool(flags & 0x20)
-	not_mounted = bool(flags & 0x200)
+    Returns a dict with boolean ``read``, ``write``, and ``not_mounted``
+    fields plus a human-readable ``summary`` string.
+    """
+    read = bool(flags & 0x10)
+    write = bool(flags & 0x20)
+    not_mounted = bool(flags & 0x200)
 
-	if read and write:
-		summary = 'read/write'
-	elif read:
-		summary = 'read only'
-	else:
-		summary = 'no access'
-	if not_mounted:
-		summary += ', not mounted'
+    if read and write:
+        summary = 'read/write'
+    elif read:
+        summary = 'read only'
+    else:
+        summary = 'no access'
+    if not_mounted:
+        summary += ', not mounted'
 
-	return {
-		'read': read,
-		'write': write,
-		'not_mounted': not_mounted,
-		'raw': f'0x{flags:04X}',
-		'summary': summary,
-	}
+    return {
+        'read': read,
+        'write': write,
+        'not_mounted': not_mounted,
+        'raw': f'0x{flags:04X}',
+        'summary': summary,
+    }
 
 def _detect_hccs_partitions(input_path: Path) -> dict:
-	"""
-	Detect HCCS-format Acorn partitions.
+    """
+    Detect HCCS-format Acorn partitions.
 
-	HCCS partitions follow each other contiguously.  The first partition
-	starts at byte 0; its boot block (at partition_start + 0xC00) contains
-	an ``Andy`` magic at +0x1B0 followed by the password, access flags
-	and a Filecore disc record whose ``disc_size`` field gives the
-	partition length in bytes.  The next partition starts immediately
-	after, and so on.
+    HCCS partitions follow each other contiguously.  The first partition
+    starts at byte 0; its boot block (at partition_start + 0xC00) contains
+    an ``Andy`` magic at +0x1B0 followed by the password, access flags
+    and a Filecore disc record whose ``disc_size`` field gives the
+    partition length in bytes.  The next partition starts immediately
+    after, and so on.
 
-	Returns:
-		Dict with ``detected``, ``scheme``, ``partitions`` list.
-	"""
-	file_size = input_path.stat().st_size
-	partitions = []
-	current_offset = 0
-	index = 0
+    Returns:
+        Dict with ``detected``, ``scheme``, ``partitions`` list.
+    """
+    file_size = input_path.stat().st_size
+    partitions = []
+    current_offset = 0
+    index = 0
 
-	with open(input_path, 'rb') as f:
-		while current_offset + FILECORE_BOOT_BLOCK_OFFSET + FILECORE_BOOT_BLOCK_SIZE <= file_size:
-			# Read boot block (512 bytes at 0xC00 from partition start)
-			f.seek(current_offset + FILECORE_BOOT_BLOCK_OFFSET)
-			boot_block = f.read(FILECORE_BOOT_BLOCK_SIZE)
-			if len(boot_block) < FILECORE_BOOT_BLOCK_SIZE:
-				break
+    with open(input_path, 'rb') as f:
+        while current_offset + FILECORE_BOOT_BLOCK_OFFSET + FILECORE_BOOT_BLOCK_SIZE <= file_size:
+            # Read boot block (512 bytes at 0xC00 from partition start)
+            f.seek(current_offset + FILECORE_BOOT_BLOCK_OFFSET)
+            boot_block = f.read(FILECORE_BOOT_BLOCK_SIZE)
+            if len(boot_block) < FILECORE_BOOT_BLOCK_SIZE:
+                break
 
-			# Check magic
-			magic = boot_block[FILECORE_BB_HWDEP_OFFSET:FILECORE_BB_HWDEP_OFFSET + 4]
-			if magic != b'Andy':
-				break
+            # Check magic
+            magic = boot_block[FILECORE_BB_HWDEP_OFFSET:FILECORE_BB_HWDEP_OFFSET + 4]
+            if magic != b'Andy':
+                break
 
-			# --- Partition header (at 0x1B0) ---
-			hdr_off = FILECORE_BB_HWDEP_OFFSET
-			password = _decode_hccs_password(boot_block[hdr_off + 4:hdr_off + 12])
-			access_before = struct.unpack_from('<H', boot_block, hdr_off + 12)[0]
-			access_after = struct.unpack_from('<H', boot_block, hdr_off + 14)[0]
+            # --- Partition header (at 0x1B0) ---
+            hdr_off = FILECORE_BB_HWDEP_OFFSET
+            password = _decode_hccs_password(boot_block[hdr_off + 4:hdr_off + 12])
+            access_before = struct.unpack_from('<H', boot_block, hdr_off + 12)[0]
+            access_after = struct.unpack_from('<H', boot_block, hdr_off + 14)[0]
 
-			# --- Disc record (at 0x1C0) ---
-			disc_record = boot_block[FILECORE_BB_DISC_RECORD_OFFSET:]
-			dr = _parse_filecore_disc_record(disc_record)
-			partition_size = dr['disc_size']
-			if partition_size == 0:
-				log.warning(f"HCCS partition {index}: disc record has zero size, stopping")
-				break
+            # --- Disc record (at 0x1C0) ---
+            disc_record = boot_block[FILECORE_BB_DISC_RECORD_OFFSET:]
+            dr = _parse_filecore_disc_record(disc_record)
+            partition_size = dr['disc_size']
+            if partition_size == 0:
+                log.warning(f"HCCS partition {index}: disc record has zero size, stopping")
+                break
 
-			# Clamp to remaining image
-			if current_offset + partition_size > file_size:
-				partition_size = file_size - current_offset
+            # Clamp to remaining image
+            if current_offset + partition_size > file_size:
+                partition_size = file_size - current_offset
 
-			partitions.append({
-				'index': index,
-				'start_byte': current_offset,
-				'size_bytes': partition_size,
-				'filesystem': 'adfs',
-				'scheme': 'hccs',
-				'description': f'HCCS partition {index}',
-				'disc_name': dr['disc_name'],
-				'password': password,
-				'access_default': _decode_hccs_access_flags(access_before),
-				'access_unlocked': _decode_hccs_access_flags(access_after),
-			})
+            partitions.append({
+                'index': index,
+                'start_byte': current_offset,
+                'size_bytes': partition_size,
+                'filesystem': 'adfs',
+                'scheme': 'hccs',
+                'description': f'HCCS partition {index}',
+                'disc_name': dr['disc_name'],
+                'password': password,
+                'access_default': _decode_hccs_access_flags(access_before),
+                'access_unlocked': _decode_hccs_access_flags(access_after),
+            })
 
-			current_offset += partition_size
-			index += 1
+            current_offset += partition_size
+            index += 1
 
-	return {
-		'detected': len(partitions) > 0,
-		'scheme': 'hccs',
-		'partitions': partitions,
-	}
+    return {
+        'detected': len(partitions) > 0,
+        'scheme': 'hccs',
+        'partitions': partitions,
+    }
 
 
 # =========================================================================
@@ -274,178 +274,178 @@ def _detect_hccs_partitions(input_path: Path) -> dict:
 # =========================================================================
 
 def _detect_nexus_partitions(input_path: Path) -> dict:
-	"""
-	Detect an SJ Research Nexus Disc Sharer partition table.
+    """
+    Detect an SJ Research Nexus Disc Sharer partition table.
 
-	The table sits at a fixed offset (NEXUS_TABLE_OFFSET = 0x20000,
-	i.e. 256 × 512-byte sectors from the start of the disc) and is
-	identified by the four-byte magic ``Net1``.  The 0x20000 bytes before
-	the table contain the disc sharer firmware; this region is captured in
-	the returned dict so that the caller can label it appropriately when
-	carving unpartitioned space.
+    The table sits at a fixed offset (NEXUS_TABLE_OFFSET = 0x20000,
+    i.e. 256 × 512-byte sectors from the start of the disc) and is
+    identified by the four-byte magic ``Net1``.  The 0x20000 bytes before
+    the table contain the disc sharer firmware; this region is captured in
+    the returned dict so that the caller can label it appropriately when
+    carving unpartitioned space.
 
-	Partition addresses are stored as plain sector numbers (ui32le).
-	The combined size/drive word stores the drive number in bits 31–24
-	and the size in sectors in bits 23–0.
+    Partition addresses are stored as plain sector numbers (ui32le).
+    The combined size/drive word stores the drive number in bits 31–24
+    and the size in sectors in bits 23–0.
 
-	Printer partitions (flag bit 3) are checked against the Filecore boot
-	block checksum as a quick ADFS sanity test.  If the check passes the
-	filesystem is set to ``adfs``; if it fails an informational message is
-	logged and the filesystem is still set to NEXUS_PRINTER_FILESYSTEM
-	(default ``'adfs'``).  Set NEXUS_PRINTER_FILESYSTEM to a different
-	string to override the label, or to None to omit printer partitions
-	from the output entirely (they will appear as unpartitioned gaps).
+    Printer partitions (flag bit 3) are checked against the Filecore boot
+    block checksum as a quick ADFS sanity test.  If the check passes the
+    filesystem is set to ``adfs``; if it fails an informational message is
+    logged and the filesystem is still set to NEXUS_PRINTER_FILESYSTEM
+    (default ``'adfs'``).  Set NEXUS_PRINTER_FILESYSTEM to a different
+    string to override the label, or to None to omit printer partitions
+    from the output entirely (they will appear as unpartitioned gaps).
 
-	Disc names are read from the Filecore disc record inside the boot block
-	at ``partition_start + 0xC00`` when the boot block is present.
+    Disc names are read from the Filecore disc record inside the boot block
+    at ``partition_start + 0xC00`` when the boot block is present.
 
-	Returns:
-		Dict with ``detected`` (bool).  When True, also includes
-		``scheme`` (``'nexus'``), ``partitions`` (list of dicts with at
-		least ``index``, ``start_byte``, ``size_bytes``, ``filesystem``),
-		and ``nexus_header`` with disc-level Nexus metadata.
-	"""
-	file_size = input_path.stat().st_size
+    Returns:
+        Dict with ``detected`` (bool).  When True, also includes
+        ``scheme`` (``'nexus'``), ``partitions`` (list of dicts with at
+        least ``index``, ``start_byte``, ``size_bytes``, ``filesystem``),
+        and ``nexus_header`` with disc-level Nexus metadata.
+    """
+    file_size = input_path.stat().st_size
 
-	# Minimum size: table offset + header + at least one entry
-	if file_size < NEXUS_TABLE_OFFSET + NEXUS_TABLE_HEADER_SIZE + NEXUS_TABLE_ENTRY_SIZE:
-		return {'detected': False, 'scheme': 'nexus'}
+    # Minimum size: table offset + header + at least one entry
+    if file_size < NEXUS_TABLE_OFFSET + NEXUS_TABLE_HEADER_SIZE + NEXUS_TABLE_ENTRY_SIZE:
+        return {'detected': False, 'scheme': 'nexus'}
 
-	partitions = []
-	network_number = header_unknown_5 = delay = 0
+    partitions = []
+    network_number = header_unknown_5 = delay = 0
 
-	with open(input_path, 'rb') as f:
-		f.seek(NEXUS_TABLE_OFFSET)
-		table_bytes = f.read(256)
+    with open(input_path, 'rb') as f:
+        f.seek(NEXUS_TABLE_OFFSET)
+        table_bytes = f.read(256)
 
-		if len(table_bytes) < NEXUS_TABLE_HEADER_SIZE or table_bytes[:4] != NEXUS_TABLE_MAGIC:
-			return {'detected': False, 'scheme': 'nexus'}
+        if len(table_bytes) < NEXUS_TABLE_HEADER_SIZE or table_bytes[:4] != NEXUS_TABLE_MAGIC:
+            return {'detected': False, 'scheme': 'nexus'}
 
-		# --- Partition table header ---
-		network_number    = table_bytes[4]
-		header_unknown_5  = table_bytes[5]
-		delay             = (table_bytes[7] << 8) | table_bytes[6]  # delay_high, delay_low
+        # --- Partition table header ---
+        network_number    = table_bytes[4]
+        header_unknown_5  = table_bytes[5]
+        delay             = (table_bytes[7] << 8) | table_bytes[6]  # delay_high, delay_low
 
-		for i in range(NEXUS_TABLE_MAX_ENTRIES):
-			eo = NEXUS_TABLE_HEADER_SIZE + i * NEXUS_TABLE_ENTRY_SIZE
-			if eo + NEXUS_TABLE_ENTRY_SIZE > len(table_bytes):
-				break
+        for i in range(NEXUS_TABLE_MAX_ENTRIES):
+            eo = NEXUS_TABLE_HEADER_SIZE + i * NEXUS_TABLE_ENTRY_SIZE
+            if eo + NEXUS_TABLE_ENTRY_SIZE > len(table_bytes):
+                break
 
-			flags_byte      = table_bytes[eo]
-			station         = table_bytes[eo + 1]
-			# eo+2, eo+3 are reserved
-			addr_word       = struct.unpack_from('<I', table_bytes, eo + 4)[0]
-			size_drive_word = struct.unpack_from('<I', table_bytes, eo + 8)[0]
-			# eo+12..eo+15 are reserved
+            flags_byte      = table_bytes[eo]
+            station         = table_bytes[eo + 1]
+            # eo+2, eo+3 are reserved
+            addr_word       = struct.unpack_from('<I', table_bytes, eo + 4)[0]
+            size_drive_word = struct.unpack_from('<I', table_bytes, eo + 8)[0]
+            # eo+12..eo+15 are reserved
 
-			decoded_flags = _decode_nexus_flags(flags_byte)
-			is_last    = decoded_flags['last']
-			is_printer = decoded_flags['printer']
+            decoded_flags = _decode_nexus_flags(flags_byte)
+            is_last    = decoded_flags['last']
+            is_printer = decoded_flags['printer']
 
-			start_sector    = addr_word
-			drive_number    = (size_drive_word >> 24) & 0xFF
-			size_in_sectors = size_drive_word & 0x00FFFFFF
-			start_byte_val  = start_sector    * NEXUS_SECTOR_SIZE
-			size_bytes_val  = size_in_sectors * NEXUS_SECTOR_SIZE
+            start_sector    = addr_word
+            drive_number    = (size_drive_word >> 24) & 0xFF
+            size_in_sectors = size_drive_word & 0x00FFFFFF
+            start_byte_val  = start_sector    * NEXUS_SECTOR_SIZE
+            size_bytes_val  = size_in_sectors * NEXUS_SECTOR_SIZE
 
-			if size_bytes_val == 0:
-				if is_last:
-					break
-				continue
+            if size_bytes_val == 0:
+                if is_last:
+                    break
+                continue
 
-			# Respect NEXUS_PRINTER_FILESYSTEM = None to omit printer partitions
-			if is_printer and NEXUS_PRINTER_FILESYSTEM is None:
-				log.debug(f"Nexus partition {i}: printer partition omitted (NEXUS_PRINTER_FILESYSTEM=None)")
-				if is_last:
-					break
-				continue
+            # Respect NEXUS_PRINTER_FILESYSTEM = None to omit printer partitions
+            if is_printer and NEXUS_PRINTER_FILESYSTEM is None:
+                log.debug(f"Nexus partition {i}: printer partition omitted (NEXUS_PRINTER_FILESYSTEM=None)")
+                if is_last:
+                    break
+                continue
 
-			# Clamp to image size
-			if start_byte_val + size_bytes_val > file_size:
-				size_bytes_val = max(0, file_size - start_byte_val)
+            # Clamp to image size
+            if start_byte_val + size_bytes_val > file_size:
+                size_bytes_val = max(0, file_size - start_byte_val)
 
-			# --- Filecore boot block: read once, used for ADFS check and disc name ---
-			bb_abs     = start_byte_val + FILECORE_BOOT_BLOCK_OFFSET
-			boot_block = b''
-			if bb_abs + FILECORE_BOOT_BLOCK_SIZE <= file_size:
-				f.seek(bb_abs)
-				boot_block = f.read(FILECORE_BOOT_BLOCK_SIZE)
+            # --- Filecore boot block: read once, used for ADFS check and disc name ---
+            bb_abs     = start_byte_val + FILECORE_BOOT_BLOCK_OFFSET
+            boot_block = b''
+            if bb_abs + FILECORE_BOOT_BLOCK_SIZE <= file_size:
+                f.seek(bb_abs)
+                boot_block = f.read(FILECORE_BOOT_BLOCK_SIZE)
 
-			# --- Determine filesystem ---
-			if is_printer:
-				if NEXUS_PRINTER_FILESYSTEM == 'adfs':
-					# Confirm ADFS by checking the Filecore boot block checksum.
-					# Log a note when it fails so that the operator knows ADFS
-					# is being assumed without confirmation.
-					adfs_ok = (
-						len(boot_block) == FILECORE_BOOT_BLOCK_SIZE
-						and sum(boot_block) & 0xFF == 0
-					)
-					if not adfs_ok:
-						log.info(
-							f"Nexus partition {i} (printer): Filecore boot block "
-							f"checksum not valid — boot block absent or partition "
-							f"may not be ADFS (assuming '{NEXUS_PRINTER_FILESYSTEM}')"
-						)
-				filesystem = NEXUS_PRINTER_FILESYSTEM
-			else:
-				filesystem = 'adfs'
+            # --- Determine filesystem ---
+            if is_printer:
+                if NEXUS_PRINTER_FILESYSTEM == 'adfs':
+                    # Confirm ADFS by checking the Filecore boot block checksum.
+                    # Log a note when it fails so that the operator knows ADFS
+                    # is being assumed without confirmation.
+                    adfs_ok = (
+                        len(boot_block) == FILECORE_BOOT_BLOCK_SIZE
+                        and sum(boot_block) & 0xFF == 0
+                    )
+                    if not adfs_ok:
+                        log.info(
+                            f"Nexus partition {i} (printer): Filecore boot block "
+                            f"checksum not valid — boot block absent or partition "
+                            f"may not be ADFS (assuming '{NEXUS_PRINTER_FILESYSTEM}')"
+                        )
+                filesystem = NEXUS_PRINTER_FILESYSTEM
+            else:
+                filesystem = 'adfs'
 
-			# --- Parse disc name from Filecore disc record ---
-			# Only extract the disc name when the boot block has a valid ADFS
-			# checksum.  If the checksum fails the boot block is either absent
-			# or contains garbage (e.g. because the Nexus partition table's
-			# sector addresses placed this partition at the wrong location on
-			# disc), and decoding the name field from garbage bytes can produce
-			# strings with embedded NUL characters that PostgreSQL rejects.
-			disc_name = ''
-			if len(boot_block) >= FILECORE_BOOT_BLOCK_SIZE:
-				bb_checksum_ok = (sum(boot_block) & 0xFF == 0)
-				if bb_checksum_ok:
-					dr = _parse_filecore_disc_record(boot_block[FILECORE_BB_DISC_RECORD_OFFSET:])
-					disc_name = dr.get('disc_name', '')
-				else:
-					log.warning(
-						f"Nexus partition {i}: boot block checksum invalid"
-						f" — disc name not extracted (partition boundaries may be incorrect)"
-					)
+            # --- Parse disc name from Filecore disc record ---
+            # Only extract the disc name when the boot block has a valid ADFS
+            # checksum.  If the checksum fails the boot block is either absent
+            # or contains garbage (e.g. because the Nexus partition table's
+            # sector addresses placed this partition at the wrong location on
+            # disc), and decoding the name field from garbage bytes can produce
+            # strings with embedded NUL characters that PostgreSQL rejects.
+            disc_name = ''
+            if len(boot_block) >= FILECORE_BOOT_BLOCK_SIZE:
+                bb_checksum_ok = (sum(boot_block) & 0xFF == 0)
+                if bb_checksum_ok:
+                    dr = _parse_filecore_disc_record(boot_block[FILECORE_BB_DISC_RECORD_OFFSET:])
+                    disc_name = dr.get('disc_name', '')
+                else:
+                    log.warning(
+                        f"Nexus partition {i}: boot block checksum invalid"
+                        f" — disc name not extracted (partition boundaries may be incorrect)"
+                    )
 
-			partition = {
-				'index':                  i,
-				'start_byte':             start_byte_val,
-				'size_bytes':             size_bytes_val,
-				'filesystem':             filesystem,
-				'scheme':                 'nexus',
-				'description':            f'Nexus partition {i}',
-				'nexus_drive_number':     drive_number,
-				'nexus_station':          station,
-				'nexus_flags':            decoded_flags,
-				'nexus_network_number':   network_number,
-				'nexus_header_unknown_5': header_unknown_5,
-				'nexus_delay':            delay,
-			}
-			if disc_name:
-				partition['disc_name'] = disc_name
+            partition = {
+                'index':                  i,
+                'start_byte':             start_byte_val,
+                'size_bytes':             size_bytes_val,
+                'filesystem':             filesystem,
+                'scheme':                 'nexus',
+                'description':            f'Nexus partition {i}',
+                'nexus_drive_number':     drive_number,
+                'nexus_station':          station,
+                'nexus_flags':            decoded_flags,
+                'nexus_network_number':   network_number,
+                'nexus_header_unknown_5': header_unknown_5,
+                'nexus_delay':            delay,
+            }
+            if disc_name:
+                partition['disc_name'] = disc_name
 
-			partitions.append(partition)
+            partitions.append(partition)
 
-			if is_last:
-				break
+            if is_last:
+                break
 
-	if not partitions:
-		# Magic matched but no usable entries — treat as not detected
-		return {'detected': False, 'scheme': 'nexus'}
+    if not partitions:
+        # Magic matched but no usable entries — treat as not detected
+        return {'detected': False, 'scheme': 'nexus'}
 
-	return {
-		'detected': True,
-		'scheme': 'nexus',
-		'partitions': partitions,
-		'nexus_header': {
-			'nexus_network_number':   network_number,
-			'nexus_header_unknown_5': header_unknown_5,
-			'nexus_delay':            delay,
-		},
-	}
+    return {
+        'detected': True,
+        'scheme': 'nexus',
+        'partitions': partitions,
+        'nexus_header': {
+            'nexus_network_number':   network_number,
+            'nexus_header_unknown_5': header_unknown_5,
+            'nexus_delay':            delay,
+        },
+    }
 
 
 # =========================================================================
@@ -453,36 +453,36 @@ def _detect_nexus_partitions(input_path: Path) -> dict:
 # =========================================================================
 
 def _detect_simtec_signature(input_path: Path) -> dict:
-	"""
-	Detect the Simtec IDEFS partition table signature.
+    """
+    Detect the Simtec IDEFS partition table signature.
 
-	Only the presence of the ``andy`` magic at 0xC00 + 0x1B0 is checked;
-	the partition table is not decoded because the documentation is
-	incomplete (password algorithm and some fields are unknown).
+    Only the presence of the ``andy`` magic at 0xC00 + 0x1B0 is checked;
+    the partition table is not decoded because the documentation is
+    incomplete (password algorithm and some fields are unknown).
 
-	Returns:
-		Dict with ``detected``, ``scheme``, and a ``description``.
-	"""
-	file_size = input_path.stat().st_size
-	if file_size < FILECORE_BOOT_BLOCK_OFFSET + FILECORE_BOOT_BLOCK_SIZE:
-		return {'detected': False, 'scheme': 'simtec'}
+    Returns:
+        Dict with ``detected``, ``scheme``, and a ``description``.
+    """
+    file_size = input_path.stat().st_size
+    if file_size < FILECORE_BOOT_BLOCK_OFFSET + FILECORE_BOOT_BLOCK_SIZE:
+        return {'detected': False, 'scheme': 'simtec'}
 
-	with open(input_path, 'rb') as f:
-		f.seek(FILECORE_BOOT_BLOCK_OFFSET + FILECORE_BB_HWDEP_OFFSET)
-		magic = f.read(4)
+    with open(input_path, 'rb') as f:
+        f.seek(FILECORE_BOOT_BLOCK_OFFSET + FILECORE_BB_HWDEP_OFFSET)
+        magic = f.read(4)
 
-	if magic != b'andy':
-		return {'detected': False, 'scheme': 'simtec'}
+    if magic != b'andy':
+        return {'detected': False, 'scheme': 'simtec'}
 
-	return {
-		'detected': True,
-		'scheme': 'simtec',
-		'partitions': [],  # No partition decoding for Simtec
-		'description': (
-			'Simtec IDEFS partition table detected '
-			'(partition decoding not implemented — documentation incomplete)'
-		),
-	}
+    return {
+        'detected': True,
+        'scheme': 'simtec',
+        'partitions': [],  # No partition decoding for Simtec
+        'description': (
+            'Simtec IDEFS partition table detected '
+            '(partition decoding not implemented — documentation incomplete)'
+        ),
+    }
 
 
 # =========================================================================
@@ -490,44 +490,44 @@ def _detect_simtec_signature(input_path: Path) -> dict:
 # =========================================================================
 
 def detect_acorn_partitions(input_path: Path) -> dict:
-	"""
-	Try all known Acorn partitioning schemes in priority order.
+    """
+    Try all known Acorn partitioning schemes in priority order.
 
-	Each scheme detector returns partitions with byte-based offsets
-	(``start_byte`` / ``size_bytes``) so the caller can use them
-	directly for image carving and gap detection.
+    Each scheme detector returns partitions with byte-based offsets
+    (``start_byte`` / ``size_bytes``) so the caller can use them
+    directly for image carving and gap detection.
 
-	To add a new scheme, write a ``_detect_<scheme>`` function and
-	call it here in the appropriate priority order.
+    To add a new scheme, write a ``_detect_<scheme>`` function and
+    call it here in the appropriate priority order.
 
-	Returns:
-		A dict with at least ``detected`` (bool).  When a scheme is
-		found, also includes ``scheme`` (str) and ``partitions`` (list).
-		Schemes that are detected but cannot be decoded (e.g. Simtec)
-		return ``partitions: []`` with a ``description``.
-	"""
-	# SJ Research Nexus Disc Sharer (checked first: the 'Net1' magic is at
-	# a fixed location 0x20000 bytes in, well away from the Filecore boot
-	# block at 0xC00.  On a Nexus disc the 0xC00 area holds the disc
-	# sharer firmware, so HCCS detection (which looks for 'Andy' there)
-	# will naturally fail — but checking Nexus first is faster.)
-	result = _detect_nexus_partitions(input_path)
-	if result['detected']:
-		return result
+    Returns:
+        A dict with at least ``detected`` (bool).  When a scheme is
+        found, also includes ``scheme`` (str) and ``partitions`` (list).
+        Schemes that are detected but cannot be decoded (e.g. Simtec)
+        return ``partitions: []`` with a ``description``.
+    """
+    # SJ Research Nexus Disc Sharer (checked first: the 'Net1' magic is at
+    # a fixed location 0x20000 bytes in, well away from the Filecore boot
+    # block at 0xC00.  On a Nexus disc the 0xC00 area holds the disc
+    # sharer firmware, so HCCS detection (which looks for 'Andy' there)
+    # will naturally fail — but checking Nexus first is faster.)
+    result = _detect_nexus_partitions(input_path)
+    if result['detected']:
+        return result
 
-	# HCCS (most common Acorn hard-disc partitioning)
-	result = _detect_hccs_partitions(input_path)
-	if result['detected']:
-		return result
+    # HCCS (most common Acorn hard-disc partitioning)
+    result = _detect_hccs_partitions(input_path)
+    if result['detected']:
+        return result
 
-	# Simtec IDEFS (signature only — documentation incomplete)
-	result = _detect_simtec_signature(input_path)
-	if result['detected']:
-		return result
+    # Simtec IDEFS (signature only — documentation incomplete)
+    result = _detect_simtec_signature(input_path)
+    if result['detected']:
+        return result
 
-	# (Future: RISC iX, ICS, etc.)
+    # (Future: RISC iX, ICS, etc.)
 
-	return {'detected': False}
+    return {'detected': False}
 
 
 # =========================================================================
@@ -852,127 +852,127 @@ _FAT_VALID_BPS = frozenset({512, 1024, 2048, 4096})
 
 # Valid media-descriptor byte values (FAT spec §3)
 _FAT_VALID_MEDIA = frozenset({
-	0xF0, 0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF,
+    0xF0, 0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF,
 })
 
 
 def detect_fat_filesystem(source: bytes | Path) -> str | None:
-	"""
-	Identify a FAT12/16/32 filesystem from a raw disc image.
+    """
+    Identify a FAT12/16/32 filesystem from a raw disc image.
 
-	*source* may be either a :class:`~pathlib.Path` (the first 512 bytes are
-	read from the file) or a :class:`bytes` object of at least 512 bytes
-	(the caller's buffer is used directly, avoiding a second file read when
-	the sector is already in memory).
+    *source* may be either a :class:`~pathlib.Path` (the first 512 bytes are
+    read from the file) or a :class:`bytes` object of at least 512 bytes
+    (the caller's buffer is used directly, avoiding a second file read when
+    the sector is already in memory).
 
-	Returns ``'fat12'``, ``'fat16'`` or ``'fat32'``, or ``None`` if the image
-	does not look like a FAT volume.
+    Returns ``'fat12'``, ``'fat16'`` or ``'fat32'``, or ``None`` if the image
+    does not look like a FAT volume.
 
-	Pure Python — reads exactly 512 bytes, no subprocesses.  The function is
-	intentionally conservative: every checked BPB field must be within its
-	legal range so that Acorn, ISO and other formats are never misclassified.
+    Pure Python — reads exactly 512 bytes, no subprocesses.  The function is
+    intentionally conservative: every checked BPB field must be within its
+    legal range so that Acorn, ISO and other formats are never misclassified.
 
-	References:
-	  Microsoft "FAT: General Overview of On-Disk Format" v1.03 (Dec 2000)
-	  https://download.microsoft.com/download/1/6/1/161ba512-40e2-4cc9-843a-923143f3456c/fatgen103.doc
+    References:
+      Microsoft "FAT: General Overview of On-Disk Format" v1.03 (Dec 2000)
+      https://download.microsoft.com/download/1/6/1/161ba512-40e2-4cc9-843a-923143f3456c/fatgen103.doc
 
-	FAT type is determined in order:
-	  1. Explicit type string at offset 54–61 (FAT12/16) or 82–89 (FAT32).
-	  2. Cluster-count method (spec §3.5) for images where the formatter did
-	     not write a type string.
-	"""
-	if isinstance(source, bytes):
-		sector = source
-	else:
-		try:
-			with open(source, 'rb') as f:
-				sector = f.read(512)
-		except OSError:
-			return None
+    FAT type is determined in order:
+      1. Explicit type string at offset 54–61 (FAT12/16) or 82–89 (FAT32).
+      2. Cluster-count method (spec §3.5) for images where the formatter did
+         not write a type string.
+    """
+    if isinstance(source, bytes):
+        sector = source
+    else:
+        try:
+            with open(source, 'rb') as f:
+                sector = f.read(512)
+        except OSError:
+            return None
 
-	if len(sector) < 512:
-		return None
+    if len(sector) < 512:
+        return None
 
-	# ── Structural checks ────────────────────────────────────────────────
+    # ── Structural checks ────────────────────────────────────────────────
 
-	# Boot-sector signature (0x55 0xAA at bytes 510–511).
-	# Spec §3.1: "This signature is present in all FAT boot sectors."
-	if sector[510] != 0x55 or sector[511] != 0xAA:
-		return None
+    # Boot-sector signature (0x55 0xAA at bytes 510–511).
+    # Spec §3.1: "This signature is present in all FAT boot sectors."
+    if sector[510] != 0x55 or sector[511] != 0xAA:
+        return None
 
-	# BPB_BytsPerSec (LE 16-bit, offset 11): 512 / 1024 / 2048 / 4096.
-	# Spec §3.1: "Legal values for this field are 512, 1024, 2048, or 4096."
-	# (Not relying on BS_jmpBoot / byte 0: the jump instruction is a PC BIOS
-	# artefact and may differ or be absent in non-PC FAT images.)
-	bps = int.from_bytes(sector[11:13], 'little')
-	if bps not in _FAT_VALID_BPS:
-		return None
+    # BPB_BytsPerSec (LE 16-bit, offset 11): 512 / 1024 / 2048 / 4096.
+    # Spec §3.1: "Legal values for this field are 512, 1024, 2048, or 4096."
+    # (Not relying on BS_jmpBoot / byte 0: the jump instruction is a PC BIOS
+    # artefact and may differ or be absent in non-PC FAT images.)
+    bps = int.from_bytes(sector[11:13], 'little')
+    if bps not in _FAT_VALID_BPS:
+        return None
 
-	# BPB_SecPerClus (offset 13): must be a non-zero power of two ≤ 128.
-	# Spec §3.1: "Legal values are 1, 2, 4, 8, 16, 32, 64, and 128."
-	spc = sector[13]
-	if spc == 0 or (spc & (spc - 1)) != 0 or spc > 128:
-		return None
+    # BPB_SecPerClus (offset 13): must be a non-zero power of two ≤ 128.
+    # Spec §3.1: "Legal values are 1, 2, 4, 8, 16, 32, 64, and 128."
+    spc = sector[13]
+    if spc == 0 or (spc & (spc - 1)) != 0 or spc > 128:
+        return None
 
-	# BPB_RsvdSecCnt (LE 16-bit, offset 14): at least 1.
-	# Spec §3.1: "Must not be 0."
-	rsvd = int.from_bytes(sector[14:16], 'little')
-	if rsvd < 1:
-		return None
+    # BPB_RsvdSecCnt (LE 16-bit, offset 14): at least 1.
+    # Spec §3.1: "Must not be 0."
+    rsvd = int.from_bytes(sector[14:16], 'little')
+    if rsvd < 1:
+        return None
 
-	# BPB_NumFATs (offset 16): 1 or 2.
-	# Spec §3.1: "Any FAT volume must have at least 1 FAT … strongly
-	# recommend … always 2."
-	num_fats = sector[16]
-	if num_fats not in (1, 2):
-		return None
+    # BPB_NumFATs (offset 16): 1 or 2.
+    # Spec §3.1: "Any FAT volume must have at least 1 FAT … strongly
+    # recommend … always 2."
+    num_fats = sector[16]
+    if num_fats not in (1, 2):
+        return None
 
-	# BPB_Media (offset 21): 0xF0 or 0xF8–0xFF.
-	# Spec §3.1: "Legal values for this field are 0xF0, 0xF8, 0xF9, 0xFA,
-	# 0xFB, 0xFC, 0xFD, 0xFE, and 0xFF."
-	if sector[21] not in _FAT_VALID_MEDIA:
-		return None
+    # BPB_Media (offset 21): 0xF0 or 0xF8–0xFF.
+    # Spec §3.1: "Legal values for this field are 0xF0, 0xF8, 0xF9, 0xFA,
+    # 0xFB, 0xFC, 0xFD, 0xFE, and 0xFF."
+    if sector[21] not in _FAT_VALID_MEDIA:
+        return None
 
-	# ── FAT variant determination ─────────────────────────────────────────
+    # ── FAT variant determination ─────────────────────────────────────────
 
-	# BPB_FATSz16 (LE 16-bit, offset 22): zero only on FAT32
-	fat_sz16 = int.from_bytes(sector[22:24], 'little')
+    # BPB_FATSz16 (LE 16-bit, offset 22): zero only on FAT32
+    fat_sz16 = int.from_bytes(sector[22:24], 'little')
 
-	if fat_sz16 == 0:
-		# FAT32: BS_FilSysType at offset 82–89
-		fs_type = sector[82:90].rstrip(b' \x00')
-		if fs_type == b'FAT32':
-			return 'fat32'
-		# No type string — trust the BPB structure (fat_sz16 == 0 implies FAT32)
-		fat_sz32 = int.from_bytes(sector[36:40], 'little')
-		if fat_sz32 == 0:
-			return None  # Neither FAT size field set; reject
-		return 'fat32'
+    if fat_sz16 == 0:
+        # FAT32: BS_FilSysType at offset 82–89
+        fs_type = sector[82:90].rstrip(b' \x00')
+        if fs_type == b'FAT32':
+            return 'fat32'
+        # No type string — trust the BPB structure (fat_sz16 == 0 implies FAT32)
+        fat_sz32 = int.from_bytes(sector[36:40], 'little')
+        if fat_sz32 == 0:
+            return None  # Neither FAT size field set; reject
+        return 'fat32'
 
-	# FAT12 or FAT16: BS_FilSysType at offset 54–61
-	fs_type = sector[54:62].rstrip(b' \x00')
-	if fs_type == b'FAT12':
-		return 'fat12'
-	if fs_type == b'FAT16':
-		return 'fat16'
+    # FAT12 or FAT16: BS_FilSysType at offset 54–61
+    fs_type = sector[54:62].rstrip(b' \x00')
+    if fs_type == b'FAT12':
+        return 'fat12'
+    if fs_type == b'FAT16':
+        return 'fat16'
 
-	# No type string (common for pre-DOS 4.0 formatters) — use the cluster
-	# count method from spec §3.5 to distinguish FAT12/16.
-	root_ent_cnt  = int.from_bytes(sector[17:19], 'little')
-	tot_sec16     = int.from_bytes(sector[19:21], 'little')
-	tot_sec32     = int.from_bytes(sector[32:36], 'little')
-	total_sectors = tot_sec16 if tot_sec16 != 0 else tot_sec32
-	if total_sectors == 0:
-		return None
+    # No type string (common for pre-DOS 4.0 formatters) — use the cluster
+    # count method from spec §3.5 to distinguish FAT12/16.
+    root_ent_cnt  = int.from_bytes(sector[17:19], 'little')
+    tot_sec16     = int.from_bytes(sector[19:21], 'little')
+    tot_sec32     = int.from_bytes(sector[32:36], 'little')
+    total_sectors = tot_sec16 if tot_sec16 != 0 else tot_sec32
+    if total_sectors == 0:
+        return None
 
-	root_dir_sectors   = (root_ent_cnt * 32 + bps - 1) // bps
-	data_sectors       = total_sectors - rsvd - (num_fats * fat_sz16) - root_dir_sectors
-	count_of_clusters  = data_sectors // spc
+    root_dir_sectors   = (root_ent_cnt * 32 + bps - 1) // bps
+    data_sectors       = total_sectors - rsvd - (num_fats * fat_sz16) - root_dir_sectors
+    count_of_clusters  = data_sectors // spc
 
-	if count_of_clusters < 4085:
-		return 'fat12'
-	if count_of_clusters < 65525:
-		return 'fat16'
-	return 'fat32'  # fat_sz16 non-zero but cluster count says FAT32: unusual
+    if count_of_clusters < 4085:
+        return 'fat12'
+    if count_of_clusters < 65525:
+        return 'fat16'
+    return 'fat32'  # fat_sz16 non-zero but cluster count says FAT32: unusual
 
-# vim: ts=4 sw=4 noet
+# vim: ts=4 sw=4 et

@@ -17,4 +17,4 @@ login_manager = LoginManager()
 bootstrap = Bootstrap5()
 csrf = CSRFProtect()
 
-# vim: ts=4 sw=4 noet
+# vim: ts=4 sw=4 et

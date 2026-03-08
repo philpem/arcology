@@ -37,3 +37,5 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 log = logging.getLogger(__name__)
+
+# vim: ts=4 sw=4 et
