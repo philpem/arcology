@@ -8,7 +8,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from .config import log
+from .config import log, TOOL_TIMEOUT
 
 
 COMPRESSION_EXTENSIONS = {
@@ -54,10 +54,10 @@ def decompress_if_needed(input_path: Path, work_dir: Path) -> Path:
                 cmd + [str(compressed_copy)],
                 capture_output=True,
                 cwd=work_dir,
-                timeout=3600
+                timeout=TOOL_TIMEOUT
             )
         except subprocess.TimeoutExpired:
-            raise RuntimeError(f"Decompression timed out after 3600 seconds: {input_path.name}")
+            raise RuntimeError(f"Decompression timed out after {TOOL_TIMEOUT} seconds: {input_path.name}")
 
         if result.returncode != 0:
             raise RuntimeError(f"Decompression failed: {result.stderr.decode()}")

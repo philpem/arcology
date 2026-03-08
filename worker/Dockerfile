@@ -274,6 +274,7 @@ ENV UPLOAD_DIR=/data/uploads
 ENV OUTPUT_DIR=/data/outputs
 ENV POLL_INTERVAL=30
 ENV LOG_LEVEL=INFO
+ENV TOOL_TIMEOUT=3600
 
 # Create data directories
 RUN mkdir -p /data/uploads /data/outputs
