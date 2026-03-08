@@ -120,7 +120,7 @@ def flux_to_imd_hxcfe(input_path: Path, output_path: Path) -> dict:
             'success': True,
             'tool': 'hxcfe',
             'output_path': str(output_path),
-            'output_type': ArtefactType.IMD,
+            'output_type': ArtefactType.IMD.value,
             'summary': 'Converted to ImageDisk format',
             'process_output': process_output
         }
@@ -157,7 +157,7 @@ def flux_to_hfe_hxcfe(input_path: Path, output_path: Path) -> dict:
             'success': True,
             'tool': 'hxcfe',
             'output_path': str(output_path),
-            'output_type': ArtefactType.HFE,
+            'output_type': ArtefactType.HFE.value,
             'summary': 'Converted to HFE format',
             'process_output': process_output
         }
@@ -195,7 +195,7 @@ def sector_image_to_raw_greaseweazle(input_path: Path, output_path: Path) -> dic
             'success': True,
             'tool': 'greaseweazle',
             'output_path': str(output_path),
-            'output_type': ArtefactType.RAW_SECTOR,
+            'output_type': ArtefactType.RAW_SECTOR.value,
             'summary': 'Converted to raw sector image (bad sectors filled)',
             'process_output': process_output
         }
