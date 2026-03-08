@@ -10,7 +10,7 @@ Supports:
 
 from pathlib import Path
 
-from ..types import ArtefactType
+from shared.enums import ArtefactType
 from .base import run_tool_with_output
 
 

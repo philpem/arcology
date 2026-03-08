@@ -13,7 +13,7 @@ from typing import Optional
 import requests
 
 from .config import log
-from .types import ArtefactType
+from shared.enums import ArtefactType
 from .tools import compute_file_hash
 
 
