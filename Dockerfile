@@ -13,7 +13,9 @@ RUN set -e; \
 	&& pip install --no-cache-dir -r /requirements.txt \
 	&& pip install gunicorn \
 	&& apk del .build-deps
-RUN pip install sqltap
+
+# Uncomment this if you want to use sqltap to inspect the SQL query workload
+#RUN pip install sqltap
 
 COPY myapp/ /app/myapp/
 COPY shared/ /app/shared/
