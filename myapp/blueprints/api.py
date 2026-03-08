@@ -266,6 +266,12 @@ def request_analysis(uuid):
     except ValueError:
         return error_response('Invalid analysis_type')
 
+    bad_field = _check_nul_bytes(data, ['tool_name', 'hints'])
+    if bad_field:
+        return error_response(
+            f"Field '{bad_field}' contains NUL characters (0x00) which are not permitted in text fields"
+        )
+
     analysis = Analysis(
         artefact_id=artefact.id,
         analysis_type=analysis_type,
