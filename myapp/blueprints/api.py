@@ -11,6 +11,7 @@ from functools import wraps
 from flask import Blueprint, jsonify, request, current_app, send_file
 from flask_wtf.csrf import CSRFProtect
 from sqlalchemy import update
+from sqlalchemy.orm import joinedload
 
 from ..extensions import db, csrf
 from ..database import (
@@ -687,7 +688,9 @@ def hash_lookup():
     elif sha1:
         query = query.filter(ExtractedFile.sha1 == sha1.lower())
     
-    extracted = query.all()
+    extracted = query.options(
+        joinedload(ExtractedFile.partition).joinedload(Partition.artefact).joinedload(Artefact.item)
+    ).all()
     return jsonify({
         'known_file': known_file_to_dict(known) if known else None,
         'found_in': [{'artefact_id': f.partition.artefact_id, 'item_id': f.partition.artefact.item_id,
