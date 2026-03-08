@@ -376,9 +376,10 @@ def get_output_file(filename):
     if not os.path.isabs(output_dir):
         output_dir = os.path.join(current_app.instance_path, output_dir)
     
-    # Security: ensure filename doesn't escape the output directory
-    safe_filename = os.path.basename(filename)
-    file_path = os.path.join(output_dir, safe_filename)
+    # Security: resolve the full path and ensure it stays within output_dir
+    file_path = os.path.realpath(os.path.join(output_dir, filename))
+    if not file_path.startswith(os.path.realpath(output_dir) + os.sep):
+        return error_response('File not found', 404)
     
     if not os.path.exists(file_path):
         return error_response('File not found', 404)
