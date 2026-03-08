@@ -4,8 +4,10 @@
 {% block content %}
 <nav aria-label="breadcrumb" class="mb-3">
     <ol class="breadcrumb">
-        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_analysis.index') }}">Analyses</a></li>
-        <li class="breadcrumb-item active">#{{ analysis.id }}</li>
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.index') }}">Items</a></li>
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=analysis.artefact.item.uuid) }}">{{ analysis.artefact.item.name }}</a></li>
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=analysis.artefact.uuid) }}">{{ analysis.artefact.label }}</a></li>
+        <li class="breadcrumb-item active">{{ analysis.analysis_type.value|replace('_', ' ')|title }} (#{{ analysis.id }})</li>
     </ol>
 </nav>
 
