@@ -64,3 +64,5 @@ __all__ = [
     'extract_7z',
     'decompress_single_file',
 ]
+
+# vim: ts=4 sw=4 et

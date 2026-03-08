@@ -18,19 +18,19 @@ from ..utils.text import normalize_extracted_filenames
 
 
 def _decode_dos_cp850(data: bytes) -> str:
-	"""
-	Best-effort CP850 decode for Western European DOS filenames.
+    """
+    Best-effort CP850 decode for Western European DOS filenames.
 
-	7z passes raw FAT directory-entry bytes through to the Linux filesystem
-	when extracting DOS disc images.  DOS systems in Western Europe typically
-	used CP850; US-only systems used CP437.  CP850 is chosen as the default
-	because this collection is UK/European-focused and the two encodings agree
-	on the ASCII range (0x00–0x7F) and are close in 0x80–0xFF.
+    7z passes raw FAT directory-entry bytes through to the Linux filesystem
+    when extracting DOS disc images.  DOS systems in Western Europe typically
+    used CP850; US-only systems used CP437.  CP850 is chosen as the default
+    because this collection is UK/European-focused and the two encodings agree
+    on the ASCII range (0x00–0x7F) and are close in 0x80–0xFF.
 
-	If a disc is known to use a different code page, pass an explicit decoder
-	to normalize_extracted_filenames() instead.
-	"""
-	return data.decode('cp850')
+    If a disc is known to use a different code page, pass an explicit decoder
+    to normalize_extracted_filenames() instead.
+    """
+    return data.decode('cp850')
 
 
 # Debugging option: if True, scripts and output files will not be deleted.
@@ -382,3 +382,5 @@ def convert_fcfs_to_raw(input_path: Path, output_path: Path) -> dict:
         if 'process_output' in locals():
             error_details['process_output'] = process_output
         return error_details
+
+# vim: ts=4 sw=4 et

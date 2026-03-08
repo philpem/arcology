@@ -399,3 +399,5 @@ def downgrade():
 
     op.drop_table('categories')
     # ### end Alembic commands ###
+
+# vim: ts=4 sw=4 et

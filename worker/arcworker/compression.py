@@ -159,3 +159,5 @@ def is_region_uniform(file_path: Path, start_byte: int, size_bytes: int) -> tupl
             remaining -= len(chunk)
 
     return True, fill_value
+
+# vim: ts=4 sw=4 et

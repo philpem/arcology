@@ -51,4 +51,4 @@ def about():
     return render_template('about.html')
 
 
-# vim: ts=4 sw=4 noet
+# vim: ts=4 sw=4 et

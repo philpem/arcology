@@ -66,12 +66,12 @@ class ExternalSystemForm(FlaskForm):
 
 
 def _collect_descendant_ids(node):
-	"""Return the set of IDs of all descendants of node (recursive)."""
-	ids = set()
-	for child in node.children:
-		ids.add(child.id)
-		ids |= _collect_descendant_ids(child)
-	return ids
+    """Return the set of IDs of all descendants of node (recursive)."""
+    ids = set()
+    for child in node.children:
+        ids.add(child.id)
+        ids |= _collect_descendant_ids(child)
+    return ids
 
 
 class HashDatabaseForm(FlaskForm):
@@ -409,4 +409,4 @@ def delete_hash_database(id):
     return redirect(url_for(f'{ROUTENAME}.hash_databases'))
 
 
-# vim: ts=4 sw=4 noet
+# vim: ts=4 sw=4 et

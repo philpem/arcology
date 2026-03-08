@@ -137,4 +137,4 @@ def queue():
     return render_template('analysis/queue.html', pending=pending, running=running)
 
 
-# vim: ts=4 sw=4 noet
+# vim: ts=4 sw=4 et

@@ -137,3 +137,5 @@ def get_analysis_path(
     path = path / f"{analysis['uuid']}_{analysis_slug}"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+# vim: ts=4 sw=4 et

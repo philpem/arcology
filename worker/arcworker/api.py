@@ -310,3 +310,5 @@ class ArcologyAPI:
         # Server returns 'claimed' field indicating if THIS request actually
         # claimed the job (vs another worker claiming it first)
         return claim_result and claim_result.get('claimed', False)
+
+# vim: ts=4 sw=4 et

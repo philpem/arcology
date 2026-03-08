@@ -177,3 +177,5 @@ def ensure_unique_slug(base_slug: str, model_class, existing_id: Optional[int] =
     # Fallback with timestamp if too many conflicts
     import time
     return f"{base_slug}-{int(time.time())}"
+
+# vim: ts=4 sw=4 et

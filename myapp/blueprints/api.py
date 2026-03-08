@@ -33,7 +33,7 @@ def init_app(app):
 
 
 def error_response(message, status_code=400):
-	return jsonify({'error': message}), status_code
+    return jsonify({'error': message}), status_code
 
 
 # =============================================================================
@@ -41,48 +41,48 @@ def error_response(message, status_code=400):
 # =============================================================================
 
 def _get_raw_key() -> str:
-	"""Extract API key from Authorization: Bearer or X-API-Key header."""
-	auth = request.headers.get('Authorization', '')
-	if auth.startswith('Bearer '):
-		return auth[7:]
-	return request.headers.get('X-API-Key', '')
+    """Extract API key from Authorization: Bearer or X-API-Key header."""
+    auth = request.headers.get('Authorization', '')
+    if auth.startswith('Bearer '):
+        return auth[7:]
+    return request.headers.get('X-API-Key', '')
 
 
 def require_auth(permission: str = 'read_only'):
-	"""
-	Decorator that requires a valid API key with at least *permission* level.
+    """
+    Decorator that requires a valid API key with at least *permission* level.
 
-	Checks the WORKER_API_KEY pre-shared secret first (always read_write),
-	then falls back to user application keys stored in the database.
+    Checks the WORKER_API_KEY pre-shared secret first (always read_write),
+    then falls back to user application keys stored in the database.
 
-	The health check endpoint is intentionally left unauthenticated so that
-	Docker / container orchestrators can reach it without credentials.
-	"""
-	required_idx = _API_KEY_PERMISSION_ORDER.index(ApiKeyPermission(permission))
+    The health check endpoint is intentionally left unauthenticated so that
+    Docker / container orchestrators can reach it without credentials.
+    """
+    required_idx = _API_KEY_PERMISSION_ORDER.index(ApiKeyPermission(permission))
 
-	def decorator(f):
-		@wraps(f)
-		def wrapper(*args, **kwargs):
-			raw = _get_raw_key()
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            raw = _get_raw_key()
 
-			# Pre-shared worker key — always grants read_write, no DB hit needed
-			worker_key = current_app.config.get('WORKER_API_KEY', '')
-			if worker_key and hmac.compare_digest(raw, worker_key):
-				return f(*args, **kwargs)
+            # Pre-shared worker key — always grants read_write, no DB hit needed
+            worker_key = current_app.config.get('WORKER_API_KEY', '')
+            if worker_key and hmac.compare_digest(raw, worker_key):
+                return f(*args, **kwargs)
 
-			# User application key
-			key = ApiKey.verify(raw)
-			if not key:
-				return error_response('Valid API key required', 401)
-			eff_idx = _API_KEY_PERMISSION_ORDER.index(key.effective_permission())
-			if eff_idx < required_idx:
-				return error_response('Insufficient permissions', 403)
-			key.last_used_at = datetime.now(timezone.utc)
-			db.session.commit()
-			return f(*args, **kwargs)
+            # User application key
+            key = ApiKey.verify(raw)
+            if not key:
+                return error_response('Valid API key required', 401)
+            eff_idx = _API_KEY_PERMISSION_ORDER.index(key.effective_permission())
+            if eff_idx < required_idx:
+                return error_response('Insufficient permissions', 403)
+            key.last_used_at = datetime.now(timezone.utc)
+            db.session.commit()
+            return f(*args, **kwargs)
 
-		return wrapper
-	return decorator
+        return wrapper
+    return decorator
 
 
 def _check_nul_bytes(data: dict, fields: list) -> str | None:
@@ -810,4 +810,4 @@ def find_known_file(md5=None, sha1=None, file_size=None):
     return query.first()
 
 
-# vim: ts=4 sw=4 noet
+# vim: ts=4 sw=4 et

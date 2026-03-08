@@ -14,33 +14,33 @@ from .database import UserPermission
 
 
 def require_permission(level: str):
-	"""
-	Decorator for web routes that enforces the current user's permission level.
+    """
+    Decorator for web routes that enforces the current user's permission level.
 
-	Must be applied AFTER @login_required so that current_user is guaranteed
-	to be an authenticated User object.
+    Must be applied AFTER @login_required so that current_user is guaranteed
+    to be an authenticated User object.
 
-	Usage::
+    Usage::
 
-		@blueprint.route('/items/new', methods=['GET', 'POST'])
-		@login_required
-		@require_permission('read_write')
-		def new_item():
-			...
+        @blueprint.route('/items/new', methods=['GET', 'POST'])
+        @login_required
+        @require_permission('read_write')
+        def new_item():
+            ...
 
-	Args:
-		level: Minimum permission level required ('read_only' or 'read_write').
-	"""
-	required = UserPermission(level)
+    Args:
+        level: Minimum permission level required ('read_only' or 'read_write').
+    """
+    required = UserPermission(level)
 
-	def decorator(f):
-		@wraps(f)
-		def wrapper(*args, **kwargs):
-			if not current_user.has_permission(required):
-				abort(403)
-			return f(*args, **kwargs)
-		return wrapper
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            if not current_user.has_permission(required):
+                abort(403)
+            return f(*args, **kwargs)
+        return wrapper
 
-	return decorator
+    return decorator
 
-# vim: ts=4 sw=4 noet
+# vim: ts=4 sw=4 et
