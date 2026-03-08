@@ -741,7 +741,7 @@ def artefact_to_dict(artefact, include_partitions=False):
 def analysis_to_dict(analysis, include_artefact=False):
     result = {
         'id': analysis.id, 'uuid': analysis.uuid, 'artefact_id': analysis.artefact_id,
-        'artefact_uuid': analysis.artefact.uuid,
+        'artefact_uuid': analysis.artefact.uuid if analysis.artefact else None,
         'analysis_type': analysis.analysis_type.value, 'status': analysis.status.value,
         'tool_name': analysis.tool_name, 'hints': analysis.hints,
         'output_url': analysis.output_url,
@@ -760,7 +760,7 @@ def analysis_to_dict(analysis, include_artefact=False):
                              'storage_directory': analysis.artefact.storage_directory.value,
                              'artefact_type': analysis.artefact.artefact_type.value,
                              'item': {'uuid': analysis.artefact.item.uuid,
-                                      'slug': analysis.artefact.item.slug}}
+                                      'slug': analysis.artefact.item.slug}} if analysis.artefact else None
     return result
 
 
