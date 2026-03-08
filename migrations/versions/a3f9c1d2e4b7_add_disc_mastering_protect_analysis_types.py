@@ -15,26 +15,27 @@ down_revision = '114ecb0fef06'
 branch_labels = None
 depends_on = None
 
+# ALTER TYPE ADD VALUE cannot run inside a transaction in PostgreSQL.
+# This flag tells Alembic to run this migration outside a transaction block.
+autocommit = True
+
 
 def upgrade():
-    # PostgreSQL: extend the analysistype enum with the two new values.
-    # ALTER TYPE ADD VALUE cannot run inside a transaction, so we open a
-    # separate AUTOCOMMIT connection outside Alembic's transaction block.
-    # SQLite stores enums as VARCHAR so no DDL change is needed there.
-    bind = op.get_bind()
-    if bind.dialect.name == 'postgresql':
-        with bind.engine.connect().execution_options(isolation_level='AUTOCOMMIT') as conn:
-            conn.execute(sa.text(
-                "ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'DISC_MASTERING_DETECT'"
-            ))
-            conn.execute(sa.text(
-                "ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'DISC_PROTECTION_DETECT'"
-            ))
+	bind = op.get_bind()
+	if bind.dialect.name == 'postgresql':
+		op.execute(sa.text(
+			"ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'DISC_MASTERING_DETECT'"
+		))
+		op.execute(sa.text(
+			"ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'DISC_PROTECTION_DETECT'"
+		))
 
 
 def downgrade():
-    # PostgreSQL does not support removing individual enum values without a
-    # full type recreation, which would require temporarily dropping the
-    # analyses table column.  Downgrading is therefore a no-op; the extra
-    # enum values are harmless if the code reverts.
-    pass
+	# PostgreSQL does not support removing individual enum values without a
+	# full type recreation, which would require temporarily dropping the
+	# analyses table column.  Downgrading is therefore a no-op; the extra
+	# enum values are harmless if the code reverts.
+	pass
+
+# vim: ts=4 sw=4 noet
