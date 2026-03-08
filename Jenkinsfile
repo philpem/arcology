@@ -7,6 +7,8 @@ pipeline {
         POSTGRES_USER     = 'arcology_test'
         POSTGRES_PASSWORD = 'arcology_test'
         SECRET_KEY        = 'jenkins-ci-test-key-not-for-production'
+        // BuildKit required for --mount=type=cache in worker Dockerfile
+        DOCKER_BUILDKIT   = '1'
     }
 
     stages {
