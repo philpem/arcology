@@ -69,7 +69,7 @@ pipeline {
         stage('Docker Build') {
             steps {
                 sh 'docker build -t arcology-web:test .'
-                sh 'docker build -t arcology-worker:test -f worker/Dockerfile worker/'
+                sh 'docker build -t arcology-worker:test -f worker/Dockerfile .'
             }
         }
     }

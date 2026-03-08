@@ -88,4 +88,4 @@ jobs:
         run: docker build -t arcology-web:test .
 
       - name: Build worker image
-        run: docker build -t arcology-worker:test -f worker/Dockerfile worker/
+        run: docker build -t arcology-worker:test -f worker/Dockerfile .
