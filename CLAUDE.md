@@ -173,14 +173,16 @@ migrations in a transaction by default, so a naive `bind.execute(...)` call
 will appear to succeed (Alembic stamps the revision) but the new enum value
 will **not** be persisted.
 
-Always use an autocommit connection for these statements:
+Always open a **separate** autocommit connection from the engine for these
+statements (you cannot change isolation level on the existing Alembic-managed
+connection because it already has an active transaction):
 
 ```python
 def upgrade():
     bind = op.get_bind()
     if bind.dialect.name == 'postgresql':
-        conn = bind.execution_options(isolation_level='AUTOCOMMIT')
-        conn.execute(sa.text("ALTER TYPE myenum ADD VALUE IF NOT EXISTS 'NEW_VALUE'"))
+        with bind.engine.connect().execution_options(isolation_level='AUTOCOMMIT') as conn:
+            conn.execute(sa.text("ALTER TYPE myenum ADD VALUE IF NOT EXISTS 'NEW_VALUE'"))
 ```
 
 If a migration was already stamped but the enum was never actually updated,
@@ -231,7 +233,7 @@ Worker external tools (compiled in worker Dockerfile): Fluxfox (Rust), HxCFE (C)
 - `myapp.cfg` is optional — environment variables take precedence and suffice for Docker deployments. `SQLALCHEMY_DATABASE_URI`, `SECRET_KEY`, and `WORKER_API_KEY` are all read from the environment if not set in `myapp.cfg`
 - `SECRET_KEY` auto-generates with a warning if missing, left at the default placeholder, or too short — set it explicitly in `.env` or `myapp.cfg` for persistent sessions
 - Alembic auto-generated migrations need manual review for renames and enum changes
-- **PostgreSQL enum pitfall**: `ALTER TYPE ... ADD VALUE` cannot run inside a transaction. Use `bind.execution_options(isolation_level='AUTOCOMMIT')` in migrations that add enum values — otherwise Alembic stamps the revision as applied but the new value is never persisted (see "Adding values to a PostgreSQL enum" above)
+- **PostgreSQL enum pitfall**: `ALTER TYPE ... ADD VALUE` cannot run inside a transaction. Open a separate connection via `bind.engine.connect().execution_options(isolation_level='AUTOCOMMIT')` in migrations that add enum values — otherwise Alembic stamps the revision as applied but the new value is never persisted (see "Adding values to a PostgreSQL enum" above)
 - Docker entrypoint (`Dentrypoint.sh`) runs `flask db upgrade` and `flask create-admin` on every start (both are idempotent)
 - `flask create-admin` reads `ADMIN_USERNAME`/`ADMIN_PASSWORD` env vars non-interactively; prompts if a TTY is available; warns and exits cleanly if neither. Passwords must be at least 12 characters
 - Upload limit is 4GB (`MAX_CONTENT_LENGTH` in config)
