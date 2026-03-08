@@ -398,6 +398,18 @@ def downgrade():
         batch_op.drop_index(batch_op.f('ix_categories_name'))
 
     op.drop_table('categories')
+
+    # Drop PostgreSQL enum types created by this migration.
+    # These are not automatically removed when tables are dropped, so they must
+    # be cleaned up explicitly; otherwise a subsequent upgrade will fail with
+    # "type already exists".
+    bind = op.get_bind()
+    if bind.dialect.name == 'postgresql':
+        op.execute(sa.text('DROP TYPE IF EXISTS filesystemtype'))
+        op.execute(sa.text('DROP TYPE IF EXISTS analysisstatus'))
+        op.execute(sa.text('DROP TYPE IF EXISTS analysistype'))
+        op.execute(sa.text('DROP TYPE IF EXISTS storagedirectory'))
+        op.execute(sa.text('DROP TYPE IF EXISTS artefacttype'))
     # ### end Alembic commands ###
 
 # vim: ts=4 sw=4 et
