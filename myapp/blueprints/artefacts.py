@@ -349,7 +349,7 @@ def reset_artefact_for_reanalysis(artefact: Artefact):
                     for output in details['outputs']:
                         if 'filename' in output:
                             output_files.append(output['filename'])
-            except (json.JSONDecodeError, Exception) as e:
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
                 current_app.logger.warning(f"Failed to parse analysis details during reset: {e}")
 
     # Delete storage files for all derived artefacts (recursively).
@@ -733,7 +733,7 @@ def _delete_item_files(item):
                         for output in details['outputs']:
                             if 'filename' in output:
                                 output_files.append(output['filename'])
-                except (json.JSONDecodeError, Exception) as e:
+                except (json.JSONDecodeError, KeyError, TypeError) as e:
                     current_app.logger.warning(f"Failed to parse analysis details during item delete: {e}")
 
         # Delete stored files for this artefact and all its derived artefacts.
@@ -853,7 +853,7 @@ def analyse(uuid):
                     form.filesystem_hint.data = last_hints['filesystem']
                 if 'notes' in last_hints:
                     form.notes.data = last_hints['notes']
-            except (json.JSONDecodeError, Exception):
+            except (json.JSONDecodeError, KeyError, TypeError):
                 pass
 
     # Show what analyses will be queued
