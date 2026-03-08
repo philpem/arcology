@@ -18,6 +18,7 @@ RUN pip install sqltap
 COPY myapp/ /app/myapp/
 COPY shared/ /app/shared/
 COPY migrations/ /app/migrations/
+COPY .flaskenv /app/
 WORKDIR /app
 
 EXPOSE 8000
