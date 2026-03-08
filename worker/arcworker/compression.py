@@ -49,11 +49,15 @@ def decompress_if_needed(input_path: Path, work_dir: Path) -> Path:
 
         # Decompress
         log.info(f"Decompressing {input_path.name} with {cmd[0]}")
-        result = subprocess.run(
-            cmd + [str(compressed_copy)],
-            capture_output=True,
-            cwd=work_dir
-        )
+        try:
+            result = subprocess.run(
+                cmd + [str(compressed_copy)],
+                capture_output=True,
+                cwd=work_dir,
+                timeout=3600
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"Decompression timed out after 3600 seconds: {input_path.name}")
 
         if result.returncode != 0:
             raise RuntimeError(f"Decompression failed: {result.stderr.decode()}")
