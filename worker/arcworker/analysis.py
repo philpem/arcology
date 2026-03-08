@@ -14,7 +14,7 @@ import traceback
 from pathlib import Path
 
 from .config import log, POLL_INTERVAL, MASTERING_TRACK_SCAN_COUNT
-from .types import ArtefactType, AnalysisType
+from shared.enums import ArtefactType, AnalysisType
 from .compression import decompress_if_needed, extract_partition_range, is_region_uniform
 from .api import ArcologyAPI
 from .utils.text import make_latin1_fspath, sanitize_path
@@ -930,7 +930,7 @@ class AnalysisWorker:
         Scans partition files for archives and queues extraction jobs.
         """
         import json
-        from .archive_formats import (
+        from shared.archive_formats import (
             get_archive_by_filetype,
             get_archive_by_extension,
             get_archive_info,
@@ -1072,7 +1072,7 @@ class AnalysisWorker:
         Performs actual extraction with file path resolution.
         """
         import json
-        from .archive_formats import (
+        from shared.archive_formats import (
             ArchiveType,
             get_archive_info,
             is_compressor_format,

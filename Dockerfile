@@ -15,7 +15,10 @@ RUN set -e; \
 	&& apk del .build-deps
 RUN pip install sqltap
 
-ADD . /app
+COPY myapp/ /app/myapp/
+COPY shared/ /app/shared/
+COPY migrations/ /app/migrations/
+COPY .flaskenv /app/
 WORKDIR /app
 
 EXPOSE 8000

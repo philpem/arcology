@@ -17,6 +17,14 @@ This script is the entry point. The actual implementation is in the
 arcworker package which provides a modular, maintainable structure.
 """
 
+import os as _os, sys as _sys
+# Ensure the repo root (parent of this file's directory) is on sys.path so
+# that 'shared' is importable when running the worker outside Docker.
+_repo_root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+if _repo_root not in _sys.path:
+	_sys.path.insert(0, _repo_root)
+del _os, _sys, _repo_root
+
 from arcworker import AnalysisWorker, ARCOLOGY_API, UPLOAD_DIR, OUTPUT_DIR, WORKER_API_KEY
 
 

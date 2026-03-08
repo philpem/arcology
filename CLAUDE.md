@@ -28,11 +28,10 @@ PostgreSQL                    uploads/ & outputs/
 arcology/
 ├── myapp/                      # Flask web application
 │   ├── app.py                  # Application factory (create_app)
-│   ├── database.py             # All SQLAlchemy models and enums (single source of truth)
+│   ├── database.py             # All SQLAlchemy models and web-specific enums
 │   ├── extensions.py           # Flask extension instances (db, migrate, login_manager, bootstrap, csrf)
 │   ├── __main__.py             # Dev server entry point (python -m myapp)
 │   ├── myapp.cfg.example       # Config template
-│   ├── archive_formats.py      # Archive type definitions (must match worker copy)
 │   ├── riscos_filetypes.py     # RISC OS filetype mapping
 │   ├── blueprints/             # Feature modules (auto-discovered)
 │   │   ├── dashboard.py        # Homepage with collection stats
@@ -44,14 +43,15 @@ arcology/
 │   ├── utils/                  # Utility modules
 │   ├── templates/              # Jinja2 templates (Bootstrap 5)
 │   └── static/                 # CSS
+├── shared/                     # Shared definitions (web app + worker)
+│   ├── enums.py                # ArtefactType and AnalysisType (single source of truth)
+│   └── archive_formats.py      # Archive format definitions
 ├── worker/                     # Analysis worker (separate container)
 │   ├── worker.py               # Entry point
 │   ├── Dockerfile              # Multi-stage build compiling HxCFE, Fluxfox, etc.
 │   └── arcworker/              # Worker package
 │       ├── analysis.py         # AnalysisWorker class and job handlers
 │       ├── api.py              # HTTP client for web API
-│       ├── types.py            # Enum copies (must match database.py)
-│       ├── archive_formats.py  # Archive format definitions (must match web copy)
 │       ├── config.py           # Environment-based config
 │       ├── compression.py      # Decompression utilities
 │       └── tools/              # Wrappers for external analysis tools
@@ -124,9 +124,9 @@ flask db stamp head                           # Mark as up-to-date without runni
 - **UUIDs for public identifiers**: URLs and API responses use UUID hex strings, not sequential integer IDs
 - **Application factory pattern**: `create_app()` in `app.py`; extensions bound in factory, not at import time
 - **Blueprint auto-discovery**: Any module in `myapp/blueprints/` with a `blueprint` variable is auto-registered. Optional `init_app(app)` for additional setup.
-- **Single database model file**: All models and enums live in `myapp/database.py` (source of truth)
-- **Enum duplication**: Worker has its own copy of enums in `worker/arcworker/types.py` - these must be kept in sync with `database.py`
-- **Archive format duplication**: `myapp/archive_formats.py` and `worker/arcworker/archive_formats.py` must be kept in sync
+- **Single database model file**: All SQLAlchemy models and web-specific enums live in `myapp/database.py`
+- **Shared enums**: `ArtefactType` and `AnalysisType` are defined in `shared/enums.py` and imported by both `myapp/database.py` and the worker — edit only `shared/enums.py` when adding new types
+- **Shared archive formats**: `ArchiveType` and `ARCHIVE_FORMATS` are defined in `shared/archive_formats.py` and imported by the worker — edit only `shared/archive_formats.py`
 - **CSRF**: Enabled globally via Flask-WTF. The API blueprint exempts itself in `init_app()`.
 - **Security**: bcrypt password hashing, CSRF protection, UUID-based URLs (no IDOR)
 
@@ -140,22 +140,20 @@ flask db stamp head                           # Mark as up-to-date without runni
 
 ### Adding a new analysis type
 
-1. Add to `AnalysisType` enum in `myapp/database.py`
+1. Add to `AnalysisType` enum in `shared/enums.py`
 2. Add to `ANALYSIS_MAP` in `myapp/blueprints/artefacts.py`
 3. Implement handler in `worker/arcworker/analysis.py`
-4. Add enum to `worker/arcworker/types.py`
 
 ### Adding a new artefact type
 
-1. Add to `ArtefactType` enum in `myapp/database.py`
+1. Add to `ArtefactType` enum in `shared/enums.py`
 2. Add extension mapping in `EXTENSION_MAP` in `myapp/blueprints/artefacts.py`
 3. Add entries to `ANALYSIS_MAP` for auto-queued analyses
-4. Add enum to `worker/arcworker/types.py`
 
 ### Adding a new archive format
 
-1. Add the new type to `ArchiveType` enum in **both** `myapp/archive_formats.py` and `worker/arcworker/archive_formats.py`
-2. Add entry to `ARCHIVE_FORMATS` in **both** copies
+1. Add the new type to `ArchiveType` enum in `shared/archive_formats.py`
+2. Add entry to `ARCHIVE_FORMATS` in the same file
 3. Add extraction branch in `process_archive_extract` in `worker/arcworker/analysis.py`
 4. Update format table in `doc/ARCHIVE_EXTRACTION.md`
 
@@ -200,13 +198,12 @@ Upload triggers auto-analysis based on `ANALYSIS_MAP` -> worker claims job atomi
 
 | File | Role |
 |------|------|
-| `myapp/database.py` | All models and enums - schema source of truth |
+| `shared/enums.py` | `ArtefactType` and `AnalysisType` — single source of truth for both web and worker |
+| `shared/archive_formats.py` | `ArchiveType`, `ARCHIVE_FORMATS`, helpers — single source of truth |
+| `myapp/database.py` | All SQLAlchemy models and web-specific enums (`AnalysisStatus`, `FilesystemType`, etc.) |
 | `myapp/blueprints/artefacts.py` | `EXTENSION_MAP` (type detection) and `ANALYSIS_MAP` (auto-analysis rules) |
 | `myapp/blueprints/api.py` | REST API consumed by workers |
-| `myapp/archive_formats.py` | Archive type definitions (must match worker copy) |
 | `worker/arcworker/analysis.py` | Worker job handlers |
-| `worker/arcworker/types.py` | Worker-side enum copies (must match `database.py`) |
-| `worker/arcworker/archive_formats.py` | Worker-side archive format definitions (must match web copy) |
 | `myapp/app.py` | Application factory, login/error handlers, blueprint registration |
 | `myapp/myapp.cfg.example` | Configuration template with all settings |
 
@@ -226,8 +223,9 @@ Worker external tools (compiled in worker Dockerfile): Fluxfox (Rust), HxCFE (C)
 
 ## Common Gotchas
 
-- Worker enums in `types.py` must match web app enums in `database.py` - they are separate copies
-- Archive format definitions in `myapp/archive_formats.py` and `worker/arcworker/archive_formats.py` must also be kept in sync
+- `ArtefactType` and `AnalysisType` live in `shared/enums.py` — edit there only; both web and worker import from it
+- `ArchiveType` and `ARCHIVE_FORMATS` live in `shared/archive_formats.py` — edit there only
+- When running the worker **outside Docker** locally, run from the repo root: `python worker/worker.py`. The entry point adds the repo root to `sys.path` automatically so `shared/` is importable
 - The worker Dockerfile multi-stage build compiles several tools from source and is slow to build
 - `myapp.cfg` is optional — environment variables take precedence and suffice for Docker deployments. `SQLALCHEMY_DATABASE_URI`, `SECRET_KEY`, and `WORKER_API_KEY` are all read from the environment if not set in `myapp.cfg`
 - `SECRET_KEY` auto-generates with a warning if missing, left at the default placeholder, or too short — set it explicitly in `.env` or `myapp.cfg` for persistent sessions

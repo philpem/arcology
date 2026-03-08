@@ -263,10 +263,11 @@ RUN python3 -m pip install --break-system-packages \
 # Clean up build dependencies
 RUN apt -y remove python3-dev git && apt -y autoremove
 
-# Copy worker script and package
+# Copy worker script, package, and shared module
 WORKDIR /app
 COPY worker/worker.py .
 COPY worker/arcworker/ ./arcworker/
+COPY shared/ ./shared/
 
 # Environment variables (override at runtime)
 ENV ARCOLOGY_API=http://host.docker.internal:5000/api
