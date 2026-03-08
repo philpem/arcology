@@ -20,23 +20,25 @@ def upgrade():
     # Create enums
     userpermission = sa.Enum('read_only', 'read_write', name='userpermission')
     apikeypermission = sa.Enum('read_only', 'read_upload', 'read_write', name='apikeypermission')
-    userpermission.create(op.get_bind())
-    apikeypermission.create(op.get_bind())
+    userpermission.create(op.get_bind(), checkfirst=True)
+    apikeypermission.create(op.get_bind(), checkfirst=True)
 
     # Add new columns to user table
+    # create_type=False because we already created the enums above with checkfirst
     with op.batch_alter_table('user', schema=None) as batch_op:
         batch_op.add_column(sa.Column('is_admin', sa.Boolean(), nullable=False, server_default='false'))
-        batch_op.add_column(sa.Column('permission', sa.Enum('read_only', 'read_write', name='userpermission'), nullable=False, server_default='read_write'))
+        batch_op.add_column(sa.Column('permission', sa.Enum('read_only', 'read_write', name='userpermission', create_type=False), nullable=False, server_default='read_write'))
         batch_op.add_column(sa.Column('can_use_api', sa.Boolean(), nullable=False, server_default='false'))
 
     # Create api_keys table
+    # create_type=False on the Enum because it was already created above
     op.create_table('api_keys',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('user_id', sa.Integer(), nullable=False),
     sa.Column('name', sa.String(length=100), nullable=False),
     sa.Column('key_prefix', sa.String(length=8), nullable=False),
     sa.Column('key_hash', sa.String(length=64), nullable=False),
-    sa.Column('permission', sa.Enum('read_only', 'read_upload', 'read_write', name='apikeypermission'), nullable=False),
+    sa.Column('permission', sa.Enum('read_only', 'read_upload', 'read_write', name='apikeypermission', create_type=False), nullable=False),
     sa.Column('is_active', sa.Boolean(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('last_used_at', sa.DateTime(), nullable=True),
