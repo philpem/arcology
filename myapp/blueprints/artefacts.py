@@ -42,7 +42,8 @@ def safe_original_filename(filename: str) -> str:
 
 from ..database import (
     Item, Artefact, ArtefactType, Partition, ExtractedFile,
-    Analysis, AnalysisType, AnalysisStatus, Platform, StorageDirectory, Tag
+    Analysis, AnalysisType, AnalysisStatus, Platform, StorageDirectory, Tag,
+    ArtefactProtection, ArtefactMastering,
 )
 
 ROUTENAME = __name__.replace('.', '_')
@@ -371,6 +372,11 @@ def reset_artefact_for_reanalysis(artefact: Artefact):
     # Delete partitions directly on this artefact; cascade handles ExtractedFile.
     for partition in list(artefact.partitions):
         db.session.delete(partition)
+
+    # Clear search index tables — protection/mastering rows are not cascade-deleted
+    # with analyses, so must be explicitly removed so re-analysis starts fresh.
+    ArtefactProtection.query.filter_by(artefact_id=artefact.id).delete()
+    ArtefactMastering.query.filter_by(artefact_id=artefact.id).delete()
 
     db.session.commit()
 

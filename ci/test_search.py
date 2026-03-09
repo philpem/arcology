@@ -106,6 +106,18 @@ class TestParseQuery(unittest.TestCase):
         tokens = self.parse('mastering:traceback')
         self.assertEqual(tokens.get('mastering'), ['traceback'])
 
+    def test_tag_key(self):
+        tokens = self.parse('tag:bbc-micro')
+        self.assertEqual(tokens.get('tag'), ['bbc-micro'])
+
+    def test_tag_quoted_value(self):
+        tokens = self.parse('tag:"bbc micro"')
+        self.assertEqual(tokens.get('tag'), ['bbc micro'])
+
+    def test_tag_wildcard(self):
+        tokens = self.parse('tag:bbc*')
+        self.assertEqual(tokens.get('tag'), ['bbc*'])
+
     # Aliases
 
     def test_alias_file(self):
@@ -224,7 +236,7 @@ class TestSearchLogic(unittest.TestCase):
         from myapp.extensions import db as _db
         from myapp.database import (
             Item, Artefact, Partition, ExtractedFile,
-            ArtefactProtection, ArtefactMastering,
+            ArtefactProtection, ArtefactMastering, Tag,
             FilesystemType, StorageDirectory,
         )
         from shared.enums import ArtefactType
@@ -331,6 +343,14 @@ class TestSearchLogic(unittest.TestCase):
                 track=78,
                 decoded='1990-01-01',
             ))
+
+            # Tags
+            tag_bbc = Tag(name='bbc-micro')
+            tag_game = Tag(name='game')
+            _db.session.add_all([tag_bbc, tag_game])
+            _db.session.flush()
+            art.tags.append(tag_bbc)
+            art.tags.append(tag_game)
 
             _db.session.commit()
 
@@ -575,6 +595,43 @@ class TestSearchLogic(unittest.TestCase):
         self.assertEqual(mast_results, [])
 
     # ------------------------------------------------------------------
+    # Tag searches
+    # ------------------------------------------------------------------
+
+    def test_tag_search_exact_finds_artefact(self):
+        results = self._search('tag:bbc-micro')
+        tag_results = [r for r in results['artefacts'] if r['type'] == 'tag']
+        self.assertTrue(len(tag_results) > 0)
+        artefact_labels = [r['artefact'].label for r in tag_results]
+        self.assertIn('Side A', artefact_labels)
+
+    def test_tag_search_second_tag(self):
+        results = self._search('tag:game')
+        tag_results = [r for r in results['artefacts'] if r['type'] == 'tag']
+        self.assertTrue(len(tag_results) > 0)
+
+    def test_tag_search_wildcard(self):
+        results = self._search('tag:bbc*')
+        tag_results = [r for r in results['artefacts'] if r['type'] == 'tag']
+        self.assertTrue(len(tag_results) > 0)
+
+    def test_tag_search_substring(self):
+        # _ilike wraps in % when no wildcard present — 'micro' should match 'bbc-micro'
+        results = self._search('tag:micro')
+        tag_results = [r for r in results['artefacts'] if r['type'] == 'tag']
+        self.assertTrue(len(tag_results) > 0)
+
+    def test_tag_search_no_match(self):
+        results = self._search('tag:nonexistent_tag_xyzzy')
+        tag_results = [r for r in results['artefacts'] if r['type'] == 'tag']
+        self.assertEqual(tag_results, [])
+
+    def test_tag_name_in_result(self):
+        results = self._search('tag:bbc-micro')
+        tag_results = [r for r in results['artefacts'] if r['type'] == 'tag']
+        self.assertTrue(any(r['tag_name'] == 'bbc-micro' for r in tag_results))
+
+    # ------------------------------------------------------------------
     # Artefact-level hash searches
     # ------------------------------------------------------------------
 
@@ -677,6 +734,10 @@ class TestSearchEndpoint(unittest.TestCase):
 
     def test_search_with_query_unauthenticated_redirects(self):
         resp = self.client.get('/search/?q=Impression')
+        self.assertIn(resp.status_code, (301, 302))
+
+    def test_search_tag_query_unauthenticated_redirects(self):
+        resp = self.client.get('/search/?q=tag:bbc-micro')
         self.assertIn(resp.status_code, (301, 302))
 
 
