@@ -2,13 +2,12 @@
 {% block page_title %}Profile{% endblock %}
 
 {% block content %}
-<div class="row">
-	<div class="col-md-6">
-
-		<!-- Change Password -->
-		<div class="card mb-4">
-			<div class="card-header"><h5 class="mb-0">Change Password</h5></div>
-			<div class="card-body">
+<!-- Change Password -->
+<div class="card mb-4">
+	<div class="card-header"><h5 class="mb-0">Change Password</h5></div>
+	<div class="card-body">
+		<div class="row">
+			<div class="col-md-6">
 				<form method="post" action="{{ url_for('myapp_blueprints_profile.change_password') }}">
 					{{ pwd_form.hidden_tag() }}
 					<div class="mb-3">
@@ -30,7 +29,6 @@
 				</form>
 			</div>
 		</div>
-
 	</div>
 </div>
 
