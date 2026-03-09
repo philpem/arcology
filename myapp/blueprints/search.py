@@ -7,7 +7,7 @@ Global cross-item search using a prefix query syntax.
 import re
 from flask import Blueprint, render_template, request
 from flask_login import login_required
-from sqlalchemy import or_
+from sqlalchemy import or_, and_
 
 from ..extensions import db
 from ..database import (
@@ -128,30 +128,33 @@ def _run_search(tokens: dict) -> dict:
     # Triggered by hash, filename, path, type, ext filters.
     # Also triggered by hash even if no other file term present (hash matches both files and artefacts).
     if has_file_terms or any(k in tokens for k in ('md5', 'sha1', 'sha256')):
-        file_filters = []
-
+        # Build per-key filter lists: OR within a key, AND across keys.
+        # e.g. "path:!Killer type:feb" → path matches AND type matches
+        #      "type:feb type:ffa"     → type is feb OR ffa
+        per_key = {}
         for h in tokens.get('md5', []):
-            file_filters.append(ExtractedFile.md5 == h.lower())
+            per_key.setdefault('md5', []).append(ExtractedFile.md5 == h.lower())
         for h in tokens.get('sha1', []):
-            file_filters.append(ExtractedFile.sha1 == h.lower())
+            per_key.setdefault('sha1', []).append(ExtractedFile.sha1 == h.lower())
         for h in tokens.get('sha256', []):
-            file_filters.append(ExtractedFile.sha256 == h.lower())
+            per_key.setdefault('sha256', []).append(ExtractedFile.sha256 == h.lower())
         for v in tokens.get('filename', []):
-            file_filters.append(_ilike(ExtractedFile.filename, v))
+            per_key.setdefault('filename', []).append(_ilike(ExtractedFile.filename, v))
         for v in tokens.get('path', []):
-            file_filters.append(_ilike(ExtractedFile.path, v))
+            per_key.setdefault('path', []).append(_ilike(ExtractedFile.path, v))
         for v in tokens.get('type', []):
-            file_filters.append(ExtractedFile.risc_os_filetype == v.lower())
+            per_key.setdefault('type', []).append(ExtractedFile.risc_os_filetype == v.lower())
         for v in tokens.get('ext', []):
-            file_filters.append(ExtractedFile.extension == v.lower())
+            per_key.setdefault('ext', []).append(ExtractedFile.extension == v.lower())
 
-        if file_filters:
+        if per_key:
+            combined = and_(*[or_(*clauses) for clauses in per_key.values()])
             q = (
                 db.session.query(ExtractedFile, Partition, Artefact, Item)
                 .join(Partition, ExtractedFile.partition_id == Partition.id)
                 .join(Artefact, Partition.artefact_id == Artefact.id)
                 .join(Item, Artefact.item_id == Item.id)
-                .filter(or_(*file_filters))
+                .filter(combined)
                 .filter(ExtractedFile.is_directory == False)
                 .order_by(Item.name, Artefact.label, ExtractedFile.path)
                 .limit(RESULT_LIMIT + 1)
@@ -165,25 +168,25 @@ def _run_search(tokens: dict) -> dict:
     # --- Disc/partition search ---
     # Triggered by label, gnufile, fs filters.
     if has_disc_terms:
-        part_filters = []
+        per_key = {}
         for v in tokens.get('label', []):
-            part_filters.append(_ilike(Partition.label, v))
+            per_key.setdefault('label', []).append(_ilike(Partition.label, v))
         for v in tokens.get('gnufile', []):
-            part_filters.append(_ilike(Partition.gnu_file_type, v))
+            per_key.setdefault('gnufile', []).append(_ilike(Partition.gnu_file_type, v))
         for v in tokens.get('fs', []):
             try:
                 fs_val = FilesystemType(v.lower())
-                part_filters.append(Partition.filesystem == fs_val)
+                per_key.setdefault('fs', []).append(Partition.filesystem == fs_val)
             except ValueError:
-                # Try matching by name (e.g. 'adfs' matches FilesystemType.ADFS)
-                part_filters.append(_ilike(Partition.container_format, v))
+                per_key.setdefault('fs', []).append(_ilike(Partition.container_format, v))
 
-        if part_filters:
+        if per_key:
+            combined = and_(*[or_(*clauses) for clauses in per_key.values()])
             q = (
                 db.session.query(Partition, Artefact, Item)
                 .join(Artefact, Partition.artefact_id == Artefact.id)
                 .join(Item, Artefact.item_id == Item.id)
-                .filter(or_(*part_filters))
+                .filter(combined)
                 .order_by(Item.name, Artefact.label, Partition.partition_index)
                 .limit(RESULT_LIMIT + 1)
                 .all()
