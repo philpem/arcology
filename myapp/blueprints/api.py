@@ -797,6 +797,7 @@ def artefact_to_dict(artefact, include_partitions=False):
         'original_filename': artefact.original_filename,
         'file_size': artefact.file_size, 'mime_type': artefact.mime_type,
         'md5': artefact.md5, 'sha256': artefact.sha256,
+        'tags': [t.name for t in artefact.tags],
         'created_at': artefact.created_at.isoformat(), 'updated_at': artefact.updated_at.isoformat()
     }
     if include_partitions:

@@ -12,7 +12,7 @@
 			<div class="col">
 				<div class="input-group">
 					<input type="text" name="q" id="search-input" class="form-control font-monospace"
-						placeholder="md5:abc123  filename:!RunImage  protection:bad_crc  type:Text  label:System  Impression"
+						placeholder="md5:abc123  filename:!RunImage  protection:bad_crc  tag:bbc-micro  type:Text  label:System  Impression"
 						value="{{ q | e }}" autofocus>
 					<button type="button" class="btn btn-outline-secondary" title="Clear search"
 						onclick="document.getElementById('search-input').value=''; document.getElementById('search-input').focus();">
@@ -30,9 +30,9 @@
 			<code>filename:</code> <code>path:</code>
 			<code>type:</code> (RISC OS hex or name) <code>ext:</code>
 			<code>ident:</code> <code>label:</code> <code>fs:</code>
-			<code>protection:</code> <code>mastering:</code>
+			<code>protection:</code> <code>mastering:</code> <code>tag:</code>
 			— bare words search item and artefact names &amp; descriptions.
-			Use <code>*</code> as wildcard in filename/path. Quote multi-word values: <code>label:"Boot Disc"</code>
+			Use <code>*</code> as wildcard in filename/path/tag. Quote multi-word values: <code>label:"Boot Disc"</code>
 		</div>
 	</div>
 </div>
@@ -118,6 +118,16 @@
 				<p class="card-text text-muted small">Search item and artefact names and descriptions with bare text.</p>
 				<code class="d-block mb-1">Impression</code>
 				<code class="d-block">BBC Basic</code>
+			</div>
+		</div>
+	</div>
+	<div class="col">
+		<div class="card h-100">
+			<div class="card-header"><i class="bi bi-tag"></i> Tags</div>
+			<div class="card-body">
+				<p class="card-text text-muted small">Find artefacts by tag. Use <code>*</code> as wildcard.</p>
+				<code class="d-block mb-1">tag:bbc-micro</code>
+				<code class="d-block">tag:prot*</code>
 			</div>
 		</div>
 	</div>
@@ -228,6 +238,8 @@
 					<span class="badge bg-warning text-dark"><i class="bi bi-shield-exclamation"></i> {{ r.protection_type }}</span>
 					{% elif r.type == 'mastering' %}
 					<span class="badge bg-info text-dark"><i class="bi bi-clock-history"></i> {{ r.mastering_type }}</span>
+					{% elif r.type == 'tag' %}
+					<span class="badge bg-info text-dark"><i class="bi bi-tag"></i> {{ r.tag_name }}</span>
 					{% elif r.type == 'artefact_hash' %}
 					<span class="badge bg-secondary"><i class="bi bi-hash"></i> hash match</span>
 					{% elif r.type == 'artefact_text' %}

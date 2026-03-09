@@ -12,7 +12,7 @@ from sqlalchemy import or_, and_, distinct
 from ..extensions import db
 from ..database import (
     Item, Artefact, Partition, ExtractedFile, FilesystemType,
-    ArtefactProtection, ArtefactMastering,
+    ArtefactProtection, ArtefactMastering, Tag, artefact_tags,
 )
 from ..riscos_filetypes import lookup_filetype_hex
 
@@ -56,7 +56,7 @@ def parse_query(raw: str) -> dict:
     """Parse a search query string into a dict of {key: [values]}.
 
     Keys: md5, sha1, sha256, filename, path, type, ext, ident,
-          label, fs, protection, mastering, text (bare words).
+          label, fs, protection, mastering, tag, text (bare words).
     """
     tokens: dict[str, list[str]] = {}
 
@@ -146,6 +146,7 @@ def _run_search(tokens: dict) -> dict:
     has_disc_terms = any(k in tokens for k in ('label', 'ident', 'fs'))
     has_prot_terms = 'protection' in tokens
     has_mast_terms = 'mastering' in tokens
+    has_tag_terms = 'tag' in tokens
     has_artefact_hash = any(k in tokens for k in ('md5', 'sha256')) and not has_file_terms
     has_text = 'text' in tokens
 
@@ -277,6 +278,27 @@ def _run_search(tokens: dict) -> dict:
             results['artefacts'].extend([
                 {'type': 'mastering', 'mastering_type': mast_type, 'artefact': a, 'item': i}
                 for _, a, i in deduped
+            ])
+
+    # --- Tag search ---
+    if has_tag_terms:
+        for tag_val in tokens.get('tag', []):
+            q = (
+                db.session.query(Artefact, Item)
+                .join(Item, Artefact.item_id == Item.id)
+                .join(artefact_tags, artefact_tags.c.artefact_id == Artefact.id)
+                .join(Tag, artefact_tags.c.tag_id == Tag.id)
+                .filter(_ilike(Tag.name, tag_val))
+                .order_by(Item.name, Artefact.label)
+                .limit(RESULT_LIMIT + 1)
+                .all()
+            )
+            if len(q) > RESULT_LIMIT:
+                results['truncated']['artefacts'] = True
+                q = q[:RESULT_LIMIT]
+            results['artefacts'].extend([
+                {'type': 'tag', 'tag_name': tag_val, 'artefact': a, 'item': i}
+                for a, i in q
             ])
 
     # --- Artefact hash search ---

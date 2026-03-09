@@ -96,6 +96,13 @@ item_tags = Table(
     Column("tag_id", Integer, ForeignKey("tags.id"), primary_key=True),
 )
 
+artefact_tags = Table(
+    "artefact_tags",
+    db.Model.metadata,
+    Column("artefact_id", Integer, ForeignKey("artefacts.id"), primary_key=True),
+    Column("tag_id", Integer, ForeignKey("tags.id"), primary_key=True),
+)
+
 
 # =============================================================================
 # User Model (from template)
@@ -278,12 +285,13 @@ class Category(db.Model):
 
 
 class Tag(db.Model):
-    """Flexible tagging for items."""
+    """Flexible tagging for items and artefacts."""
     __tablename__ = "tags"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     items: Mapped[list["Item"]] = relationship(secondary=item_tags, back_populates="tags")
+    artefacts: Mapped[list["Artefact"]] = relationship(secondary=artefact_tags, back_populates="tags")
 
 
 # =============================================================================
@@ -382,6 +390,7 @@ class Artefact(db.Model):
     derived_from_analysis: Mapped[Optional["Analysis"]] = relationship(
         foreign_keys=[derived_from_analysis_id]
     )
+    tags: Mapped[list["Tag"]] = relationship(secondary=artefact_tags, back_populates="artefacts")
 
 
 class Analysis(db.Model):
