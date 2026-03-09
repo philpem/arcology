@@ -36,7 +36,7 @@
                             <td><code>{{ file.filename }}</code></td>
                             <td>{{ file.file_size or '-' }}</td>
                             <td>{{ file.product_name or '' }}{% if file.product_version %} v{{ file.product_version }}{% endif %}</td>
-                            <td><code class="small">{{ file.md5 or '-' }}</code></td>
+                            <td>{% if file.md5 %}<code class="small">{{ file.md5 }}</code><button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 ms-1" onclick="copyToClipboard('{{ file.md5 }}', this)" title="Copy MD5"><i class="bi bi-clipboard"></i></button>{% else %}-{% endif %}</td>
                         </tr>
                         {% else %}
                         <tr><td colspan="4" class="text-muted text-center">No files</td></tr>

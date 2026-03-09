@@ -14,7 +14,12 @@
 			must be configured on both the web container and every worker container.
 		</p>
 		{% if worker_key %}
-		<pre class="bg-light border rounded p-2 user-select-all"><code>{{ worker_key }}</code></pre>
+		<div class="d-flex align-items-center gap-2 mb-2">
+			<pre class="bg-light border rounded p-2 mb-0 flex-grow-1 user-select-all"><code>{{ worker_key }}</code></pre>
+			<button type="button" class="btn btn-sm btn-outline-secondary" onclick="copyToClipboard('{{ worker_key }}', this)" title="Copy worker key">
+				<i class="bi bi-clipboard"></i> Copy
+			</button>
+		</div>
 		<p class="text-muted small mb-0">
 			<i class="bi bi-info-circle"></i>
 			To generate a new key: <code>python3 -c "import secrets; print('wrk_' + secrets.token_hex(32))"</code>

@@ -12,7 +12,12 @@
 		</div>
 
 		<div class="card mb-4">
-			<div class="card-header">Your new API key</div>
+			<div class="card-header d-flex justify-content-between align-items-center">
+				Your new API key
+				<button type="button" class="btn btn-sm btn-outline-secondary" onclick="copyToClipboard('{{ raw_key }}', this)" title="Copy key">
+					<i class="bi bi-clipboard"></i> Copy
+				</button>
+			</div>
 			<div class="card-body">
 				<pre class="mb-0 user-select-all"><code>{{ raw_key }}</code></pre>
 			</div>
