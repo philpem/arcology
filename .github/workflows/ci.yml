@@ -54,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: lint
     env:
-      SQLALCHEMY_DATABASE_URI: sqlite:///:memory:
+      SQLALCHEMY_DATABASE_URI: "sqlite:///:memory:"
       SECRET_KEY: ci-test-secret-key-not-for-production
       WORKER_API_KEY: ci-test-worker-key
 
