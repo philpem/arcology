@@ -212,7 +212,3 @@ Each derived artefact (e.g., decoded IMG from SCP) triggers its own analysis cha
 - `POST /api/artefacts/{id}/analysis` - Queue analysis
 - `GET /api/analysis/pending` - Get pending jobs (for worker)
 - `PUT /api/analysis/{id}` - Update analysis result
-
-## License
-
-MIT
