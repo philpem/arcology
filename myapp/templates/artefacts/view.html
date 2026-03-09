@@ -113,7 +113,7 @@
                         <br><small class="text-muted"><i class="bi bi-diagram-3"></i> {{ analysis.artefact.label }}</small>
                         {% endif %}
                     </div>
-                    <span class="badge {% if analysis.status.value == 'completed' %}bg-success{% elif analysis.status.value == 'failed' %}bg-danger{% elif analysis.status.value == 'running' %}bg-info{% else %}bg-warning{% endif %}">{{ analysis.status.value }}</span>
+                    <span class="badge {{ analysis.status.value | status_badge_class }}">{{ analysis.status.value }}</span>
                 </li>
                 {% else %}
                 <li class="list-group-item text-muted">No analyses</li>

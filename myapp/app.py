@@ -138,6 +138,16 @@ def create_app(config_name=None):
                      current_user.has_permission(UserPermission.READ_WRITE))
         return dict(user_can_write=can_write)
 
+    # -- template filter: analysis status -> Bootstrap badge class --
+    @app.template_filter('status_badge_class')
+    def status_badge_class(status_value):
+        """Return a Bootstrap bg-* class for a given analysis status string."""
+        return {
+            'completed': 'bg-success',
+            'failed': 'bg-danger',
+            'running': 'bg-info',
+        }.get(status_value, 'bg-warning')
+
     # Register login handlers, error handlers, blueprints, and CLI commands
     _register_login_handlers(app)
     _register_error_handlers(app)
