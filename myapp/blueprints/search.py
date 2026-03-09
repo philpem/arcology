@@ -326,6 +326,31 @@ def _run_search(tokens: dict) -> dict:
                 q = q[:RESULT_LIMIT]
             results['catalogue_items'] = q
 
+    # --- Free-text search on artefact label/description ---
+    if has_text:
+        art_text_filters = []
+        for v in tokens.get('text', []):
+            pattern = f'%{v}%'
+            art_text_filters.append(Artefact.label.ilike(pattern))
+            art_text_filters.append(Artefact.description.ilike(pattern))
+
+        if art_text_filters:
+            q = (
+                db.session.query(Artefact, Item)
+                .join(Item, Artefact.item_id == Item.id)
+                .filter(or_(*art_text_filters))
+                .order_by(Item.name, Artefact.label)
+                .limit(RESULT_LIMIT + 1)
+                .all()
+            )
+            if len(q) > RESULT_LIMIT:
+                results['truncated']['artefacts'] = True
+                q = q[:RESULT_LIMIT]
+            results['artefacts'].extend([
+                {'type': 'artefact_text', 'artefact': a, 'item': i}
+                for a, i in q
+            ])
+
     return results
 
 

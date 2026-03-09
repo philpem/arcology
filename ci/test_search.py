@@ -243,6 +243,7 @@ class TestSearchLogic(unittest.TestCase):
             art = Artefact(
                 item_id=item.id,
                 label='Side A',
+                description='Original flux dump from disc 1',
                 artefact_type=ArtefactType.HFE,
                 original_filename='side_a.hfe',
                 storage_path='side_a.hfe',
@@ -577,6 +578,25 @@ class TestSearchLogic(unittest.TestCase):
     def test_text_search_quoted_phrase(self):
         results = self._search('"BBC Micro"')
         self.assertTrue(len(results['catalogue_items']) > 0)
+
+    # ------------------------------------------------------------------
+    # Free-text artefact searches
+    # ------------------------------------------------------------------
+
+    def test_text_search_by_artefact_label(self):
+        results = self._search('Side')
+        art_results = [r for r in results['artefacts'] if r['type'] == 'artefact_text']
+        self.assertTrue(len(art_results) > 0)
+
+    def test_text_search_by_artefact_description(self):
+        results = self._search('flux')
+        art_results = [r for r in results['artefacts'] if r['type'] == 'artefact_text']
+        self.assertTrue(len(art_results) > 0)
+
+    def test_text_search_artefact_no_match(self):
+        results = self._search('xyzzy_no_such_artefact')
+        art_results = [r for r in results['artefacts'] if r['type'] == 'artefact_text']
+        self.assertEqual(art_results, [])
 
     # ------------------------------------------------------------------
     # Empty / no-results baseline

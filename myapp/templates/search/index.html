@@ -31,7 +31,7 @@
 			<code>type:</code> (RISC OS hex or name) <code>ext:</code>
 			<code>ident:</code> <code>label:</code> <code>fs:</code>
 			<code>protection:</code> <code>mastering:</code>
-			— bare words search item names &amp; descriptions.
+			— bare words search item and artefact names &amp; descriptions.
 			Use <code>*</code> as wildcard in filename/path. Quote multi-word values: <code>label:"Boot Disc"</code>
 		</div>
 	</div>
@@ -115,7 +115,7 @@
 		<div class="card h-100">
 			<div class="card-header"><i class="bi bi-collection"></i> Items</div>
 			<div class="card-body">
-				<p class="card-text text-muted small">Search item names and descriptions with bare text.</p>
+				<p class="card-text text-muted small">Search item and artefact names and descriptions with bare text.</p>
 				<code class="d-block mb-1">Impression</code>
 				<code class="d-block">BBC Basic</code>
 			</div>
@@ -230,6 +230,8 @@
 					<span class="badge bg-info text-dark"><i class="bi bi-clock-history"></i> {{ r.mastering_type }}</span>
 					{% elif r.type == 'artefact_hash' %}
 					<span class="badge bg-secondary"><i class="bi bi-hash"></i> hash match</span>
+					{% elif r.type == 'artefact_text' %}
+					<span class="badge bg-secondary"><i class="bi bi-file-text"></i> name/description match</span>
 					{% elif r.type == 'partition' %}
 					<span class="badge bg-light text-dark border"><i class="bi bi-disc"></i>
 						{% if r.partition.label %}{{ r.partition.label }} &mdash; {% endif %}
