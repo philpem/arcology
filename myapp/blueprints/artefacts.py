@@ -543,13 +543,30 @@ def view(uuid):
         page = 1
     else:
         per_page = current_app.config.get('FILES_PER_PAGE', 100)
-    files_pagination = files_query.order_by(ExtractedFile.path).paginate(
+
+    # Column sorting: sort=<col> ascending, sort=-<col> descending
+    sort_param = request.args.get('sort', 'path')
+    sort_desc = sort_param.startswith('-')
+    sort_col = sort_param.lstrip('-')
+    _sort_columns = {
+        'path': ExtractedFile.path,
+        'size': ExtractedFile.file_size,
+        'filetype': ExtractedFile.risc_os_filetype,
+        'known': ExtractedFile.is_known,
+    }
+    sort_expr = _sort_columns.get(sort_col, ExtractedFile.path)
+    if sort_desc:
+        from sqlalchemy import desc
+        sort_expr = desc(sort_expr)
+
+    files_pagination = files_query.order_by(sort_expr).paginate(
         page=page, per_page=per_page, max_per_page=per_page
     )
 
     # Build query args for pagination links, preserving all active filters
     pagination_args = request.args.to_dict()
     pagination_args.pop('page', None)
+    current_sort = sort_param
 
     # Extract subdirectories at the current path level for directory browsing
     current_path = file_form.path.data.strip() if file_form.path.data else ''
@@ -624,6 +641,7 @@ def view(uuid):
                            subdirectories=subdirectories,
                            current_path=current_path,
                            archive_paths=archive_paths,
+                           current_sort=current_sort,
                            mastering_analysis=mastering_analysis,
                            protection_analysis=protection_analysis)
 

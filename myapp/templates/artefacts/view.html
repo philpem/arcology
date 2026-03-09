@@ -396,8 +396,23 @@
             </div>
             {% endif %}
             <div class="table-responsive">
+                {# Sortable column header macro: toggles direction when active #}
+                {% macro sort_th(label, col) %}
+                    {% set is_active = current_sort == col or current_sort == '-' ~ col %}
+                    {% set next_sort = '-' ~ col if current_sort == col else col %}
+                    <th><a class="text-decoration-none {{ 'text-dark fw-bold' if is_active else 'text-muted' }}"
+                           href="?{{ dict(pagination_args, sort=next_sort, page=1) | urlencode }}">
+                        {{ label }}{% if current_sort == col %} ↑{% elif current_sort == '-' ~ col %} ↓{% endif %}
+                    </a></th>
+                {% endmacro %}
                 <table class="table table-sm table-hover mb-0">
-                    <thead><tr><th>P</th><th>Path</th><th>Size</th><th>Filetype</th><th>Known</th></tr></thead>
+                    <thead><tr>
+                        <th>P</th>
+                        {{ sort_th('Path', 'path') }}
+                        {{ sort_th('Size', 'size') }}
+                        {{ sort_th('Filetype', 'filetype') }}
+                        {{ sort_th('Known', 'known') }}
+                    </tr></thead>
                     <tbody>
                         {% for file in files %}
                         {# Color-code partition badges - cycle through colors for easy visual distinction #}
