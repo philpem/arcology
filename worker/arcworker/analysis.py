@@ -777,11 +777,16 @@ class AnalysisWorker:
                 )
                 if derived:
                     derived_uuid = derived['artefact']['uuid']
-                    self.api.queue_analysis(
-                        derived_uuid,
-                        AnalysisType.FILE_EXTRACTION.value,
-                        hints={'filesystem': fs, 'partition_index': idx}
-                    )
+                    # Nexus printer partitions are not Filecore formatted; skip
+                    # FILE_EXTRACTION so they are only registered as downloadable
+                    # raw artefacts (see issue #89).
+                    is_nexus_printer = partition.get('nexus_flags', {}).get('printer', False)
+                    if not is_nexus_printer:
+                        self.api.queue_analysis(
+                            derived_uuid,
+                            AnalysisType.FILE_EXTRACTION.value,
+                            hints={'filesystem': fs, 'partition_index': idx}
+                        )
                 else:
                     log.error(f"Failed to register partition {idx} as derived artefact")
 
