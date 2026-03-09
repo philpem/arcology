@@ -314,5 +314,124 @@ def _register_cli_commands(app):
         db.session.commit()
         click.echo(f"Admin user '{username}' created successfully.")
 
+	@app.cli.command('backfill-search')
+	def backfill_search():
+		"""Populate search index tables from existing completed analyses.
+
+		Reads all completed DISC_PROTECTION_DETECT, DISC_MASTERING_DETECT,
+		and PARTITION_DETECT analyses and writes structured rows to:
+		  - artefact_protection
+		  - artefact_mastering
+		  - partitions.gnu_file_type
+
+		The command is idempotent: existing rows are replaced on each run.
+		Run this once after applying the b2e8f4a1c9d3 migration. It is also
+		called automatically by the Docker entrypoint on every container start
+		(safe because completed analyses are not re-processed from scratch).
+		"""
+		import json
+		from .database import (
+			Analysis, AnalysisType, AnalysisStatus,
+			Partition, ArtefactProtection, ArtefactMastering,
+		)
+
+		prot_count = 0
+		mast_count = 0
+		part_count = 0
+
+		# DISC_PROTECTION_DETECT
+		analyses = (
+			Analysis.query
+			.filter_by(
+				analysis_type=AnalysisType.DISC_PROTECTION_DETECT,
+				status=AnalysisStatus.COMPLETED,
+				success=True,
+			)
+			.all()
+		)
+		click.echo(f"Processing {len(analyses)} DISC_PROTECTION_DETECT analyses...")
+		for analysis in analyses:
+			if not analysis.details:
+				continue
+			try:
+				details = json.loads(analysis.details)
+			except (ValueError, TypeError):
+				click.echo(f"  WARNING: could not parse details for analysis {analysis.uuid}", err=True)
+				continue
+			ArtefactProtection.query.filter_by(artefact_id=analysis.artefact_id).delete()
+			for ind in details.get('indicators', []):
+				db.session.add(ArtefactProtection(
+					artefact_id=analysis.artefact_id,
+					protection_type=ind.get('type', 'unknown'),
+					track=ind.get('track'),
+					side=ind.get('side'),
+					details=ind.get('sector_id') or ind.get('details'),
+				))
+				prot_count += 1
+
+		# DISC_MASTERING_DETECT
+		analyses = (
+			Analysis.query
+			.filter_by(
+				analysis_type=AnalysisType.DISC_MASTERING_DETECT,
+				status=AnalysisStatus.COMPLETED,
+				success=True,
+			)
+			.all()
+		)
+		click.echo(f"Processing {len(analyses)} DISC_MASTERING_DETECT analyses...")
+		for analysis in analyses:
+			if not analysis.details:
+				continue
+			try:
+				details = json.loads(analysis.details)
+			except (ValueError, TypeError):
+				click.echo(f"  WARNING: could not parse details for analysis {analysis.uuid}", err=True)
+				continue
+			ArtefactMastering.query.filter_by(artefact_id=analysis.artefact_id).delete()
+			for ind in details.get('indicators', []):
+				db.session.add(ArtefactMastering(
+					artefact_id=analysis.artefact_id,
+					mastering_type=ind.get('type', 'unknown'),
+					track=ind.get('track'),
+					decoded=ind.get('decoded') or ind.get('data'),
+				))
+				mast_count += 1
+
+		# PARTITION_DETECT → gnu_file_type
+		analyses = (
+			Analysis.query
+			.filter_by(
+				analysis_type=AnalysisType.PARTITION_DETECT,
+				status=AnalysisStatus.COMPLETED,
+				success=True,
+			)
+			.all()
+		)
+		click.echo(f"Processing {len(analyses)} PARTITION_DETECT analyses...")
+		for analysis in analyses:
+			if not analysis.details:
+				continue
+			try:
+				details = json.loads(analysis.details)
+			except (ValueError, TypeError):
+				click.echo(f"  WARNING: could not parse details for analysis {analysis.uuid}", err=True)
+				continue
+			gnu_file_type = details.get('file', {}).get('file_type')
+			if gnu_file_type:
+				updated = (
+					Partition.query
+					.filter_by(artefact_id=analysis.artefact_id)
+					.update({'gnu_file_type': gnu_file_type})
+				)
+				part_count += updated
+
+		db.session.commit()
+		click.echo(
+			f"Done. Protection indicators: {prot_count}, "
+			f"mastering indicators: {mast_count}, "
+			f"partitions updated: {part_count}."
+		)
+
 
 # vim: ts=4 sw=4 et
