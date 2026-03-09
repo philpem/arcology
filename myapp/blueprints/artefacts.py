@@ -42,7 +42,7 @@ def safe_original_filename(filename: str) -> str:
 
 from ..database import (
     Item, Artefact, ArtefactType, Partition, ExtractedFile,
-    Analysis, AnalysisType, AnalysisStatus, Platform, StorageDirectory
+    Analysis, AnalysisType, AnalysisStatus, Platform, StorageDirectory, Tag
 )
 
 ROUTENAME = __name__.replace('.', '_')
@@ -196,6 +196,8 @@ class ArtefactEditForm(FlaskForm):
     label = StringField('Label', validators=[DataRequired()])
     artefact_type = SelectField('Type', coerce=str, validators=[DataRequired()])
     description = TextAreaField('Description', validators=[Optional()])
+    tags = StringField('Tags', validators=[Optional()],
+                       description='Comma-separated list of tags')
 
 
 class AnalyseForm(FlaskForm):
@@ -578,6 +580,25 @@ def view(uuid):
         ).with_entities(ExtractedFile.path).all()
         archive_paths = {af.path for af in archive_files}
 
+    # Extract completed mastering and protection analysis results for display.
+    # These are surfaced as badges + cards directly on the artefact view page.
+    mastering_analysis = None
+    protection_analysis = None
+    for a in all_related_analyses:
+        if a.status == AnalysisStatus.COMPLETED and a.details:
+            if mastering_analysis is None and a.analysis_type == AnalysisType.DISC_MASTERING_DETECT:
+                try:
+                    mastering_analysis = json.loads(a.details)
+                    mastering_analysis['_analysis_uuid'] = a.uuid
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            elif protection_analysis is None and a.analysis_type == AnalysisType.DISC_PROTECTION_DETECT:
+                try:
+                    protection_analysis = json.loads(a.details)
+                    protection_analysis['_analysis_uuid'] = a.uuid
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
     return render_template('artefacts/view.html',
                            artefact=artefact,
                            analyses=analyses,
@@ -594,7 +615,9 @@ def view(uuid):
                            all_partitions=all_partitions,
                            subdirectories=subdirectories,
                            current_path=current_path,
-                           archive_paths=archive_paths)
+                           archive_paths=archive_paths,
+                           mastering_analysis=mastering_analysis,
+                           protection_analysis=protection_analysis)
 
 
 @blueprint.route('/item/<string:item_uuid>/upload', methods=['GET', 'POST'])
@@ -679,7 +702,8 @@ def edit(uuid):
     
     if request.method == 'GET':
         form.artefact_type.data = artefact.artefact_type.value
-    
+        form.tags.data = ', '.join(t.name for t in artefact.tags)
+
     if form.validate_on_submit():
         artefact.label = form.label.data
         new_type = ArtefactType(form.artefact_type.data)
@@ -687,7 +711,17 @@ def edit(uuid):
             artefact.artefact_type = new_type
             artefact.type_overridden = True
         artefact.description = form.description.data
-        
+
+        artefact.tags.clear()
+        if form.tags.data:
+            tag_names = [t.strip() for t in form.tags.data.split(',') if t.strip()]
+            for tag_name in tag_names:
+                tag = Tag.query.filter_by(name=tag_name).first()
+                if not tag:
+                    tag = Tag(name=tag_name)
+                    db.session.add(tag)
+                artefact.tags.append(tag)
+
         db.session.commit()
 
         flash(f'Artefact "{artefact.label}" updated.', 'success')
