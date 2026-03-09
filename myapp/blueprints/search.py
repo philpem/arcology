@@ -111,10 +111,10 @@ def _ilike(col, val):
 def _run_search(tokens: dict) -> dict:
     """Execute queries and return result buckets."""
     results = {
-        'files':      [],
-        'artefacts':  [],
-        'items':      [],
-        'truncated':  {},
+        'files':             [],
+        'artefacts':         [],
+        'catalogue_items':   [],
+        'truncated':         {},
     }
 
     has_file_terms = any(k in tokens for k in ('md5', 'sha1', 'sha256', 'filename', 'path', 'type', 'ext'))
@@ -284,7 +284,7 @@ def _run_search(tokens: dict) -> dict:
             if len(q) > RESULT_LIMIT:
                 results['truncated']['items'] = True
                 q = q[:RESULT_LIMIT]
-            results['items'] = q
+            results['catalogue_items'] = q
 
     return results
 

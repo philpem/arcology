@@ -106,7 +106,7 @@
 
 {% else %}
 
-{% set total = results.files|length + results.artefacts|length + results.items|length %}
+{% set total = results.files|length + results.artefacts|length + results.catalogue_items|length %}
 {% if total == 0 %}
 <div class="alert alert-info"><i class="bi bi-info-circle"></i> No results found for <strong>{{ q | e }}</strong>.</div>
 
@@ -130,11 +130,11 @@
 		</a>
 	</li>
 	{% endif %}
-	{% if results.items %}
+	{% if results.catalogue_items %}
 	<li class="nav-item">
 		<a class="nav-link{% if not results.files and not results.artefacts %} active{% endif %}" data-bs-toggle="tab" href="#tab-items">
 			<i class="bi bi-collection"></i> Items
-			<span class="badge bg-secondary ms-1">{{ results.items|length }}{% if results.truncated.get('items') %}+{% endif %}</span>
+			<span class="badge bg-secondary ms-1">{{ results.catalogue_items|length }}{% if results.truncated.get('items') %}+{% endif %}</span>
 		</a>
 	</li>
 	{% endif %}
@@ -230,7 +230,7 @@
 {% endif %}
 
 {# --- Items tab --- #}
-{% if results.items %}
+{% if results.catalogue_items %}
 <div class="tab-pane fade{% if not results.files and not results.artefacts %} show active{% endif %}" id="tab-items">
 	{% if results.truncated.get('items') %}
 	<div class="alert alert-warning py-2"><i class="bi bi-exclamation-triangle"></i> Showing first {{ RESULT_LIMIT }} results — refine your search to narrow down.</div>
@@ -244,7 +244,7 @@
 				<th>Artefacts</th>
 			</tr></thead>
 			<tbody>
-			{% for item in results.items %}
+			{% for item in results.catalogue_items %}
 			<tr>
 				<td><a href="{{ url_for('myapp_blueprints_items.view', uuid=item.uuid) }}">{{ item.name }}</a></td>
 				<td>{{ item.platform.name if item.platform else '-' }}</td>
