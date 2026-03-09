@@ -44,6 +44,7 @@ The web app is a Flask application using the application factory pattern. It ser
 | `artefacts.py` | File upload, type detection, artefact management. Also contains the `ANALYSIS_MAP` that determines which analyses are auto-queued for each artefact type. |
 | `taxonomy.py` | Platforms, categories, tags, external systems, hash databases |
 | `analysis.py` | Analysis queue UI (view, cancel, retry jobs) |
+| `search.py` | Global cross-item search using a prefix query syntax (`filename:`, `type:`, `protection:`, `mastering:`, etc.) |
 | `api.py` | REST API endpoints consumed by workers and external tools |
 
 Blueprints are auto-discovered and registered -- any module in `myapp/blueprints/` that defines a `blueprint` variable will be loaded automatically. Modules can also provide an `init_app(app)` function for additional setup (e.g., the API blueprint uses this to exempt itself from CSRF).
@@ -85,8 +86,12 @@ The worker is a standalone Python process that polls the web app's REST API for 
 | `FLUX_VISUALISATION` | Fluxfox, HxCFE | Generates graphical plots of magnetic flux data |
 | `FLUX_DECODE` | HxCFE, Greaseweazle | Converts flux images to sector formats (IMD, HFE, IMG) |
 | `FILE_EXTRACTION` | 7z, DiscImageManager | Extracts files from disk images and registers file listing |
+| `ARCHIVE_DETECT` | (built-in) | Detects archive format of an extracted file |
+| `ARCHIVE_EXTRACT` | 7z, ArcFS tools | Extracts nested archives and registers contained files |
 | `METADATA_EXTRACT` | (built-in) | Computes hashes and extracts format metadata |
 | `PARTITION_DETECT` | sfdisk, ADFS signature detection, `file` | Detects partitions and filesystem types |
+| `DISC_PROTECTION_DETECT` | HxCFE / hfe_parser | Scans for copy protection indicators (bad CRC, weak bits, DDAM, ID mismatches) |
+| `DISC_MASTERING_DETECT` | HxCFE / hfe_parser | Scans trailing tracks for mastering/duplicator fingerprints (traceback, BCD timestamp) |
 | `FORMAT_IDENTIFY` | (placeholder) | Identifies exact format/variant |
 
 ### How Web and Worker Communicate
@@ -249,6 +254,8 @@ arcology/
 2. Add it to the `ANALYSIS_MAP` in `myapp/blueprints/artefacts.py` so it gets auto-queued for the appropriate artefact types.
 3. Implement a `process_<type>` handler method in `worker/arcworker/analysis.py`.
 4. Register the handler in the `handlers` dict inside `AnalysisWorker.process_analysis()`.
+
+**Protection and mastering indicator types** (`ArtefactProtection.protection_type` and `ArtefactMastering.mastering_type`) are free-text strings stored by the worker — they are not enums. Known values are documented in comments in `myapp/database.py`. If you introduce new indicator types in a worker tool, use short lowercase snake_case names (e.g. `bad_crc`, `bcd_timestamp`); the search UI will surface them automatically once they appear in the database.
 
 ### Adding a New Artefact Type
 

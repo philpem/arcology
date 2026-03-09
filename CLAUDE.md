@@ -39,6 +39,7 @@ arcology/
 │   │   ├── artefacts.py        # File upload, type detection, ANALYSIS_MAP
 │   │   ├── taxonomy.py         # Platforms, categories, tags, external systems
 │   │   ├── analysis.py         # Analysis queue UI
+│   │   ├── search.py           # Global cross-item search (prefix query syntax)
 │   │   └── api.py              # REST API for workers and external tools
 │   ├── utils/                  # Utility modules
 │   ├── templates/              # Jinja2 templates (Bootstrap 5)
@@ -202,14 +203,33 @@ Upload triggers auto-analysis based on `ANALYSIS_MAP` -> worker claims job atomi
 | `shared/archive_formats.py` | `ArchiveType`, `ARCHIVE_FORMATS`, helpers — single source of truth |
 | `myapp/database.py` | All SQLAlchemy models and web-specific enums (`AnalysisStatus`, `FilesystemType`, etc.) |
 | `myapp/blueprints/artefacts.py` | `EXTENSION_MAP` (type detection) and `ANALYSIS_MAP` (auto-analysis rules) |
+| `myapp/blueprints/search.py` | Global search: `parse_query()`, `_run_search()`, prefix query syntax |
 | `myapp/blueprints/api.py` | REST API consumed by workers |
+| `myapp/riscos_filetypes.py` | RISC OS filetype hex↔name mapping; `lookup_filetype_hex()` |
 | `worker/arcworker/analysis.py` | Worker job handlers |
 | `myapp/app.py` | Application factory, login/error handlers, blueprint registration |
 | `myapp/myapp.cfg.example` | Configuration template with all settings |
 
 ## Testing
 
-There is no automated test suite. Changes are tested manually via the web UI and Docker Compose. When modifying code, verify:
+Automated tests live in `ci/` and run in the `app-tests` GitHub Actions job (SQLite in-memory, no PostgreSQL needed):
+
+| Test file | What it covers |
+|-----------|---------------|
+| `ci/test_app_smoke.py` | App starts, `/api/health`, API key auth |
+| `ci/test_search.py` | `parse_query()`, `lookup_filetype_hex()`, `_run_search()` with fixture data (every search key), HTTP endpoint smoke |
+| `ci/test_artefact_map.py` | `EXTENSION_MAP` / `ANALYSIS_MAP` consistency |
+| `ci/test_archive_formats.py` | Archive format completeness |
+| `ci/test_slug.py` | Slug generation (stdlib only, no pip) |
+
+Run locally:
+
+```bash
+SQLALCHEMY_DATABASE_URI=sqlite:///:memory: SECRET_KEY=test WORKER_API_KEY=test \
+    python -m unittest discover -s ci -p "test_*.py" -v
+```
+
+When modifying code, also verify manually:
 - Web UI operations (CRUD, upload, search)
 - API endpoints (worker communication)
 - Analysis pipeline (if worker-related changes)
