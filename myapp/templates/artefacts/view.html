@@ -307,7 +307,10 @@
                         {# Color-code partition badges for visual distinction #}
                         {% set partition_colors = ['primary', 'success', 'warning', 'danger', 'info', 'secondary'] %}
                         {% set partition_color = partition_colors[p.partition_index % partition_colors|length] %}
-                        <tr style="cursor: pointer;" onclick="filterByPartition('{{ p.uuid }}')" title="Click to filter files by this partition">
+                        <tr style="cursor: pointer;" onclick="filterByPartition('{{ p.uuid }}')"
+                            tabindex="0" role="button"
+                            onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();filterByPartition('{{ p.uuid }}');}"
+                            title="Click to filter files by this partition">
                             <td><span class="badge bg-{{ partition_color }}">{{ p.partition_index }}</span></td>
                             <td>{{ p.label or '-' }}</td>
                             <td>
