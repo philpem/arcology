@@ -453,7 +453,7 @@ class Partition(db.Model):
     total_bytes: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     unique_files: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     detection_details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON from partition detection (sfdisk, etc.)
-    gnu_file_type: Mapped[Optional[str]] = mapped_column(String(256), nullable=True, index=True)  # Output of file(1) on the image
+    gnu_file_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True, index=True)  # Output of file(1) on the image
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     artefact: Mapped["Artefact"] = relationship(back_populates="partitions")
