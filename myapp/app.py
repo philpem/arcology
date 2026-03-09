@@ -314,9 +314,9 @@ def _register_cli_commands(app):
         db.session.commit()
         click.echo(f"Admin user '{username}' created successfully.")
 
-	@app.cli.command('backfill-search')
-	def backfill_search():
-		"""Populate search index tables from existing completed analyses.
+	@app.cli.command('rebuild-search-index')
+	def rebuild_search_index():
+		"""Rebuild the search index tables from completed analysis results.
 
 		Reads all completed DISC_PROTECTION_DETECT, DISC_MASTERING_DETECT,
 		and PARTITION_DETECT analyses and writes structured rows to:
@@ -325,9 +325,10 @@ def _register_cli_commands(app):
 		  - partitions.gnu_file_type
 
 		The command is idempotent: existing rows are replaced on each run.
-		Run this once after applying the b2e8f4a1c9d3 migration. It is also
-		called automatically by the Docker entrypoint on every container start
-		(safe because completed analyses are not re-processed from scratch).
+		Run this after applying the b2e8f4a1c9d3 migration, or any time
+		the search index needs to be rebuilt from scratch:
+
+		  docker compose exec web flask rebuild-search-index
 		"""
 		import json
 		from .database import (
