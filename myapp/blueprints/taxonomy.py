@@ -113,7 +113,7 @@ def new_platform():
         flash(f'Platform "{platform.name}" created.', 'success')
         return redirect(url_for(f'{ROUTENAME}.platforms'))
     
-    return render_template('taxonomy/platform_form.html', form=form, title='New Platform')
+    return render_template('taxonomy/taxonomy_form.html', form=form, title='New Platform')
 
 
 @blueprint.route('/platforms/<int:id>/edit', methods=['GET', 'POST'])
@@ -137,7 +137,7 @@ def edit_platform(id):
         flash(f'Platform "{platform.name}" updated.', 'success')
         return redirect(url_for(f'{ROUTENAME}.platforms'))
     
-    return render_template('taxonomy/platform_form.html', form=form, platform=platform, title='Edit Platform')
+    return render_template('taxonomy/taxonomy_form.html', form=form, platform=platform, title='Edit Platform')
 
 
 @blueprint.route('/platforms/<int:id>/delete', methods=['POST'])
@@ -192,7 +192,7 @@ def new_category():
         flash(f'Category "{category.name}" created.', 'success')
         return redirect(url_for(f'{ROUTENAME}.categories'))
     
-    return render_template('taxonomy/category_form.html', form=form, title='New Category')
+    return render_template('taxonomy/taxonomy_form.html', form=form, title='New Category')
 
 
 @blueprint.route('/categories/<int:id>/edit', methods=['GET', 'POST'])
@@ -216,7 +216,7 @@ def edit_category(id):
         flash(f'Category "{category.name}" updated.', 'success')
         return redirect(url_for(f'{ROUTENAME}.categories'))
     
-    return render_template('taxonomy/category_form.html', form=form, category=category, title='Edit Category')
+    return render_template('taxonomy/taxonomy_form.html', form=form, category=category, title='Edit Category')
 
 
 @blueprint.route('/categories/<int:id>/delete', methods=['POST'])
@@ -264,7 +264,7 @@ def new_tag():
         flash(f'Tag "{tag.name}" created.', 'success')
         return redirect(url_for(f'{ROUTENAME}.tags'))
     
-    return render_template('taxonomy/tag_form.html', form=form, title='New Tag')
+    return render_template('taxonomy/taxonomy_form.html', form=form, title='New Tag')
 
 
 @blueprint.route('/tags/<int:id>/delete', methods=['POST'])
@@ -309,7 +309,7 @@ def new_external_system():
         flash(f'External system "{system.name}" created.', 'success')
         return redirect(url_for(f'{ROUTENAME}.external_systems'))
     
-    return render_template('taxonomy/external_system_form.html', form=form, title='New External System')
+    return render_template('taxonomy/taxonomy_form.html', form=form, title='New External System')
 
 
 @blueprint.route('/external-systems/<int:id>/edit', methods=['GET', 'POST'])
@@ -329,7 +329,7 @@ def edit_external_system(id):
         flash(f'External system "{system.name}" updated.', 'success')
         return redirect(url_for(f'{ROUTENAME}.external_systems'))
     
-    return render_template('taxonomy/external_system_form.html', form=form, system=system, title='Edit External System')
+    return render_template('taxonomy/taxonomy_form.html', form=form, system=system, title='Edit External System')
 
 
 @blueprint.route('/external-systems/<int:id>/delete', methods=['POST'])
@@ -382,7 +382,7 @@ def new_hash_database():
         flash(f'Hash database "{database.name}" created.', 'success')
         return redirect(url_for(f'{ROUTENAME}.hash_databases'))
     
-    return render_template('taxonomy/hash_database_form.html', form=form, title='New Hash Database')
+    return render_template('taxonomy/taxonomy_form.html', form=form, title='New Hash Database')
 
 
 @blueprint.route('/hash-databases/<int:id>')
