@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from functools import wraps
 from flask import Blueprint, jsonify, request, current_app, send_file
 from flask_wtf.csrf import CSRFProtect
-from sqlalchemy import update
+from sqlalchemy import update, or_
 from sqlalchemy.orm import joinedload
 
 from ..extensions import db, csrf
@@ -22,7 +22,11 @@ from ..database import (
     ApiKey, ApiKeyPermission, _API_KEY_PERMISSION_ORDER,
     ArtefactProtection, ArtefactMastering,
 )
-from .artefacts import get_artefact_path, _delete_artefact_files, _delete_item_files
+from .artefacts import (
+    get_artefact_path, _delete_artefact_files, _delete_item_files,
+    detect_artefact_type, save_uploaded_file, compute_file_hashes,
+    queue_analyses_for_artefact,
+)
 from ..utils.hash_rescan import find_known_file
 from ..utils.slugs import generate_slug, ensure_unique_slug
 
@@ -133,11 +137,16 @@ def list_items():
     per_page = request.args.get('per_page', 25, type=int)
     query = Item.query
     
+    if request.args.get('q'):
+        search = f'%{request.args["q"]}%'
+        query = query.filter(or_(Item.name.ilike(search), Item.description.ilike(search)))
     if request.args.get('platform_id', type=int):
         query = query.filter(Item.platform_id == request.args.get('platform_id', type=int))
     if request.args.get('category_id', type=int):
         query = query.filter(Item.category_id == request.args.get('category_id', type=int))
-    
+    if request.args.get('tag'):
+        query = query.filter(Item.tags.any(Tag.name == request.args['tag']))
+
     pagination = query.order_by(Item.name).paginate(page=page, per_page=per_page)
     return jsonify({
         'items': [item_to_dict(item) for item in pagination.items],
@@ -818,6 +827,131 @@ def hash_lookup():
         'found_in': [{'artefact_id': f.partition.artefact_id, 'item_id': f.partition.artefact.item_id,
                       'item_name': f.partition.artefact.item.name, 'path': f.path} for f in extracted]
     })
+
+
+# =============================================================================
+# Taxonomy
+# =============================================================================
+
+@blueprint.route('/platforms', methods=['GET'])
+@require_auth('read_only')
+def list_platforms():
+	"""List all platforms."""
+	platforms = Platform.query.order_by(Platform.name).all()
+	return jsonify({'platforms': [
+		{'id': p.id, 'name': p.name, 'description': p.description,
+		 'parent_id': p.parent_id}
+		for p in platforms
+	]})
+
+
+@blueprint.route('/categories', methods=['GET'])
+@require_auth('read_only')
+def list_categories():
+	"""List all categories."""
+	categories = Category.query.order_by(Category.name).all()
+	return jsonify({'categories': [
+		{'id': c.id, 'name': c.name, 'description': c.description,
+		 'parent_id': c.parent_id}
+		for c in categories
+	]})
+
+
+@blueprint.route('/tags', methods=['GET'])
+@require_auth('read_only')
+def list_tags():
+	"""List all tags."""
+	tags = Tag.query.order_by(Tag.name).all()
+	return jsonify({'tags': [
+		{'id': t.id, 'name': t.name}
+		for t in tags
+	]})
+
+
+# =============================================================================
+# File Upload
+# =============================================================================
+
+@blueprint.route('/items/<string:item_uuid>/artefacts/upload', methods=['POST'])
+@require_auth('read_upload')
+def upload_artefact(item_uuid):
+	"""
+	Upload a file as a new artefact on an item.
+
+	Accepts multipart form data with:
+	  - file: the file to upload (required)
+	  - label: display label for the artefact (required)
+	  - artefact_type: override auto-detection (optional, default 'auto')
+	  - description: artefact description (optional)
+	  - auto_analyse: queue automatic analyses (optional, default 'true')
+
+	Returns the created artefact JSON with 201 status.
+	"""
+	item = Item.query.filter_by(uuid=item_uuid).first_or_404()
+
+	if 'file' not in request.files:
+		return error_response('No file provided')
+	file = request.files['file']
+	if file.filename == '':
+		return error_response('No file selected')
+
+	label = request.form.get('label')
+	if not label:
+		return error_response('Label is required')
+
+	# Save file with UUID-based name
+	storage_name, file_size = save_uploaded_file(file)
+
+	# Determine artefact type: use override if provided, otherwise auto-detect
+	type_override = request.form.get('artefact_type', 'auto')
+	type_overridden = False
+	if type_override and type_override != 'auto':
+		try:
+			artefact_type = ArtefactType(type_override)
+			type_overridden = True
+		except ValueError:
+			return error_response(f'Invalid artefact_type: {type_override}')
+	else:
+		artefact_type = detect_artefact_type(file.filename)
+
+	# Compute hashes
+	from .artefacts import get_upload_folder
+	full_path = os.path.join(get_upload_folder(), storage_name)
+	md5, sha256 = compute_file_hashes(full_path)
+
+	# Preserve original filename
+	from werkzeug.utils import secure_filename
+	original_filename = secure_filename(file.filename) or 'unnamed'
+
+	description = request.form.get('description')
+
+	artefact = Artefact(
+		item_id=item.id,
+		label=label,
+		artefact_type=artefact_type,
+		type_overridden=type_overridden,
+		description=description,
+		original_filename=original_filename,
+		storage_path=storage_name,
+		storage_directory=StorageDirectory.UPLOADS,
+		file_size=file_size,
+		md5=md5,
+		sha256=sha256,
+	)
+	db.session.add(artefact)
+	db.session.commit()
+
+	# Optionally queue analyses
+	queued_analyses = []
+	auto_analyse = request.form.get('auto_analyse', 'true').lower() != 'false'
+	if auto_analyse:
+		from .artefacts import ANALYSIS_MAP
+		queue_analyses_for_artefact(artefact)
+		queued_analyses = [t.value for t in ANALYSIS_MAP.get(artefact_type, [])]
+
+	result = artefact_to_dict(artefact)
+	result['queued_analyses'] = queued_analyses
+	return jsonify(result), 201
 
 
 # =============================================================================
