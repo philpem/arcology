@@ -44,7 +44,7 @@ The web app is a Flask application using the application factory pattern. It ser
 | `artefacts.py` | File upload, type detection, artefact management. Also contains the `ANALYSIS_MAP` that determines which analyses are auto-queued for each artefact type. |
 | `taxonomy.py` | Platforms, categories, tags, external systems, hash databases |
 | `analysis.py` | Analysis queue UI (view, cancel, retry jobs) |
-| `search.py` | Global cross-item search using a prefix query syntax (`filename:`, `type:`, `protection:`, `mastering:`, etc.) |
+| `search.py` | Global cross-item search using a prefix query syntax (`filename:`, `type:`, `protection:`, `mastering:`, etc.). The `type:` key accepts either a 3-digit RISC OS filetype hex code (`type:fca`) or its human-readable name (`type:Squash`) — both resolve to the same result. |
 | `api.py` | REST API endpoints consumed by workers and external tools |
 
 Blueprints are auto-discovered and registered -- any module in `myapp/blueprints/` that defines a `blueprint` variable will be loaded automatically. Modules can also provide an `init_app(app)` function for additional setup (e.g., the API blueprint uses this to exempt itself from CSRF).
