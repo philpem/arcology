@@ -4,21 +4,25 @@
 
 Arcology is a digital artefact catalogue for retrocomputing collections, built on Flask. It enables cataloguing, uploading, and automatic analysis of digital artifacts like disk images, flux dumps, and archives from historical computer media.
 
-The system has two main components connected via a REST API:
+The system has three main components connected via a REST API:
 - **Web application** (`myapp/`) - Flask app serving the UI and REST API
 - **Analysis worker** (`worker/`) - Standalone Python process that polls for analysis jobs and runs external tools
+- **CLI tool** (`cli/`) - `arco` command-line client for creating items and uploading artefacts from a client PC
+
+Shared type definitions (enums, archive formats) live in `shared/` and are imported by all three components.
 
 ## Architecture
 
 ```
-Web (Flask)  <-- HTTP/JSON -->  Worker (Python)
-     |                              |
-     | SQLAlchemy                   | Shared volumes
-     v                              v
-PostgreSQL                    uploads/ & outputs/
+CLI (arco)  --> HTTP/JSON -->  Web (Flask)  <-- HTTP/JSON -->  Worker (Python)
+                                    |                              |
+                                    | SQLAlchemy                   | Shared volumes
+                                    v                              v
+                               PostgreSQL                    uploads/ & outputs/
 ```
 
 - The worker has **no direct database access** - all communication goes through the REST API
+- The CLI tool communicates with the web app via the same REST API (authenticated with API keys)
 - Shared filesystem volumes: `data/uploads/` (originals) and `data/outputs/` (analysis results)
 - Workers claim jobs atomically via `PUT /api/analysis/{id}` to prevent duplicate processing
 
@@ -44,7 +48,7 @@ arcology/
 │   ├── utils/                  # Utility modules
 │   ├── templates/              # Jinja2 templates (Bootstrap 5)
 │   └── static/                 # CSS
-├── shared/                     # Shared definitions (web app + worker)
+├── shared/                     # Shared definitions (web app, worker, and CLI)
 │   ├── enums.py                # ArtefactType and AnalysisType (single source of truth)
 │   └── archive_formats.py      # Archive format definitions
 ├── worker/                     # Analysis worker (separate container)
@@ -56,6 +60,14 @@ arcology/
 │       ├── config.py           # Environment-based config
 │       ├── compression.py      # Decompression utilities
 │       └── tools/              # Wrappers for external analysis tools
+├── cli/                        # Command-line client (arco)
+│   ├── pyproject.toml          # arcology-cli package, "arco" entry point
+│   └── arccli/                 # CLI package
+│       ├── main.py             # Argument parsing and command dispatch
+│       ├── client.py           # ArcologyClient HTTP class
+│       ├── config.py           # Configuration loading (~/.config/arcology/)
+│       ├── formatting.py       # Output formatting (tables, JSON)
+│       └── commands/           # Command implementations
 ├── docker-compose.yml          # Full stack: web + worker + PostgreSQL
 ├── docker-compose.adminer.yml  # Optional Adminer database browser (separate file)
 ├── Dockerfile                  # Web container (Python 3 Alpine + Gunicorn)
@@ -82,6 +94,23 @@ flask db upgrade                   # Apply committed migrations to create schema
 flask create-admin                 # Prompts for admin username and password
 python -m myapp                    # Runs on http://localhost:5000
 ```
+
+### CLI tool (client PC)
+
+```bash
+pip install -e cli/                # Installs "arco" command
+
+arco configure                     # Interactive setup (server URL + API key)
+arco health                        # Verify connectivity
+arco items list                    # List items
+arco items create --name "My Item" # Create item
+arco upload ITEM_UUID file.scp     # Upload artefact
+arco upload ITEM_UUID --dir ./imgs # Bulk upload directory
+arco download ARTEFACT_UUID        # Download artefact
+arco platforms                     # List platforms
+```
+
+Configuration: `~/.config/arcology/config.ini`, `ARCOLOGY_URL`/`ARCOLOGY_API_KEY` env vars, or `--server`/`--api-key` flags.
 
 ### Docker (full stack)
 
@@ -238,14 +267,16 @@ Upload triggers auto-analysis based on `ANALYSIS_MAP` -> worker claims job atomi
 
 | File | Role |
 |------|------|
-| `shared/enums.py` | `ArtefactType` and `AnalysisType` — single source of truth for both web and worker |
+| `shared/enums.py` | `ArtefactType` and `AnalysisType` — single source of truth for web, worker, and CLI |
 | `shared/archive_formats.py` | `ArchiveType`, `ARCHIVE_FORMATS`, helpers — single source of truth |
 | `myapp/database.py` | All SQLAlchemy models and web-specific enums (`AnalysisStatus`, `FilesystemType`, etc.) |
 | `myapp/blueprints/artefacts.py` | `EXTENSION_MAP` (type detection) and `ANALYSIS_MAP` (auto-analysis rules) |
 | `myapp/blueprints/search.py` | Global search: `parse_query()`, `_run_search()`, prefix query syntax |
-| `myapp/blueprints/api.py` | REST API consumed by workers |
+| `myapp/blueprints/api.py` | REST API consumed by workers and CLI |
 | `myapp/riscos_filetypes.py` | RISC OS filetype hex↔name mapping; `lookup_filetype_hex()` |
 | `worker/arcworker/analysis.py` | Worker job handlers |
+| `cli/arccli/main.py` | CLI entry point and argument parsing |
+| `cli/arccli/client.py` | CLI HTTP client for the REST API |
 | `myapp/app.py` | Application factory, login/error handlers, blueprint registration |
 | `myapp/myapp.cfg.example` | Configuration template with all settings |
 
@@ -286,7 +317,7 @@ Worker external tools (compiled in worker Dockerfile): Fluxfox (Rust), HxCFE (C)
 
 ## Common Gotchas
 
-- `ArtefactType` and `AnalysisType` live in `shared/enums.py` — edit there only; both web and worker import from it
+- `ArtefactType` and `AnalysisType` live in `shared/enums.py` — edit there only; web app, worker, and CLI all import from it
 - `ArchiveType` and `ARCHIVE_FORMATS` live in `shared/archive_formats.py` — edit there only
 - When running the worker **outside Docker** locally, run from the repo root: `python worker/worker.py`. The entry point adds the repo root to `sys.path` automatically so `shared/` is importable
 - The worker Dockerfile multi-stage build compiles several tools from source and is slow to build

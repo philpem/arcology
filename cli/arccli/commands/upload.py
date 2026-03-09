@@ -1,0 +1,137 @@
+"""Upload command: upload files as artefacts to an item."""
+
+import os
+import sys
+
+from ..client import compute_file_hashes
+from ..formatting import print_json, format_size
+
+
+# Files to skip in directory uploads
+JUNK_FILES = {'.DS_Store', 'Thumbs.db', 'desktop.ini', '._.'}
+JUNK_DIRS = {'__MACOSX', '.Spotlight-V100', '.Trashes'}
+
+
+def _is_junk(path: str) -> bool:
+	"""Check if a file/directory should be skipped."""
+	name = os.path.basename(path)
+	if name in JUNK_FILES or name.startswith('._'):
+		return True
+	parts = path.split(os.sep)
+	return any(d in JUNK_DIRS for d in parts)
+
+
+def _collect_files(path: str) -> list[str]:
+	"""Recursively collect files from a directory, skipping junk."""
+	files = []
+	for root, dirs, filenames in os.walk(path):
+		# Filter out junk directories in-place
+		dirs[:] = [d for d in dirs if d not in JUNK_DIRS]
+		for filename in filenames:
+			filepath = os.path.join(root, filename)
+			if not _is_junk(filepath):
+				files.append(filepath)
+	files.sort()
+	return files
+
+
+def _upload_one(client, item_uuid, filepath, label, artefact_type, auto_analyse, json_mode):
+	"""Upload a single file and report results."""
+	filename = os.path.basename(filepath)
+	file_size = os.path.getsize(filepath)
+
+	print(f"Uploading {filename} ({format_size(file_size)})...", end=' ', flush=True)
+
+	# Compute hashes client-side for integrity verification
+	local_md5, local_sha256 = compute_file_hashes(filepath)
+
+	result = client.upload_artefact(
+		item_uuid=item_uuid,
+		filepath=filepath,
+		label=label,
+		artefact_type=artefact_type,
+		auto_analyse=auto_analyse,
+	)
+
+	# Verify integrity
+	server_md5 = result.get('md5')
+	server_sha256 = result.get('sha256')
+	hash_ok = True
+	if server_md5 and server_md5 != local_md5:
+		hash_ok = False
+	if server_sha256 and server_sha256 != local_sha256:
+		hash_ok = False
+
+	if json_mode:
+		result['_hash_verified'] = hash_ok
+		print_json(result)
+	else:
+		print("done.")
+		print(f"  Artefact: {result['uuid']}")
+		print(f"  Type:     {result['artefact_type']}")
+		if result.get('queued_analyses'):
+			print(f"  Queued:   {', '.join(result['queued_analyses'])}")
+		if not hash_ok:
+			print("  WARNING: Hash mismatch — upload may be corrupted!", file=sys.stderr)
+
+	return hash_ok
+
+
+def cmd_upload(client, args):
+	"""Upload one or more files to an item."""
+	item_uuid = args.item_uuid
+	auto_analyse = not args.no_analyse
+	artefact_type = args.type
+
+	# Collect files to upload
+	if args.dir:
+		if not os.path.isdir(args.dir):
+			print(f"Error: '{args.dir}' is not a directory.", file=sys.stderr)
+			sys.exit(1)
+		files = _collect_files(args.dir)
+		if not files:
+			print(f"Error: no files found in '{args.dir}'.", file=sys.stderr)
+			sys.exit(1)
+		print(f"Found {len(files)} files in {args.dir}")
+	elif args.files:
+		files = []
+		for f in args.files:
+			if not os.path.isfile(f):
+				print(f"Error: '{f}' is not a file.", file=sys.stderr)
+				sys.exit(1)
+			files.append(f)
+	else:
+		print("Error: provide FILE(s) or --dir PATH.", file=sys.stderr)
+		sys.exit(1)
+
+	# Upload each file
+	successes = 0
+	failures = 0
+	for filepath in files:
+		# Label: use --label for single file, filename stem for multi-file
+		if args.label and len(files) == 1:
+			label = args.label
+		else:
+			label = os.path.splitext(os.path.basename(filepath))[0]
+
+		try:
+			ok = _upload_one(client, item_uuid, filepath, label, artefact_type, auto_analyse, args.json)
+			if ok:
+				successes += 1
+			else:
+				successes += 1  # upload succeeded, hash mismatch is a warning
+		except Exception as e:
+			print(f"FAILED: {e}", file=sys.stderr)
+			failures += 1
+
+	# Summary for multi-file uploads
+	if len(files) > 1:
+		print(f"\nUploaded: {successes}/{len(files)}", end='')
+		if failures:
+			print(f" ({failures} failed)", end='')
+		print()
+
+	if failures:
+		sys.exit(1)
+
+# vim: ts=4 sw=4 noet
