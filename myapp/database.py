@@ -363,7 +363,13 @@ class Artefact(db.Model):
         foreign_keys="Analysis.artefact_id"
     )
     partitions: Mapped[list["Partition"]] = relationship(back_populates="artefact", cascade="all, delete-orphan")
-    
+    protection_indicators: Mapped[list["ArtefactProtection"]] = relationship(
+        back_populates="artefact", cascade="all, delete-orphan"
+    )
+    mastering_indicators: Mapped[list["ArtefactMastering"]] = relationship(
+        back_populates="artefact", cascade="all, delete-orphan"
+    )
+
     # Derived artefacts (e.g., sector image from flux decode)
     parent_artefact: Mapped[Optional["Artefact"]] = relationship(
         back_populates="derived_artefacts", remote_side=[id],
@@ -447,6 +453,7 @@ class Partition(db.Model):
     total_bytes: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     unique_files: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     detection_details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON from partition detection (sfdisk, etc.)
+    gnu_file_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True, index=True)  # Output of file(1) on the image
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     artefact: Mapped["Artefact"] = relationship(back_populates="partitions")
@@ -499,6 +506,47 @@ class ExtractedFile(db.Model):
         Index("ix_extracted_files_archive", "is_archive", "risc_os_filetype"),
         Index("ix_extracted_files_parent", "parent_file_id", "extraction_depth"),
     )
+
+
+# =============================================================================
+# Search Index Tables
+# =============================================================================
+
+class ArtefactProtection(db.Model):
+    """Copy protection indicators detected on a disc artefact.
+
+    Populated server-side when a DISC_PROTECTION_DETECT analysis completes.
+    One row per indicator instance (a single disc may have many).
+    """
+    __tablename__ = 'artefact_protection'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    artefact_id: Mapped[int] = mapped_column(ForeignKey('artefacts.id'), index=True)
+    protection_type: Mapped[str] = mapped_column(String(64), index=True)
+    # Known values: 'weak_bits', 'bad_crc', 'id_mismatch', 'ddam', 'duplicate_id'
+    track: Mapped[Optional[int]] = mapped_column(nullable=True)
+    side: Mapped[Optional[int]] = mapped_column(nullable=True)
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # e.g. sector ID string
+
+    artefact: Mapped["Artefact"] = relationship(back_populates="protection_indicators")
+
+
+class ArtefactMastering(db.Model):
+    """Mastering / duplicator fingerprint indicators detected on a disc artefact.
+
+    Populated server-side when a DISC_MASTERING_DETECT analysis completes.
+    One row per indicator instance found.
+    """
+    __tablename__ = 'artefact_mastering'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    artefact_id: Mapped[int] = mapped_column(ForeignKey('artefacts.id'), index=True)
+    mastering_type: Mapped[str] = mapped_column(String(64), index=True)
+    # Known values: 'traceback', 'bcd_timestamp', 'unknown_mastering'
+    track: Mapped[Optional[int]] = mapped_column(nullable=True)
+    decoded: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Decoded mastering data string
+
+    artefact: Mapped["Artefact"] = relationship(back_populates="mastering_indicators")
 
 
 # =============================================================================

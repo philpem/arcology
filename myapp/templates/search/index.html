@@ -1,0 +1,286 @@
+{% extends "_base.html" %}
+{% block page_title %}Search{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+	<h1><i class="bi bi-search"></i> Search</h1>
+</div>
+
+<div class="card mb-4">
+	<div class="card-body">
+		<form method="get" class="row g-2 align-items-end">
+			<div class="col">
+				<div class="input-group">
+					<input type="text" name="q" id="search-input" class="form-control font-monospace"
+						placeholder="md5:abc123  filename:!RunImage  protection:bad_crc  type:Text  label:System  Impression"
+						value="{{ q | e }}" autofocus>
+					<button type="button" class="btn btn-outline-secondary" title="Clear search"
+						onclick="document.getElementById('search-input').value=''; document.getElementById('search-input').focus();">
+						<i class="bi bi-x-lg"></i>
+					</button>
+				</div>
+			</div>
+			<div class="col-auto">
+				<button type="submit" class="btn btn-primary"><i class="bi bi-search"></i> Search</button>
+			</div>
+		</form>
+		<div class="mt-2 text-muted small">
+			<strong>Prefix syntax:</strong>
+			<code>md5:</code> <code>sha1:</code> <code>sha256:</code>
+			<code>filename:</code> <code>path:</code>
+			<code>type:</code> (RISC OS hex or name) <code>ext:</code>
+			<code>ident:</code> <code>label:</code> <code>fs:</code>
+			<code>protection:</code> <code>mastering:</code>
+			— bare words search item and artefact names &amp; descriptions.
+			Use <code>*</code> as wildcard in filename/path. Quote multi-word values: <code>label:"Boot Disc"</code>
+		</div>
+	</div>
+</div>
+
+{% if results is none %}
+{# No search yet — show quick-reference #}
+<div class="row row-cols-1 row-cols-md-3 g-4">
+	<div class="col">
+		<div class="card h-100">
+			<div class="card-header"><i class="bi bi-hash"></i> Hashes</div>
+			<div class="card-body">
+				<p class="card-text text-muted small">Find a file or disc image by its hash.</p>
+				<code class="d-block mb-1">md5:d41d8cd98f00b204e9800998ecf8427e</code>
+				<code class="d-block mb-1">sha1:da39a3ee5e6b4b0d3255bfef95601890</code>
+				<code class="d-block">sha256:e3b0c44298fc1c149afb...</code>
+			</div>
+		</div>
+	</div>
+	<div class="col">
+		<div class="card h-100">
+			<div class="card-header"><i class="bi bi-file-earmark"></i> Files</div>
+			<div class="card-body">
+				<p class="card-text text-muted small">Find files by name, path, or type.</p>
+				<code class="d-block mb-1">filename:!RunImage</code>
+				<code class="d-block mb-1">path:!Impression filename:!RunImage</code>
+				<code class="d-block mb-1">type:fff</code>
+				<code class="d-block mb-1">type:Squash</code>
+				<code class="d-block">ext:bas</code>
+			</div>
+		</div>
+	</div>
+	<div class="col">
+		<div class="card h-100">
+			<div class="card-header"><i class="bi bi-disc"></i> Discs</div>
+			<div class="card-body">
+				<p class="card-text text-muted small">Find discs by label, filesystem, or file(1) type.</p>
+				<code class="d-block mb-1">label:System</code>
+				<code class="d-block mb-1">fs:adfs</code>
+				<code class="d-block">ident:"DOS boot sector"</code>
+			</div>
+		</div>
+	</div>
+	<div class="col">
+		<div class="card h-100">
+			<div class="card-header"><i class="bi bi-shield-exclamation"></i> Copy protection</div>
+			<div class="card-body">
+				<p class="card-text text-muted small">Find discs with specific protection indicators.</p>
+				{% if known_protection_types %}
+				{% for pt in known_protection_types %}
+				<code class="d-block mb-1">protection:{{ pt }}</code>
+				{% endfor %}
+				{% else %}
+				<code class="d-block mb-1">protection:bad_crc</code>
+				<code class="d-block mb-1">protection:weak_bits</code>
+				<code class="d-block mb-1">protection:ddam</code>
+				<code class="d-block mb-1">protection:id_mismatch</code>
+				<code class="d-block">protection:duplicate_id</code>
+				{% endif %}
+			</div>
+		</div>
+	</div>
+	<div class="col">
+		<div class="card h-100">
+			<div class="card-header"><i class="bi bi-clock-history"></i> Mastering</div>
+			<div class="card-body">
+				<p class="card-text text-muted small">Find discs with mastering/duplicator fingerprint data.</p>
+				{% if known_mastering_types %}
+				{% for mt in known_mastering_types %}
+				<code class="d-block mb-1">mastering:{{ mt }}</code>
+				{% endfor %}
+				{% else %}
+				<code class="d-block mb-1">mastering:traceback</code>
+				<code class="d-block mb-1">mastering:bcd_timestamp</code>
+				<code class="d-block">mastering:unknown_mastering</code>
+				{% endif %}
+			</div>
+		</div>
+	</div>
+	<div class="col">
+		<div class="card h-100">
+			<div class="card-header"><i class="bi bi-collection"></i> Items</div>
+			<div class="card-body">
+				<p class="card-text text-muted small">Search item and artefact names and descriptions with bare text.</p>
+				<code class="d-block mb-1">Impression</code>
+				<code class="d-block">BBC Basic</code>
+			</div>
+		</div>
+	</div>
+</div>
+
+{% else %}
+
+{% set total = results.files|length + results.artefacts|length + results.catalogue_items|length %}
+{% if total == 0 %}
+<div class="alert alert-info"><i class="bi bi-info-circle"></i> No results found for <strong>{{ q | e }}</strong>.</div>
+
+{% else %}
+
+{# --- Tab navigation --- #}
+<ul class="nav nav-tabs mb-3" id="searchTabs">
+	{% if results.files %}
+	<li class="nav-item">
+		<a class="nav-link active" data-bs-toggle="tab" href="#tab-files">
+			<i class="bi bi-file-earmark"></i> Files
+			<span class="badge bg-secondary ms-1">{{ results.files|length }}{% if results.truncated.get('files') %}+{% endif %}</span>
+		</a>
+	</li>
+	{% endif %}
+	{% if results.artefacts %}
+	<li class="nav-item">
+		<a class="nav-link{% if not results.files %} active{% endif %}" data-bs-toggle="tab" href="#tab-artefacts">
+			<i class="bi bi-disc"></i> Artefacts
+			<span class="badge bg-secondary ms-1">{{ results.artefacts|length }}{% if results.truncated.get('artefacts') %}+{% endif %}</span>
+		</a>
+	</li>
+	{% endif %}
+	{% if results.catalogue_items %}
+	<li class="nav-item">
+		<a class="nav-link{% if not results.files and not results.artefacts %} active{% endif %}" data-bs-toggle="tab" href="#tab-items">
+			<i class="bi bi-collection"></i> Items
+			<span class="badge bg-secondary ms-1">{{ results.catalogue_items|length }}{% if results.truncated.get('items') %}+{% endif %}</span>
+		</a>
+	</li>
+	{% endif %}
+</ul>
+
+<div class="tab-content">
+
+{# --- Files tab --- #}
+{% if results.files %}
+<div class="tab-pane fade show active" id="tab-files">
+	{% if results.truncated.get('files') %}
+	<div class="alert alert-warning py-2"><i class="bi bi-exclamation-triangle"></i> Showing first {{ RESULT_LIMIT }} results — refine your search to narrow down.</div>
+	{% endif %}
+	<div class="table-responsive">
+		<table class="table table-sm table-hover">
+			<thead><tr>
+				<th>File</th>
+				<th>Type</th>
+				<th>Size</th>
+				<th>Item / Artefact / Partition</th>
+			</tr></thead>
+			<tbody>
+			{% for ef, part, art, item in results.files %}
+			<tr>
+				<td>
+					<a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=art.uuid) }}#files"
+					   class="font-monospace text-decoration-none">{{ ef.path }}</a>
+				</td>
+				<td>
+					{% if ef.risc_os_filetype %}
+					<span class="badge bg-light text-dark font-monospace border" title="RISC OS filetype">{{ ef.risc_os_filetype | format_filetype }}</span>
+					{% elif ef.extension %}
+					<span class="badge bg-light text-dark border">.{{ ef.extension }}</span>
+					{% endif %}
+				</td>
+				<td class="text-muted text-nowrap">
+					{% if ef.file_size is not none %}{{ ef.file_size | filesizeformat }}{% endif %}
+				</td>
+				<td class="text-muted small">
+					<a href="{{ url_for('myapp_blueprints_items.view', uuid=item.uuid) }}">{{ item.name }}</a>
+					/ <a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=art.uuid) }}">{{ art.label }}</a>
+					{% if part.label %}/ {{ part.label }}{% endif %}
+				</td>
+			</tr>
+			{% endfor %}
+			</tbody>
+		</table>
+	</div>
+</div>
+{% endif %}
+
+{# --- Artefacts tab --- #}
+{% if results.artefacts %}
+<div class="tab-pane fade{% if not results.files %} show active{% endif %}" id="tab-artefacts">
+	{% if results.truncated.get('artefacts') %}
+	<div class="alert alert-warning py-2"><i class="bi bi-exclamation-triangle"></i> Showing first {{ RESULT_LIMIT }} results — refine your search to narrow down.</div>
+	{% endif %}
+	<div class="table-responsive">
+		<table class="table table-sm table-hover">
+			<thead><tr>
+				<th>Item</th>
+				<th>Artefact</th>
+				<th>Match</th>
+			</tr></thead>
+			<tbody>
+			{% for r in results.artefacts %}
+			<tr>
+				<td><a href="{{ url_for('myapp_blueprints_items.view', uuid=r.item.uuid) }}">{{ r.item.name }}</a></td>
+				<td><a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=r.artefact.uuid) }}">{{ r.artefact.label }}</a></td>
+				<td class="text-muted small">
+					{% if r.type == 'protection' %}
+					<span class="badge bg-warning text-dark"><i class="bi bi-shield-exclamation"></i> {{ r.protection_type }}</span>
+					{% elif r.type == 'mastering' %}
+					<span class="badge bg-info text-dark"><i class="bi bi-clock-history"></i> {{ r.mastering_type }}</span>
+					{% elif r.type == 'artefact_hash' %}
+					<span class="badge bg-secondary"><i class="bi bi-hash"></i> hash match</span>
+					{% elif r.type == 'artefact_text' %}
+					<span class="badge bg-secondary"><i class="bi bi-file-text"></i> name/description match</span>
+					{% elif r.type == 'partition' %}
+					<span class="badge bg-light text-dark border"><i class="bi bi-disc"></i>
+						{% if r.partition.label %}{{ r.partition.label }} &mdash; {% endif %}
+						{{ r.partition.filesystem.value }}
+					</span>
+					{% if r.partition.gnu_file_type %}
+					<span class="text-muted">{{ r.partition.gnu_file_type }}</span>
+					{% endif %}
+					{% endif %}
+				</td>
+			</tr>
+			{% endfor %}
+			</tbody>
+		</table>
+	</div>
+</div>
+{% endif %}
+
+{# --- Items tab --- #}
+{% if results.catalogue_items %}
+<div class="tab-pane fade{% if not results.files and not results.artefacts %} show active{% endif %}" id="tab-items">
+	{% if results.truncated.get('items') %}
+	<div class="alert alert-warning py-2"><i class="bi bi-exclamation-triangle"></i> Showing first {{ RESULT_LIMIT }} results — refine your search to narrow down.</div>
+	{% endif %}
+	<div class="table-responsive">
+		<table class="table table-sm table-hover">
+			<thead><tr>
+				<th>Name</th>
+				<th>Platform</th>
+				<th>Category</th>
+				<th>Artefacts</th>
+			</tr></thead>
+			<tbody>
+			{% for item in results.catalogue_items %}
+			<tr>
+				<td><a href="{{ url_for('myapp_blueprints_items.view', uuid=item.uuid) }}">{{ item.name }}</a></td>
+				<td>{{ item.platform.name if item.platform else '-' }}</td>
+				<td>{{ item.category.name if item.category else '-' }}</td>
+				<td><span class="badge bg-secondary">{{ item.artefacts|length }}</span></td>
+			</tr>
+			{% endfor %}
+			</tbody>
+		</table>
+	</div>
+</div>
+{% endif %}
+
+</div>{# /tab-content #}
+{% endif %}{# total > 0 #}
+{% endif %}{# results is not none #}
+
+{% endblock %}

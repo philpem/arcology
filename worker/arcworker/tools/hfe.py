@@ -800,7 +800,7 @@ def _try_bcd_timestamp(data: bytes, track: int, side: int,
     serial_number = serial_number_raw.decode('latin-1', errors='replace').rstrip()
 
     result = {
-        'type':               'bcd_timestamp_record',
+        'type':               'bcd_timestamp',
         'track':              track,
         'side':               side,
         'declared_size':      declared_size,
@@ -1118,8 +1118,8 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5,
         t = ind['type']
         if t == 'traceback':
             key = ('traceback', tuple(ind['fields']))
-        elif t == 'bcd_timestamp_record':
-            key = ('bcd_timestamp_record', ind['timestamp'],
+        elif t == 'bcd_timestamp':
+            key = ('bcd_timestamp', ind['timestamp'],
                    ind.get('format_code', ''), ind.get('serial_number', ''))
         elif t == 'unknown_mastering':
             key = ('unknown_mastering', ind.get('data_hex', ''))
