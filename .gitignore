@@ -11,6 +11,9 @@ syntax: glob
 # compiled python code
 *.pyc
 
+# setuptools build artifacts
+*.egg-info/
+
 # python virtual environment
 venv/*
 
