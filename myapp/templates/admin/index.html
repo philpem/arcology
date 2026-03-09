@@ -44,6 +44,7 @@
 		</a>
 	</div>
 	<div class="card-body p-0">
+		<div class="table-responsive">
 		<table class="table table-sm mb-0">
 			<thead class="table-light">
 				<tr>
@@ -51,9 +52,8 @@
 					<th>Admin</th>
 					<th>Permission</th>
 					<th>API Keys</th>
-					<th>API Key Access</th>
-					<th></th>
-					<th></th>
+					<th>API Access</th>
+					<th>Actions</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -79,21 +79,21 @@
 					{% if kc %}<span class="badge bg-secondary">{{ kc }} active</span>{% else %}<span class="text-muted">—</span>{% endif %}
 				</td>
 				<td class="align-middle">
-					{% if user.can_use_api %}
-					<span class="badge bg-success">Enabled</span>
-					{% else %}
-					<span class="badge bg-light text-muted border">Disabled</span>
-					{% endif %}
-				</td>
-				<td class="align-middle">
-					<form method="post" action="{{ url_for('myapp_blueprints_admin.toggle_api', user_id=user.id) }}">
-						{{ perm_forms[user.id].hidden_tag() }}
+					<div class="d-flex align-items-center gap-2">
 						{% if user.can_use_api %}
-						<button type="submit" class="btn btn-sm btn-outline-secondary">Disable API</button>
+						<span class="badge bg-success">Enabled</span>
 						{% else %}
-						<button type="submit" class="btn btn-sm btn-outline-success">Enable API</button>
+						<span class="badge bg-light text-muted border">Disabled</span>
 						{% endif %}
-					</form>
+						<form method="post" action="{{ url_for('myapp_blueprints_admin.toggle_api', user_id=user.id) }}">
+							{{ perm_forms[user.id].hidden_tag() }}
+							{% if user.can_use_api %}
+							<button type="submit" class="btn btn-sm btn-outline-secondary">Disable</button>
+							{% else %}
+							<button type="submit" class="btn btn-sm btn-outline-success">Enable</button>
+							{% endif %}
+						</form>
+					</div>
 				</td>
 				<td class="align-middle">
 					<div class="d-flex gap-1">
@@ -141,6 +141,7 @@
 			{% endfor %}
 			</tbody>
 		</table>
+		</div>
 	</div>
 </div>
 {% endblock %}
