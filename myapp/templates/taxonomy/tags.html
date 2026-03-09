@@ -22,7 +22,7 @@
             {% if user_can_write %}
             <form action="{{ url_for('myapp_blueprints_taxonomy.delete_tag', id=tag.id) }}" method="post" class="d-inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn-close btn-close-white ms-1" style="font-size: 0.6rem;" onclick="return confirm('Delete?');"></button>
+                <button type="submit" class="btn-close btn-close-white ms-1" style="font-size: 0.6rem;" onclick="return confirm('Delete tag \'{{ tag.name }}\'?');"></button>
             </form>
             {% endif %}
         </span>
