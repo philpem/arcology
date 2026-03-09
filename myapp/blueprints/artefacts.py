@@ -590,14 +590,16 @@ def view(uuid):
                 try:
                     mastering_analysis = json.loads(a.details)
                     mastering_analysis['_analysis_uuid'] = a.uuid
-                except (json.JSONDecodeError, TypeError):
-                    pass
+                except (json.JSONDecodeError, TypeError) as e:
+                    current_app.logger.warning(f"Failed to parse mastering analysis details for {a.uuid}: {e}")
             elif protection_analysis is None and a.analysis_type == AnalysisType.DISC_PROTECTION_DETECT:
                 try:
                     protection_analysis = json.loads(a.details)
                     protection_analysis['_analysis_uuid'] = a.uuid
-                except (json.JSONDecodeError, TypeError):
-                    pass
+                except (json.JSONDecodeError, TypeError) as e:
+                    current_app.logger.warning(f"Failed to parse protection analysis details for {a.uuid}: {e}")
+        if mastering_analysis is not None and protection_analysis is not None:
+            break
 
     return render_template('artefacts/view.html',
                            artefact=artefact,
@@ -715,8 +717,9 @@ def edit(uuid):
         artefact.tags.clear()
         if form.tags.data:
             tag_names = [t.strip() for t in form.tags.data.split(',') if t.strip()]
+            existing = {t.name: t for t in Tag.query.filter(Tag.name.in_(tag_names)).all()}
             for tag_name in tag_names:
-                tag = Tag.query.filter_by(name=tag_name).first()
+                tag = existing.get(tag_name)
                 if not tag:
                     tag = Tag(name=tag_name)
                     db.session.add(tag)
