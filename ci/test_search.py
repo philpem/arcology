@@ -372,10 +372,18 @@ class TestSearchLogic(unittest.TestCase):
         paths = [ef.path for ef, *_ in results['files']]
         self.assertTrue(any('!Impression' in p for p in paths))
 
+    def test_path_no_match(self):
+        results = self._search('path:xyzzy_no_such_path')
+        self.assertEqual(results['files'], [])
+
     def test_risc_os_type_search(self):
         results = self._search('type:ff8')
         filenames = [ef.filename for ef, *_ in results['files']]
         self.assertIn('!RunImage', filenames)
+
+    def test_risc_os_type_no_match(self):
+        results = self._search('type:000')
+        self.assertEqual(results['files'], [])
 
     def test_risc_os_type_alias_filetype(self):
         results = self._search('filetype:ff8')
@@ -387,6 +395,10 @@ class TestSearchLogic(unittest.TestCase):
         filenames = [ef.filename for ef, *_ in results['files']]
         self.assertIn('!RunImage', filenames)
 
+    def test_risc_os_type_name_no_match(self):
+        results = self._search('type:Squash')
+        self.assertEqual(results['files'], [])
+
     def test_risc_os_type_name_case_insensitive(self):
         results_lower = self._search('type:absolute')
         results_upper = self._search('type:ABSOLUTE')
@@ -396,6 +408,10 @@ class TestSearchLogic(unittest.TestCase):
         results = self._search('ext:bas')
         filenames = [ef.filename for ef, *_ in results['files']]
         self.assertIn('bas', filenames)
+
+    def test_ext_no_match(self):
+        results = self._search('ext:xyz_no_such_ext')
+        self.assertEqual(results['files'], [])
 
     def test_md5_finds_file(self):
         results = self._search('md5:deadbeef' + '0' * 24)
@@ -407,10 +423,18 @@ class TestSearchLogic(unittest.TestCase):
         filenames = [ef.filename for ef, *_ in results['files']]
         self.assertIn('!RunImage', filenames)
 
+    def test_sha1_no_match(self):
+        results = self._search('sha1:' + '0' * 40)
+        self.assertEqual(results['files'], [])
+
     def test_sha256_finds_file(self):
         results = self._search('sha256:' + 'b' * 64)
         filenames = [ef.filename for ef, *_ in results['files']]
         self.assertIn('!RunImage', filenames)
+
+    def test_sha256_no_match(self):
+        results = self._search('sha256:' + '0' * 64)
+        self.assertEqual(results['files'], [])
 
     def test_or_within_key(self):
         # Both type:ff8 and ext:bas should be found when queried together as same key
@@ -452,6 +476,11 @@ class TestSearchLogic(unittest.TestCase):
         types = [r['type'] for r in results['artefacts']]
         self.assertIn('partition', types)
 
+    def test_fs_search_no_match(self):
+        results = self._search('fs:xyzzy_no_such_fs')
+        partition_results = [r for r in results['artefacts'] if r['type'] == 'partition']
+        self.assertEqual(partition_results, [])
+
     def test_fs_search_container_format(self):
         # 'adfs e' is not a valid FilesystemType so falls through to container_format ilike
         results = self._search('fs:"Acorn ADFS E"')
@@ -462,6 +491,11 @@ class TestSearchLogic(unittest.TestCase):
         results = self._search('ident:"DOS boot sector"')
         types = [r['type'] for r in results['artefacts']]
         self.assertIn('partition', types)
+
+    def test_ident_no_match(self):
+        results = self._search('ident:xyzzy_no_such_ident')
+        partition_results = [r for r in results['artefacts'] if r['type'] == 'partition']
+        self.assertEqual(partition_results, [])
 
     def test_ident_alias_gnu(self):
         results = self._search('gnu:"DOS boot sector"')
