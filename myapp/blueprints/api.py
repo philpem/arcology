@@ -369,63 +369,63 @@ def update_analysis(id):
 
 
 def _populate_search_index(analysis):
-	"""Extract structured search data from a completed analysis's JSON details blob.
+    """Extract structured search data from a completed analysis's JSON details blob.
 
-	Called after update_analysis() marks a job as completed+successful.
-	Handles DISC_PROTECTION_DETECT, DISC_MASTERING_DETECT, and PARTITION_DETECT.
-	Errors are logged but never propagated — the analysis update itself must
-	still succeed even if index population fails.
-	"""
-	import json
+    Called after update_analysis() marks a job as completed+successful.
+    Handles DISC_PROTECTION_DETECT, DISC_MASTERING_DETECT, and PARTITION_DETECT.
+    Errors are logged but never propagated — the analysis update itself must
+    still succeed even if index population fails.
+    """
+    import json
 
-	if not analysis.details:
-		return
+    if not analysis.details:
+        return
 
-	try:
-		details = json.loads(analysis.details)
-	except (ValueError, TypeError):
-		current_app.logger.warning(
-			f"Could not parse details JSON for analysis {analysis.uuid} "
-			f"({analysis.analysis_type.value}) — skipping search index update"
-		)
-		return
+    try:
+        details = json.loads(analysis.details)
+    except (ValueError, TypeError):
+        current_app.logger.warning(
+            f"Could not parse details JSON for analysis {analysis.uuid} "
+            f"({analysis.analysis_type.value}) — skipping search index update"
+        )
+        return
 
-	try:
-		if analysis.analysis_type == AnalysisType.DISC_PROTECTION_DETECT:
-			# Delete any previous rows for this artefact so re-runs stay clean.
-			ArtefactProtection.query.filter_by(artefact_id=analysis.artefact_id).delete()
-			for ind in details.get('indicators', []):
-				db.session.add(ArtefactProtection(
-					artefact_id=analysis.artefact_id,
-					protection_type=ind.get('type', 'unknown'),
-					track=ind.get('track'),
-					side=ind.get('side'),
-					details=ind.get('sector_id') or ind.get('details'),
-				))
+    try:
+        if analysis.analysis_type == AnalysisType.DISC_PROTECTION_DETECT:
+            # Delete any previous rows for this artefact so re-runs stay clean.
+            ArtefactProtection.query.filter_by(artefact_id=analysis.artefact_id).delete()
+            for ind in details.get('indicators', []):
+                db.session.add(ArtefactProtection(
+                    artefact_id=analysis.artefact_id,
+                    protection_type=ind.get('type', 'unknown'),
+                    track=ind.get('track'),
+                    side=ind.get('side'),
+                    details=ind.get('sector_id') or ind.get('details'),
+                ))
 
-		elif analysis.analysis_type == AnalysisType.DISC_MASTERING_DETECT:
-			ArtefactMastering.query.filter_by(artefact_id=analysis.artefact_id).delete()
-			for ind in details.get('indicators', []):
-				db.session.add(ArtefactMastering(
-					artefact_id=analysis.artefact_id,
-					mastering_type=ind.get('type', 'unknown'),
-					track=ind.get('track'),
-					decoded=ind.get('decoded') or ind.get('data'),
-				))
+        elif analysis.analysis_type == AnalysisType.DISC_MASTERING_DETECT:
+            ArtefactMastering.query.filter_by(artefact_id=analysis.artefact_id).delete()
+            for ind in details.get('indicators', []):
+                db.session.add(ArtefactMastering(
+                    artefact_id=analysis.artefact_id,
+                    mastering_type=ind.get('type', 'unknown'),
+                    track=ind.get('track'),
+                    decoded=ind.get('decoded') or ind.get('data'),
+                ))
 
-		elif analysis.analysis_type == AnalysisType.PARTITION_DETECT:
-			gnu_file_type = details.get('file', {}).get('file_type')
-			if gnu_file_type:
-				# Apply to all partitions belonging to this artefact.
-				Partition.query.filter_by(artefact_id=analysis.artefact_id).update(
-					{'gnu_file_type': gnu_file_type}
-				)
+        elif analysis.analysis_type == AnalysisType.PARTITION_DETECT:
+            gnu_file_type = details.get('file', {}).get('file_type')
+            if gnu_file_type:
+                # Apply to all partitions belonging to this artefact.
+                Partition.query.filter_by(artefact_id=analysis.artefact_id).update(
+                    {'gnu_file_type': gnu_file_type}
+                )
 
-	except Exception:
-		current_app.logger.exception(
-			f"Error populating search index for analysis {analysis.uuid} "
-			f"({analysis.analysis_type.value})"
-		)
+    except Exception:
+        current_app.logger.exception(
+            f"Error populating search index for analysis {analysis.uuid} "
+            f"({analysis.analysis_type.value})"
+        )
 
 
 @blueprint.route('/analysis/pending', methods=['GET'])

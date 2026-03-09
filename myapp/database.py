@@ -513,40 +513,40 @@ class ExtractedFile(db.Model):
 # =============================================================================
 
 class ArtefactProtection(db.Model):
-	"""Copy protection indicators detected on a disc artefact.
+    """Copy protection indicators detected on a disc artefact.
 
-	Populated server-side when a DISC_PROTECTION_DETECT analysis completes.
-	One row per indicator instance (a single disc may have many).
-	"""
-	__tablename__ = 'artefact_protection'
+    Populated server-side when a DISC_PROTECTION_DETECT analysis completes.
+    One row per indicator instance (a single disc may have many).
+    """
+    __tablename__ = 'artefact_protection'
 
-	id: Mapped[int] = mapped_column(primary_key=True)
-	artefact_id: Mapped[int] = mapped_column(ForeignKey('artefacts.id'), index=True)
-	protection_type: Mapped[str] = mapped_column(String(64), index=True)
-	# Known values: 'weak_bits', 'bad_crc', 'id_mismatch', 'ddam', 'duplicate_id'
-	track: Mapped[Optional[int]] = mapped_column(nullable=True)
-	side: Mapped[Optional[int]] = mapped_column(nullable=True)
-	details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # e.g. sector ID string
+    id: Mapped[int] = mapped_column(primary_key=True)
+    artefact_id: Mapped[int] = mapped_column(ForeignKey('artefacts.id'), index=True)
+    protection_type: Mapped[str] = mapped_column(String(64), index=True)
+    # Known values: 'weak_bits', 'bad_crc', 'id_mismatch', 'ddam', 'duplicate_id'
+    track: Mapped[Optional[int]] = mapped_column(nullable=True)
+    side: Mapped[Optional[int]] = mapped_column(nullable=True)
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # e.g. sector ID string
 
-	artefact: Mapped["Artefact"] = relationship(back_populates="protection_indicators")
+    artefact: Mapped["Artefact"] = relationship(back_populates="protection_indicators")
 
 
 class ArtefactMastering(db.Model):
-	"""Mastering / duplicator fingerprint indicators detected on a disc artefact.
+    """Mastering / duplicator fingerprint indicators detected on a disc artefact.
 
-	Populated server-side when a DISC_MASTERING_DETECT analysis completes.
-	One row per indicator instance found.
-	"""
-	__tablename__ = 'artefact_mastering'
+    Populated server-side when a DISC_MASTERING_DETECT analysis completes.
+    One row per indicator instance found.
+    """
+    __tablename__ = 'artefact_mastering'
 
-	id: Mapped[int] = mapped_column(primary_key=True)
-	artefact_id: Mapped[int] = mapped_column(ForeignKey('artefacts.id'), index=True)
-	mastering_type: Mapped[str] = mapped_column(String(64), index=True)
-	# Known values: 'traceback', 'bcd_timestamp', 'unknown_mastering'
-	track: Mapped[Optional[int]] = mapped_column(nullable=True)
-	decoded: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Decoded mastering data string
+    id: Mapped[int] = mapped_column(primary_key=True)
+    artefact_id: Mapped[int] = mapped_column(ForeignKey('artefacts.id'), index=True)
+    mastering_type: Mapped[str] = mapped_column(String(64), index=True)
+    # Known values: 'traceback', 'bcd_timestamp', 'unknown_mastering'
+    track: Mapped[Optional[int]] = mapped_column(nullable=True)
+    decoded: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Decoded mastering data string
 
-	artefact: Mapped["Artefact"] = relationship(back_populates="mastering_indicators")
+    artefact: Mapped["Artefact"] = relationship(back_populates="mastering_indicators")
 
 
 # =============================================================================
