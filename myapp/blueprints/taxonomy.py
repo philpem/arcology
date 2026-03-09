@@ -267,6 +267,22 @@ def new_tag():
     return render_template('taxonomy/taxonomy_form.html', form=form, title='New Tag')
 
 
+@blueprint.route('/tags/<int:id>/edit', methods=['GET', 'POST'])
+@login_required
+@require_permission('read_write')
+def edit_tag(id):
+    tag = Tag.query.get_or_404(id)
+    form = TagForm(obj=tag)
+
+    if form.validate_on_submit():
+        tag.name = form.name.data
+        db.session.commit()
+        flash(f'Tag "{tag.name}" updated.', 'success')
+        return redirect(url_for(f'{ROUTENAME}.tags'))
+
+    return render_template('taxonomy/taxonomy_form.html', form=form, title='Edit Tag')
+
+
 @blueprint.route('/tags/<int:id>/delete', methods=['POST'])
 @login_required
 @require_permission('read_write')
@@ -395,6 +411,32 @@ def view_hash_database(id):
                            database=database,
                            files=files_pagination.items,
                            pagination=files_pagination)
+
+
+@blueprint.route('/hash-databases/<int:id>/edit', methods=['GET', 'POST'])
+@login_required
+@require_permission('read_write')
+def edit_hash_database(id):
+    database = HashDatabase.query.get_or_404(id)
+    form = HashDatabaseForm(obj=database)
+    form.platform_id.choices = [(0, '-- All Platforms --')] + [
+        (p.id, p.name) for p in Platform.query.order_by(Platform.name).all()
+    ]
+
+    if form.validate_on_submit():
+        database.name = form.name.data
+        database.description = form.description.data
+        database.source_url = form.source_url.data
+        database.version = form.version.data
+        database.platform_id = form.platform_id.data if form.platform_id.data != 0 else None
+        db.session.commit()
+        flash(f'Hash database "{database.name}" updated.', 'success')
+        return redirect(url_for(f'{ROUTENAME}.hash_databases'))
+
+    # Pre-select current platform in the dropdown
+    if database.platform_id:
+        form.platform_id.data = database.platform_id
+    return render_template('taxonomy/taxonomy_form.html', form=form, title='Edit Hash Database')
 
 
 @blueprint.route('/hash-databases/<int:id>/delete', methods=['POST'])
