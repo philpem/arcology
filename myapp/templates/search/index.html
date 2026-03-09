@@ -11,14 +11,13 @@
 		<form method="get" class="row g-2 align-items-end">
 			<div class="col">
 				<div class="input-group">
-					<input type="text" name="q" class="form-control font-monospace"
+					<input type="text" name="q" id="search-input" class="form-control font-monospace"
 						placeholder="md5:abc123  filename:!RunImage  protection:bad_crc  type:Text  label:System  Impression"
 						value="{{ q | e }}" autofocus>
-					{% if q %}
-					<a href="{{ url_for('myapp_blueprints_search.index') }}" class="btn btn-outline-secondary" title="Clear search">
+					<button type="button" class="btn btn-outline-secondary" title="Clear search"
+						onclick="document.getElementById('search-input').value=''; document.getElementById('search-input').focus();">
 						<i class="bi bi-x-lg"></i>
-					</a>
-					{% endif %}
+					</button>
 				</div>
 			</div>
 			<div class="col-auto">
