@@ -27,7 +27,7 @@ pipeline {
                         "-e POSTGRES_DB=${POSTGRES_DB} " +
                         "-e POSTGRES_USER=${POSTGRES_USER} " +
                         "-e POSTGRES_PASSWORD=${POSTGRES_PASSWORD} " +
-                        "-p 5433:5432"
+                        "-p 0:5432"
                     ) { pg ->
                         // Wait for PostgreSQL to be ready
                         sh """
@@ -39,9 +39,15 @@ pipeline {
                             done
                         """
 
+                        // Discover the dynamically assigned host port
+                        def pgPort = sh(
+                            script: "docker port ${pg.id} 5432 | head -1 | cut -d: -f2",
+                            returnStdout: true
+                        ).trim()
+
                         // Set up virtualenv and run migration tests
                         withEnv([
-                            "SQLALCHEMY_DATABASE_URI=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5433/${POSTGRES_DB}"
+                            "SQLALCHEMY_DATABASE_URI=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${pgPort}/${POSTGRES_DB}"
                         ]) {
                             sh '''
                                 python3 -m venv .venv-ci
