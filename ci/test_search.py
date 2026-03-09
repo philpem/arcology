@@ -1,0 +1,632 @@
+"""
+Search engine smoke tests.
+
+Tests both the query parser (pure unit tests, no database) and the search
+logic (_run_search) with fixture data inserted into a SQLite in-memory
+database.  Every search key supported by the engine is exercised.
+
+Environment variables (same as other CI tests):
+    SQLALCHEMY_DATABASE_URI  — defaults to sqlite:///:memory:
+    SECRET_KEY               — defaults to a fixed test value
+    WORKER_API_KEY           — defaults to 'ci-test-worker-key'
+
+Run:
+    python -m unittest ci.test_search -v
+"""
+
+import os
+import sys
+import unittest
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+os.environ.setdefault('SQLALCHEMY_DATABASE_URI', 'sqlite:///:memory:')
+os.environ.setdefault('SECRET_KEY', 'ci-smoke-test-secret-key-not-for-production')
+os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
+
+
+# =============================================================================
+# Unit tests: parse_query (no database required)
+# =============================================================================
+
+class TestParseQuery(unittest.TestCase):
+    """Unit tests for the query parser — no app context or database needed."""
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.blueprints.search import parse_query
+        cls.parse = staticmethod(parse_query)
+
+    def test_empty_string(self):
+        self.assertEqual(self.parse(''), {})
+
+    def test_none_string(self):
+        self.assertEqual(self.parse(None), {})
+
+    def test_bare_word(self):
+        tokens = self.parse('Impression')
+        self.assertEqual(tokens, {'text': ['Impression']})
+
+    def test_bare_quoted_phrase(self):
+        tokens = self.parse('"BBC Basic"')
+        self.assertEqual(tokens, {'text': ['BBC Basic']})
+
+    def test_key_value(self):
+        tokens = self.parse('filename:!RunImage')
+        self.assertEqual(tokens.get('filename'), ['!RunImage'])
+
+    def test_key_quoted_value(self):
+        tokens = self.parse('label:"Boot Disc"')
+        self.assertEqual(tokens.get('label'), ['Boot Disc'])
+
+    def test_md5_key(self):
+        tokens = self.parse('md5:d41d8cd98f00b204e9800998ecf8427e')
+        self.assertEqual(tokens.get('md5'), ['d41d8cd98f00b204e9800998ecf8427e'])
+
+    def test_sha1_key(self):
+        tokens = self.parse('sha1:da39a3ee5e6b4b0d3255bfef95601890afd80709')
+        self.assertEqual(tokens.get('sha1'), ['da39a3ee5e6b4b0d3255bfef95601890afd80709'])
+
+    def test_sha256_key(self):
+        h = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+        tokens = self.parse(f'sha256:{h}')
+        self.assertEqual(tokens.get('sha256'), [h])
+
+    def test_path_key(self):
+        tokens = self.parse('path:!Impression')
+        self.assertEqual(tokens.get('path'), ['!Impression'])
+
+    def test_type_key(self):
+        tokens = self.parse('type:fff')
+        self.assertEqual(tokens.get('type'), ['fff'])
+
+    def test_ext_key(self):
+        tokens = self.parse('ext:bas')
+        self.assertEqual(tokens.get('ext'), ['bas'])
+
+    def test_ident_key(self):
+        tokens = self.parse('ident:DOS')
+        self.assertEqual(tokens.get('ident'), ['DOS'])
+
+    def test_label_key(self):
+        tokens = self.parse('label:System')
+        self.assertEqual(tokens.get('label'), ['System'])
+
+    def test_fs_key(self):
+        tokens = self.parse('fs:adfs')
+        self.assertEqual(tokens.get('fs'), ['adfs'])
+
+    def test_protection_key(self):
+        tokens = self.parse('protection:bad_crc')
+        self.assertEqual(tokens.get('protection'), ['bad_crc'])
+
+    def test_mastering_key(self):
+        tokens = self.parse('mastering:traceback')
+        self.assertEqual(tokens.get('mastering'), ['traceback'])
+
+    # Aliases
+
+    def test_alias_file(self):
+        tokens = self.parse('file:!RunImage')
+        self.assertIn('filename', tokens)
+        self.assertNotIn('file', tokens)
+
+    def test_alias_filetype(self):
+        tokens = self.parse('filetype:fff')
+        self.assertIn('type', tokens)
+        self.assertNotIn('filetype', tokens)
+
+    def test_alias_disc(self):
+        tokens = self.parse('disc:System')
+        self.assertIn('label', tokens)
+        self.assertNotIn('disc', tokens)
+
+    def test_alias_gnu(self):
+        tokens = self.parse('gnu:DOS')
+        self.assertIn('ident', tokens)
+        self.assertNotIn('gnu', tokens)
+
+    def test_alias_gnufile(self):
+        tokens = self.parse('gnufile:DOS')
+        self.assertIn('ident', tokens)
+        self.assertNotIn('gnufile', tokens)
+
+    def test_alias_filesystem(self):
+        tokens = self.parse('filesystem:adfs')
+        self.assertIn('fs', tokens)
+        self.assertNotIn('filesystem', tokens)
+
+    def test_alias_prot(self):
+        tokens = self.parse('prot:bad_crc')
+        self.assertIn('protection', tokens)
+        self.assertNotIn('prot', tokens)
+
+    # Multi-value / multi-key
+
+    def test_multiple_values_same_key(self):
+        tokens = self.parse('type:feb type:ffa')
+        self.assertCountEqual(tokens.get('type', []), ['feb', 'ffa'])
+
+    def test_multiple_keys(self):
+        tokens = self.parse('path:!Impression filename:!RunImage')
+        self.assertIn('path', tokens)
+        self.assertIn('filename', tokens)
+
+    def test_mixed_bare_and_keyed(self):
+        tokens = self.parse('Impression filename:!RunImage')
+        self.assertIn('text', tokens)
+        self.assertIn('filename', tokens)
+
+
+# =============================================================================
+# Unit tests: RISC OS filetype lookup (no database required)
+# =============================================================================
+
+class TestLookupFiletypeHex(unittest.TestCase):
+    """Unit tests for lookup_filetype_hex — no app context needed."""
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.riscos_filetypes import lookup_filetype_hex
+        cls.lookup = staticmethod(lookup_filetype_hex)
+
+    def test_hex_code_returns_self(self):
+        self.assertEqual(self.lookup('fea'), 'fea')
+
+    def test_hex_code_uppercase_normalised(self):
+        self.assertEqual(self.lookup('FEA'), 'fea')
+
+    def test_name_desktop(self):
+        self.assertEqual(self.lookup('Desktop'), 'fea')
+
+    def test_name_case_insensitive(self):
+        self.assertEqual(self.lookup('desktop'), 'fea')
+        self.assertEqual(self.lookup('DESKTOP'), 'fea')
+
+    def test_name_text(self):
+        self.assertEqual(self.lookup('Text'), 'fff')
+
+    def test_name_basic(self):
+        self.assertEqual(self.lookup('BASIC'), 'ffb')
+
+    def test_name_absolute(self):
+        self.assertEqual(self.lookup('Absolute'), 'ff8')
+
+    def test_name_obey(self):
+        self.assertEqual(self.lookup('Obey'), 'feb')
+
+    def test_unknown_name_returns_none(self):
+        self.assertIsNone(self.lookup('NotARealType'))
+
+    def test_empty_string_returns_none(self):
+        self.assertIsNone(self.lookup(''))
+
+    def test_none_returns_none(self):
+        self.assertIsNone(self.lookup(None))
+
+    def test_hex_and_name_equivalent(self):
+        # type:fea and type:Desktop should resolve to the same hex code
+        self.assertEqual(self.lookup('fea'), self.lookup('Desktop'))
+
+
+# =============================================================================
+# Integration tests: _run_search with fixture data
+# =============================================================================
+
+class TestSearchLogic(unittest.TestCase):
+    """Tests for _run_search with real fixture data in a SQLite in-memory DB."""
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.app import create_app
+        from myapp.extensions import db as _db
+        from myapp.database import (
+            Item, Artefact, Partition, ExtractedFile,
+            ArtefactProtection, ArtefactMastering,
+            FilesystemType, StorageDirectory,
+        )
+        from shared.enums import ArtefactType
+
+        cls.app = create_app()
+        cls.app.config['TESTING'] = True
+
+        with cls.app.app_context():
+            _db.create_all()
+
+            # --- Fixture: one item, one artefact, one partition, two files ---
+            item = Item(name='Test Software', description='A classic BBC Micro game')
+            _db.session.add(item)
+            _db.session.flush()
+
+            art = Artefact(
+                item_id=item.id,
+                label='Side A',
+                artefact_type=ArtefactType.HFE,
+                original_filename='side_a.hfe',
+                storage_path='side_a.hfe',
+                storage_directory=StorageDirectory.UPLOADS,
+                md5='aaaabbbbccccdddd0000111122223333',
+                sha256='a' * 64,
+            )
+            _db.session.add(art)
+            _db.session.flush()
+
+            part = Partition(
+                artefact_id=art.id,
+                partition_index=0,
+                label='System',
+                filesystem=FilesystemType.ADFS,
+                container_format='Acorn ADFS E',
+                gnu_file_type='DOS boot sector',
+            )
+            _db.session.add(part)
+            _db.session.flush()
+
+            # Regular file with RISC OS filetype
+            f1 = ExtractedFile(
+                partition_id=part.id,
+                path='$.!Impression.!RunImage',
+                filename='!RunImage',
+                extension=None,
+                risc_os_filetype='ff8',
+                md5='deadbeef' + '0' * 24,
+                sha1='cafebabe' + '0' * 32,
+                sha256='b' * 64,
+                is_directory=False,
+            )
+            # File with extension
+            f2 = ExtractedFile(
+                partition_id=part.id,
+                path='$.Tools.Convert.bas',
+                filename='bas',
+                extension='bas',
+                risc_os_filetype=None,
+                md5='11112222333344445555666677778888',
+                sha1=None,
+                sha256='c' * 64,
+                is_directory=False,
+            )
+            # Directory entry — must NOT appear in file search results
+            d1 = ExtractedFile(
+                partition_id=part.id,
+                path='$.!Impression',
+                filename='!Impression',
+                extension=None,
+                is_directory=True,
+            )
+            _db.session.add_all([f1, f2, d1])
+
+            # Protection indicators
+            _db.session.add(ArtefactProtection(
+                artefact_id=art.id,
+                protection_type='bad_crc',
+                track=1,
+                side=0,
+            ))
+            _db.session.add(ArtefactProtection(
+                artefact_id=art.id,
+                protection_type='bad_crc',
+                track=2,
+                side=0,
+            ))
+            _db.session.add(ArtefactProtection(
+                artefact_id=art.id,
+                protection_type='weak_bits',
+                track=5,
+                side=0,
+            ))
+
+            # Mastering indicators
+            _db.session.add(ArtefactMastering(
+                artefact_id=art.id,
+                mastering_type='traceback',
+                track=79,
+            ))
+            _db.session.add(ArtefactMastering(
+                artefact_id=art.id,
+                mastering_type='bcd_timestamp',
+                track=78,
+                decoded='1990-01-01',
+            ))
+
+            _db.session.commit()
+
+            # Store IDs for assertions
+            cls.item_id = item.id
+            cls.art_id = art.id
+            cls.part_id = part.id
+
+    def _search(self, query_string):
+        from myapp.blueprints.search import parse_query, _run_search
+        with self.app.app_context():
+            return _run_search(parse_query(query_string))
+
+    # ------------------------------------------------------------------
+    # File searches
+    # ------------------------------------------------------------------
+
+    def test_filename_search_finds_file(self):
+        results = self._search('filename:!RunImage')
+        filenames = [ef.filename for ef, *_ in results['files']]
+        self.assertIn('!RunImage', filenames)
+
+    def test_filename_alias_file(self):
+        results = self._search('file:!RunImage')
+        self.assertTrue(len(results['files']) > 0)
+
+    def test_filename_wildcard(self):
+        results = self._search('filename:!Run*')
+        filenames = [ef.filename for ef, *_ in results['files']]
+        self.assertIn('!RunImage', filenames)
+
+    def test_filename_no_directories(self):
+        # Directory entries must never appear in file results
+        results = self._search('filename:!Impression')
+        self.assertEqual(len(results['files']), 0)
+
+    def test_path_search(self):
+        results = self._search('path:!Impression')
+        paths = [ef.path for ef, *_ in results['files']]
+        self.assertTrue(any('!Impression' in p for p in paths))
+
+    def test_risc_os_type_search(self):
+        results = self._search('type:ff8')
+        filenames = [ef.filename for ef, *_ in results['files']]
+        self.assertIn('!RunImage', filenames)
+
+    def test_risc_os_type_alias_filetype(self):
+        results = self._search('filetype:ff8')
+        self.assertTrue(len(results['files']) > 0)
+
+    def test_risc_os_type_by_name(self):
+        # 'Absolute' maps to 'ff8' — should find the same file as type:ff8
+        results = self._search('type:Absolute')
+        filenames = [ef.filename for ef, *_ in results['files']]
+        self.assertIn('!RunImage', filenames)
+
+    def test_risc_os_type_name_case_insensitive(self):
+        results_lower = self._search('type:absolute')
+        results_upper = self._search('type:ABSOLUTE')
+        self.assertEqual(len(results_lower['files']), len(results_upper['files']))
+
+    def test_ext_search(self):
+        results = self._search('ext:bas')
+        filenames = [ef.filename for ef, *_ in results['files']]
+        self.assertIn('bas', filenames)
+
+    def test_md5_finds_file(self):
+        results = self._search('md5:deadbeef' + '0' * 24)
+        filenames = [ef.filename for ef, *_ in results['files']]
+        self.assertIn('!RunImage', filenames)
+
+    def test_sha1_finds_file(self):
+        results = self._search('sha1:cafebabe' + '0' * 32)
+        filenames = [ef.filename for ef, *_ in results['files']]
+        self.assertIn('!RunImage', filenames)
+
+    def test_sha256_finds_file(self):
+        results = self._search('sha256:' + 'b' * 64)
+        filenames = [ef.filename for ef, *_ in results['files']]
+        self.assertIn('!RunImage', filenames)
+
+    def test_or_within_key(self):
+        # Both type:ff8 and ext:bas should be found when queried together as same key
+        results = self._search('type:ff8 type:nope')
+        # ff8 should still match
+        filenames = [ef.filename for ef, *_ in results['files']]
+        self.assertIn('!RunImage', filenames)
+
+    def test_and_across_keys(self):
+        # path contains !Impression AND filename is !RunImage — should match
+        results = self._search('path:!Impression filename:!RunImage')
+        self.assertTrue(len(results['files']) > 0)
+
+    def test_and_across_keys_no_match(self):
+        # path !Impression AND filename bas — no file has both
+        results = self._search('path:!Impression filename:bas')
+        self.assertEqual(len(results['files']), 0)
+
+    def test_no_file_results(self):
+        results = self._search('filename:doesnotexist_xyzzy')
+        self.assertEqual(results['files'], [])
+
+    # ------------------------------------------------------------------
+    # Disc / partition searches
+    # ------------------------------------------------------------------
+
+    def test_label_search(self):
+        results = self._search('label:System')
+        self.assertTrue(len(results['artefacts']) > 0)
+        types = [r['type'] for r in results['artefacts']]
+        self.assertIn('partition', types)
+
+    def test_label_alias_disc(self):
+        results = self._search('disc:System')
+        self.assertTrue(len(results['artefacts']) > 0)
+
+    def test_fs_search_enum_value(self):
+        results = self._search('fs:adfs')
+        types = [r['type'] for r in results['artefacts']]
+        self.assertIn('partition', types)
+
+    def test_fs_search_container_format(self):
+        # 'adfs e' is not a valid FilesystemType so falls through to container_format ilike
+        results = self._search('fs:"Acorn ADFS E"')
+        types = [r['type'] for r in results['artefacts']]
+        self.assertIn('partition', types)
+
+    def test_ident_search(self):
+        results = self._search('ident:"DOS boot sector"')
+        types = [r['type'] for r in results['artefacts']]
+        self.assertIn('partition', types)
+
+    def test_ident_alias_gnu(self):
+        results = self._search('gnu:"DOS boot sector"')
+        self.assertTrue(len(results['artefacts']) > 0)
+
+    def test_ident_alias_gnufile(self):
+        results = self._search('gnufile:"DOS boot sector"')
+        self.assertTrue(len(results['artefacts']) > 0)
+
+    def test_gnufile_alias_filesystem_fallback(self):
+        results = self._search('filesystem:adfs')
+        types = [r['type'] for r in results['artefacts']]
+        self.assertIn('partition', types)
+
+    def test_no_disc_results(self):
+        results = self._search('label:doesnotexist_xyzzy')
+        partition_results = [r for r in results['artefacts'] if r['type'] == 'partition']
+        self.assertEqual(partition_results, [])
+
+    # ------------------------------------------------------------------
+    # Protection indicator searches
+    # ------------------------------------------------------------------
+
+    def test_protection_search_finds_artefact(self):
+        results = self._search('protection:bad_crc')
+        prot_results = [r for r in results['artefacts'] if r['type'] == 'protection']
+        self.assertTrue(len(prot_results) > 0)
+
+    def test_protection_search_alias_prot(self):
+        results = self._search('prot:bad_crc')
+        prot_results = [r for r in results['artefacts'] if r['type'] == 'protection']
+        self.assertTrue(len(prot_results) > 0)
+
+    def test_protection_deduplication(self):
+        # bad_crc appears on two tracks — should yield exactly one artefact result
+        results = self._search('protection:bad_crc')
+        prot_results = [r for r in results['artefacts'] if r['type'] == 'protection']
+        artefact_ids = [r['artefact'].id for r in prot_results]
+        self.assertEqual(len(artefact_ids), len(set(artefact_ids)),
+                         "Duplicate artefact entries after deduplication")
+
+    def test_protection_search_weak_bits(self):
+        results = self._search('protection:weak_bits')
+        prot_results = [r for r in results['artefacts'] if r['type'] == 'protection']
+        self.assertTrue(len(prot_results) > 0)
+
+    def test_protection_search_no_match(self):
+        results = self._search('protection:nonexistent_type')
+        prot_results = [r for r in results['artefacts'] if r['type'] == 'protection']
+        self.assertEqual(prot_results, [])
+
+    # ------------------------------------------------------------------
+    # Mastering indicator searches
+    # ------------------------------------------------------------------
+
+    def test_mastering_search_traceback(self):
+        results = self._search('mastering:traceback')
+        mast_results = [r for r in results['artefacts'] if r['type'] == 'mastering']
+        self.assertTrue(len(mast_results) > 0)
+
+    def test_mastering_search_bcd_timestamp(self):
+        results = self._search('mastering:bcd_timestamp')
+        mast_results = [r for r in results['artefacts'] if r['type'] == 'mastering']
+        self.assertTrue(len(mast_results) > 0)
+
+    def test_mastering_deduplication(self):
+        # If an artefact had two traceback indicators it should appear once
+        results = self._search('mastering:traceback')
+        mast_results = [r for r in results['artefacts'] if r['type'] == 'mastering']
+        artefact_ids = [r['artefact'].id for r in mast_results]
+        self.assertEqual(len(artefact_ids), len(set(artefact_ids)),
+                         "Duplicate artefact entries after deduplication")
+
+    def test_mastering_search_no_match(self):
+        results = self._search('mastering:nonexistent_type')
+        mast_results = [r for r in results['artefacts'] if r['type'] == 'mastering']
+        self.assertEqual(mast_results, [])
+
+    # ------------------------------------------------------------------
+    # Artefact-level hash searches
+    # ------------------------------------------------------------------
+
+    def test_artefact_md5_search(self):
+        results = self._search('md5:aaaabbbbccccdddd0000111122223333')
+        hash_results = [r for r in results['artefacts'] if r['type'] == 'artefact_hash']
+        self.assertTrue(len(hash_results) > 0)
+
+    def test_artefact_sha256_search(self):
+        results = self._search('sha256:' + 'a' * 64)
+        hash_results = [r for r in results['artefacts'] if r['type'] == 'artefact_hash']
+        self.assertTrue(len(hash_results) > 0)
+
+    def test_artefact_hash_no_match(self):
+        results = self._search('md5:' + '0' * 32)
+        hash_results = [r for r in results['artefacts'] if r['type'] == 'artefact_hash']
+        self.assertEqual(hash_results, [])
+
+    # ------------------------------------------------------------------
+    # Free-text item searches
+    # ------------------------------------------------------------------
+
+    def test_text_search_by_name(self):
+        results = self._search('Software')
+        self.assertTrue(len(results['catalogue_items']) > 0)
+
+    def test_text_search_by_description(self):
+        results = self._search('classic')
+        self.assertTrue(len(results['catalogue_items']) > 0)
+
+    def test_text_search_no_match(self):
+        results = self._search('xyzzy_no_such_item')
+        self.assertEqual(results['catalogue_items'], [])
+
+    def test_text_search_quoted_phrase(self):
+        results = self._search('"BBC Micro"')
+        self.assertTrue(len(results['catalogue_items']) > 0)
+
+    # ------------------------------------------------------------------
+    # Empty / no-results baseline
+    # ------------------------------------------------------------------
+
+    def test_empty_results_structure(self):
+        results = self._search('xyzzy_guaranteed_no_match_12345')
+        self.assertIn('files', results)
+        self.assertIn('artefacts', results)
+        self.assertIn('catalogue_items', results)
+        self.assertIn('truncated', results)
+        self.assertEqual(results['files'], [])
+        self.assertEqual(results['artefacts'], [])
+        self.assertEqual(results['catalogue_items'], [])
+
+
+# =============================================================================
+# HTTP-level smoke tests
+# =============================================================================
+
+class TestSearchEndpoint(unittest.TestCase):
+    """Verify the /search/ route is wired up and behaves correctly over HTTP."""
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.app import create_app
+        from myapp.extensions import db as _db
+
+        cls.app = create_app()
+        cls.app.config['TESTING'] = True
+        cls.client = cls.app.test_client()
+
+        with cls.app.app_context():
+            _db.create_all()
+
+    def test_search_unauthenticated_redirects_to_login(self):
+        """GET /search/ without a session should redirect to the login page."""
+        resp = self.client.get('/search/')
+        self.assertIn(resp.status_code, (301, 302),
+                      f'Expected redirect, got {resp.status_code}')
+        location = resp.headers.get('Location', '')
+        self.assertIn('login', location.lower(),
+                      f'Expected redirect to login, got Location: {location!r}')
+
+    def test_search_with_query_unauthenticated_redirects(self):
+        resp = self.client.get('/search/?q=Impression')
+        self.assertIn(resp.status_code, (301, 302))
+
+
+if __name__ == '__main__':
+    unittest.main()
+
+# vim: ts=4 sw=4 et

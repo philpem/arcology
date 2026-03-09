@@ -113,4 +113,43 @@ def format_filetype(filetype_hex: str) -> str:
 
     return hex_display
 
+
+def lookup_filetype_hex(name_or_hex: str) -> str | None:
+    """Resolve a filetype name or hex code to its canonical lowercase hex code.
+
+    Accepts either a 3-digit hex code (e.g. 'fea', 'FEA') or a human-readable
+    name (e.g. 'Desktop', 'BASIC').  Returns the lowercase hex code, or None
+    if the input is not recognised.
+
+    Examples:
+        lookup_filetype_hex('fea')       -> 'fea'
+        lookup_filetype_hex('Desktop')   -> 'fea'
+        lookup_filetype_hex('fff')       -> 'fff'
+        lookup_filetype_hex('Text')      -> 'fff'
+        lookup_filetype_hex('unknown')   -> None
+    """
+    if not name_or_hex:
+        return None
+
+    normalised = name_or_hex.strip().lower()
+
+    # If it looks like a hex code (1–3 hex digits) try direct lookup first.
+    if normalised and all(c in '0123456789abcdef' for c in normalised):
+        # Zero-pad to 3 digits so e.g. 'ff8' == 'ff8' and '3fb' == '3fb'
+        candidate = normalised.zfill(3)
+        if candidate in FILETYPE_MAP:
+            return candidate
+
+    # Otherwise try a case-insensitive reverse lookup by name.
+    for hex_code, names in FILETYPE_MAP.items():
+        if isinstance(names, list):
+            name_list = names
+        else:
+            name_list = [names]
+        for n in name_list:
+            if n.lower() == normalised:
+                return hex_code
+
+    return None
+
 # vim: ts=4 sw=4 et

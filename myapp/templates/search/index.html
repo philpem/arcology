@@ -11,7 +11,7 @@
 		<form method="get" class="row g-2 align-items-end">
 			<div class="col">
 				<input type="text" name="q" class="form-control font-monospace"
-					placeholder="md5:abc123  filename:!RunImage  protection:bad_crc  type:fff  label:System  Impression"
+					placeholder="md5:abc123  filename:!RunImage  protection:bad_crc  type:Text  label:System  Impression"
 					value="{{ q | e }}" autofocus>
 			</div>
 			<div class="col-auto">
@@ -22,8 +22,8 @@
 			<strong>Prefix syntax:</strong>
 			<code>md5:</code> <code>sha1:</code> <code>sha256:</code>
 			<code>filename:</code> <code>path:</code>
-			<code>type:</code> (RISC OS hex) <code>ext:</code>
-			<code>gnufile:</code> <code>label:</code> <code>fs:</code>
+			<code>type:</code> (RISC OS hex or name) <code>ext:</code>
+			<code>ident:</code> <code>label:</code> <code>fs:</code>
 			<code>protection:</code> <code>mastering:</code>
 			— bare words search item names &amp; descriptions.
 			Use <code>*</code> as wildcard in filename/path. Quote multi-word values: <code>label:"Boot Disc"</code>
@@ -64,7 +64,7 @@
 				<p class="card-text text-muted small">Find discs by label, filesystem, or file(1) type.</p>
 				<code class="d-block mb-1">label:System</code>
 				<code class="d-block mb-1">fs:adfs</code>
-				<code class="d-block">gnufile:"DOS boot sector"</code>
+				<code class="d-block">ident:"DOS boot sector"</code>
 			</div>
 		</div>
 	</div>
@@ -73,11 +73,17 @@
 			<div class="card-header"><i class="bi bi-shield-exclamation"></i> Copy protection</div>
 			<div class="card-body">
 				<p class="card-text text-muted small">Find discs with specific protection indicators.</p>
+				{% if known_protection_types %}
+				{% for pt in known_protection_types %}
+				<code class="d-block mb-1">protection:{{ pt }}</code>
+				{% endfor %}
+				{% else %}
 				<code class="d-block mb-1">protection:bad_crc</code>
 				<code class="d-block mb-1">protection:weak_bits</code>
 				<code class="d-block mb-1">protection:ddam</code>
 				<code class="d-block mb-1">protection:id_mismatch</code>
 				<code class="d-block">protection:duplicate_id</code>
+				{% endif %}
 			</div>
 		</div>
 	</div>
@@ -86,9 +92,15 @@
 			<div class="card-header"><i class="bi bi-clock-history"></i> Mastering</div>
 			<div class="card-body">
 				<p class="card-text text-muted small">Find discs with mastering/duplicator fingerprint data.</p>
+				{% if known_mastering_types %}
+				{% for mt in known_mastering_types %}
+				<code class="d-block mb-1">mastering:{{ mt }}</code>
+				{% endfor %}
+				{% else %}
 				<code class="d-block mb-1">mastering:traceback</code>
 				<code class="d-block mb-1">mastering:bcd_timestamp</code>
 				<code class="d-block">mastering:unknown_mastering</code>
+				{% endif %}
 			</div>
 		</div>
 	</div>

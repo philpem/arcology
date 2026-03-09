@@ -7,13 +7,14 @@ Global cross-item search using a prefix query syntax.
 import re
 from flask import Blueprint, render_template, request
 from flask_login import login_required
-from sqlalchemy import or_, and_
+from sqlalchemy import or_, and_, distinct
 
 from ..extensions import db
 from ..database import (
     Item, Artefact, Partition, ExtractedFile, FilesystemType,
     ArtefactProtection, ArtefactMastering,
 )
+from ..riscos_filetypes import lookup_filetype_hex
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -33,7 +34,8 @@ _ALIASES = {
     'file':       'filename',
     'filetype':   'type',
     'disc':       'label',
-    'gnu':        'gnufile',
+    'gnu':        'ident',
+    'gnufile':    'ident',
     'filesystem': 'fs',
     'prot':       'protection',
 }
@@ -53,7 +55,7 @@ RESULT_LIMIT = 200
 def parse_query(raw: str) -> dict:
     """Parse a search query string into a dict of {key: [values]}.
 
-    Keys: md5, sha1, sha256, filename, path, type, ext, gnufile,
+    Keys: md5, sha1, sha256, filename, path, type, ext, ident,
           label, fs, protection, mastering, text (bare words).
     """
     tokens: dict[str, list[str]] = {}
@@ -86,6 +88,13 @@ def index():
 
     results = _run_search(tokens) if q else None
 
+    known_protection_types = sorted(
+        v for (v,) in db.session.query(distinct(ArtefactProtection.protection_type)).all()
+    )
+    known_mastering_types = sorted(
+        v for (v,) in db.session.query(distinct(ArtefactMastering.mastering_type)).all()
+    )
+
     return render_template(
         'search/index.html',
         q=q,
@@ -93,6 +102,8 @@ def index():
         results=results,
         RESULT_LIMIT=RESULT_LIMIT,
         FilesystemType=FilesystemType,
+        known_protection_types=known_protection_types,
+        known_mastering_types=known_mastering_types,
     )
 
 
@@ -108,6 +119,20 @@ def _ilike(col, val):
     return col.ilike(pattern)
 
 
+def _resolve_riscos_type(val: str):
+    """Return an ExtractedFile.risc_os_filetype filter for a type: term.
+
+    Accepts either a 3-digit hex code (e.g. 'fea') or a human-readable RISC OS
+    filetype name (e.g. 'Desktop').  Returns a SQLAlchemy column expression, or
+    None if the value cannot be resolved to a known hex code.
+    """
+    hex_code = lookup_filetype_hex(val)
+    if hex_code is not None:
+        return ExtractedFile.risc_os_filetype == hex_code
+    # Unknown name/code — match literally (may simply return no rows)
+    return ExtractedFile.risc_os_filetype == val.lower()
+
+
 def _run_search(tokens: dict) -> dict:
     """Execute queries and return result buckets."""
     results = {
@@ -118,7 +143,7 @@ def _run_search(tokens: dict) -> dict:
     }
 
     has_file_terms = any(k in tokens for k in ('md5', 'sha1', 'sha256', 'filename', 'path', 'type', 'ext'))
-    has_disc_terms = any(k in tokens for k in ('label', 'gnufile', 'fs'))
+    has_disc_terms = any(k in tokens for k in ('label', 'ident', 'fs'))
     has_prot_terms = 'protection' in tokens
     has_mast_terms = 'mastering' in tokens
     has_artefact_hash = any(k in tokens for k in ('md5', 'sha256')) and not has_file_terms
@@ -143,7 +168,7 @@ def _run_search(tokens: dict) -> dict:
         for v in tokens.get('path', []):
             per_key.setdefault('path', []).append(_ilike(ExtractedFile.path, v))
         for v in tokens.get('type', []):
-            per_key.setdefault('type', []).append(ExtractedFile.risc_os_filetype == v.lower())
+            per_key.setdefault('type', []).append(_resolve_riscos_type(v))
         for v in tokens.get('ext', []):
             per_key.setdefault('ext', []).append(ExtractedFile.extension == v.lower())
 
@@ -166,13 +191,13 @@ def _run_search(tokens: dict) -> dict:
             results['files'] = q
 
     # --- Disc/partition search ---
-    # Triggered by label, gnufile, fs filters.
+    # Triggered by label, ident, fs filters.
     if has_disc_terms:
         per_key = {}
         for v in tokens.get('label', []):
             per_key.setdefault('label', []).append(_ilike(Partition.label, v))
-        for v in tokens.get('gnufile', []):
-            per_key.setdefault('gnufile', []).append(_ilike(Partition.gnu_file_type, v))
+        for v in tokens.get('ident', []):
+            per_key.setdefault('ident', []).append(_ilike(Partition.gnu_file_type, v))
         for v in tokens.get('fs', []):
             try:
                 fs_val = FilesystemType(v.lower())
