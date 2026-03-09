@@ -209,16 +209,23 @@ def _run_search(tokens: dict) -> dict:
                 .join(Item, Artefact.item_id == Item.id)
                 .filter(ArtefactProtection.protection_type == prot_type.lower())
                 .order_by(Item.name, Artefact.label)
-                .distinct(Artefact.id)
-                .limit(RESULT_LIMIT + 1)
                 .all()
             )
-            if len(q) > RESULT_LIMIT:
+            # Deduplicate by artefact id in Python (an artefact may have multiple
+            # matching indicators, e.g. bad_crc on several tracks).
+            seen = set()
+            deduped = []
+            for row in q:
+                _, a, i = row
+                if a.id not in seen:
+                    seen.add(a.id)
+                    deduped.append(row)
+            if len(deduped) > RESULT_LIMIT:
                 results['truncated']['artefacts'] = True
-                q = q[:RESULT_LIMIT]
+                deduped = deduped[:RESULT_LIMIT]
             results['artefacts'].extend([
                 {'type': 'protection', 'protection_type': prot_type, 'artefact': a, 'item': i}
-                for _, a, i in q
+                for _, a, i in deduped
             ])
 
     # --- Mastering indicator search ---
@@ -230,16 +237,21 @@ def _run_search(tokens: dict) -> dict:
                 .join(Item, Artefact.item_id == Item.id)
                 .filter(ArtefactMastering.mastering_type == mast_type.lower())
                 .order_by(Item.name, Artefact.label)
-                .distinct(Artefact.id)
-                .limit(RESULT_LIMIT + 1)
                 .all()
             )
-            if len(q) > RESULT_LIMIT:
+            seen = set()
+            deduped = []
+            for row in q:
+                _, a, i = row
+                if a.id not in seen:
+                    seen.add(a.id)
+                    deduped.append(row)
+            if len(deduped) > RESULT_LIMIT:
                 results['truncated']['artefacts'] = True
-                q = q[:RESULT_LIMIT]
+                deduped = deduped[:RESULT_LIMIT]
             results['artefacts'].extend([
                 {'type': 'mastering', 'mastering_type': mast_type, 'artefact': a, 'item': i}
-                for _, a, i in q
+                for _, a, i in deduped
             ])
 
     # --- Artefact hash search ---
