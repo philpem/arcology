@@ -76,14 +76,13 @@ NEXUS_TABLE_MAX_ENTRIES = 15
 NEXUS_SECTOR_SIZE = 512
 
 # Filesystem label used for Printer partitions (flag bit 3, mask 0x08).
-# Printer partitions are checked against the Filecore boot block checksum
-# to confirm ADFS; this constant provides both the expected label and the
-# fallback when that check fails.
-# • 'adfs'  — assume ADFS (default; will also log if checksum fails)
+# Printer partitions are not Filecore formatted; they contain print-spool
+# data only and cannot be decoded as ADFS.
+# • 'other' — register as a downloadable artefact, skip ADFS extraction (default)
 # • None    — omit printer partitions from the partition list entirely
 #             (they will appear as unpartitioned gaps in the output)
 # • any str — use that string as the filesystem label without checking
-NEXUS_PRINTER_FILESYSTEM = 'adfs'
+NEXUS_PRINTER_FILESYSTEM = 'other'
 
 
 def _decode_nexus_flags(flags: int) -> dict:
@@ -373,20 +372,10 @@ def _detect_nexus_partitions(input_path: Path) -> dict:
 
             # --- Determine filesystem ---
             if is_printer:
-                if NEXUS_PRINTER_FILESYSTEM == 'adfs':
-                    # Confirm ADFS by checking the Filecore boot block checksum.
-                    # Log a note when it fails so that the operator knows ADFS
-                    # is being assumed without confirmation.
-                    adfs_ok = (
-                        len(boot_block) == FILECORE_BOOT_BLOCK_SIZE
-                        and sum(boot_block) & 0xFF == 0
-                    )
-                    if not adfs_ok:
-                        log.info(
-                            f"Nexus partition {i} (printer): Filecore boot block "
-                            f"checksum not valid — boot block absent or partition "
-                            f"may not be ADFS (assuming '{NEXUS_PRINTER_FILESYSTEM}')"
-                        )
+                # Printer partitions are not Filecore formatted; they hold
+                # print-spool data.  Mark them with NEXUS_PRINTER_FILESYSTEM
+                # ('other' by default) so they are registered as downloadable
+                # artefacts without being fed into the ADFS extraction pipeline.
                 filesystem = NEXUS_PRINTER_FILESYSTEM
             else:
                 filesystem = 'adfs'
