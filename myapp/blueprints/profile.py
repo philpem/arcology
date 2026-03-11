@@ -19,8 +19,8 @@ blueprint = Blueprint(ROUTENAME, __name__, url_prefix='/profile', template_folde
 
 
 def init_app(app):
-    """Register profile menu item."""
-    app.add_menu_item("Profile", f"{ROUTENAME}.index", 900)
+    """Profile blueprint init (menu link is via username in navbar)."""
+    pass
 
 
 # =============================================================================

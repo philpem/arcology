@@ -38,7 +38,7 @@
         {% if user_can_write %}
         <a href="{{ url_for('myapp_blueprints_artefacts.analyse', uuid=artefact.uuid) }}" class="btn btn-primary"><i class="bi bi-gear"></i> Re-analyse</a>
         <a href="{{ url_for('myapp_blueprints_artefacts.edit', uuid=artefact.uuid) }}" class="btn btn-outline-primary"><i class="bi bi-pencil"></i> Edit</a>
-        <form action="{{ url_for('myapp_blueprints_artefacts.delete', uuid=artefact.uuid) }}" method="post" class="d-inline" onsubmit="return confirm('Delete?');">
+        <form action="{{ url_for('myapp_blueprints_artefacts.delete', uuid=artefact.uuid) }}" method="post" class="d-inline" onsubmit="return confirm('Delete artefact \'{{ artefact.label }}\' and all related analyses? This cannot be undone.');">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-outline-danger"><i class="bi bi-trash"></i></button>
         </form>
@@ -55,8 +55,8 @@
                     <dt>Original Filename</dt><dd><code>{{ artefact.original_filename }}</code></dd>
                     <dt>Size</dt><dd>{% if artefact.file_size %}{{ (artefact.file_size / 1024 / 1024)|round(2) }} MB{% else %}-{% endif %}</dd>
                     <dt>MIME Type</dt><dd>{{ artefact.mime_type or '-' }}</dd>
-                    <dt>MD5</dt><dd>{% if artefact.md5 %}<code class="small">{{ artefact.md5 }}</code>{% else %}<span class="text-muted">Not computed</span>{% endif %}</dd>
-                    <dt>SHA256</dt><dd>{% if artefact.sha256 %}<code class="small">{{ artefact.sha256[:32] }}...</code>{% else %}<span class="text-muted">Not computed</span>{% endif %}</dd>
+                    <dt>MD5</dt><dd>{% if artefact.md5 %}<code class="small">{{ artefact.md5 }}</code><button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 ms-1" onclick="copyToClipboard('{{ artefact.md5 }}', this)" title="Copy MD5"><i class="bi bi-clipboard"></i></button>{% else %}<span class="text-muted">Not computed</span>{% endif %}</dd>
+                    <dt>SHA256</dt><dd>{% if artefact.sha256 %}<code class="small" title="{{ artefact.sha256 }}">{{ artefact.sha256[:16] }}&hellip;</code><button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 ms-1" onclick="copyToClipboard('{{ artefact.sha256 }}', this)" title="Copy SHA256"><i class="bi bi-clipboard"></i></button>{% else %}<span class="text-muted">Not computed</span>{% endif %}</dd>
                     {% if artefact.parent_artefact %}
                     <dt>Derived From</dt>
                     <dd>
@@ -113,7 +113,7 @@
                         <br><small class="text-muted"><i class="bi bi-diagram-3"></i> {{ analysis.artefact.label }}</small>
                         {% endif %}
                     </div>
-                    <span class="badge {% if analysis.status.value == 'completed' %}bg-success{% elif analysis.status.value == 'failed' %}bg-danger{% elif analysis.status.value == 'running' %}bg-info{% else %}bg-warning{% endif %}">{{ analysis.status.value }}</span>
+                    <span class="badge {{ analysis.status.value | status_badge_class }}">{{ analysis.status.value }}</span>
                 </li>
                 {% else %}
                 <li class="list-group-item text-muted">No analyses</li>
@@ -307,7 +307,10 @@
                         {# Color-code partition badges for visual distinction #}
                         {% set partition_colors = ['primary', 'success', 'warning', 'danger', 'info', 'secondary'] %}
                         {% set partition_color = partition_colors[p.partition_index % partition_colors|length] %}
-                        <tr style="cursor: pointer;" onclick="filterByPartition('{{ p.uuid }}')" title="Click to filter files by this partition">
+                        <tr style="cursor: pointer;" onclick="filterByPartition('{{ p.uuid }}')"
+                            tabindex="0" role="button"
+                            onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();filterByPartition('{{ p.uuid }}');}"
+                            title="Click to filter files by this partition">
                             <td><span class="badge bg-{{ partition_color }}">{{ p.partition_index }}</span></td>
                             <td>{{ p.label or '-' }}</td>
                             <td>
@@ -396,8 +399,23 @@
             </div>
             {% endif %}
             <div class="table-responsive">
+                {# Sortable column header macro: toggles direction when active #}
+                {% macro sort_th(label, col) %}
+                    {% set is_active = current_sort == col or current_sort == '-' ~ col %}
+                    {% set next_sort = '-' ~ col if current_sort == col else col %}
+                    <th><a class="text-decoration-none {{ 'text-dark fw-bold' if is_active else 'text-muted' }}"
+                           href="?{{ dict(pagination_args, sort=next_sort, page=1) | urlencode }}">
+                        {{ label }}{% if current_sort == col %} ↑{% elif current_sort == '-' ~ col %} ↓{% endif %}
+                    </a></th>
+                {% endmacro %}
                 <table class="table table-sm table-hover mb-0">
-                    <thead><tr><th>P</th><th>Path</th><th>Size</th><th>Filetype</th><th>Known</th></tr></thead>
+                    <thead><tr>
+                        <th>P</th>
+                        {{ sort_th('Path', 'path') }}
+                        {{ sort_th('Size', 'size') }}
+                        {{ sort_th('Filetype', 'filetype') }}
+                        {{ sort_th('Known', 'known') }}
+                    </tr></thead>
                     <tbody>
                         {% for file in files %}
                         {# Color-code partition badges - cycle through colors for easy visual distinction #}

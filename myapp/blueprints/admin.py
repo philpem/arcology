@@ -19,8 +19,8 @@ blueprint = Blueprint(ROUTENAME, __name__, url_prefix='/admin', template_folder=
 
 
 def init_app(app):
-    """Register admin menu item."""
-    app.add_menu_item("Admin", f"{ROUTENAME}.index", 1000)
+    """Admin blueprint init (link shown in right-hand navbar for admins)."""
+    pass
 
 
 def _require_admin():
@@ -119,8 +119,10 @@ def create_user():
 @login_required
 def edit_user(user_id):
     _require_admin()
+    if user_id == current_user.id:
+        flash('You cannot edit your own account. Use your profile page instead.', 'error')
+        return redirect(url_for(f'{ROUTENAME}.index'))
     user = User.query.get_or_404(user_id)
-    editing_self = (user.id == current_user.id)
 
     if request.method == 'GET':
         form = EditUserForm(
@@ -129,7 +131,7 @@ def edit_user(user_id):
             permission=user.permission.value,
             can_use_api=user.can_use_api,
         )
-        return render_template('admin/edit_user.html', form=form, user=user, editing_self=editing_self)
+        return render_template('admin/edit_user.html', form=form, user=user, editing_self=False)
 
     form = EditUserForm()
     if form.validate_on_submit():
@@ -137,26 +139,24 @@ def edit_user(user_id):
         existing = User.query.filter_by(username=form.username.data).first()
         if existing and existing.id != user.id:
             flash(f'Username "{form.username.data}" is already taken.', 'error')
-            return render_template('admin/edit_user.html', form=form, user=user, editing_self=editing_self)
+            return render_template('admin/edit_user.html', form=form, user=user, editing_self=False)
 
         # Validate password if provided
         new_pw = form.new_password.data
         if new_pw:
             if len(new_pw) < 12:
                 flash('Password must be at least 12 characters.', 'error')
-                return render_template('admin/edit_user.html', form=form, user=user, editing_self=editing_self)
+                return render_template('admin/edit_user.html', form=form, user=user, editing_self=False)
             if new_pw != form.confirm_password.data:
                 flash('Passwords must match.', 'error')
-                return render_template('admin/edit_user.html', form=form, user=user, editing_self=editing_self)
+                return render_template('admin/edit_user.html', form=form, user=user, editing_self=False)
             user.setPassword(new_pw)
 
         user.username = form.username.data
         user.permission = UserPermission(form.permission.data)
         user.can_use_api = form.can_use_api.data
 
-        # Prevent admins from removing their own admin status
-        if not editing_self:
-            user.is_admin = form.is_admin.data
+        user.is_admin = form.is_admin.data
 
         db.session.commit()
         flash(f'User "{user.username}" updated successfully.', 'success')
@@ -166,7 +166,7 @@ def edit_user(user_id):
     for field, errors in form.errors.items():
         for error in errors:
             flash(error, 'error')
-    return render_template('admin/edit_user.html', form=form, user=user, editing_self=editing_self)
+    return render_template('admin/edit_user.html', form=form, user=user, editing_self=False)
 
 
 @blueprint.route('/users/<int:user_id>/delete', methods=['POST'])

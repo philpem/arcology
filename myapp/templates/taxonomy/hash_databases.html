@@ -28,10 +28,13 @@
                     <td>{{ db.updated_at.strftime('%Y-%m-%d') }}</td>
                     <td>
                         {% if user_can_write %}
-                        <form action="{{ url_for('myapp_blueprints_taxonomy.delete_hash_database', id=db.id) }}" method="post" class="d-inline">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete?');"><i class="bi bi-trash"></i></button>
-                        </form>
+                        <div class="d-flex gap-1">
+                            <a href="{{ url_for('myapp_blueprints_taxonomy.edit_hash_database', id=db.id) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-pencil"></i></a>
+                            <form action="{{ url_for('myapp_blueprints_taxonomy.delete_hash_database', id=db.id) }}" method="post" class="d-inline">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete hash database \'{{ db.name }}\'?');"><i class="bi bi-trash"></i></button>
+                            </form>
+                        </div>
                         {% endif %}
                     </td>
                 </tr>

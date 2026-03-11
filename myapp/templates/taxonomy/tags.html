@@ -17,12 +17,18 @@
 <div class="card">
     <div class="card-body">
         {% for tag in tags %}
-        <span class="badge bg-info fs-6 me-2 mb-2 p-2">
+        <span class="d-inline-flex align-items-center badge bg-info fs-6 me-2 mb-2 p-2 gap-1">
             {{ tag.name }} <span class="badge bg-dark">{{ tag.items|length }}</span>
             {% if user_can_write %}
+            <a href="{{ url_for('myapp_blueprints_taxonomy.edit_tag', id=tag.id) }}"
+               class="btn btn-sm btn-light text-dark px-1 py-0 lh-1 ms-1"
+               title="Edit tag" style="font-size: 0.85rem; min-width: 1.5rem;"><i class="bi bi-pencil"></i></a>
             <form action="{{ url_for('myapp_blueprints_taxonomy.delete_tag', id=tag.id) }}" method="post" class="d-inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn-close btn-close-white ms-1" style="font-size: 0.6rem;" onclick="return confirm('Delete?');"></button>
+                <button type="submit" class="btn btn-sm btn-light text-dark px-1 py-0 lh-1"
+                        onclick="return confirm('Delete tag \'{{ tag.name }}\'?');"
+                        title="Delete tag"
+                        style="font-size: 0.85rem; min-width: 1.5rem;">×</button>
             </form>
             {% endif %}
         </span>

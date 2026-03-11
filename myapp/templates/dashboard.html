@@ -4,14 +4,14 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h1><i class="bi bi-speedometer2"></i> Dashboard</h1>
-    <a href="{{ url_for('myapp_blueprints_items.new') }}" class="btn btn-primary"><i class="bi bi-plus-lg"></i> New Item</a>
+    {% if user_can_write %}<a href="{{ url_for('myapp_blueprints_items.new') }}" class="btn btn-primary"><i class="bi bi-plus-lg"></i> New Item</a>{% endif %}
 </div>
 
 <div class="row mb-4">
     <div class="col-md-3">
         <div class="card text-bg-primary">
             <div class="card-body">
-                <h5 class="card-title">Items</h5>
+                <h5 class="card-title"><i class="bi bi-collection"></i> Items</h5>
                 <p class="card-text display-4">{{ stats.total_items }}</p>
             </div>
         </div>
@@ -19,7 +19,7 @@
     <div class="col-md-3">
         <div class="card text-bg-success">
             <div class="card-body">
-                <h5 class="card-title">Artefacts</h5>
+                <h5 class="card-title"><i class="bi bi-disc"></i> Artefacts</h5>
                 <p class="card-text display-4">{{ stats.total_artefacts }}</p>
             </div>
         </div>
@@ -27,7 +27,7 @@
     <div class="col-md-3">
         <div class="card text-bg-warning">
             <div class="card-body">
-                <h5 class="card-title">Pending</h5>
+                <h5 class="card-title"><i class="bi bi-hourglass-split"></i> Pending</h5>
                 <p class="card-text display-4">{{ stats.pending_analyses }}</p>
             </div>
         </div>
@@ -35,7 +35,7 @@
     <div class="col-md-3">
         <div class="card text-bg-info">
             <div class="card-body">
-                <h5 class="card-title">Running</h5>
+                <h5 class="card-title"><i class="bi bi-gear-wide-connected"></i> Running</h5>
                 <p class="card-text display-4">{{ stats.running_analyses }}</p>
             </div>
         </div>
@@ -65,7 +65,7 @@
                 {% for analysis in recent_analyses %}
                 <li class="list-group-item d-flex justify-content-between">
                     <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=analysis.uuid) }}">{{ analysis.analysis_type.value|replace('_', ' ')|title }} - {{ analysis.artefact.label }}</a>
-                    <span class="badge {% if analysis.status.value == 'completed' %}bg-success{% elif analysis.status.value == 'failed' %}bg-danger{% elif analysis.status.value == 'running' %}bg-info{% else %}bg-warning{% endif %}">{{ analysis.status.value }}</span>
+                    <span class="badge {{ analysis.status.value | status_badge_class }}">{{ analysis.status.value }}</span>
                 </li>
                 {% else %}
                 <li class="list-group-item text-muted">No analyses yet</li>
