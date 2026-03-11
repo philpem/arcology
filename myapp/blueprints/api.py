@@ -273,6 +273,16 @@ def request_analysis(uuid):
             f"Field '{bad_field}' contains NUL characters (0x00) which are not permitted in text fields"
         )
 
+    # Idempotency: return existing PENDING/RUNNING analysis instead of creating a
+    # duplicate.  COMPLETED/FAILED analyses may be intentionally re-run, so only
+    # active ones are considered.  This mirrors the logic in queue_analyses_for_artefact().
+    existing = Analysis.query.filter_by(
+        artefact_id=artefact.id,
+        analysis_type=analysis_type,
+    ).filter(Analysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.RUNNING])).first()
+    if existing:
+        return jsonify(analysis_to_dict(existing)), 200
+
     analysis = Analysis(
         artefact_id=artefact.id,
         analysis_type=analysis_type,
@@ -499,6 +509,25 @@ def produce_artefact(id):
         storage_directory = StorageDirectory(storage_dir_value)
     except ValueError:
         storage_directory = StorageDirectory.OUTPUTS
+
+    # Idempotency: if a worker retries (e.g. after a network timeout) and this
+    # exact artefact was already registered for this analysis run, return the
+    # existing record rather than inserting a duplicate.  The combination of
+    # (derived_from_analysis_id, storage_path) uniquely identifies a derived
+    # artefact within a single analysis run.
+    existing_artefact = Artefact.query.filter_by(
+        derived_from_analysis_id=analysis.id,
+        storage_path=data['storage_path'],
+    ).first()
+    if existing_artefact:
+        current_app.logger.info(
+            f"produce_artefact: returning existing artefact {existing_artefact.uuid} "
+            f"(idempotent retry for analysis {analysis.id})"
+        )
+        return jsonify({
+            'artefact': artefact_to_dict(existing_artefact),
+            'queued_analyses': [],
+        }), 200
 
     # On the first produce_artefact call for this analysis, remove any derived
     # artefacts that were created by a previous analysis of the same type on the
