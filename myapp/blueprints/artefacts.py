@@ -153,9 +153,16 @@ ANALYSIS_MAP = {
 }
 
 
-def queue_analyses_for_artefact(artefact: Artefact, hints: dict = None):
-    """Queue appropriate analyses for an artefact based on its type."""
-    analysis_types = ANALYSIS_MAP.get(artefact.artefact_type, [AnalysisType.FORMAT_IDENTIFY])
+def queue_analyses_for_artefact(artefact: Artefact, hints: dict = None, checksum_only: bool = False):
+    """Queue appropriate analyses for an artefact based on its type.
+
+    CHECKSUM_COMPUTE is always prepended as the first job regardless of artefact
+    type; it does not need to appear in ANALYSIS_MAP.  Pass checksum_only=True
+    to skip the type-specific analyses (used when auto-analyse is off on upload).
+    """
+    analysis_types = [AnalysisType.CHECKSUM_COMPUTE]
+    if not checksum_only:
+        analysis_types += ANALYSIS_MAP.get(artefact.artefact_type, [AnalysisType.FORMAT_IDENTIFY])
     hints_json = json.dumps(hints) if hints else None
     
     for analysis_type in analysis_types:
@@ -693,18 +700,10 @@ def upload(item_uuid):
         db.session.add(artefact)
         db.session.commit()
         
-        # Compute hashes immediately for small files
-        if file_size < 100 * 1024 * 1024:  # < 100MB
-            try:
-                full_path = get_artefact_path(artefact)
-                artefact.md5, artefact.sha256 = compute_file_hashes(full_path)
-                db.session.commit()
-            except Exception as e:
-                current_app.logger.warning(f"Failed to compute hashes: {e}")
-        
-        # Queue automatic analysis
+        # Always queue checksum computation via the worker; also queue type-specific
+        # analyses if the user requested auto-analyse.
+        queue_analyses_for_artefact(artefact, checksum_only=not form.auto_analyse.data)
         if form.auto_analyse.data:
-            queue_analyses_for_artefact(artefact)
             flash(f'Artefact "{artefact.label}" uploaded. Analysis queued.', 'success')
         else:
             flash(f'Artefact "{artefact.label}" uploaded.', 'success')

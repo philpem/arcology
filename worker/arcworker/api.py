@@ -101,6 +101,34 @@ class ArcologyAPI:
             log.error(f"API POST {endpoint} failed: {e}")
             return None
 
+    def patch(self, endpoint: str, data: dict) -> Optional[dict]:
+        """
+        PATCH request to API.
+
+        Args:
+            endpoint: API endpoint path
+            data: JSON data to send
+
+        Returns:
+            JSON response as dict, or None on error
+        """
+        try:
+            resp = requests.patch(
+                f"{self.api}{endpoint}",
+                json=data,
+                headers=self._auth,
+                timeout=30
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            log.error(f"API PATCH {endpoint} failed: {e}")
+            return None
+
+    def update_artefact_hashes(self, artefact_uuid: str, md5: str, sha256: str):
+        """Write computed MD5 and SHA256 hashes back to the artefact record."""
+        self.patch(f"/artefacts/{artefact_uuid}", {'md5': md5, 'sha256': sha256})
+
     def update_analysis(self, analysis_id: int, **kwargs):
         """
         Update analysis record in API.

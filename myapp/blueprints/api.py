@@ -243,6 +243,20 @@ def delete_artefact(uuid):
     return '', 204
 
 
+@blueprint.route('/artefacts/<string:uuid>', methods=['PATCH'])
+@require_auth('read_upload')
+def update_artefact(uuid):
+    """Update mutable fields on an artefact (md5 and sha256)."""
+    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    data = request.get_json() or {}
+    if 'md5' in data:
+        artefact.md5 = data['md5']
+    if 'sha256' in data:
+        artefact.sha256 = data['sha256']
+    db.session.commit()
+    return jsonify(artefact_to_dict(artefact))
+
+
 @blueprint.route('/artefacts/<string:uuid>/download', methods=['GET'])
 @require_auth('read_only')
 def download_artefact(uuid):
