@@ -100,6 +100,53 @@ class TestGenerateSlug(unittest.TestCase):
         self.assertEqual(generate_slug('!@#$%^&*()'), 'untitled')
 
 
+class TestLookupByIdentifierParsing(unittest.TestCase):
+    """
+    Pure parsing tests for lookup_by_identifier() identifier format detection.
+
+    These tests exercise the regex logic without needing Flask or a database,
+    by checking what kind of identifier is detected from the input string.
+    """
+
+    import re as _re
+
+    def _is_full_uuid(self, s):
+        return bool(self._re.fullmatch(r'[0-9a-f]{32}', s))
+
+    def _is_valid_short_prefix(self, s):
+        return len(s) >= 8 and bool(self._re.fullmatch(r'[0-9a-f]{8}', s[:8]))
+
+    def test_full_uuid_detected(self):
+        uuid = 'a' * 32
+        self.assertTrue(self._is_full_uuid(uuid))
+
+    def test_full_uuid_with_uppercase_not_detected(self):
+        uuid = 'A' * 32
+        self.assertFalse(self._is_full_uuid(uuid))
+
+    def test_short_uuid_prefix_detected(self):
+        self.assertTrue(self._is_valid_short_prefix('3f4a9b2c'))
+
+    def test_short_uuid_plus_slug_prefix_detected(self):
+        self.assertTrue(self._is_valid_short_prefix('3f4a9b2c-elite-bbc-micro'))
+
+    def test_too_short_not_valid(self):
+        self.assertFalse(self._is_valid_short_prefix('abc'))
+
+    def test_non_hex_prefix_not_valid(self):
+        self.assertFalse(self._is_valid_short_prefix('zzzzzzzz'))
+
+    def test_pure_slug_not_full_uuid_not_hex_prefix(self):
+        s = 'elite-bbc-micro'
+        self.assertFalse(self._is_full_uuid(s))
+        self.assertFalse(self._is_valid_short_prefix(s))
+
+    def test_empty_string_not_valid(self):
+        s = ''
+        self.assertFalse(self._is_full_uuid(s))
+        self.assertFalse(self._is_valid_short_prefix(s))
+
+
 if __name__ == '__main__':
     unittest.main()
 

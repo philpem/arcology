@@ -15,6 +15,7 @@ from ..extensions import db
 from ..database import Item, Platform, Category, Tag, ExternalSystem, ExternalReference
 from .artefacts import _delete_item_files
 from ..permissions import require_permission
+from ..utils.slugs import get_or_create_slug, lookup_by_identifier
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -129,9 +130,10 @@ def new():
         
         db.session.add(item)
         db.session.commit()
-        
+        get_or_create_slug(item, 'name')
+
         flash(f'Item "{item.name}" created successfully.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.view', uuid=item.uuid))
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
 
     return render_template('items/form.html', form=form, title='New Item')
 
@@ -140,7 +142,7 @@ def new():
 @login_required
 def view(uuid):
     """View an item and its artefacts."""
-    item = Item.query.filter_by(uuid=uuid).first_or_404()
+    item = lookup_by_identifier(Item, uuid)
     return render_template('items/view.html', item=item)
 
 
@@ -149,7 +151,7 @@ def view(uuid):
 @require_permission('read_write')
 def edit(uuid):
     """Edit an item."""
-    item = Item.query.filter_by(uuid=uuid).first_or_404()
+    item = lookup_by_identifier(Item, uuid)
     form = ItemForm(obj=item)
     
     form.platform_id.choices = [(0, '-- Select Platform --')] + [
@@ -181,7 +183,7 @@ def edit(uuid):
         db.session.commit()
 
         flash(f'Item "{item.name}" updated successfully.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.view', uuid=item.uuid))
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
 
     return render_template('items/form.html', form=form, item=item, title='Edit Item')
 
@@ -191,7 +193,7 @@ def edit(uuid):
 @require_permission('read_write')
 def delete(uuid):
     """Delete an item."""
-    item = Item.query.filter_by(uuid=uuid).first_or_404()
+    item = lookup_by_identifier(Item, uuid)
     name = item.name
 
     # Delete all files on disk before the cascade removes DB records.
@@ -209,7 +211,7 @@ def delete(uuid):
 @require_permission('read_write')
 def add_reference(uuid):
     """Add an external reference to an item."""
-    item = Item.query.filter_by(uuid=uuid).first_or_404()
+    item = lookup_by_identifier(Item, uuid)
     form = ExternalReferenceForm()
     
     form.system_id.choices = [
@@ -233,7 +235,7 @@ def add_reference(uuid):
         db.session.commit()
 
         flash('External reference added.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.view', uuid=item.uuid))
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
 
     return render_template('items/add_reference.html', form=form, item=item)
 
@@ -243,18 +245,18 @@ def add_reference(uuid):
 @require_permission('read_write')
 def delete_reference(item_uuid, ref_id):
     """Delete an external reference."""
-    item = Item.query.filter_by(uuid=item_uuid).first_or_404()
+    item = lookup_by_identifier(Item, item_uuid)
     ref = ExternalReference.query.get_or_404(ref_id)
 
     if ref.item_id != item.id:
         flash('Invalid reference.', 'error')
-        return redirect(url_for(f'{ROUTENAME}.view', uuid=item_uuid))
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
 
     db.session.delete(ref)
     db.session.commit()
 
     flash('External reference removed.', 'success')
-    return redirect(url_for(f'{ROUTENAME}.view', uuid=item_uuid))
+    return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
 
 
 # vim: ts=4 sw=4 et

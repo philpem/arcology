@@ -133,7 +133,8 @@ def get_slug(obj) -> Optional[str]:
     return getattr(obj, 'slug', None)
 
 
-def ensure_unique_slug(base_slug: str, model_class, existing_id: Optional[int] = None) -> str:
+def ensure_unique_slug(base_slug: str, model_class, existing_id: Optional[int] = None,
+                       scope_filter: Optional[dict] = None) -> str:
     """
     Ensure slug is unique by appending number if necessary.
 
@@ -141,6 +142,8 @@ def ensure_unique_slug(base_slug: str, model_class, existing_id: Optional[int] =
         base_slug: Base slug to check
         model_class: SQLAlchemy model class (Item, Artefact, etc.)
         existing_id: ID to exclude from uniqueness check (for updates)
+        scope_filter: Optional dict of extra filter kwargs to scope uniqueness
+                      (e.g. {'item_id': 5} to check uniqueness within one item)
 
     Returns:
         Unique slug (may have -2, -3, etc. appended)
@@ -150,32 +153,91 @@ def ensure_unique_slug(base_slug: str, model_class, existing_id: Optional[int] =
         'test'  # If no conflicts
         >>> ensure_unique_slug('test', Item)
         'test-2'  # If 'test' already exists
+        >>> ensure_unique_slug('disc-1', Artefact, scope_filter={'item_id': 3})
+        'disc-1'  # Unique within item 3
     """
-    from sqlalchemy import and_
+    def _build_query(slug_value):
+        q = model_class.query.filter(model_class.slug == slug_value)
+        if existing_id:
+            q = q.filter(model_class.id != existing_id)
+        if scope_filter:
+            q = q.filter_by(**scope_filter)
+        return q
 
-    # Check if base slug is available
-    query = model_class.query.filter(model_class.slug == base_slug)
-    if existing_id:
-        query = query.filter(model_class.id != existing_id)
-
-    if query.first() is None:
+    if _build_query(base_slug).first() is None:
         return base_slug
 
     # Try numbered variants
     counter = 2
     while counter < 1000:  # Safety limit
         candidate = f"{base_slug}-{counter}"
-        query = model_class.query.filter(model_class.slug == candidate)
-        if existing_id:
-            query = query.filter(model_class.id != existing_id)
-
-        if query.first() is None:
+        if _build_query(candidate).first() is None:
             return candidate
-
         counter += 1
 
     # Fallback with timestamp if too many conflicts
     import time
     return f"{base_slug}-{int(time.time())}"
+
+
+def lookup_by_identifier(model_class, identifier: str):
+    """
+    Look up a model by full UUID (32 hex chars) or short-UUID+slug identifier.
+
+    Accepts:
+      '3f4a9b2cabc123def456789012345678'  -> exact UUID match
+      '3f4a9b2c'                           -> first-8-char UUID prefix match
+      '3f4a9b2c-elite-bbc-micro'           -> first-8-char UUID prefix match
+                                              (slug suffix is decorative, ignored for lookup)
+
+    Returns:
+        Model instance, or aborts with 404 if not found or identifier is invalid.
+    """
+    from flask import abort
+    if re.fullmatch(r'[0-9a-f]{32}', identifier):
+        return model_class.query.filter_by(uuid=identifier).first_or_404()
+    if len(identifier) >= 8 and re.fullmatch(r'[0-9a-f]{8}', identifier[:8]):
+        prefix = identifier[:8]
+        return model_class.query.filter(
+            model_class.uuid.startswith(prefix)
+        ).first_or_404()
+    abort(404)
+
+
+def lookup_artefact_by_id(item, artefact_id: str):
+    """
+    Look up an artefact within an item by slug, full UUID, or short UUID prefix.
+
+    Resolution order:
+      1. Full 32-char UUID → exact UUID match (scoped to item)
+      2. Pure slug (no leading hex chars) → slug match within item
+      3. 8-char hex prefix (optionally followed by -slug) → UUID prefix match within item
+
+    Returns:
+        Artefact instance, or aborts with 404 if not found or identifier is invalid.
+    """
+    from flask import abort
+    from myapp.database import Artefact
+
+    # Full UUID
+    if re.fullmatch(r'[0-9a-f]{32}', artefact_id):
+        return Artefact.query.filter_by(
+            uuid=artefact_id, item_id=item.id
+        ).first_or_404()
+
+    # 8-char hex prefix (new short-UUID style, with optional -slug suffix)
+    if len(artefact_id) >= 8 and re.fullmatch(r'[0-9a-f]{8}', artefact_id[:8]):
+        prefix = artefact_id[:8]
+        return Artefact.query.filter(
+            Artefact.item_id == item.id,
+            Artefact.uuid.startswith(prefix)
+        ).first_or_404()
+
+    # Pure slug lookup within item
+    artefact = Artefact.query.filter_by(slug=artefact_id, item_id=item.id).first()
+    if artefact:
+        return artefact
+
+    abort(404)
 
 # vim: ts=4 sw=4 et

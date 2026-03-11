@@ -318,6 +318,14 @@ class Item(db.Model):
     tags: Mapped[list["Tag"]] = relationship(secondary=item_tags, back_populates="items")
     external_references: Mapped[list["ExternalReference"]] = relationship(back_populates="item", cascade="all, delete-orphan")
 
+    @property
+    def url_id(self) -> str:
+        """Short URL identifier: 8-char UUID prefix, plus slug if available."""
+        prefix = self.uuid[:8]
+        if self.slug:
+            return f"{prefix}-{self.slug}"
+        return prefix
+
     def get_reference(self, system_name: str) -> Optional["ExternalReference"]:
         for ref in self.external_references:
             if ref.system.name == system_name:
@@ -400,6 +408,11 @@ class Artefact(db.Model):
         foreign_keys=[derived_from_analysis_id]
     )
     tags: Mapped[list["Tag"]] = relationship(secondary=artefact_tags, back_populates="artefacts")
+
+    @property
+    def url_slug(self) -> str:
+        """Slug-based URL segment for use within an item URL."""
+        return self.slug if self.slug else self.uuid[:8]
 
 
 class Analysis(db.Model):

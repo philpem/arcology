@@ -5,8 +5,8 @@
 <nav aria-label="breadcrumb" class="mb-3">
     <ol class="breadcrumb">
         <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.index') }}">Items</a></li>
-        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=artefact.item.uuid) }}">{{ artefact.item.name }}</a></li>
-        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=artefact.uuid) }}">{{ artefact.label }}</a></li>
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=artefact.item.url_id) }}">{{ artefact.item.name }}</a></li>
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_artefacts.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug) }}">{{ artefact.label }}</a></li>
         <li class="breadcrumb-item active">Re-analyse</li>
     </ol>
 </nav>
@@ -59,7 +59,7 @@
 
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary"><i class="bi bi-play"></i> Queue Re-analysis</button>
-                        <a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=artefact.uuid) }}" class="btn btn-outline-secondary">Cancel</a>
+                        <a href="{{ url_for('myapp_blueprints_artefacts.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug) }}" class="btn btn-outline-secondary">Cancel</a>
                     </div>
                 </form>
             </div>

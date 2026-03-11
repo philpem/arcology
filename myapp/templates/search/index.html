@@ -189,7 +189,7 @@
 			{% for ef, part, art, item in results.files %}
 			<tr>
 				<td>
-					<a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=art.uuid) }}#files"
+					<a href="{{ url_for('myapp_blueprints_artefacts.view', item_id=art.item.url_id, artefact_id=art.url_slug) }}#files"
 					   class="font-monospace text-decoration-none">{{ ef.path }}</a>
 				</td>
 				<td>
@@ -203,8 +203,8 @@
 					{% if ef.file_size is not none %}{{ ef.file_size | filesizeformat }}{% endif %}
 				</td>
 				<td class="text-muted small">
-					<a href="{{ url_for('myapp_blueprints_items.view', uuid=item.uuid) }}">{{ item.name }}</a>
-					/ <a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=art.uuid) }}">{{ art.label }}</a>
+					<a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a>
+					/ <a href="{{ url_for('myapp_blueprints_artefacts.view', item_id=art.item.url_id, artefact_id=art.url_slug) }}">{{ art.label }}</a>
 					{% if part.label %}/ {{ part.label }}{% endif %}
 				</td>
 			</tr>
@@ -231,8 +231,8 @@
 			<tbody>
 			{% for r in results.artefacts %}
 			<tr>
-				<td><a href="{{ url_for('myapp_blueprints_items.view', uuid=r.item.uuid) }}">{{ r.item.name }}</a></td>
-				<td><a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=r.artefact.uuid) }}">{{ r.artefact.label }}</a></td>
+				<td><a href="{{ url_for('myapp_blueprints_items.view', uuid=r.item.url_id) }}">{{ r.item.name }}</a></td>
+				<td><a href="{{ url_for('myapp_blueprints_artefacts.view', item_id=r.artefact.item.url_id, artefact_id=r.artefact.url_slug) }}">{{ r.artefact.label }}</a></td>
 				<td class="text-muted small">
 					{% if r.type == 'protection' %}
 					<span class="badge bg-warning text-dark"><i class="bi bi-shield-exclamation"></i> {{ r.protection_type }}</span>
@@ -279,7 +279,7 @@
 			<tbody>
 			{% for item in results.catalogue_items %}
 			<tr>
-				<td><a href="{{ url_for('myapp_blueprints_items.view', uuid=item.uuid) }}">{{ item.name }}</a></td>
+				<td><a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a></td>
 				<td>{{ item.platform.name if item.platform else '-' }}</td>
 				<td>{{ item.category.name if item.category else '-' }}</td>
 				<td><span class="badge bg-secondary">{{ item.artefacts|length }}</span></td>

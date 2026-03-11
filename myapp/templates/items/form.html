@@ -5,7 +5,7 @@
 <nav aria-label="breadcrumb" class="mb-3">
     <ol class="breadcrumb">
         <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.index') }}">Items</a></li>
-        {% if item %}<li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=item.uuid) }}">{{ item.name }}</a></li>{% endif %}
+        {% if item %}<li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a></li>{% endif %}
         <li class="breadcrumb-item active">{{ title }}</li>
     </ol>
 </nav>
@@ -26,7 +26,7 @@
                     <div class="mb-3">{{ form.tags.label(class="form-label") }}{{ form.tags(class="form-control") }}<div class="form-text">Comma-separated</div></div>
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save</button>
-                        <a href="{{ url_for('myapp_blueprints_items.view', uuid=item.uuid) if item else url_for('myapp_blueprints_items.index') }}" class="btn btn-outline-secondary">Cancel</a>
+                        <a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) if item else url_for('myapp_blueprints_items.index') }}" class="btn btn-outline-secondary">Cancel</a>
                     </div>
                 </form>
             </div>
