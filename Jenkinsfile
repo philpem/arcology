@@ -7,6 +7,7 @@ pipeline {
         POSTGRES_USER     = 'arcology_test'
         POSTGRES_PASSWORD = 'arcology_test'
         SECRET_KEY        = 'jenkins-ci-test-key-not-for-production'
+        WORKER_API_KEY    = 'ci-test-worker-key'
         // BuildKit required for --mount=type=cache in worker Dockerfile
         DOCKER_BUILDKIT   = '1'
     }
@@ -16,6 +17,25 @@ pipeline {
             steps {
                 sh 'python3 ci/check_syntax.py'
                 sh 'python3 ci/check_migration_sanity.py'
+                sh 'python3 -m unittest ci.test_slug -v'
+            }
+        }
+
+        stage('Application Tests (SQLite)') {
+            steps {
+                withEnv(["SQLALCHEMY_DATABASE_URI=sqlite:///:memory:"]) {
+                    sh '''
+                        python3 -m venv .venv-ci
+                        . .venv-ci/bin/activate
+                        pip install -q -r requirements.txt
+
+                        echo "=== Checking imports ==="
+                        python ci/check_imports.py
+
+                        echo "=== Running application tests ==="
+                        python -m unittest discover -s ci -p "test_*.py" -v
+                    '''
+                }
             }
         }
 
@@ -53,9 +73,6 @@ pipeline {
                                 python3 -m venv .venv-ci
                                 . .venv-ci/bin/activate
                                 pip install -q -r requirements.txt
-
-                                echo "=== Checking imports ==="
-                                python ci/check_imports.py
 
                                 echo "=== Upgrading database (fresh) ==="
                                 flask db upgrade
