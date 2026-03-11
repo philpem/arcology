@@ -328,6 +328,15 @@ class Item(db.Model):
 class Artefact(db.Model):
     """A single digital artefact - one disc image, one scan, etc."""
     __tablename__ = "artefacts"
+    __table_args__ = (
+        # Prevent duplicate derived artefacts for the same analysis run + output file.
+        # NULL values are not considered equal in SQL so original (non-derived)
+        # artefacts (where derived_from_analysis_id IS NULL) are unaffected.
+        db.UniqueConstraint(
+            'derived_from_analysis_id', 'storage_path',
+            name='uq_artefact_analysis_storage_path',
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     uuid: Mapped[str] = mapped_column(String(32), unique=True, index=True, default=generate_uuid)
