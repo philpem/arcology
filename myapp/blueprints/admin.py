@@ -19,8 +19,8 @@ blueprint = Blueprint(ROUTENAME, __name__, url_prefix='/admin', template_folder=
 
 
 def init_app(app):
-    """Register admin menu item."""
-    app.add_menu_item("Admin", f"{ROUTENAME}.index", 1000)
+    """Admin blueprint init (link shown in right-hand navbar for admins)."""
+    pass
 
 
 def _require_admin():
