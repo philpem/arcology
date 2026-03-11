@@ -485,6 +485,23 @@ class AnalysisWorker:
                 }
             )
 
+    @analysis_handler("checksum computation")
+    def process_checksum_compute(self, analysis: dict, artefact: dict, work_dir: Path):
+        """Compute MD5 and SHA256 hashes for the artefact file and store them."""
+        analysis_id = analysis['id']
+        input_path = self.get_input_path(artefact, work_dir)
+
+        md5, sha256, size = compute_file_hash(input_path)
+        self.api.update_artefact_hashes(artefact['uuid'], md5, sha256)
+
+        self.api.update_analysis(
+            analysis_id,
+            status='completed',
+            success=True,
+            summary=f'MD5: {md5}  SHA256: {sha256}',
+            details=json.dumps({'md5': md5, 'sha256': sha256, 'size': size}),
+        )
+
     @analysis_handler("metadata extraction")
     def process_metadata_extract(self, analysis: dict, artefact: dict, work_dir: Path):
         """
@@ -1514,6 +1531,7 @@ class AnalysisWorker:
             try:
                 # Dispatch to appropriate handler
                 handlers = {
+                    AnalysisType.CHECKSUM_COMPUTE.value: self.process_checksum_compute,
                     AnalysisType.FLUX_VISUALISATION.value: self.process_flux_visualisation,
                     AnalysisType.FLUX_DECODE.value: self.process_flux_decode,
                     AnalysisType.FILE_EXTRACTION.value: self.process_file_extraction,
