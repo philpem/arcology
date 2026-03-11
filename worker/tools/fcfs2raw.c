@@ -453,7 +453,7 @@ static disc_map_t *build_disc_map(compacted_reader_t *reader,
     }
 
     if (verbose) {
-        uint16_t fl = map_data[1] | ((map_data[2] & 0x7F) << 8);
+        uint16_t fl = map_data[1] | ((map_data[2] & 0x7F) << 8);  /* mask bit 15 (ZoneValid) */
         printf("  Map block 0 at offset 0x%X (FreeLink=%u)\n",
                map_file_offset, fl);
     }
@@ -497,6 +497,12 @@ static disc_map_t *build_disc_map(compacted_reader_t *reader,
 
         /* Header */
         /* uint8_t zone_check = block[0]; */
+        /* FreeLink is a 16-bit little-endian field at bytes 1-2 of the zone
+         * header.  Bit 15 is always set (Nick Reeves, "New Disc File Structure
+         * for RISC OS", 1990: "offset in bits to first free space in zone, or
+         * 0 if none, with top bit always set").  The actual offset is the
+         * lower 15 bits.  When the zone has no free space, FreeLink = 0x8000
+         * — masking gives 0, which we treat as "no free fragments" below. */
         uint16_t free_link = block[1] | ((block[2] & 0x7F) << 8);
         /* uint8_t cross_check = block[3]; */
 
@@ -558,7 +564,14 @@ static disc_map_t *build_disc_map(compacted_reader_t *reader,
         uint32_t zone_total_alloc_bits = (sector_size * 8) - alloc_start_bit;
 
         while (bits_consumed < zone_total_alloc_bits && unit_in_zone < zone_alloc_bits) {
-            /* Read idlen-bit fragment ID */
+            /* Read idlen-bit fragment ID.
+             *
+             * For free fragments (ID encodes offset to next free fragment),
+             * only the low 15 bits are meaningful when idlen > 15 — the
+             * free chain link is always a 15-bit value even on big map discs
+             * (Acorn FileCore Phase 1 spec, §3.2).  This doesn't affect us
+             * since we walk all fragments sequentially rather than following
+             * the free chain. */
             uint32_t frag_id = read_map_bits(block, bit, idlen);
 
             /* Find the end of this fragment: scan for the terminating 1 bit
