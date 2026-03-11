@@ -14,8 +14,8 @@
  *   - 256-byte trailer at file_size - 0x100:
  *       +0x00: "FCFS" magic (0x53464346 LE)
  *       +0x04: type (0=raw, 1=compacted, 2=block-compressed)
- *       +0x08: disc_record_size
- *       +0x0C: offset_table_size
+ *       +0x08: map_offset (offset to zone 0 map block in compacted stream)
+ *       +0x0C: offset_table_size (type 2 only)
  *
  * Image types:
  *   Type 0: Raw - complete sector-by-sector copy. file_offset == disc_address.
@@ -98,7 +98,12 @@ typedef struct {
     uint8_t  skew;              /* +0x06: track-to-track sector skew */
     uint8_t  boot_option;       /* +0x07 */
     uint8_t  low_sector;        /* +0x08: lowest sector id on a track */
-    uint8_t  nzones;            /* +0x09: number of zones in map */
+    uint8_t  nzones;            /* +0x09: low byte of number of zones in map.
+                                 * The high byte is at offset +0x2A in the
+                                 * extended disc record (RISC OS 4+), which
+                                 * this 20-byte struct does not cover.  FCFS
+                                 * images predate big maps, so nzones <= 255
+                                 * is expected. */
     uint16_t zone_spare;        /* +0x0A: non-allocation bits between zones */
     uint32_t root_dir;          /* +0x0C: disc address of root directory */
     uint32_t disc_size_lo;      /* +0x10: disc size in bytes (low word) */
@@ -227,13 +232,20 @@ done:
 /* ======================================================================
  * Bit-level zone map access (matches FUN_00003470)
  *
- * The FileCore zone map is a packed bit array. Each allocation unit
- * is represented by log2_bpmb bits. Zero = free, non-zero = allocated.
+ * The FileCore zone map is a packed bit array, read LSB-first.
+ * Each bit in the allocation area corresponds to one allocation unit
+ * (of 2^log2_bpmb bytes).  See the filecore_guide for full decoding.
  * ====================================================================== */
 
 /*
  * Read nbits from the zone map at the given bit offset.
  * Handles spanning a 32-bit word boundary.
+ *
+ * Note: always reads words[word_idx + 1] even when not needed (bit_idx == 0).
+ * Callers must ensure the map buffer has at least 4 bytes of padding beyond
+ * the last valid word, or that bit_offset + nbits never falls in the last
+ * word of the buffer.  In practice the map buffer is sector-aligned and the
+ * last few bits are unused, so this is safe.
  */
 static uint32_t read_map_bits(const uint8_t *map_data, uint32_t bit_offset,
                               int nbits)
@@ -263,12 +275,14 @@ static uint32_t read_map_bits(const uint8_t *map_data, uint32_t bit_offset,
  * allocated units, packed sequentially.
  *
  * Zone map layout within each sector:
- *   Zone 0: [4-byte zone check] [disc record to offset 0x40] [map bits]
- *   Zone N: [4-byte zone check] [map bits from offset 0x04]
+ *   Zone 0: [4-byte zone header] [disc record to offset 0x40] [map bits]
+ *   Zone N: [4-byte zone header] [map bits from offset 0x04]
  *
  * Within the map bit area, the first zone_spare bits of each zone continue
  * a fragment from the previous zone (they can't start a new fragment).
- * After that, each log2_bpmb-bit entry represents one allocation unit.
+ * Fragment descriptors follow: idlen-bit ID + zero padding + terminating 1.
+ * The total width of each descriptor in bits equals the number of
+ * allocation units that fragment occupies.
  * ====================================================================== */
 
 /*
@@ -952,7 +966,9 @@ static filecore_disc_record_t *find_disc_record(const uint8_t *buf,
             return dr;
     }
 
-    /* Standard locations:
+    /* Standard locations (reliable for type 0 raw images; for types 1/2
+     * the trailer hint above is the primary method, since these offsets
+     * are disc addresses, not compacted-stream offsets):
      *   0x0004 — floppy: zone 0 map header (4 bytes) + disc record
      *   0x0DC0 — hard disc: boot block at disc address 0xC00, disc record
      *            at +0x1C0 within it.  This byte address is fixed regardless
