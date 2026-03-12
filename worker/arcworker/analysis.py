@@ -484,6 +484,12 @@ class AnalysisWorker:
                     'extraction_path': str(extract_dir),
                 }
             )
+            # Queue PRODUCT_RECOGNITION to match files against known-product definitions
+            self.api.queue_analysis(
+                artefact['uuid'],
+                AnalysisType.PRODUCT_RECOGNITION.value,
+                hints={'partition_uuid': partition.get('uuid')},
+            )
 
     @analysis_handler("checksum computation")
     def process_checksum_compute(self, analysis: dict, artefact: dict, work_dir: Path):
@@ -1454,6 +1460,181 @@ class AnalysisWorker:
             details=json.dumps(details)
         )
 
+    @analysis_handler("product recognition")
+    def process_product_recognition(self, analysis: dict, artefact: dict, work_dir: Path):
+        """
+        Process PRODUCT_RECOGNITION analysis.
+
+        Fetches all hash databases that have product recognition enabled, then
+        checks the extracted files in each partition of this artefact against
+        the product definitions.  A product is matched when all of its required
+        files (identified by MD5/SHA1 hash) are present in a single directory.
+        Optional files increase the confidence score but are not required.
+        When path_match_enabled is set on the product, the file's relative path
+        within the matched folder is also checked against the stored relative_path.
+
+        Results are reported back via POST /partitions/<uuid>/recognised-products.
+        """
+        import json as _json
+
+        analysis_id = analysis['id']
+        hints = _json.loads(analysis.get('hints') or '{}')
+        partition_uuid = hints.get('partition_uuid')
+
+        if not partition_uuid:
+            self.api.update_analysis(
+                analysis_id,
+                status='failed',
+                success=False,
+                error_message='No partition_uuid in analysis hints'
+            )
+            return
+
+        # Fetch recognition config (all enabled databases with products)
+        config = self.api.get_recognition_config()
+        if not config:
+            # Nothing to do — no recognition-enabled databases
+            self.api.update_analysis(
+                analysis_id,
+                status='completed',
+                success=True,
+                summary='No recognition-enabled hash databases configured'
+            )
+            return
+
+        # Fetch all files in this partition (may be large; page through them)
+        page = 1
+        all_files = []
+        while True:
+            resp = self.api.get(
+                f'/partitions/{partition_uuid}/files?per_page=10000&page={page}&show_known=true'
+            )
+            if not resp:
+                break
+            batch = resp.get('files', [])
+            all_files.extend(batch)
+            pagination = resp.get('pagination', {})
+            if page >= pagination.get('pages', 1):
+                break
+            page += 1
+
+        if not all_files:
+            self.api.update_analysis(
+                analysis_id,
+                status='completed',
+                success=True,
+                summary='No extracted files in partition'
+            )
+            return
+
+        # Build index: folder_path -> {hash_set, relative_path_map}
+        # folder_path is the parent directory of each file (i.e. path up to last '/')
+        # hash_set: set of (md5, sha1) tuples (lowercased)
+        # path_map: relative_path_within_folder -> (md5, sha1)
+        folder_index: dict[str, dict] = {}
+        for f in all_files:
+            if f.get('is_directory'):
+                continue
+            path = f.get('path', '')
+            if '/' in path:
+                folder = path.rsplit('/', 1)[0]
+                rel = path.rsplit('/', 1)[1]
+            else:
+                folder = ''
+                rel = path
+
+            if folder not in folder_index:
+                folder_index[folder] = {'hashes': set(), 'path_map': {}}
+
+            md5 = (f.get('md5') or '').lower()
+            sha1 = (f.get('sha1') or '').lower()
+            if md5 or sha1:
+                folder_index[folder]['hashes'].add((md5, sha1))
+                folder_index[folder]['path_map'][rel.lower()] = (md5, sha1)
+
+        # Check each product across all databases against each folder
+        results = []
+        total_products = sum(len(db.get('products', [])) for db in config)
+
+        for db in config:
+            for product in db.get('products', []):
+                product_id = product['product_id']
+                path_match_enabled = product.get('path_match_enabled', False)
+                required_files = product.get('required_files', [])
+                optional_files = product.get('optional_files', [])
+
+                if not required_files:
+                    continue
+
+                for folder, idx in folder_index.items():
+                    folder_hashes = idx['hashes']
+                    path_map = idx['path_map']
+
+                    required_matched = 0
+                    for req in required_files:
+                        md5 = (req.get('md5') or '').lower()
+                        sha1 = (req.get('sha1') or '').lower()
+                        rel_path = (req.get('relative_path') or '').lower()
+
+                        matched = False
+                        if path_match_enabled and rel_path:
+                            # Must match both hash AND relative path
+                            if rel_path in path_map:
+                                file_md5, file_sha1 = path_map[rel_path]
+                                matched = (
+                                    (md5 and file_md5 == md5) or
+                                    (sha1 and file_sha1 == sha1)
+                                )
+                        else:
+                            # Hash-only match: any file in the folder with this hash
+                            matched = any(
+                                (md5 and h[0] == md5) or (sha1 and h[1] == sha1)
+                                for h in folder_hashes
+                            )
+
+                        if matched:
+                            required_matched += 1
+
+                    if required_matched < len(required_files):
+                        continue  # Not a match — not all required files found
+
+                    # Count optional matches
+                    optional_matched = 0
+                    for opt in optional_files:
+                        md5 = (opt.get('md5') or '').lower()
+                        sha1 = (opt.get('sha1') or '').lower()
+                        rel_path = (opt.get('relative_path') or '').lower()
+
+                        if path_match_enabled and rel_path:
+                            if rel_path in path_map:
+                                file_md5, file_sha1 = path_map[rel_path]
+                                if (md5 and file_md5 == md5) or (sha1 and file_sha1 == sha1):
+                                    optional_matched += 1
+                        else:
+                            if any(
+                                (md5 and h[0] == md5) or (sha1 and h[1] == sha1)
+                                for h in folder_hashes
+                            ):
+                                optional_matched += 1
+
+                    results.append({
+                        'product_id': product_id,
+                        'folder_path': folder if folder else '/',
+                        'required_matched': required_matched,
+                        'required_total': len(required_files),
+                        'optional_matched': optional_matched,
+                        'optional_total': len(optional_files),
+                    })
+
+        self.api.report_recognised_products(partition_uuid, results)
+
+        self.api.update_analysis(
+            analysis_id,
+            status='completed',
+            success=True,
+            summary=f'Checked {total_products} product(s) against {len(folder_index)} folder(s); {len(results)} match(es) found'
+        )
+
     @analysis_handler("disc mastering data detection")
     def process_disc_mastering_detect(self, analysis: dict, artefact: dict, work_dir: Path):
         """Process DISC_MASTERING_DETECT analysis.
@@ -1540,6 +1721,7 @@ class AnalysisWorker:
                     AnalysisType.PARTITION_DETECT.value: self.process_partition_detect,
                     AnalysisType.ARCHIVE_DETECT.value: self.process_archive_detect,
                     AnalysisType.ARCHIVE_EXTRACT.value: self.process_archive_extract,
+                    AnalysisType.PRODUCT_RECOGNITION.value: self.process_product_recognition,
                     AnalysisType.DISC_MASTERING_DETECT.value: self.process_disc_mastering_detect,
                     AnalysisType.DISC_PROTECTION_DETECT.value: self.process_disc_protection_detect,
                 }

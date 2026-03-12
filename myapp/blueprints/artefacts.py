@@ -44,6 +44,7 @@ from ..database import (
     Item, Artefact, ArtefactType, Partition, ExtractedFile,
     Analysis, AnalysisType, AnalysisStatus, Platform, StorageDirectory, Tag,
     ArtefactProtection, ArtefactMastering,
+    HashDatabase, KnownProduct, KnownFile, RecognisedProduct,
 )
 
 ROUTENAME = __name__.replace('.', '_')
@@ -631,6 +632,35 @@ def view(uuid):
         if mastering_analysis is not None and protection_analysis is not None:
             break
 
+    hashdb_mode = request.args.get('mode') == 'hashdb'
+
+    # Recognised products for all partitions of this artefact tree
+    recognised_products = []
+    if all_partitions:
+        partition_ids = [p.id for p in all_partitions]
+        from sqlalchemy.orm import joinedload as _jl
+        recognised_products = (
+            RecognisedProduct.query
+            .filter(RecognisedProduct.partition_id.in_(partition_ids))
+            .options(_jl(RecognisedProduct.product).joinedload(KnownProduct.database))
+            .all()
+        )
+
+    # Build a set of folder paths that have a recognised product (for directory row badges)
+    recognised_folder_paths = {rp.folder_path: rp for rp in recognised_products}
+
+    # Hash databases for the "Add to Hash DB" modal (with products pre-loaded)
+    if hashdb_mode:
+        from sqlalchemy.orm import joinedload as _jl2
+        hash_databases = (
+            HashDatabase.query
+            .options(_jl2(HashDatabase.known_products))
+            .order_by(HashDatabase.name)
+            .all()
+        )
+    else:
+        hash_databases = []
+
     return render_template('artefacts/view.html',
                            artefact=artefact,
                            analyses=analyses,
@@ -650,7 +680,149 @@ def view(uuid):
                            archive_paths=archive_paths,
                            current_sort=current_sort,
                            mastering_analysis=mastering_analysis,
-                           protection_analysis=protection_analysis)
+                           protection_analysis=protection_analysis,
+                           hashdb_mode=hashdb_mode,
+                           recognised_products=recognised_products,
+                           recognised_folder_paths=recognised_folder_paths,
+                           hash_databases=hash_databases)
+
+
+@blueprint.route('/<string:uuid>/add-to-hashdb', methods=['POST'])
+@login_required
+@require_permission('read_write')
+def add_to_hashdb(uuid):
+    """Add selected extracted files to a hash database."""
+    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+
+    file_ids = request.form.getlist('file_ids', type=int)
+    database_id = request.form.get('database_id', type=int)
+    product_id = request.form.get('product_id', type=int)
+    new_product_title = request.form.get('new_product_title', '').strip()
+    new_product_description = request.form.get('new_product_description', '').strip()
+    is_required = request.form.get('is_required', '1') == '1'
+
+    if not file_ids:
+        flash('No files selected.', 'warning')
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=uuid, mode='hashdb'))
+
+    database = HashDatabase.query.get_or_404(database_id)
+
+    # Create or fetch the product
+    if product_id:
+        product = KnownProduct.query.filter_by(id=product_id, database_id=database_id).first_or_404()
+    elif new_product_title:
+        product = KnownProduct(
+            database_id=database_id,
+            title=new_product_title,
+            description=new_product_description or None,
+        )
+        db.session.add(product)
+        db.session.flush()  # get product.id
+    else:
+        flash('Select a product or provide a new product title.', 'danger')
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=uuid, mode='hashdb'))
+
+    # Get OUTPUT_FOLDER for on-demand hash computation
+    output_folder = current_app.config.get('OUTPUT_FOLDER', '')
+    if not os.path.isabs(output_folder):
+        output_folder = os.path.join(current_app.instance_path, output_folder)
+
+    added = 0
+    skipped_no_hash = []
+    skipped_no_file = []
+
+    for file_id in file_ids:
+        ef = ExtractedFile.query.get(file_id)
+        if ef is None or ef.partition.artefact_id not in _get_all_artefact_ids(artefact):
+            continue
+        if ef.is_directory:
+            continue
+
+        md5 = ef.md5
+        sha1 = ef.sha1
+        sha256 = ef.sha256
+
+        # Compute hashes on demand if missing
+        if not md5:
+            # Find the FILE_EXTRACTION analysis for this artefact with an output_path
+            extraction = (
+                Analysis.query
+                .filter_by(artefact_id=ef.partition.artefact_id, analysis_type=AnalysisType.FILE_EXTRACTION)
+                .filter(Analysis.output_path.isnot(None), Analysis.status == AnalysisStatus.COMPLETED)
+                .first()
+            )
+            if extraction and extraction.output_path:
+                # output_path may be absolute (from worker) or relative to OUTPUT_FOLDER
+                base = extraction.output_path
+                if not os.path.isabs(base):
+                    base = os.path.join(output_folder, base)
+                # File path within the extraction directory
+                file_path_on_disk = os.path.join(base, ef.path.lstrip('/'))
+                if os.path.isfile(file_path_on_disk):
+                    try:
+                        md5_h = hashlib.md5()
+                        sha1_h = hashlib.sha1()
+                        sha256_h = hashlib.sha256()
+                        with open(file_path_on_disk, 'rb') as fh:
+                            for chunk in iter(lambda: fh.read(65536), b''):
+                                md5_h.update(chunk)
+                                sha1_h.update(chunk)
+                                sha256_h.update(chunk)
+                        md5 = md5_h.hexdigest()
+                        sha1 = sha1_h.hexdigest()
+                        sha256 = sha256_h.hexdigest()
+                        # Persist back to ExtractedFile
+                        ef.md5 = md5
+                        ef.sha1 = sha1
+                        ef.sha256 = sha256
+                    except OSError:
+                        skipped_no_file.append(ef.path)
+                        continue
+                else:
+                    skipped_no_file.append(ef.path)
+                    continue
+            else:
+                skipped_no_hash.append(ef.path)
+                continue
+
+        # Deduplicate: skip if this md5 already exists in the database
+        if KnownFile.query.filter_by(database_id=database_id, md5=md5).first():
+            continue
+
+        kf = KnownFile(
+            database_id=database_id,
+            product_id=product.id,
+            filename=ef.filename,
+            file_size=ef.file_size,
+            md5=md5,
+            sha1=sha1,
+            sha256=sha256,
+            is_required=is_required,
+        )
+        db.session.add(kf)
+        added += 1
+
+    database.file_count = (database.file_count or 0) + added
+    db.session.commit()
+
+    if added:
+        flash(f'Added {added} file(s) to "{product.title}" in "{database.name}".', 'success')
+    if skipped_no_hash:
+        flash(f'{len(skipped_no_hash)} file(s) skipped — no hash available and extraction analysis not found. Re-run FILE_EXTRACTION first.', 'warning')
+    if skipped_no_file:
+        flash(f'{len(skipped_no_file)} file(s) skipped — extracted files no longer on disk.', 'warning')
+    if not added and not skipped_no_hash and not skipped_no_file:
+        flash('All selected files already exist in this hash database.', 'info')
+
+    return redirect(url_for(f'{ROUTENAME}.view', uuid=uuid, mode='hashdb'))
+
+
+def _get_all_artefact_ids(artefact):
+    """Return the set of IDs of the artefact and all derived artefacts (recursively)."""
+    ids = {artefact.id}
+    for derived in artefact.derived_artefacts:
+        ids |= _get_all_artefact_ids(derived)
+    return ids
 
 
 @blueprint.route('/item/<string:item_uuid>/upload', methods=['GET', 'POST'])
