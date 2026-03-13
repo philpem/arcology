@@ -1,0 +1,62 @@
+{% extends "_base.html" %}
+{% block page_title %}New Hash Database{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_hashdb.index') }}">Hash Databases</a></li>
+        <li class="breadcrumb-item active">New</li>
+    </ol>
+</nav>
+
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header"><h4 class="mb-0">New Hash Database</h4></div>
+            <div class="card-body">
+                <form method="post">
+                    {{ form.hidden_tag() }}
+                    <div class="mb-3">
+                        {{ form.name.label(class="form-label") }}
+                        {{ form.name(class="form-control") }}
+                    </div>
+                    <div class="mb-3">
+                        {{ form.platform_id.label(class="form-label") }}
+                        {{ form.platform_id(class="form-select") }}
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" title="URL to the source data or specification this database was derived from">
+                            Source URL
+                        </label>
+                        {{ form.source_url(class="form-control", placeholder="e.g. https://www.nsrl.nist.gov/") }}
+                        <div class="form-text">Where this hash data came from (for reference only).</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" title="Version or release identifier of the source data">
+                            Version
+                        </label>
+                        {{ form.version(class="form-control", placeholder="e.g. 2.73.1, 2024-Q1") }}
+                        <div class="form-text">Version or release of the source data.</div>
+                    </div>
+                    <div class="mb-3">
+                        {{ form.description.label(class="form-label") }}
+                        {{ form.description(class="form-control", rows=3) }}
+                    </div>
+                    <div class="mb-3 form-check">
+                        {{ form.enable_product_recognition(class="form-check-input") }}
+                        <label class="form-check-label" for="{{ form.enable_product_recognition.id }}"
+                               title="When enabled, the worker will run a folder recognition pass after extracting files from a disc image, matching folders against the product definitions in this database">
+                            Folder recognition
+                        </label>
+                        <div class="form-text">Match extracted disc folders against known product definitions.</div>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Create</button>
+                        <a href="{{ url_for('myapp_blueprints_hashdb.index') }}" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

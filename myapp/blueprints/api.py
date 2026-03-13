@@ -17,11 +17,13 @@ from ..extensions import db, csrf
 from ..database import (
     Item, Artefact, ArtefactType, Analysis, AnalysisType, AnalysisStatus,
     Partition, ExtractedFile, FilesystemType, Platform, Category, Tag,
-    ExternalSystem, ExternalReference, HashDatabase, KnownFile, StorageDirectory,
+    ExternalSystem, ExternalReference, HashDatabase, KnownFile, KnownProduct,
+    RecognisedProduct, StorageDirectory,
     ApiKey, ApiKeyPermission, _API_KEY_PERMISSION_ORDER,
     ArtefactProtection, ArtefactMastering,
 )
 from .artefacts import get_artefact_path, _delete_artefact_files, _delete_item_files
+from ..utils.hash_rescan import find_known_file
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -701,6 +703,7 @@ def add_files(uuid):
             file_size=f.get('file_size'),
             md5=f.get('md5'),
             sha1=f.get('sha1'),
+            sha256=f.get('sha256'),
             crc32=f.get('crc32'),
             # Archive support fields
             is_directory=f.get('is_directory', False),
@@ -903,21 +906,212 @@ def file_to_dict(f):
 
 def known_file_to_dict(kf):
     if not kf: return None
-    return {'id': kf.id, 'database': kf.database.name, 'filename': kf.filename,
-            'product_name': kf.product_name, 'product_version': kf.product_version}
+    product = kf.product
+    return {
+        'id': kf.id,
+        'database': kf.database.name,
+        'filename': kf.filename,
+        'product_name': product.title if product else kf.product_name,
+        'product_version': kf.product_version,
+    }
 
 
-def find_known_file(md5=None, sha1=None, file_size=None):
-    query = KnownFile.query
-    if md5:
-        query = query.filter(KnownFile.md5 == md5.lower())
-    elif sha1:
-        query = query.filter(KnownFile.sha1 == sha1.lower())
-    else:
-        return None
-    if file_size:
-        query = query.filter(KnownFile.file_size == file_size)
-    return query.first()
+
+# =============================================================================
+# Hash Database API (for CLI import/export and worker recognition)
+# =============================================================================
+
+@blueprint.route('/hash-databases', methods=['GET'])
+@require_auth('read_only')
+def list_hash_databases():
+    databases = HashDatabase.query.order_by(HashDatabase.name).all()
+    return jsonify([{
+        'id': db_.id,
+        'name': db_.name,
+        'description': db_.description,
+        'version': db_.version,
+        'file_count': db_.file_count or 0,
+        'enable_product_recognition': db_.enable_product_recognition,
+    } for db_ in databases])
+
+
+@blueprint.route('/hash-databases/<int:id>', methods=['GET'])
+@require_auth('read_only')
+def get_hash_database(id):
+    database = HashDatabase.query.get_or_404(id)
+    products = KnownProduct.query.filter_by(database_id=id).order_by(KnownProduct.title).all()
+    return jsonify({
+        'id': database.id,
+        'name': database.name,
+        'description': database.description,
+        'version': database.version,
+        'source_url': database.source_url,
+        'enable_product_recognition': database.enable_product_recognition,
+        'products': [
+            {
+                'id': p.id,
+                'title': p.title,
+                'description': p.description,
+                'path_match_enabled': p.path_match_enabled,
+                'files': [
+                    {
+                        'id': kf.id,
+                        'filename': kf.filename,
+                        'file_size': kf.file_size,
+                        'md5': kf.md5,
+                        'sha1': kf.sha1,
+                        'sha256': kf.sha256,
+                        'crc32': kf.crc32,
+                        'is_required': kf.is_required,
+                        'relative_path': kf.relative_path,
+                        'description': kf.description,
+                    }
+                    for kf in p.known_files
+                ],
+            }
+            for p in products
+        ],
+    })
+
+
+@blueprint.route('/hash-databases', methods=['POST'])
+@require_auth('read_write')
+def create_hash_database():
+    data = request.get_json(force=True) or {}
+    if not data.get('name'):
+        return error_response('name is required')
+    if HashDatabase.query.filter_by(name=data['name']).first():
+        return error_response(f"Database '{data['name']}' already exists", 409)
+    database = HashDatabase(
+        name=data['name'],
+        description=data.get('description'),
+        version=data.get('version'),
+        source_url=data.get('source_url'),
+        enable_product_recognition=bool(data.get('enable_product_recognition', False)),
+        file_count=0,
+    )
+    db.session.add(database)
+    db.session.commit()
+    return jsonify({'id': database.id, 'name': database.name}), 201
+
+
+@blueprint.route('/hash-databases/<int:db_id>/products', methods=['POST'])
+@require_auth('read_write')
+def create_known_product(db_id):
+    database = HashDatabase.query.get_or_404(db_id)
+    data = request.get_json(force=True) or {}
+    if not data.get('title'):
+        return error_response('title is required')
+    product = KnownProduct(
+        database_id=db_id,
+        title=data['title'],
+        description=data.get('description'),
+        path_match_enabled=bool(data.get('path_match_enabled', False)),
+    )
+    db.session.add(product)
+    db.session.commit()
+    return jsonify({'id': product.id, 'title': product.title}), 201
+
+
+@blueprint.route('/hash-databases/<int:db_id>/products/<int:pid>/files', methods=['POST'])
+@require_auth('read_write')
+def add_known_files_bulk(db_id, pid):
+    database = HashDatabase.query.get_or_404(db_id)
+    product = KnownProduct.query.filter_by(id=pid, database_id=db_id).first_or_404()
+    data = request.get_json(force=True) or {}
+    files = data if isinstance(data, list) else data.get('files', [])
+    if not files:
+        return error_response('files array is required')
+    added = 0
+    for f in files:
+        if not f.get('filename'):
+            continue
+        kf = KnownFile(
+            database_id=db_id,
+            product_id=pid,
+            filename=f['filename'],
+            file_size=f.get('file_size'),
+            md5=f.get('md5', '').lower() or None,
+            sha1=f.get('sha1', '').lower() or None,
+            sha256=f.get('sha256', '').lower() or None,
+            crc32=f.get('crc32', '').lower() or None,
+            is_required=bool(f.get('is_required', True)),
+            relative_path=f.get('relative_path'),
+            description=f.get('description'),
+        )
+        db.session.add(kf)
+        added += 1
+    database.file_count = (database.file_count or 0) + added
+    db.session.commit()
+    return jsonify({'added': added}), 201
+
+
+@blueprint.route('/hash-databases/recognition-config', methods=['GET'])
+@require_auth('read_only')
+def hash_database_recognition_config():
+    """Return all hash databases with enable_product_recognition=True, with full product/file data for the worker."""
+    databases = HashDatabase.query.filter_by(enable_product_recognition=True).all()
+    result = []
+    for database in databases:
+        products = KnownProduct.query.filter_by(database_id=database.id).all()
+        db_entry = {
+            'database_id': database.id,
+            'name': database.name,
+            'products': [],
+        }
+        for product in products:
+            required = [kf for kf in product.known_files if kf.is_required]
+            optional = [kf for kf in product.known_files if not kf.is_required]
+            db_entry['products'].append({
+                'product_id': product.id,
+                'title': product.title,
+                'path_match_enabled': product.path_match_enabled,
+                'required_files': [
+                    {'md5': kf.md5, 'sha1': kf.sha1, 'sha256': kf.sha256, 'relative_path': kf.relative_path}
+                    for kf in required
+                ],
+                'optional_files': [
+                    {'md5': kf.md5, 'sha1': kf.sha1, 'sha256': kf.sha256, 'relative_path': kf.relative_path}
+                    for kf in optional
+                ],
+            })
+        result.append(db_entry)
+    return jsonify(result)
+
+
+@blueprint.route('/partitions/<uuid>/recognised-products', methods=['POST'])
+@require_auth('read_write')
+def report_recognised_products(uuid):
+    """Worker reports product recognition results for a partition."""
+    partition = Partition.query.filter_by(uuid=uuid).first_or_404()
+    data = request.get_json(force=True) or []
+    if not isinstance(data, list):
+        return error_response('expected a JSON array')
+
+    # Delete existing recognition results for this partition (re-scan replaces old results)
+    RecognisedProduct.query.filter_by(partition_id=partition.id).delete()
+
+    for entry in data:
+        product_id = entry.get('product_id')
+        folder_path = entry.get('folder_path', '')
+        if not product_id or not folder_path:
+            continue
+        product = KnownProduct.query.get(product_id)
+        if not product:
+            continue
+        rp = RecognisedProduct(
+            partition_id=partition.id,
+            product_id=product_id,
+            folder_path=folder_path,
+            required_matched=int(entry.get('required_matched', 0)),
+            required_total=int(entry.get('required_total', 0)),
+            optional_matched=int(entry.get('optional_matched', 0)),
+            optional_total=int(entry.get('optional_total', 0)),
+        )
+        db.session.add(rp)
+
+    db.session.commit()
+    return jsonify({'status': 'ok'})
 
 
 # vim: ts=4 sw=4 et

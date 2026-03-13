@@ -144,6 +144,19 @@ flask db stamp head                           # Mark as up-to-date without runni
 1. Add to `AnalysisType` enum in `shared/enums.py`
 2. Add to `ANALYSIS_MAP` in `myapp/blueprints/artefacts.py`
 3. Implement handler in `worker/arcworker/analysis.py`
+4. Write a migration to add the value to the PostgreSQL `analysistype` enum — **use the enum NAME (uppercase), not the value** (see "Adding values to a PostgreSQL enum" below)
+
+> **Enum case pitfall (has caught us multiple times):** SQLAlchemy stores
+> `AnalysisType` members using their `.name` — e.g. `FILE_EXTRACTION`,
+> `PRODUCT_RECOGNITION` — not their `.value` (`file_extraction`,
+> `product_recognition`). The PostgreSQL enum type therefore contains
+> uppercase strings. Always write migrations as:
+> `ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'MY_NEW_TYPE'`
+> (uppercase). Using the lowercase `.value` will break at runtime with
+> `invalid input value for enum analysistype: "MY_NEW_TYPE"`.
+
+The same applies to `ArtefactType` and any other SQLAlchemy `Enum` column
+backed by a Python `enum.Enum` class in this project.
 
 ### Adding a new artefact type
 
@@ -180,8 +193,12 @@ autocommit = True
 def upgrade():
     bind = op.get_bind()
     if bind.dialect.name == 'postgresql':
-        op.execute(sa.text("ALTER TYPE myenum ADD VALUE IF NOT EXISTS 'NEW_VALUE'"))
+        op.execute(sa.text("ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'NEW_TYPE_NAME'"))
 ```
+
+> **Case warning:** SQLAlchemy stores enum members by their `.name` (uppercase Python
+> identifier), not their `.value`. The DB enum must contain `'FILE_EXTRACTION'` not
+> `'file_extraction'`. Always use the UPPERCASE enum name in `ADD VALUE` migrations.
 
 If a migration was already stamped but the enum was never actually updated,
 stamp back to the previous revision and re-run:
@@ -190,6 +207,28 @@ stamp back to the previous revision and re-run:
 flask db stamp <previous_revision_id>
 flask db upgrade
 ```
+
+#### Migration revision IDs
+
+**Never use placeholder or patterned IDs** (e.g. `a1b2c3d4e5f6`, `d1e2f3a4b5c6`).
+These look unique but collide with other migrations using the same pattern.
+
+When writing a migration by hand, generate the revision ID from the current UTC
+time in seconds, converted to hex, zero-padded to 12 characters:
+
+```python
+import time
+hex(int(time.time()))[2:].zfill(12)   # e.g. '000069b41ab4'
+```
+
+Or from the shell:
+
+```bash
+python3 -c "import time; print(hex(int(time.time()))[2:].zfill(12))"
+```
+
+Alembic-generated migrations (`flask db migrate`) produce their own random IDs
+automatically — this only applies to hand-written migrations.
 
 ### Analysis pipeline flow
 

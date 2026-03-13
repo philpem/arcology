@@ -1,0 +1,96 @@
+{% extends "_base.html" %}
+{% block page_title %}Hash Databases{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1><i class="bi bi-database"></i> Hash Databases</h1>
+    <div class="d-flex gap-2">
+        {% if user_can_write %}
+        <button class="btn btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#importForm">
+            <i class="bi bi-upload"></i> Import
+        </button>
+        <a href="{{ url_for('myapp_blueprints_hashdb.new') }}" class="btn btn-primary">
+            <i class="bi bi-plus-lg"></i> New Database
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+{% if user_can_write %}
+<div class="collapse mb-4" id="importForm">
+    <div class="card card-body bg-light">
+        <h6 class="mb-3"><i class="bi bi-upload"></i> Import Hash Database</h6>
+        <form action="{{ url_for('myapp_blueprints_hashdb.import_database') }}" method="post" enctype="multipart/form-data">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label form-label-sm">File <span class="text-danger">*</span></label>
+                    <input type="file" name="file" class="form-control form-control-sm" accept=".json,.csv" required>
+                    <div class="form-text">JSON or CSV format</div>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label form-label-sm">Database name</label>
+                    <input type="text" name="name" class="form-control form-control-sm"
+                           placeholder="Required for CSV; overrides JSON name">
+                </div>
+                <div class="col-md-2 d-flex align-items-end pb-1">
+                    <div class="form-check">
+                        <input type="checkbox" name="merge" class="form-check-input" id="import-merge">
+                        <label class="form-check-label form-label-sm" for="import-merge">
+                            Merge into existing
+                            <span class="text-muted" title="If unchecked and the database already exists, import will be rejected">(?)</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-primary btn-sm w-100">Import</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead><tr><th>Name</th><th>Platform</th><th>Version</th><th>Files</th><th>Active</th><th>Folder recognition</th><th>Updated</th><th></th></tr></thead>
+            <tbody>
+                {% for database in databases %}
+                <tr{% if not database.is_active %} class="text-muted"{% endif %}>
+                    <td><a href="{{ url_for('myapp_blueprints_hashdb.view', id=database.id) }}">{{ database.name }}</a>{% if not database.is_active %} <span class="badge bg-secondary">inactive</span>{% endif %}</td>
+                    <td>{{ database.platform.name if database.platform else 'All' }}</td>
+                    <td>{{ database.version or '—' }}</td>
+                    <td>{{ database.file_count or 0 }}</td>
+                    <td>
+                        {% if database.is_active %}
+                        <span class="badge bg-success">Yes</span>
+                        {% else %}
+                        <span class="badge bg-secondary">No</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if database.enable_product_recognition %}
+                        <span class="badge bg-success">On</span>
+                        {% else %}
+                        <span class="badge bg-secondary">Off</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ database.updated_at.strftime('%Y-%m-%d') }}</td>
+                    <td>
+                        {% if user_can_write %}
+                        <form action="{{ url_for('myapp_blueprints_hashdb.delete', id=database.id) }}" method="post" class="d-inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete?');"><i class="bi bi-trash"></i></button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="8" class="text-center text-muted">No hash databases defined yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

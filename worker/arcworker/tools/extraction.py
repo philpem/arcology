@@ -7,6 +7,7 @@ Supports:
 - Disc Image Manager - Acorn DFS/ADFS filesystems
 """
 
+import hashlib
 import os
 import re
 import shutil
@@ -283,6 +284,25 @@ def enumerate_extracted_files(output_dir: Path, acorn: bool = False) -> list[dic
                 'path': display_path,
                 'size': file_size,
             }
+
+        # Compute hashes so they can be stored in the DB at registration time.
+        # This avoids needing to locate the file on disk later (e.g. for hash
+        # database population) and correctly handles Acorn display-path vs
+        # on-disk `,xxx` suffix mismatches.
+        try:
+            md5_h = hashlib.md5()
+            sha1_h = hashlib.sha1()
+            sha256_h = hashlib.sha256()
+            with open(file_path, 'rb') as fh:
+                for chunk in iter(lambda: fh.read(65536), b''):
+                    md5_h.update(chunk)
+                    sha1_h.update(chunk)
+                    sha256_h.update(chunk)
+            file_entry['md5'] = md5_h.hexdigest()
+            file_entry['sha1'] = sha1_h.hexdigest()
+            file_entry['sha256'] = sha256_h.hexdigest()
+        except OSError:
+            pass
 
         files.append(file_entry)
 

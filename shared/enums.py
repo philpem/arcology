@@ -68,4 +68,7 @@ class AnalysisType(enum.Enum):
     DISC_MASTERING_DETECT  = "disc_mastering_detect"  # Mastering/duplicator fingerprint data
     DISC_PROTECTION_DETECT = "disc_protection_detect" # Copy protection signals
 
+    # Known-product recognition
+    PRODUCT_RECOGNITION    = "product_recognition"    # Match extracted files against known-product definitions
+
 # vim: ts=4 sw=4 et

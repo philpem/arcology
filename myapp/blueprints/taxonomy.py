@@ -1,17 +1,17 @@
 """
 Arcology - Taxonomy Blueprint
 
-Platforms, categories, tags, external systems, and hash databases.
+Platforms, categories, tags, and external systems.
 """
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request
 from flask_login import login_required
 from flask_wtf import FlaskForm
 from wtforms import StringField, TextAreaField, SelectField
-from wtforms.validators import DataRequired, Optional, URL, Length
+from wtforms.validators import DataRequired, Optional, Length
 
 from ..extensions import db
-from ..database import Platform, Category, Tag, ExternalSystem, HashDatabase
+from ..database import Platform, Category, Tag, ExternalSystem
 from ..permissions import require_permission
 
 ROUTENAME = __name__.replace('.', '_')
@@ -74,14 +74,6 @@ def _collect_descendant_ids(node):
     return ids
 
 
-class HashDatabaseForm(FlaskForm):
-    name = StringField('Name', validators=[DataRequired(), Length(max=100)])
-    description = TextAreaField('Description', validators=[Optional()])
-    source_url = StringField('Source URL', validators=[Optional()])
-    version = StringField('Version', validators=[Optional(), Length(max=50)])
-    platform_id = SelectField('Platform', coerce=int, validators=[Optional()])
-
-
 # =============================================================================
 # Platforms
 # =============================================================================
@@ -113,7 +105,7 @@ def new_platform():
         flash(f'Platform "{platform.name}" created.', 'success')
         return redirect(url_for(f'{ROUTENAME}.platforms'))
     
-    return render_template('taxonomy/taxonomy_form.html', form=form, title='New Platform')
+    return render_template('taxonomy/platform_form.html', form=form, title='New Platform')
 
 
 @blueprint.route('/platforms/<int:id>/edit', methods=['GET', 'POST'])
@@ -137,7 +129,7 @@ def edit_platform(id):
         flash(f'Platform "{platform.name}" updated.', 'success')
         return redirect(url_for(f'{ROUTENAME}.platforms'))
     
-    return render_template('taxonomy/taxonomy_form.html', form=form, platform=platform, title='Edit Platform')
+    return render_template('taxonomy/platform_form.html', form=form, platform=platform, title='Edit Platform')
 
 
 @blueprint.route('/platforms/<int:id>/delete', methods=['POST'])
@@ -192,7 +184,7 @@ def new_category():
         flash(f'Category "{category.name}" created.', 'success')
         return redirect(url_for(f'{ROUTENAME}.categories'))
     
-    return render_template('taxonomy/taxonomy_form.html', form=form, title='New Category')
+    return render_template('taxonomy/category_form.html', form=form, title='New Category')
 
 
 @blueprint.route('/categories/<int:id>/edit', methods=['GET', 'POST'])
@@ -216,7 +208,7 @@ def edit_category(id):
         flash(f'Category "{category.name}" updated.', 'success')
         return redirect(url_for(f'{ROUTENAME}.categories'))
     
-    return render_template('taxonomy/taxonomy_form.html', form=form, category=category, title='Edit Category')
+    return render_template('taxonomy/category_form.html', form=form, category=category, title='Edit Category')
 
 
 @blueprint.route('/categories/<int:id>/delete', methods=['POST'])
@@ -264,23 +256,7 @@ def new_tag():
         flash(f'Tag "{tag.name}" created.', 'success')
         return redirect(url_for(f'{ROUTENAME}.tags'))
     
-    return render_template('taxonomy/taxonomy_form.html', form=form, title='New Tag')
-
-
-@blueprint.route('/tags/<int:id>/edit', methods=['GET', 'POST'])
-@login_required
-@require_permission('read_write')
-def edit_tag(id):
-    tag = Tag.query.get_or_404(id)
-    form = TagForm(obj=tag)
-
-    if form.validate_on_submit():
-        tag.name = form.name.data
-        db.session.commit()
-        flash(f'Tag "{tag.name}" updated.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.tags'))
-
-    return render_template('taxonomy/taxonomy_form.html', form=form, title='Edit Tag')
+    return render_template('taxonomy/tag_form.html', form=form, title='New Tag')
 
 
 @blueprint.route('/tags/<int:id>/delete', methods=['POST'])
@@ -325,7 +301,7 @@ def new_external_system():
         flash(f'External system "{system.name}" created.', 'success')
         return redirect(url_for(f'{ROUTENAME}.external_systems'))
     
-    return render_template('taxonomy/taxonomy_form.html', form=form, title='New External System')
+    return render_template('taxonomy/external_system_form.html', form=form, title='New External System')
 
 
 @blueprint.route('/external-systems/<int:id>/edit', methods=['GET', 'POST'])
@@ -345,7 +321,7 @@ def edit_external_system(id):
         flash(f'External system "{system.name}" updated.', 'success')
         return redirect(url_for(f'{ROUTENAME}.external_systems'))
     
-    return render_template('taxonomy/taxonomy_form.html', form=form, system=system, title='Edit External System')
+    return render_template('taxonomy/external_system_form.html', form=form, system=system, title='Edit External System')
 
 
 @blueprint.route('/external-systems/<int:id>/delete', methods=['POST'])
@@ -363,92 +339,6 @@ def delete_external_system(id):
     db.session.commit()
     flash(f'External system "{name}" deleted.', 'success')
     return redirect(url_for(f'{ROUTENAME}.external_systems'))
-
-
-# =============================================================================
-# Hash Databases
-# =============================================================================
-
-@blueprint.route('/hash-databases')
-@login_required
-def hash_databases():
-    databases = HashDatabase.query.order_by(HashDatabase.name).all()
-    return render_template('taxonomy/hash_databases.html', databases=databases)
-
-
-@blueprint.route('/hash-databases/new', methods=['GET', 'POST'])
-@login_required
-@require_permission('read_write')
-def new_hash_database():
-    form = HashDatabaseForm()
-    form.platform_id.choices = [(0, '-- All Platforms --')] + [
-        (p.id, p.name) for p in Platform.query.order_by(Platform.name).all()
-    ]
-    
-    if form.validate_on_submit():
-        database = HashDatabase(
-            name=form.name.data,
-            description=form.description.data,
-            source_url=form.source_url.data,
-            version=form.version.data,
-            platform_id=form.platform_id.data if form.platform_id.data != 0 else None
-        )
-        db.session.add(database)
-        db.session.commit()
-        flash(f'Hash database "{database.name}" created.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.hash_databases'))
-    
-    return render_template('taxonomy/taxonomy_form.html', form=form, title='New Hash Database')
-
-
-@blueprint.route('/hash-databases/<int:id>')
-@login_required
-def view_hash_database(id):
-    database = HashDatabase.query.get_or_404(id)
-    page = request.args.get('page', 1, type=int)
-    files_pagination = database.known_files.paginate(page=page, per_page=100)
-    return render_template('taxonomy/hash_database_view.html',
-                           database=database,
-                           files=files_pagination.items,
-                           pagination=files_pagination)
-
-
-@blueprint.route('/hash-databases/<int:id>/edit', methods=['GET', 'POST'])
-@login_required
-@require_permission('read_write')
-def edit_hash_database(id):
-    database = HashDatabase.query.get_or_404(id)
-    form = HashDatabaseForm(obj=database)
-    form.platform_id.choices = [(0, '-- All Platforms --')] + [
-        (p.id, p.name) for p in Platform.query.order_by(Platform.name).all()
-    ]
-
-    if form.validate_on_submit():
-        database.name = form.name.data
-        database.description = form.description.data
-        database.source_url = form.source_url.data
-        database.version = form.version.data
-        database.platform_id = form.platform_id.data if form.platform_id.data != 0 else None
-        db.session.commit()
-        flash(f'Hash database "{database.name}" updated.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.hash_databases'))
-
-    # Pre-select current platform in the dropdown
-    if database.platform_id:
-        form.platform_id.data = database.platform_id
-    return render_template('taxonomy/taxonomy_form.html', form=form, title='Edit Hash Database')
-
-
-@blueprint.route('/hash-databases/<int:id>/delete', methods=['POST'])
-@login_required
-@require_permission('read_write')
-def delete_hash_database(id):
-    database = HashDatabase.query.get_or_404(id)
-    name = database.name
-    db.session.delete(database)
-    db.session.commit()
-    flash(f'Hash database "{name}" deleted.', 'success')
-    return redirect(url_for(f'{ROUTENAME}.hash_databases'))
 
 
 # vim: ts=4 sw=4 et

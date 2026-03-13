@@ -254,6 +254,30 @@ arcology/
 2. Add it to the `ANALYSIS_MAP` in `myapp/blueprints/artefacts.py` so it gets auto-queued for the appropriate artefact types.
 3. Implement a `process_<type>` handler method in `worker/arcworker/analysis.py`.
 4. Register the handler in the `handlers` dict inside `AnalysisWorker.process_analysis()`.
+5. Write a migration to add the value to the PostgreSQL `analysistype` enum (see [Enum case pitfall](#enum-case-pitfall) below).
+
+#### Enum case pitfall
+
+**This has tripped us up more than once.** SQLAlchemy stores Python `enum.Enum`
+members using their `.name` (the Python identifier), **not** their `.value`. So
+`AnalysisType.FILE_EXTRACTION` (whose `.value` is `"file_extraction"`) is stored
+in PostgreSQL as the string `'FILE_EXTRACTION'` (uppercase).
+
+The `analysistype` PostgreSQL enum therefore contains uppercase strings like
+`'FILE_EXTRACTION'`, `'ARCHIVE_DETECT'`, `'PRODUCT_RECOGNITION'`. **Always use the
+uppercase name in `ADD VALUE` migrations:**
+
+```python
+# CORRECT
+op.execute(sa.text("ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'MY_NEW_TYPE'"))
+
+# WRONG — will fail at runtime with:
+# invalid input value for enum analysistype: "MY_NEW_TYPE"
+op.execute(sa.text("ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'my_new_type'"))
+```
+
+This applies to every `SQLEnum(SomePythonEnum)` column in the project: `analysistype`,
+`artefacttype`, `analysisstatus`, `filesystemtype`, etc.
 
 **Protection and mastering indicator types** (`ArtefactProtection.protection_type` and `ArtefactMastering.mastering_type`) are free-text strings stored by the worker — they are not enums. Known values are documented in comments in `myapp/database.py`. If you introduce new indicator types in a worker tool, use short lowercase snake_case names (e.g. `bad_crc`, `bcd_timestamp`); the search UI will surface them automatically once they appear in the database.
 
@@ -323,7 +347,7 @@ This creates the `migrations/` directory structure and generates an initial migr
 
    Things to watch for:
    - Table or column renames are detected as a drop + create (data loss). Manually edit these to use `op.alter_column()` or `op.rename_table()`.
-   - Changes to enum values may need manual handling.
+   - Changes to enum values may need manual handling. See [Enum case pitfall](#enum-case-pitfall): use the **uppercase** enum name, not the lowercase value.
    - Check that both `upgrade()` and `downgrade()` functions look correct.
 
 4. **Apply the migration:**
@@ -351,6 +375,7 @@ This creates the `migrations/` directory structure and generates an initial migr
 - **Always review generated migrations.** Alembic's auto-detection is good but not infallible. It cannot detect renamed columns/tables, changes within existing enum types, or changes to constraints that aren't reflected in the model metadata.
 - **Commit migrations to version control.** They are part of the project history and other developers will need them.
 - **One logical change per migration.** Don't batch unrelated schema changes into a single migration -- it makes rollbacks harder.
+- **Never use placeholder revision IDs** like `a1b2c3d4e5f6`. They look unique but collide when two authors independently pick the same sequential pattern, causing Alembic to report duplicate revisions and a cycle error. For hand-written migrations, generate an ID from the current UTC timestamp: `python3 -c "import time; print(hex(int(time.time()))[2:].zfill(12))"`. Alembic-generated migrations (`flask db migrate`) produce random IDs automatically — this only applies to migrations written by hand.
 - **If you get "Target database is not up to date"**, run `flask db upgrade` first to bring your database to the latest migration before generating a new one.
 - **If you get "Can't locate revision"** after pulling changes, you may need to `flask db upgrade` to apply migrations created by others.
 - **To start fresh** during development (throwing away all data), drop the database and re-run `flask db upgrade`.

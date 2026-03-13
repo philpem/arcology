@@ -476,6 +476,7 @@ class Partition(db.Model):
 
     artefact: Mapped["Artefact"] = relationship(back_populates="partitions")
     files: Mapped[list["ExtractedFile"]] = relationship(back_populates="partition", cascade="all, delete-orphan")
+    recognised_products: Mapped[list["RecognisedProduct"]] = relationship(back_populates="partition", cascade="all, delete-orphan")
 
 
 class ExtractedFile(db.Model):
@@ -582,34 +583,80 @@ class HashDatabase(db.Model):
     version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     platform_id: Mapped[Optional[int]] = mapped_column(ForeignKey("platforms.id"), nullable=True)
     file_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    enable_product_recognition: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     platform: Mapped[Optional["Platform"]] = relationship()
     known_files: Mapped[list["KnownFile"]] = relationship(back_populates="database", cascade="all, delete-orphan")
+    known_products: Mapped[list["KnownProduct"]] = relationship(back_populates="database", cascade="all, delete-orphan")
+
+
+class KnownProduct(db.Model):
+    """A named product/application/group within a hash database."""
+    __tablename__ = "known_products"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    database_id: Mapped[int] = mapped_column(ForeignKey("hash_databases.id"), index=True)
+    title: Mapped[str] = mapped_column(String(200), index=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    path_match_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    database: Mapped["HashDatabase"] = relationship(back_populates="known_products")
+    known_files: Mapped[list["KnownFile"]] = relationship(back_populates="product", cascade="all, delete-orphan")
+    recognised_in: Mapped[list["RecognisedProduct"]] = relationship(back_populates="product", cascade="all, delete-orphan")
 
 
 class KnownFile(db.Model):
-    """A known file from a hash database."""
+    """A known file from a hash database, grouped under a KnownProduct."""
     __tablename__ = "known_files"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     database_id: Mapped[int] = mapped_column(ForeignKey("hash_databases.id"), index=True)
+    product_id: Mapped[Optional[int]] = mapped_column(ForeignKey("known_products.id"), index=True, nullable=True)
     filename: Mapped[str] = mapped_column(String(255), index=True)
     file_size: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     md5: Mapped[Optional[str]] = mapped_column(String(32), index=True, nullable=True)
     sha1: Mapped[Optional[str]] = mapped_column(String(40), index=True, nullable=True)
     sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     crc32: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    is_required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    relative_path: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
     product_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     product_version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     database: Mapped["HashDatabase"] = relationship(back_populates="known_files")
+    product: Mapped[Optional["KnownProduct"]] = relationship(back_populates="known_files")
 
     __table_args__ = (
         Index("ix_known_files_md5_size", "md5", "file_size"),
         Index("ix_known_files_sha1_size", "sha1", "file_size"),
+    )
+
+
+class RecognisedProduct(db.Model):
+    """Result of a PRODUCT_RECOGNITION analysis: a folder matched a KnownProduct."""
+    __tablename__ = "recognised_products"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    partition_id: Mapped[int] = mapped_column(ForeignKey("partitions.id"), index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("known_products.id"), index=True)
+    folder_path: Mapped[str] = mapped_column(String(1000))
+    required_matched: Mapped[int] = mapped_column(Integer, default=0)
+    required_total: Mapped[int] = mapped_column(Integer, default=0)
+    optional_matched: Mapped[int] = mapped_column(Integer, default=0)
+    optional_total: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    partition: Mapped["Partition"] = relationship(back_populates="recognised_products")
+    product: Mapped["KnownProduct"] = relationship(back_populates="recognised_in")
+
+    __table_args__ = (
+        Index("ix_recognised_products_partition_product", "partition_id", "product_id"),
     )
 
 
