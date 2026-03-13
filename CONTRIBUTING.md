@@ -254,6 +254,30 @@ arcology/
 2. Add it to the `ANALYSIS_MAP` in `myapp/blueprints/artefacts.py` so it gets auto-queued for the appropriate artefact types.
 3. Implement a `process_<type>` handler method in `worker/arcworker/analysis.py`.
 4. Register the handler in the `handlers` dict inside `AnalysisWorker.process_analysis()`.
+5. Write a migration to add the value to the PostgreSQL `analysistype` enum (see [Enum case pitfall](#enum-case-pitfall) below).
+
+#### Enum case pitfall
+
+**This has tripped us up more than once.** SQLAlchemy stores Python `enum.Enum`
+members using their `.name` (the Python identifier), **not** their `.value`. So
+`AnalysisType.FILE_EXTRACTION` (whose `.value` is `"file_extraction"`) is stored
+in PostgreSQL as the string `'FILE_EXTRACTION'` (uppercase).
+
+The `analysistype` PostgreSQL enum therefore contains uppercase strings like
+`'FILE_EXTRACTION'`, `'ARCHIVE_DETECT'`, `'PRODUCT_RECOGNITION'`. **Always use the
+uppercase name in `ADD VALUE` migrations:**
+
+```python
+# CORRECT
+op.execute(sa.text("ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'MY_NEW_TYPE'"))
+
+# WRONG — will fail at runtime with:
+# invalid input value for enum analysistype: "MY_NEW_TYPE"
+op.execute(sa.text("ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'my_new_type'"))
+```
+
+This applies to every `SQLEnum(SomePythonEnum)` column in the project: `analysistype`,
+`artefacttype`, `analysisstatus`, `filesystemtype`, etc.
 
 **Protection and mastering indicator types** (`ArtefactProtection.protection_type` and `ArtefactMastering.mastering_type`) are free-text strings stored by the worker — they are not enums. Known values are documented in comments in `myapp/database.py`. If you introduce new indicator types in a worker tool, use short lowercase snake_case names (e.g. `bad_crc`, `bcd_timestamp`); the search UI will surface them automatically once they appear in the database.
 
@@ -323,7 +347,7 @@ This creates the `migrations/` directory structure and generates an initial migr
 
    Things to watch for:
    - Table or column renames are detected as a drop + create (data loss). Manually edit these to use `op.alter_column()` or `op.rename_table()`.
-   - Changes to enum values may need manual handling.
+   - Changes to enum values may need manual handling. See [Enum case pitfall](#enum-case-pitfall): use the **uppercase** enum name, not the lowercase value.
    - Check that both `upgrade()` and `downgrade()` functions look correct.
 
 4. **Apply the migration:**
