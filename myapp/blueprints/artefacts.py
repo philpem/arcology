@@ -1150,5 +1150,17 @@ def compute_hashes_route(uuid):
     return redirect(url_for(f'{ROUTENAME}.view', uuid=artefact.uuid))
 
 
+@blueprint.route('/<string:uuid>/rescan-hashes', methods=['POST'])
+@login_required
+@require_permission('read_write')
+def rescan_hashes_route(uuid):
+    """Re-link extracted files to active hash databases without re-analysing."""
+    from ..utils.hash_rescan import rescan_hashes_for_artefact
+    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    updated, total = rescan_hashes_for_artefact(artefact)
+    flash(f'Hash rescan complete: {updated} of {total} files updated.', 'success')
+    return redirect(url_for(f'{ROUTENAME}.view', uuid=artefact.uuid))
+
+
 
 # vim: ts=4 sw=4 et

@@ -71,11 +71,22 @@
                     <dd>{% for tag in artefact.tags %}<span class="badge bg-info text-dark me-1">{{ tag.name }}</span>{% endfor %}</dd>
                     {% endif %}
                 </dl>
-                {% if not artefact.md5 and user_can_write %}
-                <form action="{{ url_for('myapp_blueprints_artefacts.compute_hashes_route', uuid=artefact.uuid) }}" method="post" class="mt-3">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-sm btn-outline-secondary"><i class="bi bi-hash"></i> Compute Hashes</button>
-                </form>
+                {% if user_can_write %}
+                <div class="d-flex gap-2 mt-3 flex-wrap">
+                    {% if not artefact.md5 %}
+                    <form action="{{ url_for('myapp_blueprints_artefacts.compute_hashes_route', uuid=artefact.uuid) }}" method="post">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-outline-secondary"><i class="bi bi-hash"></i> Compute Hashes</button>
+                    </form>
+                    {% endif %}
+                    <form action="{{ url_for('myapp_blueprints_artefacts.rescan_hashes_route', uuid=artefact.uuid) }}" method="post">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-outline-secondary"
+                                title="Re-link extracted files to active hash databases without re-analysing">
+                            <i class="bi bi-arrow-repeat"></i> Rescan Known Files
+                        </button>
+                    </form>
+                </div>
                 {% endif %}
             </div>
         </div>

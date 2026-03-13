@@ -23,6 +23,7 @@ from ..database import (
     ArtefactProtection, ArtefactMastering,
 )
 from .artefacts import get_artefact_path, _delete_artefact_files, _delete_item_files
+from ..utils.hash_rescan import find_known_file
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -914,18 +915,6 @@ def known_file_to_dict(kf):
         'product_version': kf.product_version,
     }
 
-
-def find_known_file(md5=None, sha1=None, file_size=None):
-    query = KnownFile.query
-    if md5:
-        query = query.filter(KnownFile.md5 == md5.lower())
-    elif sha1:
-        query = query.filter(KnownFile.sha1 == sha1.lower())
-    else:
-        return None
-    if file_size:
-        query = query.filter(KnownFile.file_size == file_size)
-    return query.first()
 
 
 # =============================================================================

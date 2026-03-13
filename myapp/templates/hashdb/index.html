@@ -54,14 +54,21 @@
 <div class="card">
     <div class="table-responsive">
         <table class="table table-hover mb-0">
-            <thead><tr><th>Name</th><th>Platform</th><th>Version</th><th>Files</th><th>Folder recognition</th><th>Updated</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Platform</th><th>Version</th><th>Files</th><th>Active</th><th>Folder recognition</th><th>Updated</th><th></th></tr></thead>
             <tbody>
                 {% for database in databases %}
-                <tr>
-                    <td><a href="{{ url_for('myapp_blueprints_hashdb.view', id=database.id) }}">{{ database.name }}</a></td>
+                <tr{% if not database.is_active %} class="text-muted"{% endif %}>
+                    <td><a href="{{ url_for('myapp_blueprints_hashdb.view', id=database.id) }}">{{ database.name }}</a>{% if not database.is_active %} <span class="badge bg-secondary">inactive</span>{% endif %}</td>
                     <td>{{ database.platform.name if database.platform else 'All' }}</td>
                     <td>{{ database.version or '—' }}</td>
                     <td>{{ database.file_count or 0 }}</td>
+                    <td>
+                        {% if database.is_active %}
+                        <span class="badge bg-success">Yes</span>
+                        {% else %}
+                        <span class="badge bg-secondary">No</span>
+                        {% endif %}
+                    </td>
                     <td>
                         {% if database.enable_product_recognition %}
                         <span class="badge bg-success">On</span>
@@ -80,7 +87,7 @@
                     </td>
                 </tr>
                 {% else %}
-                <tr><td colspan="7" class="text-center text-muted">No hash databases defined yet.</td></tr>
+                <tr><td colspan="8" class="text-center text-muted">No hash databases defined yet.</td></tr>
                 {% endfor %}
             </tbody>
         </table>

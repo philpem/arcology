@@ -153,6 +153,22 @@ def toggle_recognition(id):
     return redirect(url_for(f'{ROUTENAME}.view', id=id))
 
 
+@blueprint.route('/<int:id>/toggle-active', methods=['POST'])
+@login_required
+@require_permission('read_write')
+def toggle_active(id):
+    database = HashDatabase.query.get_or_404(id)
+    database.is_active = not database.is_active
+    db.session.commit()
+    state = 'enabled' if database.is_active else 'disabled'
+    flash(
+        f'Hash database "{database.name}" {state}. '
+        f'Run "Rescan Known Files" on affected artefacts to update file links.',
+        'success' if database.is_active else 'warning',
+    )
+    return redirect(url_for(f'{ROUTENAME}.view', id=id))
+
+
 # =============================================================================
 # Export
 # =============================================================================
