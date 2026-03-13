@@ -1,14 +1,16 @@
-"""Add KnownProduct, RecognisedProduct tables; extend HashDatabase and KnownFile
+"""Add hash database product recognition and known file management
 
 Adds:
+- PRODUCT_RECOGNITION value to analysistype enum
 - known_products table (product/application grouping within a hash database)
 - recognised_products table (analysis results linking partitions to products)
 - HashDatabase.enable_product_recognition column
+- HashDatabase.is_active column
 - KnownFile.product_id, is_required, relative_path columns
 
-Revision ID: 000069b47d67
-Revises: 000069b47d66
-Create Date: 2026-03-12 00:00:02.000000
+Revision ID: 000069b47df0
+Revises: 000069b0e773
+Create Date: 2026-03-13
 
 """
 from alembic import op
@@ -16,13 +18,25 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = '000069b47d67'
-down_revision = '000069b47d66'
+revision = '000069b47df0'
+down_revision = '000069b0e773'
 branch_labels = None
 depends_on = None
 
+# ALTER TYPE ADD VALUE cannot run inside a transaction in PostgreSQL.
+autocommit = True
+
 
 def upgrade():
+    bind = op.get_bind()
+
+    # Add PRODUCT_RECOGNITION to the analysistype enum.
+    # Must run outside a transaction (autocommit = True above).
+    if bind.dialect.name == 'postgresql':
+        op.execute(sa.text(
+            "ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'PRODUCT_RECOGNITION'"
+        ))
+
     # New table: known_products
     op.create_table(
         'known_products',
@@ -66,6 +80,8 @@ def upgrade():
     # Extend hash_databases
     op.add_column('hash_databases',
         sa.Column('enable_product_recognition', sa.Boolean(), nullable=False, server_default='false'))
+    op.add_column('hash_databases',
+        sa.Column('is_active', sa.Boolean(), nullable=False, server_default='true'))
 
     # Extend known_files
     op.add_column('known_files',
@@ -77,7 +93,6 @@ def upgrade():
 
     op.create_index('ix_known_files_product_id', 'known_files', ['product_id'])
 
-    bind = op.get_bind()
     if bind.dialect.name == 'postgresql':
         op.create_foreign_key(
             'fk_known_files_product_id',
@@ -85,9 +100,6 @@ def upgrade():
             ['product_id'], ['id'],
             ondelete='SET NULL',
         )
-    else:
-        # SQLite: skip named FK constraints (not enforced anyway)
-        pass
 
 
 def downgrade():
@@ -100,6 +112,7 @@ def downgrade():
     op.drop_column('known_files', 'is_required')
     op.drop_column('known_files', 'product_id')
 
+    op.drop_column('hash_databases', 'is_active')
     op.drop_column('hash_databases', 'enable_product_recognition')
 
     op.drop_index('ix_recognised_products_partition_product', 'recognised_products')
@@ -110,5 +123,8 @@ def downgrade():
     op.drop_index('ix_known_products_title', 'known_products')
     op.drop_index('ix_known_products_database_id', 'known_products')
     op.drop_table('known_products')
+
+    # Note: PostgreSQL does not support removing enum values.
+    # The 'PRODUCT_RECOGNITION' value added to analysistype cannot be undone.
 
 # vim: ts=4 sw=4 et
