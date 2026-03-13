@@ -6,6 +6,7 @@ dispatches them to appropriate handlers.
 """
 
 import functools
+import hashlib
 import json
 import shutil
 import tempfile
@@ -1404,6 +1405,21 @@ class AnalysisWorker:
             else:
                 file_entry['path'] = sanitize_path(str(rel_path))
 
+            try:
+                md5_h = hashlib.md5()
+                sha1_h = hashlib.sha1()
+                sha256_h = hashlib.sha256()
+                with open(file_path, 'rb') as fh:
+                    for chunk in iter(lambda: fh.read(65536), b''):
+                        md5_h.update(chunk)
+                        sha1_h.update(chunk)
+                        sha256_h.update(chunk)
+                file_entry['md5'] = md5_h.hexdigest()
+                file_entry['sha1'] = sha1_h.hexdigest()
+                file_entry['sha256'] = sha256_h.hexdigest()
+            except OSError:
+                pass
+
             files.append(file_entry)
 
         # Register extracted files in the same partition with parent_file_id
@@ -1420,6 +1436,9 @@ class AnalysisWorker:
                         'file_size': f['size'],
                         'parent_file_id': f['parent_file_id'],
                         'extraction_depth': f['extraction_depth'],
+                        'md5': f.get('md5'),
+                        'sha1': f.get('sha1'),
+                        'sha256': f.get('sha256'),
                     }
                     if f.get('risc_os_filetype'):
                         record['risc_os_filetype'] = f['risc_os_filetype']

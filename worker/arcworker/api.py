@@ -271,6 +271,7 @@ class ArcologyAPI:
                     'crc32': f.get('crc32'),
                     'md5': f.get('md5'),
                     'sha1': f.get('sha1'),
+                    'sha256': f.get('sha256'),
                     # Archive support fields
                     'risc_os_filetype': f.get('risc_os_filetype'),
                     'parent_file_id': f.get('parent_file_id'),

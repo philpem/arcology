@@ -702,6 +702,7 @@ def add_files(uuid):
             file_size=f.get('file_size'),
             md5=f.get('md5'),
             sha1=f.get('sha1'),
+            sha256=f.get('sha256'),
             crc32=f.get('crc32'),
             # Archive support fields
             is_directory=f.get('is_directory', False),
