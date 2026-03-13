@@ -4,6 +4,7 @@ Arcology - Artefacts Blueprint
 CRUD operations for digital artefacts with file upload and auto-analysis.
 """
 
+import glob
 import os
 import hashlib
 import shutil
@@ -772,27 +773,37 @@ def add_to_hashdb(uuid):
                     base = os.path.join(output_folder, base)
                 # File path within the extraction directory
                 file_path_on_disk = os.path.join(base, ef.path.lstrip('/'))
-                if os.path.isfile(file_path_on_disk):
-                    try:
-                        md5_h = hashlib.md5()
-                        sha1_h = hashlib.sha1()
-                        sha256_h = hashlib.sha256()
-                        with open(file_path_on_disk, 'rb') as fh:
-                            for chunk in iter(lambda: fh.read(65536), b''):
-                                md5_h.update(chunk)
-                                sha1_h.update(chunk)
-                                sha256_h.update(chunk)
-                        md5 = md5_h.hexdigest()
-                        sha1 = sha1_h.hexdigest()
-                        sha256 = sha256_h.hexdigest()
-                        # Persist back to ExtractedFile
-                        ef.md5 = md5
-                        ef.sha1 = sha1
-                        ef.sha256 = sha256
-                    except OSError:
+                # For Acorn archives the worker stores the RISC OS display
+                # name in ef.path (e.g. "!Boot,ffe/!Run") but the actual
+                # file on disk has a filetype suffix ("!Boot,ffe/!Run,feb8").
+                # Fall back to a glob if the exact path isn't found.
+                if not os.path.isfile(file_path_on_disk):
+                    candidates = [
+                        f for f in glob.glob(file_path_on_disk + ',*')
+                        if os.path.isfile(f)
+                    ]
+                    if candidates:
+                        file_path_on_disk = candidates[0]
+                    else:
                         skipped_no_file.append(ef.path)
                         continue
-                else:
+                try:
+                    md5_h = hashlib.md5()
+                    sha1_h = hashlib.sha1()
+                    sha256_h = hashlib.sha256()
+                    with open(file_path_on_disk, 'rb') as fh:
+                        for chunk in iter(lambda: fh.read(65536), b''):
+                            md5_h.update(chunk)
+                            sha1_h.update(chunk)
+                            sha256_h.update(chunk)
+                    md5 = md5_h.hexdigest()
+                    sha1 = sha1_h.hexdigest()
+                    sha256 = sha256_h.hexdigest()
+                    # Persist back to ExtractedFile
+                    ef.md5 = md5
+                    ef.sha1 = sha1
+                    ef.sha256 = sha256
+                except OSError:
                     skipped_no_file.append(ef.path)
                     continue
             else:
