@@ -5,9 +5,9 @@ and output file path, e.g. when a worker retries a produce-artefact call after
 a network timeout.  NULL values in derived_from_analysis_id are not considered
 equal in SQL, so original (non-derived) artefacts are unaffected.
 
-Revision ID: e5f6a7b8c9d0
-Revises: d1e2f3a4b5c6
-Create Date: 2026-03-11 00:00:00.000000
+Revision ID: 000069b0e773
+Revises: 000069ae92b3
+Create Date: 2026-03-11 03:54:27.000000
 
 """
 from alembic import op
@@ -15,8 +15,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = 'e5f6a7b8c9d0'
-down_revision = 'd1e2f3a4b5c6'
+revision = '000069b0e773'
+down_revision = '000069ae92b3'
 branch_labels = None
 depends_on = None
 

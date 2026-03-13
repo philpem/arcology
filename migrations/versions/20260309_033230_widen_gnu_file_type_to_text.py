@@ -2,9 +2,9 @@
 
 file(1) output can exceed 256 characters for complex image types.
 
-Revision ID: a1b2c3d4e5f6
-Revises: b2e8f4a1c9d3
-Create Date: 2026-03-09 00:00:01.000000
+Revision ID: 000069ae3f4e
+Revises: 000069ae3f4d
+Create Date: 2026-03-09 03:32:30.000000
 
 """
 from alembic import op
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = 'a1b2c3d4e5f6'
-down_revision = 'b2e8f4a1c9d3'
+revision = '000069ae3f4e'
+down_revision = '000069ae3f4d'
 branch_labels = None
 depends_on = None
 
