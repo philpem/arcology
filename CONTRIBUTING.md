@@ -375,6 +375,7 @@ This creates the `migrations/` directory structure and generates an initial migr
 - **Always review generated migrations.** Alembic's auto-detection is good but not infallible. It cannot detect renamed columns/tables, changes within existing enum types, or changes to constraints that aren't reflected in the model metadata.
 - **Commit migrations to version control.** They are part of the project history and other developers will need them.
 - **One logical change per migration.** Don't batch unrelated schema changes into a single migration -- it makes rollbacks harder.
+- **Never use placeholder revision IDs** like `a1b2c3d4e5f6`. They look unique but collide when two authors independently pick the same sequential pattern, causing Alembic to report duplicate revisions and a cycle error. For hand-written migrations, generate an ID from the current UTC timestamp: `python3 -c "import time; print(hex(int(time.time()))[2:].zfill(12))"`. Alembic-generated migrations (`flask db migrate`) produce random IDs automatically — this only applies to migrations written by hand.
 - **If you get "Target database is not up to date"**, run `flask db upgrade` first to bring your database to the latest migration before generating a new one.
 - **If you get "Can't locate revision"** after pulling changes, you may need to `flask db upgrade` to apply migrations created by others.
 - **To start fresh** during development (throwing away all data), drop the database and re-run `flask db upgrade`.

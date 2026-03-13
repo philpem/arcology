@@ -5,7 +5,7 @@ to the analysistype PostgreSQL enum, but SQLAlchemy stores enum names in
 uppercase (e.g. 'FILE_EXTRACTION', 'ARCHIVE_DETECT'). This migration adds the
 correct uppercase value 'PRODUCT_RECOGNITION'.
 
-Revision ID: a1b2c3d4e5f6
+Revision ID: 000069b41ab4
 Revises: f3a4b5c6d7e8
 Create Date: 2026-03-13 00:00:01.000000
 
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = 'a1b2c3d4e5f6'
+revision = '000069b41ab4'
 down_revision = 'f3a4b5c6d7e8'
 branch_labels = None
 depends_on = None

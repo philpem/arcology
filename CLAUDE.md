@@ -208,6 +208,28 @@ flask db stamp <previous_revision_id>
 flask db upgrade
 ```
 
+#### Migration revision IDs
+
+**Never use placeholder or patterned IDs** (e.g. `a1b2c3d4e5f6`, `d1e2f3a4b5c6`).
+These look unique but collide with other migrations using the same pattern.
+
+When writing a migration by hand, generate the revision ID from the current UTC
+time in seconds, converted to hex, zero-padded to 12 characters:
+
+```python
+import time
+hex(int(time.time()))[2:].zfill(12)   # e.g. '000069b41ab4'
+```
+
+Or from the shell:
+
+```bash
+python3 -c "import time; print(hex(int(time.time()))[2:].zfill(12))"
+```
+
+Alembic-generated migrations (`flask db migrate`) produce their own random IDs
+automatically — this only applies to hand-written migrations.
+
 ### Analysis pipeline flow
 
 Upload triggers auto-analysis based on `ANALYSIS_MAP` -> worker claims job atomically -> processes with external tools -> reports results via API -> derived artefacts trigger follow-on analyses (e.g., flux -> decode -> file listing).
