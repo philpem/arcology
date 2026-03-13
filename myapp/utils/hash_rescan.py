@@ -2,12 +2,19 @@
 
 Provides find_known_file() and the rescan helpers that re-link
 ExtractedFile rows to active hash databases without re-analysing.
+Also provides queue_product_recognition_for_partitions() to re-trigger
+the worker's folder-level product recognition after hash database changes.
 """
+
+import json
 
 from sqlalchemy import or_
 
 from ..extensions import db
-from ..database import ExtractedFile, Partition, KnownFile, HashDatabase
+from ..database import (
+    ExtractedFile, Partition, KnownFile, HashDatabase,
+    Analysis, AnalysisType, AnalysisStatus,
+)
 
 
 def find_known_file(md5=None, sha1=None, file_size=None):
@@ -161,6 +168,47 @@ def rescan_links_for_known_file_id(kf_id):
     """
     query = ExtractedFile.query.filter(ExtractedFile.known_file_id == kf_id)
     return rescan_hashes_for_queryset(query)
+
+
+def queue_product_recognition_for_partitions(partition_ids):
+    """Queue PRODUCT_RECOGNITION analyses for the given partition IDs.
+
+    Called after hash database changes (new files, edits, deletes,
+    imports, enable_product_recognition toggled on) so that the worker
+    re-runs folder-level product matching against the updated database.
+
+    One Analysis record is created per partition.  To avoid flooding the
+    queue, partitions whose artefact already has a PENDING or RUNNING
+    PRODUCT_RECOGNITION are skipped (the in-flight analysis will use the
+    current database state when it runs).
+
+    Returns the number of newly queued analyses.
+    """
+    queued = 0
+    for pid in partition_ids:
+        partition = db.session.get(Partition, pid)
+        if not partition:
+            continue
+        existing = (
+            Analysis.query
+            .filter_by(
+                artefact_id=partition.artefact_id,
+                analysis_type=AnalysisType.PRODUCT_RECOGNITION,
+            )
+            .filter(Analysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.RUNNING]))
+            .first()
+        )
+        if not existing:
+            db.session.add(Analysis(
+                artefact_id=partition.artefact_id,
+                analysis_type=AnalysisType.PRODUCT_RECOGNITION,
+                status=AnalysisStatus.PENDING,
+                hints=json.dumps({'partition_uuid': partition.uuid}),
+            ))
+            queued += 1
+    if queued:
+        db.session.commit()
+    return queued
 
 
 def rescan_hashes_for_new_known_files(kf_list, batch_size=500):

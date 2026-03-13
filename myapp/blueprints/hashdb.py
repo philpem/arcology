@@ -14,11 +14,32 @@ from flask_wtf import FlaskForm
 from wtforms import StringField, TextAreaField, SelectField, BooleanField
 from wtforms.validators import DataRequired, Optional, Length
 
+from sqlalchemy import or_
+
 from ..extensions import db
-from ..database import Platform, HashDatabase, KnownProduct, KnownFile
+from ..database import Platform, HashDatabase, KnownProduct, KnownFile, ExtractedFile
 from ..permissions import require_permission
 
 ROUTENAME = __name__.replace('.', '_')
+
+
+def _partition_ids_for_hashes(md5, sha1, file_size=None):
+    """Return a set of partition_ids for ExtractedFiles matching md5 or sha1."""
+    conditions = []
+    if md5:
+        conditions.append(ExtractedFile.md5 == md5)
+    if sha1:
+        conditions.append(ExtractedFile.sha1 == sha1)
+    if not conditions:
+        return set()
+    query = (
+        ExtractedFile.query
+        .with_entities(ExtractedFile.partition_id)
+        .filter(or_(*conditions))
+    )
+    if file_size is not None:
+        query = query.filter(ExtractedFile.file_size == file_size)
+    return {row[0] for row in query.all()}
 
 blueprint = Blueprint(ROUTENAME, __name__, url_prefix='/hashdb', template_folder='templates')
 
@@ -150,6 +171,21 @@ def toggle_recognition(id):
     db.session.commit()
     state = 'enabled' if database.enable_product_recognition else 'disabled'
     flash(f'Folder recognition {state} for "{database.name}".', 'success')
+    if database.enable_product_recognition:
+        # Newly enabled: queue PRODUCT_RECOGNITION for every partition
+        # that has extracted files so the worker can produce results.
+        from ..utils.hash_rescan import queue_product_recognition_for_partitions
+        from ..database import Partition
+        partition_ids = {
+            row[0] for row in
+            Partition.query
+            .with_entities(Partition.id)
+            .filter(Partition.total_files > 0)
+            .all()
+        }
+        queued = queue_product_recognition_for_partitions(partition_ids)
+        if queued:
+            flash(f'Queued product recognition for {queued} partition(s).', 'info')
     return redirect(url_for(f'{ROUTENAME}.view', id=id))
 
 
@@ -340,8 +376,22 @@ def import_database():
         db.session.commit()
         flash(f'Imported {products_added} product(s) and {files_added} file(s) into "{database.name}".', 'success')
         if database.is_active and new_kf_list:
-            from ..utils.hash_rescan import rescan_hashes_for_new_known_files
+            from ..utils.hash_rescan import rescan_hashes_for_new_known_files, queue_product_recognition_for_partitions
             rescan_hashes_for_new_known_files(new_kf_list)
+            if database.enable_product_recognition:
+                md5s = [kf.md5 for kf in new_kf_list if kf.md5]
+                sha1s = [kf.sha1 for kf in new_kf_list if kf.sha1]
+                conditions = ([ExtractedFile.md5.in_(md5s)] if md5s else []) + \
+                             ([ExtractedFile.sha1.in_(sha1s)] if sha1s else [])
+                if conditions:
+                    partition_ids = {
+                        row[0] for row in
+                        ExtractedFile.query
+                        .with_entities(ExtractedFile.partition_id)
+                        .filter(or_(*conditions))
+                        .all()
+                    }
+                    queue_product_recognition_for_partitions(partition_ids)
         return redirect(url_for(f'{ROUTENAME}.view', id=database.id))
 
     else:  # CSV
@@ -407,8 +457,22 @@ def import_database():
         db.session.commit()
         flash(f'Imported {files_added} file(s) from CSV into "{database.name}".', 'success')
         if database.is_active and new_kf_list:
-            from ..utils.hash_rescan import rescan_hashes_for_new_known_files
+            from ..utils.hash_rescan import rescan_hashes_for_new_known_files, queue_product_recognition_for_partitions
             rescan_hashes_for_new_known_files(new_kf_list)
+            if database.enable_product_recognition:
+                md5s = [kf.md5 for kf in new_kf_list if kf.md5]
+                sha1s = [kf.sha1 for kf in new_kf_list if kf.sha1]
+                conditions = ([ExtractedFile.md5.in_(md5s)] if md5s else []) + \
+                             ([ExtractedFile.sha1.in_(sha1s)] if sha1s else [])
+                if conditions:
+                    partition_ids = {
+                        row[0] for row in
+                        ExtractedFile.query
+                        .with_entities(ExtractedFile.partition_id)
+                        .filter(or_(*conditions))
+                        .all()
+                    }
+                    queue_product_recognition_for_partitions(partition_ids)
         return redirect(url_for(f'{ROUTENAME}.view', id=database.id))
 
 
@@ -506,8 +570,11 @@ def add_known_file(db_id, pid):
     db.session.commit()
     flash(f'File "{filename}" added to "{product.title}".', 'success')
     if product.database.is_active:
-        from ..utils.hash_rescan import rescan_hashes_for_known_file
+        from ..utils.hash_rescan import rescan_hashes_for_known_file, queue_product_recognition_for_partitions
         rescan_hashes_for_known_file(kf)
+        if product.database.enable_product_recognition:
+            partition_ids = _partition_ids_for_hashes(kf.md5, kf.sha1, kf.file_size)
+            queue_product_recognition_for_partitions(partition_ids)
     return redirect(url_for(f'{ROUTENAME}.view', id=db_id) + f'#product-{pid}')
 
 
@@ -522,6 +589,7 @@ def edit_known_file(db_id, pid, fid):
         return redirect(url_for(f'{ROUTENAME}.view', id=db_id) + f'#product-{pid}')
     kf_id = kf.id
     is_active = kf.database.is_active
+    enable_recognition = kf.database.enable_product_recognition
     kf.filename = filename
     kf.md5 = request.form.get('md5', '').strip().lower() or None
     kf.sha1 = request.form.get('sha1', '').strip().lower() or None
@@ -535,11 +603,15 @@ def edit_known_file(db_id, pid, fid):
     db.session.commit()
     flash(f'File "{kf.filename}" updated.', 'success')
     if is_active:
-        from ..utils.hash_rescan import rescan_links_for_known_file_id, rescan_hashes_for_known_file
+        from ..utils.hash_rescan import (rescan_links_for_known_file_id, rescan_hashes_for_known_file,
+                                         queue_product_recognition_for_partitions)
         # Re-evaluate files that were linked via the old hashes (they may
         # no longer match), then scan for files matching the new hashes.
         rescan_links_for_known_file_id(kf_id)
         rescan_hashes_for_known_file(kf)
+        if enable_recognition:
+            partition_ids = _partition_ids_for_hashes(kf.md5, kf.sha1, kf.file_size)
+            queue_product_recognition_for_partitions(partition_ids)
     return redirect(url_for(f'{ROUTENAME}.view', id=db_id) + f'#product-{pid}')
 
 
@@ -552,16 +624,30 @@ def delete_known_file(db_id, pid, fid):
     kf_id = kf.id
     database = kf.database
     is_active = database.is_active
+    enable_recognition = database.enable_product_recognition
+    # Capture affected partition IDs before the delete removes the link.
+    if is_active and enable_recognition:
+        pre_delete_partition_ids = {
+            row[0] for row in
+            ExtractedFile.query
+            .with_entities(ExtractedFile.partition_id)
+            .filter(ExtractedFile.known_file_id == kf_id)
+            .all()
+        }
+    else:
+        pre_delete_partition_ids = set()
     db.session.delete(kf)
     if database.file_count and database.file_count > 0:
         database.file_count -= 1
     db.session.commit()
     flash(f'File "{filename}" deleted.', 'success')
     if is_active:
-        from ..utils.hash_rescan import rescan_links_for_known_file_id
+        from ..utils.hash_rescan import rescan_links_for_known_file_id, queue_product_recognition_for_partitions
         # Re-evaluate files that were linked to the deleted KnownFile;
         # they may link to another active database or become unlinked.
         rescan_links_for_known_file_id(kf_id)
+        if enable_recognition and pre_delete_partition_ids:
+            queue_product_recognition_for_partitions(pre_delete_partition_ids)
     return redirect(url_for(f'{ROUTENAME}.view', id=db_id) + f'#product-{pid}')
 
 
