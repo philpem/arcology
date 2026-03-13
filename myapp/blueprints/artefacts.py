@@ -823,6 +823,7 @@ def add_to_hashdb(uuid):
             sha1=sha1,
             sha256=sha256,
             is_required=is_required,
+            relative_path=ef.path or None,
         )
         db.session.add(kf)
         added += 1
