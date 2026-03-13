@@ -1,8 +1,8 @@
 """Add API key authentication and user permissions
 
-Revision ID: 1c1217874f41
-Revises: a3f9c1d2e4b7
-Create Date: 2026-03-07 00:00:00.000000
+Revision ID: 000069ac19ee
+Revises: 000069ac0c86
+Create Date: 2026-03-07 12:28:30.000000
 
 """
 from alembic import op
@@ -11,8 +11,8 @@ from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
 
 
 # revision identifiers, used by Alembic.
-revision = '1c1217874f41'
-down_revision = 'a3f9c1d2e4b7'
+revision = '000069ac19ee'
+down_revision = '000069ac0c86'
 branch_labels = None
 depends_on = None
 

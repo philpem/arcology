@@ -1,8 +1,8 @@
 """Add search index tables for protection/mastering indicators and partition gnu_file_type
 
-Revision ID: b2e8f4a1c9d3
-Revises: 1c1217874f41
-Create Date: 2026-03-09 00:00:00.000000
+Revision ID: 000069ae3f4d
+Revises: 000069adb6c3
+Create Date: 2026-03-09 03:32:29.000000
 
 """
 from alembic import op
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = 'b2e8f4a1c9d3'
-down_revision = 'c4d5e6f7a8b9'
+revision = '000069ae3f4d'
+down_revision = '000069adb6c3'
 branch_labels = None
 depends_on = None
 

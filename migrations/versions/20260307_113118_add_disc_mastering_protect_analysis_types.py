@@ -1,8 +1,8 @@
 """Add disc_mastering_detect and disc_protection_detect analysis types
 
-Revision ID: a3f9c1d2e4b7
-Revises: 114ecb0fef06
-Create Date: 2026-03-06 00:00:00.000000
+Revision ID: 000069ac0c86
+Revises: 000069a1137d
+Create Date: 2026-03-07 11:31:18.000000
 
 """
 from alembic import op
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = 'a3f9c1d2e4b7'
-down_revision = '114ecb0fef06'
+revision = '000069ac0c86'
+down_revision = '000069a1137d'
 branch_labels = None
 depends_on = None
 

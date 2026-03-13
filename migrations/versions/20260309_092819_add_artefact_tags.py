@@ -2,9 +2,9 @@
 
 Extends tag support to artefacts using the same shared tag pool as items.
 
-Revision ID: d1e2f3a4b5c6
-Revises: c4d5e6f7a8b9
-Create Date: 2026-03-09 00:00:01.000000
+Revision ID: 000069ae92b3
+Revises: 000069ae3f4e
+Create Date: 2026-03-09 09:28:19.000000
 
 """
 from alembic import op
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = 'd1e2f3a4b5c6'
-down_revision = 'a1b2c3d4e5f6'
+revision = '000069ae92b3'
+down_revision = '000069ae3f4e'
 branch_labels = None
 depends_on = None
 

@@ -5,9 +5,9 @@ with lowercase values (read_only, read_write, read_upload), but SQLAlchemy
 stores Python enum member names which are uppercase (READ_ONLY, READ_WRITE,
 READ_UPLOAD). Rename the enum values in-place.
 
-Revision ID: c4d5e6f7a8b9
-Revises: b2e4f6a8c0d1
-Create Date: 2026-03-08 17:30:00.000000
+Revision ID: 000069adb6c3
+Revises: 000069ac2032
+Create Date: 2026-03-08 17:49:55.000000
 
 """
 from alembic import op
@@ -15,8 +15,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = 'c4d5e6f7a8b9'
-down_revision = 'b2e4f6a8c0d1'
+revision = '000069adb6c3'
+down_revision = '000069ac2032'
 branch_labels = None
 depends_on = None
 

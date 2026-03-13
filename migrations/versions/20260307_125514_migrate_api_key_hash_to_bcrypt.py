@@ -4,9 +4,9 @@ Widen key_hash column from String(64) to String(72) to accommodate bcrypt
 hashes (60 chars).  Existing keys hashed with SHA-256 are deactivated because
 their stored hashes cannot be verified with the new bcrypt scheme.
 
-Revision ID: b2e4f6a8c0d1
-Revises: 1c1217874f41
-Create Date: 2026-03-07 00:00:00.000000
+Revision ID: 000069ac2032
+Revises: 000069ac19ee
+Create Date: 2026-03-07 12:55:14.000000
 
 """
 from alembic import op
@@ -14,8 +14,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = 'b2e4f6a8c0d1'
-down_revision = '1c1217874f41'
+revision = '000069ac2032'
+down_revision = '000069ac19ee'
 branch_labels = None
 depends_on = None
 
