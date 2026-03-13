@@ -628,12 +628,17 @@
                         {% for hdb in hash_databases %}
                         <option value="{{ hdb.id }}">{{ hdb.name }}</option>
                         {% endfor %}
+                        <option value="new">+ Create new database…</option>
                     </select>
+                    <div id="new-database-fields" class="mt-2 d-none">
+                        <input type="text" name="new_database_name" id="new-database-name" class="form-control form-control-sm"
+                               placeholder="New database name" form="hashdb-form">
+                    </div>
                 </div>
-                <div class="mb-3">
+                <div class="mb-3" id="product-section">
                     <label class="form-label">Product <span class="text-danger">*</span></label>
                     <select name="product_id" id="modal-product-id" class="form-select" form="hashdb-form">
-                        <option value="">— select or create —</option>
+                        <option value="">— select a database first —</option>
                     </select>
                     <div id="new-product-fields" class="mt-2 d-none">
                         <input type="text" name="new_product_title" class="form-control form-control-sm mb-1"
@@ -714,28 +719,47 @@
     const dbSelect = document.getElementById('modal-database-id');
     const productSelect = document.getElementById('modal-product-id');
     const newProductFields = document.getElementById('new-product-fields');
+    const newDatabaseFields = document.getElementById('new-database-fields');
+    const newDatabaseName = document.getElementById('new-database-name');
+    const productSection = document.getElementById('product-section');
 
     if (dbSelect) {
         dbSelect.addEventListener('change', function() {
             const dbId = this.value;
             if (!dbId) {
-                productSelect.innerHTML = '<option value="">— select or create —</option>';
+                productSelect.innerHTML = '<option value="">— select a database first —</option>';
                 newProductFields.classList.add('d-none');
+                newDatabaseFields.classList.add('d-none');
+                newDatabaseName.required = false;
                 return;
             }
+            if (dbId === 'new') {
+                newDatabaseFields.classList.remove('d-none');
+                newDatabaseName.required = true;
+                // New DB means new product is required
+                populateProducts([]);
+                return;
+            }
+            newDatabaseFields.classList.add('d-none');
+            newDatabaseName.required = false;
             populateProducts(productCache[dbId] || []);
         });
     }
 
     function populateProducts(products) {
-        productSelect.innerHTML = '<option value="">— New product... —</option>';
+        productSelect.innerHTML = '<option value="">— New product… —</option>';
         products.forEach(p => {
             const opt = document.createElement('option');
             opt.value = p.id;
             opt.textContent = p.title;
             productSelect.appendChild(opt);
         });
-        newProductFields.classList.add('d-none');
+        // Auto-show new product fields when "New product…" is the only/selected option
+        if (productSelect.value === '') {
+            newProductFields.classList.remove('d-none');
+        } else {
+            newProductFields.classList.add('d-none');
+        }
     }
 
     if (productSelect) {

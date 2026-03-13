@@ -695,7 +695,7 @@ def add_to_hashdb(uuid):
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
 
     file_ids = request.form.getlist('file_ids', type=int)
-    database_id = request.form.get('database_id', type=int)
+    raw_db_id = request.form.get('database_id', '').strip()
     product_id = request.form.get('product_id', type=int)
     new_product_title = request.form.get('new_product_title', '').strip()
     new_product_description = request.form.get('new_product_description', '').strip()
@@ -705,14 +705,28 @@ def add_to_hashdb(uuid):
         flash('No files selected.', 'warning')
         return redirect(url_for(f'{ROUTENAME}.view', uuid=uuid, mode='hashdb'))
 
-    database = HashDatabase.query.get_or_404(database_id)
+    if raw_db_id == 'new':
+        new_db_name = request.form.get('new_database_name', '').strip()
+        if not new_db_name:
+            flash('Provide a name for the new hash database.', 'danger')
+            return redirect(url_for(f'{ROUTENAME}.view', uuid=uuid, mode='hashdb'))
+        database = HashDatabase(name=new_db_name)
+        db.session.add(database)
+        db.session.flush()
+    else:
+        try:
+            database_id = int(raw_db_id)
+        except (ValueError, TypeError):
+            flash('Select a hash database.', 'danger')
+            return redirect(url_for(f'{ROUTENAME}.view', uuid=uuid, mode='hashdb'))
+        database = HashDatabase.query.get_or_404(database_id)
 
     # Create or fetch the product
     if product_id:
-        product = KnownProduct.query.filter_by(id=product_id, database_id=database_id).first_or_404()
+        product = KnownProduct.query.filter_by(id=product_id, database_id=database.id).first_or_404()
     elif new_product_title:
         product = KnownProduct(
-            database_id=database_id,
+            database_id=database.id,
             title=new_product_title,
             description=new_product_description or None,
         )
@@ -786,11 +800,11 @@ def add_to_hashdb(uuid):
                 continue
 
         # Deduplicate: skip if this md5 already exists in the database
-        if KnownFile.query.filter_by(database_id=database_id, md5=md5).first():
+        if KnownFile.query.filter_by(database_id=database.id, md5=md5).first():
             continue
 
         kf = KnownFile(
-            database_id=database_id,
+            database_id=database.id,
             product_id=product.id,
             filename=ef.filename,
             file_size=ef.file_size,

@@ -10,9 +10,15 @@
     </ol>
 </nav>
 
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h1 class="mb-0"><i class="bi bi-database"></i> {{ database.name }}</h1>
-    <div class="d-flex gap-2">
+<div class="d-flex justify-content-between align-items-start mb-1">
+    <div>
+        <h1 class="mb-0"><i class="bi bi-database"></i> {{ database.name }}</h1>
+        <p class="text-muted small mb-0 mt-1">
+            {{ products|length }} product{% if products|length != 1 %}s{% endif %},
+            {{ database.file_count or 0 }} total known files{% if database.enable_product_recognition %} &middot; <span class="text-success fw-semibold">product recognition enabled</span>{% endif %}.
+        </p>
+    </div>
+    <div class="d-flex gap-2 mt-1">
         <div class="dropdown">
             <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown">
                 <i class="bi bi-download"></i> Export
@@ -31,20 +37,19 @@
     </div>
 </div>
 
-<div class="row g-3 mb-4">
-    <!-- DB metadata / settings -->
-    <div class="col-md-4">
-        <div class="card h-100">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <span><i class="bi bi-info-circle"></i> Details</span>
-                {% if user_can_write %}<button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#editDbForm"><i class="bi bi-pencil"></i> Edit</button>{% endif %}
+<div class="row g-3 mt-1">
+    <!-- Sidebar: DB metadata / settings -->
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center py-1">
+                <span class="small"><i class="bi bi-info-circle"></i> Details</span>
+                {% if user_can_write %}<button class="btn btn-sm btn-outline-secondary py-0" type="button" data-bs-toggle="collapse" data-bs-target="#editDbForm"><i class="bi bi-pencil"></i></button>{% endif %}
             </div>
-            <div class="card-body">
+            <div class="card-body py-2 px-3">
                 <dl class="mb-0 small">
                     <dt>Platform</dt><dd>{{ database.platform.name if database.platform else 'All' }}</dd>
                     <dt>Version</dt><dd>{{ database.version or '—' }}</dd>
-                    <dt>Files</dt><dd>{{ database.file_count or 0 }}</dd>
-                    <dt>Product recognition</dt>
+                    <dt>Recognition</dt>
                     <dd>
                         {% if database.enable_product_recognition %}
                         <span class="badge bg-success">Enabled</span>
@@ -52,9 +57,9 @@
                         <span class="badge bg-secondary">Disabled</span>
                         {% endif %}
                     </dd>
-                    {% if database.source_url %}<dt>Source</dt><dd><a href="{{ database.source_url }}" target="_blank" rel="noopener">{{ database.source_url|truncate(40) }}</a></dd>{% endif %}
-                    {% if database.description %}<dt>Description</dt><dd>{{ database.description }}</dd>{% endif %}
-                    <dt>Updated</dt><dd>{{ database.updated_at.strftime('%Y-%m-%d %H:%M') }}</dd>
+                    {% if database.source_url %}<dt>Source</dt><dd><a href="{{ database.source_url }}" target="_blank" rel="noopener">{{ database.source_url|truncate(30) }}</a></dd>{% endif %}
+                    {% if database.description %}<dt>Notes</dt><dd>{{ database.description }}</dd>{% endif %}
+                    <dt>Updated</dt><dd>{{ database.updated_at.strftime('%Y-%m-%d') }}</dd>
                 </dl>
             </div>
             {% if user_can_write %}
@@ -99,23 +104,10 @@
         </div>
     </div>
 
-    <!-- Products summary -->
-    <div class="col-md-8">
-        <div class="card h-100">
-            <div class="card-body p-2">
-                <p class="text-muted small mb-0">
-                    {{ products|length }} product{% if products|length != 1 %}s{% endif %},
-                    {{ database.file_count or 0 }} total known files.
-                    {% if database.enable_product_recognition %}
-                    Product recognition is <strong>enabled</strong> for this database.
-                    {% endif %}
-                </p>
-            </div>
-        </div>
-    </div>
-</div>
+    <!-- Main area: Products -->
+    <div class="col-md-9">
 
-<!-- Products accordion -->
+<!-- Products header + new product form -->
 <div class="d-flex justify-content-between align-items-center mb-2">
     <h5 class="mb-0"><i class="bi bi-boxes"></i> Products</h5>
     {% if user_can_write %}
@@ -360,4 +352,7 @@
 </div>
 {% endfor %}
 </div><!-- accordion -->
+
+    </div><!-- col-md-9 -->
+</div><!-- row -->
 {% endblock %}

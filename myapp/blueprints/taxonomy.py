@@ -27,6 +27,7 @@ blueprint = Blueprint(ROUTENAME, __name__, url_prefix='/taxonomy', template_fold
 def init_app(app):
     """Register menu items."""
     app.add_menu_item("Taxonomy", f"{ROUTENAME}.index", 200)
+    app.add_menu_item("HashDB", f"{ROUTENAME}.hash_databases", 250)
 
 
 # =============================================================================
