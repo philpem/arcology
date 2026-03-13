@@ -226,7 +226,7 @@ class FileSearchForm(FlaskForm):
     path = StringField('Path/Directory', validators=[Optional()])
     md5 = StringField('MD5 Hash', validators=[Optional()])
     sha1 = StringField('SHA1 Hash', validators=[Optional()])
-    show_known = BooleanField('Show known files', default=False)
+    hide_known = BooleanField('Hide known files', default=False)
     show_directories = BooleanField('Show directories', default=False)
     recursive = BooleanField('Recursive (show all subdirs)', default=True)
 
@@ -428,7 +428,7 @@ def view(uuid):
     # so that BooleanField defaults (e.g. recursive=True) apply on first load.
     # Without this, WTForms treats missing checkbox keys as False.
     _file_filter_keys = {'partition_uuid', 'filename', 'extension', 'path', 'md5', 'sha1',
-                         'show_known', 'show_directories', 'recursive'}
+                         'hide_known', 'show_directories', 'recursive'}
     if _file_filter_keys & set(request.args.keys()):
         file_form = FileSearchForm(request.args)
     else:
@@ -478,8 +478,12 @@ def view(uuid):
         Partition.artefact_id.in_(all_artefact_ids)
     ).order_by(Partition.artefact_id, Partition.partition_index).all()
 
+    from sqlalchemy.orm import selectinload as _sil
     files_query = ExtractedFile.query.join(Partition).filter(
         Partition.artefact_id.in_(all_artefact_ids)
+    ).options(
+        _sil(ExtractedFile.known_file).selectinload(KnownFile.product),
+        _sil(ExtractedFile.known_file).selectinload(KnownFile.database),
     )
 
     # Filter by specific partition if requested.
@@ -533,7 +537,7 @@ def view(uuid):
     if file_form.sha1.data:
         files_query = files_query.filter(ExtractedFile.sha1 == file_form.sha1.data.lower())
     
-    if not file_form.show_known.data:
+    if file_form.hide_known.data:
         # Always show archive files even when hiding known files, because
         # archives serve as navigational pseudo-directories in the UI.
         from sqlalchemy import or_

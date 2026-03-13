@@ -427,7 +427,7 @@
                     <div class="col-md-1">{{ file_form.filetype(class="form-control form-control-sm", placeholder="Filetype") }}</div>
                     <div class="col-md-2">{{ file_form.path(class="form-control form-control-sm", placeholder="Path (e.g., Games/)") }}</div>
                     <div class="col-md-2">{{ file_form.md5(class="form-control form-control-sm", placeholder="MD5") }}</div>
-                    <div class="col-md-1"><div class="form-check form-check-sm">{{ file_form.show_known(class="form-check-input") }}<label class="form-check-label small">Known</label></div></div>
+                    <div class="col-md-1"><div class="form-check form-check-sm">{{ file_form.hide_known(class="form-check-input") }}<label class="form-check-label small">Hide Known</label></div></div>
                     <div class="col-md-1"><div class="form-check form-check-sm">{{ file_form.show_directories(class="form-check-input") }}<label class="form-check-label small">Dirs</label></div></div>
                     <div class="col-md-1"><button type="submit" class="btn btn-sm btn-secondary w-100">Filter</button></div>
                 </form>
@@ -551,7 +551,7 @@
                                     </span>
                                 {% else %}-{% endif %}
                             </td>
-                            <td>{% if file.is_known %}<span class="badge bg-secondary">{{ file.known_file.database.name }}</span>{% endif %}</td>
+                            <td>{% if file.is_known %}{% set _db_colors = ['info', 'success', 'primary', 'danger', 'warning', 'dark'] %}<span class="badge bg-{{ _db_colors[file.known_file.database_id % (_db_colors | length)] }}" title="{{ file.known_file.database.name }}">{{ file.known_file.product.title if file.known_file.product else file.known_file.database.name }}</span>{% endif %}</td>
                         </tr>
                         {% else %}
                         <tr><td colspan="{% if hashdb_mode %}6{% else %}5{% endif %}" class="text-center text-muted">No files{% if not all_partitions %} - run analysis to extract file listing{% endif %}</td></tr>
