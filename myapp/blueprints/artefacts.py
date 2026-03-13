@@ -8,6 +8,7 @@ import glob
 import os
 import hashlib
 import shutil
+import threading
 import uuid
 import json
 import mimetypes
@@ -390,33 +391,46 @@ def reset_artefact_for_reanalysis(artefact: Artefact):
 
     db.session.commit()
 
+    cache_dir = os.path.join(output_folder, '.cache', artefact.uuid)
+    return {
+        'output_files': output_files,
+        'output_dirs': output_dirs,
+        'cache_dir': cache_dir,
+    }
+
+
+def _cleanup_analysis_outputs(output_folder, output_files, output_dirs, cache_dir, logger):
+    """Delete analysis output files and directories.
+
+    Designed to run in a background daemon thread; all paths are passed as
+    plain strings so no ORM session or Flask app context is required.
+    """
     # Remove named output files (e.g., flux visualisation PNGs).
     for filename in output_files:
         path = os.path.join(output_folder, filename)
         if os.path.exists(path):
             try:
                 os.remove(path)
-                current_app.logger.info(f"Deleted output file: {filename}")
+                logger.info(f"Deleted output file: {filename}")
             except Exception as e:
-                current_app.logger.warning(f"Failed to delete output file {filename}: {e}")
+                logger.warning(f"Failed to delete output file {filename}: {e}")
 
     # Remove extraction output directories (e.g., extracted disc file trees).
     for path in output_dirs:
         if os.path.exists(path):
             try:
                 shutil.rmtree(path)
-                current_app.logger.info(f"Deleted output directory: {path}")
+                logger.info(f"Deleted output directory: {path}")
             except Exception as e:
-                current_app.logger.warning(f"Failed to delete output directory {path}: {e}")
+                logger.warning(f"Failed to delete output directory {path}: {e}")
 
     # Remove cached decompressed partition images created by PARTITION_DETECT.
-    cache_dir = os.path.join(output_folder, '.cache', artefact.uuid)
     if os.path.exists(cache_dir):
         try:
             shutil.rmtree(cache_dir)
-            current_app.logger.info(f"Deleted partition cache: {cache_dir}")
+            logger.info(f"Deleted partition cache: {cache_dir}")
         except Exception as e:
-            current_app.logger.warning(f"Failed to delete partition cache {cache_dir}: {e}")
+            logger.warning(f"Failed to delete partition cache {cache_dir}: {e}")
 
 
 def _resolve_artefact(item_id, artefact_id, root_id=None):
@@ -1142,8 +1156,23 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
         if form.notes.data:
             hints['notes'] = form.notes.data
 
-        reset_artefact_for_reanalysis(artefact)
+        cleanup = reset_artefact_for_reanalysis(artefact)
         queue_analyses_for_artefact(artefact, hints if hints else None)
+
+        # Run filesystem cleanup in background so the redirect happens immediately.
+        app = current_app._get_current_object()
+        t = threading.Thread(
+            target=_cleanup_analysis_outputs,
+            args=(
+                get_output_folder(),
+                cleanup['output_files'],
+                cleanup['output_dirs'],
+                cleanup['cache_dir'],
+                app.logger,
+            ),
+            daemon=True,
+        )
+        t.start()
 
         flash('Re-analysis queued. Previous results have been cleared.', 'success')
         return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug))

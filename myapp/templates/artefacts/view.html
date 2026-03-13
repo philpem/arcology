@@ -330,7 +330,11 @@
                         <tr>
                             <td><strong>{{ rp.product.title }}</strong></td>
                             <td><span class="badge bg-secondary">{{ rp.product.database.name }}</span></td>
-                            <td><code>{{ rp.folder_path }}</code></td>
+                            <td>
+                                {% set rp_colors = ['primary', 'success', 'warning', 'danger', 'info', 'secondary'] %}
+                                {% set rp_color = rp_colors[rp.partition.partition_index % rp_colors|length] %}
+                                <span class="badge bg-{{ rp_color }} me-1" title="Partition {{ rp.partition.partition_index }}: {{ rp.partition.label or rp.partition.filesystem.value }}">{{ rp.partition.partition_index }}</span><code>{{ rp.folder_path }}</code>
+                            </td>
                             <td>{{ rp.required_matched }}/{{ rp.required_total }}</td>
                             <td>{{ rp.optional_matched }}/{{ rp.optional_total }}</td>
                             <td>
@@ -481,7 +485,6 @@
                 <table class="table table-sm table-hover mb-0">
                     <thead><tr>
                         {% if hashdb_mode %}<th><input type="checkbox" id="select-all-files" title="Select all on this page"></th>{% endif %}
-                        <th>P</th>
                         {{ sort_th('Path', 'path') }}
                         {{ sort_th('Size', 'size') }}
                         {{ sort_th('Filetype', 'filetype') }}
@@ -498,9 +501,8 @@
                             {% if hashdb_mode %}
                             <td>{% if not file.is_directory %}<input type="checkbox" name="file_ids" value="{{ file.id }}" class="file-checkbox">{% endif %}</td>
                             {% endif %}
-                            <td><span class="badge bg-{{ partition_color }}" title="Partition {{ file.partition.partition_index }}">{{ file.partition.partition_index }}</span></td>
                             <td>
-                                {% if file.is_directory %}
+                                <span class="badge bg-{{ partition_color }} me-1" title="Partition {{ file.partition.partition_index }}: {{ file.partition.label or file.partition.filesystem.value }}">{{ file.partition.partition_index }}</span>{% if file.is_directory %}
                                     {# Directory - make it clickable to browse into it #}
                                     <a href="?{% if hashdb_mode %}mode=hashdb&{% endif %}partition_uuid={{ file.partition.uuid }}&path={{ (file.path + '/')|urlencode }}&recursive={{ file_form.recursive.data|default(true, true)|lower }}"
                                        class="text-primary text-decoration-none"
@@ -569,7 +571,7 @@
                             <td>{% if file.is_known %}{% set _db_colors = ['info', 'success', 'primary', 'danger', 'warning', 'dark'] %}<span class="badge bg-{{ _db_colors[file.known_file.database_id % (_db_colors | length)] }}" title="{{ file.known_file.database.name }}">{{ file.known_file.product.title if file.known_file.product else file.known_file.database.name }}</span>{% endif %}</td>
                         </tr>
                         {% else %}
-                        <tr><td colspan="{% if hashdb_mode %}6{% else %}5{% endif %}" class="text-center text-muted">No files{% if not all_partitions %} - run analysis to extract file listing{% endif %}</td></tr>
+                        <tr><td colspan="{% if hashdb_mode %}5{% else %}4{% endif %}" class="text-center text-muted">No files{% if not all_partitions %} - run analysis to extract file listing{% endif %}</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
