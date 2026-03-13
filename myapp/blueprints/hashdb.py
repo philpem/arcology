@@ -354,7 +354,10 @@ def import_database():
                 products_added += 1
             for f_data in p_data.get('files', []):
                 md5 = (f_data.get('md5') or '').strip().lower() or None
+                sha1_raw = (f_data.get('sha1') or '').strip().lower() or None
                 if md5 and KnownFile.query.filter_by(database_id=database.id, md5=md5).first():
+                    continue
+                if sha1_raw and not md5 and KnownFile.query.filter_by(database_id=database.id, sha1=sha1_raw).first():
                     continue
                 kf = KnownFile(
                     database_id=database.id,
@@ -362,7 +365,7 @@ def import_database():
                     filename=f_data.get('filename', ''),
                     file_size=f_data.get('file_size'),
                     md5=md5,
-                    sha1=(f_data.get('sha1') or '').strip().lower() or None,
+                    sha1=sha1_raw,
                     sha256=(f_data.get('sha256') or '').strip().lower() or None,
                     crc32=(f_data.get('crc32') or '').strip().lower() or None,
                     is_required=f_data.get('is_required', True),
@@ -427,7 +430,10 @@ def import_database():
             product = product_cache[p_title]
 
             md5 = (row.get('md5') or '').strip().lower() or None
+            sha1 = (row.get('sha1') or '').strip().lower() or None
             if md5 and KnownFile.query.filter_by(database_id=database.id, md5=md5).first():
+                continue
+            if sha1 and not md5 and KnownFile.query.filter_by(database_id=database.id, sha1=sha1).first():
                 continue
 
             file_size_str = (row.get('file_size') or '').strip()
@@ -442,7 +448,7 @@ def import_database():
                 filename=(row.get('filename') or '').strip(),
                 file_size=file_size,
                 md5=md5,
-                sha1=(row.get('sha1') or '').strip().lower() or None,
+                sha1=sha1,
                 sha256=(row.get('sha256') or '').strip().lower() or None,
                 crc32=(row.get('crc32') or '').strip().lower() or None,
                 is_required=((row.get('is_required') or '1').strip() == '1'),
