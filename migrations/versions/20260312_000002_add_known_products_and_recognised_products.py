@@ -6,8 +6,8 @@ Adds:
 - HashDatabase.enable_product_recognition column
 - KnownFile.product_id, is_required, relative_path columns
 
-Revision ID: f3a4b5c6d7e8
-Revises: e2f3a4b5c6d7
+Revision ID: 000069b47d67
+Revises: 000069b47d66
 Create Date: 2026-03-12 00:00:02.000000
 
 """
@@ -16,8 +16,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = 'f3a4b5c6d7e8'
-down_revision = 'e2f3a4b5c6d7'
+revision = '000069b47d67'
+down_revision = '000069b47d66'
 branch_labels = None
 depends_on = None
 

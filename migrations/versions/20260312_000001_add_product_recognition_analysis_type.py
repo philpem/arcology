@@ -1,7 +1,7 @@
 """Add product_recognition analysis type
 
-Revision ID: e2f3a4b5c6d7
-Revises: d1e2f3a4b5c6
+Revision ID: 000069b47d66
+Revises: 000069b0e773
 Create Date: 2026-03-12 00:00:01.000000
 
 """
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = 'e2f3a4b5c6d7'
-down_revision = 'd1e2f3a4b5c6'
+revision = '000069b47d66'
+down_revision = '000069b0e773'
 branch_labels = None
 depends_on = None
 

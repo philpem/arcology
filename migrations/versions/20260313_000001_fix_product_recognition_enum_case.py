@@ -1,12 +1,12 @@
 """Fix PRODUCT_RECOGNITION enum value case in analysistype
 
-The previous migration (e2f3a4b5c6d7) added 'product_recognition' (lowercase)
+The previous migration (000069b47d66) added 'product_recognition' (lowercase)
 to the analysistype PostgreSQL enum, but SQLAlchemy stores enum names in
 uppercase (e.g. 'FILE_EXTRACTION', 'ARCHIVE_DETECT'). This migration adds the
 correct uppercase value 'PRODUCT_RECOGNITION'.
 
 Revision ID: 000069b41ab4
-Revises: f3a4b5c6d7e8
+Revises: 000069b47d67
 Create Date: 2026-03-13 00:00:01.000000
 
 """
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = '000069b41ab4'
-down_revision = 'f3a4b5c6d7e8'
+down_revision = '000069b47d67'
 branch_labels = None
 depends_on = None
 
