@@ -300,6 +300,7 @@ def import_database():
             db.session.flush()
 
         products_added = files_added = 0
+        new_kf_list = []
         for p_data in data.get('products', []):
             p_title = (p_data.get('title') or '').strip()
             if not p_title:
@@ -333,10 +334,14 @@ def import_database():
                     description=f_data.get('description') or None,
                 )
                 db.session.add(kf)
+                new_kf_list.append(kf)
                 files_added += 1
         database.file_count = (database.file_count or 0) + files_added
         db.session.commit()
         flash(f'Imported {products_added} product(s) and {files_added} file(s) into "{database.name}".', 'success')
+        if database.is_active and new_kf_list:
+            from ..utils.hash_rescan import rescan_hashes_for_new_known_files
+            rescan_hashes_for_new_known_files(new_kf_list)
         return redirect(url_for(f'{ROUTENAME}.view', id=database.id))
 
     else:  # CSV
@@ -357,6 +362,7 @@ def import_database():
         reader = csv.DictReader(io.StringIO(content))
         product_cache: dict[str, KnownProduct] = {}
         files_added = 0
+        new_kf_list = []
         for row in reader:
             p_title = (row.get('product_title') or '').strip()
             if not p_title:
@@ -394,11 +400,15 @@ def import_database():
                 description=(row.get('description') or '').strip() or None,
             )
             db.session.add(kf)
+            new_kf_list.append(kf)
             files_added += 1
 
         database.file_count = (database.file_count or 0) + files_added
         db.session.commit()
         flash(f'Imported {files_added} file(s) from CSV into "{database.name}".', 'success')
+        if database.is_active and new_kf_list:
+            from ..utils.hash_rescan import rescan_hashes_for_new_known_files
+            rescan_hashes_for_new_known_files(new_kf_list)
         return redirect(url_for(f'{ROUTENAME}.view', id=database.id))
 
 
@@ -495,6 +505,9 @@ def add_known_file(db_id, pid):
     product.database.file_count = (product.database.file_count or 0) + 1
     db.session.commit()
     flash(f'File "{filename}" added to "{product.title}".', 'success')
+    if product.database.is_active:
+        from ..utils.hash_rescan import rescan_hashes_for_known_file
+        rescan_hashes_for_known_file(kf)
     return redirect(url_for(f'{ROUTENAME}.view', id=db_id) + f'#product-{pid}')
 
 
@@ -507,6 +520,8 @@ def edit_known_file(db_id, pid, fid):
     if not filename:
         flash('Filename is required.', 'danger')
         return redirect(url_for(f'{ROUTENAME}.view', id=db_id) + f'#product-{pid}')
+    kf_id = kf.id
+    is_active = kf.database.is_active
     kf.filename = filename
     kf.md5 = request.form.get('md5', '').strip().lower() or None
     kf.sha1 = request.form.get('sha1', '').strip().lower() or None
@@ -519,6 +534,12 @@ def edit_known_file(db_id, pid, fid):
     kf.description = request.form.get('description', '').strip() or None
     db.session.commit()
     flash(f'File "{kf.filename}" updated.', 'success')
+    if is_active:
+        from ..utils.hash_rescan import rescan_links_for_known_file_id, rescan_hashes_for_known_file
+        # Re-evaluate files that were linked via the old hashes (they may
+        # no longer match), then scan for files matching the new hashes.
+        rescan_links_for_known_file_id(kf_id)
+        rescan_hashes_for_known_file(kf)
     return redirect(url_for(f'{ROUTENAME}.view', id=db_id) + f'#product-{pid}')
 
 
@@ -528,12 +549,19 @@ def edit_known_file(db_id, pid, fid):
 def delete_known_file(db_id, pid, fid):
     kf = KnownFile.query.filter_by(id=fid, product_id=pid, database_id=db_id).first_or_404()
     filename = kf.filename
+    kf_id = kf.id
     database = kf.database
+    is_active = database.is_active
     db.session.delete(kf)
     if database.file_count and database.file_count > 0:
         database.file_count -= 1
     db.session.commit()
     flash(f'File "{filename}" deleted.', 'success')
+    if is_active:
+        from ..utils.hash_rescan import rescan_links_for_known_file_id
+        # Re-evaluate files that were linked to the deleted KnownFile;
+        # they may link to another active database or become unlinked.
+        rescan_links_for_known_file_id(kf_id)
     return redirect(url_for(f'{ROUTENAME}.view', id=db_id) + f'#product-{pid}')
 
 

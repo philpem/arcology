@@ -4,35 +4,53 @@ Provides find_known_file() and the rescan helpers that re-link
 ExtractedFile rows to active hash databases without re-analysing.
 """
 
+from sqlalchemy import or_
+
 from ..extensions import db
 from ..database import ExtractedFile, Partition, KnownFile, HashDatabase
 
 
 def find_known_file(md5=None, sha1=None, file_size=None):
-    """Return the first active-database KnownFile matching the given hashes.
+    """Return the best-matching active-database KnownFile for the given hashes.
 
     Filters to databases with is_active=True so that disabled databases
     are never considered for new or rescanned links.
+
+    When multiple KnownFiles match (same hash appears in more than one
+    active database), the one with the lowest KnownFile.id is returned.
+    This is deterministic across runs so repeated rescans produce stable
+    results: the earliest-inserted entry wins.
+
+    For the deduplication use case (is_known=True/False) the specific
+    match returned does not matter; for product attribution it provides
+    a stable, predictable answer.
     """
     if not md5 and not sha1:
         return None
-    query = KnownFile.query.join(HashDatabase).filter(HashDatabase.is_active == True)
+    query = (
+        KnownFile.query
+        .join(HashDatabase)
+        .filter(HashDatabase.is_active == True)
+    )
     if md5:
         query = query.filter(KnownFile.md5 == md5.lower())
     else:
         query = query.filter(KnownFile.sha1 == sha1.lower())
     if file_size is not None:
         query = query.filter(KnownFile.file_size == file_size)
-    return query.first()
+    return query.order_by(KnownFile.id).first()
 
 
 def rescan_hashes_for_queryset(query, batch_size=500):
     """Re-link hashes for an ExtractedFile queryset.
 
-    Iterates *query* in batches, calling find_known_file() for each
-    non-directory file and updating is_known / known_file_id as needed.
-    After processing, refreshes the unique_files counter on every
-    affected Partition.
+    Iterates *query* in batches using cursor-based pagination (ID > last
+    seen), which is stable even if the query's filter condition changes as
+    rows are updated (e.g. is_known=False flipping to True mid-scan).
+
+    Calls find_known_file() for each non-directory file and updates
+    is_known / known_file_id as needed.  After processing, refreshes the
+    unique_files counter on every affected Partition.
 
     Returns (updated, total) — updated is the number of rows whose
     is_known or known_file_id changed.
@@ -40,15 +58,14 @@ def rescan_hashes_for_queryset(query, batch_size=500):
     updated = 0
     total = 0
     affected_partition_ids = set()
+    last_id = 0
 
-    # Paginate manually so we don't load the entire table into memory.
-    offset = 0
     while True:
         batch = (
             query
+            .filter(ExtractedFile.id > last_id)
             .order_by(ExtractedFile.id)
             .limit(batch_size)
-            .offset(offset)
             .all()
         )
         if not batch:
@@ -57,6 +74,7 @@ def rescan_hashes_for_queryset(query, batch_size=500):
         for ef in batch:
             total += 1
             if ef.is_directory:
+                last_id = ef.id
                 continue
 
             known = find_known_file(md5=ef.md5, sha1=ef.sha1, file_size=ef.file_size)
@@ -69,8 +87,9 @@ def rescan_hashes_for_queryset(query, batch_size=500):
                 affected_partition_ids.add(ef.partition_id)
                 updated += 1
 
+            last_id = ef.id
+
         db.session.commit()
-        offset += len(batch)
 
     # Refresh unique_files counters for every touched partition.
     for pid in affected_partition_ids:
@@ -107,5 +126,68 @@ def rescan_hashes_all(batch_size=500):
     Returns (updated, total).
     """
     return rescan_hashes_for_queryset(ExtractedFile.query, batch_size=batch_size)
+
+
+def rescan_hashes_for_known_file(kf):
+    """Targeted rescan: scan only ExtractedFiles whose hashes match *kf*.
+
+    Used after adding or editing a KnownFile so that artefacts are linked
+    immediately without a full collection-wide rescan.  Fast because it
+    uses the md5/sha1 indexes on extracted_files.
+
+    Returns (updated, total).
+    """
+    conditions = []
+    if kf.md5:
+        conditions.append(ExtractedFile.md5 == kf.md5)
+    if kf.sha1:
+        conditions.append(ExtractedFile.sha1 == kf.sha1)
+    if not conditions:
+        return 0, 0
+    query = ExtractedFile.query.filter(or_(*conditions))
+    if kf.file_size is not None:
+        query = query.filter(ExtractedFile.file_size == kf.file_size)
+    return rescan_hashes_for_queryset(query)
+
+
+def rescan_links_for_known_file_id(kf_id):
+    """Re-evaluate ExtractedFiles that are currently linked to *kf_id*.
+
+    Called when a KnownFile is deleted or its hashes are edited.  Files
+    that no longer match will either be re-linked to another active
+    KnownFile or have their is_known flag cleared.
+
+    Returns (updated, total).
+    """
+    query = ExtractedFile.query.filter(ExtractedFile.known_file_id == kf_id)
+    return rescan_hashes_for_queryset(query)
+
+
+def rescan_hashes_for_new_known_files(kf_list, batch_size=500):
+    """Targeted rescan after a bulk import: scan unlinked files whose
+    md5 or sha1 appears in *kf_list*.
+
+    Only considers currently-unlinked files (is_known=False) so the scan
+    stays fast for large collections.  Files already linked to other
+    databases are not disturbed.
+
+    Returns (updated, total).
+    """
+    md5_values = [kf.md5 for kf in kf_list if kf.md5]
+    sha1_values = [kf.sha1 for kf in kf_list if kf.sha1]
+    if not md5_values and not sha1_values:
+        return 0, 0
+
+    conditions = []
+    if md5_values:
+        conditions.append(ExtractedFile.md5.in_(md5_values))
+    if sha1_values:
+        conditions.append(ExtractedFile.sha1.in_(sha1_values))
+
+    query = ExtractedFile.query.filter(
+        ExtractedFile.is_known == False,
+        or_(*conditions),
+    )
+    return rescan_hashes_for_queryset(query, batch_size=batch_size)
 
 # vim: ts=4 sw=4 et
