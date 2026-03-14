@@ -1283,7 +1283,13 @@ def rerun_product_recognition_route(uuid):
     """Queue PRODUCT_RECOGNITION for all partitions of an artefact without re-analysing."""
     from ..utils.hash_rescan import queue_product_recognition_for_partitions
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
-    partition_ids = [p.id for p in artefact.partitions if p.total_files]
+    all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    partition_ids = [
+        p.id for p in Partition.query.filter(
+            Partition.artefact_id.in_(all_artefact_ids),
+            Partition.total_files > 0,
+        ).all()
+    ]
     if not partition_ids:
         flash('No partitions with extracted files found.', 'warning')
         return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug))
