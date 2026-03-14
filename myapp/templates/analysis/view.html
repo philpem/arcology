@@ -6,6 +6,9 @@
     <ol class="breadcrumb">
         <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.index') }}">Items</a></li>
         <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=analysis.artefact.item.url_id) }}">{{ analysis.artefact.item.name }}</a></li>
+        {% if analysis.artefact.parent_artefact %}
+        <li class="breadcrumb-item"><a href="{{ artefact_url(analysis.artefact.root_artefact) }}">{{ analysis.artefact.root_artefact.label }}</a></li>
+        {% endif %}
         <li class="breadcrumb-item"><a href="{{ artefact_url(analysis.artefact) }}">{{ analysis.artefact.label }}</a></li>
         <li class="breadcrumb-item active">{{ analysis.analysis_type.value|replace('_', ' ')|title }} (#{{ analysis.id }})</li>
     </ol>
