@@ -11,7 +11,7 @@ from wtforms import StringField, TextAreaField, SelectField
 from wtforms.validators import DataRequired, Optional, Length
 
 from ..extensions import db
-from ..database import Platform, Category, Tag, ExternalSystem
+from ..database import Platform, Category, Tag, ExternalSystem, HashDatabase
 from ..permissions import require_permission
 
 ROUTENAME = __name__.replace('.', '_')
@@ -145,7 +145,11 @@ def delete_platform(id):
     if platform.children:
         flash('Cannot delete platform with child platforms.', 'error')
         return redirect(url_for(f'{ROUTENAME}.platforms'))
-    
+
+    if HashDatabase.query.filter_by(platform_id=platform.id).first():
+        flash('Cannot delete platform with associated hash databases.', 'error')
+        return redirect(url_for(f'{ROUTENAME}.platforms'))
+
     name = platform.name
     db.session.delete(platform)
     db.session.commit()
