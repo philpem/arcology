@@ -99,6 +99,13 @@
                             <i class="bi bi-arrow-repeat"></i> Rescan Known Files
                         </button>
                     </form>
+                    <form action="{{ url_for('myapp_blueprints_artefacts.rerun_product_recognition_route', uuid=artefact.uuid) }}" method="post">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-outline-secondary"
+                                title="Re-queue product/folder recognition analysis without re-analysing the disc">
+                            <i class="bi bi-diagram-3"></i> Re-run Product Recognition
+                        </button>
+                    </form>
                 </div>
                 {% endif %}
             </div>

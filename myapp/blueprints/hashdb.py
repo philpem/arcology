@@ -152,9 +152,38 @@ def edit(id):
 def delete(id):
     database = HashDatabase.query.get_or_404(id)
     name = database.name
+    is_active = database.is_active
+
+    # Collect all KnownFile IDs that will be cascade-deleted so we can clear
+    # ExtractedFile.known_file_id references first (FK has no ON DELETE action).
+    kf_ids = [
+        kf.id
+        for product in database.known_products
+        for kf in product.files
+    ]
+    affected_ef_ids = []
+    if kf_ids:
+        affected_ef_ids = [
+            row[0] for row in
+            ExtractedFile.query
+            .with_entities(ExtractedFile.id)
+            .filter(ExtractedFile.known_file_id.in_(kf_ids))
+            .all()
+        ]
+        if affected_ef_ids:
+            ExtractedFile.query.filter(
+                ExtractedFile.id.in_(affected_ef_ids)
+            ).update({'known_file_id': None, 'is_known': False}, synchronize_session=False)
+
     db.session.delete(database)
     db.session.commit()
     flash(f'Hash database "{name}" deleted.', 'success')
+
+    # Re-evaluate unlinked files so they may link to another active database.
+    if is_active and affected_ef_ids:
+        from ..utils.hash_rescan import rescan_hashes_for_queryset
+        rescan_hashes_for_queryset(ExtractedFile.query.filter(ExtractedFile.id.in_(affected_ef_ids)))
+
     return redirect(url_for(f'{ROUTENAME}.index'))
 
 
