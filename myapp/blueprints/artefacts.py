@@ -618,6 +618,7 @@ def _render_artefact_view(artefact):
     # Build query args for pagination links, preserving all active filters
     pagination_args = request.args.to_dict()
     pagination_args.pop('page', None)
+    pagination_args.pop('mode', None)
     current_sort = sort_param
 
     # Extract subdirectories at the current path level for directory browsing
