@@ -744,6 +744,7 @@ def add_to_hashdb(uuid):
     new_product_title = request.form.get('new_product_title', '').strip()
     new_product_description = request.form.get('new_product_description', '').strip()
     is_required = request.form.get('is_required', '1') == '1'
+    base_path = request.form.get('base_path', '').strip()
 
     if not file_ids:
         flash('No files selected.', 'warning')
@@ -867,7 +868,7 @@ def add_to_hashdb(uuid):
             sha1=sha1,
             sha256=sha256,
             is_required=is_required,
-            relative_path=ef.path or None,
+            relative_path=(ef.path[len(base_path):] if base_path and ef.path and ef.path.startswith(base_path) else ef.path) or None,
         )
         db.session.add(kf)
         new_kfs.append(kf)
