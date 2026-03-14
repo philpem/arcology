@@ -1286,13 +1286,13 @@ def rerun_product_recognition_route(uuid):
     partition_ids = [p.id for p in artefact.partitions if p.total_files]
     if not partition_ids:
         flash('No partitions with extracted files found.', 'warning')
-        return redirect(url_for(f'{ROUTENAME}.view', uuid=artefact.uuid))
+        return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug))
     queued = queue_product_recognition_for_partitions(partition_ids)
     if queued:
         flash(f'Queued product recognition for {queued} partition(s).', 'success')
     else:
         flash('Product recognition already pending or running — nothing new queued.', 'info')
-    return redirect(url_for(f'{ROUTENAME}.view', uuid=artefact.uuid))
+    return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug))
 
 
 
