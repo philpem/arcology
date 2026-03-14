@@ -13,8 +13,9 @@
     <h1>{{ item.name }}</h1>
     {% if user_can_write %}
     <div>
-        <a href="{{ url_for('myapp_blueprints_items.edit', uuid=item.uuid) }}" class="btn btn-outline-primary"><i class="bi bi-pencil"></i> Edit</a>
-        <form action="{{ url_for('myapp_blueprints_items.delete', uuid=item.uuid) }}" method="post" class="d-inline" onsubmit="return confirm('Delete item \'{{ item.name }}\' and all its artefacts? This cannot be undone.');">
+        <a href="{{ url_for('myapp_blueprints_items.edit', uuid=item.url_id) }}" class="btn btn-outline-primary"><i class="bi bi-pencil"></i> Edit</a>
+        <form action="{{ url_for('myapp_blueprints_items.delete', uuid=item.url_id) }}" method="post" class="d-inline" onsubmit="return confirm('Delete item \'{{ item.name }}\' and all its artefacts? This cannot be undone.');">
+
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-outline-danger"><i class="bi bi-trash"></i> Delete</button>
         </form>
@@ -34,25 +35,26 @@
                 </dl>
             </div>
         </div>
-        
+
         {% if item.description %}
         <div class="card mb-4">
             <div class="card-header"><i class="bi bi-card-text"></i> Description</div>
             <div class="card-body">{{ item.description }}</div>
         </div>
         {% endif %}
-        
+
         <div class="card mb-4">
             <div class="card-header d-flex justify-content-between">
                 <span><i class="bi bi-link-45deg"></i> External References</span>
-                {% if user_can_write %}<a href="{{ url_for('myapp_blueprints_items.add_reference', uuid=item.uuid) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-plus"></i></a>{% endif %}
+                {% if user_can_write %}<a href="{{ url_for('myapp_blueprints_items.add_reference', uuid=item.url_id) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-plus"></i></a>{% endif %}
             </div>
             <ul class="list-group list-group-flush">
                 {% for ref in item.external_references %}
                 <li class="list-group-item d-flex justify-content-between">
                     <div><strong>{{ ref.system.name }}</strong><br>{% if ref.url %}<a href="{{ ref.url }}" target="_blank">{{ ref.external_id }}</a>{% else %}{{ ref.external_id }}{% endif %}</div>
                     {% if user_can_write %}
-                    <form action="{{ url_for('myapp_blueprints_items.delete_reference', item_uuid=item.uuid, ref_id=ref.id) }}" method="post" onsubmit="return confirm('Remove {{ ref.system.name }} reference \'{{ ref.external_id }}\'?');">
+                    <form action="{{ url_for('myapp_blueprints_items.delete_reference', item_uuid=item.url_id, ref_id=ref.id) }}" method="post" onsubmit="return confirm('Remove {{ ref.system.name }} reference \'{{ ref.external_id }}\'?');">
+
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-x"></i></button>
                     </form>
@@ -64,19 +66,19 @@
             </ul>
         </div>
     </div>
-    
+
     <div class="col-md-8">
         <div class="card">
             <div class="card-header d-flex justify-content-between">
                 <span><i class="bi bi-disc"></i> Artefacts ({{ item.artefacts|length }})</span>
-                {% if user_can_write %}<a href="{{ url_for('myapp_blueprints_artefacts.upload', item_uuid=item.uuid) }}" class="btn btn-sm btn-primary"><i class="bi bi-plus"></i> Upload</a>{% endif %}
+                {% if user_can_write %}<a href="{{ url_for('myapp_blueprints_artefacts.upload', item_id=item.url_id) }}" class="btn btn-sm btn-primary"><i class="bi bi-plus"></i> Upload</a>{% endif %}
             </div>
             <div class="list-group list-group-flush">
                 {% for artefact in item.artefacts if not artefact.parent_artefact %}
                 <div class="list-group-item">
                     <div class="d-flex justify-content-between">
                         <div>
-                            <h5><a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=artefact.uuid) }}">{{ artefact.label }}</a></h5>
+                            <h5><a href="{{ artefact_url(artefact) }}">{{ artefact.label }}</a></h5>
                             <p class="mb-1 text-muted">
                                 <span class="badge bg-secondary">{{ artefact.artefact_type.value.upper().replace('_', ' ') }}</span>
                                 <code>{{ artefact.original_filename }}</code>
@@ -85,7 +87,7 @@
                             <div class="ms-3 mt-2 small">
                                 <i class="bi bi-arrow-return-right text-muted"></i>
                                 {% for derived in artefact.derived_artefacts %}
-                                <a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=derived.uuid) }}" class="me-2">
+                                <a href="{{ artefact_url(derived) }}" class="me-2">
                                     {{ derived.label }} <span class="badge bg-info">{{ derived.artefact_type.value.upper() }}</span>
                                 </a>
                                 {% endfor %}

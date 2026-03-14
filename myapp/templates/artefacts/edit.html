@@ -5,8 +5,11 @@
 <nav aria-label="breadcrumb" class="mb-3">
     <ol class="breadcrumb">
         <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.index') }}">Items</a></li>
-        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=item.uuid) }}">{{ item.name }}</a></li>
-        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=artefact.uuid) }}">{{ artefact.label }}</a></li>
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a></li>
+        {% if artefact.parent_artefact %}
+        <li class="breadcrumb-item"><a href="{{ artefact_url(artefact.root_artefact) }}">{{ artefact.root_artefact.label }}</a></li>
+        {% endif %}
+        <li class="breadcrumb-item"><a href="{{ artefact_url(artefact) }}">{{ artefact.label }}</a></li>
         <li class="breadcrumb-item active">Edit</li>
     </ol>
 </nav>
@@ -20,15 +23,15 @@
                     <strong>File:</strong> {{ artefact.original_filename }}
                     {% if artefact.file_size is not none %}({{ (artefact.file_size / 1024 / 1024)|round(2) }} MB){% endif %}
                 </div>
-                
+
                 <form method="post">
                     {{ form.hidden_tag() }}
-                    
+
                     <div class="mb-3">
                         {{ form.label.label(class="form-label") }}
                         {{ form.label(class="form-control") }}
                     </div>
-                    
+
                     <div class="mb-3">
                         {{ form.artefact_type.label(class="form-label") }}
                         {{ form.artefact_type(class="form-select") }}
@@ -36,7 +39,7 @@
                         <div class="form-text text-warning">Type was manually set (not auto-detected)</div>
                         {% endif %}
                     </div>
-                    
+
                     <div class="mb-3">
                         {{ form.description.label(class="form-label") }}
                         {{ form.description(class="form-control", rows=3) }}
@@ -50,7 +53,7 @@
 
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save</button>
-                        <a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=artefact.uuid) }}" class="btn btn-outline-secondary">Cancel</a>
+                        <a href="{{ artefact_url(artefact) }}" class="btn btn-outline-secondary">Cancel</a>
                     </div>
                 </form>
             </div>

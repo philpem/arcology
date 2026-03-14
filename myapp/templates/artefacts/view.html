@@ -5,7 +5,10 @@
 <nav aria-label="breadcrumb" class="mb-3">
     <ol class="breadcrumb">
         <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.index') }}">Items</a></li>
-        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=artefact.item.uuid) }}">{{ artefact.item.name }}</a></li>
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=artefact.item.url_id) }}">{{ artefact.item.name }}</a></li>
+        {% if artefact.parent_artefact %}
+        <li class="breadcrumb-item"><a href="{{ artefact_url(artefact.root_artefact) }}">{{ artefact.root_artefact.label }}</a></li>
+        {% endif %}
         <li class="breadcrumb-item active">{{ artefact.label }}</li>
     </ol>
 </nav>
@@ -34,11 +37,12 @@
         {% endif %}
     </div>
     <div>
-        <a href="{{ url_for('myapp_blueprints_artefacts.download', uuid=artefact.uuid) }}" class="btn btn-success"><i class="bi bi-download"></i> Download</a>
+        <a href="{{ artefact_url(artefact, 'download') }}" class="btn btn-success"><i class="bi bi-download"></i> Download</a>
         {% if user_can_write %}
-        <a href="{{ url_for('myapp_blueprints_artefacts.analyse', uuid=artefact.uuid) }}" class="btn btn-primary"><i class="bi bi-gear"></i> Re-analyse</a>
-        <a href="{{ url_for('myapp_blueprints_artefacts.edit', uuid=artefact.uuid) }}" class="btn btn-outline-primary"><i class="bi bi-pencil"></i> Edit</a>
-        <form action="{{ url_for('myapp_blueprints_artefacts.delete', uuid=artefact.uuid) }}" method="post" class="d-inline" onsubmit="return confirm('Delete artefact \'{{ artefact.label }}\' and all related analyses? This cannot be undone.');">
+        <a href="{{ artefact_url(artefact, 'analyse') }}" class="btn btn-primary"><i class="bi bi-gear"></i> Re-analyse</a>
+        <a href="{{ artefact_url(artefact, 'edit') }}" class="btn btn-outline-primary"><i class="bi bi-pencil"></i> Edit</a>
+        <form action="{{ artefact_url(artefact, 'delete') }}" method="post" class="d-inline" onsubmit="return confirm('Delete artefact \'{{ artefact.label }}\' and all related analyses? This cannot be undone.');">
+
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-outline-danger"><i class="bi bi-trash"></i></button>
         </form>
@@ -60,7 +64,7 @@
                     {% if artefact.parent_artefact %}
                     <dt>Derived From</dt>
                     <dd>
-                        <a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=artefact.parent_artefact.uuid) }}">{{ artefact.parent_artefact.label }}</a>
+                        <a href="{{ artefact_url(artefact.parent_artefact) }}">{{ artefact.parent_artefact.label }}</a>
                         {% if artefact.derived_from_analysis %}
                         <span class="text-muted">(via {{ artefact.derived_from_analysis.analysis_type.value.replace('_', ' ') }})</span>
                         {% endif %}
@@ -74,12 +78,12 @@
                 {% if user_can_write %}
                 <div class="d-flex gap-2 mt-3 flex-wrap">
                     {% if not artefact.md5 %}
-                    <form action="{{ url_for('myapp_blueprints_artefacts.compute_hashes_route', uuid=artefact.uuid) }}" method="post">
+                    <form action="{{ artefact_url(artefact, 'compute_hashes_route') }}" method="post">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-sm btn-outline-secondary"><i class="bi bi-hash"></i> Compute Hashes</button>
                     </form>
                     {% endif %}
-                    <form action="{{ url_for('myapp_blueprints_artefacts.rescan_hashes_route', uuid=artefact.uuid) }}" method="post">
+                    <form action="{{ artefact_url(artefact, 'rescan_hashes_route') }}" method="post">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-sm btn-outline-secondary"
                                 title="Re-link extracted files to active hash databases without re-analysing">
@@ -97,7 +101,7 @@
             <ul class="list-group list-group-flush">
                 {% for derived in artefact.derived_artefacts %}
                 <li class="list-group-item d-flex justify-content-between">
-                    <a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=derived.uuid) }}">{{ derived.label }}</a>
+                    <a href="{{ artefact_url(derived) }}">{{ derived.label }}</a>
                     <span class="badge bg-secondary">{{ derived.artefact_type.value.upper() }}</span>
                 </li>
                 {% endfor %}
@@ -133,11 +137,11 @@
             {% if has_hidden_analyses or show_all_analyses %}
             <div class="card-footer">
                 {% if show_all_analyses %}
-                <a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=artefact.uuid) }}" class="btn btn-sm btn-outline-secondary">
+                <a href="{{ artefact_url(artefact) }}" class="btn btn-sm btn-outline-secondary">
                     <i class="bi bi-funnel"></i> Show Recent Only
                 </a>
                 {% elif has_hidden_analyses %}
-                <a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=artefact.uuid, show_all_analyses='true') }}" class="btn btn-sm btn-outline-secondary">
+                <a href="{{ artefact_url(artefact, show_all_analyses='true') }}" class="btn btn-sm btn-outline-secondary">
                     <i class="bi bi-list"></i> Show All ({{ total_analyses_count }})
                 </a>
                 {% endif %}
@@ -375,7 +379,7 @@
                             <td>{% if p.unique_files is not none %}<span class="badge bg-info">{{ p.unique_files }}</span>{% else %}-{% endif %}</td>
                             <td>
                                 {% if p.artefact_id != artefact.id %}
-                                <a href="{{ url_for('myapp_blueprints_artefacts.view', uuid=p.artefact.uuid) }}" class="badge bg-secondary text-decoration-none" onclick="event.stopPropagation()">{{ p.artefact.label }}</a>
+                                <a href="{{ artefact_url(p.artefact) }}" class="badge bg-secondary text-decoration-none" onclick="event.stopPropagation()">{{ p.artefact.label }}</a>
                                 {% else %}-{% endif %}
                             </td>
                         </tr>
