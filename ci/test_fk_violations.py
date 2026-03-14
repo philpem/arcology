@@ -863,17 +863,11 @@ class TestNullableFKEdgeCases(unittest.TestCase):
     def setUpClass(cls):
         cls.app, cls.db = _create_app_and_db()
 
-    @unittest.expectedFailure
     def test_delete_known_file_referenced_by_extracted_file(self):
         """Deleting a KnownFile referenced by ExtractedFile.known_file_id must not 500.
 
         ExtractedFile.known_file_id is nullable, so the FK should be set to NULL
         or the delete should cascade — either way, no IntegrityError.
-
-        KNOWN BUG: The KnownFile relationship on ExtractedFile has no cascade
-        or passive_deletes configured, and no ON DELETE SET NULL in the schema.
-        This causes an IntegrityError on PostgreSQL (and SQLite with FK
-        enforcement enabled).  Remove @expectedFailure once the model is fixed.
         """
         with self.app.app_context():
             from myapp.database import (HashDatabase, KnownFile, KnownProduct,
@@ -954,18 +948,12 @@ class TestNullableFKEdgeCases(unittest.TestCase):
             self.assertIsNotNone(ef_after,
                                  'ExtractedFile should survive KnownFile deletion')
 
-    @unittest.expectedFailure
     def test_delete_platform_referenced_by_hash_database(self):
         """Deleting a Platform referenced by HashDatabase.platform_id must not 500.
 
-        HashDatabase.platform_id is nullable, so ideally the FK should be set
-        to NULL or cascade.  This test verifies the delete does not raise an
+        HashDatabase.platform_id is nullable, so the FK should be set to NULL
+        or cascade.  This test verifies the delete does not raise an
         IntegrityError.
-
-        KNOWN BUG: The Platform relationship on HashDatabase has no cascade or
-        passive_deletes, and no ON DELETE SET NULL in the schema.  This causes
-        an IntegrityError on PostgreSQL (and SQLite with FK enforcement enabled).
-        Remove @expectedFailure once the model is fixed.
         """
         with self.app.app_context():
             from myapp.database import Platform, HashDatabase
