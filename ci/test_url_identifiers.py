@@ -312,6 +312,194 @@ class TestSlugGeneration(unittest.TestCase):
             self.assertEqual(art_b.slug, 'disc-1')
 
 
+class TestRootArtefactProperty(unittest.TestCase):
+    """Tests for Artefact.root_artefact and nested URL routing."""
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.app import create_app
+        from myapp.extensions import db as _db
+
+        cls.app = create_app()
+        cls.app.config['TESTING'] = True
+
+        with cls.app.app_context():
+            _db.create_all()
+            item = _make_item(_db, name='Root Artefact Test Item')
+            from myapp.utils.slugs import generate_slug, ensure_unique_slug
+            from myapp.database import Artefact
+
+            # root artefact
+            root = _make_artefact(_db, item, label='Disc 1')
+            root.slug = ensure_unique_slug(generate_slug('Disc 1'), Artefact, scope_filter={'item_id': item.id})
+            _db.session.commit()
+
+            # first-level derived artefact
+            child = Artefact(
+                item_id=item.id,
+                label='Decoded Sector Image',
+                artefact_type=root.artefact_type,
+                original_filename='decoded.img',
+                storage_path='decoded.img',
+                parent_artefact_id=root.id,
+            )
+            _db.session.add(child)
+            _db.session.commit()
+            child.slug = ensure_unique_slug(generate_slug('Decoded Sector Image'), Artefact, scope_filter={'item_id': item.id})
+            _db.session.commit()
+
+            # second-level derived artefact (grandchild)
+            grandchild = Artefact(
+                item_id=item.id,
+                label='File Listing',
+                artefact_type=root.artefact_type,
+                original_filename='files.txt',
+                storage_path='files.txt',
+                parent_artefact_id=child.id,
+            )
+            _db.session.add(grandchild)
+            _db.session.commit()
+            grandchild.slug = ensure_unique_slug(generate_slug('File Listing'), Artefact, scope_filter={'item_id': item.id})
+            _db.session.commit()
+
+            cls.item_id = item.id
+            cls.item_uuid = item.uuid
+            cls.root_id = root.id
+            cls.child_id = child.id
+            cls.grandchild_id = grandchild.id
+
+    def test_root_artefact_of_root_is_self(self):
+        from myapp.database import Artefact
+        with self.app.app_context():
+            root = Artefact.query.get(self.root_id)
+            self.assertIs(root.root_artefact, root)
+
+    def test_root_artefact_of_child(self):
+        from myapp.database import Artefact
+        with self.app.app_context():
+            child = Artefact.query.get(self.child_id)
+            root = Artefact.query.get(self.root_id)
+            self.assertEqual(child.root_artefact.id, root.id)
+
+    def test_root_artefact_of_grandchild(self):
+        from myapp.database import Artefact
+        with self.app.app_context():
+            grandchild = Artefact.query.get(self.grandchild_id)
+            root = Artefact.query.get(self.root_id)
+            self.assertEqual(grandchild.root_artefact.id, root.id)
+
+    def test_artefact_url_root_has_no_root_id_segment(self):
+        """artefact_url() for a root artefact should NOT include root_id."""
+        from myapp.database import Artefact, Item
+        with self.app.app_context():
+            root = Artefact.query.get(self.root_id)
+            item = Item.query.get(self.item_id)
+            with self.app.test_request_context():
+                from flask import url_for
+                expected = url_for('myapp_blueprints_artefacts.view',
+                                   item_id=item.url_id, artefact_id=root.url_slug)
+                from myapp.app import create_app  # helper registered on app
+                # Call the template global directly via the app
+                result = self.app.jinja_env.globals['artefact_url'](root)
+                self.assertEqual(result, expected)
+                self.assertNotIn('/disc-1/', result)  # no root_id prefix
+
+    def test_artefact_url_derived_includes_root_id_segment(self):
+        """artefact_url() for a derived artefact should include the root slug."""
+        from myapp.database import Artefact, Item
+        with self.app.app_context():
+            child = Artefact.query.get(self.child_id)
+            root = Artefact.query.get(self.root_id)
+            item = Item.query.get(self.item_id)
+            with self.app.test_request_context():
+                result = self.app.jinja_env.globals['artefact_url'](child)
+                # Should contain the root slug and the child slug as path segments
+                self.assertIn(f'/{root.url_slug}/', result)
+                self.assertIn(child.url_slug, result)
+
+    def test_artefact_url_grandchild_uses_root_not_parent(self):
+        """artefact_url() for a grandchild should use the root (not the immediate parent)."""
+        from myapp.database import Artefact
+        with self.app.app_context():
+            grandchild = Artefact.query.get(self.grandchild_id)
+            root = Artefact.query.get(self.root_id)
+            child = Artefact.query.get(self.child_id)
+            with self.app.test_request_context():
+                result = self.app.jinja_env.globals['artefact_url'](grandchild)
+                self.assertIn(f'/{root.url_slug}/', result)
+                self.assertIn(grandchild.url_slug, result)
+                # child slug should NOT be in the URL (root, not intermediate parent)
+                self.assertNotIn(f'/{child.url_slug}/', result)
+
+
+class TestApiSlugGeneration(unittest.TestCase):
+    """Derived artefacts created via the API should get slugs."""
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.app import create_app
+        from myapp.extensions import db as _db
+
+        cls.app = create_app()
+        cls.app.config['TESTING'] = True
+        cls.client = cls.app.test_client()
+
+        with cls.app.app_context():
+            _db.create_all()
+            item = _make_item(_db, name='API Slug Test Item')
+            item.slug = 'api-slug-test-item'
+            _db.session.commit()
+            cls.item_uuid = item.uuid
+            cls.item_id = item.id
+
+    def test_api_artefact_gets_slug(self):
+        """POST /api/items/<uuid>/artefacts should generate a slug from the label."""
+        from myapp.database import Artefact
+        headers = {'X-API-Key': 'ci-test-worker-key', 'Content-Type': 'application/json'}
+        resp = self.client.post(
+            f'/api/items/{self.item_uuid}/artefacts',
+            json={
+                'label': 'Decoded Sector Image',
+                'storage_path': 'decoded.img',
+                'original_filename': 'decoded.img',
+                'artefact_type': 'raw_sector',
+            },
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 201)
+        artefact_uuid = resp.get_json()['uuid']
+        with self.app.app_context():
+            artefact = Artefact.query.filter_by(uuid=artefact_uuid).first()
+            self.assertIsNotNone(artefact)
+            self.assertIsNotNone(artefact.slug)
+            self.assertEqual(artefact.slug, 'decoded-sector-image')
+
+    def test_api_artefacts_get_unique_slugs(self):
+        """Two API artefacts with the same label under the same item get distinct slugs."""
+        from myapp.database import Artefact
+        headers = {'X-API-Key': 'ci-test-worker-key', 'Content-Type': 'application/json'}
+        r1 = self.client.post(
+            f'/api/items/{self.item_uuid}/artefacts',
+            json={'label': 'Same Label', 'storage_path': 'a.img', 'original_filename': 'a.img', 'artefact_type': 'unknown'},
+            headers=headers,
+        )
+        r2 = self.client.post(
+            f'/api/items/{self.item_uuid}/artefacts',
+            json={'label': 'Same Label', 'storage_path': 'b.img', 'original_filename': 'b.img', 'artefact_type': 'unknown'},
+            headers=headers,
+        )
+        self.assertEqual(r1.status_code, 201)
+        self.assertEqual(r2.status_code, 201)
+        uuid1 = r1.get_json()['uuid']
+        uuid2 = r2.get_json()['uuid']
+        with self.app.app_context():
+            a1 = Artefact.query.filter_by(uuid=uuid1).first()
+            a2 = Artefact.query.filter_by(uuid=uuid2).first()
+            self.assertIsNotNone(a1.slug)
+            self.assertIsNotNone(a2.slug)
+            self.assertNotEqual(a1.slug, a2.slug, f'Slugs not unique: {a1.slug!r}')
+
+
 if __name__ == '__main__':
     unittest.main()
 

@@ -6,7 +6,7 @@
     <ol class="breadcrumb">
         <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.index') }}">Items</a></li>
         <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=analysis.artefact.item.url_id) }}">{{ analysis.artefact.item.name }}</a></li>
-        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_artefacts.view', item_id=analysis.artefact.item.url_id, artefact_id=analysis.artefact.url_slug) }}">{{ analysis.artefact.label }}</a></li>
+        <li class="breadcrumb-item"><a href="{{ artefact_url(analysis.artefact) }}">{{ analysis.artefact.label }}</a></li>
         <li class="breadcrumb-item active">{{ analysis.analysis_type.value|replace('_', ' ')|title }} (#{{ analysis.id }})</li>
     </ol>
 </nav>
@@ -37,7 +37,7 @@
             <div class="card-body">
                 <dl class="mb-0">
                     <dt>Type</dt><dd>{{ analysis.analysis_type.value|replace('_', ' ')|title }}</dd>
-                    <dt>Artefact</dt><dd><a href="{{ url_for('myapp_blueprints_artefacts.view', item_id=analysis.artefact.item.url_id, artefact_id=analysis.artefact.url_slug) }}">{{ analysis.artefact.label }}</a></dd>
+                    <dt>Artefact</dt><dd><a href="{{ artefact_url(analysis.artefact) }}">{{ analysis.artefact.label }}</a></dd>
                     <dt>Tool</dt><dd>{{ analysis.tool_name or '-' }}{% if analysis.tool_version %} v{{ analysis.tool_version }}{% endif %}</dd>
                     <dt>Created</dt><dd>{{ analysis.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</dd>
                     <dt>Started</dt><dd>{{ analysis.started_at.strftime('%Y-%m-%d %H:%M:%S') if analysis.started_at else '-' }}</dd>

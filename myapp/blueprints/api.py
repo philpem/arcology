@@ -24,6 +24,7 @@ from ..database import (
 )
 from .artefacts import get_artefact_path, _delete_artefact_files, _delete_item_files
 from ..utils.hash_rescan import find_known_file
+from ..utils.slugs import generate_slug, ensure_unique_slug
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -224,6 +225,8 @@ def add_artefact(item_uuid):
                         storage_path=data['storage_path'], storage_directory=storage_directory,
                         file_size=data.get('file_size'), md5=data.get('md5'), sha256=data.get('sha256'))
     db.session.add(artefact)
+    db.session.commit()
+    artefact.slug = ensure_unique_slug(generate_slug(artefact.label), Artefact, scope_filter={'item_id': item.id})
     db.session.commit()
     return jsonify(artefact_to_dict(artefact)), 201
 

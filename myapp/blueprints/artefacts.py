@@ -419,12 +419,23 @@ def reset_artefact_for_reanalysis(artefact: Artefact):
             current_app.logger.warning(f"Failed to delete partition cache {cache_dir}: {e}")
 
 
-@blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>')
-@login_required
-def view(item_id, artefact_id):
-    """View an artefact and its partitions/files."""
+def _resolve_artefact(item_id, artefact_id, root_id=None):
+    """Lookup helper: resolve item + artefact, validate root_id if nested URL."""
     item = lookup_by_identifier(Item, item_id)
     artefact = lookup_artefact_by_id(item, artefact_id)
+    if root_id is not None:
+        root = lookup_artefact_by_id(item, root_id)
+        if artefact.root_artefact.id != root.id:
+            abort(404)
+    return item, artefact
+
+
+@blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>')
+@blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>', endpoint='view_nested')
+@login_required
+def view(item_id, artefact_id, root_id=None):
+    """View an artefact and its partitions/files."""
+    _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
     return _render_artefact_view(artefact)
 
 
@@ -935,16 +946,16 @@ def upload(item_id):
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/edit', methods=['GET', 'POST'])
+@blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/edit', methods=['GET', 'POST'], endpoint='edit_nested')
 @blueprint.route('/artefacts/<string:uuid>/edit', methods=['GET', 'POST'], endpoint='edit_legacy')
 @login_required
 @require_permission('read_write')
-def edit(item_id=None, artefact_id=None, uuid=None):
+def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Edit artefact metadata."""
     if uuid is not None:
         artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     else:
-        item = lookup_by_identifier(Item, item_id)
-        artefact = lookup_artefact_by_id(item, artefact_id)
+        _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
     form = ArtefactEditForm(obj=artefact)
     
     # Build type choices
@@ -1055,16 +1066,16 @@ def _delete_item_files(item):
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/delete', methods=['POST'])
+@blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/delete', methods=['POST'], endpoint='delete_nested')
 @blueprint.route('/artefacts/<string:uuid>/delete', methods=['POST'], endpoint='delete_legacy')
 @login_required
 @require_permission('read_write')
-def delete(item_id=None, artefact_id=None, uuid=None):
+def delete(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Delete an artefact and its file."""
     if uuid is not None:
         artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     else:
-        item = lookup_by_identifier(Item, item_id)
-        artefact = lookup_artefact_by_id(item, artefact_id)
+        _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
     item_url_id = artefact.item.url_id
     label = artefact.label
 
@@ -1079,15 +1090,15 @@ def delete(item_id=None, artefact_id=None, uuid=None):
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/download')
+@blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/download', endpoint='download_nested')
 @blueprint.route('/artefacts/<string:uuid>/download', endpoint='download_legacy')
 @login_required
-def download(item_id=None, artefact_id=None, uuid=None):
+def download(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Download the artefact file."""
     if uuid is not None:
         artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     else:
-        item = lookup_by_identifier(Item, item_id)
-        artefact = lookup_artefact_by_id(item, artefact_id)
+        _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
 
     full_path = get_artefact_path(artefact)
 
@@ -1102,16 +1113,16 @@ def download(item_id=None, artefact_id=None, uuid=None):
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/analyse', methods=['GET', 'POST'])
+@blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/analyse', methods=['GET', 'POST'], endpoint='analyse_nested')
 @blueprint.route('/artefacts/<string:uuid>/analyse', methods=['GET', 'POST'], endpoint='analyse_legacy')
 @login_required
 @require_permission('read_write')
-def analyse(item_id=None, artefact_id=None, uuid=None):
+def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Re-run analysis on an artefact, clearing all previous results first."""
     if uuid is not None:
         artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     else:
-        item = lookup_by_identifier(Item, item_id)
-        artefact = lookup_artefact_by_id(item, artefact_id)
+        _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
     form = AnalyseForm()
 
     # Platform choices for hints
@@ -1167,16 +1178,16 @@ def analyse(item_id=None, artefact_id=None, uuid=None):
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/compute-hashes', methods=['POST'])
+@blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/compute-hashes', methods=['POST'], endpoint='compute_hashes_nested')
 @blueprint.route('/artefacts/<string:uuid>/compute-hashes', methods=['POST'], endpoint='compute_hashes_legacy')
 @login_required
 @require_permission('read_write')
-def compute_hashes_route(item_id=None, artefact_id=None, uuid=None):
+def compute_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Compute file hashes for an artefact."""
     if uuid is not None:
         artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     else:
-        item = lookup_by_identifier(Item, item_id)
-        artefact = lookup_artefact_by_id(item, artefact_id)
+        _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
 
     full_path = get_artefact_path(artefact)
 
@@ -1194,17 +1205,17 @@ def compute_hashes_route(item_id=None, artefact_id=None, uuid=None):
     return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug))
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/rescan-hashes', methods=['POST'])
+@blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/rescan-hashes', methods=['POST'], endpoint='rescan_hashes_nested')
 @blueprint.route('/artefacts/<string:uuid>/rescan-hashes', methods=['POST'], endpoint='rescan_hashes_legacy')
 @login_required
 @require_permission('read_write')
-def rescan_hashes_route(item_id=None, artefact_id=None, uuid=None):
+def rescan_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Re-link extracted files to active hash databases without re-analysing."""
     from ..utils.hash_rescan import rescan_hashes_for_artefact
     if uuid is not None:
         artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     else:
-        item = lookup_by_identifier(Item, item_id)
-        artefact = lookup_artefact_by_id(item, artefact_id)
+        _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
     updated, total = rescan_hashes_for_artefact(artefact)
     flash(f'Hash rescan complete: {updated} of {total} files updated.', 'success')
     return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug))

@@ -78,7 +78,7 @@
                 <div class="list-group-item">
                     <div class="d-flex justify-content-between">
                         <div>
-                            <h5><a href="{{ url_for('myapp_blueprints_artefacts.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug) }}">{{ artefact.label }}</a></h5>
+                            <h5><a href="{{ artefact_url(artefact) }}">{{ artefact.label }}</a></h5>
                             <p class="mb-1 text-muted">
                                 <span class="badge bg-secondary">{{ artefact.artefact_type.value.upper().replace('_', ' ') }}</span>
                                 <code>{{ artefact.original_filename }}</code>
@@ -87,7 +87,7 @@
                             <div class="ms-3 mt-2 small">
                                 <i class="bi bi-arrow-return-right text-muted"></i>
                                 {% for derived in artefact.derived_artefacts %}
-                                <a href="{{ url_for('myapp_blueprints_artefacts.view', item_id=derived.item.url_id, artefact_id=derived.url_slug) }}" class="me-2">
+                                <a href="{{ artefact_url(derived) }}" class="me-2">
                                     {{ derived.label }} <span class="badge bg-info">{{ derived.artefact_type.value.upper() }}</span>
                                 </a>
                                 {% endfor %}

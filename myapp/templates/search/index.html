@@ -189,7 +189,7 @@
 			{% for ef, part, art, item in results.files %}
 			<tr>
 				<td>
-					<a href="{{ url_for('myapp_blueprints_artefacts.view', item_id=art.item.url_id, artefact_id=art.url_slug) }}#files"
+					<a href="{{ artefact_url(art) }}#files"
 					   class="font-monospace text-decoration-none">{{ ef.path }}</a>
 				</td>
 				<td>
@@ -204,7 +204,7 @@
 				</td>
 				<td class="text-muted small">
 					<a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a>
-					/ <a href="{{ url_for('myapp_blueprints_artefacts.view', item_id=art.item.url_id, artefact_id=art.url_slug) }}">{{ art.label }}</a>
+					/ <a href="{{ artefact_url(art) }}">{{ art.label }}</a>
 					{% if part.label %}/ {{ part.label }}{% endif %}
 				</td>
 			</tr>
@@ -232,7 +232,7 @@
 			{% for r in results.artefacts %}
 			<tr>
 				<td><a href="{{ url_for('myapp_blueprints_items.view', uuid=r.item.url_id) }}">{{ r.item.name }}</a></td>
-				<td><a href="{{ url_for('myapp_blueprints_artefacts.view', item_id=r.artefact.item.url_id, artefact_id=r.artefact.url_slug) }}">{{ r.artefact.label }}</a></td>
+				<td><a href="{{ artefact_url(r.artefact) }}">{{ r.artefact.label }}</a></td>
 				<td class="text-muted small">
 					{% if r.type == 'protection' %}
 					<span class="badge bg-warning text-dark"><i class="bi bi-shield-exclamation"></i> {{ r.protection_type }}</span>

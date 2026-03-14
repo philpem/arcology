@@ -148,6 +148,28 @@ def create_app(config_name=None):
             'running': 'bg-info',
         }.get(status_value, 'bg-warning')
 
+    # -- template global: generate the canonical URL for an artefact action endpoint --
+    @app.template_global('artefact_url')
+    def artefact_url(artefact, endpoint='view', **kwargs):
+        """Return the canonical URL for an artefact action endpoint.
+
+        Root artefacts:    /items/<item_id>/artefacts/<artefact_id>/<action>
+        Derived artefacts: /items/<item_id>/artefacts/<root_id>/<artefact_id>/<action>
+
+        Derived artefacts use the ``_nested`` endpoint variant so that
+        url_for() generates the two-segment path rather than appending
+        root_id as a query parameter.
+        """
+        root = artefact.root_artefact
+        if root is not artefact:
+            route = 'myapp_blueprints_artefacts.' + endpoint + '_nested'
+            kw = {'item_id': artefact.item.url_id, 'root_id': root.url_slug, 'artefact_id': artefact.url_slug}
+        else:
+            route = 'myapp_blueprints_artefacts.' + endpoint
+            kw = {'item_id': artefact.item.url_id, 'artefact_id': artefact.url_slug}
+        kw.update(kwargs)
+        return url_for(route, **kw)
+
     # Register login handlers, error handlers, blueprints, and CLI commands
     _register_login_handlers(app)
     _register_error_handlers(app)

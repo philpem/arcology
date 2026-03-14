@@ -410,6 +410,14 @@ class Artefact(db.Model):
     tags: Mapped[list["Tag"]] = relationship(secondary=artefact_tags, back_populates="artefacts")
 
     @property
+    def root_artefact(self) -> "Artefact":
+        """Walk up the parent chain to the original uploaded artefact (no parent)."""
+        a = self
+        while a.parent_artefact_id is not None:
+            a = a.parent_artefact
+        return a
+
+    @property
     def url_slug(self) -> str:
         """Slug-based URL segment for use within an item URL."""
         return self.slug if self.slug else self.uuid[:8]
