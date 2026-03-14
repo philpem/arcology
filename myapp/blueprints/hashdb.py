@@ -563,7 +563,7 @@ def delete_known_product(db_id, pid):
     is_active = database.is_active
     enable_recognition = database.enable_product_recognition
 
-    kf_ids = [kf.id for kf in product.files]
+    kf_ids = [kf.id for kf in product.known_files]
 
     # Collect affected ExtractedFile IDs and partition IDs before unlinking.
     if kf_ids:
