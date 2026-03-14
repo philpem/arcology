@@ -519,7 +519,7 @@ class ExtractedFile(db.Model):
     sha1: Mapped[Optional[str]] = mapped_column(String(40), index=True, nullable=True)
     sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     crc32: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
-    known_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("known_files.id"), index=True, nullable=True)
+    known_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("known_files.id", ondelete="SET NULL"), index=True, nullable=True)
     is_known: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
     # Archive/nested file support
@@ -602,7 +602,7 @@ class HashDatabase(db.Model):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     source_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    platform_id: Mapped[Optional[int]] = mapped_column(ForeignKey("platforms.id"), nullable=True)
+    platform_id: Mapped[Optional[int]] = mapped_column(ForeignKey("platforms.id", ondelete="SET NULL"), nullable=True)
     file_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     enable_product_recognition: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
