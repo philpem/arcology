@@ -1,6 +1,15 @@
 {% extends "_base.html" %}
 {% block page_title %}{{ artefact.label }}{% endblock %}
 
+{% block styles %}
+{{ super() }}
+<style>
+/* Recognised Items: chevron rotates when group is expanded */
+.rp-summary .rp-chevron { transition: transform 0.15s ease; }
+.rp-summary[aria-expanded="true"] .rp-chevron { transform: rotate(90deg); }
+</style>
+{% endblock %}
+
 {% block content %}
 <nav aria-label="breadcrumb" class="mb-3">
     <ol class="breadcrumb">
@@ -88,6 +97,13 @@
                         <button type="submit" class="btn btn-sm btn-outline-secondary"
                                 title="Re-link extracted files to active hash databases without re-analysing">
                             <i class="bi bi-arrow-repeat"></i> Rescan Known Files
+                        </button>
+                    </form>
+                    <form action="{{ url_for('myapp_blueprints_artefacts.rerun_product_recognition_route', uuid=artefact.uuid) }}" method="post">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-outline-secondary"
+                                title="Re-queue product/folder recognition analysis without re-analysing the disc">
+                            <i class="bi bi-diagram-3"></i> Re-run Product Recognition
                         </button>
                     </form>
                 </div>
@@ -325,24 +341,81 @@
                 <div class="table-responsive">
                     <table class="table table-sm mb-0">
                         <thead class="table-light"><tr><th>Product</th><th>Database</th><th>Folder path</th><th>Required</th><th>Optional</th><th>Confidence</th></tr></thead>
+                        {# Group repeated products so duplicates (e.g. !Boot, !Scrap on every partition)
+                           are collapsed into a single row with an expandable detail section. #}
+                        {% set rp_colors = ['primary', 'success', 'warning', 'danger', 'info', 'secondary'] %}
                         <tbody>
-                        {% for rp in recognised_products %}
-                        <tr>
-                            <td><strong>{{ rp.product.title }}</strong></td>
-                            <td><span class="badge bg-secondary">{{ rp.product.database.name }}</span></td>
-                            <td><code>{{ rp.folder_path }}</code></td>
-                            <td>{{ rp.required_matched }}/{{ rp.required_total }}</td>
-                            <td>{{ rp.optional_matched }}/{{ rp.optional_total }}</td>
+                        {% for product_id, rp_group in recognised_products | groupby('product.id') %}
+                        {% set rp_instances = rp_group | list %}
+                        {% set is_multi = rp_instances | length > 1 %}
+                        {% set first = rp_instances[0] %}
+                        {% set collapse_id = 'rp-instances-' ~ product_id %}
+                        {# Summary row — clickable when there are multiple instances #}
+                        <tr {% if is_multi %}class="rp-summary" role="button"
+                               data-bs-toggle="collapse" data-bs-target="#{{ collapse_id }}"
+                               aria-expanded="false" aria-controls="{{ collapse_id }}"{% endif %}>
                             <td>
-                                {% if rp.required_total > 0 %}
-                                {% set pct = (rp.required_matched / rp.required_total * 100)|int %}
+                                <strong>{{ first.product.title }}</strong>
+                                {% if is_multi %}
+                                <span class="badge rounded-pill bg-secondary ms-1"
+                                      title="{{ rp_instances|length }} locations">{{ rp_instances|length }}</span>
+                                <i class="bi bi-chevron-right ms-1 small text-muted rp-chevron" aria-hidden="true"></i>
+                                {% endif %}
+                            </td>
+                            <td><span class="badge bg-secondary">{{ first.product.database.name }}</span></td>
+                            {% if is_multi %}
+                            {# Multi: show partition badges + paths in summary; full detail on expand #}
+                            <td colspan="4" class="small">
+                                {% for rp in rp_instances %}
+                                {% set rp_color = rp_colors[rp.partition.partition_index % rp_colors|length] %}
+                                <span class="badge bg-{{ rp_color }} me-1"
+                                      title="Partition {{ rp.partition.partition_index }}: {{ rp.partition.label or rp.partition.filesystem.value }}">{{ rp.partition.partition_index }}</span><code class="me-2">{{ rp.folder_path }}</code>
+                                {% endfor %}
+                            </td>
+                            {% else %}
+                            {# Single instance: show inline as before #}
+                            {% set rp_color = rp_colors[first.partition.partition_index % rp_colors|length] %}
+                            <td>
+                                <span class="badge bg-{{ rp_color }} me-1"
+                                      title="Partition {{ first.partition.partition_index }}: {{ first.partition.label or first.partition.filesystem.value }}">{{ first.partition.partition_index }}</span><code>{{ first.folder_path }}</code>
+                            </td>
+                            <td>{{ first.required_matched }}/{{ first.required_total }}</td>
+                            <td>{{ first.optional_matched }}/{{ first.optional_total }}</td>
+                            <td>
+                                {% if first.required_total > 0 %}
+                                {% set pct = (first.required_matched / first.required_total * 100)|int %}
                                 <div class="progress" style="height:8px; min-width:60px">
                                     <div class="progress-bar {% if pct == 100 %}bg-success{% elif pct >= 50 %}bg-warning{% else %}bg-danger{% endif %}"
                                          style="width:{{ pct }}%"></div>
                                 </div>
                                 {% else %}-{% endif %}
                             </td>
+                            {% endif %}
                         </tr>
+                        {% if is_multi %}
+                        {# Expandable detail: one flex row per instance #}
+                        <tr id="{{ collapse_id }}" class="collapse">
+                            <td colspan="6" class="pt-0 pb-2 px-4 border-top-0 bg-light">
+                                {% for rp in rp_instances %}
+                                {% set rp_color = rp_colors[rp.partition.partition_index % rp_colors|length] %}
+                                <div class="d-flex align-items-center gap-3 py-1 {% if not loop.last %}border-bottom{% endif %}">
+                                    <span class="badge bg-{{ rp_color }} flex-shrink-0"
+                                          title="Partition {{ rp.partition.partition_index }}: {{ rp.partition.label or rp.partition.filesystem.value }}">{{ rp.partition.partition_index }}</span>
+                                    <code class="flex-grow-1 text-break">{{ rp.folder_path }}</code>
+                                    <small class="text-muted text-nowrap">{{ rp.required_matched }}/{{ rp.required_total }} req</small>
+                                    <small class="text-muted text-nowrap">{{ rp.optional_matched }}/{{ rp.optional_total }} opt</small>
+                                    {% if rp.required_total > 0 %}
+                                    {% set pct = (rp.required_matched / rp.required_total * 100)|int %}
+                                    <div class="progress flex-shrink-0" style="height:8px; width:60px;">
+                                        <div class="progress-bar {% if pct == 100 %}bg-success{% elif pct >= 50 %}bg-warning{% else %}bg-danger{% endif %}"
+                                             style="width:{{ pct }}%"></div>
+                                    </div>
+                                    {% endif %}
+                                </div>
+                                {% endfor %}
+                            </td>
+                        </tr>
+                        {% endif %}
                         {% endfor %}
                         </tbody>
                     </table>
@@ -481,7 +554,6 @@
                 <table class="table table-sm table-hover mb-0">
                     <thead><tr>
                         {% if hashdb_mode %}<th><input type="checkbox" id="select-all-files" title="Select all on this page"></th>{% endif %}
-                        <th>P</th>
                         {{ sort_th('Path', 'path') }}
                         {{ sort_th('Size', 'size') }}
                         {{ sort_th('Filetype', 'filetype') }}
@@ -498,9 +570,8 @@
                             {% if hashdb_mode %}
                             <td>{% if not file.is_directory %}<input type="checkbox" name="file_ids" value="{{ file.id }}" class="file-checkbox">{% endif %}</td>
                             {% endif %}
-                            <td><span class="badge bg-{{ partition_color }}" title="Partition {{ file.partition.partition_index }}">{{ file.partition.partition_index }}</span></td>
                             <td>
-                                {% if file.is_directory %}
+                                <span class="badge bg-{{ partition_color }} me-1" title="Partition {{ file.partition.partition_index }}: {{ file.partition.label or file.partition.filesystem.value }}">{{ file.partition.partition_index }}</span>{% if file.is_directory %}
                                     {# Directory - make it clickable to browse into it #}
                                     <a href="?{% if hashdb_mode %}mode=hashdb&{% endif %}partition_uuid={{ file.partition.uuid }}&path={{ (file.path + '/')|urlencode }}&recursive={{ file_form.recursive.data|default(true, true)|lower }}"
                                        class="text-primary text-decoration-none"
@@ -569,7 +640,7 @@
                             <td>{% if file.is_known %}{% set _db_colors = ['info', 'success', 'primary', 'danger', 'warning', 'dark'] %}<span class="badge bg-{{ _db_colors[file.known_file.database_id % (_db_colors | length)] }}" title="{{ file.known_file.database.name }}">{{ file.known_file.product.title if file.known_file.product else file.known_file.database.name }}</span>{% endif %}</td>
                         </tr>
                         {% else %}
-                        <tr><td colspan="{% if hashdb_mode %}6{% else %}5{% endif %}" class="text-center text-muted">No files{% if not all_partitions %} - run analysis to extract file listing{% endif %}</td></tr>
+                        <tr><td colspan="{% if hashdb_mode %}5{% else %}4{% endif %}" class="text-center text-muted">No files{% if not all_partitions %} - run analysis to extract file listing{% endif %}</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
