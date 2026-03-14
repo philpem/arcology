@@ -1582,13 +1582,14 @@ class AnalysisWorker:
                 required_files = product.get('required_files', [])
                 optional_files = product.get('optional_files', [])
 
-                if not required_files:
+                if not required_files and not optional_files:
                     continue
 
                 for folder, idx in folder_index.items():
                     folder_hashes = idx['hashes']
                     path_map = idx['path_map']
 
+                    # Check required files (all must match)
                     required_matched = 0
                     for req in required_files:
                         md5 = (req.get('md5') or '').lower()
@@ -1614,7 +1615,7 @@ class AnalysisWorker:
                         if matched:
                             required_matched += 1
 
-                    if required_matched < len(required_files):
+                    if required_files and required_matched < len(required_files):
                         continue  # Not a match — not all required files found
 
                     # Count optional matches
@@ -1635,6 +1636,10 @@ class AnalysisWorker:
                                 for h in folder_hashes
                             ):
                                 optional_matched += 1
+
+                    # For optional-only products, require at least one match
+                    if not required_files and optional_matched == 0:
+                        continue
 
                     results.append({
                         'product_id': product_id,
