@@ -357,8 +357,14 @@
                             </td>
                             <td><span class="badge bg-secondary">{{ first.product.database.name }}</span></td>
                             {% if is_multi %}
-                            {# Multi: placeholder cells, detail shown on expand #}
-                            <td colspan="4" class="text-muted fst-italic small">{{ rp_instances|length }} locations — click to expand</td>
+                            {# Multi: show partition badges + paths in summary; full detail on expand #}
+                            <td colspan="4" class="small">
+                                {% for rp in rp_instances %}
+                                {% set rp_color = rp_colors[rp.partition.partition_index % rp_colors|length] %}
+                                <span class="badge bg-{{ rp_color }} me-1"
+                                      title="Partition {{ rp.partition.partition_index }}: {{ rp.partition.label or rp.partition.filesystem.value }}">{{ rp.partition.partition_index }}</span><code class="me-2">{{ rp.folder_path }}</code>
+                                {% endfor %}
+                            </td>
                             {% else %}
                             {# Single instance: show inline as before #}
                             {% set rp_color = rp_colors[first.partition.partition_index % rp_colors|length] %}
