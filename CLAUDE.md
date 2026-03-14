@@ -260,6 +260,10 @@ Automated tests live in `ci/` and run in the `app-tests` GitHub Actions job (SQL
 | `ci/test_artefact_map.py` | `EXTENSION_MAP` / `ANALYSIS_MAP` consistency |
 | `ci/test_archive_formats.py` | Archive format completeness |
 | `ci/test_slug.py` | Slug generation (stdlib only, no pip) |
+| `ci/test_idempotency.py` | Analysis pipeline idempotency (prevent duplicate Analysis/Artefact rows) |
+| `ci/test_checksum_compute.py` | Hash computation |
+| `ci/test_url_identifiers.py` | URL-safe identifiers and slug generation |
+| `ci/test_fk_violations.py` | FK cascade deletes, defensive checks, M2M cleanup, nullable FK edge cases (SQLite FK enforcement enabled) |
 
 Run locally:
 
