@@ -747,13 +747,13 @@ def add_to_hashdb(uuid):
 
     if not file_ids:
         flash('No files selected.', 'warning')
-        return redirect(url_for(f'{ROUTENAME}.view', uuid=uuid, mode='hashdb'))
+        return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.uuid, artefact_id=artefact.uuid, mode='hashdb'))
 
     if raw_db_id == 'new':
         new_db_name = request.form.get('new_database_name', '').strip()
         if not new_db_name:
             flash('Provide a name for the new hash database.', 'danger')
-            return redirect(url_for(f'{ROUTENAME}.view', uuid=uuid, mode='hashdb'))
+            return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.uuid, artefact_id=artefact.uuid, mode='hashdb'))
         database = HashDatabase(name=new_db_name)
         db.session.add(database)
         db.session.flush()
@@ -762,7 +762,7 @@ def add_to_hashdb(uuid):
             database_id = int(raw_db_id)
         except (ValueError, TypeError):
             flash('Select a hash database.', 'danger')
-            return redirect(url_for(f'{ROUTENAME}.view', uuid=uuid, mode='hashdb'))
+            return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.uuid, artefact_id=artefact.uuid, mode='hashdb'))
         database = HashDatabase.query.get_or_404(database_id)
 
     # Create or fetch the product
@@ -778,7 +778,7 @@ def add_to_hashdb(uuid):
         db.session.flush()  # get product.id
     else:
         flash('Select a product or provide a new product title.', 'danger')
-        return redirect(url_for(f'{ROUTENAME}.view', uuid=uuid, mode='hashdb'))
+        return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.uuid, artefact_id=artefact.uuid, mode='hashdb'))
 
     # Get OUTPUT_FOLDER for on-demand hash computation
     output_folder = current_app.config.get('OUTPUT_FOLDER', '')
@@ -909,7 +909,7 @@ def add_to_hashdb(uuid):
     if not added and not skipped_no_hash and not skipped_no_file:
         flash('All selected files already exist in this hash database.', 'info')
 
-    return redirect(url_for(f'{ROUTENAME}.view', uuid=uuid, mode='hashdb'))
+    return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.uuid, artefact_id=artefact.uuid, mode='hashdb'))
 
 
 def _get_all_artefact_ids(artefact):
