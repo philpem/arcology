@@ -685,8 +685,10 @@ def _render_artefact_view(artefact):
         from sqlalchemy.orm import joinedload as _jl
         recognised_products = (
             RecognisedProduct.query
+            .join(RecognisedProduct.partition)
             .filter(RecognisedProduct.partition_id.in_(partition_ids))
             .options(_jl(RecognisedProduct.product).joinedload(KnownProduct.database))
+            .order_by(Partition.partition_index, RecognisedProduct.folder_path)
             .all()
         )
 
