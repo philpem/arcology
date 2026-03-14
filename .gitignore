@@ -27,3 +27,6 @@ data
 
 # Flask instance folder (local config, temp DBs)
 instance/
+
+# Claude Code
+.claude/
