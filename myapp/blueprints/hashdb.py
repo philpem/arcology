@@ -530,9 +530,51 @@ def edit_known_product(db_id, pid):
 def delete_known_product(db_id, pid):
     product = KnownProduct.query.filter_by(id=pid, database_id=db_id).first_or_404()
     title = product.title
+    database = product.database
+    is_active = database.is_active
+    enable_recognition = database.enable_product_recognition
+
+    kf_ids = [kf.id for kf in product.files]
+
+    # Collect affected ExtractedFile IDs and partition IDs before unlinking.
+    if kf_ids:
+        affected_ef_ids = [
+            row[0] for row in
+            ExtractedFile.query
+            .with_entities(ExtractedFile.id)
+            .filter(ExtractedFile.known_file_id.in_(kf_ids))
+            .all()
+        ]
+        if is_active and enable_recognition:
+            pre_delete_partition_ids = {
+                row[0] for row in
+                ExtractedFile.query
+                .with_entities(ExtractedFile.partition_id)
+                .filter(ExtractedFile.id.in_(affected_ef_ids))
+                .all()
+            } if affected_ef_ids else set()
+        else:
+            pre_delete_partition_ids = set()
+        # Clear FK references so the cascade delete cannot violate the constraint.
+        if affected_ef_ids:
+            ExtractedFile.query.filter(
+                ExtractedFile.id.in_(affected_ef_ids)
+            ).update({'known_file_id': None, 'is_known': False}, synchronize_session=False)
+    else:
+        affected_ef_ids = []
+        pre_delete_partition_ids = set()
+
     db.session.delete(product)
     db.session.commit()
     flash(f'Product "{title}" deleted.', 'success')
+
+    if is_active and affected_ef_ids:
+        from ..utils.hash_rescan import rescan_hashes_for_queryset, queue_product_recognition_for_partitions
+        # Re-evaluate the unlinked files; they may match another active database.
+        rescan_hashes_for_queryset(ExtractedFile.query.filter(ExtractedFile.id.in_(affected_ef_ids)))
+        if enable_recognition and pre_delete_partition_ids:
+            queue_product_recognition_for_partitions(pre_delete_partition_ids)
+
     return redirect(url_for(f'{ROUTENAME}.view', id=db_id))
 
 
@@ -631,29 +673,46 @@ def delete_known_file(db_id, pid, fid):
     database = kf.database
     is_active = database.is_active
     enable_recognition = database.enable_product_recognition
-    # Capture affected partition IDs before the delete removes the link.
+
+    # Collect affected ExtractedFile IDs before unlinking so we can rescan
+    # them afterwards.  Must be done before the delete to avoid FK violation.
+    affected_ef_ids = [
+        row[0] for row in
+        ExtractedFile.query
+        .with_entities(ExtractedFile.id)
+        .filter(ExtractedFile.known_file_id == kf_id)
+        .all()
+    ]
     if is_active and enable_recognition:
         pre_delete_partition_ids = {
             row[0] for row in
             ExtractedFile.query
             .with_entities(ExtractedFile.partition_id)
-            .filter(ExtractedFile.known_file_id == kf_id)
+            .filter(ExtractedFile.id.in_(affected_ef_ids))
             .all()
-        }
+        } if affected_ef_ids else set()
     else:
         pre_delete_partition_ids = set()
+
+    # Clear FK references before deletion to avoid constraint violation.
+    if affected_ef_ids:
+        ExtractedFile.query.filter(
+            ExtractedFile.id.in_(affected_ef_ids)
+        ).update({'known_file_id': None, 'is_known': False}, synchronize_session=False)
+
     db.session.delete(kf)
     if database.file_count and database.file_count > 0:
         database.file_count -= 1
     db.session.commit()
     flash(f'File "{filename}" deleted.', 'success')
-    if is_active:
-        from ..utils.hash_rescan import rescan_links_for_known_file_id, queue_product_recognition_for_partitions
-        # Re-evaluate files that were linked to the deleted KnownFile;
-        # they may link to another active database or become unlinked.
-        rescan_links_for_known_file_id(kf_id)
+
+    if is_active and affected_ef_ids:
+        from ..utils.hash_rescan import rescan_hashes_for_queryset, queue_product_recognition_for_partitions
+        # Re-evaluate unlinked files; they may match another active database.
+        rescan_hashes_for_queryset(ExtractedFile.query.filter(ExtractedFile.id.in_(affected_ef_ids)))
         if enable_recognition and pre_delete_partition_ids:
             queue_product_recognition_for_partitions(pre_delete_partition_ids)
+
     return redirect(url_for(f'{ROUTENAME}.view', id=db_id) + f'#product-{pid}')
 
 
