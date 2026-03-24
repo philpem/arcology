@@ -131,6 +131,10 @@ def extract_zip(input_path: Path, output_dir: Path) -> Dict[str, Any]:
             'process_output': output
         }
 
+    # Normalise any raw Latin-1 byte sequences in extracted filenames
+    # (e.g. RISC OS filenames stored in the ZIP with non-UTF-8 bytes).
+    normalize_extracted_filenames(output_dir)
+
     file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
 
     return {
@@ -177,6 +181,8 @@ def extract_tar(input_path: Path, output_dir: Path, archive_type: str = 'tar') -
             'process_output': output
         }
 
+    normalize_extracted_filenames(output_dir)
+
     file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
 
     return {
@@ -211,6 +217,8 @@ def extract_rar(input_path: Path, output_dir: Path) -> Dict[str, Any]:
             'tool': 'unrar',
             'process_output': output
         }
+
+    normalize_extracted_filenames(output_dir)
 
     file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
 
