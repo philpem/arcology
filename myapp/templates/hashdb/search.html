@@ -1,0 +1,82 @@
+{% extends "_base.html" %}
+{% block page_title %}Search — {{ database.name }}{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_hashdb.index') }}">Hash Databases</a></li>
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_hashdb.view', id=database.id) }}">{{ database.name }}</a></li>
+        <li class="breadcrumb-item active">Search results</li>
+    </ol>
+</nav>
+
+<h1 class="mb-1"><i class="bi bi-search"></i> Find in collection</h1>
+<p class="text-muted mb-3">
+    {% if known_file %}
+    File: <code>{{ known_file.filename }}</code>
+    {% if product %} in <strong>{{ product.title }}</strong>{% endif %}
+    {% elif product %}
+    Product: <strong>{{ product.title }}</strong>
+    {% else %}
+    Entire database: <strong>{{ database.name }}</strong>
+    {% endif %}
+</p>
+
+{% if results %}
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <span class="text-muted small">
+        {{ results|length }}{% if truncated %}+{% endif %} match{{ 'es' if results|length != 1 else '' }}
+        across {{ unique_items }} item{{ 's' if unique_items != 1 else '' }}
+        and {{ unique_artefacts }} artefact{{ 's' if unique_artefacts != 1 else '' }}
+    </span>
+</div>
+{% if truncated %}
+<div class="alert alert-warning py-2"><i class="bi bi-exclamation-triangle"></i> Showing first {{ SEARCH_LIMIT }} results — narrow your search by selecting a specific product or file.</div>
+{% endif %}
+
+<div class="table-responsive">
+    <table class="table table-sm table-hover">
+        <thead>
+            <tr>
+                {% if not known_file %}<th>Known file</th>{% endif %}
+                <th>Matched file</th>
+                <th>Type</th>
+                <th>Size</th>
+                <th>Item / Artefact / Partition</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for ef, part, art, item, kf in results %}
+            <tr>
+                {% if not known_file %}
+                <td><code>{{ kf.filename }}</code></td>
+                {% endif %}
+                <td>
+                    <a href="{{ artefact_url(art) }}#files"
+                       class="font-monospace text-decoration-none">{{ ef.path }}</a>
+                </td>
+                <td>
+                    {% if ef.risc_os_filetype %}
+                    <span class="badge bg-light text-dark font-monospace border" title="RISC OS filetype">{{ ef.risc_os_filetype | format_filetype }}</span>
+                    {% elif ef.extension %}
+                    <span class="badge bg-light text-dark border">.{{ ef.extension }}</span>
+                    {% endif %}
+                </td>
+                <td class="text-muted text-nowrap">
+                    {% if ef.file_size is not none %}{{ ef.file_size | filesizeformat }}{% endif %}
+                </td>
+                <td class="text-muted small">
+                    <a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a>
+                    / <a href="{{ artefact_url(art) }}">{{ art.label }}</a>
+                    {% if part.label %}/ {{ part.label }}{% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% else %}
+<div class="alert alert-info"><i class="bi bi-info-circle"></i> No matching files found in the collection.</div>
+{% endif %}
+{% endblock %}
