@@ -17,7 +17,12 @@ pipeline {
             steps {
                 sh 'python3 ci/check_syntax.py'
                 sh 'python3 ci/check_migration_sanity.py'
-                sh 'python3 -m unittest ci.test_slug -v'
+                sh '''
+                    python3 -m venv .venv-ci
+                    . .venv-ci/bin/activate
+                    pip install -q -r requirements.txt
+                    python -m xmlrunner ci.test_slug -o test-results/static
+                '''
             }
         }
 
@@ -33,7 +38,7 @@ pipeline {
                         python ci/check_imports.py
 
                         echo "=== Running application tests ==="
-                        python -m unittest discover -s ci -p "test_*.py" -v
+                        python -m xmlrunner discover -s ci -p "test_*.py" -o test-results/app
                     '''
                 }
             }
@@ -99,8 +104,9 @@ pipeline {
 
     post {
         always {
-            // Clean up virtualenv and test Docker images
-            sh 'rm -rf .venv-ci || true'
+            junit allowEmptyResults: true, testResults: 'test-results/**/*.xml'
+            // Clean up virtualenv, test results, and test Docker images
+            sh 'rm -rf .venv-ci test-results || true'
             sh 'docker rmi arcology-web:test arcology-worker:test 2>/dev/null || true'
         }
     }
