@@ -524,7 +524,7 @@
                 <div class="small text-muted mb-2"><i class="bi bi-folder"></i> Subdirectories at this level:</div>
                 <div class="d-flex flex-wrap gap-2">
                     {% for subdir in subdirectories %}
-                    <a href="?{% if hashdb_mode %}mode=hashdb&{% endif %}{% if file_form.partition_uuid.data %}partition_uuid={{ file_form.partition_uuid.data }}&{% endif %}path={{ (current_path + subdir + '/')|urlencode }}&recursive=true"
+                    <a href="?{{ dict(pagination_args, path=current_path + subdir + '/', recursive='true') | urlencode }}"
                        class="btn btn-sm btn-outline-primary">
                         {% if (current_path + subdir) in archive_paths %}
                         <i class="bi bi-file-zip-fill"></i> {{ subdir }}
@@ -575,7 +575,7 @@
                             <td>
                                 <span class="badge bg-{{ partition_color }} me-1" title="Partition {{ file.partition.partition_index }}: {{ file.partition.label or file.partition.filesystem.value }}">{{ file.partition.partition_index }}</span>{% if file.is_directory %}
                                     {# Directory - make it clickable to browse into it #}
-                                    <a href="?{% if hashdb_mode %}mode=hashdb&{% endif %}partition_uuid={{ file.partition.uuid }}&path={{ (file.path + '/')|urlencode }}&recursive={{ file_form.recursive.data|default(true, true)|lower }}"
+                                    <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=file.path + '/', recursive=file_form.recursive.data|default(true, true)|lower) | urlencode }}"
                                        class="text-primary text-decoration-none"
                                        title="Browse directory">
                                         <i class="bi bi-folder-fill"></i> <strong>{{ file.path }}</strong>
@@ -591,7 +591,7 @@
                                     {% if path_parts|length > 1 %}
                                         {% for i in range(path_parts|length - 1) %}
                                             {% set build_path = path_parts[:i+1]|join('/') + '/' %}
-                                            <a href="?{% if hashdb_mode %}mode=hashdb&{% endif %}partition_uuid={{ file.partition.uuid }}&path={{ build_path|urlencode }}&recursive={{ file_form.recursive.data|default(true, true)|lower }}"
+                                            <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=build_path, recursive=file_form.recursive.data|default(true, true)|lower) | urlencode }}"
                                                class="text-muted text-decoration-none"
                                                title="Browse {{ build_path }}">
                                                 {% if build_path.rstrip('/') in archive_paths %}
@@ -603,7 +603,7 @@
                                             </a> /
                                         {% endfor %}
                                     {% endif %}
-                                    <a href="?{% if hashdb_mode %}mode=hashdb&{% endif %}partition_uuid={{ file.partition.uuid }}&path={{ (file.path + '/')|urlencode }}&recursive={{ file_form.recursive.data|default(true, true)|lower }}"
+                                    <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=file.path + '/', recursive=file_form.recursive.data|default(true, true)|lower) | urlencode }}"
                                        class="text-primary text-decoration-none"
                                        title="Browse archive contents">
                                         <i class="bi bi-file-zip-fill"></i> <strong>{{ path_parts[-1] }}</strong>
@@ -614,7 +614,7 @@
                                         {# Show directory path as clickable links, with archive icon for archive components #}
                                         {% for i in range(path_parts|length - 1) %}
                                             {% set build_path = path_parts[:i+1]|join('/') + '/' %}
-                                            <a href="?{% if hashdb_mode %}mode=hashdb&{% endif %}partition_uuid={{ file.partition.uuid }}&path={{ build_path|urlencode }}&recursive={{ file_form.recursive.data|default(true, true)|lower }}"
+                                            <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=build_path, recursive=file_form.recursive.data|default(true, true)|lower) | urlencode }}"
                                                class="text-muted text-decoration-none"
                                                title="Browse {{ build_path }}">
                                                 {% if build_path.rstrip('/') in archive_paths %}
