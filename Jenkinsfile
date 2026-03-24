@@ -21,7 +21,7 @@ pipeline {
                     python3 -m venv .venv-ci
                     . .venv-ci/bin/activate
                     pip install -q -r requirements.txt
-                    python -m xmlrunner ci.test_slug -o test-results/static
+                    python -m pytest ci/test_slug.py --junit-xml=test-results/static.xml -v
                 '''
             }
         }
@@ -38,7 +38,7 @@ pipeline {
                         python ci/check_imports.py
 
                         echo "=== Running application tests ==="
-                        python -m xmlrunner discover -s ci -p "test_*.py" -o test-results/app
+                        python -m pytest ci/ --junit-xml=test-results/app.xml -v
                     '''
                 }
             }
