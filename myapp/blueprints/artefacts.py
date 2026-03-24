@@ -147,10 +147,12 @@ ANALYSIS_MAP = {
     # Documents/images - just metadata/checksums
     ArtefactType.PDF: [AnalysisType.METADATA_EXTRACT],
     
-    # Archives - extract contents
-    ArtefactType.ZIP: [AnalysisType.FILE_EXTRACTION],
-    ArtefactType.TARGZ: [AnalysisType.FILE_EXTRACTION],
-    ArtefactType.RAR: [AnalysisType.FILE_EXTRACTION],
+    # Archives - extract contents via ARCHIVE_EXTRACT (same pipeline used
+    # for archives found inside disc images).  The worker detects top-level
+    # artefact archives (no partition_uuid hint) and extracts them directly.
+    ArtefactType.ZIP: [AnalysisType.ARCHIVE_EXTRACT],
+    ArtefactType.TARGZ: [AnalysisType.ARCHIVE_EXTRACT],
+    ArtefactType.RAR: [AnalysisType.ARCHIVE_EXTRACT],
     
     # Unknown - try to identify
     ArtefactType.UNKNOWN: [AnalysisType.FORMAT_IDENTIFY],

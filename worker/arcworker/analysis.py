@@ -1092,13 +1092,106 @@ class AnalysisWorker:
             })
         )
 
+    def _extract_top_level_archive(
+        self, analysis, artefact, work_dir,
+        archive_type, archive_info,
+        extract_zip, extract_tar, extract_rar, extract_7z,
+    ):
+        """Handle ARCHIVE_EXTRACT for a top-level artefact (no partition).
+
+        Extracts the artefact file directly, creates a partition for the
+        extracted files, and queues follow-on analyses (ARCHIVE_DETECT,
+        PRODUCT_RECOGNITION).  Reuses the same tool dispatch as the
+        nested-archive path.
+        """
+        import json
+        from shared.archive_formats import ArchiveType
+        from .tools.extraction import enumerate_extracted_files
+        from .config import OUTPUT_DIR
+        from .utils.paths import get_output_path
+
+        analysis_id = analysis['id']
+        item = artefact.get('item', {'uuid': 'default', 'slug': 'default'})
+
+        extract_dir = get_output_path(
+            OUTPUT_DIR, item, artefact, analysis, partition=None
+        )
+        input_path = self.get_input_path(artefact, work_dir)
+
+        # Dispatch to the correct extraction tool
+        if archive_type in [ArchiveType.ZIP, ArchiveType.ZIP_RISCOS]:
+            result = extract_zip(input_path, extract_dir)
+        elif archive_type in [ArchiveType.TAR, ArchiveType.TARGZ,
+                              ArchiveType.TARBZ2, ArchiveType.TARXZ]:
+            result = extract_tar(input_path, extract_dir, archive_type.value)
+        elif archive_type == ArchiveType.RAR:
+            result = extract_rar(input_path, extract_dir)
+        elif archive_type == ArchiveType.SEVENZ:
+            result = extract_7z(input_path, extract_dir)
+        else:
+            self.api.update_analysis(
+                analysis_id,
+                status='failed',
+                success=False,
+                error_message=f'Top-level extraction not supported for archive type: {archive_type.value}'
+            )
+            return
+
+        if not result['success']:
+            self.api.update_analysis(
+                analysis_id,
+                status='failed',
+                success=False,
+                tool_name=result.get('tool'),
+                error_message=result.get('error', 'Archive extraction failed'),
+                details=json.dumps({'process_output': result.get('process_output')}),
+            )
+            return
+
+        files = enumerate_extracted_files(extract_dir, acorn=False)
+
+        partition = self.api.register_file_listing(
+            artefact['uuid'], files, 'archive',
+        )
+
+        self.api.update_analysis(
+            analysis_id,
+            status='completed',
+            success=True,
+            tool_name=result['tool'],
+            output_path=str(extract_dir),
+            summary=f"Extracted {len(files)} files from {archive_info['name']}",
+            details=json.dumps({
+                'file_count': len(files),
+                'archive_type': archive_type.value,
+            }),
+        )
+
+        if partition:
+            self.api.queue_analysis(
+                artefact['uuid'],
+                AnalysisType.ARCHIVE_DETECT.value,
+                hints={
+                    'partition_uuid': partition.get('uuid'),
+                    'extraction_path': str(extract_dir),
+                },
+            )
+            self.api.queue_analysis(
+                artefact['uuid'],
+                AnalysisType.PRODUCT_RECOGNITION.value,
+                hints={'partition_uuid': partition.get('uuid')},
+            )
+
     @analysis_handler("archive extraction")
     def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path):
         """
         Process ARCHIVE_EXTRACT analysis.
         Extracts a specific archive file and registers the extracted files.
 
-        Performs actual extraction with file path resolution.
+        When partition_uuid is present in hints, extracts an archive found
+        inside a disc image (the original flow).  When partition_uuid is
+        absent, the artefact itself is the archive (top-level upload) and
+        the handler creates a new partition for the extracted files.
         """
         import json
         from shared.archive_formats import (
@@ -1134,6 +1227,18 @@ class AnalysisWorker:
         hinted_extraction_path = hints.get('extraction_path')
         path_prefix = hints.get('path_prefix', '')
 
+        # ── Top-level artefact archive ──────────────────────────────────
+        # When no partition_uuid is provided, the artefact itself is the
+        # archive (uploaded directly, not found inside a disc image).
+        # Derive the archive type from the artefact type and delegate to
+        # the shared extraction logic below after creating a partition.
+        if not partition_uuid:
+            artefact_type = artefact.get('artefact_type', '')
+            if not archive_type_str:
+                # Map ArtefactType value → ArchiveType value (they share
+                # the same string values for ZIP, tar_gz, and rar).
+                archive_type_str = artefact_type
+
         # Get ArchiveType enum from string
         try:
             archive_type = ArchiveType(archive_type_str)
@@ -1144,6 +1249,17 @@ class AnalysisWorker:
                 status='failed',
                 success=False,
                 error_message=f'Unknown archive type: {archive_type_str}'
+            )
+            return
+
+        # ── Top-level artefact archive (continued) ──────────────────────
+        # Extract the artefact file directly and create a new partition
+        # for the extracted files, then return.
+        if not partition_uuid:
+            self._extract_top_level_archive(
+                analysis, artefact, work_dir,
+                archive_type, archive_info,
+                extract_zip, extract_tar, extract_rar, extract_7z,
             )
             return
 
