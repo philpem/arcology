@@ -17,7 +17,7 @@ from wtforms.validators import DataRequired, Optional, Length
 from sqlalchemy import or_
 
 from ..extensions import db
-from ..database import Platform, HashDatabase, KnownProduct, KnownFile, ExtractedFile
+from ..database import Platform, HashDatabase, KnownProduct, KnownFile, ExtractedFile, Partition, Artefact, Item
 from ..permissions import require_permission
 
 ROUTENAME = __name__.replace('.', '_')
@@ -121,6 +121,75 @@ def view(id):
                            database=database,
                            products=products,
                            platforms=platforms)
+
+
+SEARCH_LIMIT = 200
+
+
+@blueprint.route('/<int:id>/search')
+@login_required
+def search(id):
+    """Search the collection for artefacts containing files from this database."""
+    database = HashDatabase.query.get_or_404(id)
+
+    product_id = request.args.get('product_id', type=int)
+    file_id = request.args.get('file_id', type=int)
+
+    # Determine scope
+    product = None
+    known_file = None
+    if file_id:
+        known_file = KnownFile.query.filter_by(id=file_id, database_id=id).first_or_404()
+        product = known_file.product
+        kf_filter = ExtractedFile.known_file_id == file_id
+    elif product_id:
+        product = KnownProduct.query.filter_by(id=product_id, database_id=id).first_or_404()
+        kf_ids = [kf.id for kf in product.known_files]
+        if not kf_ids:
+            return render_template('hashdb/search.html',
+                                   database=database, product=product,
+                                   known_file=None, results=[],
+                                   truncated=False, unique_items=0,
+                                   unique_artefacts=0, SEARCH_LIMIT=SEARCH_LIMIT)
+        kf_filter = ExtractedFile.known_file_id.in_(kf_ids)
+    else:
+        # Whole database — subquery for efficiency
+        kf_ids_sq = (
+            db.session.query(KnownFile.id)
+            .filter(KnownFile.database_id == id)
+            .scalar_subquery()
+        )
+        kf_filter = ExtractedFile.known_file_id.in_(kf_ids_sq)
+
+    q = (
+        db.session.query(ExtractedFile, Partition, Artefact, Item, KnownFile)
+        .join(Partition, ExtractedFile.partition_id == Partition.id)
+        .join(Artefact, Partition.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .join(KnownFile, ExtractedFile.known_file_id == KnownFile.id)
+        .filter(kf_filter)
+        .filter(ExtractedFile.is_directory == False)
+        .order_by(KnownFile.filename, Item.name, Artefact.label, ExtractedFile.path)
+        .limit(SEARCH_LIMIT + 1)
+        .all()
+    )
+
+    truncated = len(q) > SEARCH_LIMIT
+    if truncated:
+        q = q[:SEARCH_LIMIT]
+
+    unique_items = len({item.id for _, _, _, item, _ in q})
+    unique_artefacts = len({art.id for _, _, art, _, _ in q})
+
+    return render_template('hashdb/search.html',
+                           database=database,
+                           product=product,
+                           known_file=known_file,
+                           results=q,
+                           truncated=truncated,
+                           unique_items=unique_items,
+                           unique_artefacts=unique_artefacts,
+                           SEARCH_LIMIT=SEARCH_LIMIT)
 
 
 @blueprint.route('/<int:id>/edit', methods=['POST'])

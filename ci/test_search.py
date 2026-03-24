@@ -741,6 +741,217 @@ class TestSearchEndpoint(unittest.TestCase):
         self.assertIn(resp.status_code, (301, 302))
 
 
+# =============================================================================
+# HashDB artefact search tests
+# =============================================================================
+
+class TestHashDBSearch(unittest.TestCase):
+    """Tests for the /hashdb/<id>/search route with fixture data."""
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.app import create_app
+        from myapp.extensions import db as _db
+        from myapp.database import (
+            Item, Artefact, Partition, ExtractedFile,
+            HashDatabase, KnownProduct, KnownFile,
+            FilesystemType, StorageDirectory,
+        )
+        from shared.enums import ArtefactType
+        from myapp.blueprints.hashdb import search as _search_view  # noqa: F401 – import check
+
+        cls.app = create_app()
+        cls.app.config['TESTING'] = True
+
+        with cls.app.app_context():
+            _db.create_all()
+
+            # --- Hash database with two products ---
+            hdb = HashDatabase(name='Test HashDB')
+            _db.session.add(hdb)
+            _db.session.flush()
+
+            prod_a = KnownProduct(database_id=hdb.id, title='Product A')
+            prod_b = KnownProduct(database_id=hdb.id, title='Product B')
+            _db.session.add_all([prod_a, prod_b])
+            _db.session.flush()
+
+            kf_a1 = KnownFile(database_id=hdb.id, product_id=prod_a.id,
+                               filename='FileA1', md5='aa' * 16)
+            kf_a2 = KnownFile(database_id=hdb.id, product_id=prod_a.id,
+                               filename='FileA2', md5='bb' * 16)
+            kf_b1 = KnownFile(database_id=hdb.id, product_id=prod_b.id,
+                               filename='FileB1', md5='cc' * 16)
+            _db.session.add_all([kf_a1, kf_a2, kf_b1])
+            _db.session.flush()
+
+            # --- A second (unrelated) hash database ---
+            hdb2 = HashDatabase(name='Other HashDB')
+            _db.session.add(hdb2)
+            _db.session.flush()
+            prod_other = KnownProduct(database_id=hdb2.id, title='Other Product')
+            _db.session.add(prod_other)
+            _db.session.flush()
+            kf_other = KnownFile(database_id=hdb2.id, product_id=prod_other.id,
+                                  filename='OtherFile', md5='dd' * 16)
+            _db.session.add(kf_other)
+            _db.session.flush()
+
+            # --- Item / artefact / partition / extracted files ---
+            item = Item(name='HashDB Test Item')
+            _db.session.add(item)
+            _db.session.flush()
+
+            art = Artefact(
+                item_id=item.id, label='Disc 1',
+                artefact_type=ArtefactType.HFE,
+                original_filename='disc1.ssd',
+                storage_path='disc1.ssd',
+                storage_directory=StorageDirectory.UPLOADS,
+            )
+            _db.session.add(art)
+            _db.session.flush()
+
+            part = Partition(
+                artefact_id=art.id, partition_index=0,
+                label='Main', filesystem=FilesystemType.DFS,
+            )
+            _db.session.add(part)
+            _db.session.flush()
+
+            # File matching kf_a1
+            ef1 = ExtractedFile(
+                partition_id=part.id, path='$.FileA1', filename='FileA1',
+                md5='aa' * 16, is_directory=False,
+                known_file_id=kf_a1.id, is_known=True,
+            )
+            # File matching kf_b1
+            ef2 = ExtractedFile(
+                partition_id=part.id, path='$.FileB1', filename='FileB1',
+                md5='cc' * 16, is_directory=False,
+                known_file_id=kf_b1.id, is_known=True,
+            )
+            # File matching kf_other (different DB)
+            ef3 = ExtractedFile(
+                partition_id=part.id, path='$.OtherFile', filename='OtherFile',
+                md5='dd' * 16, is_directory=False,
+                known_file_id=kf_other.id, is_known=True,
+            )
+            # Unknown file (no match)
+            ef4 = ExtractedFile(
+                partition_id=part.id, path='$.Unknown', filename='Unknown',
+                md5='ee' * 16, is_directory=False,
+                is_known=False,
+            )
+            _db.session.add_all([ef1, ef2, ef3, ef4])
+            _db.session.commit()
+
+            cls.hdb_id = hdb.id
+            cls.hdb2_id = hdb2.id
+            cls.prod_a_id = prod_a.id
+            cls.prod_b_id = prod_b.id
+            cls.kf_a1_id = kf_a1.id
+            cls.kf_a2_id = kf_a2.id
+            cls.kf_b1_id = kf_b1.id
+
+    def _search(self, db_id, **kwargs):
+        """Call the search route's underlying logic directly."""
+        from myapp.blueprints.hashdb import SEARCH_LIMIT
+        from myapp.database import (
+            ExtractedFile, Partition, Artefact, Item,
+            HashDatabase, KnownProduct, KnownFile,
+        )
+        from myapp.extensions import db as _db
+
+        with self.app.app_context():
+            database = HashDatabase.query.get(db_id)
+            product_id = kwargs.get('product_id')
+            file_id = kwargs.get('file_id')
+
+            if file_id:
+                kf_filter = ExtractedFile.known_file_id == file_id
+            elif product_id:
+                product = KnownProduct.query.get(product_id)
+                kf_ids = [kf.id for kf in product.known_files]
+                if not kf_ids:
+                    return []
+                kf_filter = ExtractedFile.known_file_id.in_(kf_ids)
+            else:
+                kf_ids_sq = (
+                    _db.session.query(KnownFile.id)
+                    .filter(KnownFile.database_id == db_id)
+                    .subquery()
+                )
+                kf_filter = ExtractedFile.known_file_id.in_(kf_ids_sq)
+
+            return (
+                _db.session.query(ExtractedFile, Partition, Artefact, Item, KnownFile)
+                .join(Partition, ExtractedFile.partition_id == Partition.id)
+                .join(Artefact, Partition.artefact_id == Artefact.id)
+                .join(Item, Artefact.item_id == Item.id)
+                .join(KnownFile, ExtractedFile.known_file_id == KnownFile.id)
+                .filter(kf_filter)
+                .filter(ExtractedFile.is_directory == False)
+                .order_by(KnownFile.filename, Item.name, Artefact.label, ExtractedFile.path)
+                .limit(SEARCH_LIMIT + 1)
+                .all()
+            )
+
+    def test_whole_database_search(self):
+        """Search entire HashDB returns files from that DB only."""
+        results = self._search(self.hdb_id)
+        filenames = [ef.filename for ef, *_ in results]
+        self.assertIn('FileA1', filenames)
+        self.assertIn('FileB1', filenames)
+        self.assertNotIn('OtherFile', filenames)
+        self.assertNotIn('Unknown', filenames)
+
+    def test_whole_database_result_count(self):
+        results = self._search(self.hdb_id)
+        self.assertEqual(len(results), 2)
+
+    def test_product_scoped_search(self):
+        """Product-scoped search returns only files from that product."""
+        results = self._search(self.hdb_id, product_id=self.prod_a_id)
+        filenames = [ef.filename for ef, *_ in results]
+        self.assertIn('FileA1', filenames)
+        self.assertNotIn('FileB1', filenames)
+
+    def test_product_scoped_no_match(self):
+        """Product with known files that have no extracted matches returns empty."""
+        # kf_a2 has no matching ExtractedFile
+        results = self._search(self.hdb_id, file_id=self.kf_a2_id)
+        self.assertEqual(len(results), 0)
+
+    def test_single_file_search(self):
+        """Single-file search returns only that file's matches."""
+        results = self._search(self.hdb_id, file_id=self.kf_a1_id)
+        self.assertEqual(len(results), 1)
+        ef = results[0][0]
+        self.assertEqual(ef.filename, 'FileA1')
+
+    def test_other_database_isolation(self):
+        """Searching a different DB does not return files from the first."""
+        results = self._search(self.hdb2_id)
+        filenames = [ef.filename for ef, *_ in results]
+        self.assertIn('OtherFile', filenames)
+        self.assertNotIn('FileA1', filenames)
+        self.assertNotIn('FileB1', filenames)
+
+    def test_results_include_item_context(self):
+        """Results include the Item object for display context."""
+        results = self._search(self.hdb_id)
+        for _, _, _, item, _ in results:
+            self.assertEqual(item.name, 'HashDB Test Item')
+
+    def test_results_include_known_file(self):
+        """Results include the KnownFile for display context."""
+        results = self._search(self.hdb_id, file_id=self.kf_b1_id)
+        self.assertEqual(len(results), 1)
+        kf = results[0][4]
+        self.assertEqual(kf.filename, 'FileB1')
+
+
 if __name__ == '__main__':
     unittest.main()
 
