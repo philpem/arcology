@@ -305,9 +305,13 @@ def request_analysis(uuid):
     # Idempotency: return existing PENDING/RUNNING analysis instead of creating a
     # duplicate.  COMPLETED/FAILED analyses may be intentionally re-run, so only
     # active ones are considered.  This mirrors the logic in queue_analyses_for_artefact().
+    # Include hints in the check so that multiple ARCHIVE_EXTRACT jobs for
+    # different files within the same artefact are not collapsed into one.
+    hints_json = data.get('hints')
     existing = Analysis.query.filter_by(
         artefact_id=artefact.id,
         analysis_type=analysis_type,
+        hints=hints_json,
     ).filter(Analysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.RUNNING])).first()
     if existing:
         return jsonify(analysis_to_dict(existing)), 200
@@ -317,7 +321,7 @@ def request_analysis(uuid):
         analysis_type=analysis_type,
         status=AnalysisStatus.PENDING,
         tool_name=data.get('tool_name'),
-        hints=data.get('hints')  # Store hints JSON
+        hints=hints_json
     )
     db.session.add(analysis)
     db.session.commit()

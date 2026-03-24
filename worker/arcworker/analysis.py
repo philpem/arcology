@@ -1096,15 +1096,15 @@ class AnalysisWorker:
     def _sniff_archive_magic(file_path: Path):
         """Sniff the first bytes of a file to detect mis-labelled archives.
 
-        Some RISC OS archives are distributed with a ``.zip`` extension
-        even though they are actually Spark or ArcFS containers.  This
-        method reads the file header and returns the true ArchiveType
-        when a mismatch is detected, or ``None`` when the extension
-        appears correct (or the format is unrecognised).
+        Returns the detected ArchiveType, or ``None`` when the format is
+        unrecognised.  Used both for top-level artefacts (ZIP that is
+        really Spark) and nested archives (``&DDC`` file that is really
+        ZIP).
 
-        Spark: starts with 0x1A followed by 0x00, 0x80-0x89, or 0xFF.
-        ArcFS: starts with ``Archive\\0`` (41 72 63 68 69 76 65 00)
-               or ``\\x1A archive`` (1A 61 72 63 68 69 76 65).
+        Recognised signatures:
+          ArcFS: ``Archive\\0`` or ``\\x1Aarchive``
+          Spark: ``\\x1A`` followed by ``\\x00``, ``\\x80``–``\\x89``, or ``\\xFF``
+          ZIP:   ``PK\\x03\\x04``
         """
         from shared.archive_formats import ArchiveType
 
@@ -1128,6 +1128,10 @@ class AnalysisWorker:
             second = header[1]
             if second == 0x00 or (0x80 <= second <= 0x89) or second == 0xFF:
                 return ArchiveType.SPARK
+
+        # ZIP: PK\x03\x04
+        if len(header) >= 4 and header[:4] == b'PK\x03\x04':
+            return ArchiveType.ZIP
 
         return None
 
@@ -1507,6 +1511,23 @@ class AnalysisWorker:
 
         # Extract archive to temporary directory first
         temp_output_dir = work_dir / 'archive_contents'
+
+        # Sniff magic bytes — filetype-based detection can be wrong (e.g.
+        # &DDC is used for both Spark and ZIP on RISC OS).  Override the
+        # archive_type when the file header tells us otherwise.
+        sniffed = self._sniff_archive_magic(archive_path)
+        if sniffed is not None and sniffed != archive_type:
+            log.info(f"Magic-byte sniff overrides {archive_type.value} → {sniffed.value}")
+            # A ZIP found via RISC OS filetype should be treated as
+            # ZIP_RISCOS so Acorn ,xxx suffixes are parsed correctly.
+            _RISCOS_TYPES = (
+                ArchiveType.ARCFS, ArchiveType.SPARK, ArchiveType.PACKDIR,
+                ArchiveType.TBAFS, ArchiveType.CFS, ArchiveType.SQUASH,
+            )
+            if sniffed == ArchiveType.ZIP and archive_type in _RISCOS_TYPES:
+                sniffed = ArchiveType.ZIP_RISCOS
+            archive_type = sniffed
+            archive_info = get_archive_info(archive_type)
 
         # Choose extraction method based on archive type
         if archive_type in [ArchiveType.ARCFS, ArchiveType.PACKDIR,
