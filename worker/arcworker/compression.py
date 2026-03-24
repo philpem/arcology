@@ -60,7 +60,24 @@ def decompress_if_needed(input_path: Path, work_dir: Path) -> Path:
             raise RuntimeError(f"Decompression timed out after {TOOL_TIMEOUT} seconds: {input_path.name}")
 
         if result.returncode != 0:
-            raise RuntimeError(f"Decompression failed: {result.stderr.decode()}")
+            # If the file isn't actually in the expected compressed format
+            # (e.g. named .tar.gz but not gzip), fall back to the original
+            # file rather than failing the entire analysis.
+            stderr_text = result.stderr.decode()
+            _NOT_COMPRESSED_MARKERS = [
+                'not in gzip format',       # gzip
+                'is not a bzip2 file',      # bzip2
+                'File format not recognized', # xz
+            ]
+            if any(marker in stderr_text for marker in _NOT_COMPRESSED_MARKERS):
+                log.warning(
+                    f"File {input_path.name} has {suffix} extension but is not "
+                    f"actually compressed — proceeding with original file"
+                )
+                compressed_copy.unlink(missing_ok=True)
+                decompressed_path.unlink(missing_ok=True)
+                return input_path
+            raise RuntimeError(f"Decompression failed: {stderr_text}")
 
         # Clean up compressed copy
         compressed_copy.unlink(missing_ok=True)

@@ -1194,6 +1194,25 @@ class AnalysisWorker:
         )
         input_path = self.get_input_path(artefact, work_dir)
 
+        # get_input_path() runs decompress_if_needed() which may have already
+        # stripped the outer compression wrapper (e.g. .tar.gz → .tar), or
+        # the file may be mis-labelled (named .tar.gz but actually plain tar).
+        # In either case, downgrade to plain TAR so extract_tar() doesn't try
+        # to decompress again.  This is safe because:
+        #   - If decompression succeeded, the file is now a plain tar.
+        #   - If decompression was skipped (not actually compressed), the file
+        #     was already a plain tar despite the extension.
+        _COMPRESSED_TAR_TYPES = {
+            ArchiveType.TARGZ: ArchiveType.TAR,
+            ArchiveType.TARBZ2: ArchiveType.TAR,
+            ArchiveType.TARXZ: ArchiveType.TAR,
+        }
+        if archive_type in _COMPRESSED_TAR_TYPES:
+            old_type = archive_type
+            archive_type = _COMPRESSED_TAR_TYPES[archive_type]
+            archive_info = get_archive_info(archive_type)
+            log.info(f"Post-decompression: using {archive_type.value} (was {old_type.value})")
+
         # Sniff magic bytes — some RISC OS archives are distributed with
         # a .zip extension even though they are actually Spark or ArcFS.
         sniffed = self._sniff_archive_magic(input_path)
