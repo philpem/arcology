@@ -9,13 +9,15 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = '000069c2d776'
-down_revision = '000069b4c8ec'
+down_revision = '000069c2f0db'
 branch_labels = None
 depends_on = None
 
 
 def upgrade():
-    # Create restrictiontype enum for PostgreSQL; SQLite uses VARCHAR with CHECK
+    # Create restrictiontype enum for PostgreSQL; SQLite uses VARCHAR with CHECK.
+    # We create the type explicitly first, then pass create_type=False so
+    # SQLAlchemy does not attempt to auto-create it again inside create_table().
     restriction_enum = sa.Enum(
         'MALWARE', 'PII', 'COPYRIGHT', 'LEGAL_HOLD',
         'EXPORT_CONTROL', 'NSFW', 'CORRUPTED',
@@ -24,14 +26,22 @@ def upgrade():
 
     bind = op.get_bind()
     if bind.dialect.name == 'postgresql':
-        restriction_enum.create(bind)
+        restriction_enum.create(bind, checkfirst=True)
+
+    # After explicit creation, prevent SQLAlchemy from trying again
+    col_enum = sa.Enum(
+        'MALWARE', 'PII', 'COPYRIGHT', 'LEGAL_HOLD',
+        'EXPORT_CONTROL', 'NSFW', 'CORRUPTED',
+        name='restrictiontype',
+        create_type=False,
+    )
 
     # Create artefact_restrictions table
     op.create_table(
         'artefact_restrictions',
         sa.Column('id', sa.Integer(), primary_key=True),
         sa.Column('artefact_id', sa.Integer(), sa.ForeignKey('artefacts.id'), nullable=False, index=True),
-        sa.Column('restriction_type', restriction_enum, nullable=False),
+        sa.Column('restriction_type', col_enum, nullable=False),
         sa.Column('reason', sa.Text(), nullable=True),
         sa.Column('added_by_id', sa.Integer(), sa.ForeignKey('user.id'), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=False,
@@ -44,12 +54,12 @@ def upgrade():
         'user_restriction_bypasses',
         sa.Column('id', sa.Integer(), primary_key=True),
         sa.Column('user_id', sa.Integer(), sa.ForeignKey('user.id'), nullable=False, index=True),
-        sa.Column('restriction_type', restriction_enum, nullable=False),
+        sa.Column('restriction_type', col_enum, nullable=False),
         sa.UniqueConstraint('user_id', 'restriction_type', name='uq_user_restriction_bypass'),
     )
 
     # Add restriction_type column to hash_databases
-    op.add_column('hash_databases', sa.Column('restriction_type', restriction_enum, nullable=True))
+    op.add_column('hash_databases', sa.Column('restriction_type', col_enum, nullable=True))
 
 
 def downgrade():
