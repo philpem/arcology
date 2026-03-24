@@ -1092,6 +1092,45 @@ class AnalysisWorker:
             })
         )
 
+    @staticmethod
+    def _sniff_archive_magic(file_path: Path):
+        """Sniff the first bytes of a file to detect mis-labelled archives.
+
+        Some RISC OS archives are distributed with a ``.zip`` extension
+        even though they are actually Spark or ArcFS containers.  This
+        method reads the file header and returns the true ArchiveType
+        when a mismatch is detected, or ``None`` when the extension
+        appears correct (or the format is unrecognised).
+
+        Spark: starts with 0x1A followed by 0x00, 0x80-0x89, or 0xFF.
+        ArcFS: starts with ``Archive\\0`` (41 72 63 68 69 76 65 00)
+               or ``\\x1A archive`` (1A 61 72 63 68 69 76 65).
+        """
+        from shared.archive_formats import ArchiveType
+
+        try:
+            with open(file_path, 'rb') as fh:
+                header = fh.read(8)
+        except OSError:
+            return None
+
+        if len(header) < 2:
+            return None
+
+        # ArcFS: "Archive\0" or "\x1aarchive"
+        if header[:8] == b'Archive\x00':
+            return ArchiveType.ARCFS
+        if len(header) >= 8 and header[0] == 0x1A and header[1:8] == b'archive':
+            return ArchiveType.ARCFS
+
+        # Spark: 0x1A followed by 0x00, 0x80-0x89, or 0xFF
+        if header[0] == 0x1A:
+            second = header[1]
+            if second == 0x00 or (0x80 <= second <= 0x89) or second == 0xFF:
+                return ArchiveType.SPARK
+
+        return None
+
     # Extracted files with these extensions are promoted to derived artefacts
     # so they get their own analysis pipeline (e.g. an ISO inside a ZIP gets
     # FILE_EXTRACTION queued automatically).  Keep in sync with EXTENSION_MAP
@@ -1133,8 +1172,29 @@ class AnalysisWorker:
         )
         input_path = self.get_input_path(artefact, work_dir)
 
+        # Sniff magic bytes — some RISC OS archives are distributed with
+        # a .zip extension even though they are actually Spark or ArcFS.
+        sniffed = self._sniff_archive_magic(input_path)
+        if sniffed is not None and sniffed != archive_type:
+            log.info(f"Magic-byte sniff overrides {archive_type.value} → {sniffed.value}")
+            archive_type = sniffed
+            archive_info = get_archive_info(archive_type)
+
         # Dispatch to the correct extraction tool
-        if archive_type in [ArchiveType.ZIP, ArchiveType.ZIP_RISCOS]:
+        from .tools import extract_riscosarc
+
+        if archive_type in [ArchiveType.SPARK, ArchiveType.ARCFS,
+                            ArchiveType.PACKDIR, ArchiveType.CFS, ArchiveType.SQUASH]:
+            result = extract_riscosarc(input_path, extract_dir)
+            # Spark/ArcFS fallback: if riscosarc fails, the file might
+            # actually be a ZIP with RISC OS filetypes (SparkFS uses
+            # filetype &DDC for both Spark and ZIP).
+            if not result['success'] and archive_type == ArchiveType.SPARK:
+                result = extract_zip(input_path, extract_dir)
+                if result['success']:
+                    archive_type = ArchiveType.ZIP_RISCOS
+                    archive_info = get_archive_info(archive_type)
+        elif archive_type in [ArchiveType.ZIP, ArchiveType.ZIP_RISCOS]:
             result = extract_zip(input_path, extract_dir)
         elif archive_type in [ArchiveType.TAR, ArchiveType.TARGZ,
                               ArchiveType.TARBZ2, ArchiveType.TARXZ]:
