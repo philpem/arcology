@@ -618,7 +618,10 @@ def _render_artefact_view(artefact):
     # Build query args for pagination links, preserving all active filters
     pagination_args = request.args.to_dict()
     pagination_args.pop('page', None)
-    pagination_args.pop('mode', None)
+    # Keep 'mode' in pagination_args so pagination/sort/per-page links
+    # preserve hashdb mode.  The toggle button uses hashdb_toggle_args
+    # (without mode) so it can toggle freely.
+    hashdb_toggle_args = {k: v for k, v in pagination_args.items() if k != 'mode'}
     current_sort = sort_param
 
     # Extract subdirectories at the current path level for directory browsing
@@ -719,6 +722,7 @@ def _render_artefact_view(artefact):
                            files=files_pagination.items,
                            files_pagination=files_pagination,
                            pagination_args=pagination_args,
+                           hashdb_toggle_args=hashdb_toggle_args,
                            valid_per_page=valid_per_page,
                            view_all=view_all,
                            all_partitions=all_partitions,
