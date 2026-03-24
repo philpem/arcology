@@ -1333,9 +1333,18 @@ class AnalysisWorker:
         if not partition_uuid:
             artefact_type = artefact.get('artefact_type', '')
             if not archive_type_str:
-                # Map ArtefactType value → ArchiveType value (they share
-                # the same string values for ZIP, tar_gz, and rar).
-                archive_type_str = artefact_type
+                # Map ArtefactType value → ArchiveType value.  Most share
+                # the same string values (zip, tar_gz, rar).  ARC needs
+                # explicit mapping since ArtefactType.ARC ("arc") covers
+                # both ArcFS and Spark; default to ArcFS and let the
+                # magic-byte sniff in _extract_top_level_archive correct
+                # it to Spark when appropriate.
+                _ARTEFACT_TO_ARCHIVE = {
+                    ArtefactType.ARC.value: ArchiveType.ARCFS.value,
+                }
+                archive_type_str = _ARTEFACT_TO_ARCHIVE.get(
+                    artefact_type, artefact_type
+                )
 
         # Get ArchiveType enum from string
         try:

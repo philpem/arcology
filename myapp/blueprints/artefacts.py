@@ -88,6 +88,9 @@ EXTENSION_MAP = {
     '.tar.gz': ArtefactType.TARGZ,
     '.tgz': ArtefactType.TARGZ,
     '.rar': ArtefactType.RAR,
+    '.arc': ArtefactType.ARC,
+    '.spk': ArtefactType.ARC,
+    '.spark': ArtefactType.ARC,
 }
 
 
@@ -153,6 +156,7 @@ ANALYSIS_MAP = {
     ArtefactType.ZIP: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.TARGZ: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.RAR: [AnalysisType.ARCHIVE_EXTRACT],
+    ArtefactType.ARC: [AnalysisType.ARCHIVE_EXTRACT],
     
     # Unknown - try to identify
     ArtefactType.UNKNOWN: [AnalysisType.FORMAT_IDENTIFY],
