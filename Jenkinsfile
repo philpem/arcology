@@ -21,7 +21,8 @@ pipeline {
                     python3 -m venv .venv-ci
                     . .venv-ci/bin/activate
                     pip install -q -r requirements.txt
-                    python -m pytest ci/test_slug.py --junit-xml=test-results/static.xml -v
+                    mkdir -p test-results/static
+                    python -m pytest ci/test_slug.py --junit-xml=test-results/static/results.xml -v
                 '''
             }
         }
@@ -38,7 +39,8 @@ pipeline {
                         python ci/check_imports.py
 
                         echo "=== Running application tests ==="
-                        python -m pytest ci/ --junit-xml=test-results/app.xml -v
+                        mkdir -p test-results/app
+                        python -m pytest ci/ --junit-xml=test-results/app/results.xml -v
                     '''
                 }
             }
