@@ -21,6 +21,7 @@ FILETYPE_MAP = {
     'b23': 'X-File',
     'c46': 'Tar',
     'ddc': 'Archive',
+    'fc8': 'DOSDisc',
     'fca': 'Squash',
 
     # Documents and DTP
