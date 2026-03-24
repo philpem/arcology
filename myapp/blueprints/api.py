@@ -610,6 +610,10 @@ def produce_artefact(id):
     db.session.add(artefact)
     db.session.commit()
 
+    # Generate slug (unique within this item)
+    artefact.slug = ensure_unique_slug(generate_slug(artefact.label), Artefact, scope_filter={'item_id': analysis.artefact.item_id})
+    db.session.commit()
+
     # Queue follow-on analyses unless the caller will handle that explicitly
     queued_analyses = []
     if data.get('auto_analyse', True):
@@ -939,6 +943,10 @@ def upload_artefact(item_uuid):
 		sha256=sha256,
 	)
 	db.session.add(artefact)
+	db.session.commit()
+
+	# Generate slug (unique within this item)
+	artefact.slug = ensure_unique_slug(generate_slug(artefact.label), Artefact, scope_filter={'item_id': item.id})
 	db.session.commit()
 
 	# Optionally queue analyses
