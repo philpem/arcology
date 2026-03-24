@@ -4,7 +4,7 @@ Arcology - Dashboard Blueprint
 Homepage and dashboard views.
 """
 
-from flask import Blueprint, render_template
+from flask import Blueprint, jsonify, render_template
 from flask_login import login_required
 from sqlalchemy import case, func
 from sqlalchemy.orm import joinedload
@@ -22,10 +22,8 @@ def init_app(app):
     app.add_menu_item("Dashboard", f"{ROUTENAME}.index", -1000)
 
 
-@blueprint.route("/")
-@login_required
-def index():
-    """Homepage with dashboard statistics."""
+def _get_stats():
+    """Compute dashboard statistics."""
     # Single query for all four stats using scalar subqueries + conditional counts
     stats_row = db.session.query(
         db.session.query(func.count(Item.id)).scalar_subquery().label('total_items'),
@@ -34,13 +32,18 @@ def index():
         func.count(case((Analysis.status == AnalysisStatus.RUNNING, 1))).label('running'),
     ).select_from(Analysis).one()
 
-    stats = {
+    return {
         'total_items': stats_row.total_items or 0,
         'total_artefacts': stats_row.total_artefacts or 0,
         'pending_analyses': stats_row.pending or 0,
         'running_analyses': stats_row.running or 0,
     }
 
+
+@blueprint.route("/")
+@login_required
+def index():
+    """Homepage with dashboard statistics."""
     # Recent items with artefact count subquery (avoids N+1 lazy loads)
     artefact_count_sq = (
         db.session.query(func.count(Artefact.id))
@@ -66,9 +69,16 @@ def index():
     )
 
     return render_template('dashboard.html',
-                           stats=stats,
+                           stats=_get_stats(),
                            recent_items=recent_items,
                            recent_analyses=recent_analyses)
+
+
+@blueprint.route("/stats.json")
+@login_required
+def stats_json():
+    """Dashboard statistics as JSON (for live counter updates)."""
+    return jsonify(_get_stats())
 
 
 @blueprint.route("/about")
