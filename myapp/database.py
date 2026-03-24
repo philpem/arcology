@@ -490,7 +490,7 @@ class Analysis(db.Model):
     artefact_id: Mapped[int] = mapped_column(ForeignKey("artefacts.id"), index=True)
     analysis_type: Mapped[AnalysisType] = mapped_column(SQLEnum(AnalysisType))
     slug: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
-    status: Mapped[AnalysisStatus] = mapped_column(SQLEnum(AnalysisStatus), default=AnalysisStatus.PENDING)
+    status: Mapped[AnalysisStatus] = mapped_column(SQLEnum(AnalysisStatus), default=AnalysisStatus.PENDING, index=True)
     
     # Tool info (filled by worker)
     tool_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
@@ -508,7 +508,7 @@ class Analysis(db.Model):
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 

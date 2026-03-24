@@ -560,10 +560,11 @@ def _render_artefact_view(artefact):
     # Configurable via ANALYSES_SHOWN in myapp.cfg (default: 5).
     analyses_shown_limit = current_app.config.get('ANALYSES_SHOWN', 5)
 
-    # Fetch all related analyses for stats, newest first
+    # Fetch all related analyses for stats, newest first (eager-load artefact for template)
+    from sqlalchemy.orm import joinedload as _jl_a
     all_related_analyses = Analysis.query.filter(
         Analysis.artefact_id.in_(all_artefact_ids)
-    ).order_by(Analysis.id.desc()).all()
+    ).options(_jl_a(Analysis.artefact)).order_by(Analysis.id.desc()).all()
     total_analyses_count = len(all_related_analyses)
 
     # Status breakdown counts (displayed in the card header)
@@ -596,6 +597,7 @@ def _render_artefact_view(artefact):
     files_query = ExtractedFile.query.join(Partition).filter(
         Partition.artefact_id.in_(all_artefact_ids)
     ).options(
+        _sil(ExtractedFile.partition),
         _sil(ExtractedFile.known_file).selectinload(KnownFile.product),
         _sil(ExtractedFile.known_file).selectinload(KnownFile.database),
     )
