@@ -243,7 +243,7 @@ def enumerate_extracted_files(output_dir: Path, acorn: bool = False) -> list[dic
             continue
 
         # Skip .inf metadata files (Acorn DIM extraction artifacts)
-        if file_path.suffix == '.inf':
+        if acorn and file_path.suffix == '.inf':
             continue
 
         rel_path = file_path.relative_to(output_dir)
