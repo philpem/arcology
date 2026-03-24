@@ -157,6 +157,42 @@ def _is_valid_filecore_disc_record(disc_record: bytes) -> bool:
     return disc_size > 0
 
 
+def _is_valid_filecore_disc_record_strict(boot_block: bytes) -> bool:
+    """Return True if *boot_block* contains a plausible Filecore disc record.
+
+    This is a stricter variant of :func:`_is_valid_filecore_disc_record`
+    intended for the fallback path where the boot block checksum has failed.
+    It compensates for the missing 1-in-256 checksum filter by validating
+    additional disc record fields.
+
+    *boot_block* must be the full 512-byte boot block (starting at disc
+    address &C00), not just the disc record portion.
+    """
+    if len(boot_block) < FILECORE_BOOT_BLOCK_SIZE:
+        return False
+
+    disc_record = boot_block[FILECORE_BB_DISC_RECORD_OFFSET:]
+
+    # Base checks: log2_sector_size in {8, 9, 10, 12} and disc_size > 0
+    if not _is_valid_filecore_disc_record(disc_record):
+        return False
+
+    log2_sector_size = disc_record[0]
+    sectors_per_track = disc_record[1]
+    heads = disc_record[2]
+
+    # Both fields must be non-zero on any real disc geometry.
+    if sectors_per_track == 0 or heads == 0:
+        return False
+
+    # disc_size must be a whole number of sectors.
+    disc_size = struct.unpack_from('<I', disc_record, _DR_DISC_SIZE)[0]
+    if disc_size % (1 << log2_sector_size) != 0:
+        return False
+
+    return True
+
+
 # =========================================================================
 # HCCS partition detection
 # =========================================================================
@@ -686,6 +722,8 @@ def detect_acorn_adfs(input_path: Path) -> dict:
 
     Checks for:
     - ADFS boot block checksum (sum of first 512 bytes == 0 mod 256)
+    - ADFS disc record heuristics at &C00 (when checksum fails but disc
+      record fields pass stricter validation)
     - "Hugo" signature (old-format ADFS directories: ADFS-S, M, L, D)
     - "SBPr" / "Nick" signatures (new-format ADFS directories: ADFS-E, E+, F, F+)
 
@@ -742,6 +780,13 @@ def detect_acorn_adfs(input_path: Path) -> dict:
                 if _is_valid_filecore_disc_record(boot_block[FILECORE_BB_DISC_RECORD_OFFSET:]):
                     signatures.append('Valid ADFS boot block checksum (disc address &C00)')
                     adfs_variant = 'new_map'
+            elif _is_valid_filecore_disc_record_strict(boot_block):
+                # Checksum failed but the disc record fields are
+                # individually valid.  Some ADFS formatters or disc
+                # utilities produce boot blocks with incorrect checksums;
+                # accept them via stricter disc record validation.
+                signatures.append('Valid ADFS disc record without checksum (disc address &C00)')
+                adfs_variant = 'new_map'
 
         # Check for old-format directory signature "Hugo".
         # "Hugo" appears at byte 1 of the directory header (after the master
