@@ -1163,7 +1163,7 @@ class AnalysisWorker:
             )
             return
 
-        files = enumerate_extracted_files(extract_dir, acorn=False)
+        files = enumerate_extracted_files(extract_dir, acorn='auto')
 
         partition = self.api.register_file_listing(
             artefact['uuid'], files, 'archive',
@@ -1528,53 +1528,12 @@ class AnalysisWorker:
             ArchiveType.SQUASH, ArchiveType.FCFS,
         )
 
-        files = []
-        for file_path in persistent_output.rglob('*'):
-            if not file_path.is_file():
-                continue
-
-            # Skip .inf metadata files (Acorn extraction artifacts)
-            if is_acorn_archive and file_path.suffix == '.inf':
-                continue
-
-            rel_path = file_path.relative_to(persistent_output)
-
-            file_entry = {
-                'size': file_path.stat().st_size,
-                'parent_file_id': file_id,
-                'extraction_depth': extraction_depth,
-            }
-
-            if is_acorn_archive:
-                true_name, filetype = parse_acorn_filename(file_path.name)
-                if filetype and len(rel_path.parts) > 1:
-                    display_path = str(Path(*rel_path.parts[:-1]) / true_name)
-                elif filetype:
-                    display_path = true_name
-                else:
-                    display_path = str(rel_path)
-                file_entry['path'] = sanitize_path(display_path)
-                if filetype:
-                    file_entry['risc_os_filetype'] = filetype
-            else:
-                file_entry['path'] = sanitize_path(str(rel_path))
-
-            try:
-                md5_h = hashlib.md5()
-                sha1_h = hashlib.sha1()
-                sha256_h = hashlib.sha256()
-                with open(file_path, 'rb') as fh:
-                    for chunk in iter(lambda: fh.read(65536), b''):
-                        md5_h.update(chunk)
-                        sha1_h.update(chunk)
-                        sha256_h.update(chunk)
-                file_entry['md5'] = md5_h.hexdigest()
-                file_entry['sha1'] = sha1_h.hexdigest()
-                file_entry['sha256'] = sha256_h.hexdigest()
-            except OSError:
-                pass
-
-            files.append(file_entry)
+        files = enumerate_extracted_files(
+            persistent_output,
+            acorn=is_acorn_archive,
+            parent_file_id=file_id,
+            extraction_depth=extraction_depth,
+        )
 
         # Register extracted files in the same partition with parent_file_id
         if files:

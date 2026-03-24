@@ -225,17 +225,55 @@ def extract_iso_7z(input_path: Path, output_dir: Path) -> dict:
     return extract_dos_7z(input_path, output_dir)  # Same process
 
 
-def enumerate_extracted_files(output_dir: Path, acorn: bool = False) -> list[dict]:
+def _has_acorn_filetypes(output_dir: Path) -> bool:
+    """Auto-detect whether extracted files use Acorn ``,xxx`` filetype suffixes.
+
+    Scans up to 50 files; if any have a ``name,hex`` suffix that parses as a
+    valid RISC OS filetype, the directory is treated as Acorn.
+    """
+    count = 0
+    for file_path in output_dir.rglob('*'):
+        if not file_path.is_file():
+            continue
+        _, filetype = parse_acorn_filename(file_path.name)
+        if filetype is not None:
+            return True
+        count += 1
+        if count >= 50:
+            break
+    return False
+
+
+def enumerate_extracted_files(
+    output_dir: Path,
+    acorn: bool | str = False,
+    parent_file_id: int | None = None,
+    extraction_depth: int | None = None,
+) -> list[dict]:
     """
     Enumerate files in an extraction directory and return structured file list.
 
+    This is the single implementation used by FILE_EXTRACTION (disc images),
+    ARCHIVE_EXTRACT (nested archives), and top-level archive extraction.
+
     Args:
         output_dir: Directory containing extracted files
-        acorn: If True, parse Acorn filetype suffixes from filenames
+        acorn: ``True`` to always parse Acorn filetype suffixes, ``False``
+            to never parse them, or ``'auto'`` to auto-detect by scanning
+            filenames for ``,xxx`` hex suffixes.
+        parent_file_id: If set, included in every file entry (used by
+            nested-archive extraction to record lineage).
+        extraction_depth: If set, included in every file entry.
 
     Returns:
-        List of file dicts with path, size, and optional filetype/directory info
+        List of file dicts with path, size, hashes, and optional
+        filetype/directory info.
     """
+    from ..utils.text import sanitize_path
+
+    if acorn == 'auto':
+        acorn = _has_acorn_filetypes(output_dir)
+
     files = []
 
     for file_path in output_dir.rglob('*'):
@@ -262,7 +300,7 @@ def enumerate_extracted_files(output_dir: Path, acorn: bool = False) -> list[dic
                 display_path = str(rel_path)
 
             file_entry = {
-                'path': display_path,
+                'path': sanitize_path(display_path),
                 'size': file_size,
             }
 
@@ -279,11 +317,15 @@ def enumerate_extracted_files(output_dir: Path, acorn: bool = False) -> list[dic
             if filetype:
                 file_entry['risc_os_filetype'] = filetype
         else:
-            display_path = str(rel_path)
             file_entry = {
-                'path': display_path,
+                'path': sanitize_path(str(rel_path)),
                 'size': file_size,
             }
+
+        if parent_file_id is not None:
+            file_entry['parent_file_id'] = parent_file_id
+        if extraction_depth is not None:
+            file_entry['extraction_depth'] = extraction_depth
 
         # Compute hashes so they can be stored in the DB at registration time.
         # This avoids needing to locate the file on disk later (e.g. for hash
