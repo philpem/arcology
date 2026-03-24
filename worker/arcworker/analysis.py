@@ -1151,7 +1151,8 @@ class AnalysisWorker:
         files = enumerate_extracted_files(extract_dir, acorn=False)
 
         partition = self.api.register_file_listing(
-            artefact['uuid'], files, 'archive',
+            artefact['uuid'], files, 'unknown',
+            container_format=archive_info['name'],
         )
 
         self.api.update_analysis(
