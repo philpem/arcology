@@ -1814,17 +1814,20 @@ class AnalysisWorker:
         log.info(f"Uploads: {self.uploads}")
         log.info(f"Outputs: {self.outputs}")
 
+        MIN_POLL = 2
+        current_delay = MIN_POLL
+
         while True:
             try:
                 processed = self.claim_and_process()
 
                 if processed == 0:
-                    log.debug(f"No pending analyses, sleeping {POLL_INTERVAL}s")
-                    time.sleep(POLL_INTERVAL)
+                    log.debug(f"No pending analyses, sleeping {current_delay}s")
+                    time.sleep(current_delay)
+                    current_delay = min(current_delay * 2, POLL_INTERVAL)
                 else:
                     log.info(f"Processed {processed} analyses")
-                    # Small delay between batches
-                    time.sleep(1)
+                    current_delay = MIN_POLL
 
             except KeyboardInterrupt:
                 log.info("Shutting down")
