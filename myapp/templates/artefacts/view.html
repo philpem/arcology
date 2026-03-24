@@ -44,9 +44,31 @@
             <i class="bi bi-shield-lock-fill"></i> Copy Protected
         </span>
         {% endif %}
+        {% if artefact.restrictions %}
+        <p class="mb-1">
+            {% for r in artefact.restrictions %}
+            <span class="badge bg-danger me-1" title="{{ r.reason or '' }}">
+                <i class="bi bi-exclamation-triangle-fill"></i> {{ r.restriction_type.value.replace('_', ' ').title() }}
+            </span>
+            {% endfor %}
+        </p>
+        {% endif %}
     </div>
     <div>
+        {% if artefact.restrictions %}
+            {% if current_user.can_bypass_all_restrictions(artefact.restrictions) %}
+            <a href="{{ artefact_url(artefact, 'download', confirm_bypass='1') }}" class="btn btn-outline-danger"
+               onclick="return confirm('This artefact has download restrictions. Are you sure you want to download it?')">
+                <i class="bi bi-download"></i> Download (Override)
+            </a>
+            {% else %}
+            <button class="btn btn-danger" disabled title="Download restricted">
+                <i class="bi bi-lock-fill"></i> Restricted
+            </button>
+            {% endif %}
+        {% else %}
         <a href="{{ artefact_url(artefact, 'download') }}" class="btn btn-success"><i class="bi bi-download"></i> Download</a>
+        {% endif %}
         {% if user_can_write %}
         <a href="{{ artefact_url(artefact, 'analyse') }}" class="btn btn-primary"><i class="bi bi-gear"></i> Re-analyse</a>
         <a href="{{ artefact_url(artefact, 'edit') }}" class="btn btn-outline-primary"><i class="bi bi-pencil"></i> Edit</a>
@@ -110,7 +132,73 @@
                 {% endif %}
             </div>
         </div>
-        
+
+        {% if user_can_write %}
+        <div class="card mb-4">
+            <div class="card-header">
+                <a class="text-decoration-none" data-bs-toggle="collapse" href="#restrictionsSection" role="button" aria-expanded="false" aria-controls="restrictionsSection">
+                    <i class="bi bi-shield-exclamation"></i> Download Restrictions
+                    {% if artefact.restrictions %}<span class="badge bg-danger ms-1">{{ artefact.restrictions | length }}</span>{% endif %}
+                </a>
+            </div>
+            <div class="collapse {% if artefact.restrictions %}show{% endif %}" id="restrictionsSection">
+                <div class="card-body">
+                    {% if artefact.restrictions %}
+                    <table class="table table-sm mb-3">
+                        <thead><tr><th>Type</th><th>Reason</th><th>Added By</th><th></th></tr></thead>
+                        <tbody>
+                        {% for r in artefact.restrictions %}
+                        <tr>
+                            <td><span class="badge bg-danger">{{ r.restriction_type.value.replace('_', ' ').title() }}</span></td>
+                            <td>{{ r.reason or '-' }}</td>
+                            <td>{{ r.added_by.username if r.added_by else 'System' }}</td>
+                            <td>
+                                <form action="{{ artefact_url(artefact, 'manage_restrictions') }}" method="post" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="action" value="remove">
+                                    <input type="hidden" name="category" value="{{ r.restriction_type.value }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove restriction"
+                                            onclick="return confirm('Remove this restriction?')">
+                                        <i class="bi bi-x-lg"></i>
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <p class="text-muted small mb-2">No restrictions applied.</p>
+                    {% endif %}
+                    <form action="{{ artefact_url(artefact, 'manage_restrictions') }}" method="post" class="row g-2 align-items-end">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="add">
+                        <div class="col-auto">
+                            <label class="form-label small mb-0">Type</label>
+                            <select name="category" class="form-select form-select-sm" required>
+                                <option value="">Select...</option>
+                                <option value="malware">Malware</option>
+                                <option value="pii">PII</option>
+                                <option value="copyright">Copyright</option>
+                                <option value="legal_hold">Legal Hold</option>
+                                <option value="export_control">Export Control</option>
+                                <option value="nsfw">NSFW</option>
+                                <option value="corrupted">Corrupted</option>
+                            </select>
+                        </div>
+                        <div class="col">
+                            <label class="form-label small mb-0">Reason (optional)</label>
+                            <input type="text" name="reason" class="form-control form-control-sm" placeholder="Why is this restricted?">
+                        </div>
+                        <div class="col-auto">
+                            <button type="submit" class="btn btn-sm btn-danger"><i class="bi bi-plus-lg"></i> Add</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
         {% if artefact.derived_artefacts %}
         <div class="card mb-4">
             <div class="card-header"><i class="bi bi-diagram-3"></i> Derived Artefacts</div>
@@ -630,6 +718,10 @@
                                         <code>{{ file.path }}</code>
                                     {% endif %}
                                 {% endif %}
+                                {% if not file.is_directory %}
+                                <a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=file.uuid) }}"
+                                   class="text-muted ms-1" title="Download file"><i class="bi bi-download"></i></a>
+                                {% endif %}
                             </td>
                             <td>{% if file.is_directory %}<span class="text-muted">DIR</span>{% elif file.file_size %}{{ (file.file_size / 1024)|round(1) }} KB{% else %}-{% endif %}</td>
                             <td>
@@ -639,7 +731,7 @@
                                     </span>
                                 {% else %}-{% endif %}
                             </td>
-                            <td>{% if file.is_known %}{% set _db_colors = ['info', 'success', 'primary', 'danger', 'warning', 'dark'] %}<span class="badge bg-{{ _db_colors[file.known_file.database_id % (_db_colors | length)] }}" title="{{ file.known_file.database.name }}">{{ file.known_file.product.title if file.known_file.product else file.known_file.database.name }}</span>{% endif %}</td>
+                            <td>{% if file.is_known %}{% set _db_colors = ['info', 'success', 'primary', 'danger', 'warning', 'dark'] %}{% set all_matches = file_known_matches.get(file.id, []) %}{% if all_matches %}{% for kf in all_matches %}<span class="badge bg-{{ _db_colors[kf.database_id % (_db_colors | length)] }} me-1" title="{{ kf.database.name }}">{{ kf.product.title if kf.product else kf.database.name }}</span>{% endfor %}{% else %}<span class="badge bg-{{ _db_colors[file.known_file.database_id % (_db_colors | length)] }}" title="{{ file.known_file.database.name }}">{{ file.known_file.product.title if file.known_file.product else file.known_file.database.name }}</span>{% endif %}{% endif %}</td>
                         </tr>
                         {% else %}
                         <tr><td colspan="{% if hashdb_mode %}5{% else %}4{% endif %}" class="text-center text-muted">No files{% if not all_partitions %} - run analysis to extract file listing{% endif %}</td></tr>

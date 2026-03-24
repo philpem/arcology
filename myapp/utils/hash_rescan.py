@@ -14,6 +14,7 @@ from ..extensions import db
 from ..database import (
     ExtractedFile, Partition, KnownFile, HashDatabase,
     Analysis, AnalysisType, AnalysisStatus,
+    ArtefactRestriction,
 )
 
 
@@ -46,6 +47,123 @@ def find_known_file(md5=None, sha1=None, file_size=None):
     if file_size is not None:
         query = query.filter(KnownFile.file_size == file_size)
     return query.order_by(KnownFile.id).first()
+
+
+def find_all_known_files_batch(extracted_files):
+    """Return all active-database KnownFile matches for a batch of ExtractedFiles.
+
+    Used by the artefact view to show badges for every matching hash
+    database, not just the single "primary" match stored in known_file_id.
+
+    Args:
+        extracted_files: list of ExtractedFile objects (typically one page)
+
+    Returns:
+        dict mapping extracted_file.id -> list of KnownFile objects
+        (each with its .database eagerly loaded)
+    """
+    from sqlalchemy.orm import joinedload
+
+    # Collect md5 values from known files on this page
+    ef_by_md5 = {}  # md5 -> list of ExtractedFile
+    for ef in extracted_files:
+        if ef.is_known and ef.md5:
+            ef_by_md5.setdefault(ef.md5.lower(), []).append(ef)
+
+    if not ef_by_md5:
+        return {}
+
+    # Single batch query for all matching KnownFiles across active databases
+    known_files = (
+        KnownFile.query
+        .join(HashDatabase)
+        .filter(HashDatabase.is_active == True)
+        .filter(KnownFile.md5.in_(list(ef_by_md5.keys())))
+        .options(joinedload(KnownFile.database))
+        .order_by(KnownFile.id)
+        .all()
+    )
+
+    # Build md5 -> list of KnownFile lookup
+    kf_by_md5 = {}
+    for kf in known_files:
+        kf_by_md5.setdefault(kf.md5.lower(), []).append(kf)
+
+    # Map back to extracted_file.id -> list of KnownFile
+    result = {}
+    for md5, efs in ef_by_md5.items():
+        candidates = kf_by_md5.get(md5, [])
+        for ef in efs:
+            # Filter by file_size if both sides have it
+            matches = []
+            for kf in candidates:
+                if ef.file_size is not None and kf.file_size is not None:
+                    if ef.file_size == kf.file_size:
+                        matches.append(kf)
+                else:
+                    matches.append(kf)
+            # Deduplicate by database_id (show one badge per database)
+            seen_db_ids = set()
+            deduped = []
+            for kf in matches:
+                if kf.database_id not in seen_db_ids:
+                    seen_db_ids.add(kf.database_id)
+                    deduped.append(kf)
+            if deduped:
+                result[ef.id] = deduped
+
+    return result
+
+
+def apply_database_restrictions(artefact):
+    """Auto-apply download restrictions based on flagged hash databases.
+
+    When an artefact's extracted files match a HashDatabase that has a
+    restriction_type set (e.g. MALWARE), this function automatically
+    creates ArtefactRestriction records for the artefact.
+
+    Returns the number of newly added restrictions.
+    """
+    partition_ids = [p.id for p in artefact.partitions]
+    if not partition_ids:
+        return 0
+
+    # Find all restriction_type values from databases matched by this artefact's files
+    rows = (
+        db.session.query(HashDatabase.restriction_type)
+        .join(KnownFile, KnownFile.database_id == HashDatabase.id)
+        .join(ExtractedFile, ExtractedFile.known_file_id == KnownFile.id)
+        .filter(
+            ExtractedFile.partition_id.in_(partition_ids),
+            ExtractedFile.is_known == True,
+            HashDatabase.is_active == True,
+            HashDatabase.restriction_type.isnot(None),
+        )
+        .distinct()
+        .all()
+    )
+
+    restriction_types = {row[0] for row in rows}
+    if not restriction_types:
+        return 0
+
+    # Get existing restriction types for this artefact
+    existing = {r.restriction_type for r in artefact.restrictions}
+
+    added = 0
+    for rtype in restriction_types:
+        if rtype not in existing:
+            db.session.add(ArtefactRestriction(
+                artefact_id=artefact.id,
+                restriction_type=rtype,
+                reason=f'Automatically applied: file matches flagged hash database',
+            ))
+            added += 1
+
+    if added:
+        db.session.commit()
+
+    return added
 
 
 def rescan_hashes_for_queryset(query, batch_size=500):
@@ -116,6 +234,9 @@ def rescan_hashes_for_queryset(query, batch_size=500):
 def rescan_hashes_for_artefact(artefact):
     """Rescan all ExtractedFiles belonging to *artefact* (and its partitions).
 
+    After rescanning hashes, also applies any automatic restrictions from
+    flagged hash databases (e.g. databases marked as malware).
+
     Returns (updated, total).
     """
     partition_ids = [p.id for p in artefact.partitions]
@@ -124,7 +245,12 @@ def rescan_hashes_for_artefact(artefact):
     query = ExtractedFile.query.filter(
         ExtractedFile.partition_id.in_(partition_ids)
     )
-    return rescan_hashes_for_queryset(query)
+    result = rescan_hashes_for_queryset(query)
+
+    # Auto-apply restrictions from flagged hash databases
+    apply_database_restrictions(artefact)
+
+    return result
 
 
 def rescan_hashes_all(batch_size=500):

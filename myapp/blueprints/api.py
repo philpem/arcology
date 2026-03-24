@@ -276,10 +276,38 @@ def update_artefact(uuid):
 @require_auth('read_only')
 def download_artefact(uuid):
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+
+    # Enforce download restrictions
+    if artefact.restrictions:
+        return jsonify({
+            'error': 'Download restricted',
+            'restrictions': [r.restriction_type.value for r in artefact.restrictions],
+        }), 403
+
     full_path = get_artefact_path(artefact)
     if not os.path.exists(full_path):
         return error_response('File not found', 404)
     return send_file(full_path, as_attachment=True, download_name=artefact.original_filename)
+
+
+@blueprint.route('/files/<string:uuid>/download', methods=['GET'])
+@require_auth('read_only')
+def download_extracted_file(uuid):
+    """Download an individual extracted file.  Restricted artefacts return 403."""
+    ef = ExtractedFile.query.filter_by(uuid=uuid).first_or_404()
+    artefact = ef.partition.artefact
+
+    if artefact.restrictions:
+        return jsonify({
+            'error': 'Download restricted',
+            'restrictions': [r.restriction_type.value for r in artefact.restrictions],
+        }), 403
+
+    from .artefacts import _resolve_extracted_file_path
+    file_path = _resolve_extracted_file_path(ef)
+    if not file_path:
+        return error_response('Extracted file not found on disk', 404)
+    return send_file(file_path, as_attachment=True, download_name=ef.filename)
 
 
 # =============================================================================
@@ -1001,6 +1029,8 @@ def artefact_to_dict(artefact, include_partitions=False):
         'file_size': artefact.file_size, 'mime_type': artefact.mime_type,
         'md5': artefact.md5, 'sha256': artefact.sha256,
         'tags': [t.name for t in artefact.tags],
+        'restrictions': [r.restriction_type.value for r in artefact.restrictions],
+        'is_restricted': artefact.is_restricted,
         'created_at': artefact.created_at.isoformat(), 'updated_at': artefact.updated_at.isoformat()
     }
     if include_partitions:

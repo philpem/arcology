@@ -74,6 +74,25 @@
 						<div class="form-text">Allows the user to create API keys for programmatic access.</div>
 					</div>
 
+					{% if RestrictionType %}
+					<div class="mb-4">
+						<label class="form-label">Restriction Bypass Permissions</label>
+						<div class="form-text mb-2">Select which restriction types this user is allowed to bypass when downloading restricted artefacts.</div>
+						{% set user_bypasses = user.restriction_bypasses | map(attribute='restriction_type') | map(attribute='value') | list %}
+						{% for rtype in RestrictionType %}
+						<div class="form-check">
+							<input class="form-check-input" type="checkbox"
+								   name="restriction_bypasses" value="{{ rtype.value }}"
+								   id="bypass_{{ rtype.value }}"
+								   {% if rtype.value in user_bypasses %}checked{% endif %}>
+							<label class="form-check-label" for="bypass_{{ rtype.value }}">
+								{{ rtype.value.replace('_', ' ').title() }}
+							</label>
+						</div>
+						{% endfor %}
+					</div>
+					{% endif %}
+
 					<div class="d-flex gap-2">
 						<button type="submit" class="btn btn-primary">Save Changes</button>
 						<a href="{{ url_for('myapp_blueprints_admin.index') }}" class="btn btn-secondary">Cancel</a>

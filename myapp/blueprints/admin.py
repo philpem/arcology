@@ -11,7 +11,7 @@ from wtforms import SelectField, SubmitField, StringField, PasswordField, Boolea
 from wtforms.validators import DataRequired, Length, EqualTo, Optional
 
 from ..extensions import db
-from ..database import User, ApiKey, UserPermission
+from ..database import User, ApiKey, UserPermission, RestrictionType, UserRestrictionBypass
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -131,7 +131,8 @@ def edit_user(user_id):
             permission=user.permission.value,
             can_use_api=user.can_use_api,
         )
-        return render_template('admin/edit_user.html', form=form, user=user, editing_self=False)
+        return render_template('admin/edit_user.html', form=form, user=user,
+                               editing_self=False, RestrictionType=RestrictionType)
 
     form = EditUserForm()
     if form.validate_on_submit():
@@ -139,17 +140,17 @@ def edit_user(user_id):
         existing = User.query.filter_by(username=form.username.data).first()
         if existing and existing.id != user.id:
             flash(f'Username "{form.username.data}" is already taken.', 'error')
-            return render_template('admin/edit_user.html', form=form, user=user, editing_self=False)
+            return render_template('admin/edit_user.html', form=form, user=user, editing_self=False, RestrictionType=RestrictionType)
 
         # Validate password if provided
         new_pw = form.new_password.data
         if new_pw:
             if len(new_pw) < 12:
                 flash('Password must be at least 12 characters.', 'error')
-                return render_template('admin/edit_user.html', form=form, user=user, editing_self=False)
+                return render_template('admin/edit_user.html', form=form, user=user, editing_self=False, RestrictionType=RestrictionType)
             if new_pw != form.confirm_password.data:
                 flash('Passwords must match.', 'error')
-                return render_template('admin/edit_user.html', form=form, user=user, editing_self=False)
+                return render_template('admin/edit_user.html', form=form, user=user, editing_self=False, RestrictionType=RestrictionType)
             user.setPassword(new_pw)
 
         user.username = form.username.data
@@ -157,6 +158,15 @@ def edit_user(user_id):
         user.can_use_api = form.can_use_api.data
 
         user.is_admin = form.is_admin.data
+
+        # Update restriction bypass permissions
+        selected_bypasses = set(request.form.getlist('restriction_bypasses'))
+        existing_bypasses = {rb.restriction_type.value: rb for rb in user.restriction_bypasses}
+        for rtype in RestrictionType:
+            if rtype.value in selected_bypasses and rtype.value not in existing_bypasses:
+                db.session.add(UserRestrictionBypass(user_id=user.id, restriction_type=rtype))
+            elif rtype.value not in selected_bypasses and rtype.value in existing_bypasses:
+                db.session.delete(existing_bypasses[rtype.value])
 
         db.session.commit()
         flash(f'User "{user.username}" updated successfully.', 'success')
@@ -166,7 +176,7 @@ def edit_user(user_id):
     for field, errors in form.errors.items():
         for error in errors:
             flash(error, 'error')
-    return render_template('admin/edit_user.html', form=form, user=user, editing_self=False)
+    return render_template('admin/edit_user.html', form=form, user=user, editing_self=False, RestrictionType=RestrictionType)
 
 
 @blueprint.route('/users/<int:user_id>/delete', methods=['POST'])

@@ -13,7 +13,7 @@ import uuid
 import json
 import mimetypes
 from flask import Blueprint, render_template, redirect, url_for, flash, request, current_app, send_file, abort
-from flask_login import login_required
+from flask_login import login_required, current_user
 from flask_wtf import FlaskForm
 from flask_wtf.file import FileField, FileRequired
 from wtforms import StringField, TextAreaField, SelectField, BooleanField
@@ -322,6 +322,39 @@ def compute_file_hashes(filepath: str) -> tuple[str, str]:
     return md5_hash.hexdigest(), sha256_hash.hexdigest()
 
 
+def _resolve_extracted_file_path(ef):
+    """Resolve an ExtractedFile to its actual path on disk.
+
+    Looks up the FILE_EXTRACTION or ARCHIVE_EXTRACT analysis with an output_path
+    for the file's partition's artefact, then joins with ef.path.
+    Handles RISC OS filetype suffix fallback via glob.
+
+    Returns the full filesystem path as a string, or None if not found.
+    """
+    output_folder = get_output_folder()
+
+    for analysis_type in (AnalysisType.FILE_EXTRACTION, AnalysisType.ARCHIVE_EXTRACT):
+        extraction = (
+            Analysis.query
+            .filter_by(artefact_id=ef.partition.artefact_id, analysis_type=analysis_type)
+            .filter(Analysis.output_path.isnot(None), Analysis.status == AnalysisStatus.COMPLETED)
+            .first()
+        )
+        if extraction and extraction.output_path:
+            base = extraction.output_path
+            if not os.path.isabs(base):
+                base = os.path.join(output_folder, base)
+            file_path = os.path.join(base, ef.path.lstrip('/'))
+            if os.path.isfile(file_path):
+                return file_path
+            # RISC OS filetype suffix fallback
+            candidates = [f for f in glob.glob(file_path + ',*') if os.path.isfile(f)]
+            if candidates:
+                return candidates[0]
+
+    return None
+
+
 # =============================================================================
 # Routes
 # =============================================================================
@@ -622,6 +655,11 @@ def _render_artefact_view(artefact):
         page=page, per_page=per_page, max_per_page=per_page
     )
 
+    # Batch-query all matching KnownFiles across active hash databases
+    # for the current page of files, so the template can show multiple badges.
+    from ..utils.hash_rescan import find_all_known_files_batch
+    file_known_matches = find_all_known_files_batch(files_pagination.items)
+
     # Build query args for pagination links, preserving all active filters
     pagination_args = request.args.to_dict()
     pagination_args.pop('page', None)
@@ -742,7 +780,8 @@ def _render_artefact_view(artefact):
                            hashdb_mode=hashdb_mode,
                            recognised_products=recognised_products,
                            recognised_folder_paths=recognised_folder_paths,
-                           hash_databases=hash_databases)
+                           hash_databases=hash_databases,
+                           file_known_matches=file_known_matches)
 
 
 @blueprint.route('/<string:uuid>/add-to-hashdb', methods=['POST'])
@@ -827,55 +866,28 @@ def add_to_hashdb(uuid):
 
         # Compute hashes on demand if missing
         if not md5:
-            # Find the FILE_EXTRACTION analysis for this artefact with an output_path
-            extraction = (
-                Analysis.query
-                .filter_by(artefact_id=ef.partition.artefact_id, analysis_type=AnalysisType.FILE_EXTRACTION)
-                .filter(Analysis.output_path.isnot(None), Analysis.status == AnalysisStatus.COMPLETED)
-                .first()
-            )
-            if extraction and extraction.output_path:
-                # output_path may be absolute (from worker) or relative to OUTPUT_FOLDER
-                base = extraction.output_path
-                if not os.path.isabs(base):
-                    base = os.path.join(output_folder, base)
-                # File path within the extraction directory
-                file_path_on_disk = os.path.join(base, ef.path.lstrip('/'))
-                # For Acorn archives the worker stores the RISC OS display
-                # name in ef.path (e.g. "!Boot,ffe/!Run") but the actual
-                # file on disk has a filetype suffix ("!Boot,ffe/!Run,feb8").
-                # Fall back to a glob if the exact path isn't found.
-                if not os.path.isfile(file_path_on_disk):
-                    candidates = [
-                        f for f in glob.glob(file_path_on_disk + ',*')
-                        if os.path.isfile(f)
-                    ]
-                    if candidates:
-                        file_path_on_disk = candidates[0]
-                    else:
-                        skipped_no_file.append(ef.path)
-                        continue
-                try:
-                    md5_h = hashlib.md5()
-                    sha1_h = hashlib.sha1()
-                    sha256_h = hashlib.sha256()
-                    with open(file_path_on_disk, 'rb') as fh:
-                        for chunk in iter(lambda: fh.read(65536), b''):
-                            md5_h.update(chunk)
-                            sha1_h.update(chunk)
-                            sha256_h.update(chunk)
-                    md5 = md5_h.hexdigest()
-                    sha1 = sha1_h.hexdigest()
-                    sha256 = sha256_h.hexdigest()
-                    # Persist back to ExtractedFile
-                    ef.md5 = md5
-                    ef.sha1 = sha1
-                    ef.sha256 = sha256
-                except OSError:
-                    skipped_no_file.append(ef.path)
-                    continue
-            else:
-                skipped_no_hash.append(ef.path)
+            file_path_on_disk = _resolve_extracted_file_path(ef)
+            if not file_path_on_disk:
+                skipped_no_file.append(ef.path)
+                continue
+            try:
+                md5_h = hashlib.md5()
+                sha1_h = hashlib.sha1()
+                sha256_h = hashlib.sha256()
+                with open(file_path_on_disk, 'rb') as fh:
+                    for chunk in iter(lambda: fh.read(65536), b''):
+                        md5_h.update(chunk)
+                        sha1_h.update(chunk)
+                        sha256_h.update(chunk)
+                md5 = md5_h.hexdigest()
+                sha1 = sha1_h.hexdigest()
+                sha256 = sha256_h.hexdigest()
+                # Persist back to ExtractedFile
+                ef.md5 = md5
+                ef.sha1 = sha1
+                ef.sha256 = sha256
+            except OSError:
+                skipped_no_file.append(ef.path)
                 continue
 
         # Deduplicate: skip if this md5 already exists in the database
@@ -1158,11 +1170,30 @@ def delete(item_id=None, artefact_id=None, root_id=None, uuid=None):
 @blueprint.route('/artefacts/<string:uuid>/download', endpoint='download_legacy')
 @login_required
 def download(item_id=None, artefact_id=None, root_id=None, uuid=None):
-    """Download the artefact file."""
+    """Download the artefact file.  Restricted artefacts are blocked unless
+    the current user has bypass permissions for every restriction type."""
     if uuid is not None:
         artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     else:
         _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
+
+    # Enforce download restrictions
+    if artefact.restrictions:
+        if not current_user.can_bypass_all_restrictions(artefact.restrictions):
+            categories = ', '.join(
+                r.restriction_type.value.replace('_', ' ').title()
+                for r in artefact.restrictions
+            )
+            flash(f'Download restricted: {categories}', 'danger')
+            return redirect(url_for(f'{ROUTENAME}.view',
+                                    item_id=artefact.item.url_id,
+                                    artefact_id=artefact.url_slug))
+        # User has bypass — require explicit confirmation
+        if not request.args.get('confirm_bypass'):
+            flash('This artefact has download restrictions. Use the download override button to confirm.', 'warning')
+            return redirect(url_for(f'{ROUTENAME}.view',
+                                    item_id=artefact.item.url_id,
+                                    artefact_id=artefact.url_slug))
 
     full_path = get_artefact_path(artefact)
 
@@ -1174,6 +1205,96 @@ def download(item_id=None, artefact_id=None, root_id=None, uuid=None):
         as_attachment=True,
         download_name=artefact.original_filename
     )
+
+
+@blueprint.route('/files/<string:uuid>/download', endpoint='download_file')
+@login_required
+def download_file(uuid):
+    """Download an individual extracted file from a partition.
+
+    Honours artefact-level download restrictions: if the parent artefact
+    is restricted and the user lacks bypass permissions, the download is
+    blocked.
+    """
+    ef = ExtractedFile.query.filter_by(uuid=uuid).first_or_404()
+    artefact = ef.partition.artefact
+
+    # Enforce artefact restrictions
+    if artefact.restrictions:
+        if not current_user.can_bypass_all_restrictions(artefact.restrictions):
+            categories = ', '.join(
+                r.restriction_type.value.replace('_', ' ').title()
+                for r in artefact.restrictions
+            )
+            flash(f'Download restricted: {categories}', 'danger')
+            return redirect(url_for(f'{ROUTENAME}.view',
+                                    item_id=artefact.item.url_id,
+                                    artefact_id=artefact.url_slug))
+        if not request.args.get('confirm_bypass'):
+            flash('This artefact has download restrictions. Use the download override button to confirm.', 'warning')
+            return redirect(url_for(f'{ROUTENAME}.view',
+                                    item_id=artefact.item.url_id,
+                                    artefact_id=artefact.url_slug))
+
+    file_path = _resolve_extracted_file_path(ef)
+    if not file_path:
+        abort(404, description='Extracted file not found on disk')
+
+    return send_file(file_path, as_attachment=True, download_name=ef.filename)
+
+
+@blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/restrictions', methods=['POST'])
+@blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/restrictions', methods=['POST'], endpoint='manage_restrictions_nested')
+@login_required
+@require_permission('read_write')
+def manage_restrictions(item_id=None, artefact_id=None, root_id=None):
+    """Add or remove a download restriction on an artefact."""
+    _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
+
+    action = request.form.get('action', '')
+    category = request.form.get('category', '')
+    reason = request.form.get('reason', '').strip() or None
+
+    from ..database import RestrictionType, ArtefactRestriction
+    try:
+        rtype = RestrictionType(category)
+    except (ValueError, KeyError):
+        flash(f'Invalid restriction type: {category}', 'danger')
+        return redirect(url_for(f'{ROUTENAME}.view',
+                                item_id=artefact.item.url_id,
+                                artefact_id=artefact.url_slug))
+
+    if action == 'add':
+        existing = ArtefactRestriction.query.filter_by(
+            artefact_id=artefact.id, restriction_type=rtype
+        ).first()
+        if not existing:
+            db.session.add(ArtefactRestriction(
+                artefact_id=artefact.id,
+                restriction_type=rtype,
+                reason=reason,
+                added_by_id=current_user.id,
+            ))
+            db.session.commit()
+            flash(f'Restriction added: {rtype.value.replace("_", " ").title()}', 'success')
+        else:
+            flash(f'Restriction already exists: {rtype.value.replace("_", " ").title()}', 'info')
+    elif action == 'remove':
+        existing = ArtefactRestriction.query.filter_by(
+            artefact_id=artefact.id, restriction_type=rtype
+        ).first()
+        if existing:
+            db.session.delete(existing)
+            db.session.commit()
+            flash(f'Restriction removed: {rtype.value.replace("_", " ").title()}', 'success')
+        else:
+            flash(f'Restriction not found: {rtype.value.replace("_", " ").title()}', 'warning')
+    else:
+        flash(f'Invalid action: {action}', 'danger')
+
+    return redirect(url_for(f'{ROUTENAME}.view',
+                            item_id=artefact.item.url_id,
+                            artefact_id=artefact.url_slug))
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/analyse', methods=['GET', 'POST'])
