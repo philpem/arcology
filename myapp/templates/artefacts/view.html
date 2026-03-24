@@ -762,7 +762,7 @@
     const productCache = {
         {% for hdb in hash_databases %}
         {{ hdb.id }}: [
-            {% for p in hdb.known_products %}
+            {% for p in hdb.known_products|sort(attribute='title', case_sensitive=false) %}
             { id: {{ p.id }}, title: {{ p.title|tojson }} },
             {% endfor %}
         ],
