@@ -58,6 +58,24 @@ def analysis_handler(description: str):
             analysis_id = analysis['id']
             try:
                 return fn(self, analysis, artefact, work_dir)
+            except FileNotFoundError as e:
+                # Expected when an artefact is deleted while jobs are
+                # queued — the physical file is gone but the worker
+                # already claimed the analysis.  Log a clean warning
+                # instead of a full traceback.
+                log.warning(
+                    f"Analysis {analysis_id} skipped: input file missing "
+                    f"(artefact was probably deleted)"
+                )
+                try:
+                    self.api.update_analysis(
+                        analysis_id,
+                        status='failed',
+                        success=False,
+                        error_message=f'Input file missing (artefact deleted?): {e}',
+                    )
+                except Exception:
+                    pass  # API will 404 if analysis was cascade-deleted
             except Exception as e:
                 log.exception(f"Analysis {analysis_id} failed during {description}")
                 try:
