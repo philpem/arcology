@@ -89,6 +89,7 @@ EXTENSION_MAP = {
     '.tgz': ArtefactType.TARGZ,
     '.rar': ArtefactType.RAR,
     '.arc': ArtefactType.ARC,
+    '.arcfs': ArtefactType.ARC,
     '.spk': ArtefactType.ARC,
     '.spark': ArtefactType.ARC,
 }
