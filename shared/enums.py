@@ -37,6 +37,7 @@ class ArtefactType(enum.Enum):
     ZIP        = "zip"
     TARGZ      = "tar_gz"
     RAR        = "rar"
+    ARC        = "arc"               # ArcFS / Spark (RISC OS archive)
 
     # Unknown - needs manual identification
     UNKNOWN    = "unknown"

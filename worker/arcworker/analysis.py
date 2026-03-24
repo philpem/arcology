@@ -1092,13 +1092,208 @@ class AnalysisWorker:
             })
         )
 
+    @staticmethod
+    def _sniff_archive_magic(file_path: Path):
+        """Sniff the first bytes of a file to detect mis-labelled archives.
+
+        Returns the detected ArchiveType, or ``None`` when the format is
+        unrecognised.  Used both for top-level artefacts (ZIP that is
+        really Spark) and nested archives (``&DDC`` file that is really
+        ZIP).
+
+        Recognised signatures:
+          ArcFS: ``Archive\\0`` or ``\\x1Aarchive``
+          Spark: ``\\x1A`` followed by ``\\x00``, ``\\x80``–``\\x89``, or ``\\xFF``
+          ZIP:   ``PK\\x03\\x04``
+        """
+        from shared.archive_formats import ArchiveType
+
+        try:
+            with open(file_path, 'rb') as fh:
+                header = fh.read(8)
+        except OSError:
+            return None
+
+        if len(header) < 2:
+            return None
+
+        # ArcFS: "Archive\0" or "\x1aarchive"
+        if header[:8] == b'Archive\x00':
+            return ArchiveType.ARCFS
+        if len(header) >= 8 and header[0] == 0x1A and header[1:8] == b'archive':
+            return ArchiveType.ARCFS
+
+        # Spark: 0x1A followed by 0x00, 0x80-0x89, or 0xFF
+        if header[0] == 0x1A:
+            second = header[1]
+            if second == 0x00 or (0x80 <= second <= 0x89) or second == 0xFF:
+                return ArchiveType.SPARK
+
+        # ZIP: PK\x03\x04
+        if len(header) >= 4 and header[:4] == b'PK\x03\x04':
+            return ArchiveType.ZIP
+
+        return None
+
+    # Extracted files with these extensions are promoted to derived artefacts
+    # so they get their own analysis pipeline (e.g. an ISO inside a ZIP gets
+    # FILE_EXTRACTION queued automatically).  Keep in sync with EXTENSION_MAP
+    # in myapp/blueprints/artefacts.py.
+    _PROMOTABLE_EXTENSIONS = {
+        '.scp': ArtefactType.SCP,
+        '.imd': ArtefactType.IMD,
+        '.hfe': ArtefactType.HFE,
+        '.adf': ArtefactType.RAW_SECTOR,
+        '.img': ArtefactType.RAW_SECTOR,
+        '.ima': ArtefactType.RAW_SECTOR,
+        '.dsk': ArtefactType.RAW_SECTOR,
+        '.dd':  ArtefactType.RAW_SECTOR,
+        '.iso': ArtefactType.ISO,
+    }
+
+    def _extract_top_level_archive(
+        self, analysis, artefact, work_dir,
+        archive_type, archive_info,
+        extract_zip, extract_tar, extract_rar, extract_7z,
+    ):
+        """Handle ARCHIVE_EXTRACT for a top-level artefact (no partition).
+
+        Extracts the artefact file directly, creates a partition for the
+        extracted files, queues follow-on analyses, and promotes any
+        recognised disc images to derived artefacts.
+        """
+        import json
+        from shared.archive_formats import ArchiveType, get_archive_info
+        from .tools.extraction import enumerate_extracted_files
+        from .config import OUTPUT_DIR
+        from .utils.paths import get_output_path
+
+        analysis_id = analysis['id']
+        item = artefact.get('item', {'uuid': 'default', 'slug': 'default'})
+
+        extract_dir = get_output_path(
+            OUTPUT_DIR, item, artefact, analysis, partition=None
+        )
+        input_path = self.get_input_path(artefact, work_dir)
+
+        # Sniff magic bytes — some RISC OS archives are distributed with
+        # a .zip extension even though they are actually Spark or ArcFS.
+        sniffed = self._sniff_archive_magic(input_path)
+        if sniffed is not None and sniffed != archive_type:
+            log.info(f"Magic-byte sniff overrides {archive_type.value} → {sniffed.value}")
+            archive_type = sniffed
+            archive_info = get_archive_info(archive_type)
+
+        # Dispatch to the correct extraction tool
+        from .tools import extract_riscosarc
+
+        if archive_type in [ArchiveType.SPARK, ArchiveType.ARCFS,
+                            ArchiveType.PACKDIR, ArchiveType.CFS, ArchiveType.SQUASH]:
+            result = extract_riscosarc(input_path, extract_dir)
+            # Spark/ArcFS fallback: if riscosarc fails, the file might
+            # actually be a ZIP with RISC OS filetypes (SparkFS uses
+            # filetype &DDC for both Spark and ZIP).
+            if not result['success'] and archive_type == ArchiveType.SPARK:
+                result = extract_zip(input_path, extract_dir)
+                if result['success']:
+                    archive_type = ArchiveType.ZIP_RISCOS
+                    archive_info = get_archive_info(archive_type)
+        elif archive_type in [ArchiveType.ZIP, ArchiveType.ZIP_RISCOS]:
+            result = extract_zip(input_path, extract_dir)
+        elif archive_type in [ArchiveType.TAR, ArchiveType.TARGZ,
+                              ArchiveType.TARBZ2, ArchiveType.TARXZ]:
+            result = extract_tar(input_path, extract_dir, archive_type.value)
+        elif archive_type == ArchiveType.RAR:
+            result = extract_rar(input_path, extract_dir)
+        elif archive_type == ArchiveType.SEVENZ:
+            result = extract_7z(input_path, extract_dir)
+        else:
+            self.api.update_analysis(
+                analysis_id,
+                status='failed',
+                success=False,
+                error_message=f'Top-level extraction not supported for archive type: {archive_type.value}'
+            )
+            return
+
+        if not result['success']:
+            self.api.update_analysis(
+                analysis_id,
+                status='failed',
+                success=False,
+                tool_name=result.get('tool'),
+                error_message=result.get('error', 'Archive extraction failed'),
+                details=json.dumps({'process_output': result.get('process_output')}),
+            )
+            return
+
+        files = enumerate_extracted_files(extract_dir, acorn='auto')
+
+        partition = self.api.register_file_listing(
+            artefact['uuid'], files, 'archive',
+            container_format=archive_info['name'],
+        )
+
+        # Promote extracted files with recognised extensions to derived
+        # artefacts so they get their own analysis pipeline.
+        derived_count = 0
+        for file_path in extract_dir.rglob('*'):
+            if not file_path.is_file():
+                continue
+            ext = file_path.suffix.lower()
+            artefact_type = self._PROMOTABLE_EXTENSIONS.get(ext)
+            if artefact_type is None:
+                continue
+            resp = self.api.register_derived_artefact(
+                analysis_id,
+                label=file_path.name,
+                source_path=file_path,
+                artefact_type=artefact_type,
+            )
+            if resp:
+                derived_count += 1
+                log.info(f"Promoted {file_path.name} to derived {artefact_type.value} artefact")
+
+        self.api.update_analysis(
+            analysis_id,
+            status='completed',
+            success=True,
+            tool_name=result['tool'],
+            output_path=str(extract_dir),
+            summary=f"Extracted {len(files)} files from {archive_info['name']}"
+                    + (f" ({derived_count} promoted to artefacts)" if derived_count else ""),
+            details=json.dumps({
+                'file_count': len(files),
+                'archive_type': archive_type.value,
+                'derived_artefacts': derived_count,
+            }),
+        )
+
+        if partition:
+            self.api.queue_analysis(
+                artefact['uuid'],
+                AnalysisType.ARCHIVE_DETECT.value,
+                hints={
+                    'partition_uuid': partition.get('uuid'),
+                    'extraction_path': str(extract_dir),
+                },
+            )
+            self.api.queue_analysis(
+                artefact['uuid'],
+                AnalysisType.PRODUCT_RECOGNITION.value,
+                hints={'partition_uuid': partition.get('uuid')},
+            )
+
     @analysis_handler("archive extraction")
     def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path):
         """
         Process ARCHIVE_EXTRACT analysis.
         Extracts a specific archive file and registers the extracted files.
 
-        Performs actual extraction with file path resolution.
+        When partition_uuid is present in hints, extracts an archive found
+        inside a disc image (the original flow).  When partition_uuid is
+        absent, the artefact itself is the archive (top-level upload) and
+        the handler creates a new partition for the extracted files.
         """
         import json
         from shared.archive_formats import (
@@ -1134,6 +1329,27 @@ class AnalysisWorker:
         hinted_extraction_path = hints.get('extraction_path')
         path_prefix = hints.get('path_prefix', '')
 
+        # ── Top-level artefact archive ──────────────────────────────────
+        # When no partition_uuid is provided, the artefact itself is the
+        # archive (uploaded directly, not found inside a disc image).
+        # Derive the archive type from the artefact type and delegate to
+        # the shared extraction logic below after creating a partition.
+        if not partition_uuid:
+            artefact_type = artefact.get('artefact_type', '')
+            if not archive_type_str:
+                # Map ArtefactType value → ArchiveType value.  Most share
+                # the same string values (zip, tar_gz, rar).  ARC needs
+                # explicit mapping since ArtefactType.ARC ("arc") covers
+                # both ArcFS and Spark; default to ArcFS and let the
+                # magic-byte sniff in _extract_top_level_archive correct
+                # it to Spark when appropriate.
+                _ARTEFACT_TO_ARCHIVE = {
+                    ArtefactType.ARC.value: ArchiveType.ARCFS.value,
+                }
+                archive_type_str = _ARTEFACT_TO_ARCHIVE.get(
+                    artefact_type, artefact_type
+                )
+
         # Get ArchiveType enum from string
         try:
             archive_type = ArchiveType(archive_type_str)
@@ -1144,6 +1360,17 @@ class AnalysisWorker:
                 status='failed',
                 success=False,
                 error_message=f'Unknown archive type: {archive_type_str}'
+            )
+            return
+
+        # ── Top-level artefact archive (continued) ──────────────────────
+        # Extract the artefact file directly and create a new partition
+        # for the extracted files, then return.
+        if not partition_uuid:
+            self._extract_top_level_archive(
+                analysis, artefact, work_dir,
+                archive_type, archive_info,
+                extract_zip, extract_tar, extract_rar, extract_7z,
             )
             return
 
@@ -1285,6 +1512,23 @@ class AnalysisWorker:
         # Extract archive to temporary directory first
         temp_output_dir = work_dir / 'archive_contents'
 
+        # Sniff magic bytes — filetype-based detection can be wrong (e.g.
+        # &DDC is used for both Spark and ZIP on RISC OS).  Override the
+        # archive_type when the file header tells us otherwise.
+        sniffed = self._sniff_archive_magic(archive_path)
+        if sniffed is not None and sniffed != archive_type:
+            log.info(f"Magic-byte sniff overrides {archive_type.value} → {sniffed.value}")
+            # A ZIP found via RISC OS filetype should be treated as
+            # ZIP_RISCOS so Acorn ,xxx suffixes are parsed correctly.
+            _RISCOS_TYPES = (
+                ArchiveType.ARCFS, ArchiveType.SPARK, ArchiveType.PACKDIR,
+                ArchiveType.TBAFS, ArchiveType.CFS, ArchiveType.SQUASH,
+            )
+            if sniffed == ArchiveType.ZIP and archive_type in _RISCOS_TYPES:
+                sniffed = ArchiveType.ZIP_RISCOS
+            archive_type = sniffed
+            archive_info = get_archive_info(archive_type)
+
         # Choose extraction method based on archive type
         if archive_type in [ArchiveType.ARCFS, ArchiveType.PACKDIR,
                             ArchiveType.SPARK, ArchiveType.CFS, ArchiveType.SQUASH]:
@@ -1374,53 +1618,12 @@ class AnalysisWorker:
             ArchiveType.SQUASH, ArchiveType.FCFS,
         )
 
-        files = []
-        for file_path in persistent_output.rglob('*'):
-            if not file_path.is_file():
-                continue
-
-            # Skip .inf metadata files (Acorn extraction artifacts)
-            if is_acorn_archive and file_path.suffix == '.inf':
-                continue
-
-            rel_path = file_path.relative_to(persistent_output)
-
-            file_entry = {
-                'size': file_path.stat().st_size,
-                'parent_file_id': file_id,
-                'extraction_depth': extraction_depth,
-            }
-
-            if is_acorn_archive:
-                true_name, filetype = parse_acorn_filename(file_path.name)
-                if filetype and len(rel_path.parts) > 1:
-                    display_path = str(Path(*rel_path.parts[:-1]) / true_name)
-                elif filetype:
-                    display_path = true_name
-                else:
-                    display_path = str(rel_path)
-                file_entry['path'] = sanitize_path(display_path)
-                if filetype:
-                    file_entry['risc_os_filetype'] = filetype
-            else:
-                file_entry['path'] = sanitize_path(str(rel_path))
-
-            try:
-                md5_h = hashlib.md5()
-                sha1_h = hashlib.sha1()
-                sha256_h = hashlib.sha256()
-                with open(file_path, 'rb') as fh:
-                    for chunk in iter(lambda: fh.read(65536), b''):
-                        md5_h.update(chunk)
-                        sha1_h.update(chunk)
-                        sha256_h.update(chunk)
-                file_entry['md5'] = md5_h.hexdigest()
-                file_entry['sha1'] = sha1_h.hexdigest()
-                file_entry['sha256'] = sha256_h.hexdigest()
-            except OSError:
-                pass
-
-            files.append(file_entry)
+        files = enumerate_extracted_files(
+            persistent_output,
+            acorn=is_acorn_archive,
+            parent_file_id=file_id,
+            extraction_depth=extraction_depth,
+        )
 
         # Register extracted files in the same partition with parent_file_id
         if files:
