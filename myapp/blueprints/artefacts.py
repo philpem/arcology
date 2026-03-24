@@ -749,15 +749,24 @@ def add_to_hashdb(uuid):
     is_required = request.form.get('is_required', '1') == '1'
     base_path = request.form.get('base_path', '').strip()
 
+    # Preserve directory navigation state across the redirect
+    nav_partition_uuid = request.form.get('partition_uuid', '').strip() or None
+    nav_path = request.form.get('nav_path', '').strip() or None
+    redirect_kwargs = dict(item_id=artefact.item.url_id, artefact_id=artefact.url_slug, mode='hashdb')
+    if nav_partition_uuid:
+        redirect_kwargs['partition_uuid'] = nav_partition_uuid
+    if nav_path:
+        redirect_kwargs['path'] = nav_path
+
     if not file_ids:
         flash('No files selected.', 'warning')
-        return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug, mode='hashdb'))
+        return redirect(url_for(f'{ROUTENAME}.view', **redirect_kwargs))
 
     if raw_db_id == 'new':
         new_db_name = request.form.get('new_database_name', '').strip()
         if not new_db_name:
             flash('Provide a name for the new hash database.', 'danger')
-            return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug, mode='hashdb'))
+            return redirect(url_for(f'{ROUTENAME}.view', **redirect_kwargs))
         database = HashDatabase(name=new_db_name)
         db.session.add(database)
         db.session.flush()
@@ -766,7 +775,7 @@ def add_to_hashdb(uuid):
             database_id = int(raw_db_id)
         except (ValueError, TypeError):
             flash('Select a hash database.', 'danger')
-            return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug, mode='hashdb'))
+            return redirect(url_for(f'{ROUTENAME}.view', **redirect_kwargs))
         database = HashDatabase.query.get_or_404(database_id)
 
     # Create or fetch the product
@@ -782,7 +791,7 @@ def add_to_hashdb(uuid):
         db.session.flush()  # get product.id
     else:
         flash('Select a product or provide a new product title.', 'danger')
-        return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug, mode='hashdb'))
+        return redirect(url_for(f'{ROUTENAME}.view', **redirect_kwargs))
 
     # Get OUTPUT_FOLDER for on-demand hash computation
     output_folder = current_app.config.get('OUTPUT_FOLDER', '')
@@ -913,7 +922,7 @@ def add_to_hashdb(uuid):
     if not added and not skipped_no_hash and not skipped_no_file:
         flash('All selected files already exist in this hash database.', 'info')
 
-    return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug, mode='hashdb'))
+    return redirect(url_for(f'{ROUTENAME}.view', **redirect_kwargs))
 
 
 def _get_all_artefact_ids(artefact):

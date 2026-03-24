@@ -540,6 +540,8 @@
             <form id="hashdb-form" action="{{ url_for('myapp_blueprints_artefacts.add_to_hashdb', uuid=artefact.uuid) }}" method="post">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="base_path" value="{{ current_path }}">
+                <input type="hidden" name="partition_uuid" value="{{ file_form.partition_uuid.data or '' }}">
+                <input type="hidden" name="nav_path" value="{{ current_path }}">
             {% endif %}
             <div class="table-responsive">
                 {# Sortable column header macro: toggles direction when active #}
