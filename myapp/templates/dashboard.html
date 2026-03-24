@@ -12,7 +12,7 @@
         <div class="card text-bg-primary">
             <div class="card-body">
                 <h5 class="card-title"><i class="bi bi-collection"></i> Items</h5>
-                <p class="card-text display-4">{{ stats.total_items }}</p>
+                <p class="card-text display-4" id="stat-items">{{ stats.total_items }}</p>
             </div>
         </div>
     </div>
@@ -20,7 +20,7 @@
         <div class="card text-bg-success">
             <div class="card-body">
                 <h5 class="card-title"><i class="bi bi-disc"></i> Artefacts</h5>
-                <p class="card-text display-4">{{ stats.total_artefacts }}</p>
+                <p class="card-text display-4" id="stat-artefacts">{{ stats.total_artefacts }}</p>
             </div>
         </div>
     </div>
@@ -28,7 +28,7 @@
         <div class="card text-bg-warning">
             <div class="card-body">
                 <h5 class="card-title"><i class="bi bi-hourglass-split"></i> Pending</h5>
-                <p class="card-text display-4">{{ stats.pending_analyses }}</p>
+                <p class="card-text display-4" id="stat-pending">{{ stats.pending_analyses }}</p>
             </div>
         </div>
     </div>
@@ -36,7 +36,7 @@
         <div class="card text-bg-info">
             <div class="card-body">
                 <h5 class="card-title"><i class="bi bi-gear-wide-connected"></i> Running</h5>
-                <p class="card-text display-4">{{ stats.running_analyses }}</p>
+                <p class="card-text display-4" id="stat-running">{{ stats.running_analyses }}</p>
             </div>
         </div>
     </div>
@@ -74,4 +74,36 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+(function() {
+    var REFRESH_INTERVAL = 5000;
+    var statsUrl = {{ url_for('myapp_blueprints_dashboard.stats_json') | tojson }};
+    var fields = {
+        'total_items': document.getElementById('stat-items'),
+        'total_artefacts': document.getElementById('stat-artefacts'),
+        'pending_analyses': document.getElementById('stat-pending'),
+        'running_analyses': document.getElementById('stat-running')
+    };
+
+    function refreshStats() {
+        fetch(statsUrl).then(function(resp) {
+            if (!resp.ok) return;
+            return resp.json();
+        }).then(function(data) {
+            if (!data) return;
+            for (var key in fields) {
+                if (fields[key] && data[key] !== undefined) {
+                    fields[key].textContent = data[key];
+                }
+            }
+        }).catch(function() {});
+    }
+
+    setInterval(refreshStats, REFRESH_INTERVAL);
+})();
+</script>
 {% endblock %}

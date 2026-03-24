@@ -2138,6 +2138,8 @@ class AnalysisWorker:
 
         log.info(f"Processing analysis {analysis_id}: {analysis_type} for {artefact.get('label', 'unknown')}")
 
+        # Status is already RUNNING from the atomic claim in claim_and_process().
+
         # Create temporary work directory
         with tempfile.TemporaryDirectory(prefix=f'arcology_{analysis_id}_') as work_dir:
             work_path = Path(work_dir)
