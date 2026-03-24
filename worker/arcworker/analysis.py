@@ -1092,6 +1092,22 @@ class AnalysisWorker:
             })
         )
 
+    # Extracted files with these extensions are promoted to derived artefacts
+    # so they get their own analysis pipeline (e.g. an ISO inside a ZIP gets
+    # FILE_EXTRACTION queued automatically).  Keep in sync with EXTENSION_MAP
+    # in myapp/blueprints/artefacts.py.
+    _PROMOTABLE_EXTENSIONS = {
+        '.scp': ArtefactType.SCP,
+        '.imd': ArtefactType.IMD,
+        '.hfe': ArtefactType.HFE,
+        '.adf': ArtefactType.RAW_SECTOR,
+        '.img': ArtefactType.RAW_SECTOR,
+        '.ima': ArtefactType.RAW_SECTOR,
+        '.dsk': ArtefactType.RAW_SECTOR,
+        '.dd':  ArtefactType.RAW_SECTOR,
+        '.iso': ArtefactType.ISO,
+    }
+
     def _extract_top_level_archive(
         self, analysis, artefact, work_dir,
         archive_type, archive_info,
@@ -1100,9 +1116,8 @@ class AnalysisWorker:
         """Handle ARCHIVE_EXTRACT for a top-level artefact (no partition).
 
         Extracts the artefact file directly, creates a partition for the
-        extracted files, and queues follow-on analyses (ARCHIVE_DETECT,
-        PRODUCT_RECOGNITION).  Reuses the same tool dispatch as the
-        nested-archive path.
+        extracted files, queues follow-on analyses, and promotes any
+        recognised disc images to derived artefacts.
         """
         import json
         from shared.archive_formats import ArchiveType
@@ -1151,9 +1166,29 @@ class AnalysisWorker:
         files = enumerate_extracted_files(extract_dir, acorn=False)
 
         partition = self.api.register_file_listing(
-            artefact['uuid'], files, 'unknown',
+            artefact['uuid'], files, 'archive',
             container_format=archive_info['name'],
         )
+
+        # Promote extracted files with recognised extensions to derived
+        # artefacts so they get their own analysis pipeline.
+        derived_count = 0
+        for file_path in extract_dir.rglob('*'):
+            if not file_path.is_file():
+                continue
+            ext = file_path.suffix.lower()
+            artefact_type = self._PROMOTABLE_EXTENSIONS.get(ext)
+            if artefact_type is None:
+                continue
+            resp = self.api.register_derived_artefact(
+                analysis_id,
+                label=file_path.name,
+                source_path=file_path,
+                artefact_type=artefact_type,
+            )
+            if resp:
+                derived_count += 1
+                log.info(f"Promoted {file_path.name} to derived {artefact_type.value} artefact")
 
         self.api.update_analysis(
             analysis_id,
@@ -1161,10 +1196,12 @@ class AnalysisWorker:
             success=True,
             tool_name=result['tool'],
             output_path=str(extract_dir),
-            summary=f"Extracted {len(files)} files from {archive_info['name']}",
+            summary=f"Extracted {len(files)} files from {archive_info['name']}"
+                    + (f" ({derived_count} promoted to artefacts)" if derived_count else ""),
             details=json.dumps({
                 'file_count': len(files),
                 'archive_type': archive_type.value,
+                'derived_artefacts': derived_count,
             }),
         )
 

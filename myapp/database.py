@@ -75,6 +75,7 @@ class FilesystemType(enum.Enum):
     ISO9660 = "iso9660"
     CDFS = "cdfs"
     CPM = "cpm"
+    ARCHIVE = "archive"
     UNKNOWN = "unknown"
     OTHER = "other"
 
