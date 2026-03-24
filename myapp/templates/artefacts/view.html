@@ -490,10 +490,10 @@
                     {% endif %}
                 </span>
                 {% if all_partitions %}
-                <a href="?{% if hashdb_mode %}{% else %}mode=hashdb&{% endif %}{{ pagination_args | urlencode }}"
+                <a href="?{% if not hashdb_mode %}mode=hashdb&{% endif %}{{ hashdb_toggle_args | urlencode }}"
                    class="btn btn-sm {{ 'btn-warning' if hashdb_mode else 'btn-outline-secondary' }}"
                    title="{{ 'Exit Hash DB Mode' if hashdb_mode else 'Enter Hash DB Mode to add files to a hash database' }}">
-                    <i class="bi bi-database-add"></i> {{ 'Exit' if hashdb_mode else 'Hash DB Mode' }}
+                    <i class="bi bi-database-add"></i> {{ 'Exit HashDB Mode' if hashdb_mode else 'Hash DB Mode' }}
                 </a>
                 {% endif %}
             </div>
@@ -524,7 +524,7 @@
                 <div class="small text-muted mb-2"><i class="bi bi-folder"></i> Subdirectories at this level:</div>
                 <div class="d-flex flex-wrap gap-2">
                     {% for subdir in subdirectories %}
-                    <a href="?{% if file_form.partition_uuid.data %}partition_uuid={{ file_form.partition_uuid.data }}&{% endif %}path={{ (current_path + subdir + '/')|urlencode }}&recursive=true"
+                    <a href="?{% if hashdb_mode %}mode=hashdb&{% endif %}{% if file_form.partition_uuid.data %}partition_uuid={{ file_form.partition_uuid.data }}&{% endif %}path={{ (current_path + subdir + '/')|urlencode }}&recursive=true"
                        class="btn btn-sm btn-outline-primary">
                         {% if (current_path + subdir) in archive_paths %}
                         <i class="bi bi-file-zip-fill"></i> {{ subdir }}
