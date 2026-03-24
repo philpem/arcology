@@ -1159,7 +1159,7 @@ class AnalysisWorker:
         recognised disc images to derived artefacts.
         """
         import json
-        from shared.archive_formats import ArchiveType
+        from shared.archive_formats import ArchiveType, get_archive_info
         from .tools.extraction import enumerate_extracted_files
         from .config import OUTPUT_DIR
         from .utils.paths import get_output_path
