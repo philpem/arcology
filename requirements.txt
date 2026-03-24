@@ -26,3 +26,6 @@ numpy
 
 # PostgreSQL (optional)
 psycopg2-binary
+
+# Test reporting (JUnit XML output for CI)
+unittest-xml-reporting
