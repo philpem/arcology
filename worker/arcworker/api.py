@@ -325,20 +325,33 @@ class ArcologyAPI:
         Uses atomic database-level claiming to prevent race conditions
         when multiple workers try to claim the same job.
 
+        Returns False (instead of logging an error) when the analysis no
+        longer exists — this happens normally when an item is deleted while
+        its analyses are still pending.
+
         Args:
             analysis_id: ID of the analysis to claim
 
         Returns:
             True if successfully claimed, False otherwise
         """
-        claim_result = self.put(f"/analysis/{analysis_id}", {
-            'status': 'running',
-            'claim_worker': True  # Signal this is a claim attempt
-        })
-
-        # Server returns 'claimed' field indicating if THIS request actually
-        # claimed the job (vs another worker claiming it first)
-        return claim_result and claim_result.get('claimed', False)
+        try:
+            resp = requests.put(
+                f"{self.api}/analysis/{analysis_id}",
+                json={'status': 'running', 'claim_worker': True},
+                headers=self._auth,
+                timeout=30
+            )
+            if resp.status_code == 404:
+                log.debug(
+                    f"Analysis {analysis_id} no longer exists (deleted), skipping"
+                )
+                return False
+            resp.raise_for_status()
+            return resp.json().get('claimed', False)
+        except Exception as e:
+            log.error(f"Failed to claim analysis {analysis_id}: {e}")
+            return False
 
     def get_recognition_config(self) -> list[dict]:
         """

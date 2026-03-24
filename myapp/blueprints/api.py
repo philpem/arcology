@@ -12,6 +12,7 @@ from flask import Blueprint, jsonify, request, current_app, send_file
 from flask_wtf.csrf import CSRFProtect
 from sqlalchemy import update, or_
 from sqlalchemy.orm import joinedload
+from sqlalchemy.orm.exc import StaleDataError
 
 from ..extensions import db, csrf
 from ..database import (
@@ -402,7 +403,14 @@ def update_analysis(id):
     if data.get('status') == 'completed' and data.get('success'):
         _populate_search_index(analysis)
 
-    db.session.commit()
+    try:
+        db.session.commit()
+    except StaleDataError:
+        # The analysis row was cascade-deleted (e.g. item/artefact deleted)
+        # between our query and the commit.  This is not a server error —
+        # return 404 so the worker's existing 404 handler discards the result.
+        db.session.rollback()
+        return jsonify({'error': 'Analysis was deleted during update'}), 404
     return jsonify(analysis_to_dict(analysis))
 
 
