@@ -4,7 +4,7 @@ Partition detection tools.
 Tools for detecting partitions and filesystems in raw disc images.
 Supports:
 - sfdisk - Standard MBR/GPT partition tables
-- Acorn partitioning schemes (HCCS, Simtec, and future additions)
+- Acorn partitioning schemes (ICS/Baildon IDEFS, HCCS, Simtec, and future additions)
 - ADFS signature detection - Acorn ADFS filesystem heuristics
 - file command - Generic format identification
 
@@ -83,6 +83,45 @@ NEXUS_SECTOR_SIZE = 512
 #             (they will appear as unpartitioned gaps in the output)
 # • any str — use that string as the filesystem label without checking
 NEXUS_PRINTER_FILESYSTEM = 'other'
+
+
+# =========================================================================
+# ICS / Baildon Electronics partition table constants
+# =========================================================================
+# "IDEFS" was used by several RISC OS IDE manufacturers; function and
+# constant names use the "ICS" prefix to unambiguously identify the
+# ICS/Baildon/APDL variant documented in partition_ics_idefs.md.
+
+# Sector size is always 512 bytes for ICS IDEFS
+ICS_SECTOR_SIZE = 512
+
+# Partition table occupies sector 0 (first 512 bytes of the drive)
+ICS_PARTITION_TABLE_SIZE = 512
+
+# Maximum RISC OS partitions supported by ICS IDEFS
+ICS_MAX_PARTITIONS = 4
+
+# Checksum seed: ASCII "Part" as a little-endian uint32
+ICS_CHECKSUM_SEED = 0x50617274
+
+# Offset of total disc capacity (uint32le, in sectors) within sector 0
+ICS_TOTAL_CAPACITY_OFFSET = 0x1F8
+
+# Offset of checksum (uint32le) within sector 0
+ICS_CHECKSUM_OFFSET = 0x1FC
+
+# Size of each partition entry (two uint32le: start_sector, size_sectors)
+ICS_ENTRY_SIZE = 8
+
+# Maximum number of partition entries that fit before the capacity/checksum
+# fields: 504 bytes / 8 bytes per entry = 63
+ICS_MAX_ENTRIES = ICS_TOTAL_CAPACITY_OFFSET // ICS_ENTRY_SIZE
+
+# Offset of the ICS protection flags byte within the boot block
+ICS_PROTECTION_OFFSET = 0x1A7
+
+# Offset of the password hash words within the boot block (2 x uint32le)
+ICS_PASSWORD_HASH_OFFSET = 0x1A8
 
 
 def _decode_nexus_flags(flags: int) -> dict:
@@ -194,6 +233,129 @@ def _is_valid_filecore_disc_record_strict(boot_block: bytes) -> bool:
 
 
 # =========================================================================
+# ICS / Baildon Electronics partition detection
+# =========================================================================
+
+def _detect_ics_partitions(input_path: Path) -> dict:
+    """
+    Detect ICS/Baildon Electronics IDEFS partitions.
+
+    The ICS IDEFS partition table occupies sector 0 of the physical drive.
+    It contains up to 63 eight-byte entries (start_sector + size_sectors),
+    a total capacity field at offset 0x1F8, and a "Part"-seeded checksum
+    at offset 0x1FC.  Each valid partition has a FileCore boot block at
+    partition_start + 0xC00 with protection flags and password hashes.
+
+    Returns:
+        Dict with ``detected``, ``scheme``, ``partitions`` list.
+    """
+    file_size = input_path.stat().st_size
+    if file_size < ICS_PARTITION_TABLE_SIZE:
+        return {'detected': False, 'scheme': 'ics_idefs'}
+
+    with open(input_path, 'rb') as f:
+        sector0 = f.read(ICS_PARTITION_TABLE_SIZE)
+
+    if len(sector0) < ICS_PARTITION_TABLE_SIZE:
+        return {'detected': False, 'scheme': 'ics_idefs'}
+
+    # Validate the "Part" checksum — this is the primary identification
+    if not _validate_ics_checksum(sector0):
+        return {'detected': False, 'scheme': 'ics_idefs'}
+
+    # Total disc capacity in sectors (informational)
+    total_capacity_sectors = struct.unpack_from(
+        '<I', sector0, ICS_TOTAL_CAPACITY_OFFSET
+    )[0]
+
+    # Parse partition entries
+    partitions = []
+    valid_count = 0
+
+    for entry_idx in range(ICS_MAX_ENTRIES):
+        if valid_count >= ICS_MAX_PARTITIONS:
+            break
+
+        offset = entry_idx * ICS_ENTRY_SIZE
+        start_sector, size_sectors = struct.unpack_from(
+            '<II', sector0, offset
+        )
+
+        # Zero size = end-of-table marker
+        if size_sectors == 0:
+            break
+
+        # Bit 31 set = deleted/unused slot — skip and continue
+        if size_sectors & 0x80000000:
+            continue
+
+        start_byte = start_sector * ICS_SECTOR_SIZE
+        size_bytes = size_sectors * ICS_SECTOR_SIZE
+
+        # Clamp to remaining image
+        if start_byte + size_bytes > file_size:
+            size_bytes = file_size - start_byte
+
+        partition_info = {
+            'index': valid_count,
+            'start_byte': start_byte,
+            'size_bytes': size_bytes,
+            'start_sector': start_sector,
+            'size_sectors': size_sectors,
+            'filesystem': 'adfs',
+            'scheme': 'ics_idefs',
+            'description': f'ICS IDEFS partition {valid_count}',
+            'disc_name': '',
+            'boot_block_valid': False,
+            'protection': None,
+            'password_hash': None,
+        }
+
+        # Read the partition's boot block at partition_start + 0xC00
+        bb_offset = start_byte + FILECORE_BOOT_BLOCK_OFFSET
+        if bb_offset + FILECORE_BOOT_BLOCK_SIZE <= file_size:
+            with open(input_path, 'rb') as f:
+                f.seek(bb_offset)
+                boot_block = f.read(FILECORE_BOOT_BLOCK_SIZE)
+
+            if len(boot_block) == FILECORE_BOOT_BLOCK_SIZE:
+                bb_checksum_ok = (sum(boot_block) & 0xFF == 0)
+                partition_info['boot_block_valid'] = bb_checksum_ok
+
+                # Extract protection flags and password hashes
+                partition_info['protection'] = _decode_ics_protection(
+                    boot_block[ICS_PROTECTION_OFFSET]
+                )
+                partition_info['password_hash'] = _extract_ics_password_hashes(
+                    boot_block
+                )
+
+                # Parse FileCore disc record for disc name and size
+                disc_record = boot_block[FILECORE_BB_DISC_RECORD_OFFSET:]
+                if bb_checksum_ok and _is_valid_filecore_disc_record(disc_record):
+                    dr = _parse_filecore_disc_record(disc_record)
+                    partition_info['disc_name'] = dr['disc_name']
+                elif _is_valid_filecore_disc_record_strict(boot_block):
+                    dr = _parse_filecore_disc_record(disc_record)
+                    partition_info['disc_name'] = dr['disc_name']
+                    log.warning(
+                        f"ICS IDEFS partition {valid_count}: boot block "
+                        f"checksum invalid but disc record looks valid"
+                    )
+
+        partitions.append(partition_info)
+        valid_count += 1
+
+    return {
+        'detected': len(partitions) > 0,
+        'scheme': 'ics_idefs',
+        'total_capacity_sectors': total_capacity_sectors,
+        'total_capacity_bytes': total_capacity_sectors * ICS_SECTOR_SIZE,
+        'partitions': partitions,
+    }
+
+
+# =========================================================================
 # HCCS partition detection
 # =========================================================================
 
@@ -230,6 +392,65 @@ def _decode_hccs_access_flags(flags: int) -> dict:
         'raw': f'0x{flags:04X}',
         'summary': summary,
     }
+
+# =========================================================================
+# ICS / Baildon Electronics partition helpers
+# =========================================================================
+
+def _validate_ics_checksum(sector: bytes) -> bool:
+    """Validate the ICS IDEFS partition table checksum.
+
+    The checksum is: seed 0x50617274 ("Part") plus the sum of the first
+    508 bytes (offsets 0x000–0x1FB), compared against the uint32le at
+    offset 0x1FC.
+    """
+    if len(sector) < ICS_PARTITION_TABLE_SIZE:
+        return False
+    expected = struct.unpack_from('<I', sector, ICS_CHECKSUM_OFFSET)[0]
+    checksum = ICS_CHECKSUM_SEED
+    for i in range(ICS_CHECKSUM_OFFSET):
+        checksum += sector[i]
+    checksum &= 0xFFFFFFFF
+    return checksum == expected
+
+
+def _decode_ics_protection(flags_byte: int) -> dict:
+    """Decode the ICS IDEFS protection flags byte (boot block offset 0x1A7).
+
+    Bits 1:0 encode the protection level:
+      0 = no protection
+      1 = read/write access requires password
+      2 = read-only access requires password
+      3 = no access (fully locked)
+    """
+    level = flags_byte & 0x03
+    summaries = {
+        0: 'none',
+        1: 'read/write (password required)',
+        2: 'read only (password required)',
+        3: 'no access',
+    }
+    return {
+        'level': level,
+        'summary': summaries[level],
+        'raw': f'0x{flags_byte:02X}',
+    }
+
+
+def _extract_ics_password_hashes(boot_block: bytes) -> dict:
+    """Extract ICS IDEFS password hash words from a boot block.
+
+    The hash is a non-reversible shift-XOR with key 0x01810284.
+    We store the two uint32le words at offsets 0x1A8 (lo) and 0x1AC (hi)
+    for display only.
+    """
+    hash_lo = struct.unpack_from('<I', boot_block, ICS_PASSWORD_HASH_OFFSET)[0]
+    hash_hi = struct.unpack_from('<I', boot_block, ICS_PASSWORD_HASH_OFFSET + 4)[0]
+    return {
+        'hash_lo': f'0x{hash_lo:08X}',
+        'hash_hi': f'0x{hash_hi:08X}',
+    }
+
 
 def _detect_hccs_partitions(input_path: Path) -> dict:
     """
@@ -540,6 +761,13 @@ def detect_acorn_partitions(input_path: Path) -> dict:
     if result['detected']:
         return result
 
+    # ICS / Baildon Electronics IDEFS (partition table at sector 0 with
+    # "Part" checksum — checked before HCCS because the strong checksum
+    # gives unambiguous identification without touching the 0xC00 area)
+    result = _detect_ics_partitions(input_path)
+    if result['detected']:
+        return result
+
     # HCCS (most common Acorn hard-disc partitioning)
     result = _detect_hccs_partitions(input_path)
     if result['detected']:
@@ -550,7 +778,7 @@ def detect_acorn_partitions(input_path: Path) -> dict:
     if result['detected']:
         return result
 
-    # (Future: RISC iX, ICS, etc.)
+    # (Future: RISC iX, etc.)
 
     return {'detected': False}
 
