@@ -453,9 +453,9 @@ def import_database():
             for f_data in p_data.get('files', []):
                 md5 = (f_data.get('md5') or '').strip().lower() or None
                 sha1_raw = (f_data.get('sha1') or '').strip().lower() or None
-                if md5 and KnownFile.query.filter_by(database_id=database.id, md5=md5).first():
+                if md5 and KnownFile.query.filter_by(database_id=database.id, product_id=product.id, md5=md5).first():
                     continue
-                if sha1_raw and not md5 and KnownFile.query.filter_by(database_id=database.id, sha1=sha1_raw).first():
+                if sha1_raw and not md5 and KnownFile.query.filter_by(database_id=database.id, product_id=product.id, sha1=sha1_raw).first():
                     continue
                 kf = KnownFile(
                     database_id=database.id,
@@ -529,9 +529,9 @@ def import_database():
 
             md5 = (row.get('md5') or '').strip().lower() or None
             sha1 = (row.get('sha1') or '').strip().lower() or None
-            if md5 and KnownFile.query.filter_by(database_id=database.id, md5=md5).first():
+            if md5 and KnownFile.query.filter_by(database_id=database.id, product_id=product.id, md5=md5).first():
                 continue
-            if sha1 and not md5 and KnownFile.query.filter_by(database_id=database.id, sha1=sha1).first():
+            if sha1 and not md5 and KnownFile.query.filter_by(database_id=database.id, product_id=product.id, sha1=sha1).first():
                 continue
 
             file_size_str = (row.get('file_size') or '').strip()

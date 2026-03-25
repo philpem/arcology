@@ -329,6 +329,11 @@ def _resolve_extracted_file_path(ef):
     for the file's partition's artefact, then joins with ef.path.
     Handles RISC OS filetype suffix fallback via glob.
 
+    When the worker runs in a different container, the stored output_path
+    may be an absolute path that doesn't exist on the web host (e.g.
+    /data/outputs/... vs /app/instance/outputs/...).  As a fallback, the
+    relative directory structure is resolved under OUTPUT_FOLDER.
+
     Returns the full filesystem path as a string, or None if not found.
     """
     output_folder = get_output_folder()
@@ -342,15 +347,33 @@ def _resolve_extracted_file_path(ef):
         )
         if extraction and extraction.output_path:
             base = extraction.output_path
-            if not os.path.isabs(base):
-                base = os.path.join(output_folder, base)
-            file_path = os.path.join(base, ef.path.lstrip('/'))
-            if os.path.isfile(file_path):
-                return file_path
-            # RISC OS filetype suffix fallback
-            candidates = [f for f in glob.glob(file_path + ',*') if os.path.isfile(f)]
-            if candidates:
-                return candidates[0]
+
+            # Build candidate base directories to try
+            bases_to_try = []
+            if os.path.isabs(base):
+                bases_to_try.append(base)
+                # Cross-container fallback: try relative subpath under OUTPUT_FOLDER.
+                # Worker stores e.g. "/data/outputs/item/art/analysis/" but the web
+                # app sees the same files at "/app/instance/outputs/item/art/analysis/".
+                # Walk up the stored path to find the deepest suffix that exists
+                # under our output_folder.
+                parts = base.rstrip('/').split('/')
+                for i in range(1, len(parts)):
+                    candidate = os.path.join(output_folder, *parts[i:])
+                    if os.path.isdir(candidate):
+                        bases_to_try.append(candidate)
+                        break
+            else:
+                bases_to_try.append(os.path.join(output_folder, base))
+
+            for resolved_base in bases_to_try:
+                file_path = os.path.join(resolved_base, ef.path.lstrip('/'))
+                if os.path.isfile(file_path):
+                    return file_path
+                # RISC OS filetype suffix fallback
+                candidates = [f for f in glob.glob(file_path + ',*') if os.path.isfile(f)]
+                if candidates:
+                    return candidates[0]
 
     return None
 
@@ -890,8 +913,8 @@ def add_to_hashdb(uuid):
                 skipped_no_file.append(ef.path)
                 continue
 
-        # Deduplicate: skip if this md5 already exists in the database
-        if KnownFile.query.filter_by(database_id=database.id, md5=md5).first():
+        # Deduplicate: skip if this md5 already exists in this product
+        if KnownFile.query.filter_by(database_id=database.id, product_id=product.id, md5=md5).first():
             continue
 
         kf = KnownFile(

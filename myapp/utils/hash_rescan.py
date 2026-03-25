@@ -79,7 +79,7 @@ def find_all_known_files_batch(extracted_files):
         .join(HashDatabase)
         .filter(HashDatabase.is_active == True)
         .filter(KnownFile.md5.in_(list(ef_by_md5.keys())))
-        .options(joinedload(KnownFile.database))
+        .options(joinedload(KnownFile.database), joinedload(KnownFile.product))
         .order_by(KnownFile.id)
         .all()
     )
@@ -102,12 +102,14 @@ def find_all_known_files_batch(extracted_files):
                         matches.append(kf)
                 else:
                     matches.append(kf)
-            # Deduplicate by database_id (show one badge per database)
-            seen_db_ids = set()
+            # Deduplicate by (database_id, product_id) so that different
+            # products in the same database each get their own badge.
+            seen_keys = set()
             deduped = []
             for kf in matches:
-                if kf.database_id not in seen_db_ids:
-                    seen_db_ids.add(kf.database_id)
+                key = (kf.database_id, kf.product_id)
+                if key not in seen_keys:
+                    seen_keys.add(key)
                     deduped.append(kf)
             if deduped:
                 result[ef.id] = deduped
