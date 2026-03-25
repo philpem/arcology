@@ -827,14 +827,24 @@ class AnalysisWorker:
                     is_nexus_printer = partition.get('nexus_flags', {}).get('printer', False)
                     if not is_nexus_printer:
                         if fs == 'adfs':
-                            # Run ARMLOCK_DETECT before FILE_EXTRACTION for ADFS partitions.
-                            # ARMLOCK_DETECT will queue FILE_EXTRACTION itself, using a
-                            # cleaned copy of the image if protection is found.
-                            self.api.queue_analysis(
-                                derived_uuid,
-                                AnalysisType.ARMLOCK_DETECT.value,
-                                hints={'filesystem': fs, 'partition_index': idx}
-                            )
+                            # Check for ARMlock protection on the extracted partition
+                            # image before deciding what to queue next.  Detection is
+                            # pure-Python and fast (no subprocess).  Only queue the
+                            # removal step when protection is actually present; otherwise
+                            # proceed directly to FILE_EXTRACTION as for any other fs.
+                            armlock = detect_armlock(partition_path)
+                            if armlock.get('detected'):
+                                self.api.queue_analysis(
+                                    derived_uuid,
+                                    AnalysisType.ARMLOCK_DETECT.value,
+                                    hints={'filesystem': fs, 'partition_index': idx}
+                                )
+                            else:
+                                self.api.queue_analysis(
+                                    derived_uuid,
+                                    AnalysisType.FILE_EXTRACTION.value,
+                                    hints={'filesystem': fs, 'partition_index': idx}
+                                )
                         else:
                             self.api.queue_analysis(
                                 derived_uuid,
@@ -911,9 +921,9 @@ class AnalysisWorker:
                     partition_image_paths[idx] = str(partition_path)
                     log.info(f"Cached decompressed image as {partition_path}")
 
-            # Queue ARMLOCK_DETECT (for ADFS) or FILE_EXTRACTION against the original artefact.
-            # For ADFS, ARMLOCK_DETECT will queue FILE_EXTRACTION itself once it has checked
-            # for protection and optionally produced a cleaned derived artefact.
+            # Queue FILE_EXTRACTION (or ARMLOCK_DETECT removal if protected) against
+            # the original artefact.  For ADFS, run a quick inline Armlock check so
+            # we only add the removal step when protection is actually present.
             for partition in detected_partitions:
                 idx = partition['index']
                 fs = partition.get('filesystem', 'unknown')
@@ -921,11 +931,24 @@ class AnalysisWorker:
                 if idx in partition_image_paths:
                     next_hints['partition_image_path'] = partition_image_paths[idx]
                 if fs == 'adfs':
-                    self.api.queue_analysis(
-                        artefact['uuid'],
-                        AnalysisType.ARMLOCK_DETECT.value,
-                        hints=next_hints,
+                    check_path = (
+                        Path(partition_image_paths[idx])
+                        if idx in partition_image_paths
+                        else input_path
                     )
+                    armlock = detect_armlock(check_path)
+                    if armlock.get('detected'):
+                        self.api.queue_analysis(
+                            artefact['uuid'],
+                            AnalysisType.ARMLOCK_DETECT.value,
+                            hints=next_hints,
+                        )
+                    else:
+                        self.api.queue_analysis(
+                            artefact['uuid'],
+                            AnalysisType.FILE_EXTRACTION.value,
+                            hints=next_hints,
+                        )
                 else:
                     self.api.queue_analysis(
                         artefact['uuid'],
@@ -1967,80 +1990,60 @@ class AnalysisWorker:
             details=json.dumps(result),
         )
 
-    @analysis_handler("ARMlock detection")
+    @analysis_handler("ARMlock removal")
     def process_armlock_detect(self, analysis: dict, artefact: dict, work_dir: Path):
-        """Detect and remove ARMlock copy protection from ADFS disc images.
+        """Remove ARMlock copy protection from a confirmed-protected ADFS disc image.
 
-        ARMlock (by Digital Services) protects ADFS discs by replacing the real
-        root directory with a stripped "demo" copy and stashing the original at
-        disc address 0x400.  It also encodes the boot_option field in both copies
-        of the zone map header.  Disc Image Manager cannot extract files from a
-        protected image because the root directory it sees is fake.
+        This handler is only queued by PARTITION_DETECT when the ARMlock signature
+        has already been found on an ADFS partition.  It re-runs detection to capture
+        full details (zone map state, directory listings, ARMlock module bytes), then
+        removes the protection and hands off to FILE_EXTRACTION.
 
-        If protection is detected:
-        - Records full detection details (zone map state, directory listings,
-          ARMlock module bytes) in the analysis result
-        - Creates a cleaned derived artefact with the protection removed
-        - Queues FILE_EXTRACTION on the cleaned artefact
-
-        If protection is not detected, queues FILE_EXTRACTION on this artefact
-        directly (pass-through), preserving all hints from PARTITION_DETECT.
+        ARMlock (by Digital Services) protects ADFS discs by replacing the real root
+        directory with a stripped "demo" copy and stashing the original at disc address
+        0x400.  It also encodes the boot_option field in both copies of the zone map.
+        Disc Image Manager cannot extract files from a protected image because the root
+        directory it sees is fake.
         """
         analysis_id = analysis['id']
         hints = json.loads(analysis.get('hints') or '{}')
         filesystem_hint = hints.get('filesystem', 'adfs')
         partition_index = hints.get('partition_index', 0)
 
-        # Use cached decompressed path if available (from PARTITION_DETECT),
-        # otherwise decompress / use original via the standard helper.
+        # Use cached decompressed path if available (from PARTITION_DETECT).
         partition_image_path = hints.get('partition_image_path')
         if partition_image_path:
             input_path = Path(partition_image_path)
         else:
             input_path = self.get_input_path(artefact, work_dir)
 
-        # Propagate path hint to FILE_EXTRACTION so it can skip decompression.
-        extraction_hints: dict = {'filesystem': filesystem_hint, 'partition_index': partition_index}
-        if partition_image_path:
-            extraction_hints['partition_image_path'] = partition_image_path
-
+        # Re-run detection to capture full details for the analysis record.
         detection = detect_armlock(input_path)
 
-        # Structural errors (too small, old-map) — pass straight to FILE_EXTRACTION.
-        if detection.get('error') and not detection['detected']:
+        if not detection.get('detected'):
+            # Shouldn't happen (PARTITION_DETECT confirmed protection), but handle
+            # it defensively rather than leaving FILE_EXTRACTION unqueued.
+            log.warning(
+                f"ARMLOCK_DETECT for analysis {analysis_id}: protection not found on "
+                f"second pass — queuing FILE_EXTRACTION directly"
+            )
             self.api.queue_analysis(
                 artefact['uuid'],
                 AnalysisType.FILE_EXTRACTION.value,
-                hints=extraction_hints,
+                hints={'filesystem': filesystem_hint, 'partition_index': partition_index,
+                       **({'partition_image_path': partition_image_path} if partition_image_path else {})},
             )
             self.api.update_analysis(
                 analysis_id,
                 status='completed',
                 success=True,
                 tool_name='armlock',
-                summary=f'ARMlock check skipped: {detection["error"]}',
+                summary='ARMlock signature not found on second pass; FILE_EXTRACTION queued directly',
                 details=json.dumps(detection),
             )
             return
 
-        if not detection['detected']:
-            # No protection — pass through to FILE_EXTRACTION unchanged.
-            self.api.queue_analysis(
-                artefact['uuid'],
-                AnalysisType.FILE_EXTRACTION.value,
-                hints=extraction_hints,
-            )
-            self.api.update_analysis(
-                analysis_id,
-                status='completed',
-                success=True,
-                tool_name='armlock',
-                summary='No ARMlock protection detected',
-                details=json.dumps(detection),
-            )
-            return
-
-        # ARMlock detected — remove protection and register a cleaned artefact.
+        # Remove protection and register a cleaned artefact.
         cleaned_path = work_dir / 'armlock_removed.img'
         removal = remove_armlock(input_path, cleaned_path)
 
