@@ -719,8 +719,12 @@
                                     {% endif %}
                                 {% endif %}
                                 {% if not file.is_directory %}
+                                {% if artefact.restrictions %}
+                                <span class="text-muted ms-1 opacity-50" title="Download restricted"><i class="bi bi-lock-fill"></i></span>
+                                {% else %}
                                 <a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=file.uuid) }}"
                                    class="text-muted ms-1" title="Download file"><i class="bi bi-download"></i></a>
+                                {% endif %}
                                 {% endif %}
                             </td>
                             <td>{% if file.is_directory %}<span class="text-muted">DIR</span>{% elif file.file_size %}{{ (file.file_size / 1024)|round(1) }} KB{% else %}-{% endif %}</td>
