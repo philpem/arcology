@@ -1,4 +1,4 @@
-"""Add ARMLOCK_DETECT analysis type
+"""Add ARMLOCK_REMOVE analysis type
 
 Revision ID: 000069c4322f
 Revises: 000069c2f0db
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = '000069c4322f'
-down_revision = '000069c2f0db'
+down_revision = '000069c45b2d'
 branch_labels = None
 depends_on = None
 
@@ -24,7 +24,7 @@ def upgrade():
     bind = op.get_bind()
     if bind.dialect.name == 'postgresql':
         op.execute(sa.text(
-            "ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'ARMLOCK_DETECT'"
+            "ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'ARMLOCK_REMOVE'"
         ))
 
 

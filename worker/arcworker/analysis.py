@@ -836,7 +836,7 @@ class AnalysisWorker:
                             if armlock.get('detected'):
                                 self.api.queue_analysis(
                                     derived_uuid,
-                                    AnalysisType.ARMLOCK_DETECT.value,
+                                    AnalysisType.ARMLOCK_REMOVE.value,
                                     hints={'filesystem': fs, 'partition_index': idx}
                                 )
                             else:
@@ -921,7 +921,7 @@ class AnalysisWorker:
                     partition_image_paths[idx] = str(partition_path)
                     log.info(f"Cached decompressed image as {partition_path}")
 
-            # Queue FILE_EXTRACTION (or ARMLOCK_DETECT removal if protected) against
+            # Queue FILE_EXTRACTION (or ARMLOCK_REMOVE if protected) against
             # the original artefact.  For ADFS, run a quick inline Armlock check so
             # we only add the removal step when protection is actually present.
             for partition in detected_partitions:
@@ -940,7 +940,7 @@ class AnalysisWorker:
                     if armlock.get('detected'):
                         self.api.queue_analysis(
                             artefact['uuid'],
-                            AnalysisType.ARMLOCK_DETECT.value,
+                            AnalysisType.ARMLOCK_REMOVE.value,
                             hints=next_hints,
                         )
                     else:
@@ -2024,7 +2024,7 @@ class AnalysisWorker:
             # Shouldn't happen (PARTITION_DETECT confirmed protection), but handle
             # it defensively rather than leaving FILE_EXTRACTION unqueued.
             log.warning(
-                f"ARMLOCK_DETECT for analysis {analysis_id}: protection not found on "
+                f"ARMLOCK_REMOVE for analysis {analysis_id}: protection not found on "
                 f"second pass — queuing FILE_EXTRACTION directly"
             )
             self.api.queue_analysis(
@@ -2133,7 +2133,7 @@ class AnalysisWorker:
                     AnalysisType.PRODUCT_RECOGNITION.value: self.process_product_recognition,
                     AnalysisType.DISC_MASTERING_DETECT.value: self.process_disc_mastering_detect,
                     AnalysisType.DISC_PROTECTION_DETECT.value: self.process_disc_protection_detect,
-                    AnalysisType.ARMLOCK_DETECT.value: self.process_armlock_detect,
+                    AnalysisType.ARMLOCK_REMOVE.value: self.process_armlock_detect,
                 }
 
                 handler = handlers.get(analysis_type)

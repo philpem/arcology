@@ -70,7 +70,7 @@ class AnalysisType(enum.Enum):
     DISC_PROTECTION_DETECT = "disc_protection_detect" # Copy protection signals
 
     # Copy protection removal
-    ARMLOCK_DETECT         = "armlock_detect"         # Detect and remove ARMlock copy protection (ADFS)
+    ARMLOCK_REMOVE         = "armlock_remove"         # Remove ARMlock copy protection from ADFS disc images
 
     # Known-product recognition
     PRODUCT_RECOGNITION    = "product_recognition"    # Match extracted files against known-product definitions
