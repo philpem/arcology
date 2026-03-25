@@ -130,9 +130,9 @@ def apply_database_restrictions(artefact):
     if not partition_ids:
         return 0
 
-    # Find all restriction_type values from databases matched by this artefact's files
+    # Find all (restriction_type, database_name) pairs from matched databases
     rows = (
-        db.session.query(HashDatabase.restriction_type)
+        db.session.query(HashDatabase.restriction_type, HashDatabase.name)
         .join(KnownFile, KnownFile.database_id == HashDatabase.id)
         .join(ExtractedFile, ExtractedFile.known_file_id == KnownFile.id)
         .filter(
@@ -145,20 +145,25 @@ def apply_database_restrictions(artefact):
         .all()
     )
 
-    restriction_types = {row[0] for row in rows}
-    if not restriction_types:
+    if not rows:
         return 0
+
+    # Group database names by restriction type
+    rtype_to_names = {}
+    for rtype, name in rows:
+        rtype_to_names.setdefault(rtype, []).append(name)
 
     # Get existing restriction types for this artefact
     existing = {r.restriction_type for r in artefact.restrictions}
 
     added = 0
-    for rtype in restriction_types:
+    for rtype, names in rtype_to_names.items():
         if rtype not in existing:
+            db_list = ', '.join(sorted(names))
             db.session.add(ArtefactRestriction(
                 artefact_id=artefact.id,
                 restriction_type=rtype,
-                reason=f'Automatically applied: file matches flagged hash database',
+                reason=f'Automatically applied: file matches {db_list}',
             ))
             added += 1
 

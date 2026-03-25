@@ -487,6 +487,7 @@ class TestApplyDatabaseRestrictions(unittest.TestCase):
             self.assertEqual(added, 1)
             self.assertTrue(artefact.is_restricted)
             self.assertEqual(artefact.restrictions[0].restriction_type, RestrictionType.MALWARE)
+            self.assertIn('Malware DB', artefact.restrictions[0].reason)
 
     def test_no_restriction_for_unflagged_database(self):
         """Databases without restriction_type should not auto-restrict."""
