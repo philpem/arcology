@@ -111,6 +111,18 @@ def _check_nul_bytes(data: dict, fields: list) -> str | None:
     return None
 
 
+def _validate_storage_path(path: str) -> bool:
+    """Return True only if path is a safe relative filename with no traversal.
+
+    Rejects absolute paths and any path whose normalised form contains a '..'
+    component.  This is defence-in-depth: get_artefact_path() also enforces
+    confinement at read/delete time.
+    """
+    if not path or os.path.isabs(path):
+        return False
+    return '..' not in os.path.normpath(path).split(os.sep)
+
+
 # =============================================================================
 # Health Check
 # =============================================================================
@@ -229,6 +241,9 @@ def add_artefact(item_uuid):
         storage_directory = StorageDirectory(data.get('storage_directory', 'uploads'))
     except ValueError:
         return error_response('Invalid storage_directory')
+
+    if not _validate_storage_path(data['storage_path']):
+        return error_response('Invalid storage_path')
 
     artefact = Artefact(item_id=item.id, label=data['label'], artefact_type=artefact_type,
                         description=data.get('description'), original_filename=data['original_filename'],
@@ -560,11 +575,14 @@ def produce_artefact(id):
         if field not in data:
             return error_response(f'{field} is required')
 
-    bad_field = _check_nul_bytes(data, ['label', 'original_filename', 'description'])
+    bad_field = _check_nul_bytes(data, ['label', 'original_filename', 'description', 'storage_path'])
     if bad_field:
         return error_response(
             f"Field '{bad_field}' contains NUL characters (0x00) which are not permitted in text fields"
         )
+
+    if not _validate_storage_path(data['storage_path']):
+        return error_response('Invalid storage_path')
 
     try:
         artefact_type = ArtefactType(data['artefact_type'])

@@ -301,12 +301,20 @@ def save_uploaded_file(file) -> tuple[str, int]:
 
 
 def get_artefact_path(artefact: Artefact) -> str:
-    """Get the full filesystem path for an artefact based on its storage directory."""
+    """Get the full filesystem path for an artefact based on its storage directory.
+
+    Raises ValueError if storage_path would escape the storage directory
+    (absolute path override or directory traversal).
+    """
     if artefact.storage_directory == StorageDirectory.OUTPUTS:
         folder = get_output_folder()
     else:
         folder = get_upload_folder()
-    return os.path.join(folder, artefact.storage_path)
+    base = os.path.realpath(folder)
+    full_path = os.path.realpath(os.path.join(folder, artefact.storage_path))
+    if not (full_path == base or full_path.startswith(base + os.sep)):
+        raise ValueError(f"storage_path escapes storage directory: {artefact.storage_path!r}")
+    return full_path
 
 
 def compute_file_hashes(filepath: str) -> tuple[str, str]:
@@ -367,11 +375,15 @@ def _resolve_extracted_file_path(ef):
                 bases_to_try.append(os.path.join(output_folder, base))
 
             for resolved_base in bases_to_try:
-                file_path = os.path.join(resolved_base, ef.path.lstrip('/'))
+                real_base = os.path.realpath(resolved_base)
+                raw_path = os.path.join(resolved_base, ef.path.lstrip('/'))
+                file_path = os.path.realpath(raw_path)
+                if not file_path.startswith(real_base + os.sep):
+                    continue
                 if os.path.isfile(file_path):
                     return file_path
                 # RISC OS filetype suffix fallback
-                candidates = [f for f in glob.glob(file_path + ',*') if os.path.isfile(f)]
+                candidates = [f for f in glob.glob(raw_path + ',*') if os.path.isfile(f)]
                 if candidates:
                     return candidates[0]
 
@@ -1156,9 +1168,14 @@ def _delete_item_files(item):
         # Delete stored files for this artefact and all its derived artefacts.
         _delete_artefact_files(artefact)
 
+        real_output = os.path.realpath(output_folder)
+
         # Remove named output files (e.g., flux visualisation PNGs).
         for filename in output_files:
-            path = os.path.join(output_folder, filename)
+            path = os.path.realpath(os.path.join(output_folder, filename))
+            if not path.startswith(real_output + os.sep):
+                current_app.logger.warning(f"Skipping out-of-bounds output file: {filename!r}")
+                continue
             if os.path.exists(path):
                 try:
                     os.remove(path)
@@ -1168,9 +1185,13 @@ def _delete_item_files(item):
 
         # Remove extraction output directories (e.g., extracted disc file trees).
         for path in output_dirs:
-            if os.path.exists(path):
+            real_path = os.path.realpath(path)
+            if not (real_path == real_output or real_path.startswith(real_output + os.sep)):
+                current_app.logger.warning(f"Skipping out-of-bounds output directory: {path!r}")
+                continue
+            if os.path.exists(real_path):
                 try:
-                    shutil.rmtree(path)
+                    shutil.rmtree(real_path)
                     current_app.logger.info(f"Deleted output directory: {path}")
                 except Exception as e:
                     current_app.logger.warning(f"Failed to delete output directory {path}: {e}")
