@@ -1309,9 +1309,13 @@ def manage_restrictions(item_id=None, artefact_id=None, root_id=None):
             artefact_id=artefact.id, restriction_type=rtype
         ).first()
         if existing:
-            db.session.delete(existing)
-            db.session.commit()
-            flash(f'Restriction removed: {rtype.label}', 'success')
+            # Non-admins can only remove restrictions they added themselves
+            if not current_user.is_admin and existing.added_by_id != current_user.id:
+                flash('Only administrators can remove restrictions added by other users.', 'danger')
+            else:
+                db.session.delete(existing)
+                db.session.commit()
+                flash(f'Restriction removed: {rtype.label}', 'success')
         else:
             flash(f'Restriction not found: {rtype.label}', 'warning')
     else:

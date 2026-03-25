@@ -153,6 +153,7 @@
                             <td>{{ r.reason or '-' }}</td>
                             <td>{{ r.added_by.username if r.added_by else 'System' }}</td>
                             <td>
+                                {% if current_user.is_admin or r.added_by_id == current_user.id %}
                                 <form action="{{ artefact_url(artefact, 'manage_restrictions') }}" method="post" class="d-inline">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <input type="hidden" name="action" value="remove">
@@ -162,6 +163,7 @@
                                         <i class="bi bi-x-lg"></i>
                                     </button>
                                 </form>
+                                {% endif %}
                             </td>
                         </tr>
                         {% endfor %}
