@@ -100,7 +100,7 @@ def create_user():
         # Check username uniqueness
         if User.query.filter_by(username=form.username.data).first():
             flash(f'Username "{form.username.data}" is already taken.', 'error')
-            return render_template('admin/create_user.html', form=form)
+            return render_template('admin/create_user.html', form=form, RestrictionType=RestrictionType)
         user = User(
             username=form.username.data,
             is_admin=form.is_admin.data,
@@ -109,10 +109,20 @@ def create_user():
         )
         user.setPassword(form.password.data)
         db.session.add(user)
+        db.session.flush()
+
+        # Apply restriction bypass permissions
+        for rtype_value in request.form.getlist('restriction_bypasses'):
+            try:
+                rtype = RestrictionType(rtype_value)
+                db.session.add(UserRestrictionBypass(user_id=user.id, restriction_type=rtype))
+            except (ValueError, KeyError):
+                pass
+
         db.session.commit()
         flash(f'User "{user.username}" created successfully.', 'success')
         return redirect(url_for(f'{ROUTENAME}.index'))
-    return render_template('admin/create_user.html', form=form)
+    return render_template('admin/create_user.html', form=form, RestrictionType=RestrictionType)
 
 
 @blueprint.route('/users/<int:user_id>/edit', methods=['GET', 'POST'])
