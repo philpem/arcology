@@ -91,7 +91,7 @@ The worker is a standalone Python process that polls the web app's REST API for 
 | `METADATA_EXTRACT` | (built-in) | Computes hashes and extracts format metadata |
 | `PARTITION_DETECT` | sfdisk, ADFS signature detection, `file` | Detects partitions and filesystem types |
 | `DISC_PROTECTION_DETECT` | HxCFE / hfe_parser | Scans for copy protection indicators (bad CRC, weak bits, DDAM, ID mismatches) |
-| `DISC_MASTERING_DETECT` | HxCFE / hfe_parser | Scans trailing tracks for mastering/duplicator fingerprints (traceback, BCD timestamp) |
+| `DISC_MASTERING_DETECT` | HxCFE / hfe_parser | Scans trailing tracks for mastering/duplicator fingerprints (traceback, formaster) |
 | `FORMAT_IDENTIFY` | (placeholder) | Identifies exact format/variant |
 
 ### How Web and Worker Communicate
@@ -279,7 +279,7 @@ op.execute(sa.text("ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'my_new_type
 This applies to every `SQLEnum(SomePythonEnum)` column in the project: `analysistype`,
 `artefacttype`, `analysisstatus`, `filesystemtype`, etc.
 
-**Protection and mastering indicator types** (`ArtefactProtection.protection_type` and `ArtefactMastering.mastering_type`) are free-text strings stored by the worker — they are not enums. Known values are documented in comments in `myapp/database.py`. If you introduce new indicator types in a worker tool, use short lowercase snake_case names (e.g. `bad_crc`, `bcd_timestamp`); the search UI will surface them automatically once they appear in the database.
+**Protection and mastering indicator types** (`ArtefactProtection.protection_type` and `ArtefactMastering.mastering_type`) are free-text strings stored by the worker — they are not enums. Known values are documented in comments in `myapp/database.py`. If you introduce new indicator types in a worker tool, use short lowercase snake_case names (e.g. `bad_crc`, `formaster`); the search UI will surface them automatically once they appear in the database.
 
 ### Adding a New Artefact Type
 

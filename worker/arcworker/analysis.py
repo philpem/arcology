@@ -1959,7 +1959,7 @@ class AnalysisWorker:
         """Process DISC_MASTERING_DETECT analysis.
 
         Scans the trailing tracks of an HFE image for mastering/duplicator
-        fingerprint data (TRACEBACK format and BCD timestamp record).
+        fingerprint data (TRACEBACK format and Formaster record).
         """
         from .tools.hfe import analyse_hfe_mastering
 
