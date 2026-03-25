@@ -1947,9 +1947,6 @@ class AnalysisWorker:
 
         log.info(f"Processing analysis {analysis_id}: {analysis_type} for {artefact.get('label', 'unknown')}")
 
-        # Mark as running
-        self.api.update_analysis(analysis_id, status='running')
-
         # Create temporary work directory
         with tempfile.TemporaryDirectory(prefix=f'arcology_{analysis_id}_') as work_dir:
             work_path = Path(work_dir)
@@ -2035,7 +2032,7 @@ class AnalysisWorker:
         log.info(f"Uploads: {self.uploads}")
         log.info(f"Outputs: {self.outputs}")
 
-        MIN_POLL = 2
+        MIN_POLL = 0.5
         current_delay = MIN_POLL
 
         while True:
