@@ -86,6 +86,29 @@ class StorageDirectory(enum.Enum):
     OUTPUTS = "outputs"    # Derived/generated files (from analysis)
 
 
+class RestrictionType(enum.Enum):
+    """Restriction categories that can be applied to artefacts to block downloads."""
+    MALWARE = "malware"
+    PII = "pii"
+    COPYRIGHT = "copyright"
+    LEGAL_HOLD = "legal_hold"
+    EXPLICIT = "explicit"
+    CORRUPTED = "corrupted"
+
+    @property
+    def label(self):
+        """Human-readable display label, handling acronyms correctly."""
+        _LABELS = {
+            'malware': 'Malware',
+            'pii': 'PII',
+            'copyright': 'Copyright',
+            'legal_hold': 'Legal Hold',
+            'explicit': 'Explicit',
+            'corrupted': 'Corrupted',
+        }
+        return _LABELS.get(self.value, self.value.replace('_', ' ').title())
+
+
 # =============================================================================
 # Association Tables
 # =============================================================================
@@ -119,6 +142,30 @@ class User(db.Model):
     can_use_api   = Column(Boolean, nullable=False, default=False)
 
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    restriction_bypasses: Mapped[list["UserRestrictionBypass"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+    def can_bypass_restriction(self, restriction_type) -> bool:
+        """Check if this user can bypass a specific restriction type.
+
+        Admins implicitly bypass all restriction types.
+        """
+        if self.is_admin:
+            return True
+        return any(rb.restriction_type == restriction_type for rb in self.restriction_bypasses)
+
+    def can_bypass_all_restrictions(self, restrictions) -> bool:
+        """Check if this user can bypass all of the given ArtefactRestriction objects.
+
+        Admins implicitly bypass all restriction types.
+        """
+        if not restrictions:
+            return True
+        if self.is_admin:
+            return True
+        bypass_types = {rb.restriction_type for rb in self.restriction_bypasses}
+        return all(r.restriction_type in bypass_types for r in restrictions)
 
     def is_authenticated(self):
         return True
@@ -409,6 +456,14 @@ class Artefact(db.Model):
         foreign_keys=[derived_from_analysis_id]
     )
     tags: Mapped[list["Tag"]] = relationship(secondary=artefact_tags, back_populates="artefacts")
+    restrictions: Mapped[list["ArtefactRestriction"]] = relationship(
+        back_populates="artefact", cascade="all, delete-orphan"
+    )
+
+    @property
+    def is_restricted(self) -> bool:
+        """True if this artefact has any active download restrictions."""
+        return len(self.restrictions) > 0
 
     @property
     def root_artefact(self) -> "Artefact":
@@ -591,6 +646,50 @@ class ArtefactMastering(db.Model):
 
 
 # =============================================================================
+# Download Restrictions
+# =============================================================================
+
+class ArtefactRestriction(db.Model):
+    """A download restriction applied to an artefact.
+
+    Each artefact can have multiple restrictions of different types.
+    A unique constraint prevents duplicate restriction types on the same artefact.
+    """
+    __tablename__ = "artefact_restrictions"
+    __table_args__ = (
+        db.UniqueConstraint('artefact_id', 'restriction_type', name='uq_artefact_restriction_type'),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    artefact_id: Mapped[int] = mapped_column(ForeignKey("artefacts.id"), index=True)
+    restriction_type: Mapped[RestrictionType] = mapped_column(SQLEnum(RestrictionType))
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    added_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("user.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    artefact: Mapped["Artefact"] = relationship(back_populates="restrictions")
+    added_by: Mapped[Optional["User"]] = relationship()
+
+
+class UserRestrictionBypass(db.Model):
+    """Per-restriction-type bypass permission for a user.
+
+    Users with a bypass entry for a given restriction type can still
+    download artefacts restricted with that type (after confirmation).
+    """
+    __tablename__ = "user_restriction_bypasses"
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'restriction_type', name='uq_user_restriction_bypass'),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), index=True)
+    restriction_type: Mapped[RestrictionType] = mapped_column(SQLEnum(RestrictionType))
+
+    user: Mapped["User"] = relationship(back_populates="restriction_bypasses")
+
+
+# =============================================================================
 # Known File Database
 # =============================================================================
 
@@ -607,6 +706,9 @@ class HashDatabase(db.Model):
     file_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     enable_product_recognition: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    restriction_type: Mapped[Optional[RestrictionType]] = mapped_column(
+        SQLEnum(RestrictionType), nullable=True
+    )  # If set, artefacts matching this DB's files are automatically restricted
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

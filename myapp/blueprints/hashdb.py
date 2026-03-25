@@ -17,7 +17,7 @@ from wtforms.validators import DataRequired, Optional, Length
 from sqlalchemy import or_
 
 from ..extensions import db
-from ..database import Platform, HashDatabase, KnownProduct, KnownFile, ExtractedFile, Partition, Artefact, Item
+from ..database import Platform, HashDatabase, KnownProduct, KnownFile, ExtractedFile, Partition, Artefact, Item, RestrictionType
 from ..permissions import require_permission
 
 ROUTENAME = __name__.replace('.', '_')
@@ -60,6 +60,13 @@ class HashDatabaseForm(FlaskForm):
     version = StringField('Version', validators=[Optional(), Length(max=50)])
     platform_id = SelectField('Platform', coerce=int, validators=[Optional()])
     enable_product_recognition = BooleanField('Folder recognition')
+    restriction_type = SelectField('Auto-restrict', coerce=str, validators=[Optional()])
+
+
+def _restriction_type_choices():
+    return [('', '-- None --')] + [
+        (rt.value, rt.label) for rt in RestrictionType
+    ]
 
 
 def _platform_choices():
@@ -89,8 +96,10 @@ def index():
 def new():
     form = HashDatabaseForm()
     form.platform_id.choices = _platform_choices()
+    form.restriction_type.choices = _restriction_type_choices()
 
     if form.validate_on_submit():
+        rt_value = form.restriction_type.data
         database = HashDatabase(
             name=form.name.data,
             description=form.description.data,
@@ -98,6 +107,7 @@ def new():
             version=form.version.data,
             platform_id=form.platform_id.data if form.platform_id.data != 0 else None,
             enable_product_recognition=form.enable_product_recognition.data,
+            restriction_type=RestrictionType(rt_value) if rt_value else None,
         )
         db.session.add(database)
         db.session.commit()
@@ -120,7 +130,8 @@ def view(id):
     return render_template('hashdb/view.html',
                            database=database,
                            products=products,
-                           platforms=platforms)
+                           platforms=platforms,
+                           RestrictionType=RestrictionType)
 
 
 SEARCH_LIMIT = 200
@@ -199,6 +210,7 @@ def edit(id):
     database = HashDatabase.query.get_or_404(id)
     form = HashDatabaseForm(obj=database)
     form.platform_id.choices = _platform_choices()
+    form.restriction_type.choices = _restriction_type_choices()
     if form.validate_on_submit():
         database.name = form.name.data
         database.description = form.description.data
@@ -206,6 +218,8 @@ def edit(id):
         database.version = form.version.data
         database.platform_id = form.platform_id.data if form.platform_id.data != 0 else None
         database.enable_product_recognition = form.enable_product_recognition.data
+        rt_value = form.restriction_type.data
+        database.restriction_type = RestrictionType(rt_value) if rt_value else None
         db.session.commit()
         flash('Hash database updated.', 'success')
     else:
@@ -453,9 +467,9 @@ def import_database():
             for f_data in p_data.get('files', []):
                 md5 = (f_data.get('md5') or '').strip().lower() or None
                 sha1_raw = (f_data.get('sha1') or '').strip().lower() or None
-                if md5 and KnownFile.query.filter_by(database_id=database.id, md5=md5).first():
+                if md5 and KnownFile.query.filter_by(database_id=database.id, product_id=product.id, md5=md5).first():
                     continue
-                if sha1_raw and not md5 and KnownFile.query.filter_by(database_id=database.id, sha1=sha1_raw).first():
+                if sha1_raw and not md5 and KnownFile.query.filter_by(database_id=database.id, product_id=product.id, sha1=sha1_raw).first():
                     continue
                 kf = KnownFile(
                     database_id=database.id,
@@ -529,9 +543,9 @@ def import_database():
 
             md5 = (row.get('md5') or '').strip().lower() or None
             sha1 = (row.get('sha1') or '').strip().lower() or None
-            if md5 and KnownFile.query.filter_by(database_id=database.id, md5=md5).first():
+            if md5 and KnownFile.query.filter_by(database_id=database.id, product_id=product.id, md5=md5).first():
                 continue
-            if sha1 and not md5 and KnownFile.query.filter_by(database_id=database.id, sha1=sha1).first():
+            if sha1 and not md5 and KnownFile.query.filter_by(database_id=database.id, product_id=product.id, sha1=sha1).first():
                 continue
 
             file_size_str = (row.get('file_size') or '').strip()

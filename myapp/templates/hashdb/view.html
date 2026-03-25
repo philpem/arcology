@@ -59,6 +59,8 @@
                         {% else %}—{% endif %}
                     </dd>
                     {% if database.description %}<dt>Notes</dt><dd>{{ database.description }}</dd>{% endif %}
+                    <dt>Auto-restrict</dt>
+                    <dd>{% if database.restriction_type %}<span class="badge bg-danger">{{ database.restriction_type.label }}</span>{% else %}—{% endif %}</dd>
                     <dt>Updated</dt><dd>{{ database.updated_at.strftime('%Y-%m-%d') }}</dd>
                 </dl>
                 <!-- Active toggle -->
@@ -155,6 +157,16 @@
                                    title="When enabled, the worker matches extracted disc folders against product definitions in this database">
                                 Folder recognition
                             </label>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm">Auto-restrict</label>
+                            <select name="restriction_type" class="form-select form-select-sm">
+                                <option value="">-- None --</option>
+                                {% for rtype in RestrictionType %}
+                                <option value="{{ rtype.value }}"{% if database.restriction_type == rtype %} selected{% endif %}>{{ rtype.label }}</option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Artefacts containing matched files will automatically be restricted with this category.</div>
                         </div>
                         <button type="submit" class="btn btn-primary btn-sm">Save</button>
                     </form>
