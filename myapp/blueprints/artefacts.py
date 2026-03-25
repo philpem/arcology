@@ -681,6 +681,7 @@ def _render_artefact_view(artefact):
     # Batch-query all matching KnownFiles across active hash databases
     # for the current page of files, so the template can show multiple badges.
     from ..utils.hash_rescan import find_all_known_files_batch
+    from ..database import RestrictionType
     file_known_matches = find_all_known_files_batch(files_pagination.items)
 
     # Build query args for pagination links, preserving all active filters
@@ -804,7 +805,8 @@ def _render_artefact_view(artefact):
                            recognised_products=recognised_products,
                            recognised_folder_paths=recognised_folder_paths,
                            hash_databases=hash_databases,
-                           file_known_matches=file_known_matches)
+                           file_known_matches=file_known_matches,
+                           RestrictionType=RestrictionType)
 
 
 @blueprint.route('/<string:uuid>/add-to-hashdb', methods=['POST'])
@@ -1204,7 +1206,7 @@ def download(item_id=None, artefact_id=None, root_id=None, uuid=None):
     if artefact.restrictions:
         if not current_user.can_bypass_all_restrictions(artefact.restrictions):
             categories = ', '.join(
-                r.restriction_type.value.replace('_', ' ').title()
+                r.restriction_type.label
                 for r in artefact.restrictions
             )
             flash(f'Download restricted: {categories}', 'danger')
@@ -1246,7 +1248,7 @@ def download_file(uuid):
     if artefact.restrictions:
         if not current_user.can_bypass_all_restrictions(artefact.restrictions):
             categories = ', '.join(
-                r.restriction_type.value.replace('_', ' ').title()
+                r.restriction_type.label
                 for r in artefact.restrictions
             )
             flash(f'Download restricted: {categories}', 'danger')
@@ -1299,9 +1301,9 @@ def manage_restrictions(item_id=None, artefact_id=None, root_id=None):
                 added_by_id=current_user.id,
             ))
             db.session.commit()
-            flash(f'Restriction added: {rtype.value.replace("_", " ").title()}', 'success')
+            flash(f'Restriction added: {rtype.label}', 'success')
         else:
-            flash(f'Restriction already exists: {rtype.value.replace("_", " ").title()}', 'info')
+            flash(f'Restriction already exists: {rtype.label}', 'info')
     elif action == 'remove':
         existing = ArtefactRestriction.query.filter_by(
             artefact_id=artefact.id, restriction_type=rtype
@@ -1309,9 +1311,9 @@ def manage_restrictions(item_id=None, artefact_id=None, root_id=None):
         if existing:
             db.session.delete(existing)
             db.session.commit()
-            flash(f'Restriction removed: {rtype.value.replace("_", " ").title()}', 'success')
+            flash(f'Restriction removed: {rtype.label}', 'success')
         else:
-            flash(f'Restriction not found: {rtype.value.replace("_", " ").title()}', 'warning')
+            flash(f'Restriction not found: {rtype.label}', 'warning')
     else:
         flash(f'Invalid action: {action}', 'danger')
 

@@ -92,9 +92,21 @@ class RestrictionType(enum.Enum):
     PII = "pii"
     COPYRIGHT = "copyright"
     LEGAL_HOLD = "legal_hold"
-    EXPORT_CONTROL = "export_control"
-    NSFW = "nsfw"
+    EXPLICIT = "explicit"
     CORRUPTED = "corrupted"
+
+    @property
+    def label(self):
+        """Human-readable display label, handling acronyms correctly."""
+        _LABELS = {
+            'malware': 'Malware',
+            'pii': 'PII',
+            'copyright': 'Copyright',
+            'legal_hold': 'Legal Hold',
+            'explicit': 'Explicit',
+            'corrupted': 'Corrupted',
+        }
+        return _LABELS.get(self.value, self.value.replace('_', ' ').title())
 
 
 # =============================================================================

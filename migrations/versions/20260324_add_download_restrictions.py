@@ -14,7 +14,7 @@ branch_labels = None
 depends_on = None
 
 _RESTRICTION_VALUES = ('MALWARE', 'PII', 'COPYRIGHT', 'LEGAL_HOLD',
-                       'EXPORT_CONTROL', 'NSFW', 'CORRUPTED')
+                       'EXPLICIT', 'CORRUPTED')
 
 
 def upgrade():

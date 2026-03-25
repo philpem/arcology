@@ -86,7 +86,7 @@
 								   id="bypass_{{ rtype.value }}"
 								   {% if rtype.value in user_bypasses %}checked{% endif %}>
 							<label class="form-check-label" for="bypass_{{ rtype.value }}">
-								{{ rtype.value.replace('_', ' ').title() }}
+								{{ rtype.label }}
 							</label>
 						</div>
 						{% endfor %}

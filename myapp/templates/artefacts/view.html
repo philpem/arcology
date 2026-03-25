@@ -48,7 +48,7 @@
         <p class="mb-1">
             {% for r in artefact.restrictions %}
             <span class="badge bg-danger me-1" title="{{ r.reason or '' }}">
-                <i class="bi bi-exclamation-triangle-fill"></i> {{ r.restriction_type.value.replace('_', ' ').title() }}
+                <i class="bi bi-exclamation-triangle-fill"></i> {{ r.restriction_type.label }}
             </span>
             {% endfor %}
         </p>
@@ -149,7 +149,7 @@
                         <tbody>
                         {% for r in artefact.restrictions %}
                         <tr>
-                            <td><span class="badge bg-danger">{{ r.restriction_type.value.replace('_', ' ').title() }}</span></td>
+                            <td><span class="badge bg-danger">{{ r.restriction_type.label }}</span></td>
                             <td>{{ r.reason or '-' }}</td>
                             <td>{{ r.added_by.username if r.added_by else 'System' }}</td>
                             <td>
@@ -177,13 +177,9 @@
                             <label class="form-label small mb-0">Type</label>
                             <select name="category" class="form-select form-select-sm" required>
                                 <option value="">Select...</option>
-                                <option value="malware">Malware</option>
-                                <option value="pii">PII</option>
-                                <option value="copyright">Copyright</option>
-                                <option value="legal_hold">Legal Hold</option>
-                                <option value="export_control">Export Control</option>
-                                <option value="nsfw">NSFW</option>
-                                <option value="corrupted">Corrupted</option>
+                                {% for rtype in RestrictionType %}
+                                <option value="{{ rtype.value }}">{{ rtype.label }}</option>
+                                {% endfor %}
                             </select>
                         </div>
                         <div class="col">

@@ -48,7 +48,7 @@
 		<p class="text-muted">You have permission to download artefacts restricted with the following categories:</p>
 		<div>
 			{% for rb in current_user.restriction_bypasses %}
-			<span class="badge bg-warning text-dark me-1">{{ rb.restriction_type.value.replace('_', ' ').title() }}</span>
+			<span class="badge bg-warning text-dark me-1">{{ rb.restriction_type.label }}</span>
 			{% endfor %}
 		</div>
 		<p class="text-muted mt-2 mb-0"><small>Contact an administrator to change these permissions.</small></p>

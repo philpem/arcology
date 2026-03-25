@@ -155,7 +155,7 @@ class TestArtefactRestriction(unittest.TestCase):
 
             self.db.session.add(ArtefactRestriction(
                 artefact_id=artefact.id,
-                restriction_type=RestrictionType.NSFW,
+                restriction_type=RestrictionType.EXPLICIT,
             ))
             self.db.session.commit()
 
@@ -267,14 +267,14 @@ class TestUserRestrictionBypass(unittest.TestCase):
             ))
             self.db.session.add(ArtefactRestriction(
                 artefact_id=artefact.id,
-                restriction_type=RestrictionType.EXPORT_CONTROL,
+                restriction_type=RestrictionType.CORRUPTED,
             ))
             self.db.session.commit()
 
             # Admin has no explicit bypasses but can bypass everything
             self.assertEqual(len(admin.restriction_bypasses), 0)
             self.assertTrue(admin.can_bypass_restriction(RestrictionType.MALWARE))
-            self.assertTrue(admin.can_bypass_restriction(RestrictionType.NSFW))
+            self.assertTrue(admin.can_bypass_restriction(RestrictionType.EXPLICIT))
             self.assertTrue(admin.can_bypass_all_restrictions(artefact.restrictions))
 
 
