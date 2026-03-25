@@ -780,6 +780,11 @@ def add_files(uuid):
     partition.unique_files = ExtractedFile.query.filter_by(partition_id=partition.id, is_known=False).count()
     db.session.commit()
 
+    # Auto-apply restrictions from flagged hash databases
+    if added > 0:
+        from ..utils.hash_rescan import apply_database_restrictions
+        apply_database_restrictions(partition.artefact)
+
     response = {'added': added}
     if skipped > 0:
         response['skipped'] = skipped
