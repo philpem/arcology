@@ -232,7 +232,7 @@ class ApiKey(db.Model):
     def verify(cls, raw_key: str) -> Optional["ApiKey"]:
         """
         Look up an active key by its raw value.
-        Returns the ApiKey, or None if missing/invalid/inactive.
+        Returns the ApiKey, or None if missing/invalid/inactive/revoked.
         """
         if not raw_key or not raw_key.startswith('arc_'):
             return None
@@ -241,6 +241,8 @@ class ApiKey(db.Model):
         for key in candidates:
             try:
                 if bcrypt.checkpw(raw_key.encode(), key.key_hash.encode()):
+                    if not key.user.can_use_api:
+                        return None
                     return key
             except (ValueError, TypeError):
                 continue
