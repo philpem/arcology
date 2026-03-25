@@ -14,7 +14,7 @@ import time
 import traceback
 from pathlib import Path
 
-from .config import log, POLL_INTERVAL, MASTERING_TRACK_SCAN_COUNT
+from .config import log, MAX_POLL, MASTERING_TRACK_SCAN_COUNT
 from shared.enums import ArtefactType, AnalysisType
 from .compression import decompress_if_needed, extract_partition_range, is_region_uniform
 from .api import ArcologyAPI
@@ -2042,7 +2042,7 @@ class AnalysisWorker:
                 if processed == 0:
                     log.debug(f"No pending analyses, sleeping {current_delay}s")
                     time.sleep(current_delay)
-                    current_delay = min(current_delay * 2, POLL_INTERVAL)
+                    current_delay = min(current_delay * 2, MAX_POLL)
                 else:
                     log.info(f"Processed {processed} analyses")
                     current_delay = MIN_POLL
@@ -2053,6 +2053,6 @@ class AnalysisWorker:
 
             except Exception as e:
                 log.exception("Unexpected error in main loop")
-                time.sleep(POLL_INTERVAL)
+                time.sleep(MAX_POLL)
 
 # vim: ts=4 sw=4 et

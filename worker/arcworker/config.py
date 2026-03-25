@@ -13,7 +13,7 @@ from pathlib import Path
 ARCOLOGY_API = os.environ.get('ARCOLOGY_API', 'http://host.docker.internal:5000/api')
 UPLOAD_DIR = Path(os.environ.get('UPLOAD_DIR', '/data/uploads'))
 OUTPUT_DIR = Path(os.environ.get('OUTPUT_DIR', '/data/outputs'))
-POLL_INTERVAL = int(os.environ.get('POLL_INTERVAL', '30'))
+MAX_POLL = int(os.environ.get('POLL_INTERVAL', '10'))
 LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
 
 # Worker API key for authenticating with the web application

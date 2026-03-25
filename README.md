@@ -127,7 +127,7 @@ WORKER_API_KEY=<your-worker-key>  # Generate with: python3 -c 'import secrets; p
 ARCOLOGY_API=http://web:5000/api  # API endpoint URL
 UPLOAD_DIR=/data/uploads          # Uploaded files directory
 OUTPUT_DIR=/data/outputs          # Analysis outputs directory
-POLL_INTERVAL=30                  # How often worker checks for jobs (seconds)
+POLL_INTERVAL=10                  # Max poll interval when worker is idle (seconds)
 LOG_LEVEL=INFO                    # Logging level: DEBUG, INFO, WARNING, ERROR
 ```
 
