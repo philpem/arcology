@@ -86,8 +86,12 @@ def require_auth(permission: str = 'read_only'):
             eff_idx = _API_KEY_PERMISSION_ORDER.index(key.effective_permission())
             if eff_idx < required_idx:
                 return error_response('Insufficient permissions', 403)
-            key.last_used_at = datetime.now(timezone.utc)
-            db.session.commit()
+            # Throttle last_used_at updates to avoid a write transaction on
+            # every single API call.  Only update if stale by >60 seconds.
+            now = datetime.now(timezone.utc)
+            if not key.last_used_at or (now - key.last_used_at).total_seconds() > 60:
+                key.last_used_at = now
+                db.session.commit()
             return f(*args, **kwargs)
 
         return wrapper
@@ -525,7 +529,14 @@ def _populate_search_index(analysis):
 @require_auth('read_only')
 def get_pending_analyses():
     """Get pending analyses (for worker)."""
-    analyses = Analysis.query.filter(Analysis.status == AnalysisStatus.PENDING).order_by(Analysis.created_at).all()
+    analyses = (
+        Analysis.query
+        .filter(Analysis.status == AnalysisStatus.PENDING)
+        .options(joinedload(Analysis.artefact).joinedload(Artefact.item))
+        .order_by(Analysis.created_at)
+        .limit(50)
+        .all()
+    )
     return jsonify({'analyses': [analysis_to_dict(a, include_artefact=True) for a in analyses]})
 
 

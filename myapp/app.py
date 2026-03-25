@@ -57,6 +57,18 @@ def create_app(config_name=None):
         app.logger.warning("!!! Sessions will be lost on server restart - set SECRET_KEY in myapp.cfg or as an environment variable")
         app.config['SECRET_KEY'] = secrets.token_urlsafe(32)
 
+    # Connection pool tuning: allow enough connections for Gunicorn workers
+    # under concurrent load.  Defaults can be overridden in myapp.cfg or env.
+    # Only applies to PostgreSQL; SQLite uses StaticPool which doesn't support these.
+    db_uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
+    if 'SQLALCHEMY_ENGINE_OPTIONS' not in app.config and db_uri.startswith('postgresql'):
+        app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+            'pool_size': 10,
+            'max_overflow': 20,
+            'pool_recycle': 1800,
+            'pool_pre_ping': True,
+        }
+
     # Initialise extensions
     db.init_app(app)
     migrate.init_app(app, db)

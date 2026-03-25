@@ -201,7 +201,7 @@ class ApiKey(db.Model):
     id:           Mapped[int]                  = mapped_column(primary_key=True)
     user_id:      Mapped[int]                  = mapped_column(ForeignKey("user.id"), index=True)
     name:         Mapped[str]                  = mapped_column(String(100))
-    key_prefix:   Mapped[str]                  = mapped_column(String(8))   # First 8 hex chars; display only
+    key_prefix:   Mapped[str]                  = mapped_column(String(8), index=True)   # First 8 hex chars; display only
     key_hash:     Mapped[str]                  = mapped_column(String(72), unique=True, index=True)
     permission:   Mapped[ApiKeyPermission]     = mapped_column(SQLEnum(ApiKeyPermission))
     is_active:    Mapped[bool]                 = mapped_column(Boolean, default=True)
@@ -603,6 +603,7 @@ class ExtractedFile(db.Model):
         Index("ix_extracted_files_partition_known", "partition_id", "is_known"),
         Index("ix_extracted_files_archive", "is_archive", "risc_os_filetype"),
         Index("ix_extracted_files_parent", "parent_file_id", "extraction_depth"),
+        Index("ix_extracted_files_partition_path", "partition_id", "path"),
     )
 
 

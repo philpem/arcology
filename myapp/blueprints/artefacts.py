@@ -395,20 +395,31 @@ def _resolve_extracted_file_path(ef):
 # =============================================================================
 
 def get_all_derived_artefact_ids(artefact: Artefact) -> list[int]:
-    """Recursively collect all derived artefact IDs."""
-    ids = []
-    for derived in artefact.derived_artefacts:
-        ids.append(derived.id)
-        ids.extend(get_all_derived_artefact_ids(derived))
-    return ids
+    """Collect all derived artefact IDs using a single recursive CTE query.
+
+    Replaces the previous recursive ORM walk which triggered N+1 queries
+    (one per level of the derivation tree).
+    """
+    from sqlalchemy import literal_column, union_all, select
+    from ..extensions import db
+
+    base = select(Artefact.id).where(Artefact.parent_artefact_id == artefact.id)
+    cte = base.cte(name='derived', recursive=True)
+    recursive = select(Artefact.id).where(Artefact.parent_artefact_id == cte.c.id)
+    cte = cte.union_all(recursive)
+    rows = db.session.execute(select(cte.c.id)).all()
+    return [r[0] for r in rows]
 
 
 def _collect_all_analyses(artefact: Artefact) -> list:
-    """Recursively collect all analyses for an artefact and its derived artefacts."""
-    analyses = list(artefact.analyses)
-    for derived in artefact.derived_artefacts:
-        analyses.extend(_collect_all_analyses(derived))
-    return analyses
+    """Collect all analyses for an artefact and its derived artefacts.
+
+    Uses the CTE-based get_all_derived_artefact_ids to avoid N+1 queries,
+    then fetches all analyses in a single query.
+    """
+    from ..extensions import db
+    all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    return Analysis.query.filter(Analysis.artefact_id.in_(all_ids)).order_by(Analysis.id.desc()).all()
 
 
 def reset_artefact_for_reanalysis(artefact: Artefact):
