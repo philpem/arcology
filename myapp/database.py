@@ -135,12 +135,22 @@ class User(db.Model):
     )
 
     def can_bypass_restriction(self, restriction_type) -> bool:
-        """Check if this user can bypass a specific restriction type."""
+        """Check if this user can bypass a specific restriction type.
+
+        Admins implicitly bypass all restriction types.
+        """
+        if self.is_admin:
+            return True
         return any(rb.restriction_type == restriction_type for rb in self.restriction_bypasses)
 
     def can_bypass_all_restrictions(self, restrictions) -> bool:
-        """Check if this user can bypass all of the given ArtefactRestriction objects."""
+        """Check if this user can bypass all of the given ArtefactRestriction objects.
+
+        Admins implicitly bypass all restriction types.
+        """
         if not restrictions:
+            return True
+        if self.is_admin:
             return True
         bypass_types = {rb.restriction_type for rb in self.restriction_bypasses}
         return all(r.restriction_type in bypass_types for r in restrictions)

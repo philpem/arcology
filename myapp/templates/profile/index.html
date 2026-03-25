@@ -35,6 +35,29 @@
 	</div>
 </div>
 
+<!-- Download Restriction Bypasses -->
+<div class="card mb-4">
+	<div class="card-header"><h5 class="mb-0">Download Restriction Bypasses</h5></div>
+	<div class="card-body">
+		{% if current_user.is_admin %}
+		<p class="text-muted mb-0">
+			<i class="bi bi-shield-check"></i>
+			As an administrator, you can bypass all download restrictions.
+		</p>
+		{% elif current_user.restriction_bypasses %}
+		<p class="text-muted">You have permission to download artefacts restricted with the following categories:</p>
+		<div>
+			{% for rb in current_user.restriction_bypasses %}
+			<span class="badge bg-warning text-dark me-1">{{ rb.restriction_type.value.replace('_', ' ').title() }}</span>
+			{% endfor %}
+		</div>
+		<p class="text-muted mt-2 mb-0"><small>Contact an administrator to change these permissions.</small></p>
+		{% else %}
+		<p class="text-muted mb-0">You do not have any restriction bypass permissions. Contact an administrator if you need access to restricted artefacts.</p>
+		{% endif %}
+	</div>
+</div>
+
 {% if current_user.can_use_api %}
 <!-- API Keys -->
 <div class="card mb-4">

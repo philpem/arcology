@@ -245,6 +245,38 @@ class TestUserRestrictionBypass(unittest.TestCase):
             self.db.session.commit()
             self.assertFalse(user.can_bypass_all_restrictions(artefact.restrictions))
 
+    def test_admin_bypasses_all_restrictions(self):
+        """Admin users should implicitly bypass all restriction types."""
+        with self.app.app_context():
+            from myapp.database import (
+                User, ArtefactRestriction, RestrictionType,
+            )
+
+            admin = User(username='admin_bypass_user', password_hash='x' * 60, is_admin=True)
+            self.db.session.add(admin)
+            self.db.session.flush()
+
+            _, artefact = _make_item_and_artefact(self.db)
+            self.db.session.add(ArtefactRestriction(
+                artefact_id=artefact.id,
+                restriction_type=RestrictionType.MALWARE,
+            ))
+            self.db.session.add(ArtefactRestriction(
+                artefact_id=artefact.id,
+                restriction_type=RestrictionType.COPYRIGHT,
+            ))
+            self.db.session.add(ArtefactRestriction(
+                artefact_id=artefact.id,
+                restriction_type=RestrictionType.EXPORT_CONTROL,
+            ))
+            self.db.session.commit()
+
+            # Admin has no explicit bypasses but can bypass everything
+            self.assertEqual(len(admin.restriction_bypasses), 0)
+            self.assertTrue(admin.can_bypass_restriction(RestrictionType.MALWARE))
+            self.assertTrue(admin.can_bypass_restriction(RestrictionType.NSFW))
+            self.assertTrue(admin.can_bypass_all_restrictions(artefact.restrictions))
+
 
 # =============================================================================
 # API download restriction tests
