@@ -35,6 +35,7 @@ from .archives import (
     extract_7z,
     decompress_single_file,
 )
+from .armlock import detect_armlock, remove_armlock
 
 __all__ = [
     'run_tool',
@@ -63,6 +64,8 @@ __all__ = [
     'extract_rar',
     'extract_7z',
     'decompress_single_file',
+    'detect_armlock',
+    'remove_armlock',
 ]
 
 # vim: ts=4 sw=4 et
