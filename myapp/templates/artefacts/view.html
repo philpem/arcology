@@ -511,26 +511,82 @@
 
         {% if all_partitions %}
         <div class="card mb-4">
-            <div class="card-header"><i class="bi bi-hdd"></i> Partitions</div>
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>
+                    <i class="bi bi-hdd"></i> Partitions
+                    {% if partition_detect_details %}
+                    {% set acorn = partition_detect_details.get('acorn_partitions', {}) %}
+                    {% if acorn.get('detected') %}
+                    <span class="badge bg-dark ms-1">{{ acorn.get('scheme', 'unknown') | upper }}</span>
+                    {% endif %}
+                    {% set decomp = partition_detect_details.get('decompression', {}) %}
+                    {% if decomp.get('was_decompressed') %}
+                    <span class="badge bg-secondary ms-1" title="Input was decompressed from {{ decomp.get('compression_format', '?') }} ({{ ((decomp.get('compressed_size', 0)) / 1024 / 1024) | round(1) }} MB &rarr; {{ ((decomp.get('decompressed_size', 0)) / 1024 / 1024) | round(1) }} MB)">
+                        <i class="bi bi-file-zip"></i> {{ decomp.get('compression_format', '') }}
+                    </span>
+                    {% endif %}
+                    {% endif %}
+                </span>
+                {% if partition_detect_details %}
+                <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=partition_detect_details['_analysis_uuid']) }}"
+                   class="btn btn-sm btn-outline-secondary" title="View raw partition detection analysis">
+                    <i class="bi bi-search"></i> Raw Analysis
+                </a>
+                {% endif %}
+            </div>
+
+            {# Scheme description banner #}
+            {% if partition_detect_details %}
+            {% set acorn = partition_detect_details.get('acorn_partitions', {}) %}
+            {% if acorn.get('detected') %}
+            <div class="card-body py-2 border-bottom bg-light">
+                <small class="text-muted">
+                    <strong>{{ acorn.get('scheme', '') | upper }}</strong>
+                    {% if acorn.get('description') %}&mdash; {{ acorn.get('description') }}{% endif %}
+                    {% if acorn.get('total_capacity_bytes') %}
+                    ({{ (acorn.get('total_capacity_bytes') / 1024 / 1024) | round(1) }} MB)
+                    {% endif %}
+                    {% set nxhdr = acorn.get('nexus_header', {}) %}
+                    {% if nxhdr %}
+                    &nbsp;<span class="badge bg-secondary">Net #{{ nxhdr.get('nexus_network_number', '?') }}</span>
+                    {% if nxhdr.get('nexus_delay') %}<span class="badge bg-secondary ms-1">Delay {{ nxhdr.get('nexus_delay') }}</span>{% endif %}
+                    {% endif %}
+                </small>
+            </div>
+            {% endif %}
+            {% endif %}
+
             <div class="table-responsive">
                 <table class="table table-sm mb-0 table-hover">
-                    <thead><tr><th>#</th><th>Label</th><th>Filesystem</th><th>Files</th><th>Unique</th><th>Source</th></tr></thead>
+                    <thead><tr><th>#</th><th>Label</th><th>Filesystem</th><th>Files</th><th>Unique</th><th>Source</th>
+                    {% if partition_metadata %}<th>Details</th>{% endif %}
+                    </tr></thead>
                     <tbody>
                         {% for p in all_partitions %}
                         {# Color-code partition badges for visual distinction #}
                         {% set partition_colors = ['primary', 'success', 'warning', 'danger', 'info', 'secondary'] %}
                         {% set partition_color = partition_colors[p.partition_index % partition_colors|length] %}
+                        {% set pmeta = partition_metadata.get(p.partition_index, {}) %}
                         <tr style="cursor: pointer;" onclick="filterByPartition('{{ p.uuid }}')"
                             tabindex="0" role="button"
                             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();filterByPartition('{{ p.uuid }}');}"
                             title="Click to filter files by this partition">
                             <td><span class="badge bg-{{ partition_color }}">{{ p.partition_index }}</span></td>
-                            <td>{{ p.label or '-' }}</td>
+                            <td>
+                                {% if pmeta.get('disc_name') %}
+                                <strong>{{ pmeta.get('disc_name') }}</strong>
+                                {% elif p.label %}
+                                {{ p.label }}
+                                {% else %}-{% endif %}
+                            </td>
                             <td>
                                 {% if p.container_format %}
                                 <code style="border-bottom: 1px dotted #999; cursor: help;" title="{{ p.container_format }}">{{ p.filesystem.value }}</code>
                                 {% else %}
                                 <code>{{ p.filesystem.value }}</code>
+                                {% endif %}
+                                {% if p.gnu_file_type %}
+                                <i class="bi bi-info-circle text-muted ms-1" style="cursor: help; font-size: 0.75em;" title="{{ p.gnu_file_type }}"></i>
                                 {% endif %}
                             </td>
                             <td>{{ p.total_files or '-' }}</td>
@@ -540,7 +596,101 @@
                                 <a href="{{ artefact_url(p.artefact) }}" class="badge bg-secondary text-decoration-none" onclick="event.stopPropagation()">{{ p.artefact.label }}</a>
                                 {% else %}-{% endif %}
                             </td>
+                            {% if partition_metadata %}
+                            <td onclick="event.stopPropagation();">
+                                {# HCCS: password and access badges #}
+                                {% if pmeta.get('password') %}
+                                <span class="badge bg-warning text-dark" title="HCCS password"><i class="bi bi-key-fill"></i> Password</span>
+                                {% endif %}
+                                {% if pmeta.get('access_default') %}
+                                {% set acc = pmeta.get('access_default', {}) %}
+                                <span class="badge {% if acc.get('write') %}bg-success{% elif acc.get('read') %}bg-info{% else %}bg-danger{% endif %}" title="Default access: {{ acc.get('summary', '') }}">
+                                    {{ acc.get('summary', '') }}
+                                </span>
+                                {% endif %}
+                                {# ICS IDEFS: protection level badge #}
+                                {% if pmeta.get('protection') %}
+                                {% set prot = pmeta.get('protection', {}) %}
+                                {% set prot_level = prot.get('level', 0) %}
+                                <span class="badge {% if prot_level == 0 %}bg-success{% elif prot_level == 3 %}bg-danger{% else %}bg-warning text-dark{% endif %}" title="ICS IDEFS protection: {{ prot.get('summary', '') }}">
+                                    <i class="bi bi-shield-lock{% if prot_level == 0 %}-fill{% endif %}"></i> {{ prot.get('summary', '') }}
+                                </span>
+                                {% endif %}
+                                {# Nexus: flags badges #}
+                                {% if pmeta.get('nexus_flags') %}
+                                {% set nf = pmeta.get('nexus_flags', {}) %}
+                                {% if nf.get('printer') %}<span class="badge bg-secondary" title="Printer partition"><i class="bi bi-printer"></i></span>{% endif %}
+                                {% if not nf.get('writable') %}<span class="badge bg-warning text-dark" title="Read-only"><i class="bi bi-lock"></i></span>{% endif %}
+                                {% if nf.get('local') %}<span class="badge bg-info" title="Local partition">Local</span>{% endif %}
+                                {% if pmeta.get('nexus_station') is not none %}<span class="badge bg-secondary" title="Econet station">Stn {{ pmeta.get('nexus_station') }}</span>{% endif %}
+                                {% endif %}
+                                {# Expand toggle for detail row #}
+                                {% if pmeta.get('password') or pmeta.get('protection') or pmeta.get('nexus_flags') or pmeta.get('password_hash') or pmeta.get('access_unlocked') %}
+                                <a class="btn btn-sm btn-outline-secondary py-0 px-1 ms-1" data-bs-toggle="collapse" href="#partDetail{{ p.partition_index }}" role="button" title="Show details">
+                                    <i class="bi bi-three-dots"></i>
+                                </a>
+                                {% endif %}
+                            </td>
+                            {% endif %}
                         </tr>
+                        {# Expandable detail row for partition metadata #}
+                        {% if partition_metadata and (pmeta.get('password') or pmeta.get('protection') or pmeta.get('nexus_flags') or pmeta.get('password_hash') or pmeta.get('access_unlocked')) %}
+                        <tr class="collapse" id="partDetail{{ p.partition_index }}">
+                            <td colspan="{{ 7 if partition_metadata else 6 }}" class="bg-light border-top-0 py-2 px-4">
+                                <dl class="row mb-0 small">
+                                    {# HCCS password and access details #}
+                                    {% if pmeta.get('password') %}
+                                    <dt class="col-sm-3">Password</dt>
+                                    <dd class="col-sm-9"><code>{{ pmeta.get('password') }}</code></dd>
+                                    {% endif %}
+                                    {% if pmeta.get('access_default') %}
+                                    <dt class="col-sm-3">Default Access</dt>
+                                    <dd class="col-sm-9">{{ pmeta.get('access_default', {}).get('summary', '-') }} <code class="text-muted ms-1">{{ pmeta.get('access_default', {}).get('raw', '') }}</code></dd>
+                                    {% endif %}
+                                    {% if pmeta.get('access_unlocked') %}
+                                    <dt class="col-sm-3">Unlocked Access</dt>
+                                    <dd class="col-sm-9">{{ pmeta.get('access_unlocked', {}).get('summary', '-') }} <code class="text-muted ms-1">{{ pmeta.get('access_unlocked', {}).get('raw', '') }}</code></dd>
+                                    {% endif %}
+                                    {# ICS IDEFS protection and password hashes #}
+                                    {% if pmeta.get('protection') %}
+                                    <dt class="col-sm-3">Protection Level</dt>
+                                    <dd class="col-sm-9">{{ pmeta.get('protection', {}).get('summary', '-') }} (level {{ pmeta.get('protection', {}).get('level', '?') }}) <code class="text-muted ms-1">{{ pmeta.get('protection', {}).get('raw', '') }}</code></dd>
+                                    {% endif %}
+                                    {% if pmeta.get('password_hash') %}
+                                    {% set ph = pmeta.get('password_hash', {}) %}
+                                    <dt class="col-sm-3">Password Hash</dt>
+                                    <dd class="col-sm-9"><code>{{ ph.get('hash_lo', '') }}</code> <code>{{ ph.get('hash_hi', '') }}</code></dd>
+                                    {% endif %}
+                                    {# Nexus flags and station info #}
+                                    {% if pmeta.get('nexus_flags') %}
+                                    {% set nf = pmeta.get('nexus_flags', {}) %}
+                                    <dt class="col-sm-3">Nexus Flags</dt>
+                                    <dd class="col-sm-9">
+                                        {% if nf.get('writable') %}<span class="badge bg-success me-1">Writable</span>{% else %}<span class="badge bg-warning text-dark me-1">Read-only</span>{% endif %}
+                                        {% if nf.get('multiple') %}<span class="badge bg-secondary me-1">Multiple</span>{% endif %}
+                                        {% if nf.get('fixed') %}<span class="badge bg-secondary me-1">Fixed</span>{% endif %}
+                                        {% if nf.get('printer') %}<span class="badge bg-secondary me-1">Printer</span>{% endif %}
+                                        {% if nf.get('local') %}<span class="badge bg-info me-1">Local</span>{% endif %}
+                                        <code class="text-muted ms-1">{{ nf.get('raw', '') }}</code>
+                                    </dd>
+                                    {% endif %}
+                                    {% if pmeta.get('nexus_station') is not none %}
+                                    <dt class="col-sm-3">Station</dt>
+                                    <dd class="col-sm-9">{{ pmeta.get('nexus_station') }}</dd>
+                                    {% endif %}
+                                    {% if pmeta.get('nexus_drive_number') is not none %}
+                                    <dt class="col-sm-3">Drive Number</dt>
+                                    <dd class="col-sm-9">{{ pmeta.get('nexus_drive_number') }}</dd>
+                                    {% endif %}
+                                    {# Boot block validity #}
+                                    {% if pmeta.get('boot_block_valid') is not none %}
+                                    <dt class="col-sm-3">Boot Block</dt>
+                                    <dd class="col-sm-9">{% if pmeta.get('boot_block_valid') %}<span class="badge bg-success">Valid checksum</span>{% else %}<span class="badge bg-warning text-dark">Invalid checksum</span>{% endif %}</dd>
+                                    {% endif %}
+                                </dl>
+                            </td>
+                        </tr>
+                        {% endif %}
                         {% endfor %}
                     </tbody>
                 </table>

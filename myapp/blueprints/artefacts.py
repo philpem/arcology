@@ -728,10 +728,11 @@ def _render_artefact_view(artefact):
         ).with_entities(ExtractedFile.path).all()
         archive_paths = {af.path for af in archive_files}
 
-    # Extract completed mastering and protection analysis results for display.
+    # Extract completed analysis results for display.
     # These are surfaced as badges + cards directly on the artefact view page.
     mastering_analysis = None
     protection_analysis = None
+    partition_detect_details = None
     for a in all_related_analyses:
         if a.status == AnalysisStatus.COMPLETED and a.details:
             if mastering_analysis is None and a.analysis_type == AnalysisType.DISC_MASTERING_DETECT:
@@ -746,8 +747,24 @@ def _render_artefact_view(artefact):
                     protection_analysis['_analysis_uuid'] = a.uuid
                 except (json.JSONDecodeError, TypeError) as e:
                     current_app.logger.warning(f"Failed to parse protection analysis details for {a.uuid}: {e}")
-        if mastering_analysis is not None and protection_analysis is not None:
+            elif partition_detect_details is None and a.analysis_type == AnalysisType.PARTITION_DETECT:
+                try:
+                    partition_detect_details = json.loads(a.details)
+                    partition_detect_details['_analysis_uuid'] = a.uuid
+                except (json.JSONDecodeError, TypeError) as e:
+                    current_app.logger.warning(f"Failed to parse partition detect details for {a.uuid}: {e}")
+        if mastering_analysis is not None and protection_analysis is not None and partition_detect_details is not None:
             break
+
+    # Build a lookup of per-partition metadata from PARTITION_DETECT, keyed by
+    # partition index, so the template can display disc names, passwords,
+    # protection levels, and flags inline in the Partitions table.
+    partition_metadata = {}
+    if partition_detect_details:
+        for p in partition_detect_details.get('partitions', []):
+            idx = p.get('index')
+            if idx is not None:
+                partition_metadata[idx] = p
 
     hashdb_mode = request.args.get('mode') == 'hashdb'
 
@@ -801,6 +818,8 @@ def _render_artefact_view(artefact):
                            current_sort=current_sort,
                            mastering_analysis=mastering_analysis,
                            protection_analysis=protection_analysis,
+                           partition_detect_details=partition_detect_details,
+                           partition_metadata=partition_metadata,
                            hashdb_mode=hashdb_mode,
                            recognised_products=recognised_products,
                            recognised_folder_paths=recognised_folder_paths,
