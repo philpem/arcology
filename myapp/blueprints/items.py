@@ -9,10 +9,11 @@ from flask_login import login_required
 from flask_wtf import FlaskForm
 from wtforms import StringField, TextAreaField, SelectField
 from wtforms.validators import DataRequired, Optional, Length
-from sqlalchemy import or_
+from sqlalchemy import func, or_
+from sqlalchemy.orm import selectinload
 
 from ..extensions import db
-from ..database import Item, Platform, Category, Tag, ExternalSystem, ExternalReference
+from ..database import Item, Artefact, Platform, Category, Tag, ExternalSystem, ExternalReference
 from .artefacts import _delete_item_files
 from ..permissions import require_permission
 from ..utils.slugs import get_or_create_slug, lookup_by_identifier
@@ -73,26 +74,42 @@ def index():
     ]
     
     query = Item.query
-    
+
     if form.q.data:
         search = f'%{form.q.data}%'
         query = query.filter(or_(
             Item.name.ilike(search),
             Item.description.ilike(search)
         ))
-    
+
     if form.platform_id.data and form.platform_id.data != 0:
         query = query.filter(Item.platform_id == form.platform_id.data)
-    
+
     if form.category_id.data and form.category_id.data != 0:
         query = query.filter(Item.category_id == form.category_id.data)
-    
+
+    # Eager-load platform and category to avoid N+1 lazy loads in template
+    query = query.options(selectinload(Item.platform), selectinload(Item.category))
+
     page = request.args.get('page', 1, type=int)
     per_page = current_app.config.get('ITEMS_PER_PAGE', 25)
     pagination = query.order_by(Item.name).paginate(page=page, per_page=per_page)
-    
+
+    # Compute artefact counts in a single query instead of lazy-loading per item
+    item_ids = [item.id for item in pagination.items]
+    artefact_counts = {}
+    if item_ids:
+        counts = (
+            db.session.query(Artefact.item_id, func.count(Artefact.id))
+            .filter(Artefact.item_id.in_(item_ids))
+            .group_by(Artefact.item_id)
+            .all()
+        )
+        artefact_counts = dict(counts)
+
     return render_template('items/index.html',
                            items=pagination.items,
+                           artefact_counts=artefact_counts,
                            pagination=pagination,
                            form=form)
 

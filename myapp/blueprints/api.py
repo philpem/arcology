@@ -10,8 +10,8 @@ from datetime import datetime, timezone
 from functools import wraps
 from flask import Blueprint, jsonify, request, current_app, send_file
 from flask_wtf.csrf import CSRFProtect
-from sqlalchemy import update, or_
-from sqlalchemy.orm import joinedload
+from sqlalchemy import func, update, or_
+from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.orm.exc import StaleDataError
 
 from ..extensions import db, csrf
@@ -86,8 +86,12 @@ def require_auth(permission: str = 'read_only'):
             eff_idx = _API_KEY_PERMISSION_ORDER.index(key.effective_permission())
             if eff_idx < required_idx:
                 return error_response('Insufficient permissions', 403)
-            key.last_used_at = datetime.now(timezone.utc)
-            db.session.commit()
+            # Throttle last_used_at updates to avoid a write transaction on
+            # every single API call.  Only update if stale by >60 seconds.
+            now = datetime.now(timezone.utc)
+            if not key.last_used_at or (now - key.last_used_at).total_seconds() > 60:
+                key.last_used_at = now
+                db.session.commit()
             return f(*args, **kwargs)
 
         return wrapper
@@ -149,7 +153,7 @@ def list_items():
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 25, type=int)
     query = Item.query
-    
+
     if request.args.get('q'):
         search = f'%{request.args["q"]}%'
         query = query.filter(or_(Item.name.ilike(search), Item.description.ilike(search)))
@@ -160,9 +164,30 @@ def list_items():
     if request.args.get('tag'):
         query = query.filter(Item.tags.any(Tag.name == request.args['tag']))
 
+    # Eager-load relationships accessed by item_to_dict to avoid N+1
+    query = query.options(
+        selectinload(Item.platform),
+        selectinload(Item.category),
+        selectinload(Item.tags),
+    )
+
     pagination = query.order_by(Item.name).paginate(page=page, per_page=per_page)
+
+    # Batch artefact counts instead of loading all artefact objects per item
+    item_ids = [item.id for item in pagination.items]
+    artefact_counts = {}
+    if item_ids:
+        counts = (
+            db.session.query(Artefact.item_id, func.count(Artefact.id))
+            .filter(Artefact.item_id.in_(item_ids))
+            .group_by(Artefact.item_id)
+            .all()
+        )
+        artefact_counts = dict(counts)
+
     return jsonify({
-        'items': [item_to_dict(item) for item in pagination.items],
+        'items': [item_to_dict(item, _artefact_count=artefact_counts.get(item.id, 0))
+                  for item in pagination.items],
         'total': pagination.total, 'page': page, 'per_page': per_page, 'pages': pagination.pages
     })
 
@@ -290,7 +315,9 @@ def update_artefact(uuid):
 @blueprint.route('/artefacts/<string:uuid>/download', methods=['GET'])
 @require_auth('read_only')
 def download_artefact(uuid):
-    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    artefact = Artefact.query.filter_by(uuid=uuid).options(
+        selectinload(Artefact.restrictions)
+    ).first_or_404()
 
     # Enforce download restrictions
     if artefact.restrictions:
@@ -309,7 +336,11 @@ def download_artefact(uuid):
 @require_auth('read_only')
 def download_extracted_file(uuid):
     """Download an individual extracted file.  Restricted artefacts return 403."""
-    ef = ExtractedFile.query.filter_by(uuid=uuid).first_or_404()
+    ef = ExtractedFile.query.filter_by(uuid=uuid).options(
+        joinedload(ExtractedFile.partition)
+        .joinedload(Partition.artefact)
+        .selectinload(Artefact.restrictions)
+    ).first_or_404()
     artefact = ef.partition.artefact
 
     if artefact.restrictions:
@@ -375,7 +406,8 @@ def request_analysis(uuid):
 @require_auth('read_only')
 def get_artefact_analyses(uuid):
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
-    return jsonify({'analyses': [analysis_to_dict(a) for a in artefact.analyses]})
+    analyses = Analysis.query.filter_by(artefact_id=artefact.id).order_by(Analysis.id.desc()).all()
+    return jsonify({'analyses': [analysis_to_dict(a) for a in analyses]})
 
 
 @blueprint.route('/analysis/<string:uuid>', methods=['GET'])
@@ -528,7 +560,14 @@ def _populate_search_index(analysis):
 @require_auth('read_only')
 def get_pending_analyses():
     """Get pending analyses (for worker)."""
-    analyses = Analysis.query.filter(Analysis.status == AnalysisStatus.PENDING).order_by(Analysis.created_at).all()
+    analyses = (
+        Analysis.query
+        .filter(Analysis.status == AnalysisStatus.PENDING)
+        .options(joinedload(Analysis.artefact).joinedload(Artefact.item))
+        .order_by(Analysis.created_at)
+        .limit(50)
+        .all()
+    )
     return jsonify({'analyses': [analysis_to_dict(a, include_artefact=True) for a in analyses]})
 
 
@@ -1032,12 +1071,13 @@ def upload_artefact(item_uuid):
 # Helpers
 # =============================================================================
 
-def item_to_dict(item, include_artefacts=False):
+def item_to_dict(item, include_artefacts=False, _artefact_count=None):
     result = {
         'id': item.id, 'uuid': item.uuid, 'name': item.name, 'description': item.description,
         'platform': {'id': item.platform.id, 'name': item.platform.name} if item.platform else None,
         'category': {'id': item.category.id, 'name': item.category.name} if item.category else None,
-        'tags': [t.name for t in item.tags], 'artefact_count': len(item.artefacts),
+        'tags': [t.name for t in item.tags],
+        'artefact_count': _artefact_count if _artefact_count is not None else len(item.artefacts),
         'created_at': item.created_at.isoformat(), 'updated_at': item.updated_at.isoformat()
     }
     if include_artefacts:

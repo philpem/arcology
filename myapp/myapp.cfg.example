@@ -18,6 +18,15 @@ SQLALCHEMY_DATABASE_URI = "postgresql://arcology_user:arcology_password@db/arcol
 
 SQLALCHEMY_TRACK_MODIFICATIONS = False
 
+# Connection pool tuning (defaults are set in app.py if not specified here).
+# Increase pool_size when running many Gunicorn workers or heavy worker load.
+#SQLALCHEMY_ENGINE_OPTIONS = {
+#    'pool_size': 10,        # Persistent connections per worker process
+#    'max_overflow': 20,     # Extra connections allowed under peak load
+#    'pool_recycle': 1800,   # Recycle connections after 30 minutes
+#    'pool_pre_ping': True,  # Verify connections are alive before using
+#}
+
 # Arcology-specific settings
 UPLOAD_FOLDER = "uploads"           # Relative to instance folder, or absolute path
 OUTPUT_FOLDER = "outputs"           # For analysis outputs (visualisations, etc.)

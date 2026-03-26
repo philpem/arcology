@@ -6,7 +6,8 @@ Homepage and dashboard views.
 
 from flask import Blueprint, render_template
 from flask_login import login_required
-from sqlalchemy import func
+from sqlalchemy import case, func
+from sqlalchemy.orm import joinedload
 
 from ..extensions import db
 from ..database import Item, Artefact, Analysis, AnalysisStatus
@@ -25,20 +26,45 @@ def init_app(app):
 @login_required
 def index():
     """Homepage with dashboard statistics."""
+    # Single query for all four stats using scalar subqueries + conditional counts
+    stats_row = db.session.query(
+        db.session.query(func.count(Item.id)).scalar_subquery().label('total_items'),
+        db.session.query(func.count(Artefact.id)).scalar_subquery().label('total_artefacts'),
+        func.count(case((Analysis.status == AnalysisStatus.PENDING, 1))).label('pending'),
+        func.count(case((Analysis.status == AnalysisStatus.RUNNING, 1))).label('running'),
+    ).select_from(Analysis).one()
+
     stats = {
-        'total_items': db.session.query(func.count(Item.id)).scalar() or 0,
-        'total_artefacts': db.session.query(func.count(Artefact.id)).scalar() or 0,
-        'pending_analyses': db.session.query(func.count(Analysis.id)).filter(
-            Analysis.status == AnalysisStatus.PENDING
-        ).scalar() or 0,
-        'running_analyses': db.session.query(func.count(Analysis.id)).filter(
-            Analysis.status == AnalysisStatus.RUNNING
-        ).scalar() or 0,
+        'total_items': stats_row.total_items or 0,
+        'total_artefacts': stats_row.total_artefacts or 0,
+        'pending_analyses': stats_row.pending or 0,
+        'running_analyses': stats_row.running or 0,
     }
-    
-    recent_items = Item.query.order_by(Item.created_at.desc()).limit(10).all()
-    recent_analyses = Analysis.query.order_by(Analysis.created_at.desc()).limit(10).all()
-    
+
+    # Recent items with artefact count subquery (avoids N+1 lazy loads)
+    artefact_count_sq = (
+        db.session.query(func.count(Artefact.id))
+        .filter(Artefact.item_id == Item.id)
+        .correlate(Item)
+        .scalar_subquery()
+        .label('artefact_count')
+    )
+    recent_items = (
+        db.session.query(Item, artefact_count_sq)
+        .order_by(Item.created_at.desc())
+        .limit(10)
+        .all()
+    )
+
+    # Recent analyses with artefact eagerly loaded (avoids N+1)
+    recent_analyses = (
+        Analysis.query
+        .options(joinedload(Analysis.artefact))
+        .order_by(Analysis.created_at.desc())
+        .limit(10)
+        .all()
+    )
+
     return render_template('dashboard.html',
                            stats=stats,
                            recent_items=recent_items,

@@ -29,7 +29,7 @@
                     <td><a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a></td>
                     <td>{{ item.platform.name if item.platform else '-' }}</td>
                     <td>{{ item.category.name if item.category else '-' }}</td>
-                    <td><span class="badge bg-secondary">{{ item.artefacts|length }}</span></td>
+                    <td><span class="badge bg-secondary">{{ artefact_counts.get(item.id, 0) }}</span></td>
                     <td>{{ item.updated_at.strftime('%Y-%m-%d') }}</td>
                 </tr>
                 {% else %}

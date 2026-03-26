@@ -47,10 +47,10 @@
         <div class="card">
             <div class="card-header"><i class="bi bi-clock-history"></i> Recent Items</div>
             <ul class="list-group list-group-flush">
-                {% for item in recent_items %}
+                {% for item, artefact_count in recent_items %}
                 <li class="list-group-item d-flex justify-content-between">
                     <a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a>
-                    <span class="badge bg-secondary">{{ item.artefacts|length }}</span>
+                    <span class="badge bg-secondary">{{ artefact_count }}</span>
                 </li>
                 {% else %}
                 <li class="list-group-item text-muted">No items yet</li>

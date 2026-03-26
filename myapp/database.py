@@ -201,7 +201,7 @@ class ApiKey(db.Model):
     id:           Mapped[int]                  = mapped_column(primary_key=True)
     user_id:      Mapped[int]                  = mapped_column(ForeignKey("user.id"), index=True)
     name:         Mapped[str]                  = mapped_column(String(100))
-    key_prefix:   Mapped[str]                  = mapped_column(String(8))   # First 8 hex chars; display only
+    key_prefix:   Mapped[str]                  = mapped_column(String(8), index=True)   # First 8 hex chars; display only
     key_hash:     Mapped[str]                  = mapped_column(String(72), unique=True, index=True)
     permission:   Mapped[ApiKeyPermission]     = mapped_column(SQLEnum(ApiKeyPermission))
     is_active:    Mapped[bool]                 = mapped_column(Boolean, default=True)
@@ -490,7 +490,7 @@ class Analysis(db.Model):
     artefact_id: Mapped[int] = mapped_column(ForeignKey("artefacts.id"), index=True)
     analysis_type: Mapped[AnalysisType] = mapped_column(SQLEnum(AnalysisType))
     slug: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
-    status: Mapped[AnalysisStatus] = mapped_column(SQLEnum(AnalysisStatus), default=AnalysisStatus.PENDING)
+    status: Mapped[AnalysisStatus] = mapped_column(SQLEnum(AnalysisStatus), default=AnalysisStatus.PENDING, index=True)
     
     # Tool info (filled by worker)
     tool_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
@@ -508,7 +508,7 @@ class Analysis(db.Model):
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
@@ -603,6 +603,7 @@ class ExtractedFile(db.Model):
         Index("ix_extracted_files_partition_known", "partition_id", "is_known"),
         Index("ix_extracted_files_archive", "is_archive", "risc_os_filetype"),
         Index("ix_extracted_files_parent", "parent_file_id", "extraction_depth"),
+        Index("ix_extracted_files_partition_path", "partition_id", "path"),
     )
 
 

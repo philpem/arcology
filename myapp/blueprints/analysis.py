@@ -8,6 +8,8 @@ import re
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request
 from flask_login import login_required
+from sqlalchemy import case, func
+from sqlalchemy.orm import joinedload
 
 from ..extensions import db
 from ..database import Analysis, AnalysisStatus
@@ -30,22 +32,32 @@ def index():
     status_filter = request.args.get('status')
     
     query = Analysis.query
-    
+
     if status_filter:
         try:
             status = AnalysisStatus(status_filter)
             query = query.filter(Analysis.status == status)
         except ValueError:
             pass
-    
+
     page = request.args.get('page', 1, type=int)
-    pagination = query.order_by(Analysis.created_at.desc()).paginate(page=page, per_page=50)
-    
+    # Eager-load artefact to avoid N+1 lazy loads in template
+    pagination = query.options(
+        joinedload(Analysis.artefact)
+    ).order_by(Analysis.created_at.desc()).paginate(page=page, per_page=50)
+
+    # Single query for all status counts using conditional aggregation
+    counts_row = db.session.query(
+        func.count(case((Analysis.status == AnalysisStatus.PENDING, 1))).label('pending'),
+        func.count(case((Analysis.status == AnalysisStatus.RUNNING, 1))).label('running'),
+        func.count(case((Analysis.status == AnalysisStatus.COMPLETED, 1))).label('completed'),
+        func.count(case((Analysis.status == AnalysisStatus.FAILED, 1))).label('failed'),
+    ).one()
     status_counts = {
-        'pending': Analysis.query.filter(Analysis.status == AnalysisStatus.PENDING).count(),
-        'running': Analysis.query.filter(Analysis.status == AnalysisStatus.RUNNING).count(),
-        'completed': Analysis.query.filter(Analysis.status == AnalysisStatus.COMPLETED).count(),
-        'failed': Analysis.query.filter(Analysis.status == AnalysisStatus.FAILED).count(),
+        'pending': counts_row.pending,
+        'running': counts_row.running,
+        'completed': counts_row.completed,
+        'failed': counts_row.failed,
     }
     
     return render_template('analysis/index.html',
@@ -128,11 +140,11 @@ def queue():
     """View the analysis queue (pending and running)."""
     pending = Analysis.query.filter(
         Analysis.status == AnalysisStatus.PENDING
-    ).order_by(Analysis.created_at).all()
-    
+    ).options(joinedload(Analysis.artefact)).order_by(Analysis.created_at).all()
+
     running = Analysis.query.filter(
         Analysis.status == AnalysisStatus.RUNNING
-    ).order_by(Analysis.started_at).all()
+    ).options(joinedload(Analysis.artefact)).order_by(Analysis.started_at).all()
     
     return render_template('analysis/queue.html', pending=pending, running=running)
 
