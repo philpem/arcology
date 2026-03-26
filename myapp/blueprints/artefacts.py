@@ -479,24 +479,7 @@ def reset_artefact_for_reanalysis(artefact: Artefact):
     This must be called before queueing new analyses when the user triggers
     a re-analyse, so that stale results from previous runs are fully cleared.
     """
-    output_folder = get_output_folder()
-
-    # Collect filesystem paths to clean up before deleting DB records.
-    # analysis.output_path: extraction output directories (FILE_EXTRACTION etc.)
-    # analysis.details outputs[]: named output files (flux visualisations etc.)
-    all_analyses = _collect_all_analyses(artefact)
-    output_dirs = [a.output_path for a in all_analyses if a.output_path]
-    output_files = []
-    for analysis in all_analyses:
-        if analysis.details:
-            try:
-                details = json.loads(analysis.details)
-                if 'outputs' in details and isinstance(details['outputs'], list):
-                    for output in details['outputs']:
-                        if 'filename' in output:
-                            output_files.append(output['filename'])
-            except (json.JSONDecodeError, KeyError, TypeError) as e:
-                current_app.logger.warning(f"Failed to parse analysis details during reset: {e}")
+    cleanup = _collect_cleanup_paths_for_artefact(artefact, 'reset')
 
     # Delete storage files for all derived artefacts (recursively).
     # Must happen before the DB delete so we can still walk the ORM tree.
@@ -523,12 +506,7 @@ def reset_artefact_for_reanalysis(artefact: Artefact):
 
     db.session.commit()
 
-    cache_dir = os.path.join(output_folder, '.cache', artefact.uuid)
-    return {
-        'output_files': output_files,
-        'output_dirs': output_dirs,
-        'cache_dir': cache_dir,
-    }
+    return cleanup
 
 
 def _cleanup_analysis_outputs(output_folder, output_files, output_dirs, cache_dir, logger):
@@ -590,7 +568,7 @@ def _cleanup_analysis_outputs(output_folder, output_files, output_dirs, cache_di
             logger.warning(f"Failed to delete partition cache {cache_dir}: {e}")
 
 
-def _collect_cleanup_paths_for_artefact(artefact: Artefact) -> dict[str, list[str] | str]:
+def _collect_cleanup_paths_for_artefact(artefact: Artefact, context: str = 'cleanup') -> dict[str, list[str] | str]:
     """Collect output files/directories/cache paths for an artefact tree."""
     output_folder = get_output_folder()
     all_analyses = _collect_all_analyses(artefact)
@@ -606,7 +584,7 @@ def _collect_cleanup_paths_for_artefact(artefact: Artefact) -> dict[str, list[st
                         if 'filename' in output:
                             output_files.append(output['filename'])
             except (json.JSONDecodeError, KeyError, TypeError) as e:
-                current_app.logger.warning(f"Failed to parse analysis details during cleanup collection: {e}")
+                current_app.logger.warning(f"Failed to parse analysis details during {context}: {e}")
 
     cache_dir = os.path.join(output_folder, '.cache', artefact.uuid)
     return {
@@ -615,6 +593,18 @@ def _collect_cleanup_paths_for_artefact(artefact: Artefact) -> dict[str, list[st
         'output_dirs': output_dirs,
         'cache_dir': cache_dir,
     }
+
+
+def _cleanup_artefact_outputs(artefact: Artefact, logger) -> None:
+    """Delete derived output files/directories for an artefact tree."""
+    cleanup = _collect_cleanup_paths_for_artefact(artefact)
+    _cleanup_analysis_outputs(
+        cleanup['output_folder'],
+        cleanup['output_files'],
+        cleanup['output_dirs'],
+        cleanup['cache_dir'],
+        logger,
+    )
 
 
 def _resolve_artefact(item_id, artefact_id, root_id=None):
@@ -1291,63 +1281,10 @@ def _delete_item_files(item):
     analysis output directories, named output files, and cached partition images.
     Must be called while the ORM relationships are still intact (before db.session.delete).
     """
-    output_folder = get_output_folder()
-
     for artefact in item.artefacts:
-        # Collect analysis outputs before we lose the ORM tree.
-        all_analyses = _collect_all_analyses(artefact)
-        output_dirs = [a.output_path for a in all_analyses if a.output_path]
-        output_files = []
-        for analysis in all_analyses:
-            if analysis.details:
-                try:
-                    details = json.loads(analysis.details)
-                    if 'outputs' in details and isinstance(details['outputs'], list):
-                        for output in details['outputs']:
-                            if 'filename' in output:
-                                output_files.append(output['filename'])
-                except (json.JSONDecodeError, KeyError, TypeError) as e:
-                    current_app.logger.warning(f"Failed to parse analysis details during item delete: {e}")
-
         # Delete stored files for this artefact and all its derived artefacts.
         _delete_artefact_files(artefact)
-
-        real_output = os.path.realpath(output_folder)
-
-        # Remove named output files (e.g., flux visualisation PNGs).
-        for filename in output_files:
-            path = os.path.realpath(os.path.join(output_folder, filename))
-            if not path.startswith(real_output + os.sep):
-                current_app.logger.warning(f"Skipping out-of-bounds output file: {filename!r}")
-                continue
-            if os.path.exists(path):
-                try:
-                    os.remove(path)
-                    current_app.logger.info(f"Deleted output file: {filename}")
-                except Exception as e:
-                    current_app.logger.warning(f"Failed to delete output file {filename}: {e}")
-
-        # Remove extraction output directories (e.g., extracted disc file trees).
-        for path in output_dirs:
-            real_path = _map_output_path_to_local_root(path, output_folder)
-            if not (real_path == real_output or real_path.startswith(real_output + os.sep)):
-                current_app.logger.warning(f"Skipping out-of-bounds output directory: {path!r}")
-                continue
-            if os.path.exists(real_path):
-                try:
-                    shutil.rmtree(real_path)
-                    current_app.logger.info(f"Deleted output directory: {path}")
-                except Exception as e:
-                    current_app.logger.warning(f"Failed to delete output directory {path}: {e}")
-
-        # Remove cached decompressed partition images.
-        cache_dir = os.path.join(output_folder, '.cache', artefact.uuid)
-        if os.path.exists(cache_dir):
-            try:
-                shutil.rmtree(cache_dir)
-                current_app.logger.info(f"Deleted partition cache: {cache_dir}")
-            except Exception as e:
-                current_app.logger.warning(f"Failed to delete partition cache {cache_dir}: {e}")
+        _cleanup_artefact_outputs(artefact, current_app.logger)
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/delete', methods=['POST'])
@@ -1365,17 +1302,9 @@ def delete(item_id=None, artefact_id=None, root_id=None, uuid=None):
     label = artefact.label
 
     # Collect analysis outputs before deleting ORM rows or files.
-    cleanup = _collect_cleanup_paths_for_artefact(artefact)
-
     # Delete files for this artefact and all derived artefacts.
     _delete_artefact_files(artefact)
-    _cleanup_analysis_outputs(
-        cleanup['output_folder'],
-        cleanup['output_files'],
-        cleanup['output_dirs'],
-        cleanup['cache_dir'],
-        current_app.logger,
-    )
+    _cleanup_artefact_outputs(artefact, current_app.logger)
 
     db.session.delete(artefact)
     db.session.commit()
