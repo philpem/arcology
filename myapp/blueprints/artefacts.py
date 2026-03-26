@@ -639,7 +639,7 @@ def _redirect_to_artefact_view(artefact):
     return redirect(url_for(f'{ROUTENAME}.view', **_artefact_view_kwargs(artefact)))
 
 
-def _check_download_bypass(artefact):
+def _check_download_restrictions(artefact):
     """Return a redirect response when download restrictions block access."""
     if not artefact.restrictions:
         return None
@@ -1354,7 +1354,7 @@ def download(item_id=None, artefact_id=None, root_id=None, uuid=None):
     the current user has bypass permissions for every restriction type."""
     artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
 
-    restriction_redirect = _check_download_bypass(artefact)
+    restriction_redirect = _check_download_restrictions(artefact)
     if restriction_redirect:
         return restriction_redirect
 
@@ -1382,7 +1382,7 @@ def download_file(uuid):
     ef = ExtractedFile.query.filter_by(uuid=uuid).first_or_404()
     artefact = ef.partition.artefact
 
-    restriction_redirect = _check_download_bypass(artefact)
+    restriction_redirect = _check_download_restrictions(artefact)
     if restriction_redirect:
         return restriction_redirect
 
