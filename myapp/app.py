@@ -346,7 +346,16 @@ def _register_cli_commands(app):
             query = query.join(Item)
 
         if item_uuid:
-            query = query.filter(Item.uuid == item_uuid)
+            import re as _re
+            identifier = item_uuid
+            if _re.fullmatch(r'[0-9a-f]{32}', identifier):
+                query = query.filter(Item.uuid == identifier)
+            elif len(identifier) >= 8 and _re.fullmatch(r'[0-9a-f]{8}', identifier[:8]):
+                prefix = identifier[:8]
+                query = query.filter(Item.uuid.startswith(prefix))
+            else:
+                click.echo(f"ERROR: '{identifier}' is not a valid item UUID or URL identifier.", err=True)
+                raise SystemExit(1)
 
         if tag_name:
             query = query.filter(Item.tags.any(Tag.name == tag_name))
