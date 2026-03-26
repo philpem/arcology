@@ -18,6 +18,77 @@ from ..database import (
 )
 
 
+def _active_known_file_query():
+    """Return a KnownFile query limited to active hash databases."""
+    return (
+        KnownFile.query
+        .join(HashDatabase)
+        .filter(HashDatabase.is_active == True)
+    )
+
+
+def _filter_known_files_by_hashes(query, *, md5=None, sha1=None):
+    """Apply md5/sha1 filters to a KnownFile query."""
+    if md5:
+        return query.filter(KnownFile.md5 == md5.lower())
+    if sha1:
+        return query.filter(KnownFile.sha1 == sha1.lower())
+    return query
+
+
+def _filter_known_files_by_size(query, file_size=None):
+    """Apply an optional file_size filter to a KnownFile query."""
+    if file_size is not None:
+        query = query.filter(KnownFile.file_size == file_size)
+    return query
+
+
+def _matching_known_files_query(*, md5=None, sha1=None, file_size=None):
+    """Return an active KnownFile query for the given hashes and size."""
+    return _filter_known_files_by_size(
+        _filter_known_files_by_hashes(_active_known_file_query(), md5=md5, sha1=sha1),
+        file_size=file_size,
+    )
+
+
+def _match_file_size(candidates, file_size):
+    """Filter KnownFile candidates by file_size when both sides provide one."""
+    matches = []
+    for kf in candidates:
+        if file_size is not None and kf.file_size is not None:
+            if file_size == kf.file_size:
+                matches.append(kf)
+        else:
+            matches.append(kf)
+    return matches
+
+
+def _dedupe_known_files(matches):
+    """Deduplicate KnownFiles by (database_id, product_id)."""
+    seen_keys = set()
+    deduped = []
+    for kf in matches:
+        key = (kf.database_id, kf.product_id)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            deduped.append(kf)
+    return deduped
+
+
+def _refresh_partition_unique_counts(partition_ids):
+    """Refresh unique_files counters for all touched partitions."""
+    for pid in partition_ids:
+        partition = db.session.get(Partition, pid)
+        if partition:
+            partition.unique_files = (
+                ExtractedFile.query
+                .filter_by(partition_id=pid, is_known=False)
+                .count()
+            )
+    if partition_ids:
+        db.session.commit()
+
+
 def find_known_file(md5=None, sha1=None, file_size=None):
     """Return the best-matching active-database KnownFile for the given hashes.
 
@@ -35,17 +106,7 @@ def find_known_file(md5=None, sha1=None, file_size=None):
     """
     if not md5 and not sha1:
         return None
-    query = (
-        KnownFile.query
-        .join(HashDatabase)
-        .filter(HashDatabase.is_active == True)
-    )
-    if md5:
-        query = query.filter(KnownFile.md5 == md5.lower())
-    else:
-        query = query.filter(KnownFile.sha1 == sha1.lower())
-    if file_size is not None:
-        query = query.filter(KnownFile.file_size == file_size)
+    query = _matching_known_files_query(md5=md5, sha1=sha1, file_size=file_size)
     return query.order_by(KnownFile.id).first()
 
 
@@ -75,9 +136,7 @@ def find_all_known_files_batch(extracted_files):
 
     # Single batch query for all matching KnownFiles across active databases
     known_files = (
-        KnownFile.query
-        .join(HashDatabase)
-        .filter(HashDatabase.is_active == True)
+        _active_known_file_query()
         .filter(KnownFile.md5.in_(list(ef_by_md5.keys())))
         .options(joinedload(KnownFile.database), joinedload(KnownFile.product))
         .order_by(KnownFile.id)
@@ -94,23 +153,8 @@ def find_all_known_files_batch(extracted_files):
     for md5, efs in ef_by_md5.items():
         candidates = kf_by_md5.get(md5, [])
         for ef in efs:
-            # Filter by file_size if both sides have it
-            matches = []
-            for kf in candidates:
-                if ef.file_size is not None and kf.file_size is not None:
-                    if ef.file_size == kf.file_size:
-                        matches.append(kf)
-                else:
-                    matches.append(kf)
-            # Deduplicate by (database_id, product_id) so that different
-            # products in the same database each get their own badge.
-            seen_keys = set()
-            deduped = []
-            for kf in matches:
-                key = (kf.database_id, kf.product_id)
-                if key not in seen_keys:
-                    seen_keys.add(key)
-                    deduped.append(kf)
+            matches = _match_file_size(candidates, ef.file_size)
+            deduped = _dedupe_known_files(matches)
             if deduped:
                 result[ef.id] = deduped
 
@@ -224,16 +268,7 @@ def rescan_hashes_for_queryset(query, batch_size=500):
         db.session.commit()
 
     # Refresh unique_files counters for every touched partition.
-    for pid in affected_partition_ids:
-        partition = db.session.get(Partition, pid)
-        if partition:
-            partition.unique_files = (
-                ExtractedFile.query
-                .filter_by(partition_id=pid, is_known=False)
-                .count()
-            )
-    if affected_partition_ids:
-        db.session.commit()
+    _refresh_partition_unique_counts(affected_partition_ids)
 
     return updated, total
 
