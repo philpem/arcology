@@ -181,6 +181,57 @@ class AnalysisWorker:
         shutil.copy(source_path, dest_path)
         return filename
 
+    def fail_analysis(self, analysis_id: int, message: str, **kwargs):
+        """Report a failed analysis."""
+        self.api.update_analysis(
+            analysis_id,
+            status='failed',
+            success=False,
+            error_message=message,
+            **kwargs,
+        )
+
+    def complete_analysis(self, analysis_id: int, summary: str | None = None, **kwargs):
+        """Report a successful analysis."""
+        payload = {
+            'status': 'completed',
+            'success': True,
+            **kwargs,
+        }
+        if summary is not None:
+            payload['summary'] = summary
+        self.api.update_analysis(analysis_id, **payload)
+
+    def _get_partition(self, analysis_id, partition_uuid):
+        """Fetch partition metadata and fail cleanly when not available."""
+        resp = self.api.get(f"/partitions/{partition_uuid}")
+        if not resp:
+            self.fail_analysis(analysis_id, 'Failed to get partition info')
+            return None
+        return resp.get('partition', {})
+
+    def _list_partition_files(self, analysis_id, partition_uuid, *, show_known=True, is_archive=None, per_page=10000):
+        """Fetch partition file listings with optional filters."""
+        params = [
+            f"per_page={per_page}",
+            f"show_known={'true' if show_known else 'false'}",
+        ]
+        if is_archive is not None:
+            params.append(f"is_archive={'true' if is_archive else 'false'}")
+        resp = self.api.get(f"/partitions/{partition_uuid}/files?{'&'.join(params)}")
+        if not resp:
+            self.fail_analysis(analysis_id, 'Failed to get partition files')
+            return None
+        return resp.get('files', [])
+
+    def _find_partition_file(self, analysis_id, files, file_id):
+        """Return the file entry with the given id or fail."""
+        for f in files:
+            if f['id'] == file_id:
+                return f
+        self.fail_analysis(analysis_id, f'File {file_id} not found in partition')
+        return None
+
     # =========================================================================
     # Analysis Handlers
     # =========================================================================
@@ -1048,17 +1099,14 @@ class AnalysisWorker:
         # Get files not yet marked as archives (skip already-detected ones).
         # Must include known files (show_known=true) because archive files
         # can match the known-files database and would otherwise be hidden.
-        partition_resp = self.api.get(f"/partitions/{partition_uuid}/files?per_page=10000&is_archive=false&show_known=true")
-        if not partition_resp:
-            self.api.update_analysis(
-                analysis_id,
-                status='failed',
-                success=False,
-                error_message='Failed to get partition files'
-            )
+        files = self._list_partition_files(
+            analysis_id,
+            partition_uuid,
+            show_known=True,
+            is_archive=False,
+        )
+        if files is None:
             return
-
-        files = partition_resp.get('files', [])
 
         # Filter files to only those belonging to this archive's extraction
         # context.  Without this, nested ARCHIVE_DETECT jobs pick up files
@@ -1466,43 +1514,17 @@ class AnalysisWorker:
             return
 
         # Get partition and item metadata from API
-        partition_resp = self.api.get(f"/partitions/{partition_uuid}")
-        if not partition_resp:
-            self.api.update_analysis(
-                analysis_id,
-                status='failed',
-                success=False,
-                error_message='Failed to get partition info'
-            )
+        partition = self._get_partition(analysis_id, partition_uuid)
+        if partition is None:
             return
-
-        partition = partition_resp.get('partition', {})
 
         # Find the file in the partition
-        files_resp = self.api.get(f"/partitions/{partition_uuid}/files?per_page=10000")
-        if not files_resp:
-            self.api.update_analysis(
-                analysis_id,
-                status='failed',
-                success=False,
-                error_message='Failed to get partition files'
-            )
+        files = self._list_partition_files(analysis_id, partition_uuid)
+        if files is None:
             return
 
-        # Find our specific file
-        target_file = None
-        for f in files_resp.get('files', []):
-            if f['id'] == file_id:
-                target_file = f
-                break
-
-        if not target_file:
-            self.api.update_analysis(
-                analysis_id,
-                status='failed',
-                success=False,
-                error_message=f'File {file_id} not found in partition'
-            )
+        target_file = self._find_partition_file(analysis_id, files, file_id)
+        if target_file is None:
             return
 
         # Determine extraction path: prefer value passed through hints (set by the
