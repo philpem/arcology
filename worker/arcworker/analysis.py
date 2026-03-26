@@ -2055,7 +2055,6 @@ class AnalysisWorker:
         details: dict = {k: v for k, v in detection.items()
                          if k not in ('module_data', 'real_root', 'stripped_root')}
         if detection.get('module_data'):
-            details['module_data_hex'] = detection['module_data'].hex()
             details['module_data_length'] = len(detection['module_data'])
             module_path = work_dir / 'ARMlock_module'
             module_path.write_bytes(detection['module_data'])
