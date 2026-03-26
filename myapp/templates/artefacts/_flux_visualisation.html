@@ -1,0 +1,43 @@
+{% if flux_visualisation_analysis and flux_visualisation_analysis.get('outputs') %}
+{% set fv_outputs = flux_visualisation_analysis.get('outputs', []) | selectattr('type', 'equalto', 'image') | list %}
+{% if fv_outputs %}
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center rp-summary"
+         style="cursor: pointer;" data-bs-toggle="collapse" data-bs-target="#fluxVisualisationCollapse"
+         aria-expanded="false" aria-controls="fluxVisualisationCollapse">
+        <span>
+            <i class="bi bi-image"></i> Flux Visualisation
+            <span class="badge bg-secondary ms-1">{{ fv_outputs | length }}</span>
+        </span>
+        <div>
+            <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=flux_visualisation_analysis['_analysis_uuid']) }}"
+               class="btn btn-sm btn-outline-secondary me-1" onclick="event.stopPropagation()">
+                <i class="bi bi-search"></i> Raw Analysis
+            </a>
+            <i class="bi bi-chevron-right rp-chevron"></i>
+        </div>
+    </div>
+    <div class="collapse" id="fluxVisualisationCollapse">
+        <div class="card-body">
+            <div class="row">
+                {% for output in fv_outputs %}
+                <div class="col-md-6 mb-3">
+                    <div class="card">
+                        <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=output.filename) }}" target="_blank">
+                            <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=output.filename) }}"
+                                 class="card-img-top"
+                                 alt="{{ output.description }}"
+                                 style="cursor: pointer;">
+                        </a>
+                        <div class="card-body py-2">
+                            <small class="text-muted">{{ output.description }} ({{ output.tool }})</small>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endif %}

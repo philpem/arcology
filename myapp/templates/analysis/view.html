@@ -103,9 +103,9 @@
                     {% if output.type == 'image' %}
                     <div class="col-md-6 mb-3">
                         <div class="card">
-                            <a href="{{ url_for('myapp_blueprints_api.get_output_file', filename=output.filename) }}" target="_blank">
-                                <img src="{{ url_for('myapp_blueprints_api.get_output_file', filename=output.filename) }}" 
-                                     class="card-img-top" 
+                            <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=output.filename) }}" target="_blank">
+                                <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=output.filename) }}"
+                                     class="card-img-top"
                                      alt="{{ output.description }}"
                                      style="cursor: pointer;">
                             </a>

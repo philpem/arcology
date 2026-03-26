@@ -50,6 +50,7 @@ def analysis_to_dict(analysis, include_artefact=False):
     }
     if include_artefact:
         result['artefact'] = {'id': analysis.artefact.id, 'uuid': analysis.artefact.uuid,
+                             'slug': analysis.artefact.slug,
                              'label': analysis.artefact.label,
                              'original_filename': analysis.artefact.original_filename,
                              'storage_path': analysis.artefact.storage_path,

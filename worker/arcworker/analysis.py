@@ -166,20 +166,28 @@ class AnalysisWorker:
 
         return result
 
-    def save_output_file(self, source_path: Path, filename: str) -> str:
+    def save_output_file(self, source_path: Path, filename: str, subdir: str | None = None) -> str:
         """
         Save an output file (like a visualisation) to the outputs directory.
 
         Args:
             source_path: Path to the generated file
             filename: Destination filename
+            subdir: Optional subdirectory within outputs (e.g. '{item_uuid}_{item_slug}/{artefact_uuid}_{artefact_slug}')
 
         Returns:
-            The filename (relative path for URLs)
+            The relative path for use in URLs (subdir/filename or just filename)
         """
-        dest_path = self.outputs / filename
+        if subdir:
+            dest_dir = self.outputs / subdir
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest_path = dest_dir / filename
+            relative_path = f"{subdir}/{filename}"
+        else:
+            dest_path = self.outputs / filename
+            relative_path = filename
         shutil.copy(source_path, dest_path)
-        return filename
+        return relative_path
 
     def fail_analysis(self, analysis_id: int, error_message: str, **kwargs):
         """Report a failed analysis to the API."""
@@ -260,6 +268,16 @@ class AnalysisWorker:
 
         input_path = self.get_input_path(artefact, work_dir)
 
+        # Build output subdirectory: {item_uuid}_{item_slug}/{artefact_uuid}_{artefact_slug}
+        item = artefact.get('item', {})
+        item_uuid = item.get('uuid', '')
+        item_slug = item.get('slug', '')
+        artefact_uuid = artefact.get('uuid', '')
+        artefact_slug = artefact.get('slug', '')
+        item_part = f"{item_uuid}_{item_slug}" if item_slug else item_uuid
+        artefact_part = f"{artefact_uuid}_{artefact_slug}" if artefact_slug else artefact_uuid
+        output_subdir = f"{item_part}/{artefact_part}" if (item_part and artefact_part) else None
+
         outputs = []
 
         # Try Fluxfox first (more detailed)
@@ -268,7 +286,7 @@ class AnalysisWorker:
         result_fluxfox = flux_visualisation_fluxfox(input_path, output_fluxfox)
 
         if result_fluxfox['success']:
-            saved_name = self.save_output_file(output_fluxfox, f"{analysis_uuid}_fluxfox.png")
+            saved_name = self.save_output_file(output_fluxfox, f"{analysis_uuid}_fluxfox.png", subdir=output_subdir)
             outputs.append({
                 'tool': 'fluxfox',
                 'type': 'image',
@@ -281,7 +299,7 @@ class AnalysisWorker:
         result_hxcfe = flux_visualisation_hxcfe(input_path, output_hxcfe)
 
         if result_hxcfe['success']:
-            saved_name = self.save_output_file(output_hxcfe, f"{analysis_uuid}_hxcfe.png")
+            saved_name = self.save_output_file(output_hxcfe, f"{analysis_uuid}_hxcfe.png", subdir=output_subdir)
             outputs.append({
                 'tool': 'hxcfe',
                 'type': 'image',
