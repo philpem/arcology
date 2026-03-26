@@ -53,6 +53,26 @@ _DR_DISC_SIZE = 0x10      # ui32le: disc/partition size in bytes
 _DR_DISC_NAME = 0x16      # 10 bytes, CR or null terminated
 
 
+def _validate_filecore_boot_block_checksum(boot_block: bytes) -> bool:
+    """Validate a 512-byte FileCore boot block checksum.
+
+    The checksum byte at offset 0x1FF is computed by walking backwards from
+    byte 0x1FE to 0x000, accumulating each byte with 8-bit carry propagation,
+    and storing the result at 0x1FF.  Simple modular addition (sum % 256)
+    gives a different result whenever the running total carries, so it must
+    not be used here.
+
+    Reference: partition_ics_idefs.md, "Boot Block Checksum" section.
+    """
+    if len(boot_block) < FILECORE_BOOT_BLOCK_SIZE:
+        return False
+    s = 0
+    for i in range(510, -1, -1):
+        s += boot_block[i]
+        s = (s & 0xFF) + (s >> 8)
+    return (s & 0xFF) == boot_block[511]
+
+
 # =========================================================================
 # SJ Research Nexus Disc Sharer constants
 # =========================================================================
@@ -319,7 +339,7 @@ def _detect_ics_partitions(input_path: Path) -> dict:
                 boot_block = f.read(FILECORE_BOOT_BLOCK_SIZE)
 
             if len(boot_block) == FILECORE_BOOT_BLOCK_SIZE:
-                bb_checksum_ok = (sum(boot_block) & 0xFF == 0)
+                bb_checksum_ok = _validate_filecore_boot_block_checksum(boot_block)
                 partition_info['boot_block_valid'] = bb_checksum_ok
 
                 # Extract protection flags and password hashes
@@ -646,7 +666,7 @@ def _detect_nexus_partitions(input_path: Path) -> dict:
             # strings with embedded NUL characters that PostgreSQL rejects.
             disc_name = ''
             if len(boot_block) >= FILECORE_BOOT_BLOCK_SIZE:
-                bb_checksum_ok = (sum(boot_block) & 0xFF == 0)
+                bb_checksum_ok = _validate_filecore_boot_block_checksum(boot_block)
                 if bb_checksum_ok:
                     dr = _parse_filecore_disc_record(boot_block[FILECORE_BB_DISC_RECORD_OFFSET:])
                     disc_name = dr.get('disc_name', '')
