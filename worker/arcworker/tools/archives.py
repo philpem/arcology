@@ -125,28 +125,45 @@ def _check_7z_paths(input_path: Path) -> None:
 
 
 def _check_rar_paths(input_path: Path) -> None:
-    """Reject the archive if unrar reports any absolute-path or traversal entry.
+    """Reject the archive if unrar reports any absolute-path, traversal, or link entry.
 
-    Uses 'unrar vb' bare listing, which prints one path per line with no
-    column formatting, making it straightforward to parse reliably.
+    Uses 'unrar lt' technical listing, which provides 'Name:' and 'Type:' fields
+    per member.  This allows detection of symbolic and hard links (both of which
+    carry 'link' in their Type value) before any extractor runs.
 
     Raises:
-        ValueError: If an unsafe path is found or the listing times out.
+        ValueError: If an unsafe path, traversal component, or link entry is
+                    found, or if the listing times out.
     """
     try:
         result = subprocess.run(
-            ['unrar', 'vb', str(input_path)],
+            ['unrar', 'lt', str(input_path)],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60,
         )
     except subprocess.TimeoutExpired:
         raise ValueError('unrar listing timed out — archive rejected')
-    for name in result.stdout.decode('utf-8', errors='replace').splitlines():
-        name = name.rstrip('/')
-        if not name:
-            continue
-        parts = name.replace('\\', '/').split('/')
-        if os.path.isabs(name) or '..' in parts:
-            raise ValueError(f'Unsafe path in RAR archive: {name!r}')
+
+    current_name: str | None = None
+    for line in result.stdout.decode('utf-8', errors='replace').splitlines():
+        line = line.strip()
+        if line.startswith('Name:'):
+            # Validate the previous entry before moving on to the next.
+            if current_name is not None:
+                parts = current_name.replace('\\', '/').split('/')
+                if os.path.isabs(current_name) or '..' in parts:
+                    raise ValueError(f'Unsafe path in RAR archive: {current_name!r}')
+            current_name = line[5:].strip()
+        elif line.startswith('Type:'):
+            type_val = line[5:].strip().lower()
+            # 'Symbolic link', 'Hard link', etc. — any link type is rejected.
+            if 'link' in type_val:
+                raise ValueError(f'Link entry in RAR archive: {current_name!r}')
+
+    # Validate the final entry.
+    if current_name is not None:
+        parts = current_name.replace('\\', '/').split('/')
+        if os.path.isabs(current_name) or '..' in parts:
+            raise ValueError(f'Unsafe path in RAR archive: {current_name!r}')
 
 
 def _assert_confined(output_dir: Path) -> None:
@@ -433,6 +450,10 @@ def extract_rar(input_path: Path, output_dir: Path) -> Dict[str, Any]:
 
     normalize_extracted_filenames(output_dir)
     sanitize_extracted_tree(output_dir)
+    try:
+        _assert_confined(output_dir)
+    except ValueError as e:
+        return {'success': False, 'error': str(e), 'tool': 'unrar'}
 
     file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
 
@@ -519,8 +540,9 @@ def decompress_single_file(input_path: Path, output_file: Path, compressor: str)
     # not only after the loop exits.
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        outcome = stream_to_file(proc, output_file, MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT)
-        proc.stdout.close()
+        outcome, stderr_bytes = stream_to_file(
+            proc, output_file, MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT
+        )
         proc.wait()
 
         if outcome == 'timeout':
@@ -542,7 +564,7 @@ def decompress_single_file(input_path: Path, output_file: Path, compressor: str)
                 'tool': compressor,
             }
 
-        stderr_text = proc.stderr.read().decode('utf-8', errors='replace')
+        stderr_text = stderr_bytes.decode('utf-8', errors='replace')
         if proc.returncode != 0:
             return {
                 'success': False,

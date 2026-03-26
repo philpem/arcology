@@ -7,6 +7,7 @@ Handles decompression of compressed input files before analysis.
 import select
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -33,29 +34,48 @@ def stream_to_file(
     output_path: Path,
     max_bytes: int,
     timeout: float,
-) -> str:
+) -> tuple[str, bytes]:
     """Stream proc.stdout to output_path, enforcing byte and time limits.
 
-    Uses select() to poll for data so the read loop never blocks longer than
-    ~1 second at a time.  This means the TOOL_TIMEOUT deadline is checked on
-    every iteration even if the subprocess produces no output.
+    Uses select() to poll stdout so the read loop never blocks longer than ~1
+    second at a time, meaning the timeout deadline is checked every iteration
+    even if the subprocess produces no output.
 
-    Returns one of:
-        'ok'            — completed normally
-        'size_exceeded' — killed because output would exceed max_bytes
-        'timeout'       — killed because wall-clock time exceeded timeout
+    Stderr is drained concurrently by a daemon thread so the subprocess can
+    never block on a full stderr pipe while the main loop is reading stdout.
 
-    The caller is responsible for calling proc.stdout.close() and proc.wait()
-    after this function returns.
+    Closes proc.stdout and proc.stderr before returning.  The caller is
+    responsible for proc.wait().
+
+    Returns:
+        (outcome, stderr_bytes) where outcome is one of:
+            'ok'            — completed normally
+            'size_exceeded' — killed because output would exceed max_bytes
+            'timeout'       — killed because wall-clock time exceeded timeout
     """
+    stderr_buf: list[bytes] = []
+
+    def _drain_stderr() -> None:
+        try:
+            for chunk in iter(lambda: proc.stderr.read(4096), b''):
+                stderr_buf.append(chunk)
+        except OSError:
+            pass
+
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stderr_thread.start()
+
     deadline = time.monotonic() + timeout
     written = 0
+    outcome = 'ok'
+
     with open(output_path, 'wb') as dst:
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 proc.kill()
-                return 'timeout'
+                outcome = 'timeout'
+                break
             # Poll with a 1 s interval so we always re-check the deadline.
             ready, _, _ = select.select([proc.stdout], [], [], min(remaining, 1.0))
             if not ready:
@@ -68,9 +88,14 @@ def stream_to_file(
             written += len(chunk)
             if written > max_bytes:
                 proc.kill()
-                return 'size_exceeded'
+                outcome = 'size_exceeded'
+                break
             dst.write(chunk)
-    return 'ok'
+
+    proc.stdout.close()
+    stderr_thread.join(timeout=5.0)
+    proc.stderr.close()
+    return outcome, b''.join(stderr_buf)
 
 
 def decompress_if_needed(input_path: Path, work_dir: Path) -> Path:
@@ -112,8 +137,9 @@ def decompress_if_needed(input_path: Path, work_dir: Path) -> Path:
             stderr=subprocess.PIPE,
             cwd=work_dir,
         )
-        outcome = stream_to_file(proc, decompressed_path, MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT)
-        proc.stdout.close()
+        outcome, stderr_bytes = stream_to_file(
+            proc, decompressed_path, MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT
+        )
         proc.wait()
 
         if outcome == 'timeout':
@@ -131,7 +157,7 @@ def decompress_if_needed(input_path: Path, work_dir: Path) -> Path:
                 f"({input_path.name})"
             )
 
-        stderr_text = proc.stderr.read().decode()
+        stderr_text = stderr_bytes.decode('utf-8', errors='replace')
         compressed_copy.unlink(missing_ok=True)
 
         if proc.returncode != 0:
