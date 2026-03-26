@@ -69,8 +69,8 @@ class AnalysisType(enum.Enum):
     DISC_MASTERING_DETECT  = "disc_mastering_detect"  # Mastering/duplicator fingerprint data
     DISC_PROTECTION_DETECT = "disc_protection_detect" # Copy protection signals
 
-    # Copy protection removal
-    ARMLOCK_REMOVE         = "armlock_remove"         # Remove ARMlock copy protection from ADFS disc images
+    # Disc security removal
+    ARMLOCK_REMOVE         = "armlock_remove"         # Remove ARMlock disc security from ADFS disc images
 
     # Known-product recognition
     PRODUCT_RECOGNITION    = "product_recognition"    # Match extracted files against known-product definitions

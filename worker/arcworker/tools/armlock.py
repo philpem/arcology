@@ -1,14 +1,15 @@
 """
-Detect and remove ARMlock copy protection from Filecore disc images.
+Detect and remove ARMlock disc security from Filecore disc images.
 
-ARMlock (by Digital Services) protects ADFS discs by:
-- Replacing the real root directory with a stripped "demo" copy containing
-  only an !Boot application that loads the ARMlock module
+ARMlock (by Digital Services) is a disc security package used in schools to
+prevent pupils from deleting applications or damaging system files.  It works by:
+- Replacing the real root directory with a stripped copy containing only an
+  !Boot file that loads the ARMlock module
 - Stashing the real root directory at disc address 0x400
 - Encoding the boot_option field in both copies of the zone map header
 
 Disc Image Manager cannot extract files from a protected image because it
-sees only the fake root directory.  The protection must be detected and
+sees only the stripped root directory.  The security must be detected and
 removed before passing the image to DIM.
 
 This module provides two public functions:
@@ -283,35 +284,71 @@ def _read_subdir_by_sin(image: bytearray, rec: dict, sin: int) -> tuple[bool, li
 def _parse_module_header(data: bytes) -> dict:
     """Extract title and help strings from a RISC OS module header.
 
-    RISC OS module header layout (all fields are word-sized offsets relative
-    to the start of the module data):
+    RISC OS module header layout (offsets are bytes from module start):
       +0x10: title string offset  (e.g. "ARMlock")
       +0x14: help string offset   (e.g. "ARMlock\\t1.00 (01 Jan 1994)")
 
     The help string conventionally has the format:
       "<name>\\t<version> (<date>)"
     The part after the tab is the version/date string.
+
+    Tries module-start-relative offsets first, then self-relative (offset
+    from the word's own address), then falls back to scanning for the
+    title string literal — covering variations in how ARMlock was built.
     """
     info: dict = {'title': None, 'help_string': None, 'version': None}
     if len(data) < 0x18:
         return info
 
     def _read_cstr(off: int) -> str | None:
-        if off <= 0 or off >= len(data):
+        if off == 0 or off >= len(data):
             return None
         end = off
-        while end < len(data) and data[end] not in (0x00, 0x0D):
+        while end < len(data) and data[end] not in (0x00, 0x0D, 0xFF):
             end += 1
-        return data[off:end].decode('ascii', errors='replace').strip()
+        if end == off:
+            return None
+        try:
+            s = data[off:end].decode('ascii', errors='strict').strip()
+        except UnicodeDecodeError:
+            return None
+        return s if s else None
 
-    title_off = struct.unpack_from('<I', data, 0x10)[0]
-    help_off  = struct.unpack_from('<I', data, 0x14)[0]
+    title_raw = struct.unpack_from('<I', data, 0x10)[0]
+    help_raw  = struct.unpack_from('<I', data, 0x14)[0]
 
-    info['title'] = _read_cstr(title_off)
-    help_str = _read_cstr(help_off)
+    # Attempt 1: module-start-relative (RISC OS PRM standard)
+    title = _read_cstr(title_raw)
+    help_str = _read_cstr(help_raw)
+
+    # Attempt 2: self-relative (offset from the word's own address)
+    if title is None and title_raw > 0:
+        title = _read_cstr(0x10 + title_raw)
+    if help_str is None and help_raw > 0:
+        help_str = _read_cstr(0x14 + help_raw)
+
+    # Attempt 3: scan for "ARMlock" literal in the binary data
+    if title is None:
+        for marker in (b'ARMlock\x00', b'ARMlock\r', b'ARMlock\xff',
+                       b'ARMLOCK\x00', b'ArmLock\x00'):
+            idx = data.find(marker[:-1])
+            if idx >= 0:
+                t = _read_cstr(idx)
+                if t:
+                    title = t
+                    break
+
+    info['title'] = title
+
+    # If help string still missing but we have a title, search for "<title>\t"
+    if help_str is None and title:
+        search = title.encode('ascii') + b'\t'
+        idx = data.find(search)
+        if idx >= 0:
+            help_str = _read_cstr(idx)
+
     if help_str:
         info['help_string'] = help_str
-        # Version is everything after the first tab character
         if '\t' in help_str:
             info['version'] = help_str.split('\t', 1)[1].strip()
 
@@ -428,10 +465,17 @@ def detect_armlock(image_path: Path) -> dict:
     # This directory holds the security configuration: settings, serial
     # number and password hashes.  Extract all small files (≤ 4 KB) as
     # hex so they can be displayed without storing huge amounts of data.
+    #
+    # The is_dir attribute flag can be unreliable, so we match the entry by
+    # name only.  Inside $.ARMlock the layout is typically:
+    #   $.ARMlock.!ARMlock/   -- ARMlock application (settings, options)
+    #   $.ARMlock.BootUp/     -- Boot configuration files
+    # We detect subdirectories by attempting to parse them as ADFS directories
+    # (Hugo/Nick magic check) rather than relying on is_dir.
     if valid_r:
         config_dir_entry = next(
             (e for e in real_entries
-             if e['is_dir'] and e['name'].lower() in ('armlock', '!armlock')),
+             if e['name'].lower() in ('armlock', '!armlock')),
             None
         )
         if config_dir_entry:
@@ -439,7 +483,25 @@ def detect_armlock(image_path: Path) -> dict:
             if valid_cd:
                 config_files: dict = {}
                 for fe in config_entries:
-                    if not fe['is_dir'] and 0 < fe['length'] <= 4096:
+                    # Try to read as a subdirectory (Hugo/Nick magic confirms it)
+                    valid_sd, sd_entries = _read_subdir_by_sin(image, rec, fe['sin'])
+                    if valid_sd:
+                        prefix = fe['name'] + '/'
+                        for sfe in sd_entries:
+                            if 0 < sfe['length'] <= 4096:
+                                # Verify it's not itself a directory before extracting
+                                valid_ssd, _ = _read_subdir_by_sin(image, rec, sfe['sin'])
+                                if not valid_ssd:
+                                    file_data = _extract_file_by_sin(
+                                        image, rec, sfe['sin'], sfe['length'])
+                                    if file_data:
+                                        config_files[prefix + sfe['name']] = {
+                                            'length': sfe['length'],
+                                            'filetype': sfe['filetype'],
+                                            'hex': file_data.hex(),
+                                        }
+                    elif 0 < fe['length'] <= 4096:
+                        # Not a directory — extract as a file
                         file_data = _extract_file_by_sin(image, rec, fe['sin'], fe['length'])
                         if file_data:
                             config_files[fe['name']] = {

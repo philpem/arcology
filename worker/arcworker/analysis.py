@@ -1992,7 +1992,7 @@ class AnalysisWorker:
 
     @analysis_handler("ARMlock removal")
     def process_armlock_detect(self, analysis: dict, artefact: dict, work_dir: Path):
-        """Remove ARMlock copy protection from a confirmed-protected ADFS disc image.
+        """Remove ARMlock disc security from a confirmed-protected ADFS disc image.
 
         This handler is only queued by PARTITION_DETECT when the ARMlock signature
         has already been found on an ADFS partition.  It re-runs detection to capture
@@ -2050,7 +2050,10 @@ class AnalysisWorker:
         # Serialise module bytes as hex for JSON storage; also register as a
         # derived UNKNOWN artefact so it can be downloaded for offline analysis.
         # The module contains the protection code and password data.
-        details: dict = {k: v for k, v in detection.items() if k != 'module_data'}
+        # Exclude raw module bytes (stored separately as an artefact) and the
+        # real_root listing (FILE_EXTRACTION on the cleaned image covers this).
+        details: dict = {k: v for k, v in detection.items()
+                         if k not in ('module_data', 'real_root', 'stripped_root')}
         if detection.get('module_data'):
             details['module_data_hex'] = detection['module_data'].hex()
             details['module_data_length'] = len(detection['module_data'])
@@ -2085,10 +2088,8 @@ class AnalysisWorker:
                     AnalysisType.FILE_EXTRACTION.value,
                     hints={'filesystem': filesystem_hint, 'partition_index': partition_index},
                 )
-                real_entry_count = len(detection.get('real_root', []))
                 summary = (
-                    f'ARMlock protection detected and removed. '
-                    f'Real root has {real_entry_count} entr{"y" if real_entry_count == 1 else "ies"}. '
+                    f'ARMlock disc security detected and removed. '
                     f'Cleaned artefact queued for file extraction.'
                 )
                 if detection.get('module_data'):

@@ -427,10 +427,9 @@
         {% set al_removed = armlock_analysis.get('removal', {}).get('success', False) %}
         {% set al_cfg = armlock_analysis.get('armlock_config', {}) %}
         <div class="card mb-4 border-warning">
-            <div class="card-header d-flex justify-content-between align-items-center bg-warning bg-opacity-25"
-                 style="cursor: pointer;" data-bs-toggle="collapse" data-bs-target="#armlockCollapse"
-                 aria-expanded="true" aria-controls="armlockCollapse">
-                <span>
+            <div class="card-header d-flex justify-content-between align-items-center bg-warning bg-opacity-25">
+                <span style="cursor: pointer;" data-bs-toggle="collapse" data-bs-target="#armlockCollapse"
+                      aria-expanded="true" aria-controls="armlockCollapse">
                     <i class="bi bi-unlock-fill"></i>
                     <strong>ARMlock Disc Security</strong>
                     {% if al_removed %}
@@ -441,10 +440,11 @@
                 </span>
                 <div>
                     <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=armlock_analysis['_analysis_uuid']) }}"
-                       class="btn btn-sm btn-outline-secondary me-1" onclick="event.stopPropagation()">
+                       class="btn btn-sm btn-outline-secondary me-1">
                         <i class="bi bi-search"></i> Raw Analysis
                     </a>
-                    <i class="bi bi-chevron-down"></i>
+                    <i class="bi bi-chevron-down" style="cursor: pointer;"
+                       data-bs-toggle="collapse" data-bs-target="#armlockCollapse"></i>
                 </div>
             </div>
             <div class="collapse show" id="armlockCollapse">
@@ -541,8 +541,8 @@
                         </div>
                     </details>
                     {% endfor %}
-                    {% elif armlock_analysis.get('real_root') %}
-                    <p class="small text-muted">No $.Armlock directory found in root.</p>
+                    {% else %}
+                    <p class="small text-muted">No $.Armlock directory found.</p>
                     {% endif %}
                 </div>
             </div>
