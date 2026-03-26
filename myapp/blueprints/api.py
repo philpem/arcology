@@ -130,6 +130,53 @@ def _check_nul_bytes(data: dict, fields: list) -> str | None:
     return None
 
 
+def _json_data(*, force: bool = False):
+    """Return decoded JSON payload, preserving Flask's normal error handling."""
+    return request.get_json(force=force)
+
+
+def _json_object(*, force: bool = False, required: bool = False):
+    """Return a JSON object payload or a ready-made error response."""
+    data = _json_data(force=force)
+    if data is None:
+        if required:
+            return None, error_response('JSON body required')
+        return {}, None
+    if not isinstance(data, dict):
+        return None, error_response('JSON object required')
+    return data, None
+
+
+def _json_array(*, force: bool = False, required: bool = False):
+    """Return a JSON array payload or a ready-made error response."""
+    data = _json_data(force=force)
+    if data is None:
+        if required:
+            return None, error_response('JSON body required')
+        return [], None
+    if not isinstance(data, list):
+        return None, error_response('expected a JSON array')
+    return data, None
+
+
+def _require_fields(data: dict, *fields: str):
+    """Return an error response if any required fields are missing."""
+    missing = [field for field in fields if field not in data]
+    if missing:
+        return error_response(', '.join(missing) + ' are required')
+    return None
+
+
+def _nul_error(data: dict, fields: list[str]):
+    """Return a standard NUL-byte validation error response, if needed."""
+    bad_field = _check_nul_bytes(data, fields)
+    if bad_field:
+        return error_response(
+            f"Field '{bad_field}' contains NUL characters (0x00) which are not permitted in text fields"
+        )
+    return None
+
+
 def _validate_storage_path(path: str) -> bool:
     """Return True only if path is a safe relative filename with no traversal.
 
@@ -210,8 +257,10 @@ def list_items():
 @blueprint.route('/items', methods=['POST'])
 @require_auth('read_upload')
 def create_item():
-    data = request.get_json()
-    if not data or 'name' not in data:
+    data, error = _json_object(required=True)
+    if error:
+        return error
+    if 'name' not in data:
         return error_response('Name is required')
     
     item = Item(name=data['name'], description=data.get('description'),
@@ -241,7 +290,9 @@ def get_item(uuid):
 @require_auth('read_write')
 def update_item(uuid):
     item = Item.query.filter_by(uuid=uuid).first_or_404()
-    data = request.get_json()
+    data, error = _json_object(required=True)
+    if error:
+        return error
     if 'name' in data: item.name = data['name']
     if 'description' in data: item.description = data['description']
     if 'platform_id' in data: item.platform_id = data['platform_id']
@@ -268,8 +319,11 @@ def delete_item(uuid):
 @require_auth('read_upload')
 def add_artefact(item_uuid):
     item = Item.query.filter_by(uuid=item_uuid).first_or_404()
-    data = request.get_json()
-    if not data or 'label' not in data or 'storage_path' not in data or 'original_filename' not in data:
+    data, error = _json_object(required=True)
+    if error:
+        return error
+    missing = _require_fields(data, 'label', 'storage_path', 'original_filename')
+    if missing:
         return error_response('Label, storage_path and original_filename are required')
 
     try:
@@ -318,7 +372,9 @@ def delete_artefact(uuid):
 def update_artefact(uuid):
     """Update mutable fields on an artefact (md5 and sha256)."""
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
-    data = request.get_json() or {}
+    data, error = _json_object()
+    if error:
+        return error
     if 'md5' in data:
         artefact.md5 = data['md5']
     if 'sha256' in data:
@@ -379,17 +435,17 @@ def download_extracted_file(uuid):
 @require_auth('read_upload')
 def request_analysis(uuid):
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
-    data = request.get_json() or {}
+    data, error = _json_object()
+    if error:
+        return error
     try:
         analysis_type = AnalysisType(data.get('analysis_type', 'metadata_extract'))
     except ValueError:
         return error_response('Invalid analysis_type')
 
-    bad_field = _check_nul_bytes(data, ['tool_name', 'hints'])
-    if bad_field:
-        return error_response(
-            f"Field '{bad_field}' contains NUL characters (0x00) which are not permitted in text fields"
-        )
+    nul_error = _nul_error(data, ['tool_name', 'hints'])
+    if nul_error:
+        return nul_error
 
     # Idempotency: return existing PENDING/RUNNING analysis instead of creating a
     # duplicate.  COMPLETED/FAILED analyses may be intentionally re-run, so only
@@ -443,16 +499,16 @@ def update_analysis(id):
     a job. This prevents race conditions when multiple workers try to
     claim the same job.
     """
-    data = request.get_json()
+    data, error = _json_object(required=True)
+    if error:
+        return error
 
-    bad_field = _check_nul_bytes(data, [
+    nul_error = _nul_error(data, [
         'tool_name', 'tool_version', 'output_url', 'output_path',
         'summary', 'details', 'error_message',
     ])
-    if bad_field:
-        return error_response(
-            f"Field '{bad_field}' contains NUL characters (0x00) which are not permitted in text fields"
-        )
+    if nul_error:
+        return nul_error
 
     # Fields that drive the analysis lifecycle, downstream behaviour, or
     # operator-visible audit data may only be set by the worker process.
@@ -640,21 +696,17 @@ def produce_artefact(id):
     if not _is_worker_request():
         return error_response('Only the worker may register derived artefacts', 403)
     analysis = Analysis.query.get_or_404(id)
-    data = request.get_json()
+    data, error = _json_object(required=True)
+    if error:
+        return error
 
-    if not data:
-        return error_response('JSON body required')
-    
-    required = ['label', 'original_filename', 'storage_path', 'artefact_type']
-    for field in required:
-        if field not in data:
-            return error_response(f'{field} is required')
+    missing = _require_fields(data, 'label', 'original_filename', 'storage_path', 'artefact_type')
+    if missing:
+        return missing
 
-    bad_field = _check_nul_bytes(data, ['label', 'original_filename', 'description', 'storage_path'])
-    if bad_field:
-        return error_response(
-            f"Field '{bad_field}' contains NUL characters (0x00) which are not permitted in text fields"
-        )
+    nul_error = _nul_error(data, ['label', 'original_filename', 'description', 'storage_path'])
+    if nul_error:
+        return nul_error
 
     if not _validate_storage_path(data['storage_path']):
         return error_response('Invalid storage_path')
@@ -773,7 +825,9 @@ def add_partition(uuid):
     if not _is_worker_request():
         return error_response('Only the worker may register partitions', 403)
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
-    data = request.get_json()
+    data, error = _json_object(required=True)
+    if error:
+        return error
     try:
         filesystem = FilesystemType(data.get('filesystem', 'unknown'))
     except ValueError:
@@ -817,7 +871,9 @@ def add_files(uuid):
     if not _is_worker_request():
         return error_response('Only the worker may register extracted files', 403)
     partition = Partition.query.filter_by(uuid=uuid).first_or_404()
-    data = request.get_json()
+    data, error = _json_object(required=True)
+    if error:
+        return error
     if 'files' not in data:
         return error_response('files array required')
 
@@ -918,7 +974,9 @@ def get_partition_files(uuid):
 def mark_file_as_archive(file_id):
     """Mark a file as an archive and update its metadata."""
     file = ExtractedFile.query.get_or_404(file_id)
-    data = request.get_json()
+    data, error = _json_object(required=True)
+    if error:
+        return error
 
     file.is_archive = data.get('is_archive', True)
     file.archive_format = data.get('archive_format')
@@ -1267,7 +1325,9 @@ def get_hash_database(id):
 @blueprint.route('/hash-databases', methods=['POST'])
 @require_auth('read_write')
 def create_hash_database():
-    data = request.get_json(force=True) or {}
+    data, error = _json_object(force=True)
+    if error:
+        return error
     if not data.get('name'):
         return error_response('name is required')
     if HashDatabase.query.filter_by(name=data['name']).first():
@@ -1289,7 +1349,9 @@ def create_hash_database():
 @require_auth('read_write')
 def create_known_product(db_id):
     database = HashDatabase.query.get_or_404(db_id)
-    data = request.get_json(force=True) or {}
+    data, error = _json_object(force=True)
+    if error:
+        return error
     if not data.get('title'):
         return error_response('title is required')
     product = KnownProduct(
@@ -1308,7 +1370,11 @@ def create_known_product(db_id):
 def add_known_files_bulk(db_id, pid):
     database = HashDatabase.query.get_or_404(db_id)
     product = KnownProduct.query.filter_by(id=pid, database_id=db_id).first_or_404()
-    data = request.get_json(force=True) or {}
+    data = _json_data(force=True)
+    if data is None:
+        data = {}
+    if not isinstance(data, (dict, list)):
+        return error_response('JSON object or array required')
     files = data if isinstance(data, list) else data.get('files', [])
     if not files:
         return error_response('files array is required')
@@ -1374,9 +1440,9 @@ def hash_database_recognition_config():
 def report_recognised_products(uuid):
     """Worker reports product recognition results for a partition."""
     partition = Partition.query.filter_by(uuid=uuid).first_or_404()
-    data = request.get_json(force=True) or []
-    if not isinstance(data, list):
-        return error_response('expected a JSON array')
+    data, error = _json_array(force=True)
+    if error:
+        return error
 
     # Delete existing recognition results for this partition (re-scan replaces old results)
     RecognisedProduct.query.filter_by(partition_id=partition.id).delete()
