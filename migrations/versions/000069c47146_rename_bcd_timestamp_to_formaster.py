@@ -1,14 +1,14 @@
 """Rename mastering type bcd_timestamp to formaster
 
 Revision ID: 000069c47146
-Revises: 000069c4322f
+Revises: 000069c2d753
 Create Date: 2026-03-25
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = '000069c47146'
-down_revision = '000069c4322f'
+down_revision = '000069c2d753'
 branch_labels = None
 depends_on = None
 
