@@ -44,6 +44,11 @@
             <i class="bi bi-shield-lock-fill"></i> Copy Protected
         </span>
         {% endif %}
+        {% if armlock_analysis and armlock_analysis.get('detected') %}
+        <span class="badge bg-warning text-dark me-1" title="ARMlock copy protection was detected and removed">
+            <i class="bi bi-unlock-fill"></i> ARMlock Removed
+        </span>
+        {% endif %}
         {% if artefact.restrictions %}
         <p class="mb-1">
             {% for r in artefact.restrictions %}
@@ -408,6 +413,159 @@
                     </div>
                     {% endfor %}
                     </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        {# ------------------------------------------------------------------ #}
+        {# ARMlock copy protection panel                                      #}
+        {# ------------------------------------------------------------------ #}
+        {% if armlock_analysis and armlock_analysis.get('detected') %}
+        {% set al_zmp = armlock_analysis.get('zone_map_primary', {}) %}
+        {% set al_zmb = armlock_analysis.get('zone_map_backup', {}) %}
+        {% set al_real = armlock_analysis.get('real_root', []) %}
+        {% set al_stripped = armlock_analysis.get('stripped_root', []) %}
+        {% set al_removed = armlock_analysis.get('removal', {}).get('success', False) %}
+        <div class="card mb-4 border-warning">
+            <div class="card-header d-flex justify-content-between align-items-center bg-warning bg-opacity-25"
+                 style="cursor: pointer;" data-bs-toggle="collapse" data-bs-target="#armlockCollapse"
+                 aria-expanded="true" aria-controls="armlockCollapse">
+                <span>
+                    <i class="bi bi-unlock-fill"></i>
+                    <strong>ARMlock Copy Protection</strong>
+                    {% if al_removed %}
+                    <span class="badge bg-success ms-2">Removed</span>
+                    {% else %}
+                    <span class="badge bg-danger ms-2">Removal failed</span>
+                    {% endif %}
+                    <span class="badge bg-secondary ms-1">{{ al_real | length }} real root entr{{ 'y' if al_real | length == 1 else 'ies' }}</span>
+                </span>
+                <div>
+                    <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=armlock_analysis['_analysis_uuid']) }}"
+                       class="btn btn-sm btn-outline-secondary me-1" onclick="event.stopPropagation()">
+                        <i class="bi bi-search"></i> Raw Analysis
+                    </a>
+                    <i class="bi bi-chevron-down"></i>
+                </div>
+            </div>
+            <div class="collapse show" id="armlockCollapse">
+                <div class="card-body pb-0">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h6 class="text-muted small text-uppercase mb-2">Zone Map</h6>
+                            <table class="table table-sm table-borderless small mb-0">
+                                <thead class="table-light"><tr><th></th><th>Primary</th><th>Backup</th></tr></thead>
+                                <tbody>
+                                <tr>
+                                    <td class="text-muted">Encoded boot_option</td>
+                                    <td><code>0x{{ '%02X' % al_zmp.get('stored_boot_option', 0) }}</code></td>
+                                    <td><code>0x{{ '%02X' % al_zmb.get('stored_boot_option', 0) }}</code></td>
+                                </tr>
+                                <tr>
+                                    <td class="text-muted">Decoded boot_option</td>
+                                    <td><code>{{ al_zmp.get('real_boot_option', '?') }}</code></td>
+                                    <td><code>{{ al_zmb.get('real_boot_option', '?') }}</code></td>
+                                </tr>
+                                <tr>
+                                    <td class="text-muted">ZoneCheck</td>
+                                    <td>
+                                        {% if al_zmp.get('check_valid') %}
+                                        <span class="badge bg-success">Valid</span>
+                                        {% else %}
+                                        <span class="badge bg-danger" title="Expected 0x{{ '%02X' % al_zmp.get('expected_check', 0) }}">Invalid</span>
+                                        {% endif %}
+                                        <code class="ms-1">0x{{ '%02X' % al_zmp.get('check_byte', 0) }}</code>
+                                    </td>
+                                    <td>
+                                        {% if al_zmb.get('check_valid') %}
+                                        <span class="badge bg-success">Valid</span>
+                                        {% else %}
+                                        <span class="badge bg-danger" title="Expected 0x{{ '%02X' % al_zmb.get('expected_check', 0) }}">Invalid</span>
+                                        {% endif %}
+                                        <code class="ms-1">0x{{ '%02X' % al_zmb.get('check_byte', 0) }}</code>
+                                    </td>
+                                </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="text-muted small text-uppercase mb-2">Protection Module</h6>
+                            {% if armlock_analysis.get('module_data_length') %}
+                            <p class="small mb-1">
+                                <i class="bi bi-file-binary"></i>
+                                ARMlock module: {{ armlock_analysis.get('module_data_length') }} bytes
+                                <span class="text-muted">(saved as derived artefact)</span>
+                            </p>
+                            {% else %}
+                            <p class="small text-muted mb-1">No module data extracted.</p>
+                            {% endif %}
+                            {% set al_dr = armlock_analysis.get('disc_record', {}) %}
+                            {% if al_dr %}
+                            <p class="small text-muted mb-0">
+                                {{ al_dr.get('nzones', '?') }} zones &middot;
+                                {{ al_dr.get('sector_size', '?') }}B sectors &middot;
+                                {{ al_dr.get('bpmb', '?') }} B/map-bit
+                                {% if al_dr.get('disc_name') %}&middot; <em>{{ al_dr.get('disc_name') }}</em>{% endif %}
+                            </p>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    {# Real root directory — what the disc actually contains #}
+                    {% if al_real %}
+                    <h6 class="text-muted small text-uppercase mb-1">Real Root Directory <span class="badge bg-secondary">{{ al_real | length }}</span></h6>
+                    <div class="table-responsive mb-3">
+                        <table class="table table-sm table-hover small mb-0">
+                            <thead class="table-light">
+                                <tr><th>Name</th><th>Type</th><th class="text-end">Size</th><th>Load/Exec</th></tr>
+                            </thead>
+                            <tbody>
+                            {% for e in al_real %}
+                            <tr>
+                                <td><i class="bi bi-{{ 'folder2' if e.is_dir else 'file-earmark' }} me-1 text-muted"></i>{{ e.name }}</td>
+                                <td>
+                                    {% if e.is_dir %}<span class="badge bg-secondary">Dir</span>
+                                    {% elif e.filetype is not none %}<span class="badge bg-info text-dark"><code>&amp;{{ '%03X' % e.filetype }}</code></span>
+                                    {% else %}<span class="badge bg-light text-dark border">File</span>{% endif %}
+                                </td>
+                                <td class="text-end text-muted">{% if not e.is_dir %}{{ e.length | filesizeformat }}{% endif %}</td>
+                                <td><code class="small text-muted">{{ '%08X' % e.load }}:{{ '%08X' % e['exec'] }}</code></td>
+                            </tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% endif %}
+
+                    {# Stripped root — what ARMlock shows instead #}
+                    {% if al_stripped %}
+                    <details class="mb-3">
+                        <summary class="small text-muted" style="cursor:pointer;">
+                            Stripped root (shown by ARMlock) — {{ al_stripped | length }} entr{{ 'y' if al_stripped | length == 1 else 'ies' }}
+                        </summary>
+                        <div class="table-responsive mt-2">
+                            <table class="table table-sm small mb-0">
+                                <thead class="table-light">
+                                    <tr><th>Name</th><th>Type</th><th class="text-end">Size</th></tr>
+                                </thead>
+                                <tbody>
+                                {% for e in al_stripped %}
+                                <tr>
+                                    <td><i class="bi bi-{{ 'folder2' if e.is_dir else 'file-earmark' }} me-1 text-muted"></i>{{ e.name }}</td>
+                                    <td>
+                                        {% if e.is_dir %}<span class="badge bg-secondary">Dir</span>
+                                        {% elif e.filetype is not none %}<span class="badge bg-info text-dark"><code>&amp;{{ '%03X' % e.filetype }}</code></span>
+                                        {% else %}<span class="badge bg-light text-dark border">File</span>{% endif %}
+                                    </td>
+                                    <td class="text-end text-muted">{% if not e.is_dir %}{{ e.length | filesizeformat }}{% endif %}</td>
+                                </tr>
+                                {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </details>
+                    {% endif %}
                 </div>
             </div>
         </div>

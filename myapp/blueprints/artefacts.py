@@ -745,6 +745,7 @@ def _render_artefact_view(artefact):
     mastering_analysis = None
     protection_analysis = None
     partition_detect_details = None
+    armlock_analysis = None
     for a in all_related_analyses:
         if a.status == AnalysisStatus.COMPLETED and a.details:
             if mastering_analysis is None and a.analysis_type == AnalysisType.DISC_MASTERING_DETECT:
@@ -765,7 +766,14 @@ def _render_artefact_view(artefact):
                     partition_detect_details['_analysis_uuid'] = a.uuid
                 except (json.JSONDecodeError, TypeError) as e:
                     current_app.logger.warning(f"Failed to parse partition detect details for {a.uuid}: {e}")
-        if mastering_analysis is not None and protection_analysis is not None and partition_detect_details is not None:
+            elif armlock_analysis is None and a.analysis_type == AnalysisType.ARMLOCK_REMOVE:
+                try:
+                    armlock_analysis = json.loads(a.details)
+                    armlock_analysis['_analysis_uuid'] = a.uuid
+                except (json.JSONDecodeError, TypeError) as e:
+                    current_app.logger.warning(f"Failed to parse ARMlock analysis details for {a.uuid}: {e}")
+        if (mastering_analysis is not None and protection_analysis is not None
+                and partition_detect_details is not None and armlock_analysis is not None):
             break
 
     # Build a lookup of per-partition metadata from PARTITION_DETECT, keyed by
@@ -830,6 +838,7 @@ def _render_artefact_view(artefact):
                            current_sort=current_sort,
                            mastering_analysis=mastering_analysis,
                            protection_analysis=protection_analysis,
+                           armlock_analysis=armlock_analysis,
                            partition_detect_details=partition_detect_details,
                            partition_metadata=partition_metadata,
                            hashdb_mode=hashdb_mode,
