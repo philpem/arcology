@@ -455,7 +455,7 @@ class TestApiSlugGeneration(unittest.TestCase):
     def test_api_artefact_gets_slug(self):
         """POST /api/items/<uuid>/artefacts should generate a slug from the label."""
         from myapp.database import Artefact
-        headers = {'X-API-Key': 'ci-test-worker-key', 'Content-Type': 'application/json'}
+        headers = {'X-API-Key': self.app.config['WORKER_API_KEY'], 'Content-Type': 'application/json'}
         resp = self.client.post(
             f'/api/items/{self.item_uuid}/artefacts',
             json={
@@ -477,7 +477,7 @@ class TestApiSlugGeneration(unittest.TestCase):
     def test_api_artefacts_get_unique_slugs(self):
         """Two API artefacts with the same label under the same item get distinct slugs."""
         from myapp.database import Artefact
-        headers = {'X-API-Key': 'ci-test-worker-key', 'Content-Type': 'application/json'}
+        headers = {'X-API-Key': self.app.config['WORKER_API_KEY'], 'Content-Type': 'application/json'}
         r1 = self.client.post(
             f'/api/items/{self.item_uuid}/artefacts',
             json={'label': 'Same Label', 'storage_path': 'a.img', 'original_filename': 'a.img', 'artefact_type': 'unknown'},
