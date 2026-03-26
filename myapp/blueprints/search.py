@@ -133,6 +133,234 @@ def _resolve_riscos_type(val: str):
     return ExtractedFile.risc_os_filetype == val.lower()
 
 
+def _dedup_by_artefact(rows):
+    """Deduplicate query rows by artefact id (second element of each row)."""
+    seen = set()
+    deduped = []
+    for row in rows:
+        _, a, i = row
+        if a.id not in seen:
+            seen.add(a.id)
+            deduped.append(row)
+    return deduped
+
+
+def _search_files(tokens):
+    """Search ExtractedFile by hash, filename, path, type, or extension."""
+    # Build per-key filter lists: OR within a key, AND across keys.
+    per_key = {}
+    for h in tokens.get('md5', []):
+        per_key.setdefault('md5', []).append(ExtractedFile.md5 == h.lower())
+    for h in tokens.get('sha1', []):
+        per_key.setdefault('sha1', []).append(ExtractedFile.sha1 == h.lower())
+    for h in tokens.get('sha256', []):
+        per_key.setdefault('sha256', []).append(ExtractedFile.sha256 == h.lower())
+    for v in tokens.get('filename', []):
+        per_key.setdefault('filename', []).append(_ilike(ExtractedFile.filename, v))
+    for v in tokens.get('path', []):
+        per_key.setdefault('path', []).append(_ilike(ExtractedFile.path, v))
+    for v in tokens.get('type', []):
+        per_key.setdefault('type', []).append(_resolve_riscos_type(v))
+    for v in tokens.get('ext', []):
+        per_key.setdefault('ext', []).append(ExtractedFile.extension == v.lower())
+
+    if not per_key:
+        return [], False
+
+    combined = and_(*[or_(*clauses) for clauses in per_key.values()])
+    q = (
+        db.session.query(ExtractedFile, Partition, Artefact, Item)
+        .join(Partition, ExtractedFile.partition_id == Partition.id)
+        .join(Artefact, Partition.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(combined)
+        .filter(ExtractedFile.is_directory == False)
+        .order_by(Item.name, Artefact.label, ExtractedFile.path)
+        .limit(RESULT_LIMIT + 1)
+        .all()
+    )
+    truncated = len(q) > RESULT_LIMIT
+    return q[:RESULT_LIMIT], truncated
+
+
+def _search_partitions(tokens):
+    """Search Partitions by label, ident, or filesystem type."""
+    per_key = {}
+    for v in tokens.get('label', []):
+        per_key.setdefault('label', []).append(_ilike(Partition.label, v))
+    for v in tokens.get('ident', []):
+        per_key.setdefault('ident', []).append(_ilike(Partition.gnu_file_type, v))
+    for v in tokens.get('fs', []):
+        try:
+            fs_val = FilesystemType(v.lower())
+            per_key.setdefault('fs', []).append(Partition.filesystem == fs_val)
+        except ValueError:
+            per_key.setdefault('fs', []).append(_ilike(Partition.container_format, v))
+
+    if not per_key:
+        return [], False
+
+    combined = and_(*[or_(*clauses) for clauses in per_key.values()])
+    q = (
+        db.session.query(Partition, Artefact, Item)
+        .join(Artefact, Partition.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(combined)
+        .order_by(Item.name, Artefact.label, Partition.partition_index)
+        .limit(RESULT_LIMIT + 1)
+        .all()
+    )
+    truncated = len(q) > RESULT_LIMIT
+    return q[:RESULT_LIMIT], truncated
+
+
+def _search_protection(tokens):
+    """Search ArtefactProtection by protection type."""
+    all_results = []
+    truncated = False
+    for prot_type in tokens.get('protection', []):
+        q = (
+            db.session.query(ArtefactProtection, Artefact, Item)
+            .join(Artefact, ArtefactProtection.artefact_id == Artefact.id)
+            .join(Item, Artefact.item_id == Item.id)
+            .filter(ArtefactProtection.protection_type == prot_type.lower())
+            .order_by(Item.name, Artefact.label)
+            .all()
+        )
+        deduped = _dedup_by_artefact(q)
+        if len(deduped) > RESULT_LIMIT:
+            truncated = True
+            deduped = deduped[:RESULT_LIMIT]
+        all_results.extend([
+            {'type': 'protection', 'protection_type': prot_type, 'artefact': a, 'item': i}
+            for _, a, i in deduped
+        ])
+    return all_results, truncated
+
+
+def _search_mastering(tokens):
+    """Search ArtefactMastering by mastering type."""
+    all_results = []
+    truncated = False
+    for mast_type in tokens.get('mastering', []):
+        q = (
+            db.session.query(ArtefactMastering, Artefact, Item)
+            .join(Artefact, ArtefactMastering.artefact_id == Artefact.id)
+            .join(Item, Artefact.item_id == Item.id)
+            .filter(ArtefactMastering.mastering_type == mast_type.lower())
+            .order_by(Item.name, Artefact.label)
+            .all()
+        )
+        deduped = _dedup_by_artefact(q)
+        if len(deduped) > RESULT_LIMIT:
+            truncated = True
+            deduped = deduped[:RESULT_LIMIT]
+        all_results.extend([
+            {'type': 'mastering', 'mastering_type': mast_type, 'artefact': a, 'item': i}
+            for _, a, i in deduped
+        ])
+    return all_results, truncated
+
+
+def _search_tags(tokens):
+    """Search artefacts by tag name."""
+    all_results = []
+    truncated = False
+    for tag_val in tokens.get('tag', []):
+        q = (
+            db.session.query(Artefact, Item)
+            .join(Item, Artefact.item_id == Item.id)
+            .join(artefact_tags, artefact_tags.c.artefact_id == Artefact.id)
+            .join(Tag, artefact_tags.c.tag_id == Tag.id)
+            .filter(_ilike(Tag.name, tag_val))
+            .order_by(Item.name, Artefact.label)
+            .limit(RESULT_LIMIT + 1)
+            .all()
+        )
+        if len(q) > RESULT_LIMIT:
+            truncated = True
+            q = q[:RESULT_LIMIT]
+        all_results.extend([
+            {'type': 'tag', 'tag_name': tag_val, 'artefact': a, 'item': i}
+            for a, i in q
+        ])
+    return all_results, truncated
+
+
+def _search_artefact_hashes(tokens):
+    """Search artefact-level hashes (md5, sha256)."""
+    art_filters = []
+    for h in tokens.get('md5', []):
+        art_filters.append(Artefact.md5 == h.lower())
+    for h in tokens.get('sha256', []):
+        art_filters.append(Artefact.sha256 == h.lower())
+
+    if not art_filters:
+        return [], False
+
+    q = (
+        db.session.query(Artefact, Item)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(or_(*art_filters))
+        .order_by(Item.name, Artefact.label)
+        .limit(RESULT_LIMIT + 1)
+        .all()
+    )
+    truncated = len(q) > RESULT_LIMIT
+    return [
+        {'type': 'artefact_hash', 'artefact': a, 'item': i}
+        for a, i in q[:RESULT_LIMIT]
+    ], truncated
+
+
+def _search_text_items(tokens):
+    """Free-text search on item name/description."""
+    text_filters = []
+    for v in tokens.get('text', []):
+        pattern = f'%{v}%'
+        text_filters.append(Item.name.ilike(pattern))
+        text_filters.append(Item.description.ilike(pattern))
+
+    if not text_filters:
+        return [], False
+
+    q = (
+        Item.query
+        .filter(or_(*text_filters))
+        .order_by(Item.name)
+        .limit(RESULT_LIMIT + 1)
+        .all()
+    )
+    truncated = len(q) > RESULT_LIMIT
+    return q[:RESULT_LIMIT], truncated
+
+
+def _search_text_artefacts(tokens):
+    """Free-text search on artefact label/description."""
+    art_text_filters = []
+    for v in tokens.get('text', []):
+        pattern = f'%{v}%'
+        art_text_filters.append(Artefact.label.ilike(pattern))
+        art_text_filters.append(Artefact.description.ilike(pattern))
+
+    if not art_text_filters:
+        return [], False
+
+    q = (
+        db.session.query(Artefact, Item)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(or_(*art_text_filters))
+        .order_by(Item.name, Artefact.label)
+        .limit(RESULT_LIMIT + 1)
+        .all()
+    )
+    truncated = len(q) > RESULT_LIMIT
+    return [
+        {'type': 'artefact_text', 'artefact': a, 'item': i}
+        for a, i in q[:RESULT_LIMIT]
+    ], truncated
+
+
 def _run_search(tokens: dict) -> dict:
     """Execute queries and return result buckets."""
     results = {
@@ -144,234 +372,64 @@ def _run_search(tokens: dict) -> dict:
 
     has_file_terms = any(k in tokens for k in ('md5', 'sha1', 'sha256', 'filename', 'path', 'type', 'ext'))
     has_disc_terms = any(k in tokens for k in ('label', 'ident', 'fs'))
-    has_prot_terms = 'protection' in tokens
-    has_mast_terms = 'mastering' in tokens
-    has_tag_terms = 'tag' in tokens
-    has_artefact_hash = any(k in tokens for k in ('md5', 'sha256')) and not has_file_terms
     has_text = 'text' in tokens
 
-    # --- File search ---
-    # Triggered by hash, filename, path, type, ext filters.
-    # Also triggered by hash even if no other file term present (hash matches both files and artefacts).
+    # File search: triggered by hash, filename, path, type, ext filters.
     if has_file_terms or any(k in tokens for k in ('md5', 'sha1', 'sha256')):
-        # Build per-key filter lists: OR within a key, AND across keys.
-        # e.g. "path:!Killer type:feb" → path matches AND type matches
-        #      "type:feb type:ffa"     → type is feb OR ffa
-        per_key = {}
-        for h in tokens.get('md5', []):
-            per_key.setdefault('md5', []).append(ExtractedFile.md5 == h.lower())
-        for h in tokens.get('sha1', []):
-            per_key.setdefault('sha1', []).append(ExtractedFile.sha1 == h.lower())
-        for h in tokens.get('sha256', []):
-            per_key.setdefault('sha256', []).append(ExtractedFile.sha256 == h.lower())
-        for v in tokens.get('filename', []):
-            per_key.setdefault('filename', []).append(_ilike(ExtractedFile.filename, v))
-        for v in tokens.get('path', []):
-            per_key.setdefault('path', []).append(_ilike(ExtractedFile.path, v))
-        for v in tokens.get('type', []):
-            per_key.setdefault('type', []).append(_resolve_riscos_type(v))
-        for v in tokens.get('ext', []):
-            per_key.setdefault('ext', []).append(ExtractedFile.extension == v.lower())
+        files, trunc = _search_files(tokens)
+        results['files'] = files
+        if trunc:
+            results['truncated']['files'] = True
 
-        if per_key:
-            combined = and_(*[or_(*clauses) for clauses in per_key.values()])
-            q = (
-                db.session.query(ExtractedFile, Partition, Artefact, Item)
-                .join(Partition, ExtractedFile.partition_id == Partition.id)
-                .join(Artefact, Partition.artefact_id == Artefact.id)
-                .join(Item, Artefact.item_id == Item.id)
-                .filter(combined)
-                .filter(ExtractedFile.is_directory == False)
-                .order_by(Item.name, Artefact.label, ExtractedFile.path)
-                .limit(RESULT_LIMIT + 1)
-                .all()
-            )
-            if len(q) > RESULT_LIMIT:
-                results['truncated']['files'] = True
-                q = q[:RESULT_LIMIT]
-            results['files'] = q
-
-    # --- Disc/partition search ---
-    # Triggered by label, ident, fs filters.
+    # Disc/partition search
     if has_disc_terms:
-        per_key = {}
-        for v in tokens.get('label', []):
-            per_key.setdefault('label', []).append(_ilike(Partition.label, v))
-        for v in tokens.get('ident', []):
-            per_key.setdefault('ident', []).append(_ilike(Partition.gnu_file_type, v))
-        for v in tokens.get('fs', []):
-            try:
-                fs_val = FilesystemType(v.lower())
-                per_key.setdefault('fs', []).append(Partition.filesystem == fs_val)
-            except ValueError:
-                per_key.setdefault('fs', []).append(_ilike(Partition.container_format, v))
+        partitions, trunc = _search_partitions(tokens)
+        if trunc:
+            results['truncated']['artefacts'] = True
+        results['artefacts'].extend([
+            {'type': 'partition', 'partition': p, 'artefact': a, 'item': i}
+            for p, a, i in partitions
+        ])
 
-        if per_key:
-            combined = and_(*[or_(*clauses) for clauses in per_key.values()])
-            q = (
-                db.session.query(Partition, Artefact, Item)
-                .join(Artefact, Partition.artefact_id == Artefact.id)
-                .join(Item, Artefact.item_id == Item.id)
-                .filter(combined)
-                .order_by(Item.name, Artefact.label, Partition.partition_index)
-                .limit(RESULT_LIMIT + 1)
-                .all()
-            )
-            if len(q) > RESULT_LIMIT:
-                results['truncated']['artefacts'] = True
-                q = q[:RESULT_LIMIT]
-            # Store as artefact-level results with partition detail
-            results['artefacts'].extend([
-                {'type': 'partition', 'partition': p, 'artefact': a, 'item': i}
-                for p, a, i in q
-            ])
+    # Protection indicator search
+    if 'protection' in tokens:
+        prot_results, trunc = _search_protection(tokens)
+        if trunc:
+            results['truncated']['artefacts'] = True
+        results['artefacts'].extend(prot_results)
 
-    # --- Protection indicator search ---
-    if has_prot_terms:
-        for prot_type in tokens.get('protection', []):
-            q = (
-                db.session.query(ArtefactProtection, Artefact, Item)
-                .join(Artefact, ArtefactProtection.artefact_id == Artefact.id)
-                .join(Item, Artefact.item_id == Item.id)
-                .filter(ArtefactProtection.protection_type == prot_type.lower())
-                .order_by(Item.name, Artefact.label)
-                .all()
-            )
-            # Deduplicate by artefact id in Python (an artefact may have multiple
-            # matching indicators, e.g. bad_crc on several tracks).
-            seen = set()
-            deduped = []
-            for row in q:
-                _, a, i = row
-                if a.id not in seen:
-                    seen.add(a.id)
-                    deduped.append(row)
-            if len(deduped) > RESULT_LIMIT:
-                results['truncated']['artefacts'] = True
-                deduped = deduped[:RESULT_LIMIT]
-            results['artefacts'].extend([
-                {'type': 'protection', 'protection_type': prot_type, 'artefact': a, 'item': i}
-                for _, a, i in deduped
-            ])
+    # Mastering indicator search
+    if 'mastering' in tokens:
+        mast_results, trunc = _search_mastering(tokens)
+        if trunc:
+            results['truncated']['artefacts'] = True
+        results['artefacts'].extend(mast_results)
 
-    # --- Mastering indicator search ---
-    if has_mast_terms:
-        for mast_type in tokens.get('mastering', []):
-            q = (
-                db.session.query(ArtefactMastering, Artefact, Item)
-                .join(Artefact, ArtefactMastering.artefact_id == Artefact.id)
-                .join(Item, Artefact.item_id == Item.id)
-                .filter(ArtefactMastering.mastering_type == mast_type.lower())
-                .order_by(Item.name, Artefact.label)
-                .all()
-            )
-            seen = set()
-            deduped = []
-            for row in q:
-                _, a, i = row
-                if a.id not in seen:
-                    seen.add(a.id)
-                    deduped.append(row)
-            if len(deduped) > RESULT_LIMIT:
-                results['truncated']['artefacts'] = True
-                deduped = deduped[:RESULT_LIMIT]
-            results['artefacts'].extend([
-                {'type': 'mastering', 'mastering_type': mast_type, 'artefact': a, 'item': i}
-                for _, a, i in deduped
-            ])
+    # Tag search
+    if 'tag' in tokens:
+        tag_results, trunc = _search_tags(tokens)
+        if trunc:
+            results['truncated']['artefacts'] = True
+        results['artefacts'].extend(tag_results)
 
-    # --- Tag search ---
-    if has_tag_terms:
-        for tag_val in tokens.get('tag', []):
-            q = (
-                db.session.query(Artefact, Item)
-                .join(Item, Artefact.item_id == Item.id)
-                .join(artefact_tags, artefact_tags.c.artefact_id == Artefact.id)
-                .join(Tag, artefact_tags.c.tag_id == Tag.id)
-                .filter(_ilike(Tag.name, tag_val))
-                .order_by(Item.name, Artefact.label)
-                .limit(RESULT_LIMIT + 1)
-                .all()
-            )
-            if len(q) > RESULT_LIMIT:
-                results['truncated']['artefacts'] = True
-                q = q[:RESULT_LIMIT]
-            results['artefacts'].extend([
-                {'type': 'tag', 'tag_name': tag_val, 'artefact': a, 'item': i}
-                for a, i in q
-            ])
-
-    # --- Artefact hash search ---
-    # Hash terms not paired with file terms also search artefact-level hashes.
+    # Artefact hash search
     if any(k in tokens for k in ('md5', 'sha256')):
-        art_filters = []
-        for h in tokens.get('md5', []):
-            art_filters.append(Artefact.md5 == h.lower())
-        for h in tokens.get('sha256', []):
-            art_filters.append(Artefact.sha256 == h.lower())
+        hash_results, trunc = _search_artefact_hashes(tokens)
+        if trunc:
+            results['truncated']['artefacts'] = True
+        results['artefacts'].extend(hash_results)
 
-        if art_filters:
-            q = (
-                db.session.query(Artefact, Item)
-                .join(Item, Artefact.item_id == Item.id)
-                .filter(or_(*art_filters))
-                .order_by(Item.name, Artefact.label)
-                .limit(RESULT_LIMIT + 1)
-                .all()
-            )
-            if len(q) > RESULT_LIMIT:
-                results['truncated']['artefacts'] = True
-                q = q[:RESULT_LIMIT]
-            results['artefacts'].extend([
-                {'type': 'artefact_hash', 'artefact': a, 'item': i}
-                for a, i in q
-            ])
-
-    # --- Free-text search on item name/description ---
+    # Free-text search
     if has_text:
-        text_filters = []
-        for v in tokens.get('text', []):
-            pattern = f'%{v}%'
-            text_filters.append(Item.name.ilike(pattern))
-            text_filters.append(Item.description.ilike(pattern))
+        items, trunc = _search_text_items(tokens)
+        results['catalogue_items'] = items
+        if trunc:
+            results['truncated']['items'] = True
 
-        if text_filters:
-            q = (
-                Item.query
-                .filter(or_(*text_filters))
-                .order_by(Item.name)
-                .limit(RESULT_LIMIT + 1)
-                .all()
-            )
-            if len(q) > RESULT_LIMIT:
-                results['truncated']['items'] = True
-                q = q[:RESULT_LIMIT]
-            results['catalogue_items'] = q
-
-    # --- Free-text search on artefact label/description ---
-    if has_text:
-        art_text_filters = []
-        for v in tokens.get('text', []):
-            pattern = f'%{v}%'
-            art_text_filters.append(Artefact.label.ilike(pattern))
-            art_text_filters.append(Artefact.description.ilike(pattern))
-
-        if art_text_filters:
-            q = (
-                db.session.query(Artefact, Item)
-                .join(Item, Artefact.item_id == Item.id)
-                .filter(or_(*art_text_filters))
-                .order_by(Item.name, Artefact.label)
-                .limit(RESULT_LIMIT + 1)
-                .all()
-            )
-            if len(q) > RESULT_LIMIT:
-                results['truncated']['artefacts'] = True
-                q = q[:RESULT_LIMIT]
-            results['artefacts'].extend([
-                {'type': 'artefact_text', 'artefact': a, 'item': i}
-                for a, i in q
-            ])
+        art_text_results, trunc = _search_text_artefacts(tokens)
+        if trunc:
+            results['truncated']['artefacts'] = True
+        results['artefacts'].extend(art_text_results)
 
     return results
 
