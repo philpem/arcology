@@ -74,6 +74,55 @@ def _collect_descendant_ids(node):
     return ids
 
 
+def _route_redirect(endpoint: str):
+    """Redirect to a taxonomy endpoint by local route name."""
+    return redirect(url_for(f'{ROUTENAME}.{endpoint}'))
+
+
+def _parent_choices(model, label: str, exclude_ids=None):
+    """Build standard parent select choices for hierarchical taxonomy forms."""
+    exclude_ids = exclude_ids or set()
+    return [(0, label)] + [
+        (node.id, node.name)
+        for node in model.query.order_by(model.name).all()
+        if node.id not in exclude_ids
+    ]
+
+
+def _save_named_description_model(obj, form, *, parent_field: bool = False):
+    """Copy the common name/description[/parent] form fields onto an ORM object."""
+    obj.name = form.name.data
+    obj.description = form.description.data
+    if parent_field:
+        obj.parent_id = form.parent_id.data if form.parent_id.data != 0 else None
+
+
+def _save_external_system(obj, form):
+    """Copy ExternalSystem form fields onto an ORM object."""
+    obj.name = form.name.data
+    obj.system_type = form.system_type.data
+    obj.base_url = form.base_url.data
+    obj.url_template = form.url_template.data
+    obj.description = form.description.data
+
+
+def _delete_with_guards(obj, endpoint: str, success_label: str, guards: list[tuple[bool, str]]):
+    """Delete an object after evaluating guard conditions.
+
+    Returns a redirect response in all cases.
+    """
+    for condition, message in guards:
+        if condition:
+            flash(message, 'error')
+            return _route_redirect(endpoint)
+
+    name = obj.name
+    db.session.delete(obj)
+    db.session.commit()
+    flash(f'{success_label} "{name}" deleted.', 'success')
+    return _route_redirect(endpoint)
+
+
 # =============================================================================
 # Platforms
 # =============================================================================
@@ -90,20 +139,15 @@ def platforms():
 @require_permission('read_write')
 def new_platform():
     form = PlatformForm()
-    form.parent_id.choices = [(0, '-- No Parent --')] + [
-        (p.id, p.name) for p in Platform.query.order_by(Platform.name).all()
-    ]
+    form.parent_id.choices = _parent_choices(Platform, '-- No Parent --')
     
     if form.validate_on_submit():
-        platform = Platform(
-            name=form.name.data,
-            description=form.description.data,
-            parent_id=form.parent_id.data if form.parent_id.data != 0 else None
-        )
+        platform = Platform()
+        _save_named_description_model(platform, form, parent_field=True)
         db.session.add(platform)
         db.session.commit()
         flash(f'Platform "{platform.name}" created.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.platforms'))
+        return _route_redirect('platforms')
     
     return render_template('taxonomy/platform_form.html', form=form, title='New Platform')
 
@@ -116,18 +160,13 @@ def edit_platform(id):
     form = PlatformForm(obj=platform)
     
     exclude_ids = {platform.id} | _collect_descendant_ids(platform)
-    form.parent_id.choices = [(0, '-- No Parent --')] + [
-        (p.id, p.name) for p in Platform.query.order_by(Platform.name).all()
-        if p.id not in exclude_ids
-    ]
+    form.parent_id.choices = _parent_choices(Platform, '-- No Parent --', exclude_ids)
     
     if form.validate_on_submit():
-        platform.name = form.name.data
-        platform.description = form.description.data
-        platform.parent_id = form.parent_id.data if form.parent_id.data != 0 else None
+        _save_named_description_model(platform, form, parent_field=True)
         db.session.commit()
         flash(f'Platform "{platform.name}" updated.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.platforms'))
+        return _route_redirect('platforms')
     
     return render_template('taxonomy/platform_form.html', form=form, platform=platform, title='Edit Platform')
 
@@ -137,24 +176,12 @@ def edit_platform(id):
 @require_permission('read_write')
 def delete_platform(id):
     platform = Platform.query.get_or_404(id)
-    
-    if platform.items:
-        flash('Cannot delete platform with associated items.', 'error')
-        return redirect(url_for(f'{ROUTENAME}.platforms'))
-    
-    if platform.children:
-        flash('Cannot delete platform with child platforms.', 'error')
-        return redirect(url_for(f'{ROUTENAME}.platforms'))
-
-    if HashDatabase.query.filter_by(platform_id=platform.id).first():
-        flash('Cannot delete platform with associated hash databases.', 'error')
-        return redirect(url_for(f'{ROUTENAME}.platforms'))
-
-    name = platform.name
-    db.session.delete(platform)
-    db.session.commit()
-    flash(f'Platform "{name}" deleted.', 'success')
-    return redirect(url_for(f'{ROUTENAME}.platforms'))
+    return _delete_with_guards(platform, 'platforms', 'Platform', [
+        (bool(platform.items), 'Cannot delete platform with associated items.'),
+        (bool(platform.children), 'Cannot delete platform with child platforms.'),
+        (bool(HashDatabase.query.filter_by(platform_id=platform.id).first()),
+         'Cannot delete platform with associated hash databases.'),
+    ])
 
 
 # =============================================================================
@@ -173,20 +200,15 @@ def categories():
 @require_permission('read_write')
 def new_category():
     form = CategoryForm()
-    form.parent_id.choices = [(0, '-- No Parent --')] + [
-        (c.id, c.name) for c in Category.query.order_by(Category.name).all()
-    ]
+    form.parent_id.choices = _parent_choices(Category, '-- No Parent --')
     
     if form.validate_on_submit():
-        category = Category(
-            name=form.name.data,
-            description=form.description.data,
-            parent_id=form.parent_id.data if form.parent_id.data != 0 else None
-        )
+        category = Category()
+        _save_named_description_model(category, form, parent_field=True)
         db.session.add(category)
         db.session.commit()
         flash(f'Category "{category.name}" created.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.categories'))
+        return _route_redirect('categories')
     
     return render_template('taxonomy/category_form.html', form=form, title='New Category')
 
@@ -199,18 +221,13 @@ def edit_category(id):
     form = CategoryForm(obj=category)
     
     exclude_ids = {category.id} | _collect_descendant_ids(category)
-    form.parent_id.choices = [(0, '-- No Parent --')] + [
-        (c.id, c.name) for c in Category.query.order_by(Category.name).all()
-        if c.id not in exclude_ids
-    ]
+    form.parent_id.choices = _parent_choices(Category, '-- No Parent --', exclude_ids)
     
     if form.validate_on_submit():
-        category.name = form.name.data
-        category.description = form.description.data
-        category.parent_id = form.parent_id.data if form.parent_id.data != 0 else None
+        _save_named_description_model(category, form, parent_field=True)
         db.session.commit()
         flash(f'Category "{category.name}" updated.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.categories'))
+        return _route_redirect('categories')
     
     return render_template('taxonomy/category_form.html', form=form, category=category, title='Edit Category')
 
@@ -220,20 +237,10 @@ def edit_category(id):
 @require_permission('read_write')
 def delete_category(id):
     category = Category.query.get_or_404(id)
-    
-    if category.items:
-        flash('Cannot delete category with associated items.', 'error')
-        return redirect(url_for(f'{ROUTENAME}.categories'))
-    
-    if category.children:
-        flash('Cannot delete category with child categories.', 'error')
-        return redirect(url_for(f'{ROUTENAME}.categories'))
-    
-    name = category.name
-    db.session.delete(category)
-    db.session.commit()
-    flash(f'Category "{name}" deleted.', 'success')
-    return redirect(url_for(f'{ROUTENAME}.categories'))
+    return _delete_with_guards(category, 'categories', 'Category', [
+        (bool(category.items), 'Cannot delete category with associated items.'),
+        (bool(category.children), 'Cannot delete category with child categories.'),
+    ])
 
 
 # =============================================================================
@@ -258,7 +265,7 @@ def new_tag():
         db.session.add(tag)
         db.session.commit()
         flash(f'Tag "{tag.name}" created.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.tags'))
+        return _route_redirect('tags')
     
     return render_template('taxonomy/tag_form.html', form=form, title='New Tag')
 
@@ -268,11 +275,7 @@ def new_tag():
 @require_permission('read_write')
 def delete_tag(id):
     tag = Tag.query.get_or_404(id)
-    name = tag.name
-    db.session.delete(tag)
-    db.session.commit()
-    flash(f'Tag "{name}" deleted.', 'success')
-    return redirect(url_for(f'{ROUTENAME}.tags'))
+    return _delete_with_guards(tag, 'tags', 'Tag', [])
 
 
 # =============================================================================
@@ -293,17 +296,12 @@ def new_external_system():
     form = ExternalSystemForm()
     
     if form.validate_on_submit():
-        system = ExternalSystem(
-            name=form.name.data,
-            system_type=form.system_type.data,
-            base_url=form.base_url.data,
-            url_template=form.url_template.data,
-            description=form.description.data
-        )
+        system = ExternalSystem()
+        _save_external_system(system, form)
         db.session.add(system)
         db.session.commit()
         flash(f'External system "{system.name}" created.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.external_systems'))
+        return _route_redirect('external_systems')
     
     return render_template('taxonomy/external_system_form.html', form=form, title='New External System')
 
@@ -316,14 +314,10 @@ def edit_external_system(id):
     form = ExternalSystemForm(obj=system)
     
     if form.validate_on_submit():
-        system.name = form.name.data
-        system.system_type = form.system_type.data
-        system.base_url = form.base_url.data
-        system.url_template = form.url_template.data
-        system.description = form.description.data
+        _save_external_system(system, form)
         db.session.commit()
         flash(f'External system "{system.name}" updated.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.external_systems'))
+        return _route_redirect('external_systems')
     
     return render_template('taxonomy/external_system_form.html', form=form, system=system, title='Edit External System')
 
@@ -333,16 +327,9 @@ def edit_external_system(id):
 @require_permission('read_write')
 def delete_external_system(id):
     system = ExternalSystem.query.get_or_404(id)
-    
-    if system.references:
-        flash('Cannot delete external system with associated references.', 'error')
-        return redirect(url_for(f'{ROUTENAME}.external_systems'))
-    
-    name = system.name
-    db.session.delete(system)
-    db.session.commit()
-    flash(f'External system "{name}" deleted.', 'success')
-    return redirect(url_for(f'{ROUTENAME}.external_systems'))
+    return _delete_with_guards(system, 'external_systems', 'External system', [
+        (bool(system.references), 'Cannot delete external system with associated references.'),
+    ])
 
 
 # vim: ts=4 sw=4 et
