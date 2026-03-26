@@ -27,17 +27,12 @@ def _active_known_file_query():
     )
 
 
-def _filter_known_files_by_hashes(query, *, md5=None, sha1=None):
-    """Apply md5/sha1 filters to a KnownFile query."""
+def _filter_known_files(query, *, md5=None, sha1=None, file_size=None):
+    """Apply optional md5/sha1/size filters to a KnownFile query."""
     if md5:
         query = query.filter(KnownFile.md5 == md5.lower())
     if sha1:
         query = query.filter(KnownFile.sha1 == sha1.lower())
-    return query
-
-
-def _filter_known_files_by_size(query, file_size=None):
-    """Apply an optional file_size filter to a KnownFile query."""
     if file_size is not None:
         query = query.filter(KnownFile.file_size == file_size)
     return query
@@ -45,10 +40,7 @@ def _filter_known_files_by_size(query, file_size=None):
 
 def _matching_known_files_query(*, md5=None, sha1=None, file_size=None):
     """Return an active KnownFile query for the given hashes and size."""
-    return _filter_known_files_by_size(
-        _filter_known_files_by_hashes(_active_known_file_query(), md5=md5, sha1=sha1),
-        file_size=file_size,
-    )
+    return _filter_known_files(_active_known_file_query(), md5=md5, sha1=sha1, file_size=file_size)
 
 
 def _match_file_size(candidates, file_size):
