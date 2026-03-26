@@ -49,13 +49,17 @@
                 <div class="small text-muted mb-2"><i class="bi bi-folder"></i> Subdirectories at this level:</div>
                 <div class="d-flex flex-wrap gap-2">
                     {% for subdir in subdirectories %}
-                    <a href="?{{ dict(pagination_args, path=current_path + subdir + '/', recursive='true') | urlencode }}"
-                       class="btn btn-sm btn-outline-primary">
-                        {% if (current_path + subdir) in archive_paths %}
-                        <i class="bi bi-file-zip-fill"></i> {{ subdir }}
+                    {% set subdir_full_path = current_path + subdir %}
+                    {% set subdir_rp = recognised_folder_paths.get(subdir_full_path) %}
+                    <a href="?{{ dict(pagination_args, path=subdir_full_path + '/', recursive='true') | urlencode }}"
+                       class="btn btn-sm {{ 'btn-info' if subdir_rp else 'btn-outline-primary' }}"
+                       {% if subdir_rp %}title="Recognised: {{ subdir_rp.product.title }} ({{ subdir_rp.required_matched }}/{{ subdir_rp.required_total }} required matched)"{% endif %}>
+                        {% if subdir_full_path in archive_paths %}
+                        <i class="bi bi-file-zip-fill"></i>
                         {% else %}
-                        <i class="bi bi-folder-fill"></i> {{ subdir }}
+                        <i class="bi bi-folder-fill"></i>
                         {% endif %}
+                        {{ subdir }}{% if subdir_rp %} <i class="bi bi-check2-square"></i>{% endif %}
                     </a>
                     {% endfor %}
                 </div>
