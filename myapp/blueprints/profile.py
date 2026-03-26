@@ -12,6 +12,7 @@ from wtforms.validators import DataRequired, Length, EqualTo, ValidationError
 
 from ..extensions import db
 from ..database import ApiKey, ApiKeyPermission, UserPermission
+from ..utils.web_forms import flash_form_errors, redirect_local
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -21,6 +22,11 @@ blueprint = Blueprint(ROUTENAME, __name__, url_prefix='/profile', template_folde
 def init_app(app):
     """Profile blueprint init (menu link is via username in navbar)."""
     pass
+
+
+def _route_redirect(endpoint: str, **values):
+    """Redirect to a local profile endpoint."""
+    return redirect_local(ROUTENAME, endpoint, **values)
 
 
 # =============================================================================
@@ -79,15 +85,13 @@ def change_password():
     if form.validate_on_submit():
         if not current_user.checkPassword(form.current_password.data):
             flash('Current password is incorrect.', 'error')
-            return redirect(url_for(f'{ROUTENAME}.index'))
+            return _route_redirect('index')
         current_user.setPassword(form.new_password.data)
         db.session.commit()
         flash('Password changed successfully.', 'success')
     else:
-        for field, errors in form.errors.items():
-            for error in errors:
-                flash(f'{error}', 'error')
-    return redirect(url_for(f'{ROUTENAME}.index'))
+        flash_form_errors(form)
+    return _route_redirect('index')
 
 
 @blueprint.route('/keys/create', methods=['POST'])
@@ -104,12 +108,12 @@ def create_key():
             permission = ApiKeyPermission(form.permission.data)
         except ValueError:
             flash('Invalid permission level.', 'error')
-            return redirect(url_for(f'{ROUTENAME}.index'))
+            return _route_redirect('index')
 
         # Ensure the requested permission doesn't exceed the user's own level
         if not _key_permission_allowed(permission):
             flash('Permission level exceeds your account access.', 'error')
-            return redirect(url_for(f'{ROUTENAME}.index'))
+            return _route_redirect('index')
 
         key, raw_key = ApiKey.create(
             user_id=current_user.id,
@@ -121,12 +125,10 @@ def create_key():
 
         # Store the raw key in the session for one-time display, then redirect
         session['new_api_key'] = raw_key
-        return redirect(url_for(f'{ROUTENAME}.key_created'))
+        return _route_redirect('key_created')
 
-    for field, errors in form.errors.items():
-        for error in errors:
-            flash(f'{error}', 'error')
-    return redirect(url_for(f'{ROUTENAME}.index'))
+    flash_form_errors(form)
+    return _route_redirect('index')
 
 
 @blueprint.route('/keys/created')
@@ -147,7 +149,7 @@ def revoke_key(key_id):
     key.is_active = False
     db.session.commit()
     flash(f'Key "{key.name}" revoked.', 'success')
-    return redirect(url_for(f'{ROUTENAME}.index'))
+    return _route_redirect('index')
 
 
 # =============================================================================
