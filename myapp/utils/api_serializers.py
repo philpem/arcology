@@ -79,6 +79,7 @@ def file_to_dict(f):
         'md5': f.md5,
         'sha1': f.sha1,
         'is_known': f.is_known,
+        'is_directory': f.is_directory,
         'risc_os_filetype': f.risc_os_filetype,
         'is_archive': f.is_archive,
         'archive_format': f.archive_format,

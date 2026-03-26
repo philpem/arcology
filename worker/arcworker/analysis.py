@@ -1868,6 +1868,13 @@ class AnalysisWorker:
                     path_map = idx['path_map']
 
                     # Check required files (all must match)
+                    # When path matching is enabled, relative_path in the product
+                    # config is the full root-relative path (e.g. '!ArcFS/ArcFS'),
+                    # but path_map keys are only the filename within the folder
+                    # (e.g. 'arcfs').  Pre-compute the folder prefix to strip.
+                    folder_lower = folder.lower()
+                    folder_prefix = folder_lower + '/' if folder_lower else ''
+
                     required_matched = 0
                     for req in required_files:
                         md5 = (req.get('md5') or '').lower()
@@ -1876,9 +1883,15 @@ class AnalysisWorker:
 
                         matched = False
                         if path_match_enabled and rel_path:
-                            # Must match both hash AND relative path
-                            if rel_path in path_map:
-                                file_md5, file_sha1 = path_map[rel_path]
+                            # Must match both hash AND relative path.
+                            # Strip the folder prefix so '!arcfs/arcfs' becomes
+                            # 'arcfs' before looking up in path_map.
+                            if folder_prefix and rel_path.startswith(folder_prefix):
+                                rel_path_in_folder = rel_path[len(folder_prefix):]
+                            else:
+                                rel_path_in_folder = rel_path
+                            if rel_path_in_folder in path_map:
+                                file_md5, file_sha1 = path_map[rel_path_in_folder]
                                 matched = (
                                     (md5 and file_md5 == md5) or
                                     (sha1 and file_sha1 == sha1)
@@ -1904,8 +1917,12 @@ class AnalysisWorker:
                         rel_path = (opt.get('relative_path') or '').lower()
 
                         if path_match_enabled and rel_path:
-                            if rel_path in path_map:
-                                file_md5, file_sha1 = path_map[rel_path]
+                            if folder_prefix and rel_path.startswith(folder_prefix):
+                                rel_path_in_folder = rel_path[len(folder_prefix):]
+                            else:
+                                rel_path_in_folder = rel_path
+                            if rel_path_in_folder in path_map:
+                                file_md5, file_sha1 = path_map[rel_path_in_folder]
                                 if (md5 and file_md5 == md5) or (sha1 and file_sha1 == sha1):
                                     optional_matched += 1
                         else:
