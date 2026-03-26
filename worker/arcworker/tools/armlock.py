@@ -264,6 +264,18 @@ def _extract_file_by_sin(image: bytearray, rec: dict, sin: int, file_length: int
     return bytes(obj_data[start:start + file_length])
 
 
+def _read_subdir_by_sin(image: bytearray, rec: dict, sin: int) -> tuple[bool, list]:
+    """Read a subdirectory by its SIN and return its directory entries.
+
+    Resolves the SIN via the zone map (same mechanism as for files) and
+    parses the resulting 0x800-byte directory block.
+    """
+    raw = _extract_file_by_sin(image, rec, sin, 0x800)
+    if not raw:
+        return False, []
+    return _parse_directory(bytearray(raw), 0)
+
+
 # ---------------------------------------------------------------------------
 # RISC OS module header parsing
 # ---------------------------------------------------------------------------
@@ -332,6 +344,7 @@ def detect_armlock(image_path: Path) -> dict:
         'zone_map_backup': {},
         'stripped_root': [],
         'real_root': [],
+        'armlock_config': {},   # files extracted from $.Armlock directory
         'module_data': None,
         'module_title': None,
         'module_version': None,
@@ -410,6 +423,31 @@ def detect_armlock(image_path: Path) -> dict:
     valid_r, real_entries = _parse_directory(image, 0x400)
     if valid_r:
         result['real_root'] = real_entries
+
+    # Navigate to $.Armlock (or $.!Armlock) in the real root.
+    # This directory holds the security configuration: settings, serial
+    # number and password hashes.  Extract all small files (≤ 4 KB) as
+    # hex so they can be displayed without storing huge amounts of data.
+    if valid_r:
+        config_dir_entry = next(
+            (e for e in real_entries
+             if e['is_dir'] and e['name'].lower() in ('armlock', '!armlock')),
+            None
+        )
+        if config_dir_entry:
+            valid_cd, config_entries = _read_subdir_by_sin(image, rec, config_dir_entry['sin'])
+            if valid_cd:
+                config_files: dict = {}
+                for fe in config_entries:
+                    if not fe['is_dir'] and 0 < fe['length'] <= 4096:
+                        file_data = _extract_file_by_sin(image, rec, fe['sin'], fe['length'])
+                        if file_data:
+                            config_files[fe['name']] = {
+                                'length': fe['length'],
+                                'filetype': fe['filetype'],
+                                'hex': file_data.hex(),
+                            }
+                result['armlock_config'] = config_files
 
     # Extract the ARMlock module from the stripped root's !Boot entry.
     # This file contains the protection code and password data.
