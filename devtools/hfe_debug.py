@@ -237,7 +237,7 @@ def main() -> None:
                 if itype == 'traceback':
                     fields = ' | '.join(ind.get('fields', []))
                     print(f"  [traceback] track {t} side {s}: {fields}")
-                elif itype == 'bcd_timestamp':
+                elif itype == 'formaster':
                     ts       = ind.get('timestamp', '?')
                     fmt_code = ind.get('format_code', '')
                     fmt_desc = ind.get('format_description', '')
@@ -248,7 +248,7 @@ def main() -> None:
                     crc_note = 'CRC OK' if ind.get('crc_valid') else 'BAD CRC'
                     sz_note  = (f'{decl}B' if decl == actual
                                 else f'{decl}→{actual}B [overridden]')
-                    print(f"  [bcd_timestamp] track {t} side {s}: "
+                    print(f"  [formaster] track {t} side {s}: "
                           f"{ts}  size={sz_note}  {crc_note}")
                     print(f"    format_code={fmt_code!r}  format_desc={fmt_desc!r}")
                     print(f"    serial_number={serial!r}")

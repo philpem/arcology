@@ -423,9 +423,12 @@ def _register_cli_commands(app):
                 continue
             ArtefactMastering.query.filter_by(artefact_id=analysis.artefact_id).delete()
             for ind in details.get('indicators', []):
+                _mtype = ind.get('type', 'unknown')
+                if _mtype == 'bcd_timestamp':
+                    _mtype = 'formaster'
                 db.session.add(ArtefactMastering(
                     artefact_id=analysis.artefact_id,
-                    mastering_type=ind.get('type', 'unknown'),
+                    mastering_type=_mtype,
                     track=ind.get('track'),
                     decoded=ind.get('decoded') or ind.get('data'),
                 ))

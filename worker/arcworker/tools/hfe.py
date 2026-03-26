@@ -760,10 +760,10 @@ def _try_traceback(data: bytes, track: int, side: int) -> dict | None:
     }
 
 
-def _try_bcd_timestamp(data: bytes, track: int, side: int,
-                       declared_size: int, size_used: int,
-                       size_was_overridden: bool, crc_valid: bool) -> dict | None:
-    """Return a bcd_timestamp_record indicator if the format matches.
+def _try_formaster(data: bytes, track: int, side: int,
+                   declared_size: int, size_used: int,
+                   size_was_overridden: bool, crc_valid: bool) -> dict | None:
+    """Return a formaster indicator if the format matches.
 
     Field layout (offsets in the sector data):
       0x00-0x04  signature (5 bytes: \x01\x02\x03\x04\x05)
@@ -800,7 +800,7 @@ def _try_bcd_timestamp(data: bytes, track: int, side: int,
     serial_number = serial_number_raw.decode('latin-1', errors='replace').rstrip()
 
     result = {
-        'type':               'bcd_timestamp',
+        'type':               'formaster',
         'track':              track,
         'side':               side,
         'declared_size':      declared_size,
@@ -913,7 +913,7 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5,
 
     Scans both known mastering formats:
       - TRACEBACK  (MFM, null-separated text, magic b'TRACEBACK')
-      - BCD timestamp record  (FM, PC-format, signature 01 02 03 04 05)
+      - Formaster record  (FM, PC-format, signature 01 02 03 04 05)
 
     Single-sector tracks with unrecognised content are captured as
     'unknown_mastering' indicators (with extracted printable strings).
@@ -1035,7 +1035,7 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5,
                                 bcd_was_overridden = (sector.get('size_used',
                                                           sector.get('declared_size', 0)) != 256)
 
-                        ind = _try_bcd_timestamp(
+                        ind = _try_formaster(
                             bcd_data, t_idx, side,
                             declared_size=sector['declared_size'],
                             size_used=bcd_size_used,
@@ -1118,8 +1118,8 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5,
         t = ind['type']
         if t == 'traceback':
             key = ('traceback', tuple(ind['fields']))
-        elif t == 'bcd_timestamp':
-            key = ('bcd_timestamp', ind['timestamp'],
+        elif t == 'formaster':
+            key = ('formaster', ind['timestamp'],
                    ind.get('format_code', ''), ind.get('serial_number', ''))
         elif t == 'unknown_mastering':
             key = ('unknown_mastering', ind.get('data_hex', ''))

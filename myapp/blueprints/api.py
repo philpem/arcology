@@ -499,9 +499,12 @@ def _populate_search_index(analysis):
         elif analysis.analysis_type == AnalysisType.DISC_MASTERING_DETECT:
             ArtefactMastering.query.filter_by(artefact_id=analysis.artefact_id).delete()
             for ind in details.get('indicators', []):
+                _mtype = ind.get('type', 'unknown')
+                if _mtype == 'bcd_timestamp':
+                    _mtype = 'formaster'
                 db.session.add(ArtefactMastering(
                     artefact_id=analysis.artefact_id,
-                    mastering_type=ind.get('type', 'unknown'),
+                    mastering_type=_mtype,
                     track=ind.get('track'),
                     decoded=ind.get('decoded') or ind.get('data'),
                 ))

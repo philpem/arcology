@@ -339,7 +339,7 @@ class TestSearchLogic(unittest.TestCase):
             ))
             _db.session.add(ArtefactMastering(
                 artefact_id=art.id,
-                mastering_type='bcd_timestamp',
+                mastering_type='formaster',
                 track=78,
                 decoded='1990-01-01',
             ))
@@ -576,8 +576,8 @@ class TestSearchLogic(unittest.TestCase):
         mast_results = [r for r in results['artefacts'] if r['type'] == 'mastering']
         self.assertTrue(len(mast_results) > 0)
 
-    def test_mastering_search_bcd_timestamp(self):
-        results = self._search('mastering:bcd_timestamp')
+    def test_mastering_search_formaster(self):
+        results = self._search('mastering:formaster')
         mast_results = [r for r in results['artefacts'] if r['type'] == 'mastering']
         self.assertTrue(len(mast_results) > 0)
 

@@ -640,7 +640,7 @@ class ArtefactMastering(db.Model):
     id: Mapped[int] = mapped_column(primary_key=True)
     artefact_id: Mapped[int] = mapped_column(ForeignKey('artefacts.id'), index=True)
     mastering_type: Mapped[str] = mapped_column(String(64), index=True)
-    # Known values: 'traceback', 'bcd_timestamp', 'unknown_mastering'
+    # Known values: 'traceback', 'formaster', 'unknown_mastering'
     track: Mapped[Optional[int]] = mapped_column(nullable=True)
     decoded: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Decoded mastering data string
 
