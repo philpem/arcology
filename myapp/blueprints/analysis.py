@@ -85,7 +85,7 @@ def index():
     # Eager-load artefact to avoid N+1 lazy loads in template
     pagination = query.options(
         joinedload(Analysis.artefact)
-    ).order_by(Analysis.created_at.desc()).paginate(page=page, per_page=50)
+    ).order_by(Analysis.created_at.desc()).paginate(page=page, per_page=current_app.config.get('ANALYSES_PER_PAGE', 50))
 
     # Single query for all status counts using conditional aggregation
     counts_row = db.session.query(

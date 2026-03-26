@@ -37,4 +37,64 @@
 {% endif %}
 {% endmacro %}
 
+
+{% macro render_letter_bar(endpoint, active_letter, available_letters, extra_args={}) %}
+{% set letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' %}
+<div class="mb-3 d-flex flex-wrap gap-1 justify-content-center" role="navigation" aria-label="Alphabetical filter">
+    <a href="{{ url_for(endpoint, **extra_args) }}"
+       class="btn btn-sm {{ 'btn-secondary' if not active_letter else 'btn-outline-secondary' }}">All</a>
+    <a href="{{ url_for(endpoint, letter='#', **extra_args) }}"
+       class="btn btn-sm {{ 'btn-secondary' if active_letter == '#' else ('btn-outline-secondary' if '#' in available_letters else 'btn-outline-secondary disabled') }}"
+       {% if '#' not in available_letters and active_letter != '#' %}tabindex="-1" aria-disabled="true"{% endif %}>#</a>
+    {% for ch in letters %}
+    <a href="{{ url_for(endpoint, letter=ch, **extra_args) }}"
+       class="btn btn-sm {{ 'btn-secondary' if active_letter == ch else ('btn-outline-secondary' if ch in available_letters else 'btn-outline-secondary disabled') }}"
+       {% if ch not in available_letters and active_letter != ch %}tabindex="-1" aria-disabled="true"{% endif %}>{{ ch }}</a>
+    {% endfor %}
+</div>
+{% endmacro %}
+
+
+{% macro render_pagination_compact(pagination, pagination_args, valid_per_page=none, view_all=false) %}
+{% if pagination.total > 0 %}
+<div class="card-footer">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        {# Page navigation -- only shown when there is more than one page #}
+        {% if pagination.pages > 1 %}
+        <nav><ul class="pagination pagination-sm mb-0">
+            {% if pagination.has_prev %}<li class="page-item"><a class="page-link" href="?{{ dict(pagination_args, page=pagination.prev_num) | urlencode }}">‹</a></li>
+            {% else %}<li class="page-item disabled"><span class="page-link">‹</span></li>{% endif %}
+            {% for pg in pagination.iter_pages(left_edge=1, left_current=2, right_current=3, right_edge=1) %}
+                {% if pg %}
+                <li class="page-item {{ 'active' if pg == pagination.page else '' }}">
+                    <a class="page-link" href="?{{ dict(pagination_args, page=pg) | urlencode }}">{{ pg }}</a>
+                </li>
+                {% else %}
+                <li class="page-item disabled"><span class="page-link">…</span></li>
+                {% endif %}
+            {% endfor %}
+            {% if pagination.has_next %}<li class="page-item"><a class="page-link" href="?{{ dict(pagination_args, page=pagination.next_num) | urlencode }}">›</a></li>
+            {% else %}<li class="page-item disabled"><span class="page-link">›</span></li>{% endif %}
+        </ul></nav>
+        {% else %}
+        <span class="text-muted small">{{ pagination.total }} file{{ 's' if pagination.total != 1 else '' }}</span>
+        {% endif %}
+
+        {% if valid_per_page %}
+        {# Per-page selector #}
+        <div class="d-flex align-items-center gap-1">
+            <span class="text-muted small me-1">Per page:</span>
+            {% for pp in valid_per_page %}
+            <a class="btn btn-sm {{ 'btn-secondary' if (not view_all and pagination.per_page == pp) else 'btn-outline-secondary' }}"
+               href="?{{ dict(pagination_args, per_page=pp) | urlencode }}">{{ pp }}</a>
+            {% endfor %}
+            <a class="btn btn-sm {{ 'btn-secondary' if view_all else 'btn-outline-secondary' }}"
+               href="?{{ dict(pagination_args, per_page=0) | urlencode }}">All</a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+{% endmacro %}
+
 {# vim: ts=4 sw=4 et #}

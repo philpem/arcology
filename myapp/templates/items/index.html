@@ -1,5 +1,5 @@
 {% extends "_base.html" %}
-{% from '_pagination.html' import render_pagination %}
+{% from '_pagination.html' import render_pagination, render_letter_bar %}
 {% block page_title %}Items{% endblock %}
 
 {% block content %}
@@ -18,6 +18,17 @@
         </form>
     </div>
 </div>
+
+{{ render_letter_bar(
+    'myapp_blueprints_items.index',
+    active_letter,
+    available_letters,
+    {
+        'q': request.args.get('q'),
+        'platform_id': request.args.get('platform_id'),
+        'category_id': request.args.get('category_id')
+    }
+) }}
 
 <div class="card">
     <div class="table-responsive">
@@ -43,6 +54,7 @@
 {{ render_pagination(pagination, 'myapp_blueprints_items.index', {
     'q': request.args.get('q'),
     'platform_id': request.args.get('platform_id'),
-    'category_id': request.args.get('category_id')
+    'category_id': request.args.get('category_id'),
+    'letter': request.args.get('letter')
 }) }}
 {% endblock %}
