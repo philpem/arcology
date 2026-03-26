@@ -409,6 +409,33 @@ def _resolve_extracted_file_path(ef):
     return None
 
 
+def _map_output_path_to_local_root(path: str, output_folder: str) -> str:
+    """Map a stored output path into the local OUTPUT_FOLDER namespace.
+
+    Worker analyses may store absolute paths rooted at the worker container's
+    OUTPUT_DIR (for example ``/data/outputs/...``), while the web app sees the
+    same files under its own mount point (for example
+    ``/app/instance/outputs/...``). This helper rewrites the absolute path onto
+    the local output root before cleanup-time safety checks.
+    """
+    real_output = os.path.realpath(output_folder)
+    real_path = os.path.realpath(path)
+
+    if real_path == real_output or real_path.startswith(real_output + os.sep):
+        return real_path
+
+    # Cross-container fallback: re-root the path under our local OUTPUT_FOLDER
+    # using the suffix after the worker's output-root basename ("outputs").
+    output_root_name = os.path.basename(real_output.rstrip(os.sep))
+    parts = [part for part in path.rstrip(os.sep).split(os.sep) if part]
+    if output_root_name in parts:
+        suffix = parts[parts.index(output_root_name) + 1:]
+        if suffix:
+            return os.path.realpath(os.path.join(real_output, *suffix))
+
+    return real_path
+
+
 # =============================================================================
 # Routes
 # =============================================================================
@@ -516,6 +543,17 @@ def _cleanup_analysis_outputs(output_folder, output_files, output_dirs, cache_di
         """Return True only if p resolves to a path inside output_folder."""
         return os.path.realpath(p).startswith(real_output + os.sep)
 
+    def _prune_empty_parents(path: str) -> None:
+        """Remove empty parent directories up to, but not including, output_folder."""
+        current = os.path.dirname(os.path.realpath(path))
+        while current.startswith(real_output + os.sep):
+            try:
+                os.rmdir(current)
+                logger.info(f"Deleted empty parent directory: {current}")
+            except OSError:
+                break
+            current = os.path.dirname(current)
+
     # Remove named output files (e.g., flux visualisation PNGs).
     for filename in output_files:
         path = os.path.join(output_folder, filename)
@@ -531,13 +569,15 @@ def _cleanup_analysis_outputs(output_folder, output_files, output_dirs, cache_di
 
     # Remove extraction output directories (e.g., extracted disc file trees).
     for path in output_dirs:
-        if not _is_safe(path):
+        local_path = _map_output_path_to_local_root(path, output_folder)
+        if not _is_safe(local_path):
             logger.warning(f"Skipping out-of-bounds output directory: {path!r}")
             continue
-        if os.path.exists(path):
+        if os.path.exists(local_path):
             try:
-                shutil.rmtree(path)
-                logger.info(f"Deleted output directory: {path}")
+                shutil.rmtree(local_path)
+                logger.info(f"Deleted output directory: {local_path}")
+                _prune_empty_parents(local_path)
             except Exception as e:
                 logger.warning(f"Failed to delete output directory {path}: {e}")
 
@@ -548,6 +588,33 @@ def _cleanup_analysis_outputs(output_folder, output_files, output_dirs, cache_di
             logger.info(f"Deleted partition cache: {cache_dir}")
         except Exception as e:
             logger.warning(f"Failed to delete partition cache {cache_dir}: {e}")
+
+
+def _collect_cleanup_paths_for_artefact(artefact: Artefact) -> dict[str, list[str] | str]:
+    """Collect output files/directories/cache paths for an artefact tree."""
+    output_folder = get_output_folder()
+    all_analyses = _collect_all_analyses(artefact)
+    output_dirs = [a.output_path for a in all_analyses if a.output_path]
+    output_files = []
+
+    for analysis in all_analyses:
+        if analysis.details:
+            try:
+                details = json.loads(analysis.details)
+                if 'outputs' in details and isinstance(details['outputs'], list):
+                    for output in details['outputs']:
+                        if 'filename' in output:
+                            output_files.append(output['filename'])
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                current_app.logger.warning(f"Failed to parse analysis details during cleanup collection: {e}")
+
+    cache_dir = os.path.join(output_folder, '.cache', artefact.uuid)
+    return {
+        'output_folder': output_folder,
+        'output_files': output_files,
+        'output_dirs': output_dirs,
+        'cache_dir': cache_dir,
+    }
 
 
 def _resolve_artefact(item_id, artefact_id, root_id=None):
@@ -1262,7 +1329,7 @@ def _delete_item_files(item):
 
         # Remove extraction output directories (e.g., extracted disc file trees).
         for path in output_dirs:
-            real_path = os.path.realpath(path)
+            real_path = _map_output_path_to_local_root(path, output_folder)
             if not (real_path == real_output or real_path.startswith(real_output + os.sep)):
                 current_app.logger.warning(f"Skipping out-of-bounds output directory: {path!r}")
                 continue
@@ -1297,8 +1364,18 @@ def delete(item_id=None, artefact_id=None, root_id=None, uuid=None):
     item_url_id = artefact.item.url_id
     label = artefact.label
 
-    # Delete files for this artefact and all derived artefacts
+    # Collect analysis outputs before deleting ORM rows or files.
+    cleanup = _collect_cleanup_paths_for_artefact(artefact)
+
+    # Delete files for this artefact and all derived artefacts.
     _delete_artefact_files(artefact)
+    _cleanup_analysis_outputs(
+        cleanup['output_folder'],
+        cleanup['output_files'],
+        cleanup['output_dirs'],
+        cleanup['cache_dir'],
+        current_app.logger,
+    )
 
     db.session.delete(artefact)
     db.session.commit()
