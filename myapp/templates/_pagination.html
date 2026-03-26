@@ -38,20 +38,49 @@
 {% endmacro %}
 
 
-{% macro render_letter_bar(endpoint, active_letter, available_letters, extra_args={}) %}
+{% macro render_letter_bar(endpoint, letter_pages, current_letter, extra_args={}) %}
 {% set letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' %}
-<div class="mb-3 d-flex flex-wrap gap-1 justify-content-center" role="navigation" aria-label="Alphabetical filter">
-    <a href="{{ url_for(endpoint, **extra_args) }}"
-       class="btn btn-sm {{ 'btn-secondary' if not active_letter else 'btn-outline-secondary' }}">All</a>
-    <a href="{{ url_for(endpoint, letter='#', **extra_args) }}"
-       class="btn btn-sm {{ 'btn-secondary' if active_letter == '#' else ('btn-outline-secondary' if '#' in available_letters else 'btn-outline-secondary disabled') }}"
-       {% if '#' not in available_letters and active_letter != '#' %}tabindex="-1" aria-disabled="true"{% endif %}>#</a>
+{% if letter_pages %}
+<div class="mb-3 d-flex flex-wrap gap-1 justify-content-center" role="navigation" aria-label="Alphabetical navigation">
+    {% if '#' in letter_pages %}
+    <a href="{{ url_for(endpoint, page=letter_pages['#'], **extra_args) }}"
+       class="btn btn-sm {{ 'btn-secondary' if current_letter == '#' else 'btn-outline-secondary' }}">#</a>
+    {% else %}
+    <span class="btn btn-sm btn-outline-secondary disabled" tabindex="-1" aria-disabled="true">#</span>
+    {% endif %}
     {% for ch in letters %}
-    <a href="{{ url_for(endpoint, letter=ch, **extra_args) }}"
-       class="btn btn-sm {{ 'btn-secondary' if active_letter == ch else ('btn-outline-secondary' if ch in available_letters else 'btn-outline-secondary disabled') }}"
-       {% if ch not in available_letters and active_letter != ch %}tabindex="-1" aria-disabled="true"{% endif %}>{{ ch }}</a>
+    {% if ch in letter_pages %}
+    <a href="{{ url_for(endpoint, page=letter_pages[ch], **extra_args) }}"
+       class="btn btn-sm {{ 'btn-secondary' if current_letter == ch else 'btn-outline-secondary' }}">{{ ch }}</a>
+    {% else %}
+    <span class="btn btn-sm btn-outline-secondary disabled" tabindex="-1" aria-disabled="true">{{ ch }}</span>
+    {% endif %}
     {% endfor %}
 </div>
+{% endif %}
+{% endmacro %}
+
+
+{% macro render_letter_bar_compact(letter_pages, current_letter, pagination_args) %}
+{% set letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' %}
+{% if letter_pages %}
+<div class="card-body border-bottom py-2 d-flex flex-wrap gap-1 justify-content-center" role="navigation" aria-label="Alphabetical navigation">
+    {% if '#' in letter_pages %}
+    <a href="?{{ dict(pagination_args, page=letter_pages['#']) | urlencode }}"
+       class="btn btn-sm {{ 'btn-secondary' if current_letter == '#' else 'btn-outline-secondary' }}">#</a>
+    {% else %}
+    <span class="btn btn-sm btn-outline-secondary disabled" tabindex="-1" aria-disabled="true">#</span>
+    {% endif %}
+    {% for ch in letters %}
+    {% if ch in letter_pages %}
+    <a href="?{{ dict(pagination_args, page=letter_pages[ch]) | urlencode }}"
+       class="btn btn-sm {{ 'btn-secondary' if current_letter == ch else 'btn-outline-secondary' }}">{{ ch }}</a>
+    {% else %}
+    <span class="btn btn-sm btn-outline-secondary disabled" tabindex="-1" aria-disabled="true">{{ ch }}</span>
+    {% endif %}
+    {% endfor %}
+</div>
+{% endif %}
 {% endmacro %}
 
 

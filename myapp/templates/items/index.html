@@ -21,8 +21,8 @@
 
 {{ render_letter_bar(
     'myapp_blueprints_items.index',
-    active_letter,
-    available_letters,
+    letter_pages,
+    current_letter,
     {
         'q': request.args.get('q'),
         'platform_id': request.args.get('platform_id'),
@@ -54,7 +54,6 @@
 {{ render_pagination(pagination, 'myapp_blueprints_items.index', {
     'q': request.args.get('q'),
     'platform_id': request.args.get('platform_id'),
-    'category_id': request.args.get('category_id'),
-    'letter': request.args.get('letter')
+    'category_id': request.args.get('category_id')
 }) }}
 {% endblock %}

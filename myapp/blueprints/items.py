@@ -18,6 +18,7 @@ from .artefacts import _delete_item_files
 from ..permissions import require_permission
 from ..utils.item_helpers import item_choice_list, assign_item_fields, assign_item_tags
 from ..utils.slugs import get_or_create_slug, lookup_by_identifier
+from ..utils.pagination import compute_letter_pages
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -85,31 +86,17 @@ def index():
     if form.category_id.data and form.category_id.data != 0:
         query = query.filter(Item.category_id == form.category_id.data)
 
-    # Compute available first letters for the letter bar (before letter filter)
-    first_char = func.upper(func.substr(Item.name, 1, 1))
-    available_letters_raw = {
-        row[0] for row in query.with_entities(first_char).distinct().all()
-        if row[0]
-    }
-    alpha_letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-    available_letters = {ch for ch in available_letters_raw if ch in alpha_letters}
-    if available_letters_raw - available_letters:
-        available_letters.add('#')
-
-    # Apply letter filter
-    letter = request.args.get('letter', '', type=str).upper().strip()
-    if letter == '#':
-        query = query.filter(first_char.notin_(list(alpha_letters)))
-    elif len(letter) == 1 and letter in alpha_letters:
-        query = query.filter(Item.name.ilike(f'{letter}%'))
-    else:
-        letter = ''
-
     # Eager-load platform and category to avoid N+1 lazy loads in template
     query = query.options(selectinload(Item.platform), selectinload(Item.category))
 
     page = request.args.get('page', 1, type=int)
     per_page = current_app.config.get('ITEMS_PER_PAGE', 25)
+
+    # Compute letter-to-page mapping for A-Z jump bar
+    letter_pages, current_letter = compute_letter_pages(
+        query.order_by(Item.name), Item.name, per_page, current_page=page
+    )
+
     pagination = query.order_by(Item.name).paginate(page=page, per_page=per_page)
 
     # Compute artefact counts in a single query instead of lazy-loading per item
@@ -129,8 +116,8 @@ def index():
                            artefact_counts=artefact_counts,
                            pagination=pagination,
                            form=form,
-                           active_letter=letter,
-                           available_letters=available_letters)
+                           letter_pages=letter_pages,
+                           current_letter=current_letter)
 
 
 @blueprint.route('/new', methods=['GET', 'POST'])
@@ -173,15 +160,20 @@ def view(uuid):
     page = request.args.get('page', 1, type=int)
     per_page = current_app.config.get('ARTEFACTS_PER_PAGE', 25)
 
-    artefacts_page = (
+    artefact_query = (
         Artefact.query
         .filter_by(item_id=item.id, parent_artefact_id=None)
         .options(selectinload(Artefact.derived_artefacts))
-        .order_by(Artefact.label)
-        .paginate(page=page, per_page=per_page)
     )
 
-    return render_template('items/view.html', item=item, artefacts_page=artefacts_page)
+    letter_pages, current_letter = compute_letter_pages(
+        artefact_query.order_by(Artefact.label), Artefact.label, per_page, current_page=page
+    )
+
+    artefacts_page = artefact_query.order_by(Artefact.label).paginate(page=page, per_page=per_page)
+
+    return render_template('items/view.html', item=item, artefacts_page=artefacts_page,
+                           letter_pages=letter_pages, current_letter=current_letter)
 
 
 @blueprint.route('/<string:uuid>/edit', methods=['GET', 'POST'])

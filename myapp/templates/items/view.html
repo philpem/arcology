@@ -1,5 +1,5 @@
 {% extends "_base.html" %}
-{% from '_pagination.html' import render_pagination %}
+{% from '_pagination.html' import render_pagination, render_letter_bar %}
 {% block page_title %}{{ item.name }}{% endblock %}
 
 {% block content %}
@@ -74,6 +74,11 @@
                 <span><i class="bi bi-disc"></i> Artefacts ({{ artefacts_page.total }})</span>
                 {% if user_can_write %}<a href="{{ url_for('myapp_blueprints_artefacts.upload', item_id=item.url_id) }}" class="btn btn-sm btn-primary"><i class="bi bi-plus"></i> Upload</a>{% endif %}
             </div>
+            {% if letter_pages %}
+            <div class="card-body border-bottom py-2">
+                {{ render_letter_bar('myapp_blueprints_items.view', letter_pages, current_letter, {'uuid': item.url_id}) }}
+            </div>
+            {% endif %}
             <div class="list-group list-group-flush">
                 {% for artefact in artefacts_page.items %}
                 <div class="list-group-item">

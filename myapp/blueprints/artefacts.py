@@ -845,6 +845,16 @@ def _render_artefact_view(artefact):
     if sort_desc:
         sort_expr = desc(sort_expr)
 
+    # Compute letter-to-page mapping for A-Z jump bar (only for path sort)
+    if sort_col == 'path' and not sort_desc:
+        from ..utils.pagination import compute_letter_pages
+        letter_pages, current_letter = compute_letter_pages(
+            files_query.order_by(ExtractedFile.path), ExtractedFile.path,
+            per_page, current_page=page
+        )
+    else:
+        letter_pages, current_letter = {}, ''
+
     files_pagination = files_query.order_by(sort_expr).paginate(
         page=page, per_page=per_page, max_per_page=per_page
     )
@@ -1041,7 +1051,9 @@ def _render_artefact_view(artefact):
                            recognised_folder_paths=recognised_folder_paths,
                            hash_databases=hash_databases,
                            file_known_matches=file_known_matches,
-                           RestrictionType=RestrictionType)
+                           RestrictionType=RestrictionType,
+                           letter_pages=letter_pages,
+                           current_letter=current_letter)
 
 
 @blueprint.route('/<string:uuid>/add-to-hashdb', methods=['POST'])

@@ -1,4 +1,4 @@
-{% from '_pagination.html' import render_pagination_compact %}
+{% from '_pagination.html' import render_pagination_compact, render_letter_bar_compact %}
         <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span>
@@ -66,6 +66,7 @@
                 </div>
             </div>
             {% endif %}
+            {{ render_letter_bar_compact(letter_pages, current_letter, pagination_args) }}
             {% if hashdb_mode %}
             <form id="hashdb-form" action="{{ url_for('myapp_blueprints_artefacts.add_to_hashdb', uuid=artefact.uuid) }}" method="post">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
