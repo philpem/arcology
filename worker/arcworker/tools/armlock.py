@@ -280,8 +280,27 @@ def _read_subdir_by_sin(image: bytearray, rec: dict, sin: int) -> tuple[bool, li
 
 
 # ---------------------------------------------------------------------------
-# RISC OS module header parsing
+# Hexdump formatter
 # ---------------------------------------------------------------------------
+
+def _hexdump(data: bytes) -> str:
+    """Format bytes as a standard hexdump-C style string.
+
+    Output format (matches `hexdump -C`):
+      00000000  41 52 4d 6c 6f 63 6b 00  00 00 00 00 00 00 00 00  |ARMlock.........|
+    """
+    lines = []
+    for i in range(0, len(data), 16):
+        chunk = data[i:i + 16]
+        hex_pairs = [f'{b:02x}' for b in chunk]
+        hex_left  = ' '.join(hex_pairs[:8])
+        hex_right = ' '.join(hex_pairs[8:])
+        hex_part  = f'{hex_left:<23}  {hex_right:<23}'
+        ascii_part = ''.join(chr(b) if 0x20 <= b < 0x7F else '.' for b in chunk)
+        lines.append(f'{i:08x}  {hex_part}  |{ascii_part}|')
+    return '\n'.join(lines)
+
+
 
 def _parse_module_header(data: bytes) -> dict:
     """Extract title and help strings from a RISC OS module header.
@@ -502,7 +521,7 @@ def detect_armlock(image_path: Path) -> dict:
                                     config_files[prefix + sfe['name']] = {
                                         'length': sfe['length'],
                                         'filetype': sfe['filetype'],
-                                        'hex': file_data.hex(),
+                                        'hexdump': _hexdump(file_data),
                                     }
                     elif 0 < fe['length'] <= 4096:
                         valid_as_dir, _ = _read_subdir_by_sin(image, rec, fe['sin'])
@@ -513,7 +532,7 @@ def detect_armlock(image_path: Path) -> dict:
                                 config_files[fe['name']] = {
                                     'length': fe['length'],
                                     'filetype': fe['filetype'],
-                                    'hex': file_data.hex(),
+                                    'hexdump': _hexdump(file_data),
                                 }
                 result['armlock_config'] = config_files
 

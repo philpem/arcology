@@ -525,8 +525,6 @@
                     {% if al_cfg %}
                     <h6 class="text-muted small text-uppercase mb-2">$.Armlock</h6>
                     {% for fname, finfo in al_cfg.items() | sort %}
-                    {% set fhex = finfo.get('hex', '') %}
-                    {# Render hex bytes as space-separated pairs for readability #}
                     {% set flen = finfo.get('length', 0) %}
                     <details class="mb-2" {% if loop.first %}open{% endif %}>
                         <summary class="small" style="cursor:pointer;">
@@ -537,7 +535,7 @@
                             {% endif %}
                         </summary>
                         <div class="mt-1 ms-3">
-                            <code class="small d-block" style="word-break:break-all; white-space:pre-wrap;">{{ fhex | upper }}</code>
+                            <pre class="small mb-0" style="font-size:0.75em;">{{ finfo.get('hexdump', '') }}</pre>
                         </div>
                     </details>
                     {% endfor %}
