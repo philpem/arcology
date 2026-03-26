@@ -167,7 +167,8 @@ def analysis_handler(description: str):
 class AnalysisWorker:
     """Main worker class that processes analysis jobs."""
 
-    def __init__(self, api_url: str, upload_dir: Path, output_dir: Path, api_key: str = ''):
+    def __init__(self, api_url: str, upload_dir: Path, output_dir: Path,
+                 api_key: str = '', storage=None):
         """
         Initialize the worker.
 
@@ -176,17 +177,37 @@ class AnalysisWorker:
             upload_dir: Directory where uploaded artefacts are stored
             output_dir: Directory for analysis outputs (e.g., visualisations)
             api_key: Worker API key for authentication
+            storage: StorageBackend instance (if None, creates from config)
         """
         self.uploads = upload_dir
         self.outputs = output_dir
         self.outputs.mkdir(parents=True, exist_ok=True)
-        self.api = ArcologyAPI(api_url, upload_dir, output_dir, api_key=api_key)
+
+        if storage is None:
+            from shared.storage import create_storage
+            from .config import (STORAGE_BACKEND, S3_ENDPOINT_URL, S3_BUCKET,
+                                 S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION)
+            storage = create_storage({
+                'STORAGE_BACKEND': STORAGE_BACKEND,
+                'S3_ENDPOINT_URL': S3_ENDPOINT_URL,
+                'S3_BUCKET': S3_BUCKET,
+                'S3_ACCESS_KEY': S3_ACCESS_KEY,
+                'S3_SECRET_KEY': S3_SECRET_KEY,
+                'S3_REGION': S3_REGION,
+                'UPLOAD_FOLDER': str(upload_dir),
+                'OUTPUT_FOLDER': str(output_dir),
+            })
+        self.storage = storage
+
+        self.api = ArcologyAPI(api_url, upload_dir, output_dir,
+                               api_key=api_key, storage=storage)
         self._decompression_info = None  # Set by get_input_path() when decompression occurs
 
     def get_input_path(self, artefact: dict, work_dir: Path) -> Path:
         """
         Get input file path, decompressing if needed.
 
+        In S3 mode, downloads the file from storage to work_dir first.
         After calling this method, self._decompression_info is set to a dict
         with decompression details if the file was compressed, or None otherwise.
         Handlers can use this to include decompression info in their output.
@@ -204,11 +225,19 @@ class AnalysisWorker:
         storage_path = artefact['storage_path']
         storage_directory = artefact.get('storage_directory', 'uploads')
 
-        # Use uploads or outputs directory based on storage_directory field
-        if storage_directory == 'outputs':
-            input_path = self.outputs / storage_path
+        key = self.storage.storage_key(storage_directory, storage_path)
+
+        from shared.storage import LocalStorage
+        if isinstance(self.storage, LocalStorage):
+            # Local mode: use direct filesystem path
+            input_path = self.storage.local_path(key)
         else:
-            input_path = self.uploads / storage_path
+            # S3 mode: download to work_dir
+            input_path = work_dir / storage_path
+            if not input_path.exists():
+                if not self.storage.exists(key):
+                    raise FileNotFoundError(f"Input file not found in storage: {key}")
+                self.storage.get(key, input_path)
 
         if not input_path.exists():
             raise FileNotFoundError(f"Input file not found: {input_path}")
@@ -232,7 +261,7 @@ class AnalysisWorker:
 
     def save_output_file(self, source_path: Path, filename: str, subdir: str | None = None) -> str:
         """
-        Save an output file (like a visualisation) to the outputs directory.
+        Save an output file (like a visualisation) to storage.
 
         Args:
             source_path: Path to the generated file
@@ -243,14 +272,11 @@ class AnalysisWorker:
             The relative path for use in URLs (subdir/filename or just filename)
         """
         if subdir:
-            dest_dir = self.outputs / subdir
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            dest_path = dest_dir / filename
             relative_path = f"{subdir}/{filename}"
         else:
-            dest_path = self.outputs / filename
             relative_path = filename
-        shutil.copy(source_path, dest_path)
+        key = self.storage.storage_key('outputs', relative_path)
+        self.storage.put(key, source_path)
         return relative_path
 
     def fail_analysis(self, analysis_id: int, error_message: str, **kwargs):
@@ -335,6 +361,52 @@ class AnalysisWorker:
             AnalysisType.RISCOS_MODULE_PARSE.value,
             hints=module_hints,
         )
+
+    def _relative_output_path(self, extract_dir: Path) -> str:
+        """Convert an absolute extraction directory to a relative path for storage.
+
+        Returns the path relative to the outputs directory, suitable for
+        storing in Analysis.output_path and as a storage key prefix.
+        """
+        try:
+            return str(extract_dir.relative_to(self.outputs))
+        except ValueError:
+            # Not under outputs dir — return as-is (shouldn't happen normally)
+            return str(extract_dir)
+
+    def _upload_extraction_tree(self, extract_dir: Path) -> None:
+        """Upload an extraction directory tree to storage (S3 mode).
+
+        In local mode this is a no-op since the files are already in place.
+        """
+        from shared.storage import LocalStorage
+        if isinstance(self.storage, LocalStorage):
+            return
+        rel = self._relative_output_path(extract_dir)
+        prefix = self.storage.storage_key('outputs', rel)
+        count = self.storage.put_tree(prefix, extract_dir)
+        log.info(f"Uploaded {count} files to storage prefix: {prefix}")
+
+    def _resolve_extraction_path(self, extraction_path: str) -> Path:
+        """Resolve an extraction path from hints/DB to a local directory.
+
+        In local mode, resolves relative path under outputs dir.
+        In S3 mode, downloads the extraction tree to a temp directory.
+        """
+        from shared.storage import LocalStorage
+
+        if isinstance(self.storage, LocalStorage):
+            path = Path(extraction_path)
+            if path.is_absolute():
+                return path
+            return self.outputs / extraction_path
+
+        # S3 mode: download to temp
+        prefix = self.storage.storage_key('outputs', extraction_path.lstrip('/'))
+        tmp_dir = Path(tempfile.mkdtemp(prefix='arcology_extract_'))
+        count = self.storage.get_tree(prefix, tmp_dir)
+        log.info(f"Downloaded {count} files from storage prefix: {prefix}")
+        return tmp_dir
 
     # =========================================================================
     # Analysis Handlers
@@ -529,10 +601,28 @@ class AnalysisWorker:
         # Use cached partition image from PARTITION_DETECT when available,
         # avoiding redundant decompression of the original artefact.
         partition_image_path = hints.get('partition_image_path')
-        if partition_image_path and Path(partition_image_path).exists():
-            input_path = Path(partition_image_path)
-            log.info(f"Using cached partition image: {input_path}")
-        else:
+        input_path = None
+        if partition_image_path:
+            local_path = Path(partition_image_path)
+            if local_path.exists():
+                input_path = local_path
+                log.info(f"Using cached partition image: {input_path}")
+            else:
+                # S3 mode or different worker: try to download from storage cache
+                from shared.storage import S3Storage
+                if isinstance(self.storage, S3Storage):
+                    try:
+                        rel = local_path.relative_to(self.outputs)
+                        cache_key = self.storage.storage_key('outputs', str(rel))
+                    except ValueError:
+                        cache_key = self.storage.storage_key(
+                            'outputs', f".cache/{artefact['uuid']}/{local_path.name}")
+                    dest = work_dir / local_path.name
+                    if self.storage.exists(cache_key):
+                        self.storage.get(cache_key, dest)
+                        input_path = dest
+                        log.info(f"Downloaded cached partition image from storage: {cache_key}")
+        if input_path is None:
             input_path = self.get_input_path(artefact, work_dir)
 
         # Get Item for hierarchical path
@@ -695,11 +785,15 @@ class AnalysisWorker:
             partition_index=partition_index,
         )
 
+        # Upload extraction tree to storage (no-op in local mode)
+        self._upload_extraction_tree(extract_dir)
+        rel_output_path = self._relative_output_path(extract_dir)
+
         self.complete_analysis(
             analysis_id,
             tool_name=result['tool'],
             summary=f'Extracted {len(files)} files ({fs_type})',
-            output_path=str(extract_dir),
+            output_path=rel_output_path,
             details=_build_details({'file_count': len(files)})
         )
 
@@ -708,7 +802,7 @@ class AnalysisWorker:
             self.queue_partition_follow_ups(
                 artefact['uuid'],
                 partition.get('uuid'),
-                extraction_path=str(extract_dir),
+                extraction_path=rel_output_path,
             )
 
     @analysis_handler("checksum computation")
@@ -1099,6 +1193,10 @@ class AnalysisWorker:
                     idx = partition['index']
                     partition_path = cache_dir / f"partition_{idx}.img"
                     shutil.copy(input_path, partition_path)
+                    # Upload cached partition to storage (no-op in local mode)
+                    cache_key = self.storage.storage_key(
+                        'outputs', f".cache/{artefact['uuid']}/partition_{idx}.img")
+                    self.storage.put(cache_key, partition_path)
                     partition_image_paths[idx] = str(partition_path)
                     log.info(f"Cached decompressed image as {partition_path}")
 
@@ -1533,10 +1631,14 @@ class AnalysisWorker:
                 derived_count += 1
                 log.info(f"Promoted {file_path.name} to derived {artefact_type.value} artefact")
 
+        # Upload extraction tree to storage (no-op in local mode)
+        self._upload_extraction_tree(extract_dir)
+        rel_output_path = self._relative_output_path(extract_dir)
+
         self.complete_analysis(
             analysis_id,
             tool_name=result['tool'],
-            output_path=str(extract_dir),
+            output_path=rel_output_path,
             summary=f"Extracted {len(files)} files from {archive_info['name']}"
                     + (f" ({derived_count} promoted to artefacts)" if derived_count else ""),
             details=json.dumps({
@@ -1550,7 +1652,7 @@ class AnalysisWorker:
             self.queue_partition_follow_ups(
                 artefact['uuid'],
                 partition.get('uuid'),
-                extraction_path=str(extract_dir),
+                extraction_path=rel_output_path,
             )
 
     @analysis_handler("archive extraction")
@@ -1701,7 +1803,8 @@ class AnalysisWorker:
             disk_relative_path = db_path[len(path_prefix) + 1:]
         else:
             disk_relative_path = db_path
-        archive_path = Path(extraction_path) / disk_relative_path
+        resolved_extraction = self._resolve_extraction_path(extraction_path)
+        archive_path = resolved_extraction / disk_relative_path
 
         # Build a list of name variants to try in order.  DIM writes Acorn
         # files with a RISC OS filetype suffix (e.g. "Palette,DDC") in either
@@ -1904,7 +2007,7 @@ class AnalysisWorker:
                 AnalysisType.ARCHIVE_DETECT.value,
                 hints={
                     'partition_uuid': partition_uuid,
-                    'extraction_path': str(persistent_output),
+                    'extraction_path': self._relative_output_path(persistent_output),
                     'path_prefix': archive_display_path,
                 }
             )
@@ -1958,10 +2061,14 @@ class AnalysisWorker:
         if po:
             details[tool_key] = {'process_output': po}
 
+        # Upload extraction tree to storage (no-op in local mode)
+        self._upload_extraction_tree(persistent_output)
+        rel_output_path = self._relative_output_path(persistent_output)
+
         self.complete_analysis(
             analysis_id,
             tool_name=result['tool'],
-            output_path=str(persistent_output),
+            output_path=rel_output_path,
             summary=f"Extracted {len(files)} files from {archive_info['name']} archive",
             details=json.dumps(details)
         )

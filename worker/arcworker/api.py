@@ -20,7 +20,8 @@ from .tools import compute_file_hash
 class ArcologyAPI:
     """Client for the Arcology REST API."""
 
-    def __init__(self, api_url: str, upload_dir: Path, output_dir: Path, api_key: str = ''):
+    def __init__(self, api_url: str, upload_dir: Path, output_dir: Path,
+                 api_key: str = '', storage=None):
         """
         Initialize the API client.
 
@@ -29,10 +30,12 @@ class ArcologyAPI:
             upload_dir: Directory where uploaded files are stored
             output_dir: Directory where derived/output files are stored
             api_key: Worker API key for authentication
+            storage: StorageBackend instance for file storage
         """
         self.api = api_url.rstrip('/')
         self.uploads = upload_dir
         self.outputs = output_dir
+        self.storage = storage
         self._auth = {'Authorization': f'Bearer {api_key}'} if api_key else {}
 
     def _request(
@@ -166,7 +169,7 @@ class ArcologyAPI:
     ) -> Optional[dict]:
         """
         Register a derived artefact produced by an analysis.
-        Copies file to outputs directory and calls API.
+        Stores file via storage backend and calls API.
 
         Args:
             analysis_id: ID of the analysis that produced this artefact
@@ -180,13 +183,18 @@ class ArcologyAPI:
             API response dict, or None on error
         """
         storage_name = f"{uuid.uuid4().hex}{source_path.suffix}"
-        storage_path = self.outputs / storage_name
 
-        # Copy file to outputs (derived files go there, not uploads)
-        shutil.copy(source_path, storage_path)
-
-        # Compute hashes
-        md5, sha256, file_size = compute_file_hash(storage_path)
+        # Store file via storage backend
+        if self.storage:
+            key = self.storage.storage_key('outputs', storage_name)
+            self.storage.put(key, source_path)
+            # Compute hashes from source (already local)
+            md5, sha256, file_size = compute_file_hash(source_path)
+        else:
+            # Fallback: direct copy (legacy path without storage backend)
+            storage_path = self.outputs / storage_name
+            shutil.copy(source_path, storage_path)
+            md5, sha256, file_size = compute_file_hash(storage_path)
 
         # Register via API - derived artefacts use 'outputs' storage directory
         return self.post(f"/analysis/{analysis_id}/produce-artefact", {

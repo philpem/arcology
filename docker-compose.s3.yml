@@ -1,0 +1,60 @@
+# Arcology Docker Compose - S3 Storage Override
+#
+# Enables S3-compatible object storage for distributed workers.
+# Use with the base docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.s3.yml up -d
+#
+# Before first start:
+#   1. Generate S3 credentials and add to .env:
+#      S3_ACCESS_KEY=<your-access-key>
+#      S3_SECRET_KEY=<your-secret-key>
+#
+#   2. Create the data directory:
+#      mkdir -p data/garage
+#
+#   3. After Garage starts, configure it (one-time setup):
+#      See https://garagehq.deuxfleurs.fr/documentation/quick-start/
+#
+# This enables workers to run on separate machines — they access files
+# via S3 instead of requiring shared Docker volume mounts.
+#
+# Recommended self-hosted S3 backends:
+#   - Garage (https://garagehq.deuxfleurs.fr/) - lightweight, single binary
+#   - SeaweedFS (https://github.com/seaweedfs/seaweedfs) - scalable
+#
+# For cloud deployments, any S3-compatible service works (AWS S3, etc.)
+
+services:
+  # S3-compatible object storage (Garage)
+  # Replace with your preferred S3-compatible service if needed.
+  garage:
+    image: dxflrs/garage:v1.1.0
+    volumes:
+      - ./data/garage:/var/lib/garage
+    ports:
+      - "3900:3900"   # S3 API
+      - "3902:3902"   # Admin API (for initial setup only)
+    restart: unless-stopped
+
+  web:
+    environment:
+      - STORAGE_BACKEND=s3
+      - S3_ENDPOINT_URL=http://garage:3900
+      - S3_BUCKET=${S3_BUCKET:-arcology}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY}
+      - S3_SECRET_KEY=${S3_SECRET_KEY}
+      - S3_REGION=${S3_REGION:-garage}
+
+  worker:
+    environment:
+      - STORAGE_BACKEND=s3
+      - S3_ENDPOINT_URL=http://garage:3900
+      - S3_BUCKET=${S3_BUCKET:-arcology}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY}
+      - S3_SECRET_KEY=${S3_SECRET_KEY}
+      - S3_REGION=${S3_REGION:-garage}
+    # Workers no longer need shared volume mounts for uploads/outputs
+    # — they access files via S3 and use local temp space for processing.
+    # Uncomment below to remove the shared volumes:
+    # volumes: !override []

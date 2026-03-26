@@ -8,7 +8,7 @@ import hmac
 import os
 from datetime import datetime, timezone, timedelta
 from functools import wraps
-from flask import Blueprint, jsonify, request, current_app, send_file
+from flask import Blueprint, jsonify, request, current_app, send_file, redirect
 from flask_wtf.csrf import CSRFProtect
 from sqlalchemy import func, update, or_
 from sqlalchemy.orm import joinedload, selectinload
@@ -25,9 +25,9 @@ from ..database import (
     ExtractedFileRestriction,
 )
 from .artefacts import (
-    get_artefact_path, _delete_artefact_files, _delete_item_files,
-    detect_artefact_type, save_uploaded_file, compute_file_hashes,
-    queue_analyses_for_artefact, move_artefact_to_item,
+    get_artefact_path, get_artefact_storage_key, _delete_artefact_files,
+    _delete_item_files, detect_artefact_type, save_uploaded_file,
+    compute_file_hashes, queue_analyses_for_artefact, move_artefact_to_item,
     _collect_all_file_restrictions, _collect_ancestor_file_restrictions,
 )
 from ..utils.hash_rescan import find_known_file
@@ -507,6 +507,15 @@ def download_artefact(uuid):
             'restrictions': [r.restriction_type.value for r in artefact.restrictions],
         }), 403
 
+    storage = current_app.storage
+    key = get_artefact_storage_key(artefact)
+
+    # S3 mode: redirect to pre-signed URL
+    url = storage.presigned_url(key, filename=artefact.original_filename)
+    if url:
+        return redirect(url)
+
+    # Local mode: serve file directly
     full_path = get_artefact_path(artefact)
     if not os.path.exists(full_path):
         return error_response('File not found', 404)
@@ -861,19 +870,27 @@ def reset_stale_analyses():
 @require_auth('read_only')
 def get_output_file(filename):
     """Serve an output file (visualisation, etc.)."""
-    output_dir = current_app.config.get('OUTPUT_FOLDER', 'outputs')
-    if not os.path.isabs(output_dir):
-        output_dir = os.path.join(current_app.instance_path, output_dir)
-    
-    # Security: resolve the full path and ensure it stays within output_dir
-    file_path = os.path.realpath(os.path.join(output_dir, filename))
-    if not file_path.startswith(os.path.realpath(output_dir) + os.sep):
-        return error_response('File not found', 404)
-    
-    if not os.path.exists(file_path):
-        return error_response('File not found', 404)
-    
-    return send_file(file_path)
+    storage = current_app.storage
+    key = storage.storage_key('outputs', filename)
+
+    # S3 mode: redirect to pre-signed URL
+    url = storage.presigned_url(key)
+    if url:
+        return redirect(url)
+
+    # Local mode: serve file directly with path traversal protection
+    from shared.storage import LocalStorage
+    if isinstance(storage, LocalStorage):
+        local_path = str(storage.local_path(key))
+        output_dir = str(storage.outputs_dir)
+        real_path = os.path.realpath(local_path)
+        if not real_path.startswith(os.path.realpath(output_dir) + os.sep):
+            return error_response('File not found', 404)
+        if not os.path.exists(real_path):
+            return error_response('File not found', 404)
+        return send_file(real_path)
+
+    return error_response('File not found', 404)
 
 
 # =============================================================================
@@ -1322,10 +1339,9 @@ def upload_artefact(item_uuid):
 	else:
 		artefact_type = detect_artefact_type(file.filename)
 
-	# Compute hashes
-	from .artefacts import get_upload_folder
-	full_path = os.path.join(get_upload_folder(), storage_name)
-	md5, sha256 = compute_file_hashes(full_path)
+	# Compute hashes via storage backend
+	storage_key = current_app.storage.storage_key('uploads', storage_name)
+	md5, sha256 = compute_file_hashes(storage_key, use_storage=True)
 
 	# Preserve original filename
 	from werkzeug.utils import secure_filename

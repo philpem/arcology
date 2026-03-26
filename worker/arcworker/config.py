@@ -35,6 +35,14 @@ MAX_DECOMPRESSED_BYTES = int(os.environ.get('MAX_DECOMPRESSED_BYTES', str(10 * 1
 # Mastering detection: number of trailing tracks to scan
 MASTERING_TRACK_SCAN_COUNT = int(os.environ.get('MASTERING_TRACK_SCAN_COUNT', '5'))
 
+# Storage backend configuration: 'local' (default) or 's3'
+STORAGE_BACKEND = os.environ.get('STORAGE_BACKEND', 'local')
+S3_ENDPOINT_URL = os.environ.get('S3_ENDPOINT_URL', '')
+S3_BUCKET = os.environ.get('S3_BUCKET', 'arcology')
+S3_ACCESS_KEY = os.environ.get('S3_ACCESS_KEY', '')
+S3_SECRET_KEY = os.environ.get('S3_SECRET_KEY', '')
+S3_REGION = os.environ.get('S3_REGION', 'us-east-1')
+
 # Configure logging
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL),
