@@ -543,6 +543,12 @@
                                         {% endif %}
                                     </td>
                                 </tr>
+                                {% if al_boot.get('install_serial') is not none %}
+                                <tr>
+                                    <td class="text-muted pe-3">Install serial</td>
+                                    <td><code>0x{{ '%08X' % al_boot.install_serial }}</code></td>
+                                </tr>
+                                {% endif %}
                                 {% if al_opts.get('hash_word1') is not none or al_opts.get('hash_word2') is not none %}
                                 <tr>
                                     <td class="text-muted pe-3">Password hash</td>

@@ -285,7 +285,7 @@ def _parse_armlock_options(data: bytes) -> dict:
     Layout:
       0x00  4  hash_word1 (v3), little-endian
       0x04  4  hash_word2 (v4), little-endian
-      0x08  6  copy of BootUp.Options (hash_word1 + config_flag + password_required)
+      0x08  6  copy of BootUp.Options (install_serial + config_flag + password_required)
       0x0E  1  management_flag
       0x0F  …  NUL-terminated application path strings
     """
@@ -315,14 +315,14 @@ def _parse_bootup_options(data: bytes) -> dict:
     """Parse $.ARMlock.BootUp.Options binary format.
 
     Layout:
-      0x00  4  hash_word1 (v3), little-endian
+      0x00  4  install_serial -- serial number of the install disc, little-endian
       0x04  1  config_flag
       0x05  1  password_required (0=no, 1=yes)
     """
     if len(data) < 6:
         return {}
     return {
-        'hash_word1': struct.unpack_from('<I', data, 0x00)[0],
+        'install_serial': struct.unpack_from('<I', data, 0x00)[0],
         'config_flag': data[0x04],
         'password_required': bool(data[0x05]),
     }
