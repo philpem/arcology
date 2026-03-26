@@ -181,6 +181,73 @@ class AnalysisWorker:
         shutil.copy(source_path, dest_path)
         return filename
 
+    def fail_analysis(self, analysis_id: int, error_message: str, **kwargs):
+        """Report a failed analysis to the API."""
+        self.api.update_analysis(
+            analysis_id,
+            status='failed',
+            success=False,
+            error_message=error_message,
+            **kwargs,
+        )
+
+    def complete_analysis(self, analysis_id: int, summary: str | None = None, **kwargs):
+        """Report a completed successful analysis to the API."""
+        payload = {
+            'status': 'completed',
+            'success': True,
+            **kwargs,
+        }
+        if summary is not None:
+            payload['summary'] = summary
+        self.api.update_analysis(analysis_id, **payload)
+
+    def queue_file_extraction(
+        self,
+        artefact_uuid: str,
+        filesystem: str,
+        partition_index: int,
+        *,
+        partition_image_path: str | None = None,
+    ):
+        """Queue FILE_EXTRACTION with the standard hint structure."""
+        hints = {
+            'filesystem': filesystem,
+            'partition_index': partition_index,
+        }
+        if partition_image_path:
+            hints['partition_image_path'] = partition_image_path
+        self.api.queue_analysis(
+            artefact_uuid,
+            AnalysisType.FILE_EXTRACTION.value,
+            hints=hints,
+        )
+
+    def queue_partition_follow_ups(
+        self,
+        artefact_uuid: str,
+        partition_uuid: str,
+        *,
+        extraction_path: str | None = None,
+        path_prefix: str | None = None,
+    ):
+        """Queue the standard archive-detect and product-recognition follow-ups."""
+        archive_hints = {'partition_uuid': partition_uuid}
+        if extraction_path:
+            archive_hints['extraction_path'] = extraction_path
+        if path_prefix:
+            archive_hints['path_prefix'] = path_prefix
+        self.api.queue_analysis(
+            artefact_uuid,
+            AnalysisType.ARCHIVE_DETECT.value,
+            hints=archive_hints,
+        )
+        self.api.queue_analysis(
+            artefact_uuid,
+            AnalysisType.PRODUCT_RECOGNITION.value,
+            hints={'partition_uuid': partition_uuid},
+        )
+
     # =========================================================================
     # Analysis Handlers
     # =========================================================================
@@ -223,10 +290,8 @@ class AnalysisWorker:
             })
 
         if outputs:
-            self.api.update_analysis(
+            self.complete_analysis(
                 analysis_id,
-                status='completed',
-                success=True,
                 tool_name='fluxfox,hxcfe',
                 summary=f'Generated {len(outputs)} flux visualisation(s)',
                 details=json.dumps({
@@ -236,11 +301,9 @@ class AnalysisWorker:
                 })
             )
         else:
-            self.api.update_analysis(
+            self.fail_analysis(
                 analysis_id,
-                status='failed',
-                success=False,
-                error_message=f"Fluxfox: {result_fluxfox.get('error', 'unknown')}; HxCFE: {result_hxcfe.get('error', 'unknown')}"
+                f"Fluxfox: {result_fluxfox.get('error', 'unknown')}; HxCFE: {result_hxcfe.get('error', 'unknown')}"
             )
 
     @analysis_handler("flux decode")
@@ -307,14 +370,20 @@ class AnalysisWorker:
         any_success = any(r[1]['success'] for r in results)
         summary_parts = [f"{name}: {'OK' if r['success'] else 'FAIL'}" for name, r in results]
 
-        self.api.update_analysis(
-            analysis_id,
-            status='completed' if any_success else 'failed',
-            success=any_success,
-            tool_name='hxcfe,greaseweazle',
-            summary='; '.join(summary_parts),
-            details=json.dumps({name: r for name, r in results})
-        )
+        if any_success:
+            self.complete_analysis(
+                analysis_id,
+                tool_name='hxcfe,greaseweazle',
+                summary='; '.join(summary_parts),
+                details=json.dumps({name: r for name, r in results})
+            )
+        else:
+            self.fail_analysis(
+                analysis_id,
+                '; '.join(summary_parts),
+                tool_name='hxcfe,greaseweazle',
+                details=json.dumps({name: r for name, r in results})
+            )
 
     @analysis_handler("file extraction")
     def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path):
@@ -345,11 +414,9 @@ class AnalysisWorker:
             ArtefactType.DD_BZ2.value,
         )
         if artefact_type not in supported_types:
-            self.api.update_analysis(
+            self.fail_analysis(
                 analysis_id,
-                status='completed',
-                success=False,
-                error_message=f'File extraction not supported for {artefact_type} format. Only raw sector images are supported.',
+                f'File extraction not supported for {artefact_type} format. Only raw sector images are supported.',
                 details=json.dumps({
                     'artefact_type': artefact_type,
                     'supported_types': list(supported_types),
@@ -424,12 +491,10 @@ class AnalysisWorker:
             return json.dumps(d)
 
         if not result['success']:
-            self.api.update_analysis(
+            self.fail_analysis(
                 analysis_id,
-                status='failed',
-                success=False,
+                result.get('error', 'Extraction failed'),
                 tool_name=result.get('tool'),
-                error_message=result.get('error', 'Extraction failed'),
                 details=_build_details()
             )
             return
@@ -485,10 +550,8 @@ class AnalysisWorker:
             partition_index=partition_index,
         )
 
-        self.api.update_analysis(
+        self.complete_analysis(
             analysis_id,
-            status='completed',
-            success=True,
             tool_name=result['tool'],
             summary=f'Extracted {len(files)} files ({fs_type})',
             output_path=str(extract_dir),
@@ -497,19 +560,10 @@ class AnalysisWorker:
 
         # Queue ARCHIVE_DETECT to scan extracted files for nested archives
         if partition:
-            self.api.queue_analysis(
+            self.queue_partition_follow_ups(
                 artefact['uuid'],
-                AnalysisType.ARCHIVE_DETECT.value,
-                hints={
-                    'partition_uuid': partition.get('uuid'),
-                    'extraction_path': str(extract_dir),
-                }
-            )
-            # Queue PRODUCT_RECOGNITION to match files against known-product definitions
-            self.api.queue_analysis(
-                artefact['uuid'],
-                AnalysisType.PRODUCT_RECOGNITION.value,
-                hints={'partition_uuid': partition.get('uuid')},
+                partition.get('uuid'),
+                extraction_path=str(extract_dir),
             )
 
     @analysis_handler("checksum computation")
@@ -521,10 +575,8 @@ class AnalysisWorker:
         md5, sha256, size = compute_file_hash(input_path)
         self.api.update_artefact_hashes(artefact['uuid'], md5, sha256)
 
-        self.api.update_analysis(
+        self.complete_analysis(
             analysis_id,
-            status='completed',
-            success=True,
             summary=f'MD5: {md5}  SHA256: {sha256}',
             details=json.dumps({'md5': md5, 'sha256': sha256, 'size': size}),
         )
@@ -550,10 +602,8 @@ class AnalysisWorker:
             'sha256': sha256
         }
 
-        self.api.update_analysis(
+        self.complete_analysis(
             analysis_id,
-            status='completed',
-            success=True,
             summary=f'Extracted metadata for {artefact_type}',
             details=json.dumps(metadata)
         )
@@ -598,12 +648,10 @@ class AnalysisWorker:
             conv_result = convert_fcfs_to_raw(input_path, raw_path)
 
             if not conv_result['success']:
-                self.api.update_analysis(
+                self.fail_analysis(
                     analysis_id,
-                    status='failed',
-                    success=False,
+                    f'FCFS detected but conversion failed: {conv_result.get("error", "unknown")}',
                     tool_name='fcfs2raw',
-                    error_message=f'FCFS detected but conversion failed: {conv_result.get("error", "unknown")}',
                     details=json.dumps({'detected': 'fcfs', 'fcfs2raw': conv_result})
                 )
                 return
@@ -619,10 +667,8 @@ class AnalysisWorker:
                 auto_analyse=True
             )
 
-            self.api.update_analysis(
+            self.complete_analysis(
                 analysis_id,
-                status='completed',
-                success=True,
                 tool_name='fcfs2raw',
                 summary='Identified as FCFS hard disk image; converted to raw sectors',
                 details=json.dumps({
@@ -634,10 +680,8 @@ class AnalysisWorker:
             return
 
         # No format recognised yet.
-        self.api.update_analysis(
+        self.complete_analysis(
             analysis_id,
-            status='completed',
-            success=True,
             summary='Format not identified',
             details=json.dumps({'detected': 'unknown'})
         )
@@ -840,17 +884,9 @@ class AnalysisWorker:
                                     hints={'filesystem': fs, 'partition_index': idx}
                                 )
                             else:
-                                self.api.queue_analysis(
-                                    derived_uuid,
-                                    AnalysisType.FILE_EXTRACTION.value,
-                                    hints={'filesystem': fs, 'partition_index': idx}
-                                )
+                                self.queue_file_extraction(derived_uuid, fs, idx)
                         else:
-                            self.api.queue_analysis(
-                                derived_uuid,
-                                AnalysisType.FILE_EXTRACTION.value,
-                                hints={'filesystem': fs, 'partition_index': idx}
-                            )
+                            self.queue_file_extraction(derived_uuid, fs, idx)
                 else:
                     log.error(f"Failed to register partition {idx} as derived artefact")
 
@@ -944,16 +980,18 @@ class AnalysisWorker:
                             hints=next_hints,
                         )
                     else:
-                        self.api.queue_analysis(
+                        self.queue_file_extraction(
                             artefact['uuid'],
-                            AnalysisType.FILE_EXTRACTION.value,
-                            hints=next_hints,
+                            fs,
+                            idx,
+                            partition_image_path=next_hints.get('partition_image_path'),
                         )
                 else:
-                    self.api.queue_analysis(
+                    self.queue_file_extraction(
                         artefact['uuid'],
-                        AnalysisType.FILE_EXTRACTION.value,
-                        hints=next_hints,
+                        fs,
+                        idx,
+                        partition_image_path=next_hints.get('partition_image_path'),
                     )
 
         # -----------------------------------------------------------------
@@ -1005,10 +1043,8 @@ class AnalysisWorker:
         if unpartitioned_notes:
             details['unpartitioned_notes'] = unpartitioned_notes
 
-        self.api.update_analysis(
+        self.complete_analysis(
             analysis_id,
-            status='completed',
-            success=True,
             tool_name='sfdisk,adfs_detect,file',
             summary=summary,
             details=json.dumps(details)
@@ -1037,12 +1073,7 @@ class AnalysisWorker:
         path_prefix = hints.get('path_prefix', '')
 
         if not partition_uuid:
-            self.api.update_analysis(
-                analysis_id,
-                status='failed',
-                success=False,
-                error_message='No partition_uuid in analysis hints'
-            )
+            self.fail_analysis(analysis_id, 'No partition_uuid in analysis hints')
             return
 
         # Get files not yet marked as archives (skip already-detected ones).
@@ -1050,12 +1081,7 @@ class AnalysisWorker:
         # can match the known-files database and would otherwise be hidden.
         partition_resp = self.api.get(f"/partitions/{partition_uuid}/files?per_page=10000&is_archive=false&show_known=true")
         if not partition_resp:
-            self.api.update_analysis(
-                analysis_id,
-                status='failed',
-                success=False,
-                error_message='Failed to get partition files'
-            )
+            self.fail_analysis(analysis_id, 'Failed to get partition files')
             return
 
         files = partition_resp.get('files', [])
@@ -1142,10 +1168,8 @@ class AnalysisWorker:
         if depth_limit_exceeded > 0:
             summary += f", {depth_limit_exceeded} at depth limit"
 
-        self.api.update_analysis(
+        self.complete_analysis(
             analysis_id,
-            status='completed',
-            success=True,
             summary=summary,
             details=json.dumps({
                 'archives_found': archive_count,
@@ -1299,21 +1323,17 @@ class AnalysisWorker:
         elif archive_type == ArchiveType.SEVENZ:
             result = extract_7z(input_path, extract_dir)
         else:
-            self.api.update_analysis(
+            self.fail_analysis(
                 analysis_id,
-                status='failed',
-                success=False,
-                error_message=f'Top-level extraction not supported for archive type: {archive_type.value}'
+                f'Top-level extraction not supported for archive type: {archive_type.value}'
             )
             return
 
         if not result['success']:
-            self.api.update_analysis(
+            self.fail_analysis(
                 analysis_id,
-                status='failed',
-                success=False,
+                result.get('error', 'Archive extraction failed'),
                 tool_name=result.get('tool'),
-                error_message=result.get('error', 'Archive extraction failed'),
                 details=json.dumps({'process_output': result.get('process_output')}),
             )
             return
@@ -1345,10 +1365,8 @@ class AnalysisWorker:
                 derived_count += 1
                 log.info(f"Promoted {file_path.name} to derived {artefact_type.value} artefact")
 
-        self.api.update_analysis(
+        self.complete_analysis(
             analysis_id,
-            status='completed',
-            success=True,
             tool_name=result['tool'],
             output_path=str(extract_dir),
             summary=f"Extracted {len(files)} files from {archive_info['name']}"
@@ -1361,18 +1379,10 @@ class AnalysisWorker:
         )
 
         if partition:
-            self.api.queue_analysis(
+            self.queue_partition_follow_ups(
                 artefact['uuid'],
-                AnalysisType.ARCHIVE_DETECT.value,
-                hints={
-                    'partition_uuid': partition.get('uuid'),
-                    'extraction_path': str(extract_dir),
-                },
-            )
-            self.api.queue_analysis(
-                artefact['uuid'],
-                AnalysisType.PRODUCT_RECOGNITION.value,
-                hints={'partition_uuid': partition.get('uuid')},
+                partition.get('uuid'),
+                extraction_path=str(extract_dir),
             )
 
     @analysis_handler("archive extraction")
@@ -1446,12 +1456,7 @@ class AnalysisWorker:
             archive_type = ArchiveType(archive_type_str)
             archive_info = get_archive_info(archive_type)
         except (ValueError, KeyError):
-            self.api.update_analysis(
-                analysis_id,
-                status='failed',
-                success=False,
-                error_message=f'Unknown archive type: {archive_type_str}'
-            )
+            self.fail_analysis(analysis_id, f'Unknown archive type: {archive_type_str}')
             return
 
         # ── Top-level artefact archive (continued) ──────────────────────
@@ -1468,12 +1473,7 @@ class AnalysisWorker:
         # Get partition and item metadata from API
         partition_resp = self.api.get(f"/partitions/{partition_uuid}")
         if not partition_resp:
-            self.api.update_analysis(
-                analysis_id,
-                status='failed',
-                success=False,
-                error_message='Failed to get partition info'
-            )
+            self.fail_analysis(analysis_id, 'Failed to get partition info')
             return
 
         partition = partition_resp.get('partition', {})
@@ -1481,12 +1481,7 @@ class AnalysisWorker:
         # Find the file in the partition
         files_resp = self.api.get(f"/partitions/{partition_uuid}/files?per_page=10000")
         if not files_resp:
-            self.api.update_analysis(
-                analysis_id,
-                status='failed',
-                success=False,
-                error_message='Failed to get partition files'
-            )
+            self.fail_analysis(analysis_id, 'Failed to get partition files')
             return
 
         # Find our specific file
@@ -1497,12 +1492,7 @@ class AnalysisWorker:
                 break
 
         if not target_file:
-            self.api.update_analysis(
-                analysis_id,
-                status='failed',
-                success=False,
-                error_message=f'File {file_id} not found in partition'
-            )
+            self.fail_analysis(analysis_id, f'File {file_id} not found in partition')
             return
 
         # Determine extraction path: prefer value passed through hints (set by the
@@ -1529,12 +1519,7 @@ class AnalysisWorker:
             extraction_path = file_extraction_path or archive_extract_path
 
         if not extraction_path:
-            self.api.update_analysis(
-                analysis_id,
-                status='failed',
-                success=False,
-                error_message='Could not determine extraction path for files'
-            )
+            self.fail_analysis(analysis_id, 'Could not determine extraction path for files')
             return
 
         # Construct full path to archive file.
@@ -1580,12 +1565,7 @@ class AnalysisWorker:
                 break
 
         if not archive_path.exists():
-            self.api.update_analysis(
-                analysis_id,
-                status='failed',
-                success=False,
-                error_message=f'Archive file not found at {archive_path}'
-            )
+            self.fail_analysis(analysis_id, f'Archive file not found at {archive_path}')
             return
 
         # Get item for hierarchical path
@@ -1672,20 +1652,13 @@ class AnalysisWorker:
             result = decompress_single_file(archive_path, output_file, archive_type.value)
 
         else:
-            self.api.update_analysis(
-                analysis_id,
-                status='failed',
-                success=False,
-                error_message=f'Unsupported archive type: {archive_type.value}'
-            )
+            self.fail_analysis(analysis_id, f'Unsupported archive type: {archive_type.value}')
             return
 
         if not result['success']:
-            self.api.update_analysis(
+            self.fail_analysis(
                 analysis_id,
-                status='failed',
-                success=False,
-                error_message=result.get('error', 'Extraction failed'),
+                result.get('error', 'Extraction failed'),
                 tool_name=result.get('tool'),
                 details=json.dumps({'process_output': result.get('process_output')})
             )
@@ -1764,10 +1737,8 @@ class AnalysisWorker:
         if po:
             details[tool_key] = {'process_output': po}
 
-        self.api.update_analysis(
+        self.complete_analysis(
             analysis_id,
-            status='completed',
-            success=True,
             tool_name=result['tool'],
             output_path=str(persistent_output),
             summary=f"Extracted {len(files)} files from {archive_info['name']} archive",
@@ -1796,24 +1767,14 @@ class AnalysisWorker:
         partition_uuid = hints.get('partition_uuid')
 
         if not partition_uuid:
-            self.api.update_analysis(
-                analysis_id,
-                status='failed',
-                success=False,
-                error_message='No partition_uuid in analysis hints'
-            )
+            self.fail_analysis(analysis_id, 'No partition_uuid in analysis hints')
             return
 
         # Fetch recognition config (all enabled databases with products)
         config = self.api.get_recognition_config()
         if not config:
             # Nothing to do — no recognition-enabled databases
-            self.api.update_analysis(
-                analysis_id,
-                status='completed',
-                success=True,
-                summary='No recognition-enabled hash databases configured'
-            )
+            self.complete_analysis(analysis_id, summary='No recognition-enabled hash databases configured')
             return
 
         # Fetch all files in this partition (may be large; page through them)
@@ -1833,12 +1794,7 @@ class AnalysisWorker:
             page += 1
 
         if not all_files:
-            self.api.update_analysis(
-                analysis_id,
-                status='completed',
-                success=True,
-                summary='No extracted files in partition'
-            )
+            self.complete_analysis(analysis_id, summary='No extracted files in partition')
             return
 
         # Build index: folder_path -> {hash_set, relative_path_map}
@@ -1947,10 +1903,8 @@ class AnalysisWorker:
 
         self.api.report_recognised_products(partition_uuid, results)
 
-        self.api.update_analysis(
+        self.complete_analysis(
             analysis_id,
-            status='completed',
-            success=True,
             summary=f'Checked {total_products} product(s) against {len(folder_index)} folder(s); {len(results)} match(es) found'
         )
 
@@ -1972,10 +1926,8 @@ class AnalysisWorker:
             summary = f"Mastering data found: {types_found}"
         else:
             summary = "No mastering data found"
-        self.api.update_analysis(
+        self.complete_analysis(
             analysis_id,
-            status='completed',
-            success=True,
             tool_name='hfe_parser',
             summary=summary,
             details=json.dumps(result),
@@ -2000,10 +1952,8 @@ class AnalysisWorker:
             summary = f"Protection indicators found: {types_found}"
         else:
             summary = "No protection indicators found"
-        self.api.update_analysis(
+        self.complete_analysis(
             analysis_id,
-            status='completed',
-            success=True,
             tool_name='hfe_parser',
             summary=summary,
             details=json.dumps(result),
@@ -2046,16 +1996,14 @@ class AnalysisWorker:
                 f"ARMLOCK_REMOVE for analysis {analysis_id}: protection not found on "
                 f"second pass — queuing FILE_EXTRACTION directly"
             )
-            self.api.queue_analysis(
+            self.queue_file_extraction(
                 artefact['uuid'],
-                AnalysisType.FILE_EXTRACTION.value,
-                hints={'filesystem': filesystem_hint, 'partition_index': partition_index,
-                       **({'partition_image_path': partition_image_path} if partition_image_path else {})},
+                filesystem_hint,
+                partition_index,
+                partition_image_path=partition_image_path,
             )
-            self.api.update_analysis(
+            self.complete_analysis(
                 analysis_id,
-                status='completed',
-                success=True,
                 tool_name='armlock',
                 summary='ARMlock signature not found on second pass; FILE_EXTRACTION queued directly',
                 details=json.dumps(detection),
@@ -2101,11 +2049,7 @@ class AnalysisWorker:
             )
             if cleaned:
                 cleaned_uuid = cleaned['artefact']['uuid']
-                self.api.queue_analysis(
-                    cleaned_uuid,
-                    AnalysisType.FILE_EXTRACTION.value,
-                    hints={'filesystem': filesystem_hint, 'partition_index': partition_index},
-                )
+                self.queue_file_extraction(cleaned_uuid, filesystem_hint, partition_index)
                 summary = (
                     f'ARMlock disc security detected and removed. '
                     f'Cleaned artefact queued for file extraction.'
@@ -2117,10 +2061,8 @@ class AnalysisWorker:
         else:
             summary = f'ARMlock detected but removal failed: {removal.get("error")}'
 
-        self.api.update_analysis(
+        self.complete_analysis(
             analysis_id,
-            status='completed',
-            success=True,
             tool_name='armlock',
             summary=summary,
             details=json.dumps(details),
@@ -2167,20 +2109,12 @@ class AnalysisWorker:
                     handler(analysis, artefact, work_path)
                 else:
                     log.warning(f"Unknown analysis type: {analysis_type}")
-                    self.api.update_analysis(
-                        analysis_id,
-                        status='failed',
-                        error_message=f'Unknown analysis type: {analysis_type}'
-                    )
+                    self.fail_analysis(analysis_id, f'Unknown analysis type: {analysis_type}')
 
             except Exception as e:
                 log.exception(f"Analysis {analysis_id} failed with exception")
                 try:
-                    self.api.update_analysis(
-                        analysis_id,
-                        status='failed',
-                        error_message=str(e)[:1000]
-                    )
+                    self.fail_analysis(analysis_id, str(e)[:1000])
                 except Exception:
                     log.exception(
                         f"Analysis {analysis_id}: failed to report failure to API "
