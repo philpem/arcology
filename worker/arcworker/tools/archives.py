@@ -5,13 +5,213 @@ Wraps external archive extraction tools (riscosarc, tbafs-extractor, etc.)
 for use by the worker.
 """
 
+import os
 import subprocess
 import re
+import tarfile
+import zipfile
 from pathlib import Path
 from typing import Dict, Any
 
 from .base import run_tool_with_output
+from ..compression import stream_to_file
+from ..config import log, TOOL_TIMEOUT, MAX_DECOMPRESSED_BYTES
 from ..utils.text import normalize_extracted_filenames
+
+
+def _check_archive_paths(input_path: Path, fmt: str) -> None:
+    """Reject the archive if any entry contains an unsafe path or link target.
+
+    Uses Python's built-in zipfile / tarfile readers so the check happens before
+    any external tool runs and cannot be bypassed by a crafted archive.
+
+    Raises:
+        ValueError: If a path-traversal entry, or an unsafe symlink/hardlink target,
+                    is found.
+    """
+    if fmt == 'zip':
+        with zipfile.ZipFile(input_path) as zf:
+            for zi in zf.infolist():
+                name = zi.filename
+                parts = name.replace('\\', '/').split('/')
+                if os.path.isabs(name) or '..' in parts:
+                    raise ValueError(f'Unsafe path in ZIP archive: {name!r}')
+                # Reject symlink entries.  Unix-originated ZIPs encode the file mode in
+                # the upper 16 bits of external_attr; S_IFLNK == 0o120000.  A zero mode
+                # means the ZIP was created on Windows and is not a symlink.
+                mode = (zi.external_attr >> 16) & 0xFFFF
+                if mode and (mode & 0o170000) == 0o120000:
+                    raise ValueError(f'Symlink entry in ZIP archive: {name!r}')
+    elif fmt == 'tar':
+        with tarfile.open(input_path) as tf:
+            for m in tf.getmembers():
+                parts = m.name.replace('\\', '/').split('/')
+                if os.path.isabs(m.name) or '..' in parts:
+                    raise ValueError(f'Unsafe path in TAR archive: {m.name!r}')
+                # Also validate symlink and hardlink targets so that a relative link
+                # like '../../etc/passwd' cannot escape the extraction directory.
+                if m.issym() or m.islnk():
+                    link_parts = m.linkname.replace('\\', '/').split('/')
+                    if os.path.isabs(m.linkname) or '..' in link_parts:
+                        raise ValueError(
+                            f'Unsafe link target in TAR archive: {m.linkname!r}'
+                        )
+
+
+# Matches symlink-mode Unix permission strings (e.g. 'lrwxrwxrwx') or a
+# standalone 'L' flag used by some 7z builds.
+_7Z_SYMLINK_RE = re.compile(r'(?:^|\s)l[rwx-]{9}(?:\s|$)|(?:^|\s)L(?:\s|$)')
+
+
+def _check_7z_paths(input_path: Path) -> None:
+    """Reject the archive if 7z reports any absolute-path, traversal, or symlink entry.
+
+    Uses '7z l -slt' technical listing.  The output contains an archive-level
+    header block (introduced by '--' and ending at the first '----------' line)
+    followed by one block per member.  The header's 'Path = ' line (the archive
+    file's own path, which is an absolute path on the host) is skipped; only
+    member blocks are validated.
+
+    Raises:
+        ValueError: If an unsafe path, traversal component, symlink entry, or
+                    listing timeout is detected.
+    """
+    try:
+        result = subprocess.run(
+            ['7z', 'l', '-slt', str(input_path)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        raise ValueError('7z listing timed out — archive rejected')
+
+    past_header = False
+    path = None
+    is_symlink = False
+
+    def _validate(name: str, symlink: bool) -> None:
+        if symlink:
+            raise ValueError(f'Symlink entry in 7z archive: {name!r}')
+        parts = name.replace('\\', '/').split('/')
+        if os.path.isabs(name) or '..' in parts:
+            raise ValueError(f'Unsafe path in 7z archive: {name!r}')
+
+    for line in result.stdout.decode('utf-8', errors='replace').splitlines():
+        if line == '----------':
+            if past_header:
+                # End of a member block — validate collected path before reset.
+                if path is not None:
+                    _validate(path, is_symlink)
+                path = None
+                is_symlink = False
+            else:
+                # First '----------' ends the archive-level header; members follow.
+                past_header = True
+            continue
+
+        if not past_header:
+            continue
+
+        if line.startswith('Path = '):
+            path = line[7:]
+        elif line.startswith('Attributes = '):
+            # Detect symlinks via Unix permission string ('lrwxrwxrwx')
+            # or a standalone 'L' flag used by some 7z builds.
+            if _7Z_SYMLINK_RE.search(line[13:]):
+                is_symlink = True
+
+    # Validate the last member block (output may not end with '----------').
+    if past_header and path is not None:
+        _validate(path, is_symlink)
+
+
+def _check_rar_paths(input_path: Path) -> None:
+    """Reject the archive if unrar reports any absolute-path, traversal, or link entry.
+
+    Uses 'unrar lt' technical listing, which provides 'Name:' and 'Type:' fields
+    per member.  This allows detection of symbolic and hard links (both of which
+    carry 'link' in their Type value) before any extractor runs.
+
+    Raises:
+        ValueError: If an unsafe path, traversal component, or link entry is
+                    found, or if the listing times out.
+    """
+    try:
+        result = subprocess.run(
+            ['unrar', 'lt', str(input_path)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        raise ValueError('unrar listing timed out — archive rejected')
+
+    current_name: str | None = None
+    for line in result.stdout.decode('utf-8', errors='replace').splitlines():
+        line = line.strip()
+        if line.startswith('Name:'):
+            # Validate the previous entry before moving on to the next.
+            if current_name is not None:
+                parts = current_name.replace('\\', '/').split('/')
+                if os.path.isabs(current_name) or '..' in parts:
+                    raise ValueError(f'Unsafe path in RAR archive: {current_name!r}')
+            current_name = line[5:].strip()
+        elif line.startswith('Type:'):
+            type_val = line[5:].strip().lower()
+            # 'Symbolic link', 'Hard link', etc. — any link type is rejected.
+            if 'link' in type_val:
+                raise ValueError(f'Link entry in RAR archive: {current_name!r}')
+
+    # Validate the final entry.
+    if current_name is not None:
+        parts = current_name.replace('\\', '/').split('/')
+        if os.path.isabs(current_name) or '..' in parts:
+            raise ValueError(f'Unsafe path in RAR archive: {current_name!r}')
+
+
+def _assert_confined(output_dir: Path) -> None:
+    """Raise if any extracted path has a realpath outside output_dir.
+
+    Defence-in-depth for archive formats whose extractors cannot be pre-checked
+    with Python's native readers.  If an extractor writes outside output_dir the
+    damage is already done, but this ensures the analysis job fails loudly rather
+    than silently completing with escaped files.
+
+    Raises:
+        ValueError: If any file has escaped the output directory.
+    """
+    real_base = str(output_dir.resolve())
+    prefix = real_base + os.sep
+    for entry in output_dir.rglob('*'):
+        try:
+            real = str(entry.resolve())
+        except OSError:
+            continue
+        if real != real_base and not real.startswith(prefix):
+            raise ValueError(f'Extracted file escaped output directory: {entry}')
+
+
+def sanitize_extracted_tree(output_dir: Path) -> int:
+    """Remove unsafe entries from an extracted archive tree.
+
+    Removes symlinks and special files (device nodes, FIFOs, sockets) that
+    could be used by a malicious archive to escape the extraction directory or
+    access host resources.  Regular files and directories are left intact.
+
+    Returns the number of entries removed.
+    """
+    removed = 0
+    real_base = str(output_dir.resolve())
+    # Walk bottom-up so we handle nested symlinks before their parents.
+    for entry in sorted(output_dir.rglob('*'), key=lambda p: len(p.parts), reverse=True):
+        try:
+            if entry.is_symlink():
+                entry.unlink()
+                removed += 1
+            elif not entry.is_dir() and not entry.is_file():
+                # Device node, FIFO, socket, etc.
+                entry.unlink()
+                removed += 1
+        except OSError:
+            pass
+    return removed
 
 
 def extract_riscosarc(input_path: Path, output_dir: Path) -> Dict[str, Any]:
@@ -57,6 +257,11 @@ def extract_riscosarc(input_path: Path, output_dir: Path) -> Dict[str, Any]:
 
     # Normalise any RISC OS Latin1 byte sequences in extracted filenames.
     normalize_extracted_filenames(output_dir)
+    sanitize_extracted_tree(output_dir)
+    try:
+        _assert_confined(output_dir)
+    except ValueError as e:
+        return {'success': False, 'error': str(e), 'tool': 'riscosarc'}
 
     # Count extracted files
     file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
@@ -95,6 +300,11 @@ def extract_tbafs(input_path: Path, output_dir: Path) -> Dict[str, Any]:
         }
 
     normalize_extracted_filenames(output_dir)
+    sanitize_extracted_tree(output_dir)
+    try:
+        _assert_confined(output_dir)
+    except ValueError as e:
+        return {'success': False, 'error': str(e), 'tool': 'tbafs-extractor'}
 
     file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
 
@@ -120,6 +330,11 @@ def extract_zip(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    try:
+        _check_archive_paths(input_path, 'zip')
+    except ValueError as e:
+        return {'success': False, 'error': str(e), 'tool': 'unzip'}
+
     cmd = ['unzip', '-F', '-q', str(input_path), '-d', str(output_dir)]
     result, output = run_tool_with_output(cmd)
 
@@ -134,6 +349,7 @@ def extract_zip(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     # Normalise any raw Latin-1 byte sequences in extracted filenames
     # (e.g. RISC OS filenames stored in the ZIP with non-UTF-8 bytes).
     normalize_extracted_filenames(output_dir)
+    sanitize_extracted_tree(output_dir)
 
     file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
 
@@ -169,7 +385,15 @@ def extract_tar(input_path: Path, output_dir: Path, archive_type: str = 'tar') -
     }
 
     flags = compression_flags.get(archive_type, [])
-    cmd = ['tar'] + flags + ['-xf', str(input_path), '-C', str(output_dir)]
+
+    try:
+        _check_archive_paths(input_path, 'tar')
+    except ValueError as e:
+        return {'success': False, 'error': str(e), 'tool': 'tar'}
+
+    # --no-absolute-filenames: explicitly reject entries with leading '/'
+    # even though GNU tar strips them by default.
+    cmd = ['tar', '--no-absolute-filenames'] + flags + ['-xf', str(input_path), '-C', str(output_dir)]
 
     result, output = run_tool_with_output(cmd)
 
@@ -182,6 +406,7 @@ def extract_tar(input_path: Path, output_dir: Path, archive_type: str = 'tar') -
         }
 
     normalize_extracted_filenames(output_dir)
+    sanitize_extracted_tree(output_dir)
 
     file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
 
@@ -207,6 +432,11 @@ def extract_rar(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    try:
+        _check_rar_paths(input_path)
+    except ValueError as e:
+        return {'success': False, 'error': str(e), 'tool': 'unrar'}
+
     cmd = ['unrar', 'x', '-y', str(input_path), str(output_dir) + '/']
     result, output = run_tool_with_output(cmd)
 
@@ -219,6 +449,11 @@ def extract_rar(input_path: Path, output_dir: Path) -> Dict[str, Any]:
         }
 
     normalize_extracted_filenames(output_dir)
+    sanitize_extracted_tree(output_dir)
+    try:
+        _assert_confined(output_dir)
+    except ValueError as e:
+        return {'success': False, 'error': str(e), 'tool': 'unrar'}
 
     file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
 
@@ -244,6 +479,11 @@ def extract_7z(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    try:
+        _check_7z_paths(input_path)
+    except ValueError as e:
+        return {'success': False, 'error': str(e), 'tool': '7z'}
+
     cmd = ['7z', 'x', '-y', f'-o{output_dir}', str(input_path)]
     result, output = run_tool_with_output(cmd)
 
@@ -255,6 +495,7 @@ def extract_7z(input_path: Path, output_dir: Path) -> Dict[str, Any]:
             'process_output': output
         }
 
+    sanitize_extracted_tree(output_dir)
     file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
 
     return {
@@ -295,17 +536,41 @@ def decompress_single_file(input_path: Path, output_file: Path, compressor: str)
             'tool': compressor
         }
 
-    # Run decompression and redirect output to file
+    # stream_to_file() uses select() so the timeout is enforced mid-read,
+    # not only after the loop exits.
     try:
-        with open(output_file, 'wb') as f:
-            result = subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        outcome, stderr_bytes = stream_to_file(
+            proc, output_file, MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT
+        )
+        proc.wait()
 
-        if result.returncode != 0:
+        if outcome == 'timeout':
+            output_file.unlink(missing_ok=True)
             return {
                 'success': False,
-                'error': f'{compressor} failed: {result.stderr}',
+                'error': f'{compressor} timed out after {TOOL_TIMEOUT}s',
                 'tool': compressor,
-                'process_output': result.stderr
+            }
+
+        if outcome == 'size_exceeded':
+            output_file.unlink(missing_ok=True)
+            return {
+                'success': False,
+                'error': (
+                    f'{compressor}: decompressed size exceeds '
+                    f'{MAX_DECOMPRESSED_BYTES:,} byte limit'
+                ),
+                'tool': compressor,
+            }
+
+        stderr_text = stderr_bytes.decode('utf-8', errors='replace')
+        if proc.returncode != 0:
+            return {
+                'success': False,
+                'error': f'{compressor} failed: {stderr_text}',
+                'tool': compressor,
+                'process_output': stderr_text,
             }
 
         return {
@@ -313,13 +578,13 @@ def decompress_single_file(input_path: Path, output_file: Path, compressor: str)
             'tool': compressor,
             'file_count': 1,
             'summary': f'Decompressed file using {compressor}',
-            'output_path': str(output_file)
+            'output_path': str(output_file),
         }
     except Exception as e:
         return {
             'success': False,
             'error': f'{compressor} failed: {str(e)}',
-            'tool': compressor
+            'tool': compressor,
         }
 
 # vim: ts=4 sw=4 et

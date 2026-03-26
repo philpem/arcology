@@ -4,18 +4,98 @@ Compression handling utilities.
 Handles decompression of compressed input files before analysis.
 """
 
+import select
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
 
-from .config import log, TOOL_TIMEOUT
+from .config import log, TOOL_TIMEOUT, MAX_DECOMPRESSED_BYTES
 
 
 COMPRESSION_EXTENSIONS = {
-    '.zst': ['zstd', '-d', '-k', '-f'],
-    '.gz': ['gzip', '-d', '-k', '-f'],
-    '.bz2': ['bzip2', '-d', '-k', '-f'],
+    '.zst': ['zstd', '-d', '-c'],
+    '.gz':  ['gzip', '-d', '-c'],
+    '.bz2': ['bzip2', '-d', '-c'],
 }
+
+_NOT_COMPRESSED_MARKERS = [
+    'not in gzip format',        # gzip
+    'is not a bzip2 file',       # bzip2
+    'File format not recognized', # zstd (unrecognised magic)
+]
+
+_CHUNK = 65536
+
+
+def stream_to_file(
+    proc: subprocess.Popen,
+    output_path: Path,
+    max_bytes: int,
+    timeout: float,
+) -> tuple[str, bytes]:
+    """Stream proc.stdout to output_path, enforcing byte and time limits.
+
+    Uses select() to poll stdout so the read loop never blocks longer than ~1
+    second at a time, meaning the timeout deadline is checked every iteration
+    even if the subprocess produces no output.
+
+    Stderr is drained concurrently by a daemon thread so the subprocess can
+    never block on a full stderr pipe while the main loop is reading stdout.
+
+    Closes proc.stdout and proc.stderr before returning.  The caller is
+    responsible for proc.wait().
+
+    Returns:
+        (outcome, stderr_bytes) where outcome is one of:
+            'ok'            — completed normally
+            'size_exceeded' — killed because output would exceed max_bytes
+            'timeout'       — killed because wall-clock time exceeded timeout
+    """
+    stderr_buf: list[bytes] = []
+
+    def _drain_stderr() -> None:
+        try:
+            for chunk in iter(lambda: proc.stderr.read(4096), b''):
+                stderr_buf.append(chunk)
+        except OSError:
+            pass
+
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stderr_thread.start()
+
+    deadline = time.monotonic() + timeout
+    written = 0
+    outcome = 'ok'
+
+    with open(output_path, 'wb') as dst:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                proc.kill()
+                outcome = 'timeout'
+                break
+            # Poll with a 1 s interval so we always re-check the deadline.
+            ready, _, _ = select.select([proc.stdout], [], [], min(remaining, 1.0))
+            if not ready:
+                if proc.poll() is not None:
+                    break   # process already exited, no more data
+                continue    # still running, re-check deadline
+            chunk = proc.stdout.read(_CHUNK)
+            if not chunk:
+                break       # EOF
+            written += len(chunk)
+            if written > max_bytes:
+                proc.kill()
+                outcome = 'size_exceeded'
+                break
+            dst.write(chunk)
+
+    proc.stdout.close()
+    stderr_thread.join(timeout=5.0)
+    proc.stderr.close()
+    return outcome, b''.join(stderr_buf)
 
 
 def decompress_if_needed(input_path: Path, work_dir: Path) -> Path:
@@ -31,7 +111,7 @@ def decompress_if_needed(input_path: Path, work_dir: Path) -> Path:
         Path to the decompressed file (or original if not compressed)
 
     Raises:
-        RuntimeError: If decompression fails or produces an empty file
+        RuntimeError: If decompression fails, times out, or exceeds size limit
     """
     suffix = input_path.suffix.lower()
 
@@ -43,57 +123,63 @@ def decompress_if_needed(input_path: Path, work_dir: Path) -> Path:
         compressed_size = input_path.stat().st_size
         log.info(f"Compressed file detected: {input_path.name} ({suffix}, {compressed_size:,} bytes)")
 
-        # Copy compressed file to work dir first
+        # Copy compressed file to work dir so the tool runs with a local path.
         compressed_copy = work_dir / input_path.name
         shutil.copy(input_path, compressed_copy)
 
-        # Decompress
+        # Decompress via stdout, enforcing MAX_DECOMPRESSED_BYTES and TOOL_TIMEOUT
+        # mid-stream.  stream_to_file() uses select() so it never blocks longer
+        # than ~1 s per iteration regardless of subprocess behaviour.
         log.info(f"Decompressing {input_path.name} with {cmd[0]}")
-        try:
-            result = subprocess.run(
-                cmd + [str(compressed_copy)],
-                capture_output=True,
-                cwd=work_dir,
-                timeout=TOOL_TIMEOUT
-            )
-        except subprocess.TimeoutExpired:
-            raise RuntimeError(f"Decompression timed out after {TOOL_TIMEOUT} seconds: {input_path.name}")
+        proc = subprocess.Popen(
+            cmd + [str(compressed_copy)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=work_dir,
+        )
+        outcome, stderr_bytes = stream_to_file(
+            proc, decompressed_path, MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT
+        )
+        proc.wait()
 
-        if result.returncode != 0:
+        if outcome == 'timeout':
+            compressed_copy.unlink(missing_ok=True)
+            decompressed_path.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"Decompression timed out after {TOOL_TIMEOUT} seconds: {input_path.name}"
+            )
+
+        if outcome == 'size_exceeded':
+            compressed_copy.unlink(missing_ok=True)
+            decompressed_path.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"Decompressed size exceeds {MAX_DECOMPRESSED_BYTES:,} byte limit "
+                f"({input_path.name})"
+            )
+
+        stderr_text = stderr_bytes.decode('utf-8', errors='replace')
+        compressed_copy.unlink(missing_ok=True)
+
+        if proc.returncode != 0:
             # If the file isn't actually in the expected compressed format
             # (e.g. named .tar.gz but not gzip), fall back to the original
             # file rather than failing the entire analysis.
-            stderr_text = result.stderr.decode()
-            _NOT_COMPRESSED_MARKERS = [
-                'not in gzip format',       # gzip
-                'is not a bzip2 file',      # bzip2
-                'File format not recognized', # xz
-            ]
             if any(marker in stderr_text for marker in _NOT_COMPRESSED_MARKERS):
                 log.warning(
                     f"File {input_path.name} has {suffix} extension but is not "
                     f"actually compressed — proceeding with original file"
                 )
-                compressed_copy.unlink(missing_ok=True)
                 decompressed_path.unlink(missing_ok=True)
                 return input_path
             raise RuntimeError(f"Decompression failed: {stderr_text}")
 
-        # Clean up compressed copy
-        compressed_copy.unlink(missing_ok=True)
-
-        # Verify decompressed file exists and has content
-        if not decompressed_path.exists():
+        # Verify decompressed output exists and is non-empty.
+        if not decompressed_path.exists() or decompressed_path.stat().st_size == 0:
             raise RuntimeError(
-                f"Decompressed file not found at expected path: {decompressed_path}"
+                f"Decompressed file is missing or empty: {decompressed_path}"
             )
 
         decompressed_size = decompressed_path.stat().st_size
-        if decompressed_size == 0:
-            raise RuntimeError(
-                f"Decompressed file is empty (0 bytes): {decompressed_path}"
-            )
-
         log.info(
             f"Decompression successful: {decompressed_path.name} "
             f"({decompressed_size:,} bytes, ratio {decompressed_size / compressed_size:.1f}x)"

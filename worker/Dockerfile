@@ -23,8 +23,11 @@
 #################
 FROM debian:stable AS build-hxcfe
 
-# Version to build
-ARG HXCFE_TAG=HxCFloppyEmulator_V2_16_13_1
+# Pinned commit SHA for the tag HxCFloppyEmulator_V2_16_13_1.
+# Update this when upgrading HxCFE.  To find the SHA for a new tag:
+#   git ls-remote https://github.com/jfdelnero/HxCFloppyEmulator.git refs/tags/<TAG>
+# Current as of 2026-03-26.
+ARG HXCFE_SHA=0a8f492d9b96e7c35283cf4ddf629c802f63fcf1
 
 # Disable prompt during package installation
 ARG DEBIAN_FRONTEND=noninteractive
@@ -41,8 +44,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Build HxCFE
 RUN \
 	mkdir /build && cd /build && \
-	git clone --branch "${HXCFE_TAG}" --depth=1 https://github.com/jfdelnero/HxCFloppyEmulator.git && \
-	cd HxCFloppyEmulator/build && make ${MINUSJ} HxCFloppyEmulator_cmdline && \
+	git clone https://github.com/jfdelnero/HxCFloppyEmulator.git && \
+	cd HxCFloppyEmulator && git checkout "${HXCFE_SHA}" && \
+	cd build && make ${MINUSJ} HxCFloppyEmulator_cmdline && \
 	cd /build/HxCFloppyEmulator/build && \
 	cp -r lib* /usr/local/lib && \
 	cp hxcfe /usr/local/bin && \
@@ -54,8 +58,9 @@ RUN \
 #################
 FROM debian:stable AS build-fluxfox
 
-# Version to build
-ARG FLUXFOX_TAG=main
+# Pinned commit SHA — update this when upgrading fluxfox.
+# Current as of 2026-03-26; branch: main
+ARG FLUXFOX_TAG=32fa0e5dd75346fccaeb466922289deeb12ccccc
 
 # Disable prompt during package installation
 ARG DEBIAN_FRONTEND=noninteractive
@@ -69,9 +74,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt -y update && apt -y upgrade && \
 	apt -y install git rustup gcc && \
 	rustup default stable && \
-	git clone --branch "${FLUXFOX_TAG}" --depth=1 https://github.com/dbalsom/fluxfox && \
+	git clone https://github.com/dbalsom/fluxfox && \
 	cd fluxfox && \
-	cargo update && \
+	git checkout "${FLUXFOX_TAG}" && \
 	cargo build -r ${MINUSJ} -p imgviz -p fluxfox_cli && \
 	cp target/release/imgviz /usr/local/bin && \
 	cp target/release/fluxfox_cli /usr/local/bin
@@ -82,19 +87,23 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 #################
 FROM debian:stable AS build-discimagemanager
 
-# Version to build
+# Pinned commit SHAs — update these when upgrading DiscImageManager or its deps.
+# Current as of 2026-03-26.
 #ARG DISCIMAGEMANAGER_VERSION=1.49
-ARG DISCIMAGEMANAGER_VERSION=feature/decouple-ui-from-cli
-# Binary build location -- you shouldn't have to change this
-ARG DISCIMAGEMANAGER_URL=https://github.com/geraldholdsworth/DiscImageManager/releases/download/${DISCIMAGEMANAGER_VERSION}/Disc.Image.Manager.${DISCIMAGEMANAGER_VERSION}.Linux.64.bit.Intel.zip
+ARG DISCIMAGEMANAGER_VERSION=4ff5f97167f393520c8382514e09bfcf56af2638
+# Binary release version — only used when DISCIMAGEMANAGER_SOURCEBUILD=0.
+# Kept separate from DISCIMAGEMANAGER_VERSION (a commit SHA for source builds)
+# so the binary download URL stays valid when the source SHA changes.
+ARG DISCIMAGEMANAGER_BINARY_VERSION=1.49
+ARG DISCIMAGEMANAGER_URL=https://github.com/geraldholdsworth/DiscImageManager/releases/download/${DISCIMAGEMANAGER_BINARY_VERSION}/Disc.Image.Manager.${DISCIMAGEMANAGER_BINARY_VERSION}.Linux.64.bit.Intel.zip
 # Github repo location
 #ARG DISCIMAGEMANAGER_REPO=https://github.com/geraldholdsworth/DiscImageManager
 ARG DISCIMAGEMANAGER_REPO=https://github.com/philpem/DiscImageManager
 # If 1, build from source
 ARG DISCIMAGEMANAGER_SOURCEBUILD=1
-# SpriteToBitmap unit version, defaults to "main" which is the latest dev version
-ARG DISCIMAGEMANAGER_STB_VERSION=main
-ARG DISCIMAGEMANAGER_GJHCC_VERSION=main
+# SpriteToBitmap and GJHCustomComponents pinned commit SHAs
+ARG DISCIMAGEMANAGER_STB_VERSION=2cbd3ac945186bb5ed7e31685ee4e8287589ddd9
+ARG DISCIMAGEMANAGER_GJHCC_VERSION=9f1397c7cb69aa117cfebf687eee701866f9da7c
 
 # Disable prompt during package installation
 ARG DEBIAN_FRONTEND=noninteractive
@@ -116,9 +125,12 @@ RUN	\
 		echo "  DIM   branch: ${DISCIMAGEMANAGER_VERSION}" ; \
 		echo "  STB   branch: ${DISCIMAGEMANAGER_STB_VERSION}" ; \
 		echo "  GJHCC branch: ${DISCIMAGEMANAGER_GJHCC_VERSION}" ; \
-		git clone --branch "${DISCIMAGEMANAGER_VERSION}" --depth=1 ${DISCIMAGEMANAGER_REPO} && \
-		git clone --branch "${DISCIMAGEMANAGER_STB_VERSION}" --depth=1 https://github.com/geraldholdsworth/SpriteToBitmap && \
-		git clone --branch "${DISCIMAGEMANAGER_GJHCC_VERSION}" --depth=1 https://github.com/geraldholdsworth/GJHCustomComponents && \
+		git clone ${DISCIMAGEMANAGER_REPO} DiscImageManager && \
+		git -C DiscImageManager checkout "${DISCIMAGEMANAGER_VERSION}" && \
+		git clone https://github.com/geraldholdsworth/SpriteToBitmap && \
+		git -C SpriteToBitmap checkout "${DISCIMAGEMANAGER_STB_VERSION}" && \
+		git clone https://github.com/geraldholdsworth/GJHCustomComponents && \
+		git -C GJHCustomComponents checkout "${DISCIMAGEMANAGER_GJHCC_VERSION}" && \
 		cd DiscImageManager && \
 		ln -s ../GJHCustomComponents/Source GJHCustomComponents && \
 		ln -s ../GJHCustomComponents/Source GJHCustomConponents && \
@@ -167,6 +179,10 @@ RUN \
 #################
 FROM debian:stable AS build-riscosarc
 
+# Pinned commit SHA — update this when upgrading riscosarc.
+# Current as of 2026-03-26; branch: master
+ARG RISCOSARC_VERSION=1f5cef10be4c5622eafb689d0dbe8f9f2601f141
+
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt -y update && apt -y upgrade && \
@@ -174,7 +190,7 @@ RUN apt -y update && apt -y upgrade && \
 
 # Clone and build riscosarc
 RUN git clone https://github.com/mjwoodcock/riscosarc.git /src/riscosarc && \
-    cd /src/riscosarc && \
+    cd /src/riscosarc && git checkout "${RISCOSARC_VERSION}" && \
     mkdir build && \
     javac -d ./build *.java riscos/archive/*.java riscos/archive/container/*.java && \
     ( cd build && jar --create --file ../riscosarc.jar --main-class riscosarc * ) && \
@@ -188,6 +204,10 @@ COPY worker/tools/riscosarc /usr/local/bin/
 #################
 FROM debian:stable AS build-tbafs
 
+# Pinned commit SHA — update this when upgrading tbafs.
+# Current as of 2026-03-26; branch: main
+ARG TBAFS_VERSION=e91ef8ed7b83a77db52e342b752df282772b8838
+
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt -y update && apt -y upgrade && \
@@ -195,7 +215,7 @@ RUN apt -y update && apt -y upgrade && \
 
 # Clone and build tbafs extractor
 RUN git clone https://github.com/mattgodbolt/tbafs.git /src/tbafs && \
-    cd /src/tbafs && \
+    cd /src/tbafs && git checkout "${TBAFS_VERSION}" && \
     cp tbafs.py /usr/local/bin/tbafs-extractor
 
 
@@ -256,9 +276,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 		file fdisk \
 		default-jre
 
-# Install Greaseweazle for disk image conversion
+# Install Greaseweazle for disk image conversion.
+# Pinned to a specific commit SHA; update when upgrading (was: @latest).
+# Current as of 2026-03-26.
+ARG GREASEWEAZLE_VERSION=dcb3d5d9d71b58d51aa22938cf96272a3b507292
 RUN python3 -m pip install --break-system-packages \
-	git+https://github.com/keirf/greaseweazle@latest
+	git+https://github.com/keirf/greaseweazle@${GREASEWEAZLE_VERSION}
 
 # Clean up build dependencies
 RUN apt -y remove python3-dev git && apt -y autoremove

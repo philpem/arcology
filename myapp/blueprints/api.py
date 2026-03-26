@@ -57,6 +57,21 @@ def _get_raw_key() -> str:
     return request.headers.get('X-API-Key', '')
 
 
+def _is_worker_request() -> bool:
+    """Return True if the current request authenticated with the WORKER_API_KEY.
+
+    Used to gate endpoints or fields that should only be accessible to the
+    worker process, not to ordinary user API keys — even read_write ones.
+
+    Rotation: if WORKER_API_KEY is compromised, stop all workers, update the
+    value in .env (and on worker containers), then restart.  In-progress jobs
+    will time out and be re-queued automatically.  Generate a new key with:
+        python3 -c 'import secrets; print(f"wrk_{secrets.token_urlsafe(32)}")'
+    """
+    worker_key = current_app.config.get('WORKER_API_KEY', '')
+    return bool(worker_key and hmac.compare_digest(_get_raw_key(), worker_key))
+
+
 def require_auth(permission: str = 'read_only'):
     """
     Decorator that requires a valid API key with at least *permission* level.
@@ -439,8 +454,23 @@ def update_analysis(id):
             f"Field '{bad_field}' contains NUL characters (0x00) which are not permitted in text fields"
         )
 
+    # Fields that drive the analysis lifecycle, downstream behaviour, or
+    # operator-visible audit data may only be set by the worker process.
+    # Ordinary read_write API keys cannot impersonate the worker by mutating
+    # these values.
+    _WORKER_ONLY_FIELDS = {
+        'output_path', 'status', 'success', 'details',
+        'tool_name', 'tool_version', 'summary', 'error_message', 'output_url',
+    }
+    worker = _is_worker_request()
+    for _f in _WORKER_ONLY_FIELDS:
+        if _f in data and not worker:
+            return error_response(f'Only the worker may set {_f!r}', 403)
+
     # Handle atomic claim attempt using database-level atomicity
     if data.get('claim_worker') and data.get('status') == 'running':
+        if not worker:
+            return error_response('Only the worker may claim analysis jobs', 403)
         # Use atomic UPDATE with WHERE clause to prevent race conditions
         # Only one worker can successfully transition from PENDING to RUNNING
         result = db.session.execute(
@@ -468,7 +498,8 @@ def update_analysis(id):
         except ValueError:
             return error_response('Invalid status')
 
-    for field in ['tool_name', 'tool_version', 'output_url', 'output_path', 'success', 'summary', 'details', 'error_message']:
+    for field in ['tool_name', 'tool_version', 'output_url', 'output_path',
+                  'success', 'summary', 'details', 'error_message']:
         if field in data:
             setattr(analysis, field, data[field])
 
@@ -606,9 +637,11 @@ def produce_artefact(id):
     Used by workers when e.g. flux decode produces a sector image.
     The new artefact will automatically have follow-on analyses queued.
     """
+    if not _is_worker_request():
+        return error_response('Only the worker may register derived artefacts', 403)
     analysis = Analysis.query.get_or_404(id)
     data = request.get_json()
-    
+
     if not data:
         return error_response('JSON body required')
     
@@ -737,6 +770,8 @@ def produce_artefact(id):
 @blueprint.route('/artefacts/<string:uuid>/partitions', methods=['POST'])
 @require_auth('read_upload')
 def add_partition(uuid):
+    if not _is_worker_request():
+        return error_response('Only the worker may register partitions', 403)
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     data = request.get_json()
     try:
@@ -779,6 +814,8 @@ def get_partition(uuid):
 @blueprint.route('/partitions/<string:uuid>/files', methods=['POST'])
 @require_auth('read_upload')
 def add_files(uuid):
+    if not _is_worker_request():
+        return error_response('Only the worker may register extracted files', 403)
     partition = Partition.query.filter_by(uuid=uuid).first_or_404()
     data = request.get_json()
     if 'files' not in data:
