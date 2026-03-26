@@ -265,8 +265,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Install Greaseweazle for disk image conversion.
 # Pinned to a specific commit SHA; update when upgrading (was: @latest).
 # Current as of 2026-03-26.
+ARG GREASEWEAZLE_VERSION=dcb3d5d9d71b58d51aa22938cf96272a3b507292
 RUN python3 -m pip install --break-system-packages \
-	git+https://github.com/keirf/greaseweazle@dcb3d5d9d71b58d51aa22938cf96272a3b507292
+	git+https://github.com/keirf/greaseweazle@${GREASEWEAZLE_VERSION}
 
 # Clean up build dependencies
 RUN apt -y remove python3-dev git && apt -y autoremove
