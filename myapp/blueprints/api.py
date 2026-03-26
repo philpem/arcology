@@ -194,6 +194,56 @@ def _validate_storage_path(path: str) -> bool:
     return '..' not in os.path.normpath(path).split(os.sep)
 
 
+def _query_with_options(model, *load_options):
+    """Return a model query with optional eager-load directives applied."""
+    query = model.query
+    if load_options:
+        query = query.options(*load_options)
+    return query
+
+
+def _get_by_uuid_or_404(model, uuid, *load_options):
+    """Look up a model by UUID with optional eager-load directives."""
+    return _query_with_options(model, *load_options).filter_by(uuid=uuid).first_or_404()
+
+
+def _get_by_id_or_404(model, id, *load_options):
+    """Look up a model by integer primary key with optional eager-load directives."""
+    return _query_with_options(model, *load_options).filter_by(id=id).first_or_404()
+
+
+def _get_item_or_404(uuid):
+    return _get_by_uuid_or_404(Item, uuid)
+
+
+def _get_artefact_or_404(uuid, *load_options):
+    return _get_by_uuid_or_404(Artefact, uuid, *load_options)
+
+
+def _get_analysis_or_404(*, id=None, uuid=None, load_options=()):
+    if uuid is not None:
+        return _get_by_uuid_or_404(Analysis, uuid, *load_options)
+    return _get_by_id_or_404(Analysis, id, *load_options)
+
+
+def _get_partition_or_404(uuid):
+    return _get_by_uuid_or_404(Partition, uuid)
+
+
+def _get_extracted_file_or_404(*, id=None, uuid=None, load_options=()):
+    if uuid is not None:
+        return _get_by_uuid_or_404(ExtractedFile, uuid, *load_options)
+    return _get_by_id_or_404(ExtractedFile, id, *load_options)
+
+
+def _get_hash_database_or_404(id):
+    return _get_by_id_or_404(HashDatabase, id)
+
+
+def _get_known_product_or_404(database_id, product_id):
+    return KnownProduct.query.filter_by(id=product_id, database_id=database_id).first_or_404()
+
+
 # =============================================================================
 # Health Check
 # =============================================================================
@@ -286,14 +336,14 @@ def create_item():
 @blueprint.route('/items/<string:uuid>', methods=['GET'])
 @require_auth('read_only')
 def get_item(uuid):
-    item = Item.query.filter_by(uuid=uuid).first_or_404()
+    item = _get_item_or_404(uuid)
     return jsonify(item_to_dict(item, include_artefacts=True))
 
 
 @blueprint.route('/items/<string:uuid>', methods=['PUT'])
 @require_auth('read_write')
 def update_item(uuid):
-    item = Item.query.filter_by(uuid=uuid).first_or_404()
+    item = _get_item_or_404(uuid)
     data, error = _json_object(required=True)
     if error:
         return error
@@ -308,7 +358,7 @@ def update_item(uuid):
 @blueprint.route('/items/<string:uuid>', methods=['DELETE'])
 @require_auth('read_write')
 def delete_item(uuid):
-    item = Item.query.filter_by(uuid=uuid).first_or_404()
+    item = _get_item_or_404(uuid)
     _delete_item_files(item)
     db.session.delete(item)
     db.session.commit()
@@ -322,7 +372,7 @@ def delete_item(uuid):
 @blueprint.route('/items/<string:item_uuid>/artefacts', methods=['POST'])
 @require_auth('read_upload')
 def add_artefact(item_uuid):
-    item = Item.query.filter_by(uuid=item_uuid).first_or_404()
+    item = _get_item_or_404(item_uuid)
     data, error = _json_object(required=True)
     if error:
         return error
@@ -357,14 +407,14 @@ def add_artefact(item_uuid):
 @blueprint.route('/artefacts/<string:uuid>', methods=['GET'])
 @require_auth('read_only')
 def get_artefact(uuid):
-    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    artefact = _get_artefact_or_404(uuid)
     return jsonify(artefact_to_dict(artefact, include_partitions=True))
 
 
 @blueprint.route('/artefacts/<string:uuid>', methods=['DELETE'])
 @require_auth('read_write')
 def delete_artefact(uuid):
-    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    artefact = _get_artefact_or_404(uuid)
     _delete_artefact_files(artefact)
     db.session.delete(artefact)
     db.session.commit()
@@ -375,7 +425,7 @@ def delete_artefact(uuid):
 @require_auth('read_upload')
 def update_artefact(uuid):
     """Update mutable fields on an artefact (md5 and sha256)."""
-    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    artefact = _get_artefact_or_404(uuid)
     data, error = _json_object()
     if error:
         return error
@@ -390,9 +440,7 @@ def update_artefact(uuid):
 @blueprint.route('/artefacts/<string:uuid>/download', methods=['GET'])
 @require_auth('read_only')
 def download_artefact(uuid):
-    artefact = Artefact.query.filter_by(uuid=uuid).options(
-        selectinload(Artefact.restrictions)
-    ).first_or_404()
+    artefact = _get_artefact_or_404(uuid, selectinload(Artefact.restrictions))
 
     # Enforce download restrictions
     if artefact.restrictions:
@@ -411,11 +459,11 @@ def download_artefact(uuid):
 @require_auth('read_only')
 def download_extracted_file(uuid):
     """Download an individual extracted file.  Restricted artefacts return 403."""
-    ef = ExtractedFile.query.filter_by(uuid=uuid).options(
+    ef = _get_extracted_file_or_404(uuid=uuid, load_options=(
         joinedload(ExtractedFile.partition)
         .joinedload(Partition.artefact)
         .selectinload(Artefact.restrictions)
-    ).first_or_404()
+    ,))
     artefact = ef.partition.artefact
 
     if artefact.restrictions:
@@ -438,7 +486,7 @@ def download_extracted_file(uuid):
 @blueprint.route('/artefacts/<string:uuid>/analysis', methods=['POST'])
 @require_auth('read_upload')
 def request_analysis(uuid):
-    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    artefact = _get_artefact_or_404(uuid)
     data, error = _json_object()
     if error:
         return error
@@ -480,7 +528,7 @@ def request_analysis(uuid):
 @blueprint.route('/artefacts/<string:uuid>/analysis', methods=['GET'])
 @require_auth('read_only')
 def get_artefact_analyses(uuid):
-    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    artefact = _get_artefact_or_404(uuid)
     analyses = Analysis.query.filter_by(artefact_id=artefact.id).order_by(Analysis.id.desc()).all()
     return jsonify({'analyses': [analysis_to_dict(a) for a in analyses]})
 
@@ -488,7 +536,7 @@ def get_artefact_analyses(uuid):
 @blueprint.route('/analysis/<string:uuid>', methods=['GET'])
 @require_auth('read_only')
 def get_analysis(uuid):
-    analysis = Analysis.query.filter_by(uuid=uuid).first_or_404()
+    analysis = _get_analysis_or_404(uuid=uuid)
     return jsonify(analysis_to_dict(analysis))
 
 
@@ -542,7 +590,7 @@ def update_analysis(id):
         db.session.commit()
 
         # Fetch the analysis to return (also validates it exists)
-        analysis = Analysis.query.get_or_404(id)
+        analysis = _get_analysis_or_404(id=id)
         response = analysis_to_dict(analysis)
 
         # Add 'claimed' field to indicate if THIS request actually claimed it
@@ -550,7 +598,7 @@ def update_analysis(id):
         return jsonify(response)
 
     # Non-claim updates - use standard ORM approach
-    analysis = Analysis.query.get_or_404(id)
+    analysis = _get_analysis_or_404(id=id)
 
     if 'status' in data:
         try:
@@ -699,7 +747,7 @@ def produce_artefact(id):
     """
     if not _is_worker_request():
         return error_response('Only the worker may register derived artefacts', 403)
-    analysis = Analysis.query.get_or_404(id)
+    analysis = _get_analysis_or_404(id=id)
     data, error = _json_object(required=True)
     if error:
         return error
@@ -828,7 +876,7 @@ def produce_artefact(id):
 def add_partition(uuid):
     if not _is_worker_request():
         return error_response('Only the worker may register partitions', 403)
-    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    artefact = _get_artefact_or_404(uuid)
     data, error = _json_object(required=True)
     if error:
         return error
@@ -865,7 +913,7 @@ def add_partition(uuid):
 @require_auth('read_only')
 def get_partition(uuid):
     """Get partition details by UUID."""
-    partition = Partition.query.filter_by(uuid=uuid).first_or_404()
+    partition = _get_partition_or_404(uuid)
     return jsonify(partition_to_dict(partition))
 
 
@@ -874,7 +922,7 @@ def get_partition(uuid):
 def add_files(uuid):
     if not _is_worker_request():
         return error_response('Only the worker may register extracted files', 403)
-    partition = Partition.query.filter_by(uuid=uuid).first_or_404()
+    partition = _get_partition_or_404(uuid)
     data, error = _json_object(required=True)
     if error:
         return error
@@ -952,7 +1000,7 @@ def add_files(uuid):
 @blueprint.route('/partitions/<string:uuid>/files', methods=['GET'])
 @require_auth('read_only')
 def get_partition_files(uuid):
-    partition = Partition.query.filter_by(uuid=uuid).first_or_404()
+    partition = _get_partition_or_404(uuid)
     show_known = request.args.get('show_known', 'false').lower() == 'true'
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 100, type=int)
@@ -977,7 +1025,7 @@ def get_partition_files(uuid):
 @require_auth('read_upload')
 def mark_file_as_archive(file_id):
     """Mark a file as an archive and update its metadata."""
-    file = ExtractedFile.query.get_or_404(file_id)
+    file = _get_extracted_file_or_404(id=file_id)
     data, error = _json_object(required=True)
     if error:
         return error
@@ -1095,7 +1143,7 @@ def upload_artefact(item_uuid):
 
 	Returns the created artefact JSON with 201 status.
 	"""
-	item = Item.query.filter_by(uuid=item_uuid).first_or_404()
+	item = _get_item_or_404(item_uuid)
 
 	if 'file' not in request.files:
 		return error_response('No file provided')
@@ -1187,7 +1235,7 @@ def list_hash_databases():
 @blueprint.route('/hash-databases/<int:id>', methods=['GET'])
 @require_auth('read_only')
 def get_hash_database(id):
-    database = HashDatabase.query.get_or_404(id)
+    database = _get_hash_database_or_404(id)
     products = KnownProduct.query.filter_by(database_id=id).order_by(KnownProduct.title).all()
     return jsonify({
         'id': database.id,
@@ -1249,7 +1297,7 @@ def create_hash_database():
 @blueprint.route('/hash-databases/<int:db_id>/products', methods=['POST'])
 @require_auth('read_write')
 def create_known_product(db_id):
-    database = HashDatabase.query.get_or_404(db_id)
+    database = _get_hash_database_or_404(db_id)
     data, error = _json_object(force=True)
     if error:
         return error
@@ -1269,8 +1317,8 @@ def create_known_product(db_id):
 @blueprint.route('/hash-databases/<int:db_id>/products/<int:pid>/files', methods=['POST'])
 @require_auth('read_write')
 def add_known_files_bulk(db_id, pid):
-    database = HashDatabase.query.get_or_404(db_id)
-    product = KnownProduct.query.filter_by(id=pid, database_id=db_id).first_or_404()
+    database = _get_hash_database_or_404(db_id)
+    product = _get_known_product_or_404(db_id, pid)
     data = _json_data(force=True)
     if data is None:
         data = {}
@@ -1340,7 +1388,7 @@ def hash_database_recognition_config():
 @require_auth('read_write')
 def report_recognised_products(uuid):
     """Worker reports product recognition results for a partition."""
-    partition = Partition.query.filter_by(uuid=uuid).first_or_404()
+    partition = _get_partition_or_404(uuid)
     data, error = _json_array(force=True)
     if error:
         return error
