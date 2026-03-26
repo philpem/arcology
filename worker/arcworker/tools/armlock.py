@@ -213,7 +213,9 @@ def _walk_zone_map(image: bytearray, rec: dict, target_frag_id: int) -> list:
                 continue
             if bit_pos + idlen > zone_end_bits:
                 break
-            # Read fragment ID (idlen bits, LSB first)
+            frag_start_au = alloc_unit
+            # Read fragment ID (idlen bits, LSB first).
+            # Each ID bit occupies one allocation unit, so alloc_unit advances here.
             frag_id = 0
             for b in range(idlen):
                 byte_idx = bit_pos >> 3
@@ -221,8 +223,8 @@ def _walk_zone_map(image: bytearray, rec: dict, target_frag_id: int) -> list:
                 if zone_data[byte_idx] & (1 << bit_idx):
                     frag_id |= (1 << b)
                 bit_pos += 1
-            frag_start_au = alloc_unit
-            # Count padding zeros + terminating 1
+                alloc_unit += 1
+            # Count padding zeros + terminating 1 (each also an allocation unit)
             while bit_pos < zone_end_bits:
                 byte_idx = bit_pos >> 3
                 bit_idx = bit_pos & 7
@@ -490,38 +492,19 @@ def detect_armlock(image_path: Path) -> dict:
                         for sfe in sd_entries:
                             if sfe['length'] <= 0:
                                 continue
-                            # Confirm not itself a nested directory
                             valid_ssd, _ = _read_subdir_by_sin(image, rec, sfe['sin'])
                             if valid_ssd:
                                 continue
-                            file_data = _extract_file_by_sin(
-                                image, rec, sfe['sin'], sfe['length'])
-                            if not file_data:
-                                continue
-                            # Check whether this is the ARMlock RISC OS module.
-                            # The module lives in $.ARMlock.!ARMlock/ and is the
-                            # largest file there; we identify it by trying to parse
-                            # its module header.  We check all files up to 64 KB so
-                            # we don't miss it if the filetype field is absent.
-                            if (result['module_data'] is None
-                                    and sfe['length'] <= 65536):
-                                header = _parse_module_header(file_data)
-                                if header.get('title'):
-                                    result['module_data'] = file_data
-                                    result['module_title'] = header['title']
-                                    result['module_version'] = header['version']
-                                    # Don't add the module to config_files — it is
-                                    # stored separately as a derived artefact.
-                                    continue
-                            # Small non-module files go into the config display
                             if sfe['length'] <= 4096:
-                                config_files[prefix + sfe['name']] = {
-                                    'length': sfe['length'],
-                                    'filetype': sfe['filetype'],
-                                    'hex': file_data.hex(),
-                                }
+                                file_data = _extract_file_by_sin(
+                                    image, rec, sfe['sin'], sfe['length'])
+                                if file_data:
+                                    config_files[prefix + sfe['name']] = {
+                                        'length': sfe['length'],
+                                        'filetype': sfe['filetype'],
+                                        'hex': file_data.hex(),
+                                    }
                     elif 0 < fe['length'] <= 4096:
-                        # Direct file in $.ARMlock (not in a subdir)
                         valid_as_dir, _ = _read_subdir_by_sin(image, rec, fe['sin'])
                         if not valid_as_dir:
                             file_data = _extract_file_by_sin(
@@ -533,6 +516,23 @@ def detect_armlock(image_path: Path) -> dict:
                                     'hex': file_data.hex(),
                                 }
                 result['armlock_config'] = config_files
+
+    # Extract the ARMlock module from !Boot in the stripped root.
+    # ARMlock installs itself as a single RISC OS module file named !Boot in the
+    # fake root; when the disc is booted, FileCore runs !Boot which loads the module.
+    if valid_s:
+        boot_entry = next(
+            (e for e in stripped_entries if e['name'] == '!Boot'),
+            None
+        )
+        if boot_entry and boot_entry['length'] > 0:
+            module_data = _extract_file_by_sin(
+                image, rec, boot_entry['sin'], boot_entry['length'])
+            result['module_data'] = module_data
+            if module_data:
+                header = _parse_module_header(module_data)
+                result['module_title'] = header['title']
+                result['module_version'] = header['version']
 
     return result
 
