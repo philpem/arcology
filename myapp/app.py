@@ -17,6 +17,11 @@ from urllib.parse import urlparse
 from .extensions import db, migrate, login_manager, bootstrap, csrf
 from .database import UserPermission, ApiKeyPermission
 
+_CFG_SECRET_KEY = 'SECRET_KEY'
+_CFG_DB_URI = 'SQLALCHEMY_DATABASE_URI'
+_CFG_WORKER_API_KEY = 'WORKER_API_KEY'
+_CFG_DEBUG_DB_PROFILING = 'DEBUG_DB_PROFILING'
+
 # Subclass the application so we can add the menu management functions
 class AppClass(Flask):
     def __init__(self, *args, **kwargs):
@@ -35,32 +40,32 @@ def create_app(config_name=None):
     app.config.from_pyfile(config_name or 'myapp.cfg', silent=True)
 
     # Load settings from environment, overriding config file where set
-    for env_key in ('SECRET_KEY', 'SQLALCHEMY_DATABASE_URI', 'WORKER_API_KEY'):
+    for env_key in (_CFG_SECRET_KEY, _CFG_DB_URI, _CFG_WORKER_API_KEY):
         env_val = os.environ.get(env_key)
         if env_val:
             app.config[env_key] = env_val
 
     # Abort if no database URI is configured
-    if not app.config.get('SQLALCHEMY_DATABASE_URI'):
+    if not app.config.get(_CFG_DB_URI):
         raise RuntimeError(
             "SQLALCHEMY_DATABASE_URI is not set — configure it in myapp.cfg or as an environment variable"
         )
 
     # Warn if WORKER_API_KEY is missing
-    if not app.config.get('WORKER_API_KEY'):
+    if not app.config.get(_CFG_WORKER_API_KEY):
         app.logger.warning("WORKER_API_KEY is not configured — worker API authentication will fail")
 
     # Warn and auto-generate SECRET_KEY if missing, left at the default placeholder, or too short
-    secret_key = app.config.get('SECRET_KEY', '')
+    secret_key = app.config.get(_CFG_SECRET_KEY, '')
     if not secret_key or secret_key in ['0123456789ABCDEF', 'CHANGE_ME'] or len(secret_key) < 32:
         app.logger.warning("!!! SECRET_KEY not set, left at default, or too short - generating random key for this session")
         app.logger.warning("!!! Sessions will be lost on server restart - set SECRET_KEY in myapp.cfg or as an environment variable")
-        app.config['SECRET_KEY'] = secrets.token_urlsafe(32)
+        app.config[_CFG_SECRET_KEY] = secrets.token_urlsafe(32)
 
     # Connection pool tuning: allow enough connections for Gunicorn workers
     # under concurrent load.  Defaults can be overridden in myapp.cfg or env.
     # Only applies to PostgreSQL; SQLite uses StaticPool which doesn't support these.
-    db_uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
+    db_uri = app.config.get(_CFG_DB_URI, '')
     if 'SQLALCHEMY_ENGINE_OPTIONS' not in app.config and db_uri.startswith('postgresql'):
         app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
             'pool_size': 10,
@@ -102,7 +107,7 @@ def create_app(config_name=None):
         logging.getLogger('sqlalchemy.engine').addHandler(default_handler)
 
     # start database profiling (if enabled)
-    if app.config.get('DEBUG_DB_PROFILING', False):
+    if app.config.get(_CFG_DEBUG_DB_PROFILING, False):
         app.logger.warning('Warning - database profiling enabled. Do not use this in production!')
         try:
             import sqltap
@@ -122,7 +127,7 @@ def create_app(config_name=None):
         @app.teardown_request
         def shutdown_session(exception=None):
             # if database profiling is enabled, save a report
-            if app.config.get('DEBUG_DB_PROFILING', False) and not request.path.startswith('/static'):
+            if app.config.get(_CFG_DEBUG_DB_PROFILING, False) and not request.path.startswith('/static'):
                 # filter out any statistics which aren't for this request
                 stats_all = sqltap_sess.collect()
                 stats_req = list(filter(lambda x: x.user_context == g.req_id, stats_all))
