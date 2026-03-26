@@ -494,8 +494,19 @@
                             {% if armlock_analysis.get('module_data_length') %}
                             <p class="small mb-1">
                                 <i class="bi bi-file-binary"></i>
-                                ARMlock module: {{ armlock_analysis.get('module_data_length') }} bytes
-                                <span class="text-muted">(saved as derived artefact)</span>
+                                {% if armlock_analysis.get('module_title') %}
+                                <strong>{{ armlock_analysis.get('module_title') }}</strong>
+                                {% else %}ARMlock module{% endif %}
+                                {% if armlock_analysis.get('module_version') %}
+                                <span class="badge bg-secondary ms-1">{{ armlock_analysis.get('module_version') }}</span>
+                                {% endif %}
+                                &mdash; {{ armlock_analysis.get('module_data_length') }} bytes
+                                {% if armlock_analysis.get('module_artefact_uuid') %}
+                                <a href="{{ url_for('myapp_blueprints_artefacts.download_legacy', uuid=armlock_analysis['module_artefact_uuid']) }}"
+                                   class="btn btn-sm btn-outline-secondary ms-2" title="Download ARMlock module">
+                                    <i class="bi bi-download"></i> Download
+                                </a>
+                                {% endif %}
                             </p>
                             {% else %}
                             <p class="small text-muted mb-1">No module data extracted.</p>

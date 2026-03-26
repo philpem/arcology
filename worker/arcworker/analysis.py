@@ -2056,13 +2056,18 @@ class AnalysisWorker:
             details['module_data_length'] = len(detection['module_data'])
             module_path = work_dir / 'ARMlock_module'
             module_path.write_bytes(detection['module_data'])
-            self.api.register_derived_artefact(
+            module_label = f'{artefact.get("label", "Unknown")} (ARMlock module)'
+            if detection.get('module_version'):
+                module_label = f'{artefact.get("label", "Unknown")} (ARMlock module {detection["module_version"]})'
+            module_artefact = self.api.register_derived_artefact(
                 analysis_id,
-                f'{artefact.get("label", "Unknown")} (ARMlock module)',
+                module_label,
                 module_path,
                 ArtefactType.UNKNOWN,
                 auto_analyse=False,
             )
+            if module_artefact:
+                details['module_artefact_uuid'] = module_artefact['artefact']['uuid']
         details['removal'] = removal
 
         if removal['success']:

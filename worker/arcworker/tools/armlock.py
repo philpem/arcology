@@ -265,6 +265,48 @@ def _extract_file_by_sin(image: bytearray, rec: dict, sin: int, file_length: int
 
 
 # ---------------------------------------------------------------------------
+# RISC OS module header parsing
+# ---------------------------------------------------------------------------
+
+def _parse_module_header(data: bytes) -> dict:
+    """Extract title and help strings from a RISC OS module header.
+
+    RISC OS module header layout (all fields are word-sized offsets relative
+    to the start of the module data):
+      +0x10: title string offset  (e.g. "ARMlock")
+      +0x14: help string offset   (e.g. "ARMlock\\t1.00 (01 Jan 1994)")
+
+    The help string conventionally has the format:
+      "<name>\\t<version> (<date>)"
+    The part after the tab is the version/date string.
+    """
+    info: dict = {'title': None, 'help_string': None, 'version': None}
+    if len(data) < 0x18:
+        return info
+
+    def _read_cstr(off: int) -> str | None:
+        if off <= 0 or off >= len(data):
+            return None
+        end = off
+        while end < len(data) and data[end] not in (0x00, 0x0D):
+            end += 1
+        return data[off:end].decode('ascii', errors='replace').strip()
+
+    title_off = struct.unpack_from('<I', data, 0x10)[0]
+    help_off  = struct.unpack_from('<I', data, 0x14)[0]
+
+    info['title'] = _read_cstr(title_off)
+    help_str = _read_cstr(help_off)
+    if help_str:
+        info['help_string'] = help_str
+        # Version is everything after the first tab character
+        if '\t' in help_str:
+            info['version'] = help_str.split('\t', 1)[1].strip()
+
+    return info
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -291,6 +333,8 @@ def detect_armlock(image_path: Path) -> dict:
         'stripped_root': [],
         'real_root': [],
         'module_data': None,
+        'module_title': None,
+        'module_version': None,
         'error': None,
     }
 
@@ -376,6 +420,10 @@ def detect_armlock(image_path: Path) -> dict:
     if boot_entry and boot_entry['length'] > 0:
         module_data = _extract_file_by_sin(image, rec, boot_entry['sin'], boot_entry['length'])
         result['module_data'] = module_data
+        if module_data:
+            header = _parse_module_header(module_data)
+            result['module_title'] = header['title']
+            result['module_version'] = header['version']
 
     return result
 
