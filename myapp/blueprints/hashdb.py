@@ -41,6 +41,83 @@ def _partition_ids_for_hashes(md5, sha1, file_size=None):
         query = query.filter(ExtractedFile.file_size == file_size)
     return {row[0] for row in query.all()}
 
+
+def _route_redirect(endpoint: str, **values):
+    """Redirect to a local HashDB endpoint."""
+    return redirect(url_for(f'{ROUTENAME}.{endpoint}', **values))
+
+
+def _view_anchor(db_id: int, anchor: str | None = None):
+    """Return the HashDB view URL, optionally with an anchor suffix."""
+    url = url_for(f'{ROUTENAME}.view', id=db_id)
+    if anchor:
+        return url + anchor
+    return url
+
+
+def _prepare_database_form(form: "HashDatabaseForm"):
+    """Populate shared choice lists on the HashDB form."""
+    form.platform_id.choices = _platform_choices()
+    form.restriction_type.choices = _restriction_type_choices()
+
+
+def _save_database_from_form(database: HashDatabase, form: "HashDatabaseForm"):
+    """Copy editable HashDatabase fields from the form to the ORM object."""
+    database.name = form.name.data
+    database.description = form.description.data
+    database.source_url = form.source_url.data
+    database.version = form.version.data
+    database.platform_id = form.platform_id.data if form.platform_id.data != 0 else None
+    database.enable_product_recognition = form.enable_product_recognition.data
+    rt_value = form.restriction_type.data
+    database.restriction_type = RestrictionType(rt_value) if rt_value else None
+
+
+def _existing_known_file(database_id: int, product_id: int, md5: str | None, sha1: str | None):
+    """Return an existing KnownFile matching the supplied identifying hashes."""
+    if md5 and KnownFile.query.filter_by(
+        database_id=database_id, product_id=product_id, md5=md5
+    ).first():
+        return True
+    if sha1 and not md5 and KnownFile.query.filter_by(
+        database_id=database_id, product_id=product_id, sha1=sha1
+    ).first():
+        return True
+    return False
+
+
+def _post_known_file_changes(database: HashDatabase, new_kf_list: list[KnownFile]):
+    """Run shared hash-rescan and recognition queueing after new file imports."""
+    if not database.is_active or not new_kf_list:
+        return
+
+    from ..utils.hash_rescan import (
+        rescan_hashes_for_new_known_files,
+        queue_product_recognition_for_partitions,
+    )
+
+    rescan_hashes_for_new_known_files(new_kf_list)
+
+    if not database.enable_product_recognition:
+        return
+
+    md5s = [kf.md5 for kf in new_kf_list if kf.md5]
+    sha1s = [kf.sha1 for kf in new_kf_list if kf.sha1]
+    conditions = ([ExtractedFile.md5.in_(md5s)] if md5s else []) + (
+        [ExtractedFile.sha1.in_(sha1s)] if sha1s else []
+    )
+    if not conditions:
+        return
+
+    partition_ids = {
+        row[0] for row in
+        ExtractedFile.query
+        .with_entities(ExtractedFile.partition_id)
+        .filter(or_(*conditions))
+        .all()
+    }
+    queue_product_recognition_for_partitions(partition_ids)
+
 blueprint = Blueprint(ROUTENAME, __name__, url_prefix='/hashdb', template_folder='templates')
 
 
@@ -95,24 +172,15 @@ def index():
 @require_permission('read_write')
 def new():
     form = HashDatabaseForm()
-    form.platform_id.choices = _platform_choices()
-    form.restriction_type.choices = _restriction_type_choices()
+    _prepare_database_form(form)
 
     if form.validate_on_submit():
-        rt_value = form.restriction_type.data
-        database = HashDatabase(
-            name=form.name.data,
-            description=form.description.data,
-            source_url=form.source_url.data,
-            version=form.version.data,
-            platform_id=form.platform_id.data if form.platform_id.data != 0 else None,
-            enable_product_recognition=form.enable_product_recognition.data,
-            restriction_type=RestrictionType(rt_value) if rt_value else None,
-        )
+        database = HashDatabase()
+        _save_database_from_form(database, form)
         db.session.add(database)
         db.session.commit()
         flash(f'Hash database "{database.name}" created.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.view', id=database.id))
+        return _route_redirect('view', id=database.id)
 
     return render_template('hashdb/new.html', form=form)
 
@@ -209,24 +277,16 @@ def search(id):
 def edit(id):
     database = HashDatabase.query.get_or_404(id)
     form = HashDatabaseForm(obj=database)
-    form.platform_id.choices = _platform_choices()
-    form.restriction_type.choices = _restriction_type_choices()
+    _prepare_database_form(form)
     if form.validate_on_submit():
-        database.name = form.name.data
-        database.description = form.description.data
-        database.source_url = form.source_url.data
-        database.version = form.version.data
-        database.platform_id = form.platform_id.data if form.platform_id.data != 0 else None
-        database.enable_product_recognition = form.enable_product_recognition.data
-        rt_value = form.restriction_type.data
-        database.restriction_type = RestrictionType(rt_value) if rt_value else None
+        _save_database_from_form(database, form)
         db.session.commit()
         flash('Hash database updated.', 'success')
     else:
         for field, errors in form.errors.items():
             for error in errors:
                 flash(f'{field}: {error}', 'danger')
-    return redirect(url_for(f'{ROUTENAME}.view', id=id))
+    return _route_redirect('view', id=id)
 
 
 @blueprint.route('/<int:id>/delete', methods=['POST'])
@@ -267,7 +327,7 @@ def delete(id):
         from ..utils.hash_rescan import rescan_hashes_for_queryset
         rescan_hashes_for_queryset(ExtractedFile.query.filter(ExtractedFile.id.in_(affected_ef_ids)))
 
-    return redirect(url_for(f'{ROUTENAME}.index'))
+    return _route_redirect('index')
 
 
 # =============================================================================
@@ -298,7 +358,7 @@ def toggle_recognition(id):
         queued = queue_product_recognition_for_partitions(partition_ids)
         if queued:
             flash(f'Queued product recognition for {queued} partition(s).', 'info')
-    return redirect(url_for(f'{ROUTENAME}.view', id=id))
+    return _route_redirect('view', id=id)
 
 
 @blueprint.route('/<int:id>/toggle-active', methods=['POST'])
@@ -314,7 +374,7 @@ def toggle_active(id):
         f'Run "Rescan Known Files" on affected artefacts to update file links.',
         'success' if database.is_active else 'warning',
     )
-    return redirect(url_for(f'{ROUTENAME}.view', id=id))
+    return _route_redirect('view', id=id)
 
 
 # =============================================================================
@@ -400,7 +460,7 @@ def import_database():
     f = request.files.get('file')
     if not f or not f.filename:
         flash('No file uploaded.', 'danger')
-        return redirect(url_for(f'{ROUTENAME}.index'))
+        return _route_redirect('index')
 
     name_override = request.form.get('name', '').strip()
     merge = 'merge' in request.form
@@ -412,31 +472,31 @@ def import_database():
         fmt = 'csv'
     else:
         flash('Unknown format — use a .json or .csv file.', 'danger')
-        return redirect(url_for(f'{ROUTENAME}.index'))
+        return _route_redirect('index')
 
     try:
         content = f.read().decode('utf-8')
     except Exception as e:
         flash(f'Could not read file: {e}', 'danger')
-        return redirect(url_for(f'{ROUTENAME}.index'))
+        return _route_redirect('index')
 
     if fmt == 'json':
         try:
             data = json.loads(content)
         except json.JSONDecodeError as e:
             flash(f'Invalid JSON: {e}', 'danger')
-            return redirect(url_for(f'{ROUTENAME}.index'))
+            return _route_redirect('index')
 
         db_info = data.get('database', {})
         db_name = name_override or db_info.get('name', '').strip()
         if not db_name:
             flash('The JSON file has no database name; provide one in the Name field.', 'danger')
-            return redirect(url_for(f'{ROUTENAME}.index'))
+            return _route_redirect('index')
 
         database = HashDatabase.query.filter_by(name=db_name).first()
         if database and not merge:
             flash(f'"{db_name}" already exists. Tick "Merge into existing" to add to it.', 'danger')
-            return redirect(url_for(f'{ROUTENAME}.index'))
+            return _route_redirect('index')
         if not database:
             database = HashDatabase(
                 name=db_name,
@@ -467,9 +527,7 @@ def import_database():
             for f_data in p_data.get('files', []):
                 md5 = (f_data.get('md5') or '').strip().lower() or None
                 sha1_raw = (f_data.get('sha1') or '').strip().lower() or None
-                if md5 and KnownFile.query.filter_by(database_id=database.id, product_id=product.id, md5=md5).first():
-                    continue
-                if sha1_raw and not md5 and KnownFile.query.filter_by(database_id=database.id, product_id=product.id, sha1=sha1_raw).first():
+                if _existing_known_file(database.id, product.id, md5, sha1_raw):
                     continue
                 kf = KnownFile(
                     database_id=database.id,
@@ -490,35 +548,19 @@ def import_database():
         database.file_count = (database.file_count or 0) + files_added
         db.session.commit()
         flash(f'Imported {products_added} product(s) and {files_added} file(s) into "{database.name}".', 'success')
-        if database.is_active and new_kf_list:
-            from ..utils.hash_rescan import rescan_hashes_for_new_known_files, queue_product_recognition_for_partitions
-            rescan_hashes_for_new_known_files(new_kf_list)
-            if database.enable_product_recognition:
-                md5s = [kf.md5 for kf in new_kf_list if kf.md5]
-                sha1s = [kf.sha1 for kf in new_kf_list if kf.sha1]
-                conditions = ([ExtractedFile.md5.in_(md5s)] if md5s else []) + \
-                             ([ExtractedFile.sha1.in_(sha1s)] if sha1s else [])
-                if conditions:
-                    partition_ids = {
-                        row[0] for row in
-                        ExtractedFile.query
-                        .with_entities(ExtractedFile.partition_id)
-                        .filter(or_(*conditions))
-                        .all()
-                    }
-                    queue_product_recognition_for_partitions(partition_ids)
-        return redirect(url_for(f'{ROUTENAME}.view', id=database.id))
+        _post_known_file_changes(database, new_kf_list)
+        return _route_redirect('view', id=database.id)
 
     else:  # CSV
         db_name = name_override
         if not db_name:
             flash('A database name is required for CSV import.', 'danger')
-            return redirect(url_for(f'{ROUTENAME}.index'))
+            return _route_redirect('index')
 
         database = HashDatabase.query.filter_by(name=db_name).first()
         if database and not merge:
             flash(f'"{db_name}" already exists. Tick "Merge into existing" to add to it.', 'danger')
-            return redirect(url_for(f'{ROUTENAME}.index'))
+            return _route_redirect('index')
         if not database:
             database = HashDatabase(name=db_name)
             db.session.add(database)
@@ -543,9 +585,7 @@ def import_database():
 
             md5 = (row.get('md5') or '').strip().lower() or None
             sha1 = (row.get('sha1') or '').strip().lower() or None
-            if md5 and KnownFile.query.filter_by(database_id=database.id, product_id=product.id, md5=md5).first():
-                continue
-            if sha1 and not md5 and KnownFile.query.filter_by(database_id=database.id, product_id=product.id, sha1=sha1).first():
+            if _existing_known_file(database.id, product.id, md5, sha1):
                 continue
 
             file_size_str = (row.get('file_size') or '').strip()
@@ -574,24 +614,8 @@ def import_database():
         database.file_count = (database.file_count or 0) + files_added
         db.session.commit()
         flash(f'Imported {files_added} file(s) from CSV into "{database.name}".', 'success')
-        if database.is_active and new_kf_list:
-            from ..utils.hash_rescan import rescan_hashes_for_new_known_files, queue_product_recognition_for_partitions
-            rescan_hashes_for_new_known_files(new_kf_list)
-            if database.enable_product_recognition:
-                md5s = [kf.md5 for kf in new_kf_list if kf.md5]
-                sha1s = [kf.sha1 for kf in new_kf_list if kf.sha1]
-                conditions = ([ExtractedFile.md5.in_(md5s)] if md5s else []) + \
-                             ([ExtractedFile.sha1.in_(sha1s)] if sha1s else [])
-                if conditions:
-                    partition_ids = {
-                        row[0] for row in
-                        ExtractedFile.query
-                        .with_entities(ExtractedFile.partition_id)
-                        .filter(or_(*conditions))
-                        .all()
-                    }
-                    queue_product_recognition_for_partitions(partition_ids)
-        return redirect(url_for(f'{ROUTENAME}.view', id=database.id))
+        _post_known_file_changes(database, new_kf_list)
+        return _route_redirect('view', id=database.id)
 
 
 # =============================================================================
@@ -606,7 +630,7 @@ def new_known_product(db_id):
     title = request.form.get('title', '').strip()
     if not title:
         flash('Product title is required.', 'danger')
-        return redirect(url_for(f'{ROUTENAME}.view', id=db_id))
+        return _route_redirect('view', id=db_id)
     product = KnownProduct(
         database_id=db_id,
         title=title,
@@ -616,7 +640,7 @@ def new_known_product(db_id):
     db.session.add(product)
     db.session.commit()
     flash(f'Product "{product.title}" added.', 'success')
-    return redirect(url_for(f'{ROUTENAME}.view', id=db_id) + f'#product-{product.id}')
+    return redirect(_view_anchor(db_id, f'#product-{product.id}'))
 
 
 @blueprint.route('/<int:db_id>/products/<int:pid>/edit', methods=['POST'])
@@ -627,13 +651,13 @@ def edit_known_product(db_id, pid):
     title = request.form.get('title', '').strip()
     if not title:
         flash('Product title is required.', 'danger')
-        return redirect(url_for(f'{ROUTENAME}.view', id=db_id))
+        return _route_redirect('view', id=db_id)
     product.title = title
     product.description = request.form.get('description', '').strip() or None
     product.path_match_enabled = 'path_match_enabled' in request.form
     db.session.commit()
     flash(f'Product "{product.title}" updated.', 'success')
-    return redirect(url_for(f'{ROUTENAME}.view', id=db_id) + f'#product-{pid}')
+    return redirect(_view_anchor(db_id, f'#product-{pid}'))
 
 
 @blueprint.route('/<int:db_id>/products/<int:pid>/delete', methods=['POST'])
@@ -687,7 +711,7 @@ def delete_known_product(db_id, pid):
         if enable_recognition and pre_delete_partition_ids:
             queue_product_recognition_for_partitions(pre_delete_partition_ids)
 
-    return redirect(url_for(f'{ROUTENAME}.view', id=db_id))
+    return _route_redirect('view', id=db_id)
 
 
 # =============================================================================
@@ -702,14 +726,14 @@ def add_known_file(db_id, pid):
     filename = request.form.get('filename', '').strip()
     if not filename:
         flash('Filename is required.', 'danger')
-        return redirect(url_for(f'{ROUTENAME}.view', id=db_id) + f'#product-{pid}')
+        return redirect(_view_anchor(db_id, f'#product-{pid}'))
     md5 = request.form.get('md5', '').strip().lower() or None
     sha1 = request.form.get('sha1', '').strip().lower() or None
     sha256 = request.form.get('sha256', '').strip().lower() or None
     crc32 = request.form.get('crc32', '').strip().lower() or None
     if not any([md5, sha1, sha256, crc32]):
         flash('At least one hash is required.', 'danger')
-        return redirect(url_for(f'{ROUTENAME}.view', id=db_id) + f'#product-{pid}')
+        return redirect(_view_anchor(db_id, f'#product-{pid}'))
     file_size_str = request.form.get('file_size', '').strip()
     file_size = int(file_size_str) if file_size_str.isdigit() else None
     kf = KnownFile(
@@ -735,7 +759,7 @@ def add_known_file(db_id, pid):
         if product.database.enable_product_recognition:
             partition_ids = _partition_ids_for_hashes(kf.md5, kf.sha1, kf.file_size)
             queue_product_recognition_for_partitions(partition_ids)
-    return redirect(url_for(f'{ROUTENAME}.view', id=db_id) + f'#product-{pid}')
+    return redirect(_view_anchor(db_id, f'#product-{pid}'))
 
 
 @blueprint.route('/<int:db_id>/products/<int:pid>/files/<int:fid>/edit', methods=['POST'])
@@ -746,7 +770,7 @@ def edit_known_file(db_id, pid, fid):
     filename = request.form.get('filename', '').strip()
     if not filename:
         flash('Filename is required.', 'danger')
-        return redirect(url_for(f'{ROUTENAME}.view', id=db_id) + f'#product-{pid}')
+        return redirect(_view_anchor(db_id, f'#product-{pid}'))
     kf_id = kf.id
     is_active = kf.database.is_active
     enable_recognition = kf.database.enable_product_recognition
@@ -772,7 +796,7 @@ def edit_known_file(db_id, pid, fid):
         if enable_recognition:
             partition_ids = _partition_ids_for_hashes(kf.md5, kf.sha1, kf.file_size)
             queue_product_recognition_for_partitions(partition_ids)
-    return redirect(url_for(f'{ROUTENAME}.view', id=db_id) + f'#product-{pid}')
+    return redirect(_view_anchor(db_id, f'#product-{pid}'))
 
 
 @blueprint.route('/<int:db_id>/products/<int:pid>/files/<int:fid>/delete', methods=['POST'])
@@ -825,7 +849,7 @@ def delete_known_file(db_id, pid, fid):
         if enable_recognition and pre_delete_partition_ids:
             queue_product_recognition_for_partitions(pre_delete_partition_ids)
 
-    return redirect(url_for(f'{ROUTENAME}.view', id=db_id) + f'#product-{pid}')
+    return redirect(_view_anchor(db_id, f'#product-{pid}'))
 
 
 # vim: ts=4 sw=4 et
