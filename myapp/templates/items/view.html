@@ -1,4 +1,5 @@
 {% extends "_base.html" %}
+{% from '_pagination.html' import render_pagination %}
 {% block page_title %}{{ item.name }}{% endblock %}
 
 {% block content %}
@@ -70,11 +71,11 @@
     <div class="col-md-8">
         <div class="card">
             <div class="card-header d-flex justify-content-between">
-                <span><i class="bi bi-disc"></i> Artefacts ({{ item.artefacts|length }})</span>
+                <span><i class="bi bi-disc"></i> Artefacts ({{ artefacts_page.total }})</span>
                 {% if user_can_write %}<a href="{{ url_for('myapp_blueprints_artefacts.upload', item_id=item.url_id) }}" class="btn btn-sm btn-primary"><i class="bi bi-plus"></i> Upload</a>{% endif %}
             </div>
             <div class="list-group list-group-flush">
-                {% for artefact in item.artefacts if not artefact.parent_artefact %}
+                {% for artefact in artefacts_page.items %}
                 <div class="list-group-item">
                     <div class="d-flex justify-content-between">
                         <div>
@@ -103,6 +104,7 @@
                 <div class="list-group-item text-muted text-center">No artefacts yet</div>
                 {% endfor %}
             </div>
+            {{ render_pagination(artefacts_page, 'myapp_blueprints_items.view', {'uuid': item.url_id}) }}
         </div>
     </div>
 </div>
