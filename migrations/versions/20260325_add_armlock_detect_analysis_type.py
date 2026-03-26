@@ -1,7 +1,7 @@
 """Add ARMLOCK_REMOVE analysis type
 
 Revision ID: 000069c4322f
-Revises: 000069c2f0db
+Revises: 000069c48529
 Create Date: 2026-03-25
 
 """

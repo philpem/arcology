@@ -1991,7 +1991,7 @@ class AnalysisWorker:
         )
 
     @analysis_handler("ARMlock removal")
-    def process_armlock_detect(self, analysis: dict, artefact: dict, work_dir: Path):
+    def process_armlock_remove(self, analysis: dict, artefact: dict, work_dir: Path):
         """Remove ARMlock disc security from a confirmed-protected ADFS disc image.
 
         This handler is only queued by PARTITION_DETECT when the ARMlock signature
@@ -2139,7 +2139,7 @@ class AnalysisWorker:
                     AnalysisType.PRODUCT_RECOGNITION.value: self.process_product_recognition,
                     AnalysisType.DISC_MASTERING_DETECT.value: self.process_disc_mastering_detect,
                     AnalysisType.DISC_PROTECTION_DETECT.value: self.process_disc_protection_detect,
-                    AnalysisType.ARMLOCK_REMOVE.value: self.process_armlock_detect,
+                    AnalysisType.ARMLOCK_REMOVE.value: self.process_armlock_remove,
                 }
 
                 handler = handlers.get(analysis_type)
