@@ -13,6 +13,42 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 
 
+def _slug(value: Dict[str, Any], default: str = 'untitled') -> str:
+    """Return a safe slug fallback for a path segment dict."""
+    return value.get('slug') or default
+
+
+def _segment(value: Dict[str, Any]) -> str:
+    """Build a standard UUID_slug path segment."""
+    return f"{value['uuid']}_{_slug(value)}"
+
+
+def _ensure_dir(path: Path) -> Path:
+    """Create a path if needed and return it."""
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _base_output_path(output_base: Path, item: Dict[str, Any]) -> Path:
+    """Return the item-level output directory path."""
+    return output_base / _segment(item)
+
+
+def _artefact_output_path(output_base: Path, item: Dict[str, Any], artefact: Dict[str, Any]) -> Path:
+    """Return the artefact-level output directory path."""
+    return _base_output_path(output_base, item) / _segment(artefact)
+
+
+def _analysis_output_path(
+    output_base: Path,
+    item: Dict[str, Any],
+    artefact: Dict[str, Any],
+    analysis: Dict[str, Any],
+) -> Path:
+    """Return the analysis-level output directory path."""
+    return _artefact_output_path(output_base, item, artefact) / _segment(analysis)
+
+
 def get_output_path(
     output_base: Path,
     item: Dict[str, Any],
@@ -46,26 +82,15 @@ def get_output_path(
         Path('/data/outputs/abc123_risc-os-3-11/def456_disc-1-install/
               ghi789_file-listing/partition_0_system')
     """
-    # Get slugs with fallback to 'untitled' if not present
-    item_slug = item.get('slug') or 'untitled'
-    artefact_slug = artefact.get('slug') or 'untitled'
-    analysis_slug = analysis.get('slug') or 'untitled'
-
-    # Build path: item → artefact → analysis
-    path = output_base / f"{item['uuid']}_{item_slug}"
-    path = path / f"{artefact['uuid']}_{artefact_slug}"
-    path = path / f"{analysis['uuid']}_{analysis_slug}"
+    path = _analysis_output_path(output_base, item, artefact, analysis)
 
     # Add partition subdirectory if specified
     if partition:
         partition_index = partition.get('partition_index', 0)
-        partition_slug = partition.get('slug') or str(partition_index)
+        partition_slug = _slug(partition, str(partition_index))
         path = path / f"partition_{partition_index}_{partition_slug}"
 
-    # Create directory if it doesn't exist
-    path.mkdir(parents=True, exist_ok=True)
-
-    return path
+    return _ensure_dir(path)
 
 
 def get_item_path(output_base: Path, item: Dict[str, Any]) -> Path:
@@ -79,10 +104,7 @@ def get_item_path(output_base: Path, item: Dict[str, Any]) -> Path:
     Returns:
         Path to item directory
     """
-    item_slug = item.get('slug') or 'untitled'
-    path = output_base / f"{item['uuid']}_{item_slug}"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    return _ensure_dir(_base_output_path(output_base, item))
 
 
 def get_artefact_path(
@@ -101,13 +123,7 @@ def get_artefact_path(
     Returns:
         Path to artefact directory
     """
-    item_slug = item.get('slug') or 'untitled'
-    artefact_slug = artefact.get('slug') or 'untitled'
-
-    path = output_base / f"{item['uuid']}_{item_slug}"
-    path = path / f"{artefact['uuid']}_{artefact_slug}"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    return _ensure_dir(_artefact_output_path(output_base, item, artefact))
 
 
 def get_analysis_path(
@@ -128,14 +144,6 @@ def get_analysis_path(
     Returns:
         Path to analysis directory
     """
-    item_slug = item.get('slug') or 'untitled'
-    artefact_slug = artefact.get('slug') or 'untitled'
-    analysis_slug = analysis.get('slug') or 'untitled'
-
-    path = output_base / f"{item['uuid']}_{item_slug}"
-    path = path / f"{artefact['uuid']}_{artefact_slug}"
-    path = path / f"{analysis['uuid']}_{analysis_slug}"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    return _ensure_dir(_analysis_output_path(output_base, item, artefact, analysis))
 
 # vim: ts=4 sw=4 et
