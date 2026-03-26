@@ -35,6 +35,8 @@ from .tools import (
     detect_acorn_partitions,
     detect_format_file_cmd,
     detect_fat_filesystem,
+    detect_armlock,
+    remove_armlock,
 )
 
 
@@ -824,11 +826,31 @@ class AnalysisWorker:
                     # raw artefacts (see issue #89).
                     is_nexus_printer = partition.get('nexus_flags', {}).get('printer', False)
                     if not is_nexus_printer:
-                        self.api.queue_analysis(
-                            derived_uuid,
-                            AnalysisType.FILE_EXTRACTION.value,
-                            hints={'filesystem': fs, 'partition_index': idx}
-                        )
+                        if fs == 'adfs':
+                            # Check for ARMlock protection on the extracted partition
+                            # image before deciding what to queue next.  Detection is
+                            # pure-Python and fast (no subprocess).  Only queue the
+                            # removal step when protection is actually present; otherwise
+                            # proceed directly to FILE_EXTRACTION as for any other fs.
+                            armlock = detect_armlock(partition_path)
+                            if armlock.get('detected'):
+                                self.api.queue_analysis(
+                                    derived_uuid,
+                                    AnalysisType.ARMLOCK_REMOVE.value,
+                                    hints={'filesystem': fs, 'partition_index': idx}
+                                )
+                            else:
+                                self.api.queue_analysis(
+                                    derived_uuid,
+                                    AnalysisType.FILE_EXTRACTION.value,
+                                    hints={'filesystem': fs, 'partition_index': idx}
+                                )
+                        else:
+                            self.api.queue_analysis(
+                                derived_uuid,
+                                AnalysisType.FILE_EXTRACTION.value,
+                                hints={'filesystem': fs, 'partition_index': idx}
+                            )
                 else:
                     log.error(f"Failed to register partition {idx} as derived artefact")
 
@@ -899,18 +921,40 @@ class AnalysisWorker:
                     partition_image_paths[idx] = str(partition_path)
                     log.info(f"Cached decompressed image as {partition_path}")
 
-            # Queue FILE_EXTRACTION against the original artefact
+            # Queue FILE_EXTRACTION (or ARMLOCK_REMOVE if protected) against
+            # the original artefact.  For ADFS, run a quick inline Armlock check so
+            # we only add the removal step when protection is actually present.
             for partition in detected_partitions:
                 idx = partition['index']
                 fs = partition.get('filesystem', 'unknown')
-                extraction_hints: dict = {'filesystem': fs, 'partition_index': idx}
+                next_hints: dict = {'filesystem': fs, 'partition_index': idx}
                 if idx in partition_image_paths:
-                    extraction_hints['partition_image_path'] = partition_image_paths[idx]
-                self.api.queue_analysis(
-                    artefact['uuid'],
-                    AnalysisType.FILE_EXTRACTION.value,
-                    hints=extraction_hints,
-                )
+                    next_hints['partition_image_path'] = partition_image_paths[idx]
+                if fs == 'adfs':
+                    check_path = (
+                        Path(partition_image_paths[idx])
+                        if idx in partition_image_paths
+                        else input_path
+                    )
+                    armlock = detect_armlock(check_path)
+                    if armlock.get('detected'):
+                        self.api.queue_analysis(
+                            artefact['uuid'],
+                            AnalysisType.ARMLOCK_REMOVE.value,
+                            hints=next_hints,
+                        )
+                    else:
+                        self.api.queue_analysis(
+                            artefact['uuid'],
+                            AnalysisType.FILE_EXTRACTION.value,
+                            hints=next_hints,
+                        )
+                else:
+                    self.api.queue_analysis(
+                        artefact['uuid'],
+                        AnalysisType.FILE_EXTRACTION.value,
+                        hints=next_hints,
+                    )
 
         # -----------------------------------------------------------------
         # Build summary and details
@@ -1965,6 +2009,123 @@ class AnalysisWorker:
             details=json.dumps(result),
         )
 
+    @analysis_handler("ARMlock removal")
+    def process_armlock_remove(self, analysis: dict, artefact: dict, work_dir: Path):
+        """Remove ARMlock disc security from a confirmed-protected ADFS disc image.
+
+        This handler is only queued by PARTITION_DETECT when the ARMlock signature
+        has already been found on an ADFS partition.  It re-runs detection to capture
+        full details (zone map state, directory listings, ARMlock module bytes), then
+        removes the protection and hands off to FILE_EXTRACTION.
+
+        ARMlock (by Digital Services) protects ADFS discs by replacing the real root
+        directory with a stripped "demo" copy and stashing the original at disc address
+        0x400.  It also encodes the boot_option field in both copies of the zone map.
+        Disc Image Manager cannot extract files from a protected image because the root
+        directory it sees is fake.
+        """
+        analysis_id = analysis['id']
+        hints = json.loads(analysis.get('hints') or '{}')
+        filesystem_hint = hints.get('filesystem', 'adfs')
+        partition_index = hints.get('partition_index', 0)
+
+        # Use cached decompressed path if available (from PARTITION_DETECT).
+        partition_image_path = hints.get('partition_image_path')
+        if partition_image_path:
+            input_path = Path(partition_image_path)
+        else:
+            input_path = self.get_input_path(artefact, work_dir)
+
+        # Re-run detection to capture full details for the analysis record.
+        detection = detect_armlock(input_path)
+
+        if not detection.get('detected'):
+            # Shouldn't happen (PARTITION_DETECT confirmed protection), but handle
+            # it defensively rather than leaving FILE_EXTRACTION unqueued.
+            log.warning(
+                f"ARMLOCK_REMOVE for analysis {analysis_id}: protection not found on "
+                f"second pass — queuing FILE_EXTRACTION directly"
+            )
+            self.api.queue_analysis(
+                artefact['uuid'],
+                AnalysisType.FILE_EXTRACTION.value,
+                hints={'filesystem': filesystem_hint, 'partition_index': partition_index,
+                       **({'partition_image_path': partition_image_path} if partition_image_path else {})},
+            )
+            self.api.update_analysis(
+                analysis_id,
+                status='completed',
+                success=True,
+                tool_name='armlock',
+                summary='ARMlock signature not found on second pass; FILE_EXTRACTION queued directly',
+                details=json.dumps(detection),
+            )
+            return
+
+        # Remove protection and register a cleaned artefact.
+        cleaned_path = work_dir / 'armlock_removed.img'
+        removal = remove_armlock(input_path, cleaned_path)
+
+        # Serialise module bytes as hex for JSON storage; also register as a
+        # derived UNKNOWN artefact so it can be downloaded for offline analysis.
+        # The module contains the protection code and password data.
+        # Exclude raw module bytes (stored separately as an artefact) and the
+        # real_root listing (FILE_EXTRACTION on the cleaned image covers this).
+        details: dict = {k: v for k, v in detection.items()
+                         if k not in ('module_data', 'real_root', 'stripped_root')}
+        if detection.get('module_data'):
+            details['module_data_length'] = len(detection['module_data'])
+            module_path = work_dir / 'ARMlock_module'
+            module_path.write_bytes(detection['module_data'])
+            module_label = f'{artefact.get("label", "Unknown")} (ARMlock module)'
+            if detection.get('module_version'):
+                module_label = f'{artefact.get("label", "Unknown")} (ARMlock module {detection["module_version"]})'
+            module_artefact = self.api.register_derived_artefact(
+                analysis_id,
+                module_label,
+                module_path,
+                ArtefactType.UNKNOWN,
+                auto_analyse=False,
+            )
+            if module_artefact:
+                details['module_artefact_uuid'] = module_artefact['artefact']['uuid']
+        details['removal'] = removal
+
+        if removal['success']:
+            cleaned = self.api.register_derived_artefact(
+                analysis_id,
+                f'{artefact.get("label", "Unknown")} (ARMlock removed)',
+                cleaned_path,
+                ArtefactType.RAW_SECTOR,
+                auto_analyse=False,
+            )
+            if cleaned:
+                cleaned_uuid = cleaned['artefact']['uuid']
+                self.api.queue_analysis(
+                    cleaned_uuid,
+                    AnalysisType.FILE_EXTRACTION.value,
+                    hints={'filesystem': filesystem_hint, 'partition_index': partition_index},
+                )
+                summary = (
+                    f'ARMlock disc security detected and removed. '
+                    f'Cleaned artefact queued for file extraction.'
+                )
+                if detection.get('module_data'):
+                    summary += ' ARMlock module saved.'
+            else:
+                summary = 'ARMlock detected; failed to register cleaned artefact.'
+        else:
+            summary = f'ARMlock detected but removal failed: {removal.get("error")}'
+
+        self.api.update_analysis(
+            analysis_id,
+            status='completed',
+            success=True,
+            tool_name='armlock',
+            summary=summary,
+            details=json.dumps(details),
+        )
+
     # =========================================================================
     # Job Processing
     # =========================================================================
@@ -1996,6 +2157,7 @@ class AnalysisWorker:
                     AnalysisType.PRODUCT_RECOGNITION.value: self.process_product_recognition,
                     AnalysisType.DISC_MASTERING_DETECT.value: self.process_disc_mastering_detect,
                     AnalysisType.DISC_PROTECTION_DETECT.value: self.process_disc_protection_detect,
+                    AnalysisType.ARMLOCK_REMOVE.value: self.process_armlock_remove,
                 }
 
                 handler = handlers.get(analysis_type)

@@ -44,6 +44,11 @@
             <i class="bi bi-shield-lock-fill"></i> Copy Protected
         </span>
         {% endif %}
+        {% if armlock_analysis and armlock_analysis.get('detected') %}
+        <span class="badge bg-warning text-dark me-1" title="ARMlock disc security was detected and removed">
+            <i class="bi bi-unlock-fill"></i> ARMlock Removed
+        </span>
+        {% endif %}
         {% if artefact.restrictions %}
         <p class="mb-1">
             {% for r in artefact.restrictions %}
@@ -407,6 +412,172 @@
                         </div>
                     </div>
                     {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        {# ------------------------------------------------------------------ #}
+        {# ARMlock disc security panel                                        #}
+        {# ------------------------------------------------------------------ #}
+        {% if armlock_analysis and armlock_analysis.get('detected') %}
+        {% set al_zmp = armlock_analysis.get('zone_map_primary', {}) %}
+        {% set al_zmb = armlock_analysis.get('zone_map_backup', {}) %}
+        {% set al_removed = armlock_analysis.get('removal', {}).get('success', False) %}
+        {% set al_cfg = armlock_analysis.get('armlock_config', {}) %}
+        <div class="card mb-4 border-warning">
+            <div class="card-header d-flex justify-content-between align-items-center bg-warning bg-opacity-25">
+                <span style="cursor: pointer;" data-bs-toggle="collapse" data-bs-target="#armlockCollapse"
+                      aria-expanded="false" aria-controls="armlockCollapse">
+                    <i class="bi bi-unlock-fill"></i>
+                    <strong>ARMlock Disc Security</strong>
+                    {% if al_removed %}
+                    <span class="badge bg-success ms-2">Removed</span>
+                    {% else %}
+                    <span class="badge bg-danger ms-2">Removal failed</span>
+                    {% endif %}
+                </span>
+                <div>
+                    <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=armlock_analysis['_analysis_uuid']) }}"
+                       class="btn btn-sm btn-outline-secondary me-1">
+                        <i class="bi bi-search"></i> Raw Analysis
+                    </a>
+                    <i class="bi bi-chevron-down" style="cursor: pointer;"
+                       data-bs-toggle="collapse" data-bs-target="#armlockCollapse"></i>
+                </div>
+            </div>
+            <div class="collapse" id="armlockCollapse">
+                <div class="card-body pb-0">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h6 class="text-muted small text-uppercase mb-2">Zone Map</h6>
+                            <table class="table table-sm table-borderless small mb-0">
+                                <thead class="table-light"><tr><th></th><th>Primary</th><th>Backup</th></tr></thead>
+                                <tbody>
+                                <tr>
+                                    <td class="text-muted">Encoded boot_option</td>
+                                    <td><code>0x{{ '%02X' % al_zmp.get('stored_boot_option', 0) }}</code></td>
+                                    <td><code>0x{{ '%02X' % al_zmb.get('stored_boot_option', 0) }}</code></td>
+                                </tr>
+                                <tr>
+                                    <td class="text-muted">Decoded boot_option</td>
+                                    {% for _bo in [al_zmp.get('real_boot_option'), al_zmb.get('real_boot_option')] %}
+                                    <td><code>{{ _bo if _bo is not none else '?' }}</code>
+                                        {% if _bo == 0 %}<span class="text-muted ms-1">none</span>
+                                        {% elif _bo == 1 %}<span class="text-muted ms-1">load</span>
+                                        {% elif _bo == 2 %}<span class="text-muted ms-1">run</span>
+                                        {% elif _bo == 3 %}<span class="text-muted ms-1">exec</span>
+                                        {% endif %}
+                                    </td>
+                                    {% endfor %}
+                                </tr>
+                                <tr>
+                                    <td class="text-muted">ZoneCheck</td>
+                                    <td>
+                                        {% if al_zmp.get('check_valid') %}
+                                        <span class="badge bg-success">Valid</span>
+                                        {% else %}
+                                        <span class="badge bg-danger" title="Expected 0x{{ '%02X' % al_zmp.get('expected_check', 0) }}">Invalid</span>
+                                        {% endif %}
+                                        <code class="ms-1">0x{{ '%02X' % al_zmp.get('check_byte', 0) }}</code>
+                                    </td>
+                                    <td>
+                                        {% if al_zmb.get('check_valid') %}
+                                        <span class="badge bg-success">Valid</span>
+                                        {% else %}
+                                        <span class="badge bg-danger" title="Expected 0x{{ '%02X' % al_zmb.get('expected_check', 0) }}">Invalid</span>
+                                        {% endif %}
+                                        <code class="ms-1">0x{{ '%02X' % al_zmb.get('check_byte', 0) }}</code>
+                                    </td>
+                                </tr>
+                                </tbody>
+                            </table>
+                            {% if al_cfg %}
+                            {% set al_opts = al_cfg.get('options', {}) %}
+                            {% if al_opts.get('app_paths') %}
+                            <p class="small text-muted mt-2 mb-1">Protected applications:</p>
+                            <ul class="small mb-0">
+                                {% for p in al_opts.app_paths %}
+                                <li><code>{{ p }}</code></li>
+                                {% endfor %}
+                            </ul>
+                            {% endif %}
+                            {% endif %}
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="text-muted small text-uppercase mb-2">Security Module</h6>
+                            {% if armlock_analysis.get('module_data_length') %}
+                            <p class="small mb-1">
+                                <i class="bi bi-file-binary"></i>
+                                {% if armlock_analysis.get('module_title') %}
+                                <strong>{{ armlock_analysis.get('module_title') }}</strong>
+                                {% else %}ARMlock module{% endif %}
+                                {% if armlock_analysis.get('module_version') %}
+                                <span class="badge bg-secondary ms-1">{{ armlock_analysis.get('module_version') }}</span>
+                                {% endif %}
+                                &mdash; {{ armlock_analysis.get('module_data_length') }} bytes
+                                {% if armlock_analysis.get('module_artefact_uuid') %}
+                                <a href="{{ url_for('myapp_blueprints_artefacts.download_legacy', uuid=armlock_analysis['module_artefact_uuid']) }}"
+                                   class="btn btn-sm btn-outline-secondary ms-2" title="Download ARMlock module">
+                                    <i class="bi bi-download"></i> Download
+                                </a>
+                                {% endif %}
+                            </p>
+                            {% else %}
+                            <p class="small text-muted mb-1">No module data extracted.</p>
+                            {% endif %}
+                            {% set al_dr = armlock_analysis.get('disc_record', {}) %}
+                            {% if al_dr %}
+                            <p class="small text-muted mb-0">
+                                {{ al_dr.get('nzones', '?') }} zones &middot;
+                                {{ al_dr.get('sector_size', '?') }}B sectors &middot;
+                                {{ al_dr.get('bpmb', '?') }} B/map-bit
+                                {% if al_dr.get('disc_name') %}&middot; <em>{{ al_dr.get('disc_name') }}</em>{% endif %}
+                            </p>
+                            {% endif %}
+                            {# $.ARMlock security configuration #}
+                            {% if al_cfg %}
+                            {% set al_opts = al_cfg.get('options', {}) %}
+                            {% set al_boot = al_cfg.get('bootup', {}) %}
+                            <h6 class="text-muted small text-uppercase mt-3 mb-2">Security Configuration</h6>
+                            <table class="table table-sm table-borderless small mb-2">
+                                <colgroup><col style="width: 10em"><col></colgroup>
+                                <tbody>
+                                <tr>
+                                    <td class="text-muted pe-3">Password required</td>
+                                    <td>
+                                        {% if al_boot.get('password_required') %}
+                                        <span class="badge bg-warning text-dark">Yes</span>
+                                        {% else %}
+                                        <span class="badge bg-secondary">No</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% if al_boot.get('install_serial') is not none %}
+                                <tr>
+                                    <td class="text-muted pe-3">Serial number</td>
+                                    <td><code>0x{{ '%08X' % al_boot.install_serial }}</code></td>
+                                </tr>
+                                {% endif %}
+                                {% if al_opts.get('hash_word1') is not none or al_opts.get('hash_word2') is not none %}
+                                <tr>
+                                    <td class="text-muted pe-3">Password hash</td>
+                                    <td><code>$armlock${{ '%08x' % al_opts.get('hash_word1', 0) }}${{ '%08x' % al_opts.get('hash_word2', 0) }}</code></td>
+                                </tr>
+                                {% endif %}
+                                {% if al_opts.get('management_flag') is not none %}
+                                <tr>
+                                    <td class="text-muted pe-3">Management flag</td>
+                                    <td><code>0x{{ '%02X' % al_opts.management_flag }}</code></td>
+                                </tr>
+                                {% endif %}
+                                </tbody>
+                            </table>
+                            {% else %}
+                            <p class="small text-muted">No $.ARMlock configuration found.</p>
+                            {% endif %}
+                        </div>
                     </div>
                 </div>
             </div>
