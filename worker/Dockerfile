@@ -23,8 +23,11 @@
 #################
 FROM debian:stable AS build-hxcfe
 
-# Version to build
-ARG HXCFE_TAG=HxCFloppyEmulator_V2_16_13_1
+# Pinned commit SHA for the tag HxCFloppyEmulator_V2_16_13_1.
+# Update this when upgrading HxCFE.  To find the SHA for a new tag:
+#   git ls-remote https://github.com/jfdelnero/HxCFloppyEmulator.git refs/tags/<TAG>
+# Current as of 2026-03-26.
+ARG HXCFE_SHA=0a8f492d9b96e7c35283cf4ddf629c802f63fcf1
 
 # Disable prompt during package installation
 ARG DEBIAN_FRONTEND=noninteractive
@@ -41,8 +44,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Build HxCFE
 RUN \
 	mkdir /build && cd /build && \
-	git clone --branch "${HXCFE_TAG}" --depth=1 https://github.com/jfdelnero/HxCFloppyEmulator.git && \
-	cd HxCFloppyEmulator/build && make ${MINUSJ} HxCFloppyEmulator_cmdline && \
+	git clone https://github.com/jfdelnero/HxCFloppyEmulator.git && \
+	cd HxCFloppyEmulator && git checkout "${HXCFE_SHA}" && \
+	cd build && make ${MINUSJ} HxCFloppyEmulator_cmdline && \
 	cd /build/HxCFloppyEmulator/build && \
 	cp -r lib* /usr/local/lib && \
 	cp hxcfe /usr/local/bin && \
@@ -175,6 +179,10 @@ RUN \
 #################
 FROM debian:stable AS build-riscosarc
 
+# Pinned commit SHA — update this when upgrading riscosarc.
+# Current as of 2026-03-26; branch: master
+ARG RISCOSARC_VERSION=1f5cef10be4c5622eafb689d0dbe8f9f2601f141
+
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt -y update && apt -y upgrade && \
@@ -182,7 +190,7 @@ RUN apt -y update && apt -y upgrade && \
 
 # Clone and build riscosarc
 RUN git clone https://github.com/mjwoodcock/riscosarc.git /src/riscosarc && \
-    cd /src/riscosarc && \
+    cd /src/riscosarc && git checkout "${RISCOSARC_VERSION}" && \
     mkdir build && \
     javac -d ./build *.java riscos/archive/*.java riscos/archive/container/*.java && \
     ( cd build && jar --create --file ../riscosarc.jar --main-class riscosarc * ) && \
@@ -196,6 +204,10 @@ COPY worker/tools/riscosarc /usr/local/bin/
 #################
 FROM debian:stable AS build-tbafs
 
+# Pinned commit SHA — update this when upgrading tbafs.
+# Current as of 2026-03-26; branch: main
+ARG TBAFS_VERSION=e91ef8ed7b83a77db52e342b752df282772b8838
+
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt -y update && apt -y upgrade && \
@@ -203,7 +215,7 @@ RUN apt -y update && apt -y upgrade && \
 
 # Clone and build tbafs extractor
 RUN git clone https://github.com/mattgodbolt/tbafs.git /src/tbafs && \
-    cd /src/tbafs && \
+    cd /src/tbafs && git checkout "${TBAFS_VERSION}" && \
     cp tbafs.py /usr/local/bin/tbafs-extractor
 
 

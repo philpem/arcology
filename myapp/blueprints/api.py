@@ -454,10 +454,14 @@ def update_analysis(id):
             f"Field '{bad_field}' contains NUL characters (0x00) which are not permitted in text fields"
         )
 
-    # Fields that drive the analysis lifecycle and downstream behaviour may
-    # only be set by the worker process.  Ordinary read_write API keys cannot
-    # impersonate the worker by mutating these values.
-    _WORKER_ONLY_FIELDS = {'output_path', 'status', 'success', 'details'}
+    # Fields that drive the analysis lifecycle, downstream behaviour, or
+    # operator-visible audit data may only be set by the worker process.
+    # Ordinary read_write API keys cannot impersonate the worker by mutating
+    # these values.
+    _WORKER_ONLY_FIELDS = {
+        'output_path', 'status', 'success', 'details',
+        'tool_name', 'tool_version', 'summary', 'error_message', 'output_url',
+    }
     worker = _is_worker_request()
     for _f in _WORKER_ONLY_FIELDS:
         if _f in data and not worker:
