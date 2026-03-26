@@ -29,6 +29,7 @@ from .artefacts import (
     queue_analyses_for_artefact,
 )
 from ..utils.hash_rescan import find_known_file
+from ..utils.item_helpers import assign_item_fields, assign_item_tags
 from ..utils.slugs import generate_slug, ensure_unique_slug
 from ..utils.api_serializers import (
     item_to_dict, artefact_to_dict, analysis_to_dict,
@@ -267,16 +268,15 @@ def create_item():
     if 'name' not in data:
         return error_response('Name is required')
     
-    item = Item(name=data['name'], description=data.get('description'),
-                platform_id=data.get('platform_id'), category_id=data.get('category_id'))
-    
-    if 'tags' in data:
-        for tag_name in data['tags']:
-            tag = Tag.query.filter_by(name=tag_name).first()
-            if not tag:
-                tag = Tag(name=tag_name)
-                db.session.add(tag)
-            item.tags.append(tag)
+    item = Item()
+    assign_item_fields(
+        item,
+        name=data['name'],
+        description=data.get('description'),
+        platform_id=data.get('platform_id'),
+        category_id=data.get('category_id'),
+    )
+    assign_item_tags(item, data.get('tags'))
     
     db.session.add(item)
     db.session.commit()

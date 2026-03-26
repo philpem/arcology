@@ -16,6 +16,7 @@ from ..extensions import db
 from ..database import Item, Artefact, Platform, Category, Tag, ExternalSystem, ExternalReference
 from .artefacts import _delete_item_files
 from ..permissions import require_permission
+from ..utils.item_helpers import item_choice_list, assign_item_fields, assign_item_tags
 from ..utils.slugs import get_or_create_slug, lookup_by_identifier
 
 ROUTENAME = __name__.replace('.', '_')
@@ -66,12 +67,8 @@ def index():
     """List all items with search/filter."""
     form = SearchForm(request.args)
     
-    form.platform_id.choices = [(0, '-- All Platforms --')] + [
-        (p.id, p.name) for p in Platform.query.order_by(Platform.name).all()
-    ]
-    form.category_id.choices = [(0, '-- All Categories --')] + [
-        (c.id, c.name) for c in Category.query.order_by(Category.name).all()
-    ]
+    form.platform_id.choices = item_choice_list(Platform, '-- All Platforms --')
+    form.category_id.choices = item_choice_list(Category, '-- All Categories --')
     
     query = Item.query
 
@@ -121,29 +118,19 @@ def new():
     """Create a new item."""
     form = ItemForm()
     
-    form.platform_id.choices = [(0, '-- Select Platform --')] + [
-        (p.id, p.name) for p in Platform.query.order_by(Platform.name).all()
-    ]
-    form.category_id.choices = [(0, '-- Select Category --')] + [
-        (c.id, c.name) for c in Category.query.order_by(Category.name).all()
-    ]
+    form.platform_id.choices = item_choice_list(Platform, '-- Select Platform --')
+    form.category_id.choices = item_choice_list(Category, '-- Select Category --')
     
     if form.validate_on_submit():
-        item = Item(
+        item = Item()
+        assign_item_fields(
+            item,
             name=form.name.data,
             description=form.description.data,
             platform_id=form.platform_id.data if form.platform_id.data != 0 else None,
-            category_id=form.category_id.data if form.category_id.data != 0 else None
+            category_id=form.category_id.data if form.category_id.data != 0 else None,
         )
-        
-        if form.tags.data:
-            tag_names = [t.strip() for t in form.tags.data.split(',') if t.strip()]
-            for tag_name in tag_names:
-                tag = Tag.query.filter_by(name=tag_name).first()
-                if not tag:
-                    tag = Tag(name=tag_name)
-                    db.session.add(tag)
-                item.tags.append(tag)
+        assign_item_tags(item, form.tags.data)
         
         db.session.add(item)
         db.session.commit()
@@ -183,31 +170,21 @@ def edit(uuid):
     item = lookup_by_identifier(Item, uuid)
     form = ItemForm(obj=item)
     
-    form.platform_id.choices = [(0, '-- Select Platform --')] + [
-        (p.id, p.name) for p in Platform.query.order_by(Platform.name).all()
-    ]
-    form.category_id.choices = [(0, '-- Select Category --')] + [
-        (c.id, c.name) for c in Category.query.order_by(Category.name).all()
-    ]
+    form.platform_id.choices = item_choice_list(Platform, '-- Select Platform --')
+    form.category_id.choices = item_choice_list(Category, '-- Select Category --')
     
     if request.method == 'GET':
         form.tags.data = ', '.join([t.name for t in item.tags])
     
     if form.validate_on_submit():
-        item.name = form.name.data
-        item.description = form.description.data
-        item.platform_id = form.platform_id.data if form.platform_id.data != 0 else None
-        item.category_id = form.category_id.data if form.category_id.data != 0 else None
-        
-        item.tags.clear()
-        if form.tags.data:
-            tag_names = [t.strip() for t in form.tags.data.split(',') if t.strip()]
-            for tag_name in tag_names:
-                tag = Tag.query.filter_by(name=tag_name).first()
-                if not tag:
-                    tag = Tag(name=tag_name)
-                    db.session.add(tag)
-                item.tags.append(tag)
+        assign_item_fields(
+            item,
+            name=form.name.data,
+            description=form.description.data,
+            platform_id=form.platform_id.data if form.platform_id.data != 0 else None,
+            category_id=form.category_id.data if form.category_id.data != 0 else None,
+        )
+        assign_item_tags(item, form.tags.data)
         
         db.session.commit()
 
