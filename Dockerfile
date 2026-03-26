@@ -21,7 +21,14 @@ COPY myapp/ /app/myapp/
 COPY shared/ /app/shared/
 COPY migrations/ /app/migrations/
 COPY .flaskenv /app/
+COPY .git /app/.git
 WORKDIR /app
+
+RUN apk add --no-cache git && \
+    (git -C /app describe --tags --always --long > /app/VERSION 2>/dev/null \
+        || echo "unknown" > /app/VERSION) && \
+    apk del git && \
+    rm -rf /app/.git
 
 EXPOSE 8000
 #CMD ["gunicorn", "-b", "0.0.0.0:8000", "myapp.app"]
