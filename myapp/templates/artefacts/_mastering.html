@@ -1,0 +1,73 @@
+        {% if mastering_analysis and mastering_analysis.get('indicators') %}
+        {% set m_indicators = mastering_analysis.get('indicators', []) %}
+        <div class="card mb-4 border-dark">
+            <div class="card-header d-flex justify-content-between align-items-center bg-dark text-white rp-summary"
+                 style="cursor: pointer;" data-bs-toggle="collapse" data-bs-target="#masteringCollapse"
+                 aria-expanded="false" aria-controls="masteringCollapse">
+                <span>
+                    <i class="bi bi-fingerprint"></i> Mastering Data
+                    <span class="badge bg-secondary ms-1">{{ m_indicators | length }}</span>
+                </span>
+                <div>
+                    <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=mastering_analysis['_analysis_uuid']) }}"
+                       class="btn btn-sm btn-outline-light me-1" onclick="event.stopPropagation()">
+                        <i class="bi bi-search"></i> Raw Analysis
+                    </a>
+                    <i class="bi bi-chevron-right rp-chevron"></i>
+                </div>
+            </div>
+            <div class="collapse" id="masteringCollapse">
+                <div class="card-body p-0">
+                    <div class="list-group list-group-flush">
+                    {% for ind in m_indicators %}
+                        {% if ind.type == 'traceback' %}
+                        <div class="list-group-item">
+                            <div class="d-flex align-items-center mb-1">
+                                <span class="badge bg-dark me-2">TRACEBACK</span>
+                                <small class="text-muted">Track {{ ind.track }}, Side {{ ind.side }}</small>
+                            </div>
+                            {% if ind.fields %}
+                            <dl class="mb-0 row row-cols-auto small">
+                                {% for field in ind.fields %}
+                                <dd class="col"><code>{{ field }}</code></dd>
+                                {% endfor %}
+                            </dl>
+                            {% endif %}
+                        </div>
+                        {% elif ind.type == 'formaster' %}
+                        <div class="list-group-item">
+                            <div class="d-flex align-items-center mb-1">
+                                <span class="badge bg-dark me-2">Formaster</span>
+                                <small class="text-muted">Track {{ ind.track }}, Side {{ ind.side }}</small>
+                            </div>
+                            <dl class="mb-0 row small">
+                                {% if ind.timestamp %}<dt class="col-sm-4">Timestamp</dt><dd class="col-sm-8"><code>{{ ind.timestamp }}</code></dd>{% endif %}
+                                {% if ind.format_code %}<dt class="col-sm-4">Format Code</dt><dd class="col-sm-8"><code>{{ ind.format_code }}</code></dd>{% endif %}
+                                {% if ind.format_description %}<dt class="col-sm-4">Description</dt><dd class="col-sm-8">{{ ind.format_description }}</dd>{% endif %}
+                                {% if ind.serial_number %}<dt class="col-sm-4">Serial Number</dt><dd class="col-sm-8"><code>{{ ind.serial_number }}</code></dd>{% endif %}
+                                {% if ind.text_c %}<dt class="col-sm-4">Text</dt><dd class="col-sm-8">{{ ind.text_c }}</dd>{% endif %}
+                            </dl>
+                        </div>
+                        {% elif ind.type == 'unknown_mastering' %}
+                        <div class="list-group-item">
+                            <div class="d-flex align-items-center mb-1">
+                                <span class="badge bg-secondary me-2">Unknown Format</span>
+                                <small class="text-muted">Track {{ ind.track }}, Side {{ ind.side }} &mdash; {{ ind.size }} bytes{% if ind.truncated %} (truncated){% endif %}</small>
+                            </div>
+                            {% if ind.strings %}
+                            <div class="small mb-1"><span class="text-muted">Strings:</span>
+                                {% for s in ind.strings %}<code class="me-1">{{ s }}</code>{% endfor %}
+                            </div>
+                            {% endif %}
+                            <details class="small">
+                                <summary class="text-muted" style="cursor: pointer;">Hex data</summary>
+                                <code class="d-block mt-1" style="word-break: break-all; font-size: 0.75em;">{{ ind.data_hex }}</code>
+                            </details>
+                        </div>
+                        {% endif %}
+                    {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}

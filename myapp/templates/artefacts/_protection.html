@@ -1,0 +1,78 @@
+        {% if protection_analysis and protection_analysis.get('indicators') %}
+        {% set p_indicators = protection_analysis.get('indicators', []) %}
+        {# Group indicators by type for a concise summary #}
+        {% set p_types = [] %}
+        {% for ind in p_indicators %}{% if ind.type not in p_types %}{% set _ = p_types.append(ind.type) %}{% endif %}{% endfor %}
+        <div class="card mb-4 border-danger">
+            <div class="card-header d-flex justify-content-between align-items-center bg-danger text-white rp-summary"
+                 style="cursor: pointer;" data-bs-toggle="collapse" data-bs-target="#protectionCollapse"
+                 aria-expanded="false" aria-controls="protectionCollapse">
+                <span>
+                    <i class="bi bi-shield-lock-fill"></i> Copy Protection
+                    {% for t in p_types | sort %}
+                    <span class="badge bg-light text-danger ms-1">{{ t.replace('_', ' ') }}</span>
+                    {% endfor %}
+                </span>
+                <div>
+                    <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=protection_analysis['_analysis_uuid']) }}"
+                       class="btn btn-sm btn-outline-light me-1" onclick="event.stopPropagation()">
+                        <i class="bi bi-search"></i> Raw Analysis
+                    </a>
+                    <i class="bi bi-chevron-right rp-chevron"></i>
+                </div>
+            </div>
+            <div class="collapse" id="protectionCollapse">
+                <div class="card-body p-0">
+                    <div class="accordion accordion-flush" id="protectionAccordion">
+                    {% for ptype in p_types | sort %}
+                    {% set type_indicators = p_indicators | selectattr('type', 'equalto', ptype) | list %}
+                    <div class="accordion-item">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#prot_{{ ptype }}">
+                                <span class="badge bg-danger me-2">{{ type_indicators | length }}</span>
+                                <strong>{{ ptype.replace('_', ' ').title() }}</strong>
+                                <span class="text-muted ms-2 small">
+                                {% if ptype == 'weak_bits' %}— fuzzy/uncertain bits used by some protection schemes
+                                {% elif ptype == 'bad_crc' %}— intentional CRC errors (copy-protection hallmark)
+                                {% elif ptype == 'ddam' %}— Deleted Data Address Marks
+                                {% elif ptype == 'id_mismatch' %}— sector cylinder ID does not match physical track
+                                {% elif ptype == 'duplicate_id' %}— duplicate sector IDs on same track
+                                {% endif %}
+                                </span>
+                            </button>
+                        </h2>
+                        <div id="prot_{{ ptype }}" class="accordion-collapse collapse">
+                            <div class="accordion-body p-0">
+                                <table class="table table-sm mb-0 small">
+                                    <thead><tr><th>Track</th><th>Side</th>
+                                    {% if ptype == 'weak_bits' %}<th>Count</th>
+                                    {% elif ptype == 'id_mismatch' %}<th>Reported Cyl</th><th>Expected</th>
+                                    {% elif ptype == 'duplicate_id' %}<th>Sector ID</th><th>Occurrences</th>
+                                    {% elif ptype == 'bad_crc' %}<th>Sector</th>
+                                    {% elif ptype == 'ddam' %}<th>Sector</th>
+                                    {% endif %}
+                                    </tr></thead>
+                                    <tbody>
+                                    {% for ind in type_indicators %}
+                                    <tr>
+                                        <td>{{ ind.track }}</td>
+                                        <td>{{ ind.side }}</td>
+                                        {% if ptype == 'weak_bits' %}<td>{{ ind.count }}</td>
+                                        {% elif ptype == 'id_mismatch' %}<td><code>{{ ind.get('reported_cyl', '?') }}</code></td><td><code>{{ ind.track }}</code></td>
+                                        {% elif ptype == 'duplicate_id' %}<td><code>C{{ ind.get('cyl','?') }}/H{{ ind.get('head','?') }}/R{{ ind.get('sect','?') }}/N{{ ind.get('size_code','?') }}</code></td><td>{{ ind.get('count', '?') }}</td>
+                                        {% elif ptype == 'bad_crc' %}<td>R{{ ind.get('sect', '?') }}</td>
+                                        {% elif ptype == 'ddam' %}<td>R{{ ind.get('sect', '?') }}</td>
+                                        {% endif %}
+                                    </tr>
+                                    {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}

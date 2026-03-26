@@ -1,0 +1,93 @@
+        {% if recognised_products %}
+        <div class="card mb-4 border-info">
+            <div class="card-header d-flex justify-content-between align-items-center bg-info bg-opacity-10 rp-summary"
+                 style="cursor: pointer;" data-bs-toggle="collapse" data-bs-target="#recognisedCollapse"
+                 aria-expanded="false" aria-controls="recognisedCollapse">
+                <span><i class="bi bi-check2-square"></i> Recognised Items <span class="badge bg-info text-dark">{{ recognised_products|length }}</span></span>
+                <i class="bi bi-chevron-right rp-chevron"></i>
+            </div>
+            <div class="collapse" id="recognisedCollapse">
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0">
+                        <thead class="table-light"><tr><th>Product</th><th>Database</th><th>Folder path</th><th>Required</th><th>Optional</th><th>Confidence</th></tr></thead>
+                        {# Group repeated products so duplicates (e.g. !Boot, !Scrap on every partition)
+                           are collapsed into a single row with an expandable detail section. #}
+                        {% set rp_colors = ['primary', 'success', 'warning', 'danger', 'info', 'secondary'] %}
+                        <tbody>
+                        {% for product_id, rp_group in recognised_products | groupby('product.id') %}
+                        {% set rp_instances = rp_group | list %}
+                        {% set is_multi = rp_instances | length > 1 %}
+                        {% set first = rp_instances[0] %}
+                        {% set collapse_id = 'rp-instances-' ~ product_id %}
+                        {# Summary row — clickable when there are multiple instances #}
+                        <tr {% if is_multi %}class="rp-summary" role="button"
+                               data-bs-toggle="collapse" data-bs-target="#{{ collapse_id }}"
+                               aria-expanded="false" aria-controls="{{ collapse_id }}"{% endif %}>
+                            <td>
+                                <strong>{{ first.product.title }}</strong>
+                                {% if is_multi %}
+                                <span class="badge rounded-pill bg-secondary ms-1"
+                                      title="{{ rp_instances|length }} locations">{{ rp_instances|length }}</span>
+                                <i class="bi bi-chevron-right ms-1 small text-muted rp-chevron" aria-hidden="true"></i>
+                                {% endif %}
+                            </td>
+                            <td><span class="badge bg-secondary">{{ first.product.database.name }}</span></td>
+                            {% if is_multi %}
+                            {# Multi: show brief summary; full detail on expand #}
+                            <td colspan="4" class="small text-muted">
+                                {{ rp_instances|length }} locations across
+                                {{ rp_instances | map(attribute='partition.partition_index') | list | unique | list | length }}
+                                partition{{ 's' if rp_instances | map(attribute='partition.partition_index') | list | unique | list | length != 1 }}
+                                — click to expand
+                            </td>
+                            {% else %}
+                            {# Single instance: show inline as before #}
+                            {% set rp_color = rp_colors[first.partition.partition_index % rp_colors|length] %}
+                            <td>
+                                <span class="badge bg-{{ rp_color }} me-1"
+                                      title="Partition {{ first.partition.partition_index }}: {{ first.partition.label or first.partition.filesystem.value }}">{{ first.partition.partition_index }}</span><a href="?partition_uuid={{ first.partition.uuid }}&path={{ (first.folder_path ~ '/')|urlencode }}&show_directories=y" class="text-decoration-none"><code>{{ first.folder_path }}</code></a>
+                            </td>
+                            <td>{{ first.required_matched }}/{{ first.required_total }}</td>
+                            <td>{{ first.optional_matched }}/{{ first.optional_total }}</td>
+                            <td>
+                                {% if first.required_total > 0 %}
+                                {% set pct = (first.required_matched / first.required_total * 100)|int %}
+                                <div class="progress" style="height:8px; min-width:60px">
+                                    <div class="progress-bar {% if pct == 100 %}bg-success{% elif pct >= 50 %}bg-warning{% else %}bg-danger{% endif %}"
+                                         style="width:{{ pct }}%"></div>
+                                </div>
+                                {% else %}-{% endif %}
+                            </td>
+                            {% endif %}
+                        </tr>
+                        {% if is_multi %}
+                        {# Expandable detail: one flex row per instance #}
+                        <tr id="{{ collapse_id }}" class="collapse">
+                            <td colspan="6" class="pt-0 pb-2 px-4 border-top-0 bg-light">
+                                {% for rp in rp_instances %}
+                                {% set rp_color = rp_colors[rp.partition.partition_index % rp_colors|length] %}
+                                <div class="d-flex align-items-center gap-3 py-1 {% if not loop.last %}border-bottom{% endif %}">
+                                    <span class="badge bg-{{ rp_color }} flex-shrink-0"
+                                          title="Partition {{ rp.partition.partition_index }}: {{ rp.partition.label or rp.partition.filesystem.value }}">{{ rp.partition.partition_index }}</span>
+                                    <a href="?partition_uuid={{ rp.partition.uuid }}&path={{ (rp.folder_path ~ '/')|urlencode }}&show_directories=y" class="text-decoration-none flex-grow-1 text-break"><code>{{ rp.folder_path }}</code></a>
+                                    <small class="text-muted text-nowrap">{{ rp.required_matched }}/{{ rp.required_total }} req</small>
+                                    <small class="text-muted text-nowrap">{{ rp.optional_matched }}/{{ rp.optional_total }} opt</small>
+                                    {% if rp.required_total > 0 %}
+                                    {% set pct = (rp.required_matched / rp.required_total * 100)|int %}
+                                    <div class="progress flex-shrink-0" style="height:8px; width:60px;">
+                                        <div class="progress-bar {% if pct == 100 %}bg-success{% elif pct >= 50 %}bg-warning{% else %}bg-danger{% endif %}"
+                                             style="width:{{ pct }}%"></div>
+                                    </div>
+                                    {% endif %}
+                                </div>
+                                {% endfor %}
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
