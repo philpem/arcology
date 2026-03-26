@@ -235,7 +235,16 @@ class FileSearchForm(FlaskForm):
     path = StringField('Path/Directory', validators=[Optional()])
     md5 = StringField('MD5 Hash', validators=[Optional()])
     sha1 = StringField('SHA1 Hash', validators=[Optional()])
-    hide_known = BooleanField('Hide known files', default=False)
+    hide_known = SelectField('Known files', choices=[
+        ('', 'Known: All'),
+        ('hide', 'Known: Hide'),
+        ('only', 'Known: Only'),
+    ], default='', validators=[Optional()])
+    filter_products = SelectField('Product matches', choices=[
+        ('', 'Products: All'),
+        ('hide', 'Products: Hide'),
+        ('only', 'Products: Only'),
+    ], default='', validators=[Optional()])
     show_directories = BooleanField('Show directories', default=False)
     recursive = BooleanField('Recursive (show all subdirs)', default=True)
 
@@ -553,7 +562,7 @@ def _render_artefact_view(artefact):
     # so that BooleanField defaults (e.g. recursive=True) apply on first load.
     # Without this, WTForms treats missing checkbox keys as False.
     _file_filter_keys = {'partition_uuid', 'filename', 'extension', 'path', 'md5', 'sha1',
-                         'hide_known', 'show_directories', 'recursive'}
+                         'hide_known', 'filter_products', 'show_directories', 'recursive'}
     if _file_filter_keys & set(request.args.keys()):
         file_form = FileSearchForm(request.args)
     else:
@@ -664,12 +673,36 @@ def _render_artefact_view(artefact):
     if file_form.sha1.data:
         files_query = files_query.filter(ExtractedFile.sha1 == file_form.sha1.data.lower())
     
-    if file_form.hide_known.data:
+    if file_form.hide_known.data == 'hide':
         # Always show archive files even when hiding known files, because
         # archives serve as navigational pseudo-directories in the UI.
         from sqlalchemy import or_
         files_query = files_query.filter(
             or_(ExtractedFile.is_known == False, ExtractedFile.is_archive == True)
+        )
+    elif file_form.hide_known.data == 'only':
+        from sqlalchemy import or_
+        files_query = files_query.filter(
+            or_(ExtractedFile.is_known == True, ExtractedFile.is_archive == True)
+        )
+
+    if file_form.filter_products.data == 'hide':
+        # Hide files whose primary known_file match has a product association.
+        from sqlalchemy import or_ as _or
+        files_query = files_query.filter(
+            _or(
+                ExtractedFile.known_file_id == None,
+                ~ExtractedFile.known_file.has(KnownFile.product_id != None),
+                ExtractedFile.is_archive == True,
+            )
+        )
+    elif file_form.filter_products.data == 'only':
+        from sqlalchemy import or_ as _or
+        files_query = files_query.filter(
+            _or(
+                ExtractedFile.known_file.has(KnownFile.product_id != None),
+                ExtractedFile.is_archive == True,
+            )
         )
     
     page = request.args.get('page', 1, type=int)

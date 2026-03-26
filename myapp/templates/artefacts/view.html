@@ -908,7 +908,7 @@
                 <form method="get" class="row g-2">
                 {% if hashdb_mode %}<input type="hidden" name="mode" value="hashdb">{% endif %}
                     <div class="col-md-2">
-                        <select name="partition_uuid" class="form-select form-select-sm">
+                        <select name="partition_uuid" class="form-select form-select-sm" title="Filter files by disk partition. Select a specific partition or show files from all partitions.">
                             <option value="">All Partitions</option>
                             {% for p in all_partitions %}
                             <option value="{{ p.uuid }}" {{ 'selected' if file_form.partition_uuid.data == p.uuid else '' }}>
@@ -917,13 +917,14 @@
                             {% endfor %}
                         </select>
                     </div>
-                    <div class="col-md-2">{{ file_form.filename(class="form-control form-control-sm", placeholder="Filename (glob: *.txt)") }}</div>
-                    <div class="col-md-1">{{ file_form.filetype(class="form-control form-control-sm", placeholder="Filetype") }}</div>
-                    <div class="col-md-2">{{ file_form.path(class="form-control form-control-sm", placeholder="Path (e.g., Games/)") }}</div>
-                    <div class="col-md-2">{{ file_form.md5(class="form-control form-control-sm", placeholder="MD5") }}</div>
-                    <div class="col-md-1"><div class="form-check form-check-sm">{{ file_form.hide_known(class="form-check-input") }}<label class="form-check-label small">Hide Known</label></div></div>
-                    <div class="col-md-1"><div class="form-check form-check-sm">{{ file_form.show_directories(class="form-check-input") }}<label class="form-check-label small">Dirs</label></div></div>
-                    <div class="col-md-1"><button type="submit" class="btn btn-sm btn-secondary w-100">Filter</button></div>
+                    <div class="col-md-2">{{ file_form.filename(class="form-control form-control-sm", placeholder="Filename (glob: *.txt)", title="Filter by filename. Supports glob wildcards: * matches any characters, ? matches a single character. Example: *.txt, README*") }}</div>
+                    <div class="col-md-1">{{ file_form.filetype(class="form-control form-control-sm", placeholder="Filetype", title="Filter by RISC OS filetype code (hex). Leading # or & is stripped automatically. Example: fff, Text") }}</div>
+                    <div class="col-md-2">{{ file_form.path(class="form-control form-control-sm", placeholder="Path (e.g., Games/)", title="Filter by directory path. Shows files within the given path. Use with Recursive to include all subdirectories.") }}</div>
+                    <div class="col-md-1">{{ file_form.md5(class="form-control form-control-sm", placeholder="MD5", title="Filter by exact MD5 hash (32-character hex string)") }}</div>
+                    <div class="col-auto">{{ file_form.hide_known(class="form-select form-select-sm", title="Filter files by hash database match status. 'Hide' removes files matching known hashes; 'Only' shows only files matching known hashes.") }}</div>
+                    <div class="col-auto">{{ file_form.filter_products(class="form-select form-select-sm", title="Filter files by product match status. 'Hide' removes files matched to a known product; 'Only' shows only files matched to a known product.") }}</div>
+                    <div class="col-auto"><div class="form-check form-check-sm">{{ file_form.show_directories(class="form-check-input", title="Show directory entries in the file listing") }}<label class="form-check-label small" title="Show directory entries in the file listing">Dirs</label></div></div>
+                    <div class="col-auto"><button type="submit" class="btn btn-sm btn-secondary w-100">Filter</button></div>
                 </form>
             </div>
             {% if subdirectories %}
