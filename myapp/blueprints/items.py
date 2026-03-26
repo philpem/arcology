@@ -94,7 +94,7 @@ def index():
 
     # Compute letter-to-page mapping for A-Z jump bar
     letter_pages, current_letter = compute_letter_pages(
-        query.order_by(Item.name), Item.name, per_page, current_page=page
+        query, Item.name, per_page, current_page=page
     )
 
     pagination = query.order_by(Item.name).paginate(page=page, per_page=per_page)
@@ -167,7 +167,7 @@ def view(uuid):
     )
 
     letter_pages, current_letter = compute_letter_pages(
-        artefact_query.order_by(Artefact.label), Artefact.label, per_page, current_page=page
+        artefact_query, Artefact.label, per_page, current_page=page
     )
 
     artefacts_page = artefact_query.order_by(Artefact.label).paginate(page=page, per_page=per_page)

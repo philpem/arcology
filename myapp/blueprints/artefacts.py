@@ -849,7 +849,7 @@ def _render_artefact_view(artefact):
     if sort_col == 'path' and not sort_desc:
         from ..utils.pagination import compute_letter_pages
         letter_pages, current_letter = compute_letter_pages(
-            files_query.order_by(ExtractedFile.path), ExtractedFile.path,
+            files_query, ExtractedFile.path,
             per_page, current_page=page
         )
     else:

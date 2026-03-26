@@ -22,8 +22,12 @@ def compute_letter_pages(query, field, per_page, current_page=1):
         return {}, ''
 
     first_char = func.upper(func.substr(field, 1, 1))
+    # Strip any existing ORDER BY from the query — with_entities + group_by
+    # builds its own SELECT and PostgreSQL rejects ORDER BY columns that are
+    # not in the GROUP BY or an aggregate.
     rows = (
         query
+        .order_by(None)
         .with_entities(first_char.label('letter'), func.count().label('cnt'))
         .group_by(first_char)
         .order_by(first_char)
