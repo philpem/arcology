@@ -58,7 +58,10 @@
 		</main>
 
 		<footer class="text-center py-3 mt-4 bg-light">
-			<small class="text-muted">Arcology - Digital Artefact Catalogue</small>
+			<small class="text-muted">
+				Arcology &mdash; Digital Artefact Catalogue &mdash;
+				<a href="{{ url_for('myapp_blueprints_dashboard.about') }}" class="text-muted">About</a>
+			</small>
 		</footer>
 
         {% block scripts %}

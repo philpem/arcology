@@ -150,6 +150,14 @@ def create_app(config_name=None):
                      current_user.has_permission(UserPermission.READ_WRITE))
         return dict(user_can_write=can_write)
 
+    # -- version context processor --
+    from .version import get_version
+    import datetime
+    @app.context_processor
+    def inject_version():
+        """Inject app_version and now into every template context."""
+        return dict(app_version=get_version(), now=datetime.datetime.now())
+
     # -- template filter: analysis status -> Bootstrap badge class --
     @app.template_filter('status_badge_class')
     def status_badge_class(status_value):

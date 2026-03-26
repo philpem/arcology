@@ -3,25 +3,146 @@
 
 {% block content %}
 <div class="row justify-content-center">
-    <div class="col-md-8">
+    <div class="col-md-9 col-lg-8">
         <h1><i class="bi bi-info-circle"></i> About Arcology</h1>
-        
+
         <p class="lead">Arcology is a digital artefact catalogue for retrocomputing collections.</p>
-        
-        <p>Track disk images (Supercard Pro, ImageDisk, ISO, etc.), scanned documents, and other digital files associated with your collection.</p>
-        
-        <h3>Features</h3>
+
+        <hr>
+
+        <h3>Version</h3>
+        <p><code>{{ app_version }}</code></p>
+
+        <h3>Documentation</h3>
         <ul>
-            <li>Catalogue items with multiple digital artefacts</li>
-            <li>Link to external collection systems (Koillection, Collective Access, etc.)</li>
-            <li>Browse extracted file listings from disk images</li>
-            <li>Identify known files using hash databases (NSRL, custom)</li>
-            <li>Queue analysis jobs for automated processing</li>
-            <li>REST API for integration with analysis tools</li>
+            <li><a href="https://github.com/philpem/arcology/blob/master/README.md" target="_blank" rel="noopener">README</a> &mdash; quick-start and feature overview</li>
+            <li><a href="https://github.com/philpem/arcology/blob/master/CONTRIBUTING.md" target="_blank" rel="noopener">Contributing guide</a> &mdash; architecture notes and contribution workflow</li>
+            <li><a href="{{ url_for('myapp_blueprints_api.health_check') }}" target="_blank" rel="noopener">REST API</a> &mdash; available at <code>/api/</code></li>
         </ul>
-        
-        <h3>API</h3>
-        <p>The API is available at <code>/api/</code>. See the README for documentation.</p>
+
+        <hr>
+
+        <h3>Copyright &amp; Licence</h3>
+        <p>Copyright &copy; {{ now.year }} Phil Pemberton.</p>
+        <p>
+            This program is free software: you can redistribute it and/or modify it
+            under the terms of the
+            <a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" rel="noopener">GNU General Public License version&nbsp;3</a>
+            as published by the Free Software Foundation.
+        </p>
+        <p>
+            This program is distributed in the hope that it will be useful,
+            but WITHOUT ANY WARRANTY; without even the implied warranty of
+            MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+        </p>
+
+        <hr>
+
+        <h3>Third-party components</h3>
+
+        <h5>Web application</h5>
+        <table class="table table-sm table-bordered">
+            <thead class="table-light">
+                <tr><th>Component</th><th>Licence</th><th>Notes</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><a href="https://flask.palletsprojects.com/" target="_blank" rel="noopener">Flask</a></td>
+                    <td>BSD-3-Clause</td>
+                    <td>Web framework</td>
+                </tr>
+                <tr>
+                    <td><a href="https://flask-sqlalchemy.palletsprojects.com/" target="_blank" rel="noopener">Flask-SQLAlchemy</a></td>
+                    <td>BSD-3-Clause</td>
+                    <td>SQLAlchemy integration for Flask</td>
+                </tr>
+                <tr>
+                    <td><a href="https://flask-migrate.readthedocs.io/" target="_blank" rel="noopener">Flask-Migrate</a></td>
+                    <td>MIT</td>
+                    <td>Database schema migrations (Alembic)</td>
+                </tr>
+                <tr>
+                    <td><a href="https://flask-login.readthedocs.io/" target="_blank" rel="noopener">Flask-Login</a></td>
+                    <td>MIT</td>
+                    <td>User session management</td>
+                </tr>
+                <tr>
+                    <td><a href="https://flask-wtf.readthedocs.io/" target="_blank" rel="noopener">Flask-WTF</a></td>
+                    <td>BSD-3-Clause</td>
+                    <td>Form handling and CSRF protection</td>
+                </tr>
+                <tr>
+                    <td><a href="https://bootstrap-flask.readthedocs.io/" target="_blank" rel="noopener">Bootstrap-Flask</a></td>
+                    <td>MIT</td>
+                    <td>Bootstrap 5 helpers for Jinja2 templates</td>
+                </tr>
+                <tr>
+                    <td><a href="https://www.sqlalchemy.org/" target="_blank" rel="noopener">SQLAlchemy</a></td>
+                    <td>MIT</td>
+                    <td>Database ORM</td>
+                </tr>
+                <tr>
+                    <td><a href="https://pypi.org/project/bcrypt/" target="_blank" rel="noopener">bcrypt</a></td>
+                    <td>Apache-2.0</td>
+                    <td>Password hashing</td>
+                </tr>
+                <tr>
+                    <td><a href="https://getbootstrap.com/" target="_blank" rel="noopener">Bootstrap 5</a></td>
+                    <td>MIT</td>
+                    <td>Frontend CSS/JS framework</td>
+                </tr>
+                <tr>
+                    <td><a href="https://icons.getbootstrap.com/" target="_blank" rel="noopener">Bootstrap Icons</a></td>
+                    <td>MIT</td>
+                    <td>Icon set</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h5>Analysis worker</h5>
+        <table class="table table-sm table-bordered">
+            <thead class="table-light">
+                <tr><th>Component</th><th>Author</th><th>Notes</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><a href="https://github.com/jfdelnero/HxCFloppyEmulator" target="_blank" rel="noopener">HxCFloppyEmulator</a></td>
+                    <td>Jean-François DEL NERO</td>
+                    <td>Floppy disk image conversion and analysis</td>
+                </tr>
+                <tr>
+                    <td><a href="https://github.com/dbalsom/fluxfox" target="_blank" rel="noopener">Fluxfox</a></td>
+                    <td>Daniel Balsom</td>
+                    <td>Flux-level disk image analysis</td>
+                </tr>
+                <tr>
+                    <td><a href="https://github.com/geraldholdsworth/DiscImageManager" target="_blank" rel="noopener">DiscImageManager</a></td>
+                    <td>Gerald Holdsworth</td>
+                    <td>Acorn / RISC OS disc image management</td>
+                </tr>
+                <tr>
+                    <td><a href="https://github.com/keirf/greaseweazle" target="_blank" rel="noopener">Greaseweazle</a></td>
+                    <td>Keir Fraser</td>
+                    <td>Disk image format conversion</td>
+                </tr>
+                <tr>
+                    <td><a href="https://github.com/mjwoodcock/riscosarc" target="_blank" rel="noopener">riscosarc</a></td>
+                    <td>Martin Woodcock</td>
+                    <td>RISC OS ARC archive extraction</td>
+                </tr>
+                <tr>
+                    <td><a href="https://github.com/mattgodbolt/tbafs" target="_blank" rel="noopener">tbafs</a></td>
+                    <td>Matt Godbolt</td>
+                    <td>BBC Micro tape/disc filesystem extraction</td>
+                </tr>
+                <tr>
+                    <td><a href="https://www.7-zip.org/" target="_blank" rel="noopener">7-Zip</a></td>
+                    <td>Igor Pavlov</td>
+                    <td>Archive extraction (ZIP, 7z, and others)</td>
+                </tr>
+            </tbody>
+        </table>
+
     </div>
 </div>
 {% endblock %}
