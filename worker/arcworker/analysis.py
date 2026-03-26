@@ -1199,6 +1199,16 @@ class AnalysisWorker:
         sniffed = self._sniff_archive_magic(input_path)
         if sniffed is not None and sniffed != archive_type:
             log.info(f"Magic-byte sniff overrides {archive_type.value} → {sniffed.value}")
+            # A ZIP found via RISC OS filetype (including zip_riscos itself)
+            # should be treated as ZIP_RISCOS so Acorn ,xxx suffixes are
+            # parsed correctly and the container format is recorded accurately.
+            _RISCOS_TYPES = (
+                ArchiveType.ARCFS, ArchiveType.SPARK, ArchiveType.PACKDIR,
+                ArchiveType.TBAFS, ArchiveType.CFS, ArchiveType.SQUASH,
+                ArchiveType.ZIP_RISCOS,
+            )
+            if sniffed == ArchiveType.ZIP and archive_type in _RISCOS_TYPES:
+                sniffed = ArchiveType.ZIP_RISCOS
             archive_type = sniffed
             archive_info = get_archive_info(archive_type)
 
@@ -1541,6 +1551,7 @@ class AnalysisWorker:
             _RISCOS_TYPES = (
                 ArchiveType.ARCFS, ArchiveType.SPARK, ArchiveType.PACKDIR,
                 ArchiveType.TBAFS, ArchiveType.CFS, ArchiveType.SQUASH,
+                ArchiveType.ZIP_RISCOS,
             )
             if sniffed == ArchiveType.ZIP and archive_type in _RISCOS_TYPES:
                 sniffed = ArchiveType.ZIP_RISCOS
