@@ -28,6 +28,10 @@ TOOL_TIMEOUT = int(os.environ.get('TOOL_TIMEOUT', '3600'))
 # Archive extraction configuration
 MAX_ARCHIVE_DEPTH = int(os.environ.get('MAX_ARCHIVE_DEPTH', '10'))
 
+# Maximum size of a decompressed file in bytes (default: 10 GiB).
+# Prevents decompression-bomb inputs from exhausting disk space.
+MAX_DECOMPRESSED_BYTES = int(os.environ.get('MAX_DECOMPRESSED_BYTES', str(10 * 1024 ** 3)))
+
 # Mastering detection: number of trailing tracks to scan
 MASTERING_TRACK_SCAN_COUNT = int(os.environ.get('MASTERING_TRACK_SCAN_COUNT', '5'))
 

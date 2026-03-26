@@ -57,6 +57,16 @@ def _get_raw_key() -> str:
     return request.headers.get('X-API-Key', '')
 
 
+def _is_worker_request() -> bool:
+    """Return True if the current request authenticated with the WORKER_API_KEY.
+
+    Used to gate endpoints or fields that should only be accessible to the
+    worker process, not to ordinary user API keys — even read_write ones.
+    """
+    worker_key = current_app.config.get('WORKER_API_KEY', '')
+    return bool(worker_key and hmac.compare_digest(_get_raw_key(), worker_key))
+
+
 def require_auth(permission: str = 'read_only'):
     """
     Decorator that requires a valid API key with at least *permission* level.
@@ -438,6 +448,12 @@ def update_analysis(id):
         return error_response(
             f"Field '{bad_field}' contains NUL characters (0x00) which are not permitted in text fields"
         )
+
+    # output_path is a filesystem path used by cleanup and download routes.
+    # Only the worker process (authenticated via WORKER_API_KEY) may set it;
+    # ordinary read_write API keys are blocked to prevent path-injection.
+    if 'output_path' in data and not _is_worker_request():
+        return error_response('Only the worker may set output_path', 403)
 
     # Handle atomic claim attempt using database-level atomicity
     if data.get('claim_worker') and data.get('status') == 'running':

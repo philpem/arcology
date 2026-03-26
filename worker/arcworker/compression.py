@@ -8,7 +8,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from .config import log, TOOL_TIMEOUT
+from .config import log, TOOL_TIMEOUT, MAX_DECOMPRESSED_BYTES
 
 
 COMPRESSION_EXTENSIONS = {
@@ -92,6 +92,13 @@ def decompress_if_needed(input_path: Path, work_dir: Path) -> Path:
         if decompressed_size == 0:
             raise RuntimeError(
                 f"Decompressed file is empty (0 bytes): {decompressed_path}"
+            )
+
+        if decompressed_size > MAX_DECOMPRESSED_BYTES:
+            decompressed_path.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"Decompressed size {decompressed_size:,} bytes exceeds limit "
+                f"of {MAX_DECOMPRESSED_BYTES:,} bytes ({input_path.name})"
             )
 
         log.info(

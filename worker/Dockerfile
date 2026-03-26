@@ -54,8 +54,9 @@ RUN \
 #################
 FROM debian:stable AS build-fluxfox
 
-# Version to build
-ARG FLUXFOX_TAG=main
+# Pinned commit SHA — update this when upgrading fluxfox.
+# Current as of 2026-03-26; branch: main
+ARG FLUXFOX_TAG=32fa0e5dd75346fccaeb466922289deeb12ccccc
 
 # Disable prompt during package installation
 ARG DEBIAN_FRONTEND=noninteractive
@@ -69,8 +70,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt -y update && apt -y upgrade && \
 	apt -y install git rustup gcc && \
 	rustup default stable && \
-	git clone --branch "${FLUXFOX_TAG}" --depth=1 https://github.com/dbalsom/fluxfox && \
+	git clone https://github.com/dbalsom/fluxfox && \
 	cd fluxfox && \
+	git checkout "${FLUXFOX_TAG}" && \
 	cargo update && \
 	cargo build -r ${MINUSJ} -p imgviz -p fluxfox_cli && \
 	cp target/release/imgviz /usr/local/bin && \
@@ -82,9 +84,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 #################
 FROM debian:stable AS build-discimagemanager
 
-# Version to build
+# Pinned commit SHAs — update these when upgrading DiscImageManager or its deps.
+# Current as of 2026-03-26.
 #ARG DISCIMAGEMANAGER_VERSION=1.49
-ARG DISCIMAGEMANAGER_VERSION=feature/decouple-ui-from-cli
+ARG DISCIMAGEMANAGER_VERSION=4ff5f97167f393520c8382514e09bfcf56af2638
 # Binary build location -- you shouldn't have to change this
 ARG DISCIMAGEMANAGER_URL=https://github.com/geraldholdsworth/DiscImageManager/releases/download/${DISCIMAGEMANAGER_VERSION}/Disc.Image.Manager.${DISCIMAGEMANAGER_VERSION}.Linux.64.bit.Intel.zip
 # Github repo location
@@ -92,9 +95,9 @@ ARG DISCIMAGEMANAGER_URL=https://github.com/geraldholdsworth/DiscImageManager/re
 ARG DISCIMAGEMANAGER_REPO=https://github.com/philpem/DiscImageManager
 # If 1, build from source
 ARG DISCIMAGEMANAGER_SOURCEBUILD=1
-# SpriteToBitmap unit version, defaults to "main" which is the latest dev version
-ARG DISCIMAGEMANAGER_STB_VERSION=main
-ARG DISCIMAGEMANAGER_GJHCC_VERSION=main
+# SpriteToBitmap and GJHCustomComponents pinned commit SHAs
+ARG DISCIMAGEMANAGER_STB_VERSION=2cbd3ac945186bb5ed7e31685ee4e8287589ddd9
+ARG DISCIMAGEMANAGER_GJHCC_VERSION=9f1397c7cb69aa117cfebf687eee701866f9da7c
 
 # Disable prompt during package installation
 ARG DEBIAN_FRONTEND=noninteractive
@@ -116,9 +119,12 @@ RUN	\
 		echo "  DIM   branch: ${DISCIMAGEMANAGER_VERSION}" ; \
 		echo "  STB   branch: ${DISCIMAGEMANAGER_STB_VERSION}" ; \
 		echo "  GJHCC branch: ${DISCIMAGEMANAGER_GJHCC_VERSION}" ; \
-		git clone --branch "${DISCIMAGEMANAGER_VERSION}" --depth=1 ${DISCIMAGEMANAGER_REPO} && \
-		git clone --branch "${DISCIMAGEMANAGER_STB_VERSION}" --depth=1 https://github.com/geraldholdsworth/SpriteToBitmap && \
-		git clone --branch "${DISCIMAGEMANAGER_GJHCC_VERSION}" --depth=1 https://github.com/geraldholdsworth/GJHCustomComponents && \
+		git clone ${DISCIMAGEMANAGER_REPO} DiscImageManager && \
+		git -C DiscImageManager checkout "${DISCIMAGEMANAGER_VERSION}" && \
+		git clone https://github.com/geraldholdsworth/SpriteToBitmap && \
+		git -C SpriteToBitmap checkout "${DISCIMAGEMANAGER_STB_VERSION}" && \
+		git clone https://github.com/geraldholdsworth/GJHCustomComponents && \
+		git -C GJHCustomComponents checkout "${DISCIMAGEMANAGER_GJHCC_VERSION}" && \
 		cd DiscImageManager && \
 		ln -s ../GJHCustomComponents/Source GJHCustomComponents && \
 		ln -s ../GJHCustomComponents/Source GJHCustomConponents && \
@@ -256,9 +262,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 		file fdisk \
 		default-jre
 
-# Install Greaseweazle for disk image conversion
+# Install Greaseweazle for disk image conversion.
+# Pinned to a specific commit SHA; update when upgrading (was: @latest).
+# Current as of 2026-03-26.
 RUN python3 -m pip install --break-system-packages \
-	git+https://github.com/keirf/greaseweazle@latest
+	git+https://github.com/keirf/greaseweazle@dcb3d5d9d71b58d51aa22938cf96272a3b507292
 
 # Clean up build dependencies
 RUN apt -y remove python3-dev git && apt -y autoremove

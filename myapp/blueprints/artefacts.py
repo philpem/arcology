@@ -345,6 +345,7 @@ def _resolve_extracted_file_path(ef):
     Returns the full filesystem path as a string, or None if not found.
     """
     output_folder = get_output_folder()
+    real_output = os.path.realpath(output_folder)
 
     for analysis_type in (AnalysisType.FILE_EXTRACTION, AnalysisType.ARCHIVE_EXTRACT):
         extraction = (
@@ -376,14 +377,23 @@ def _resolve_extracted_file_path(ef):
 
             for resolved_base in bases_to_try:
                 real_base = os.path.realpath(resolved_base)
+                # Ensure the base directory itself lies within OUTPUT_FOLDER.
+                # Without this check, a malicious output_path (e.g. /etc) would
+                # pass the inner confinement test and expose arbitrary host files.
+                if not real_base.startswith(real_output + os.sep):
+                    continue
                 raw_path = os.path.join(resolved_base, ef.path.lstrip('/'))
                 file_path = os.path.realpath(raw_path)
                 if not file_path.startswith(real_base + os.sep):
                     continue
                 if os.path.isfile(file_path):
                     return file_path
-                # RISC OS filetype suffix fallback
-                candidates = [f for f in glob.glob(raw_path + ',*') if os.path.isfile(f)]
+                # RISC OS filetype suffix fallback — re-check confinement on
+                # each candidate so a glob match cannot escape real_base.
+                candidates = [
+                    f for f in glob.glob(raw_path + ',*')
+                    if os.path.isfile(f) and os.path.realpath(f).startswith(real_base + os.sep)
+                ]
                 if candidates:
                     return candidates[0]
 
@@ -491,9 +501,18 @@ def _cleanup_analysis_outputs(output_folder, output_files, output_dirs, cache_di
     Designed to run in a background daemon thread; all paths are passed as
     plain strings so no ORM session or Flask app context is required.
     """
+    real_output = os.path.realpath(output_folder)
+
+    def _is_safe(p: str) -> bool:
+        """Return True only if p resolves to a path inside output_folder."""
+        return os.path.realpath(p).startswith(real_output + os.sep)
+
     # Remove named output files (e.g., flux visualisation PNGs).
     for filename in output_files:
         path = os.path.join(output_folder, filename)
+        if not _is_safe(path):
+            logger.warning(f"Skipping out-of-bounds output file: {filename!r}")
+            continue
         if os.path.exists(path):
             try:
                 os.remove(path)
@@ -503,6 +522,9 @@ def _cleanup_analysis_outputs(output_folder, output_files, output_dirs, cache_di
 
     # Remove extraction output directories (e.g., extracted disc file trees).
     for path in output_dirs:
+        if not _is_safe(path):
+            logger.warning(f"Skipping out-of-bounds output directory: {path!r}")
+            continue
         if os.path.exists(path):
             try:
                 shutil.rmtree(path)

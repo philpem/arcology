@@ -5,6 +5,7 @@ Wraps external archive extraction tools (riscosarc, tbafs-extractor, etc.)
 for use by the worker.
 """
 
+import os
 import subprocess
 import re
 from pathlib import Path
@@ -12,6 +13,32 @@ from typing import Dict, Any
 
 from .base import run_tool_with_output
 from ..utils.text import normalize_extracted_filenames
+
+
+def sanitize_extracted_tree(output_dir: Path) -> int:
+    """Remove unsafe entries from an extracted archive tree.
+
+    Removes symlinks and special files (device nodes, FIFOs, sockets) that
+    could be used by a malicious archive to escape the extraction directory or
+    access host resources.  Regular files and directories are left intact.
+
+    Returns the number of entries removed.
+    """
+    removed = 0
+    real_base = str(output_dir.resolve())
+    # Walk bottom-up so we handle nested symlinks before their parents.
+    for entry in sorted(output_dir.rglob('*'), key=lambda p: len(p.parts), reverse=True):
+        try:
+            if entry.is_symlink():
+                entry.unlink()
+                removed += 1
+            elif not entry.is_dir() and not entry.is_file():
+                # Device node, FIFO, socket, etc.
+                entry.unlink()
+                removed += 1
+        except OSError:
+            pass
+    return removed
 
 
 def extract_riscosarc(input_path: Path, output_dir: Path) -> Dict[str, Any]:
@@ -57,6 +84,7 @@ def extract_riscosarc(input_path: Path, output_dir: Path) -> Dict[str, Any]:
 
     # Normalise any RISC OS Latin1 byte sequences in extracted filenames.
     normalize_extracted_filenames(output_dir)
+    sanitize_extracted_tree(output_dir)
 
     # Count extracted files
     file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
@@ -95,6 +123,7 @@ def extract_tbafs(input_path: Path, output_dir: Path) -> Dict[str, Any]:
         }
 
     normalize_extracted_filenames(output_dir)
+    sanitize_extracted_tree(output_dir)
 
     file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
 
@@ -134,6 +163,7 @@ def extract_zip(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     # Normalise any raw Latin-1 byte sequences in extracted filenames
     # (e.g. RISC OS filenames stored in the ZIP with non-UTF-8 bytes).
     normalize_extracted_filenames(output_dir)
+    sanitize_extracted_tree(output_dir)
 
     file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
 
@@ -182,6 +212,7 @@ def extract_tar(input_path: Path, output_dir: Path, archive_type: str = 'tar') -
         }
 
     normalize_extracted_filenames(output_dir)
+    sanitize_extracted_tree(output_dir)
 
     file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
 
@@ -219,6 +250,7 @@ def extract_rar(input_path: Path, output_dir: Path) -> Dict[str, Any]:
         }
 
     normalize_extracted_filenames(output_dir)
+    sanitize_extracted_tree(output_dir)
 
     file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
 
@@ -255,6 +287,7 @@ def extract_7z(input_path: Path, output_dir: Path) -> Dict[str, Any]:
             'process_output': output
         }
 
+    sanitize_extracted_tree(output_dir)
     file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
 
     return {
