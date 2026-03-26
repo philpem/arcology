@@ -160,7 +160,19 @@ def new():
 def view(uuid):
     """View an item and its artefacts."""
     item = lookup_by_identifier(Item, uuid)
-    return render_template('items/view.html', item=item)
+
+    page = request.args.get('page', 1, type=int)
+    per_page = current_app.config.get('ARTEFACTS_PER_PAGE', 25)
+
+    artefacts_page = (
+        Artefact.query
+        .filter_by(item_id=item.id, parent_artefact_id=None)
+        .options(selectinload(Artefact.derived_artefacts))
+        .order_by(Artefact.label)
+        .paginate(page=page, per_page=per_page)
+    )
+
+    return render_template('items/view.html', item=item, artefacts_page=artefacts_page)
 
 
 @blueprint.route('/<string:uuid>/edit', methods=['GET', 'POST'])
