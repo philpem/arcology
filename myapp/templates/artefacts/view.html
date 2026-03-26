@@ -1,8 +1,10 @@
 {% extends "_base.html" %}
+{% import "_rollup_card.html" as rollup %}
 {% block page_title %}{{ artefact.label }}{% endblock %}
 
 {% block styles %}
 {{ super() }}
+{{ rollup.styles() }}
 <style>
 /* Recognised Items: chevron rotates when group is expanded */
 .rp-summary .rp-chevron { transition: transform 0.15s ease; }
@@ -40,7 +42,7 @@
         </span>
         {% endif %}
         {% if protection_analysis and protection_analysis.get('indicators') %}
-        <span class="badge bg-danger me-1" title="Copy protection indicators found — click Analysis for details">
+        <span class="badge bg-warning text-dark me-1" title="Copy protection indicators found — click Analysis for details">
             <i class="bi bi-shield-lock-fill"></i> Copy Protected
         </span>
         {% endif %}
