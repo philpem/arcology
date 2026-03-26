@@ -30,9 +30,9 @@ def _active_known_file_query():
 def _filter_known_files_by_hashes(query, *, md5=None, sha1=None):
     """Apply md5/sha1 filters to a KnownFile query."""
     if md5:
-        return query.filter(KnownFile.md5 == md5.lower())
+        query = query.filter(KnownFile.md5 == md5.lower())
     if sha1:
-        return query.filter(KnownFile.sha1 == sha1.lower())
+        query = query.filter(KnownFile.sha1 == sha1.lower())
     return query
 
 
