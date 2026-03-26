@@ -5,7 +5,7 @@ for worker job claiming, ApiKey prefix lookups on every authenticated request,
 and ExtractedFile duplicate detection during bulk file uploads.
 
 Revision ID: 000069c2d753
-Revises: 000069b4c8ec
+Revises: 000069c4322f
 Create Date: 2026-03-24
 
 """
@@ -14,7 +14,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = '000069c2d753'
-down_revision = '000069c2f0db'
+down_revision = '000069c4322f'
 branch_labels = None
 depends_on = None
 
