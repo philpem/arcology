@@ -618,6 +618,44 @@ def _resolve_artefact(item_id, artefact_id, root_id=None):
     return item, artefact
 
 
+def _get_artefact_or_404(item_id=None, artefact_id=None, root_id=None, uuid=None):
+    """Load an artefact from either the nested or legacy route parameters."""
+    if uuid is not None:
+        return Artefact.query.filter_by(uuid=uuid).first_or_404()
+    _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
+    return artefact
+
+
+def _artefact_view_kwargs(artefact):
+    """Return standard kwargs for redirecting to an artefact view."""
+    return {
+        'item_id': artefact.item.url_id,
+        'artefact_id': artefact.url_slug,
+    }
+
+
+def _redirect_to_artefact_view(artefact):
+    """Redirect to the standard artefact view."""
+    return redirect(url_for(f'{ROUTENAME}.view', **_artefact_view_kwargs(artefact)))
+
+
+def _check_download_bypass(artefact):
+    """Return a redirect response when download restrictions block access."""
+    if not artefact.restrictions:
+        return None
+
+    if not current_user.can_bypass_all_restrictions(artefact.restrictions):
+        categories = ', '.join(r.restriction_type.label for r in artefact.restrictions)
+        flash(f'Download restricted: {categories}', 'danger')
+        return _redirect_to_artefact_view(artefact)
+
+    if not request.args.get('confirm_bypass'):
+        flash('This artefact has download restrictions. Use the download override button to confirm.', 'warning')
+        return _redirect_to_artefact_view(artefact)
+
+    return None
+
+
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>')
 @blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>', endpoint='view_nested')
 @login_required
@@ -1218,10 +1256,7 @@ def upload(item_id):
 @require_permission('read_write')
 def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Edit artefact metadata."""
-    if uuid is not None:
-        artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
-    else:
-        _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
+    artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
     form = ArtefactEditForm(obj=artefact)
     
     # Build type choices
@@ -1254,7 +1289,7 @@ def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
         db.session.commit()
 
         flash(f'Artefact "{artefact.label}" updated.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug))
+        return _redirect_to_artefact_view(artefact)
 
     return render_template('artefacts/edit.html',
                            form=form,
@@ -1294,10 +1329,7 @@ def _delete_item_files(item):
 @require_permission('read_write')
 def delete(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Delete an artefact and its file."""
-    if uuid is not None:
-        artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
-    else:
-        _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
+    artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
     item_url_id = artefact.item.url_id
     label = artefact.label
 
@@ -1320,28 +1352,11 @@ def delete(item_id=None, artefact_id=None, root_id=None, uuid=None):
 def download(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Download the artefact file.  Restricted artefacts are blocked unless
     the current user has bypass permissions for every restriction type."""
-    if uuid is not None:
-        artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
-    else:
-        _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
+    artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
 
-    # Enforce download restrictions
-    if artefact.restrictions:
-        if not current_user.can_bypass_all_restrictions(artefact.restrictions):
-            categories = ', '.join(
-                r.restriction_type.label
-                for r in artefact.restrictions
-            )
-            flash(f'Download restricted: {categories}', 'danger')
-            return redirect(url_for(f'{ROUTENAME}.view',
-                                    item_id=artefact.item.url_id,
-                                    artefact_id=artefact.url_slug))
-        # User has bypass — require explicit confirmation
-        if not request.args.get('confirm_bypass'):
-            flash('This artefact has download restrictions. Use the download override button to confirm.', 'warning')
-            return redirect(url_for(f'{ROUTENAME}.view',
-                                    item_id=artefact.item.url_id,
-                                    artefact_id=artefact.url_slug))
+    restriction_redirect = _check_download_bypass(artefact)
+    if restriction_redirect:
+        return restriction_redirect
 
     full_path = get_artefact_path(artefact)
 
@@ -1367,22 +1382,9 @@ def download_file(uuid):
     ef = ExtractedFile.query.filter_by(uuid=uuid).first_or_404()
     artefact = ef.partition.artefact
 
-    # Enforce artefact restrictions
-    if artefact.restrictions:
-        if not current_user.can_bypass_all_restrictions(artefact.restrictions):
-            categories = ', '.join(
-                r.restriction_type.label
-                for r in artefact.restrictions
-            )
-            flash(f'Download restricted: {categories}', 'danger')
-            return redirect(url_for(f'{ROUTENAME}.view',
-                                    item_id=artefact.item.url_id,
-                                    artefact_id=artefact.url_slug))
-        if not request.args.get('confirm_bypass'):
-            flash('This artefact has download restrictions. Use the download override button to confirm.', 'warning')
-            return redirect(url_for(f'{ROUTENAME}.view',
-                                    item_id=artefact.item.url_id,
-                                    artefact_id=artefact.url_slug))
+    restriction_redirect = _check_download_bypass(artefact)
+    if restriction_redirect:
+        return restriction_redirect
 
     file_path = _resolve_extracted_file_path(ef)
     if not file_path:
@@ -1397,7 +1399,7 @@ def download_file(uuid):
 @require_permission('read_write')
 def manage_restrictions(item_id=None, artefact_id=None, root_id=None):
     """Add or remove a download restriction on an artefact."""
-    _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
+    artefact = _get_artefact_or_404(item_id, artefact_id, root_id)
 
     action = request.form.get('action', '')
     category = request.form.get('category', '')
@@ -1408,9 +1410,7 @@ def manage_restrictions(item_id=None, artefact_id=None, root_id=None):
         rtype = RestrictionType(category)
     except (ValueError, KeyError):
         flash(f'Invalid restriction type: {category}', 'danger')
-        return redirect(url_for(f'{ROUTENAME}.view',
-                                item_id=artefact.item.url_id,
-                                artefact_id=artefact.url_slug))
+        return _redirect_to_artefact_view(artefact)
 
     if action == 'add':
         existing = ArtefactRestriction.query.filter_by(
@@ -1444,9 +1444,7 @@ def manage_restrictions(item_id=None, artefact_id=None, root_id=None):
     else:
         flash(f'Invalid action: {action}', 'danger')
 
-    return redirect(url_for(f'{ROUTENAME}.view',
-                            item_id=artefact.item.url_id,
-                            artefact_id=artefact.url_slug))
+    return _redirect_to_artefact_view(artefact)
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/analyse', methods=['GET', 'POST'])
@@ -1456,10 +1454,7 @@ def manage_restrictions(item_id=None, artefact_id=None, root_id=None):
 @require_permission('read_write')
 def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Re-run analysis on an artefact, clearing all previous results first."""
-    if uuid is not None:
-        artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
-    else:
-        _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
+    artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
     form = AnalyseForm()
 
     # Platform choices for hints
@@ -1498,7 +1493,7 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
         t.start()
 
         flash('Re-analysis queued. Previous results have been cleared.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug))
+        return _redirect_to_artefact_view(artefact)
 
     # Pre-populate form with hints from the most recent analysis that had hints.
     if request.method == 'GET':
@@ -1536,16 +1531,13 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
 @require_permission('read_write')
 def compute_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Compute file hashes for an artefact."""
-    if uuid is not None:
-        artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
-    else:
-        _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
+    artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
 
     full_path = get_artefact_path(artefact)
 
     if not os.path.exists(full_path):
         flash('File not found.', 'error')
-        return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug))
+        return _redirect_to_artefact_view(artefact)
 
     try:
         artefact.md5, artefact.sha256 = compute_file_hashes(full_path)
@@ -1554,7 +1546,7 @@ def compute_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None
     except Exception as e:
         flash(f'Error computing hashes: {e}', 'error')
 
-    return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug))
+    return _redirect_to_artefact_view(artefact)
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/rescan-hashes', methods=['POST'])
 @blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/rescan-hashes', methods=['POST'], endpoint='rescan_hashes_route_nested')
@@ -1564,13 +1556,10 @@ def compute_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None
 def rescan_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Re-link extracted files to active hash databases without re-analysing."""
     from ..utils.hash_rescan import rescan_hashes_for_artefact
-    if uuid is not None:
-        artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
-    else:
-        _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
+    artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
     updated, total = rescan_hashes_for_artefact(artefact)
     flash(f'Hash rescan complete: {updated} of {total} files updated.', 'success')
-    return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug))
+    return _redirect_to_artefact_view(artefact)
 
 
 @blueprint.route('/<string:uuid>/rerun-product-recognition', methods=['POST'])
@@ -1589,13 +1578,13 @@ def rerun_product_recognition_route(uuid):
     ]
     if not partition_ids:
         flash('No partitions with extracted files found.', 'warning')
-        return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug))
+        return _redirect_to_artefact_view(artefact)
     queued = queue_product_recognition_for_partitions(partition_ids)
     if queued:
         flash(f'Queued product recognition for {queued} partition(s).', 'success')
     else:
         flash('Product recognition already pending or running — nothing new queued.', 'info')
-    return redirect(url_for(f'{ROUTENAME}.view', item_id=artefact.item.url_id, artefact_id=artefact.url_slug))
+    return _redirect_to_artefact_view(artefact)
 
 
 
