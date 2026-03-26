@@ -12,10 +12,16 @@ from .config import log, TOOL_TIMEOUT, MAX_DECOMPRESSED_BYTES
 
 
 COMPRESSION_EXTENSIONS = {
-    '.zst': ['zstd', '-d', '-k', '-f'],
-    '.gz': ['gzip', '-d', '-k', '-f'],
-    '.bz2': ['bzip2', '-d', '-k', '-f'],
+    '.zst': ['zstd', '-d', '-c'],
+    '.gz':  ['gzip', '-d', '-c'],
+    '.bz2': ['bzip2', '-d', '-c'],
 }
+
+_NOT_COMPRESSED_MARKERS = [
+    'not in gzip format',        # gzip
+    'is not a bzip2 file',       # bzip2
+    'File format not recognized', # zstd (unrecognised magic)
+]
 
 
 def decompress_if_needed(input_path: Path, work_dir: Path) -> Path:
@@ -31,7 +37,7 @@ def decompress_if_needed(input_path: Path, work_dir: Path) -> Path:
         Path to the decompressed file (or original if not compressed)
 
     Raises:
-        RuntimeError: If decompression fails or produces an empty file
+        RuntimeError: If decompression fails, times out, or exceeds size limit
     """
     suffix = input_path.suffix.lower()
 
@@ -43,64 +49,73 @@ def decompress_if_needed(input_path: Path, work_dir: Path) -> Path:
         compressed_size = input_path.stat().st_size
         log.info(f"Compressed file detected: {input_path.name} ({suffix}, {compressed_size:,} bytes)")
 
-        # Copy compressed file to work dir first
+        # Copy compressed file to work dir so the tool runs with a local path.
         compressed_copy = work_dir / input_path.name
         shutil.copy(input_path, compressed_copy)
 
-        # Decompress
+        # Decompress via stdout so we can enforce MAX_DECOMPRESSED_BYTES
+        # mid-stream without ever writing the full expansion to disk first.
         log.info(f"Decompressing {input_path.name} with {cmd[0]}")
+        CHUNK = 65536
+        proc = subprocess.Popen(
+            cmd + [str(compressed_copy)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=work_dir,
+        )
+        written = 0
+        size_exceeded = False
+        with open(decompressed_path, 'wb') as dst:
+            for chunk in iter(lambda: proc.stdout.read(CHUNK), b''):
+                written += len(chunk)
+                if written > MAX_DECOMPRESSED_BYTES:
+                    proc.kill()
+                    size_exceeded = True
+                    break
+                dst.write(chunk)
+        proc.stdout.close()
         try:
-            result = subprocess.run(
-                cmd + [str(compressed_copy)],
-                capture_output=True,
-                cwd=work_dir,
-                timeout=TOOL_TIMEOUT
-            )
+            proc.wait(timeout=TOOL_TIMEOUT)
         except subprocess.TimeoutExpired:
-            raise RuntimeError(f"Decompression timed out after {TOOL_TIMEOUT} seconds: {input_path.name}")
+            proc.kill()
+            proc.wait()
+            compressed_copy.unlink(missing_ok=True)
+            decompressed_path.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"Decompression timed out after {TOOL_TIMEOUT} seconds: {input_path.name}"
+            )
 
-        if result.returncode != 0:
+        if size_exceeded:
+            compressed_copy.unlink(missing_ok=True)
+            decompressed_path.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"Decompressed size exceeds {MAX_DECOMPRESSED_BYTES:,} byte limit "
+                f"({input_path.name})"
+            )
+
+        stderr_text = proc.stderr.read().decode()
+        compressed_copy.unlink(missing_ok=True)
+
+        if proc.returncode != 0:
             # If the file isn't actually in the expected compressed format
             # (e.g. named .tar.gz but not gzip), fall back to the original
             # file rather than failing the entire analysis.
-            stderr_text = result.stderr.decode()
-            _NOT_COMPRESSED_MARKERS = [
-                'not in gzip format',       # gzip
-                'is not a bzip2 file',      # bzip2
-                'File format not recognized', # xz
-            ]
             if any(marker in stderr_text for marker in _NOT_COMPRESSED_MARKERS):
                 log.warning(
                     f"File {input_path.name} has {suffix} extension but is not "
                     f"actually compressed — proceeding with original file"
                 )
-                compressed_copy.unlink(missing_ok=True)
                 decompressed_path.unlink(missing_ok=True)
                 return input_path
             raise RuntimeError(f"Decompression failed: {stderr_text}")
 
-        # Clean up compressed copy
-        compressed_copy.unlink(missing_ok=True)
-
-        # Verify decompressed file exists and has content
-        if not decompressed_path.exists():
+        # Verify decompressed output exists and is non-empty.
+        if not decompressed_path.exists() or decompressed_path.stat().st_size == 0:
             raise RuntimeError(
-                f"Decompressed file not found at expected path: {decompressed_path}"
+                f"Decompressed file is missing or empty: {decompressed_path}"
             )
 
         decompressed_size = decompressed_path.stat().st_size
-        if decompressed_size == 0:
-            raise RuntimeError(
-                f"Decompressed file is empty (0 bytes): {decompressed_path}"
-            )
-
-        if decompressed_size > MAX_DECOMPRESSED_BYTES:
-            decompressed_path.unlink(missing_ok=True)
-            raise RuntimeError(
-                f"Decompressed size {decompressed_size:,} bytes exceeds limit "
-                f"of {MAX_DECOMPRESSED_BYTES:,} bytes ({input_path.name})"
-            )
-
         log.info(
             f"Decompression successful: {decompressed_path.name} "
             f"({decompressed_size:,} bytes, ratio {decompressed_size / compressed_size:.1f}x)"

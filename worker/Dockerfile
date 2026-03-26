@@ -73,7 +73,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 	git clone https://github.com/dbalsom/fluxfox && \
 	cd fluxfox && \
 	git checkout "${FLUXFOX_TAG}" && \
-	cargo update && \
 	cargo build -r ${MINUSJ} -p imgviz -p fluxfox_cli && \
 	cp target/release/imgviz /usr/local/bin && \
 	cp target/release/fluxfox_cli /usr/local/bin
@@ -88,8 +87,11 @@ FROM debian:stable AS build-discimagemanager
 # Current as of 2026-03-26.
 #ARG DISCIMAGEMANAGER_VERSION=1.49
 ARG DISCIMAGEMANAGER_VERSION=4ff5f97167f393520c8382514e09bfcf56af2638
-# Binary build location -- you shouldn't have to change this
-ARG DISCIMAGEMANAGER_URL=https://github.com/geraldholdsworth/DiscImageManager/releases/download/${DISCIMAGEMANAGER_VERSION}/Disc.Image.Manager.${DISCIMAGEMANAGER_VERSION}.Linux.64.bit.Intel.zip
+# Binary release version — only used when DISCIMAGEMANAGER_SOURCEBUILD=0.
+# Kept separate from DISCIMAGEMANAGER_VERSION (a commit SHA for source builds)
+# so the binary download URL stays valid when the source SHA changes.
+ARG DISCIMAGEMANAGER_BINARY_VERSION=1.49
+ARG DISCIMAGEMANAGER_URL=https://github.com/geraldholdsworth/DiscImageManager/releases/download/${DISCIMAGEMANAGER_BINARY_VERSION}/Disc.Image.Manager.${DISCIMAGEMANAGER_BINARY_VERSION}.Linux.64.bit.Intel.zip
 # Github repo location
 #ARG DISCIMAGEMANAGER_REPO=https://github.com/geraldholdsworth/DiscImageManager
 ARG DISCIMAGEMANAGER_REPO=https://github.com/philpem/DiscImageManager

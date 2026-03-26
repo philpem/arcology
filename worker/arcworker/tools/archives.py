@@ -8,11 +8,36 @@ for use by the worker.
 import os
 import subprocess
 import re
+import tarfile
+import zipfile
 from pathlib import Path
 from typing import Dict, Any
 
 from .base import run_tool_with_output
 from ..utils.text import normalize_extracted_filenames
+
+
+def _check_archive_paths(input_path: Path, fmt: str) -> None:
+    """Reject the archive if any entry contains an absolute path or '..' component.
+
+    Uses Python's built-in zipfile / tarfile readers so the check happens before
+    any external tool runs and cannot be bypassed by a crafted archive.
+
+    Raises:
+        ValueError: If a path-traversal entry is found.
+    """
+    if fmt == 'zip':
+        with zipfile.ZipFile(input_path) as zf:
+            for name in zf.namelist():
+                parts = name.replace('\\', '/').split('/')
+                if os.path.isabs(name) or '..' in parts:
+                    raise ValueError(f'Unsafe path in ZIP archive: {name!r}')
+    elif fmt == 'tar':
+        with tarfile.open(input_path) as tf:
+            for m in tf.getmembers():
+                parts = m.name.replace('\\', '/').split('/')
+                if os.path.isabs(m.name) or '..' in parts:
+                    raise ValueError(f'Unsafe path in TAR archive: {m.name!r}')
 
 
 def sanitize_extracted_tree(output_dir: Path) -> int:
@@ -149,6 +174,11 @@ def extract_zip(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    try:
+        _check_archive_paths(input_path, 'zip')
+    except ValueError as e:
+        return {'success': False, 'error': str(e), 'tool': 'unzip'}
+
     cmd = ['unzip', '-F', '-q', str(input_path), '-d', str(output_dir)]
     result, output = run_tool_with_output(cmd)
 
@@ -199,7 +229,15 @@ def extract_tar(input_path: Path, output_dir: Path, archive_type: str = 'tar') -
     }
 
     flags = compression_flags.get(archive_type, [])
-    cmd = ['tar'] + flags + ['-xf', str(input_path), '-C', str(output_dir)]
+
+    try:
+        _check_archive_paths(input_path, 'tar')
+    except ValueError as e:
+        return {'success': False, 'error': str(e), 'tool': 'tar'}
+
+    # --no-absolute-filenames: explicitly reject entries with leading '/'
+    # even though GNU tar strips them by default.
+    cmd = ['tar', '--no-absolute-filenames'] + flags + ['-xf', str(input_path), '-C', str(output_dir)]
 
     result, output = run_tool_with_output(cmd)
 
