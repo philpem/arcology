@@ -94,9 +94,13 @@ def _build_boot_block(disc_size=0x1E8BE000, disc_name=b'TestDisc',
     name = disc_name[:10].ljust(10, b'\r')
     bb[dr_off + 0x16:dr_off + 0x16 + 10] = name
 
-    # Boot block checksum: sum of all 512 bytes must be 0 mod 256.
-    # Set byte 511 so that the total is zero.
-    bb[511] = (-sum(bb[:511])) & 0xFF
+    # Boot block checksum: carry-propagation sum of bytes 0x1FE..0x000
+    # (walking backwards), result stored at byte 0x1FF.
+    s = 0
+    for i in range(510, -1, -1):
+        s += bb[i]
+        s = (s & 0xFF) + (s >> 8)
+    bb[511] = s & 0xFF
 
     return bytes(bb)
 
