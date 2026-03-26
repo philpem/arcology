@@ -19,6 +19,8 @@ from sqlalchemy import or_
 from ..extensions import db
 from ..database import Platform, HashDatabase, KnownProduct, KnownFile, ExtractedFile, Partition, Artefact, Item, RestrictionType
 from ..permissions import require_permission
+from ..utils.web_forms import redirect_local
+from ..utils.db_helpers import normalize_hash, model_choice_list
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -44,7 +46,7 @@ def _partition_ids_for_hashes(md5, sha1, file_size=None):
 
 def _route_redirect(endpoint: str, **values):
     """Redirect to a local HashDB endpoint."""
-    return redirect(url_for(f'{ROUTENAME}.{endpoint}', **values))
+    return redirect_local(ROUTENAME, endpoint, **values)
 
 
 def _view_anchor(db_id: int, anchor: str | None = None):
@@ -147,9 +149,7 @@ def _restriction_type_choices():
 
 
 def _platform_choices():
-    return [(0, '-- All Platforms --')] + [
-        (p.id, p.name) for p in Platform.query.order_by(Platform.name).all()
-    ]
+    return model_choice_list(Platform, label='-- All Platforms --')
 
 
 # =============================================================================
@@ -525,8 +525,8 @@ def import_database():
                 db.session.flush()
                 products_added += 1
             for f_data in p_data.get('files', []):
-                md5 = (f_data.get('md5') or '').strip().lower() or None
-                sha1_raw = (f_data.get('sha1') or '').strip().lower() or None
+                md5 = normalize_hash(f_data.get('md5'))
+                sha1_raw = normalize_hash(f_data.get('sha1'))
                 if _existing_known_file(database.id, product.id, md5, sha1_raw):
                     continue
                 kf = KnownFile(
@@ -536,8 +536,8 @@ def import_database():
                     file_size=f_data.get('file_size'),
                     md5=md5,
                     sha1=sha1_raw,
-                    sha256=(f_data.get('sha256') or '').strip().lower() or None,
-                    crc32=(f_data.get('crc32') or '').strip().lower() or None,
+                    sha256=normalize_hash(f_data.get('sha256')),
+                    crc32=normalize_hash(f_data.get('crc32')),
                     is_required=f_data.get('is_required', True),
                     relative_path=f_data.get('relative_path') or None,
                     description=f_data.get('description') or None,
@@ -583,8 +583,8 @@ def import_database():
                 product_cache[p_title] = product
             product = product_cache[p_title]
 
-            md5 = (row.get('md5') or '').strip().lower() or None
-            sha1 = (row.get('sha1') or '').strip().lower() or None
+            md5 = normalize_hash(row.get('md5'))
+            sha1 = normalize_hash(row.get('sha1'))
             if _existing_known_file(database.id, product.id, md5, sha1):
                 continue
 
@@ -601,8 +601,8 @@ def import_database():
                 file_size=file_size,
                 md5=md5,
                 sha1=sha1,
-                sha256=(row.get('sha256') or '').strip().lower() or None,
-                crc32=(row.get('crc32') or '').strip().lower() or None,
+                sha256=normalize_hash(row.get('sha256')),
+                crc32=normalize_hash(row.get('crc32')),
                 is_required=((row.get('is_required') or '1').strip() == '1'),
                 relative_path=(row.get('relative_path') or '').strip() or None,
                 description=(row.get('description') or '').strip() or None,
@@ -727,10 +727,10 @@ def add_known_file(db_id, pid):
     if not filename:
         flash('Filename is required.', 'danger')
         return redirect(_view_anchor(db_id, f'#product-{pid}'))
-    md5 = request.form.get('md5', '').strip().lower() or None
-    sha1 = request.form.get('sha1', '').strip().lower() or None
-    sha256 = request.form.get('sha256', '').strip().lower() or None
-    crc32 = request.form.get('crc32', '').strip().lower() or None
+    md5 = normalize_hash(request.form.get('md5'))
+    sha1 = normalize_hash(request.form.get('sha1'))
+    sha256 = normalize_hash(request.form.get('sha256'))
+    crc32 = normalize_hash(request.form.get('crc32'))
     if not any([md5, sha1, sha256, crc32]):
         flash('At least one hash is required.', 'danger')
         return redirect(_view_anchor(db_id, f'#product-{pid}'))
@@ -775,10 +775,10 @@ def edit_known_file(db_id, pid, fid):
     is_active = kf.database.is_active
     enable_recognition = kf.database.enable_product_recognition
     kf.filename = filename
-    kf.md5 = request.form.get('md5', '').strip().lower() or None
-    kf.sha1 = request.form.get('sha1', '').strip().lower() or None
-    kf.sha256 = request.form.get('sha256', '').strip().lower() or None
-    kf.crc32 = request.form.get('crc32', '').strip().lower() or None
+    kf.md5 = normalize_hash(request.form.get('md5'))
+    kf.sha1 = normalize_hash(request.form.get('sha1'))
+    kf.sha256 = normalize_hash(request.form.get('sha256'))
+    kf.crc32 = normalize_hash(request.form.get('crc32'))
     file_size_str = request.form.get('file_size', '').strip()
     kf.file_size = int(file_size_str) if file_size_str.isdigit() else None
     kf.is_required = 'is_required' in request.form

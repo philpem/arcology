@@ -4,7 +4,7 @@ Arcology - Taxonomy Blueprint
 Platforms, categories, tags, and external systems.
 """
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request
+from flask import Blueprint, render_template, flash, request
 from flask_login import login_required
 from flask_wtf import FlaskForm
 from wtforms import StringField, TextAreaField, SelectField
@@ -13,6 +13,8 @@ from wtforms.validators import DataRequired, Optional, Length
 from ..extensions import db
 from ..database import Platform, Category, Tag, ExternalSystem, HashDatabase
 from ..permissions import require_permission
+from ..utils.web_forms import redirect_local
+from ..utils.db_helpers import model_choice_list
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -74,19 +76,9 @@ def _collect_descendant_ids(node):
     return ids
 
 
-def _route_redirect(endpoint: str):
+def _route_redirect(endpoint: str, **values):
     """Redirect to a taxonomy endpoint by local route name."""
-    return redirect(url_for(f'{ROUTENAME}.{endpoint}'))
-
-
-def _parent_choices(model, label: str, exclude_ids=None):
-    """Build standard parent select choices for hierarchical taxonomy forms."""
-    exclude_ids = exclude_ids or set()
-    return [(0, label)] + [
-        (node.id, node.name)
-        for node in model.query.order_by(model.name).all()
-        if node.id not in exclude_ids
-    ]
+    return redirect_local(ROUTENAME, endpoint, **values)
 
 
 def _save_named_description_model(obj, form, *, parent_field: bool = False):
@@ -139,7 +131,7 @@ def platforms():
 @require_permission('read_write')
 def new_platform():
     form = PlatformForm()
-    form.parent_id.choices = _parent_choices(Platform, '-- No Parent --')
+    form.parent_id.choices = model_choice_list(Platform, label='-- No Parent --')
     
     if form.validate_on_submit():
         platform = Platform()
@@ -160,7 +152,7 @@ def edit_platform(id):
     form = PlatformForm(obj=platform)
     
     exclude_ids = {platform.id} | _collect_descendant_ids(platform)
-    form.parent_id.choices = _parent_choices(Platform, '-- No Parent --', exclude_ids)
+    form.parent_id.choices = model_choice_list(Platform, label='-- No Parent --', exclude_ids=exclude_ids)
     
     if form.validate_on_submit():
         _save_named_description_model(platform, form, parent_field=True)
@@ -200,7 +192,7 @@ def categories():
 @require_permission('read_write')
 def new_category():
     form = CategoryForm()
-    form.parent_id.choices = _parent_choices(Category, '-- No Parent --')
+    form.parent_id.choices = model_choice_list(Category, label='-- No Parent --')
     
     if form.validate_on_submit():
         category = Category()
@@ -221,7 +213,7 @@ def edit_category(id):
     form = CategoryForm(obj=category)
     
     exclude_ids = {category.id} | _collect_descendant_ids(category)
-    form.parent_id.choices = _parent_choices(Category, '-- No Parent --', exclude_ids)
+    form.parent_id.choices = model_choice_list(Category, label='-- No Parent --', exclude_ids=exclude_ids)
     
     if form.validate_on_submit():
         _save_named_description_model(category, form, parent_field=True)
