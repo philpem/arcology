@@ -493,6 +493,17 @@
                                 </tr>
                                 </tbody>
                             </table>
+                            {% if al_cfg %}
+                            {% set al_opts = al_cfg.get('options', {}) %}
+                            {% if al_opts.get('app_paths') %}
+                            <p class="small text-muted mt-2 mb-1">Protected applications:</p>
+                            <ul class="small mb-0">
+                                {% for p in al_opts.app_paths %}
+                                <li><code>{{ p }}</code></li>
+                                {% endfor %}
+                            </ul>
+                            {% endif %}
+                            {% endif %}
                         </div>
                         <div class="col-md-6">
                             <h6 class="text-muted small text-uppercase mb-2">Security Module</h6>
@@ -563,14 +574,6 @@
                                 {% endif %}
                                 </tbody>
                             </table>
-                            {% if al_opts.get('app_paths') %}
-                            <p class="small text-muted mb-1">Protected applications:</p>
-                            <ul class="small mb-0">
-                                {% for p in al_opts.app_paths %}
-                                <li><code>{{ p }}</code></li>
-                                {% endfor %}
-                            </ul>
-                            {% endif %}
                             {% else %}
                             <p class="small text-muted">No $.ARMlock configuration found.</p>
                             {% endif %}
