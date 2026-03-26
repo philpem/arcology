@@ -12,6 +12,7 @@ from wtforms.validators import DataRequired, Length, EqualTo, Optional
 
 from ..extensions import db
 from ..database import User, ApiKey, UserPermission, RestrictionType, UserRestrictionBypass
+from ..utils.web_forms import flash_form_errors, redirect_local
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -27,6 +28,11 @@ def _require_admin():
     """Abort with 403 if the current user is not an admin."""
     if not current_user.is_authenticated or not current_user.is_admin:
         abort(403)
+
+
+def _route_redirect(endpoint: str, **values):
+    """Redirect to a local admin endpoint."""
+    return redirect_local(ROUTENAME, endpoint, **values)
 
 
 # =============================================================================
@@ -121,7 +127,7 @@ def create_user():
 
         db.session.commit()
         flash(f'User "{user.username}" created successfully.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.index'))
+        return _route_redirect('index')
     return render_template('admin/create_user.html', form=form, RestrictionType=RestrictionType)
 
 
@@ -131,7 +137,7 @@ def edit_user(user_id):
     _require_admin()
     if user_id == current_user.id:
         flash('You cannot edit your own account. Use your profile page instead.', 'error')
-        return redirect(url_for(f'{ROUTENAME}.index'))
+        return _route_redirect('index')
     user = User.query.get_or_404(user_id)
 
     if request.method == 'GET':
@@ -180,12 +186,10 @@ def edit_user(user_id):
 
         db.session.commit()
         flash(f'User "{user.username}" updated successfully.', 'success')
-        return redirect(url_for(f'{ROUTENAME}.index'))
+        return _route_redirect('index')
 
     # Form validation failed
-    for field, errors in form.errors.items():
-        for error in errors:
-            flash(error, 'error')
+    flash_form_errors(form)
     return render_template('admin/edit_user.html', form=form, user=user, editing_self=False, RestrictionType=RestrictionType)
 
 
@@ -195,13 +199,13 @@ def delete_user(user_id):
     _require_admin()
     if user_id == current_user.id:
         flash('You cannot delete your own account.', 'error')
-        return redirect(url_for(f'{ROUTENAME}.index'))
+        return _route_redirect('index')
     user = User.query.get_or_404(user_id)
     username = user.username
     db.session.delete(user)
     db.session.commit()
     flash(f'User "{username}" deleted.', 'success')
-    return redirect(url_for(f'{ROUTENAME}.index'))
+    return _route_redirect('index')
 
 
 @blueprint.route('/users/<int:user_id>/set-permission', methods=['POST'])
@@ -217,7 +221,7 @@ def set_permission(user_id):
             flash(f'Permission for "{user.username}" updated to {user.permission.value}.', 'success')
         except ValueError:
             flash('Invalid permission level.', 'error')
-    return redirect(url_for(f'{ROUTENAME}.index'))
+    return _route_redirect('index')
 
 
 @blueprint.route('/users/<int:user_id>/toggle-api', methods=['POST'])
@@ -229,6 +233,6 @@ def toggle_api(user_id):
     db.session.commit()
     state = 'enabled' if user.can_use_api else 'disabled'
     flash(f'API key access {state} for "{user.username}".', 'success')
-    return redirect(url_for(f'{ROUTENAME}.index'))
+    return _route_redirect('index')
 
 # vim: ts=4 sw=4 et
