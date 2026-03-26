@@ -316,6 +316,8 @@ def create_item():
     
     db.session.add(item)
     db.session.commit()
+    item.slug = ensure_unique_slug(generate_slug(item.name), Item)
+    db.session.commit()
     return jsonify(item_to_dict(item)), 201
 
 
