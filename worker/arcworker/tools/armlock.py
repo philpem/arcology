@@ -488,42 +488,51 @@ def detect_armlock(image_path: Path) -> dict:
                     if valid_sd:
                         prefix = fe['name'] + '/'
                         for sfe in sd_entries:
-                            if 0 < sfe['length'] <= 4096:
-                                # Verify it's not itself a directory before extracting
-                                valid_ssd, _ = _read_subdir_by_sin(image, rec, sfe['sin'])
-                                if not valid_ssd:
-                                    file_data = _extract_file_by_sin(
-                                        image, rec, sfe['sin'], sfe['length'])
-                                    if file_data:
-                                        config_files[prefix + sfe['name']] = {
-                                            'length': sfe['length'],
-                                            'filetype': sfe['filetype'],
-                                            'hex': file_data.hex(),
-                                        }
+                            if sfe['length'] <= 0:
+                                continue
+                            # Confirm not itself a nested directory
+                            valid_ssd, _ = _read_subdir_by_sin(image, rec, sfe['sin'])
+                            if valid_ssd:
+                                continue
+                            file_data = _extract_file_by_sin(
+                                image, rec, sfe['sin'], sfe['length'])
+                            if not file_data:
+                                continue
+                            # Check whether this is the ARMlock RISC OS module.
+                            # The module lives in $.ARMlock.!ARMlock/ and is the
+                            # largest file there; we identify it by trying to parse
+                            # its module header.  We check all files up to 64 KB so
+                            # we don't miss it if the filetype field is absent.
+                            if (result['module_data'] is None
+                                    and sfe['length'] <= 65536):
+                                header = _parse_module_header(file_data)
+                                if header.get('title'):
+                                    result['module_data'] = file_data
+                                    result['module_title'] = header['title']
+                                    result['module_version'] = header['version']
+                                    # Don't add the module to config_files — it is
+                                    # stored separately as a derived artefact.
+                                    continue
+                            # Small non-module files go into the config display
+                            if sfe['length'] <= 4096:
+                                config_files[prefix + sfe['name']] = {
+                                    'length': sfe['length'],
+                                    'filetype': sfe['filetype'],
+                                    'hex': file_data.hex(),
+                                }
                     elif 0 < fe['length'] <= 4096:
-                        # Not a directory — extract as a file
-                        file_data = _extract_file_by_sin(image, rec, fe['sin'], fe['length'])
-                        if file_data:
-                            config_files[fe['name']] = {
-                                'length': fe['length'],
-                                'filetype': fe['filetype'],
-                                'hex': file_data.hex(),
-                            }
+                        # Direct file in $.ARMlock (not in a subdir)
+                        valid_as_dir, _ = _read_subdir_by_sin(image, rec, fe['sin'])
+                        if not valid_as_dir:
+                            file_data = _extract_file_by_sin(
+                                image, rec, fe['sin'], fe['length'])
+                            if file_data:
+                                config_files[fe['name']] = {
+                                    'length': fe['length'],
+                                    'filetype': fe['filetype'],
+                                    'hex': file_data.hex(),
+                                }
                 result['armlock_config'] = config_files
-
-    # Extract the ARMlock module from the stripped root's !Boot entry.
-    # This file contains the protection code and password data.
-    boot_entry = next(
-        (e for e in stripped_entries if e['name'] == '!Boot' and not e['is_dir']),
-        None
-    )
-    if boot_entry and boot_entry['length'] > 0:
-        module_data = _extract_file_by_sin(image, rec, boot_entry['sin'], boot_entry['length'])
-        result['module_data'] = module_data
-        if module_data:
-            header = _parse_module_header(module_data)
-            result['module_title'] = header['title']
-            result['module_version'] = header['version']
 
     return result
 
