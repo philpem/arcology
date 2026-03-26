@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 from .base import run_tool_with_output
+from ..compression import stream_to_file
 from ..config import log, TOOL_TIMEOUT, MAX_DECOMPRESSED_BYTES
 from ..utils.text import normalize_extracted_filenames
 
@@ -57,13 +58,23 @@ def _check_archive_paths(input_path: Path, fmt: str) -> None:
                         )
 
 
-def _check_7z_paths(input_path: Path) -> None:
-    """Reject the archive if 7z reports any absolute-path or traversal entry.
+# Matches symlink-mode Unix permission strings (e.g. 'lrwxrwxrwx') or a
+# standalone 'L' flag used by some 7z builds.
+_7Z_SYMLINK_RE = re.compile(r'(?:^|\s)l[rwx-]{9}(?:\s|$)|(?:^|\s)L(?:\s|$)')
 
-    Uses '7z l -slt' technical listing; 'Path = ' lines give each member's path.
+
+def _check_7z_paths(input_path: Path) -> None:
+    """Reject the archive if 7z reports any absolute-path, traversal, or symlink entry.
+
+    Uses '7z l -slt' technical listing.  The output contains an archive-level
+    header block (introduced by '--' and ending at the first '----------' line)
+    followed by one block per member.  The header's 'Path = ' line (the archive
+    file's own path, which is an absolute path on the host) is skipped; only
+    member blocks are validated.
 
     Raises:
-        ValueError: If an unsafe path is found or the listing times out.
+        ValueError: If an unsafe path, traversal component, symlink entry, or
+                    listing timeout is detected.
     """
     try:
         result = subprocess.run(
@@ -72,12 +83,45 @@ def _check_7z_paths(input_path: Path) -> None:
         )
     except subprocess.TimeoutExpired:
         raise ValueError('7z listing timed out — archive rejected')
+
+    past_header = False
+    path = None
+    is_symlink = False
+
+    def _validate(name: str, symlink: bool) -> None:
+        if symlink:
+            raise ValueError(f'Symlink entry in 7z archive: {name!r}')
+        parts = name.replace('\\', '/').split('/')
+        if os.path.isabs(name) or '..' in parts:
+            raise ValueError(f'Unsafe path in 7z archive: {name!r}')
+
     for line in result.stdout.decode('utf-8', errors='replace').splitlines():
+        if line == '----------':
+            if past_header:
+                # End of a member block — validate collected path before reset.
+                if path is not None:
+                    _validate(path, is_symlink)
+                path = None
+                is_symlink = False
+            else:
+                # First '----------' ends the archive-level header; members follow.
+                past_header = True
+            continue
+
+        if not past_header:
+            continue
+
         if line.startswith('Path = '):
-            name = line[7:]
-            parts = name.replace('\\', '/').split('/')
-            if os.path.isabs(name) or '..' in parts:
-                raise ValueError(f'Unsafe path in 7z archive: {name!r}')
+            path = line[7:]
+        elif line.startswith('Attributes = '):
+            # Detect symlinks via Unix permission string ('lrwxrwxrwx')
+            # or a standalone 'L' flag used by some 7z builds.
+            if _7Z_SYMLINK_RE.search(line[13:]):
+                is_symlink = True
+
+    # Validate the last member block (output may not end with '----------').
+    if past_header and path is not None:
+        _validate(path, is_symlink)
 
 
 def _check_rar_paths(input_path: Path) -> None:
@@ -471,27 +515,15 @@ def decompress_single_file(input_path: Path, output_file: Path, compressor: str)
             'tool': compressor
         }
 
-    # Stream decompressor stdout in chunks so we can abort mid-stream if the
-    # output exceeds MAX_DECOMPRESSED_BYTES, preventing decompression-bomb DoS.
-    CHUNK = 65536
+    # stream_to_file() uses select() so the timeout is enforced mid-read,
+    # not only after the loop exits.
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        written = 0
-        size_exceeded = False
-        with open(output_file, 'wb') as dst:
-            for chunk in iter(lambda: proc.stdout.read(CHUNK), b''):
-                written += len(chunk)
-                if written > MAX_DECOMPRESSED_BYTES:
-                    proc.kill()
-                    size_exceeded = True
-                    break
-                dst.write(chunk)
+        outcome = stream_to_file(proc, output_file, MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT)
         proc.stdout.close()
-        try:
-            proc.wait(timeout=TOOL_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
+        proc.wait()
+
+        if outcome == 'timeout':
             output_file.unlink(missing_ok=True)
             return {
                 'success': False,
@@ -499,7 +531,7 @@ def decompress_single_file(input_path: Path, output_file: Path, compressor: str)
                 'tool': compressor,
             }
 
-        if size_exceeded:
+        if outcome == 'size_exceeded':
             output_file.unlink(missing_ok=True)
             return {
                 'success': False,

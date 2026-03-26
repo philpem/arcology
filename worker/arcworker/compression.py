@@ -4,8 +4,10 @@ Compression handling utilities.
 Handles decompression of compressed input files before analysis.
 """
 
+import select
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from .config import log, TOOL_TIMEOUT, MAX_DECOMPRESSED_BYTES
@@ -22,6 +24,53 @@ _NOT_COMPRESSED_MARKERS = [
     'is not a bzip2 file',       # bzip2
     'File format not recognized', # zstd (unrecognised magic)
 ]
+
+_CHUNK = 65536
+
+
+def stream_to_file(
+    proc: subprocess.Popen,
+    output_path: Path,
+    max_bytes: int,
+    timeout: float,
+) -> str:
+    """Stream proc.stdout to output_path, enforcing byte and time limits.
+
+    Uses select() to poll for data so the read loop never blocks longer than
+    ~1 second at a time.  This means the TOOL_TIMEOUT deadline is checked on
+    every iteration even if the subprocess produces no output.
+
+    Returns one of:
+        'ok'            — completed normally
+        'size_exceeded' — killed because output would exceed max_bytes
+        'timeout'       — killed because wall-clock time exceeded timeout
+
+    The caller is responsible for calling proc.stdout.close() and proc.wait()
+    after this function returns.
+    """
+    deadline = time.monotonic() + timeout
+    written = 0
+    with open(output_path, 'wb') as dst:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                proc.kill()
+                return 'timeout'
+            # Poll with a 1 s interval so we always re-check the deadline.
+            ready, _, _ = select.select([proc.stdout], [], [], min(remaining, 1.0))
+            if not ready:
+                if proc.poll() is not None:
+                    break   # process already exited, no more data
+                continue    # still running, re-check deadline
+            chunk = proc.stdout.read(_CHUNK)
+            if not chunk:
+                break       # EOF
+            written += len(chunk)
+            if written > max_bytes:
+                proc.kill()
+                return 'size_exceeded'
+            dst.write(chunk)
+    return 'ok'
 
 
 def decompress_if_needed(input_path: Path, work_dir: Path) -> Path:
@@ -53,39 +102,28 @@ def decompress_if_needed(input_path: Path, work_dir: Path) -> Path:
         compressed_copy = work_dir / input_path.name
         shutil.copy(input_path, compressed_copy)
 
-        # Decompress via stdout so we can enforce MAX_DECOMPRESSED_BYTES
-        # mid-stream without ever writing the full expansion to disk first.
+        # Decompress via stdout, enforcing MAX_DECOMPRESSED_BYTES and TOOL_TIMEOUT
+        # mid-stream.  stream_to_file() uses select() so it never blocks longer
+        # than ~1 s per iteration regardless of subprocess behaviour.
         log.info(f"Decompressing {input_path.name} with {cmd[0]}")
-        CHUNK = 65536
         proc = subprocess.Popen(
             cmd + [str(compressed_copy)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=work_dir,
         )
-        written = 0
-        size_exceeded = False
-        with open(decompressed_path, 'wb') as dst:
-            for chunk in iter(lambda: proc.stdout.read(CHUNK), b''):
-                written += len(chunk)
-                if written > MAX_DECOMPRESSED_BYTES:
-                    proc.kill()
-                    size_exceeded = True
-                    break
-                dst.write(chunk)
+        outcome = stream_to_file(proc, decompressed_path, MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT)
         proc.stdout.close()
-        try:
-            proc.wait(timeout=TOOL_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
+        proc.wait()
+
+        if outcome == 'timeout':
             compressed_copy.unlink(missing_ok=True)
             decompressed_path.unlink(missing_ok=True)
             raise RuntimeError(
                 f"Decompression timed out after {TOOL_TIMEOUT} seconds: {input_path.name}"
             )
 
-        if size_exceeded:
+        if outcome == 'size_exceeded':
             compressed_copy.unlink(missing_ok=True)
             decompressed_path.unlink(missing_ok=True)
             raise RuntimeError(
