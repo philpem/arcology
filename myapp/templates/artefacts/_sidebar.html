@@ -1,0 +1,168 @@
+        <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-info-circle"></i> Details</div>
+            <div class="card-body">
+                <dl class="mb-0">
+                    <dt>Original Filename</dt><dd><code>{{ artefact.original_filename }}</code></dd>
+                    <dt>Size</dt><dd>{% if artefact.file_size %}{{ (artefact.file_size / 1024 / 1024)|round(2) }} MB{% else %}-{% endif %}</dd>
+                    <dt>MIME Type</dt><dd>{{ artefact.mime_type or '-' }}</dd>
+                    <dt>MD5</dt><dd>{% if artefact.md5 %}<code class="small">{{ artefact.md5 }}</code><button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 ms-1" onclick="copyToClipboard('{{ artefact.md5 }}', this)" title="Copy MD5"><i class="bi bi-clipboard"></i></button>{% else %}<span class="text-muted">Not computed</span>{% endif %}</dd>
+                    <dt>SHA256</dt><dd>{% if artefact.sha256 %}<code class="small" title="{{ artefact.sha256 }}">{{ artefact.sha256[:16] }}&hellip;</code><button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 ms-1" onclick="copyToClipboard('{{ artefact.sha256 }}', this)" title="Copy SHA256"><i class="bi bi-clipboard"></i></button>{% else %}<span class="text-muted">Not computed</span>{% endif %}</dd>
+                    {% if artefact.parent_artefact %}
+                    <dt>Derived From</dt>
+                    <dd>
+                        <a href="{{ artefact_url(artefact.parent_artefact) }}">{{ artefact.parent_artefact.label }}</a>
+                        {% if artefact.derived_from_analysis %}
+                        <span class="text-muted">(via {{ artefact.derived_from_analysis.analysis_type.value.replace('_', ' ') }})</span>
+                        {% endif %}
+                    </dd>
+                    {% endif %}
+                    {% if artefact.tags %}
+                    <dt>Tags</dt>
+                    <dd>{% for tag in artefact.tags %}<span class="badge bg-info text-dark me-1">{{ tag.name }}</span>{% endfor %}</dd>
+                    {% endif %}
+                </dl>
+                {% if user_can_write %}
+                <div class="d-flex gap-2 mt-3 flex-wrap">
+                    {% if not artefact.md5 %}
+                    <form action="{{ artefact_url(artefact, 'compute_hashes_route') }}" method="post">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-outline-secondary"><i class="bi bi-hash"></i> Compute Hashes</button>
+                    </form>
+                    {% endif %}
+                    <form action="{{ artefact_url(artefact, 'rescan_hashes_route') }}" method="post">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-outline-secondary"
+                                title="Re-link extracted files to active hash databases without re-analysing">
+                            <i class="bi bi-arrow-repeat"></i> Rescan Known Files
+                        </button>
+                    </form>
+                    <form action="{{ url_for('myapp_blueprints_artefacts.rerun_product_recognition_route', uuid=artefact.uuid) }}" method="post">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-outline-secondary"
+                                title="Re-queue product/folder recognition analysis without re-analysing the disc">
+                            <i class="bi bi-diagram-3"></i> Re-run Product Recognition
+                        </button>
+                    </form>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if user_can_write %}
+        <div class="card mb-4">
+            <div class="card-header">
+                <a class="text-decoration-none" data-bs-toggle="collapse" href="#restrictionsSection" role="button" aria-expanded="false" aria-controls="restrictionsSection">
+                    <i class="bi bi-shield-exclamation"></i> Download Restrictions
+                    {% if artefact.restrictions %}<span class="badge bg-danger ms-1">{{ artefact.restrictions | length }}</span>{% endif %}
+                </a>
+            </div>
+            <div class="collapse {% if artefact.restrictions %}show{% endif %}" id="restrictionsSection">
+                <div class="card-body">
+                    {% if artefact.restrictions %}
+                    <table class="table table-sm mb-3">
+                        <thead><tr><th>Type</th><th>Reason</th><th>Added By</th><th></th></tr></thead>
+                        <tbody>
+                        {% for r in artefact.restrictions %}
+                        <tr>
+                            <td><span class="badge bg-danger">{{ r.restriction_type.label }}</span></td>
+                            <td>{{ r.reason or '-' }}</td>
+                            <td>{{ r.added_by.username if r.added_by else 'System' }}</td>
+                            <td>
+                                {% if current_user.is_admin or r.added_by_id == current_user.id %}
+                                <form action="{{ artefact_url(artefact, 'manage_restrictions') }}" method="post" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="action" value="remove">
+                                    <input type="hidden" name="category" value="{{ r.restriction_type.value }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove restriction"
+                                            onclick="return confirm('Remove this restriction?')">
+                                        <i class="bi bi-x-lg"></i>
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <p class="text-muted small mb-2">No restrictions applied.</p>
+                    {% endif %}
+                    <form action="{{ artefact_url(artefact, 'manage_restrictions') }}" method="post" class="row g-2 align-items-end">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="add">
+                        <div class="col-auto">
+                            <label class="form-label small mb-0">Type</label>
+                            <select name="category" class="form-select form-select-sm" required>
+                                <option value="">Select...</option>
+                                {% for rtype in RestrictionType %}
+                                <option value="{{ rtype.value }}">{{ rtype.label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col">
+                            <label class="form-label small mb-0">Reason (optional)</label>
+                            <input type="text" name="reason" class="form-control form-control-sm" placeholder="Why is this restricted?">
+                        </div>
+                        <div class="col-auto">
+                            <button type="submit" class="btn btn-sm btn-danger"><i class="bi bi-plus-lg"></i> Add</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if artefact.derived_artefacts %}
+        <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-diagram-3"></i> Derived Artefacts</div>
+            <ul class="list-group list-group-flush">
+                {% for derived in artefact.derived_artefacts %}
+                <li class="list-group-item d-flex justify-content-between">
+                    <a href="{{ artefact_url(derived) }}">{{ derived.label }}</a>
+                    <span class="badge bg-secondary">{{ derived.artefact_type.value.upper() }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+        
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-gear"></i> Analyses
+                    <span class="badge bg-primary ms-1" title="{{ total_analyses_count }} total analyses">{{ total_analyses_count }}</span>
+                    {% if status_counts.completed %}<span class="badge bg-success ms-1" title="{{ status_counts.completed }} completed">{{ status_counts.completed }}</span>{% endif %}
+                    {% if status_counts.failed %}<span class="badge bg-danger ms-1" title="{{ status_counts.failed }} failed">{{ status_counts.failed }}</span>{% endif %}
+                    {% if status_counts.running %}<span class="badge bg-info ms-1" title="{{ status_counts.running }} running">{{ status_counts.running }}</span>{% endif %}
+                    {% if status_counts.pending %}<span class="badge bg-warning text-dark ms-1" title="{{ status_counts.pending }} pending">{{ status_counts.pending }}</span>{% endif %}
+                </span>
+            </div>
+            <ul class="list-group list-group-flush">
+                {% for analysis in analyses %}
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                    <div>
+                        <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=analysis.uuid) }}">{{ analysis.analysis_type.value.replace('_', ' ').title() }}</a>
+                        {% if analysis.artefact_id != artefact.id %}
+                        <br><small class="text-muted"><i class="bi bi-diagram-3"></i> {{ analysis.artefact.label }}</small>
+                        {% endif %}
+                    </div>
+                    <span class="badge {{ analysis.status.value | status_badge_class }}">{{ analysis.status.value }}</span>
+                </li>
+                {% else %}
+                <li class="list-group-item text-muted">No analyses</li>
+                {% endfor %}
+            </ul>
+            {% if has_hidden_analyses or show_all_analyses %}
+            <div class="card-footer">
+                {% if show_all_analyses %}
+                <a href="{{ artefact_url(artefact) }}" class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-funnel"></i> Show Recent Only
+                </a>
+                {% elif has_hidden_analyses %}
+                <a href="{{ artefact_url(artefact, show_all_analyses='true') }}" class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-list"></i> Show All ({{ total_analyses_count }})
+                </a>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
