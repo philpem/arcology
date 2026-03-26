@@ -194,22 +194,8 @@ def _validate_storage_path(path: str) -> bool:
     return '..' not in os.path.normpath(path).split(os.sep)
 
 
-def _query_with_options(model, *load_options):
-    """Return a model query with optional eager-load directives applied."""
-    query = model.query
-    if load_options:
-        query = query.options(*load_options)
-    return query
-
-
-def _get_by_uuid_or_404(model, uuid, *load_options):
-    """Look up a model by UUID with optional eager-load directives."""
-    return _query_with_options(model, *load_options).filter_by(uuid=uuid).first_or_404()
-
-
-def _get_by_id_or_404(model, id, *load_options):
-    """Look up a model by integer primary key with optional eager-load directives."""
-    return _query_with_options(model, *load_options).filter_by(id=id).first_or_404()
+from ..utils.db_helpers import get_by_uuid_or_404 as _get_by_uuid_or_404
+from ..utils.db_helpers import get_by_id_or_404 as _get_by_id_or_404
 
 
 def _get_item_or_404(uuid):
