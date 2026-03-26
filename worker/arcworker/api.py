@@ -35,6 +35,37 @@ class ArcologyAPI:
         self.outputs = output_dir
         self._auth = {'Authorization': f'Bearer {api_key}'} if api_key else {}
 
+    def _request(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        data: dict | list | None = None,
+        expect_json: bool = True,
+        log_errors: bool = True,
+    ):
+        """Perform a worker API request with shared timeout/auth handling."""
+        try:
+            resp = self._request_response(method, endpoint, data=data)
+            resp.raise_for_status()
+            if not expect_json:
+                return resp
+            return resp.json()
+        except Exception as exc:
+            if log_errors:
+                log.error(f"API {method.upper()} {endpoint} failed: {exc}")
+            return None
+
+    def _request_response(self, method: str, endpoint: str, *, data: dict | list | None = None):
+        """Perform a worker API request and return the raw response object."""
+        return requests.request(
+            method,
+            f"{self.api}{endpoint}",
+            json=data,
+            headers=self._auth,
+            timeout=30,
+        )
+
     def get(self, endpoint: str) -> Optional[dict]:
         """
         GET request to API.
@@ -45,13 +76,7 @@ class ArcologyAPI:
         Returns:
             JSON response as dict, or None on error
         """
-        try:
-            resp = requests.get(f"{self.api}{endpoint}", headers=self._auth, timeout=30)
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as e:
-            log.error(f"API GET {endpoint} failed: {e}")
-            return None
+        return self._request('get', endpoint)
 
     def put(self, endpoint: str, data: dict) -> Optional[dict]:
         """
@@ -64,18 +89,7 @@ class ArcologyAPI:
         Returns:
             JSON response as dict, or None on error
         """
-        try:
-            resp = requests.put(
-                f"{self.api}{endpoint}",
-                json=data,
-                headers=self._auth,
-                timeout=30
-            )
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as e:
-            log.error(f"API PUT {endpoint} failed: {e}")
-            return None
+        return self._request('put', endpoint, data=data)
 
     def post(self, endpoint: str, data: dict) -> Optional[dict]:
         """
@@ -88,18 +102,7 @@ class ArcologyAPI:
         Returns:
             JSON response as dict, or None on error
         """
-        try:
-            resp = requests.post(
-                f"{self.api}{endpoint}",
-                json=data,
-                headers=self._auth,
-                timeout=30
-            )
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as e:
-            log.error(f"API POST {endpoint} failed: {e}")
-            return None
+        return self._request('post', endpoint, data=data)
 
     def patch(self, endpoint: str, data: dict) -> Optional[dict]:
         """
@@ -112,18 +115,7 @@ class ArcologyAPI:
         Returns:
             JSON response as dict, or None on error
         """
-        try:
-            resp = requests.patch(
-                f"{self.api}{endpoint}",
-                json=data,
-                headers=self._auth,
-                timeout=30
-            )
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as e:
-            log.error(f"API PATCH {endpoint} failed: {e}")
-            return None
+        return self._request('patch', endpoint, data=data)
 
     def update_artefact_hashes(self, artefact_uuid: str, md5: str, sha256: str):
         """Write computed MD5 and SHA256 hashes back to the artefact record."""
@@ -146,12 +138,7 @@ class ArcologyAPI:
                 a minimal failure report.
         """
         try:
-            resp = requests.put(
-                f"{self.api}/analysis/{analysis_id}",
-                json=kwargs,
-                headers=self._auth,
-                timeout=30
-            )
+            resp = self._request_response('put', f'/analysis/{analysis_id}', data=kwargs)
             if resp.status_code == 404:
                 log.warning(
                     f"Analysis {analysis_id} no longer exists on the server "
@@ -336,11 +323,10 @@ class ArcologyAPI:
             True if successfully claimed, False otherwise
         """
         try:
-            resp = requests.put(
-                f"{self.api}/analysis/{analysis_id}",
-                json={'status': 'running', 'claim_worker': True},
-                headers=self._auth,
-                timeout=30
+            resp = self._request_response(
+                'put',
+                f'/analysis/{analysis_id}',
+                data={'status': 'running', 'claim_worker': True},
             )
             if resp.status_code == 404:
                 log.debug(
