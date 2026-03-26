@@ -462,8 +462,15 @@
                                 </tr>
                                 <tr>
                                     <td class="text-muted">Decoded boot_option</td>
-                                    <td><code>{{ al_zmp.get('real_boot_option', '?') }}</code></td>
-                                    <td><code>{{ al_zmb.get('real_boot_option', '?') }}</code></td>
+                                    {% for _bo in [al_zmp.get('real_boot_option'), al_zmb.get('real_boot_option')] %}
+                                    <td><code>{{ _bo if _bo is not none else '?' }}</code>
+                                        {% if _bo == 0 %}<span class="text-muted ms-1">none</span>
+                                        {% elif _bo == 1 %}<span class="text-muted ms-1">load</span>
+                                        {% elif _bo == 2 %}<span class="text-muted ms-1">run</span>
+                                        {% elif _bo == 3 %}<span class="text-muted ms-1">exec</span>
+                                        {% endif %}
+                                    </td>
+                                    {% endfor %}
                                 </tr>
                                 <tr>
                                     <td class="text-muted">ZoneCheck</td>
