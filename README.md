@@ -124,7 +124,7 @@ SECRET_KEY=<your-secret-key>      # Generate with: python3 -c 'import secrets; p
 WORKER_API_KEY=<your-worker-key>  # Generate with: python3 -c 'import secrets; print(f"wrk_{secrets.token_urlsafe(32)}")'
 
 # Worker configuration (usually auto-configured in Docker)
-ARCOLOGY_API=http://web:5000/api  # API endpoint URL
+ARCOLOGY_API=http://web:8000/api  # API endpoint URL
 UPLOAD_DIR=/data/uploads          # Uploaded files directory
 OUTPUT_DIR=/data/outputs          # Analysis outputs directory
 POLL_INTERVAL=10                  # Max poll interval when worker is idle (seconds)

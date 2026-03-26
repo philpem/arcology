@@ -69,7 +69,7 @@ The worker is a standalone Python process that polls the web app's REST API for 
 
 **How workers process jobs:**
 
-1. The worker polls `GET /api/analysis/pending` on a configurable interval (default 30s).
+1. The worker polls `GET /api/analysis/pending` on a configurable interval (default 10s).
 2. It attempts to **claim** a job atomically via `PUT /api/analysis/{id}` with `claim_worker: true`. The server uses an atomic `UPDATE ... WHERE status = 'pending'` query so only one worker can claim each job, even with multiple workers running.
 3. A temporary working directory is created for the job.
 4. The appropriate handler method runs external tools and processes the artefact.

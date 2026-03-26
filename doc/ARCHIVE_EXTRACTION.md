@@ -182,12 +182,12 @@ ARCHIVE_EXTRACT = "archive_extract"  # Extract specific archive
 
 ## Centralized Archive Definitions
 
-**File**: `myapp/archive_formats.py`
+**File**: `shared/archive_formats.py`
 
 Single source of truth for archive format definitions, used by both web UI and worker:
 
 ```python
-from myapp.archive_formats import (
+from shared.archive_formats import (
     ArchiveType,              # Enum of all formats
     ArchiveCategory,          # ARCHIVE, COMPRESS, or DISK_IMAGE
     get_archive_by_filetype,  # '3fb' -> ArchiveType.ARCFS
@@ -204,7 +204,7 @@ from myapp.archive_formats import (
 ```bash
 # Worker configuration
 MAX_ARCHIVE_DEPTH=10         # Maximum nesting depth (default: 10)
-ARCOLOGY_API=http://web:5000/api
+ARCOLOGY_API=http://web:8000/api
 UPLOAD_DIR=/data/uploads
 OUTPUT_DIR=/data/outputs      # Hierarchical structure created here
 ```
