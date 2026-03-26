@@ -279,27 +279,53 @@ def _read_subdir_by_sin(image: bytearray, rec: dict, sin: int) -> tuple[bool, li
     return _parse_directory(bytearray(raw), 0)
 
 
-# ---------------------------------------------------------------------------
-# Hexdump formatter
-# ---------------------------------------------------------------------------
+def _parse_armlock_options(data: bytes) -> dict:
+    """Parse $.ARMlock.!ARMlock.Options binary format.
 
-def _hexdump(data: bytes) -> str:
-    """Format bytes as a standard hexdump-C style string.
-
-    Output format (matches `hexdump -C`):
-      00000000  41 52 4d 6c 6f 63 6b 00  00 00 00 00 00 00 00 00  |ARMlock.........|
+    Layout:
+      0x00  4  hash_word1 (v3), little-endian
+      0x04  4  hash_word2 (v4), little-endian
+      0x08  6  copy of BootUp.Options (hash_word1 + config_flag + password_required)
+      0x0E  1  management_flag
+      0x0F  …  NUL-terminated application path strings
     """
-    lines = []
-    for i in range(0, len(data), 16):
-        chunk = data[i:i + 16]
-        hex_pairs = [f'{b:02x}' for b in chunk]
-        hex_left  = ' '.join(hex_pairs[:8])
-        hex_right = ' '.join(hex_pairs[8:])
-        hex_part  = f'{hex_left:<23}  {hex_right:<23}'
-        ascii_part = ''.join(chr(b) if 0x20 <= b < 0x7F else '.' for b in chunk)
-        lines.append(f'{i:08x}  {hex_part}  |{ascii_part}|')
-    return '\n'.join(lines)
+    if len(data) < 0x0F:
+        return {}
+    result: dict = {
+        'hash_word1': struct.unpack_from('<I', data, 0x00)[0],
+        'hash_word2': struct.unpack_from('<I', data, 0x04)[0],
+        'management_flag': data[0x0E] if len(data) > 0x0E else None,
+    }
+    paths: list = []
+    pos = 0x0F
+    while pos < len(data):
+        nul = data.find(b'\x00', pos)
+        end = nul if nul != -1 else len(data)
+        s = data[pos:end].decode('ascii', errors='replace').strip()
+        if s:
+            paths.append(s)
+        if nul == -1:
+            break
+        pos = nul + 1
+    result['app_paths'] = paths
+    return result
 
+
+def _parse_bootup_options(data: bytes) -> dict:
+    """Parse $.ARMlock.BootUp.Options binary format.
+
+    Layout:
+      0x00  4  hash_word1 (v3), little-endian
+      0x04  1  config_flag
+      0x05  1  password_required (0=no, 1=yes)
+    """
+    if len(data) < 6:
+        return {}
+    return {
+        'hash_word1': struct.unpack_from('<I', data, 0x00)[0],
+        'config_flag': data[0x04],
+        'password_required': bool(data[0x05]),
+    }
 
 
 def _parse_module_header(data: bytes) -> dict:
@@ -482,17 +508,14 @@ def detect_armlock(image_path: Path) -> dict:
     if valid_r:
         result['real_root'] = real_entries
 
-    # Navigate to $.Armlock (or $.!Armlock) in the real root.
-    # This directory holds the security configuration: settings, serial
-    # number and password hashes.  Extract all small files (≤ 4 KB) as
-    # hex so they can be displayed without storing huge amounts of data.
+    # Navigate to $.ARMlock in the real root and parse the security Options files.
     #
-    # The is_dir attribute flag can be unreliable, so we match the entry by
-    # name only.  Inside $.ARMlock the layout is typically:
-    #   $.ARMlock.!ARMlock/   -- ARMlock application (settings, options)
-    #   $.ARMlock.BootUp/     -- Boot configuration files
-    # We detect subdirectories by attempting to parse them as ADFS directories
-    # (Hugo/Nick magic check) rather than relying on is_dir.
+    # The layout is:
+    #   $.ARMlock.!ARMlock/Options  -- full options: hash words, management flag, app paths
+    #   $.ARMlock.BootUp/Options    -- boot copy: hash word 1, config flag, password-required
+    #
+    # Subdirectories are detected by the Hugo/Nick magic-byte check rather than
+    # the unreliable is_dir attribute flag.
     if valid_r:
         config_dir_entry = next(
             (e for e in real_entries
@@ -502,39 +525,27 @@ def detect_armlock(image_path: Path) -> dict:
         if config_dir_entry:
             valid_cd, config_entries = _read_subdir_by_sin(image, rec, config_dir_entry['sin'])
             if valid_cd:
-                config_files: dict = {}
+                security_config: dict = {}
                 for fe in config_entries:
-                    # Try to read as a subdirectory (Hugo/Nick magic confirms it)
                     valid_sd, sd_entries = _read_subdir_by_sin(image, rec, fe['sin'])
-                    if valid_sd:
-                        prefix = fe['name'] + '/'
-                        for sfe in sd_entries:
-                            if sfe['length'] <= 0:
-                                continue
-                            valid_ssd, _ = _read_subdir_by_sin(image, rec, sfe['sin'])
-                            if valid_ssd:
-                                continue
-                            if sfe['length'] <= 4096:
-                                file_data = _extract_file_by_sin(
-                                    image, rec, sfe['sin'], sfe['length'])
-                                if file_data:
-                                    config_files[prefix + sfe['name']] = {
-                                        'length': sfe['length'],
-                                        'filetype': sfe['filetype'],
-                                        'hexdump': _hexdump(file_data),
-                                    }
-                    elif 0 < fe['length'] <= 4096:
-                        valid_as_dir, _ = _read_subdir_by_sin(image, rec, fe['sin'])
-                        if not valid_as_dir:
-                            file_data = _extract_file_by_sin(
-                                image, rec, fe['sin'], fe['length'])
-                            if file_data:
-                                config_files[fe['name']] = {
-                                    'length': fe['length'],
-                                    'filetype': fe['filetype'],
-                                    'hexdump': _hexdump(file_data),
-                                }
-                result['armlock_config'] = config_files
+                    if not valid_sd:
+                        continue
+                    fe_lower = fe['name'].lower()
+                    for sfe in sd_entries:
+                        if sfe['name'].lower() != 'options' or sfe['length'] <= 0:
+                            continue
+                        valid_ssd, _ = _read_subdir_by_sin(image, rec, sfe['sin'])
+                        if valid_ssd:
+                            continue
+                        file_data = _extract_file_by_sin(
+                            image, rec, sfe['sin'], sfe['length'])
+                        if not file_data:
+                            continue
+                        if fe_lower == '!armlock':
+                            security_config['options'] = _parse_armlock_options(file_data)
+                        elif fe_lower == 'bootup':
+                            security_config['bootup'] = _parse_bootup_options(file_data)
+                result['armlock_config'] = security_config
 
     # Extract the ARMlock module from !Boot in the stripped root.
     # ARMlock installs itself as a single RISC OS module file named !Boot in the
