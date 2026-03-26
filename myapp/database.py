@@ -567,7 +567,7 @@ class ExtractedFile(db.Model):
     partition_id: Mapped[int] = mapped_column(ForeignKey("partitions.id"), index=True)
     path: Mapped[str] = mapped_column(String(1000))
     filename: Mapped[str] = mapped_column(String(255), index=True)
-    extension: Mapped[Optional[str]] = mapped_column(String(20), index=True, nullable=True)
+    extension: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
     file_size: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     created_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     modified_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
