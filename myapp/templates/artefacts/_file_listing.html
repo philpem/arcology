@@ -1,0 +1,402 @@
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>
+                    <i class="bi bi-folder2-open"></i> Extracted Files
+                    {% if hashdb_mode %}<span class="badge bg-warning text-dark ms-2"><i class="bi bi-database-add"></i> Hash DB Mode</span>{% endif %}
+                    {% if file_form.path.data %}
+                        <span class="text-muted ms-2">
+                            <i class="bi bi-arrow-right-short"></i>
+                            <code class="text-primary">{{ file_form.path.data }}</code>
+                            <a href="?{% if hashdb_mode %}mode=hashdb&{% endif %}" class="btn btn-sm btn-outline-secondary ms-2" title="Clear path filter">
+                                <i class="bi bi-x"></i> Clear
+                            </a>
+                        </span>
+                    {% endif %}
+                </span>
+                {% if all_partitions %}
+                <a href="?{% if not hashdb_mode %}mode=hashdb&{% endif %}{{ hashdb_toggle_args | urlencode }}"
+                   class="btn btn-sm {{ 'btn-warning' if hashdb_mode else 'btn-outline-secondary' }}"
+                   title="{{ 'Exit Hash DB Mode' if hashdb_mode else 'Enter Hash DB Mode to add files to a hash database' }}">
+                    <i class="bi bi-database-add"></i> {{ 'Exit HashDB Mode' if hashdb_mode else 'Hash DB Mode' }}
+                </a>
+                {% endif %}
+            </div>
+            <div class="card-body border-bottom">
+                <form method="get" class="row g-2">
+                {% if hashdb_mode %}<input type="hidden" name="mode" value="hashdb">{% endif %}
+                    <div class="col-md-2">
+                        <select name="partition_uuid" class="form-select form-select-sm" title="Filter files by disk partition. Select a specific partition or show files from all partitions.">
+                            <option value="">All Partitions</option>
+                            {% for p in all_partitions %}
+                            <option value="{{ p.uuid }}" {{ 'selected' if file_form.partition_uuid.data == p.uuid else '' }}>
+                                Partition {{ p.partition_index }}: {{ p.label or p.filesystem.value }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-2">{{ file_form.filename(class="form-control form-control-sm", placeholder="Filename (glob: *.txt)", title="Filter by filename. Supports glob wildcards: * matches any characters, ? matches a single character. Example: *.txt, README*") }}</div>
+                    <div class="col-md-1">{{ file_form.filetype(class="form-control form-control-sm", placeholder="Filetype", title="Filter by RISC OS filetype code (hex). Leading # or & is stripped automatically. Example: fff, Text") }}</div>
+                    <div class="col-md-2">{{ file_form.path(class="form-control form-control-sm", placeholder="Path (e.g., Games/)", title="Filter by directory path. Shows files within the given path. Use with Recursive to include all subdirectories.") }}</div>
+                    <div class="col-md-1">{{ file_form.md5(class="form-control form-control-sm", placeholder="MD5", title="Filter by exact MD5 hash (32-character hex string)") }}</div>
+                    <div class="col-auto">{{ file_form.hide_known(class="form-select form-select-sm", title="Filter files by hash database match status. 'Hide' removes files matching known hashes; 'Only' shows only files matching known hashes.") }}</div>
+                    <div class="col-auto">{{ file_form.filter_products(class="form-select form-select-sm", title="Filter files by product match status. 'Hide' removes files matched to a known product; 'Only' shows only files matched to a known product.") }}</div>
+                    <div class="col-auto"><div class="form-check form-check-sm">{{ file_form.show_directories(class="form-check-input", title="Show directory entries in the file listing") }}<label class="form-check-label small" title="Show directory entries in the file listing">Dirs</label></div></div>
+                    <div class="col-auto"><button type="submit" class="btn btn-sm btn-secondary w-100">Filter</button></div>
+                </form>
+            </div>
+            {% if subdirectories %}
+            <div class="card-body border-bottom bg-light">
+                <div class="small text-muted mb-2"><i class="bi bi-folder"></i> Subdirectories at this level:</div>
+                <div class="d-flex flex-wrap gap-2">
+                    {% for subdir in subdirectories %}
+                    <a href="?{{ dict(pagination_args, path=current_path + subdir + '/', recursive='true') | urlencode }}"
+                       class="btn btn-sm btn-outline-primary">
+                        {% if (current_path + subdir) in archive_paths %}
+                        <i class="bi bi-file-zip-fill"></i> {{ subdir }}
+                        {% else %}
+                        <i class="bi bi-folder-fill"></i> {{ subdir }}
+                        {% endif %}
+                    </a>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+            {% if hashdb_mode %}
+            <form id="hashdb-form" action="{{ url_for('myapp_blueprints_artefacts.add_to_hashdb', uuid=artefact.uuid) }}" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="base_path" value="{{ current_path }}">
+                <input type="hidden" name="partition_uuid" value="{{ file_form.partition_uuid.data or '' }}">
+                <input type="hidden" name="nav_path" value="{{ current_path }}">
+            {% endif %}
+            <div class="table-responsive">
+                {# Sortable column header macro: toggles direction when active #}
+                {% macro sort_th(label, col) %}
+                    {% set is_active = current_sort == col or current_sort == '-' ~ col %}
+                    {% set next_sort = '-' ~ col if current_sort == col else col %}
+                    <th><a class="text-decoration-none {{ 'text-dark fw-bold' if is_active else 'text-muted' }}"
+                           href="?{{ dict(pagination_args, sort=next_sort, page=1) | urlencode }}">
+                        {{ label }}{% if current_sort == col %} ↑{% elif current_sort == '-' ~ col %} ↓{% endif %}
+                    </a></th>
+                {% endmacro %}
+                <table class="table table-sm table-hover mb-0">
+                    <thead><tr>
+                        {% if hashdb_mode %}<th><input type="checkbox" id="select-all-files" title="Select all on this page"></th>{% endif %}
+                        {{ sort_th('Path', 'path') }}
+                        {{ sort_th('Size', 'size') }}
+                        {{ sort_th('Filetype', 'filetype') }}
+                        {{ sort_th('Known', 'known') }}
+                    </tr></thead>
+                    <tbody>
+                        {% for file in files %}
+                        {# Color-code partition badges - cycle through colors for easy visual distinction #}
+                        {% set partition_colors = ['primary', 'success', 'warning', 'danger', 'info', 'secondary'] %}
+                        {% set partition_color = partition_colors[file.partition.partition_index % partition_colors|length] %}
+                        {# Check if this directory row has a recognised product match #}
+                        {% set rp_match = recognised_folder_paths.get(file.path) if file.is_directory else none %}
+                        <tr class="{{ 'table-secondary' if file.is_known else '' }}{{ ' fst-italic' if file.is_directory else '' }}" id="file-row-{{ file.id }}">
+                            {% if hashdb_mode %}
+                            <td>{% if not file.is_directory %}<input type="checkbox" name="file_ids" value="{{ file.id }}" class="file-checkbox">{% endif %}</td>
+                            {% endif %}
+                            <td>
+                                <span class="badge bg-{{ partition_color }} me-1" title="Partition {{ file.partition.partition_index }}: {{ file.partition.label or file.partition.filesystem.value }}">{{ file.partition.partition_index }}</span>{% if file.is_directory %}
+                                    {# Directory - make it clickable to browse into it #}
+                                    <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=file.path + '/', recursive=file_form.recursive.data|default(true, true)|lower) | urlencode }}"
+                                       class="text-primary text-decoration-none"
+                                       title="Browse directory">
+                                        <i class="bi bi-folder-fill"></i> <strong>{{ file.path }}</strong>
+                                    </a>
+                                    {% if rp_match %}
+                                    <span class="badge bg-info ms-1" title="Recognised: {{ rp_match.product.title }} ({{ rp_match.product.database.name }}) — {{ rp_match.required_matched }}/{{ rp_match.required_total }} required matched">
+                                        <i class="bi bi-check2-square"></i> {{ rp_match.product.title }}
+                                    </span>
+                                    {% endif %}
+                                {% elif file.is_archive %}
+                                    {# Archive - render like a directory but with an archive icon #}
+                                    {% set path_parts = file.path.split('/') %}
+                                    {% if path_parts|length > 1 %}
+                                        {% for i in range(path_parts|length - 1) %}
+                                            {% set build_path = path_parts[:i+1]|join('/') + '/' %}
+                                            <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=build_path, recursive=file_form.recursive.data|default(true, true)|lower) | urlencode }}"
+                                               class="text-muted text-decoration-none"
+                                               title="Browse {{ build_path }}">
+                                                {% if build_path.rstrip('/') in archive_paths %}
+                                                <i class="bi bi-file-zip"></i>
+                                                {% else %}
+                                                <i class="bi bi-folder"></i>
+                                                {% endif %}
+                                                {{ path_parts[i] }}
+                                            </a> /
+                                        {% endfor %}
+                                    {% endif %}
+                                    <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=file.path + '/', recursive=file_form.recursive.data|default(true, true)|lower) | urlencode }}"
+                                       class="text-primary text-decoration-none"
+                                       title="Browse archive contents">
+                                        <i class="bi bi-file-zip-fill"></i> <strong>{{ path_parts[-1] }}</strong>
+                                    </a>
+                                {% else %}
+                                    {% set path_parts = file.path.split('/') %}
+                                    {% if path_parts|length > 1 %}
+                                        {# Show directory path as clickable links, with archive icon for archive components #}
+                                        {% for i in range(path_parts|length - 1) %}
+                                            {% set build_path = path_parts[:i+1]|join('/') + '/' %}
+                                            <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=build_path, recursive=file_form.recursive.data|default(true, true)|lower) | urlencode }}"
+                                               class="text-muted text-decoration-none"
+                                               title="Browse {{ build_path }}">
+                                                {% if build_path.rstrip('/') in archive_paths %}
+                                                <i class="bi bi-file-zip"></i>
+                                                {% else %}
+                                                <i class="bi bi-folder"></i>
+                                                {% endif %}
+                                                {{ path_parts[i] }}
+                                            </a> /
+                                        {% endfor %}
+                                        <code>{{ path_parts[-1] }}</code>
+                                    {% else %}
+                                        <code>{{ file.path }}</code>
+                                    {% endif %}
+                                {% endif %}
+                                {% if not file.is_directory %}
+                                {% if artefact.restrictions and current_user.can_bypass_all_restrictions(artefact.restrictions) %}
+                                <a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=file.uuid, confirm_bypass='1') }}"
+                                   class="text-danger ms-1" title="Download file (restricted — bypass active)"
+                                   onclick="return confirm('This artefact has download restrictions. Download anyway?')"><i class="bi bi-download"></i></a>
+                                {% elif artefact.restrictions %}
+                                <span class="text-muted ms-1 opacity-50" title="Download restricted"><i class="bi bi-lock-fill"></i></span>
+                                {% else %}
+                                <a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=file.uuid) }}"
+                                   class="text-muted ms-1" title="Download file"><i class="bi bi-download"></i></a>
+                                {% endif %}
+                                {% endif %}
+                            </td>
+                            <td>{% if file.is_directory %}<span class="text-muted">DIR</span>{% elif file.file_size %}{{ (file.file_size / 1024)|round(1) }} KB{% else %}-{% endif %}</td>
+                            <td>
+                                {% if file.risc_os_filetype %}
+                                    <span class="text-muted" title="{{ file.risc_os_filetype | format_filetype }}">
+                                        <small>{{ (file.risc_os_filetype | filetype_name) or ('&' ~ file.risc_os_filetype | upper) }}</small>
+                                    </span>
+                                {% else %}-{% endif %}
+                            </td>
+                            <td>{% if file.is_known %}{% set _db_colors = ['info', 'success', 'primary', 'danger', 'warning', 'dark'] %}{% set all_matches = file_known_matches.get(file.id, []) %}{% if all_matches %}{% for kf in all_matches %}<span class="badge bg-{{ _db_colors[kf.database_id % (_db_colors | length)] }} me-1" title="{{ kf.database.name }}">{{ kf.product.title if kf.product else kf.database.name }}</span>{% endfor %}{% else %}<span class="badge bg-{{ _db_colors[file.known_file.database_id % (_db_colors | length)] }}" title="{{ file.known_file.database.name }}">{{ file.known_file.product.title if file.known_file.product else file.known_file.database.name }}</span>{% endif %}{% endif %}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="{% if hashdb_mode %}5{% else %}4{% endif %}" class="text-center text-muted">No files{% if not all_partitions %} - run analysis to extract file listing{% endif %}</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if hashdb_mode %}</form>{% endif %}
+            {% if files_pagination.total > 0 %}
+            <div class="card-footer">
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    {# Page navigation – only shown when there is more than one page #}
+                    {% if files_pagination.pages > 1 %}
+                    <nav><ul class="pagination pagination-sm mb-0">
+                        {% if files_pagination.has_prev %}<li class="page-item"><a class="page-link" href="?{{ dict(pagination_args, page=files_pagination.prev_num) | urlencode }}">‹</a></li>
+                        {% else %}<li class="page-item disabled"><span class="page-link">‹</span></li>{% endif %}
+                        {% for pg in files_pagination.iter_pages(left_edge=1, left_current=2, right_current=3, right_edge=1) %}
+                            {% if pg %}
+                            <li class="page-item {{ 'active' if pg == files_pagination.page else '' }}">
+                                <a class="page-link" href="?{{ dict(pagination_args, page=pg) | urlencode }}">{{ pg }}</a>
+                            </li>
+                            {% else %}
+                            <li class="page-item disabled"><span class="page-link">…</span></li>
+                            {% endif %}
+                        {% endfor %}
+                        {% if files_pagination.has_next %}<li class="page-item"><a class="page-link" href="?{{ dict(pagination_args, page=files_pagination.next_num) | urlencode }}">›</a></li>
+                        {% else %}<li class="page-item disabled"><span class="page-link">›</span></li>{% endif %}
+                    </ul></nav>
+                    {% else %}
+                    <span class="text-muted small">{{ files_pagination.total }} file{{ 's' if files_pagination.total != 1 else '' }}</span>
+                    {% endif %}
+
+                    {# Per-page selector #}
+                    <div class="d-flex align-items-center gap-1">
+                        <span class="text-muted small me-1">Per page:</span>
+                        {% for pp in valid_per_page %}
+                        <a class="btn btn-sm {{ 'btn-secondary' if (not view_all and files_pagination.per_page == pp) else 'btn-outline-secondary' }}"
+                           href="?{{ dict(pagination_args, per_page=pp) | urlencode }}">{{ pp }}</a>
+                        {% endfor %}
+                        <a class="btn btn-sm {{ 'btn-secondary' if view_all else 'btn-outline-secondary' }}"
+                           href="?{{ dict(pagination_args, per_page=0) | urlencode }}">All</a>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{% if hashdb_mode %}
+<!-- Floating action bar for Hash DB mode -->
+<div id="hashdb-bar" class="position-fixed bottom-0 start-0 end-0 bg-warning shadow p-2 d-flex align-items-center gap-3" style="z-index:1050; display:none !important;">
+    <span class="fw-bold"><i class="bi bi-database-add"></i> <span id="selected-count">0</span> file(s) selected</span>
+    <button type="button" class="btn btn-primary btn-sm" id="add-to-db-btn" disabled
+            data-bs-toggle="modal" data-bs-target="#hashdbModal">
+        <i class="bi bi-plus-lg"></i> Add to Hash Database
+    </button>
+    <button type="button" class="btn btn-outline-secondary btn-sm" id="deselect-all-btn">Deselect All</button>
+</div>
+
+<!-- Hash DB modal -->
+<div class="modal fade" id="hashdbModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-database-add"></i> Add to Hash Database</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Hash Database <span class="text-danger">*</span></label>
+                    <select name="database_id" id="modal-database-id" class="form-select" form="hashdb-form" required>
+                        <option value="">— select database —</option>
+                        {% for hdb in hash_databases %}
+                        <option value="{{ hdb.id }}">{{ hdb.name }}</option>
+                        {% endfor %}
+                        <option value="new">+ Create new database…</option>
+                    </select>
+                    <div id="new-database-fields" class="mt-2 d-none">
+                        <input type="text" name="new_database_name" id="new-database-name" class="form-control form-control-sm"
+                               placeholder="New database name" form="hashdb-form">
+                    </div>
+                </div>
+                <div class="mb-3" id="product-section">
+                    <label class="form-label">Product <span class="text-danger">*</span></label>
+                    <select name="product_id" id="modal-product-id" class="form-select" form="hashdb-form">
+                        <option value="">— select a database first —</option>
+                    </select>
+                    <div id="new-product-fields" class="mt-2 d-none">
+                        <input type="text" name="new_product_title" class="form-control form-control-sm mb-1"
+                               placeholder="New product title" form="hashdb-form">
+                        <input type="text" name="new_product_description" class="form-control form-control-sm"
+                               placeholder="Description (optional)" form="hashdb-form">
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">File role</label>
+                    <select name="is_required" class="form-select" form="hashdb-form">
+                        <option value="1">Required (must all match for recognition)</option>
+                        <option value="0">Optional (increases confidence score)</option>
+                    </select>
+                </div>
+                <p class="text-muted small mb-0">
+                    Files without hashes will be hashed on the fly from the extracted output on disk (if available).
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" form="hashdb-form" class="btn btn-primary">
+                    <i class="bi bi-plus-lg"></i> Add <span id="modal-file-count"></span> file(s)
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    // Products per database, pre-loaded from server
+    const productCache = {
+        {% for hdb in hash_databases %}
+        {{ hdb.id }}: [
+            {% for p in hdb.known_products|sort(attribute='title', case_sensitive=false) %}
+            { id: {{ p.id }}, title: {{ p.title|tojson }} },
+            {% endfor %}
+        ],
+        {% endfor %}
+    };
+
+    function updateBar() {
+        const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+        const count = checkboxes.length;
+        document.getElementById('selected-count').textContent = count;
+        document.getElementById('modal-file-count').textContent = count;
+        const bar = document.getElementById('hashdb-bar');
+        const btn = document.getElementById('add-to-db-btn');
+        if (count > 0) {
+            bar.style.removeProperty('display');
+        } else {
+            bar.style.display = 'none';
+        }
+        btn.disabled = count === 0;
+    }
+
+    // Select all on page
+    const selectAll = document.getElementById('select-all-files');
+    if (selectAll) {
+        selectAll.addEventListener('change', function() {
+            document.querySelectorAll('.file-checkbox').forEach(cb => cb.checked = this.checked);
+            updateBar();
+        });
+    }
+
+    document.querySelectorAll('.file-checkbox').forEach(cb => {
+        cb.addEventListener('change', updateBar);
+    });
+
+    document.getElementById('deselect-all-btn')?.addEventListener('click', function() {
+        document.querySelectorAll('.file-checkbox').forEach(cb => cb.checked = false);
+        if (selectAll) selectAll.checked = false;
+        updateBar();
+    });
+
+    // Load products when database changes
+    const dbSelect = document.getElementById('modal-database-id');
+    const productSelect = document.getElementById('modal-product-id');
+    const newProductFields = document.getElementById('new-product-fields');
+    const newDatabaseFields = document.getElementById('new-database-fields');
+    const newDatabaseName = document.getElementById('new-database-name');
+    const productSection = document.getElementById('product-section');
+
+    if (dbSelect) {
+        dbSelect.addEventListener('change', function() {
+            const dbId = this.value;
+            if (!dbId) {
+                productSelect.innerHTML = '<option value="">— select a database first —</option>';
+                newProductFields.classList.add('d-none');
+                newDatabaseFields.classList.add('d-none');
+                newDatabaseName.required = false;
+                return;
+            }
+            if (dbId === 'new') {
+                newDatabaseFields.classList.remove('d-none');
+                newDatabaseName.required = true;
+                // New DB means new product is required
+                populateProducts([]);
+                return;
+            }
+            newDatabaseFields.classList.add('d-none');
+            newDatabaseName.required = false;
+            populateProducts(productCache[dbId] || []);
+        });
+    }
+
+    function populateProducts(products) {
+        productSelect.innerHTML = '<option value="">— New product… —</option>';
+        products.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = p.title;
+            productSelect.appendChild(opt);
+        });
+        // Auto-show new product fields when "New product…" is the only/selected option
+        if (productSelect.value === '') {
+            newProductFields.classList.remove('d-none');
+        } else {
+            newProductFields.classList.add('d-none');
+        }
+    }
+
+    if (productSelect) {
+        productSelect.addEventListener('change', function() {
+            if (this.value === '') {
+                newProductFields.classList.remove('d-none');
+            } else {
+                newProductFields.classList.add('d-none');
+            }
+        });
+    }
+})();
+</script>
+{% endif %}
+{% endblock %}
