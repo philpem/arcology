@@ -25,6 +25,39 @@ def init_app(app):
     app.add_menu_item("Analysis", f"{ROUTENAME}.index", 300)
 
 
+def _get_analysis_or_404(uuid):
+    """Load an analysis by UUID."""
+    return Analysis.query.filter_by(uuid=uuid).first_or_404()
+
+
+def _view_redirect(analysis):
+    """Redirect to the analysis detail page."""
+    return redirect(url_for(f'{ROUTENAME}.view', uuid=analysis.uuid))
+
+
+def _require_analysis_status(analysis, expected_status, message):
+    """Return a redirect response if the analysis is not in the expected state."""
+    if analysis.status != expected_status:
+        flash(message, 'error')
+        return _view_redirect(analysis)
+    return None
+
+
+def _reset_for_retry(analysis):
+    """Clear worker-populated fields so the job can be re-queued cleanly."""
+    analysis.status = AnalysisStatus.PENDING
+    analysis.error_message = None
+    analysis.started_at = None
+    analysis.completed_at = None
+    analysis.tool_name = None
+    analysis.tool_version = None
+    analysis.output_url = None
+    analysis.output_path = None
+    analysis.success = None
+    analysis.summary = None
+    analysis.details = None
+
+
 @blueprint.route('/')
 @login_required
 def index():
@@ -71,7 +104,7 @@ def index():
 @login_required
 def view(uuid):
     """View analysis details."""
-    analysis = Analysis.query.filter_by(uuid=uuid).first_or_404()
+    analysis = _get_analysis_or_404(uuid)
     # Sanitize any JSON-escaped Python surrogates (\udcNN) in stored details.
     # These arise from Acorn filenames with raw Latin-1 bytes (e.g. 0xA0 hard
     # space) appearing in the command field of process_output records written
@@ -92,11 +125,14 @@ def view(uuid):
 @require_permission('read_write')
 def cancel(uuid):
     """Cancel a pending analysis."""
-    analysis = Analysis.query.filter_by(uuid=uuid).first_or_404()
-
-    if analysis.status != AnalysisStatus.PENDING:
-        flash('Can only cancel pending analyses.', 'error')
-        return redirect(url_for(f'{ROUTENAME}.view', uuid=uuid))
+    analysis = _get_analysis_or_404(uuid)
+    wrong_status = _require_analysis_status(
+        analysis,
+        AnalysisStatus.PENDING,
+        'Can only cancel pending analyses.',
+    )
+    if wrong_status:
+        return wrong_status
 
     db.session.delete(analysis)
     db.session.commit()
@@ -110,28 +146,21 @@ def cancel(uuid):
 @require_permission('read_write')
 def retry(uuid):
     """Retry a failed analysis."""
-    analysis = Analysis.query.filter_by(uuid=uuid).first_or_404()
+    analysis = _get_analysis_or_404(uuid)
+    wrong_status = _require_analysis_status(
+        analysis,
+        AnalysisStatus.FAILED,
+        'Can only retry failed analyses.',
+    )
+    if wrong_status:
+        return wrong_status
 
-    if analysis.status != AnalysisStatus.FAILED:
-        flash('Can only retry failed analyses.', 'error')
-        return redirect(url_for(f'{ROUTENAME}.view', uuid=uuid))
-
-    analysis.status = AnalysisStatus.PENDING
-    analysis.error_message = None
-    analysis.started_at = None
-    analysis.completed_at = None
-    analysis.tool_name = None
-    analysis.tool_version = None
-    analysis.output_url = None
-    analysis.output_path = None
-    analysis.success = None
-    analysis.summary = None
-    analysis.details = None
+    _reset_for_retry(analysis)
 
     db.session.commit()
 
     flash('Analysis requeued.', 'success')
-    return redirect(url_for(f'{ROUTENAME}.view', uuid=uuid))
+    return _view_redirect(analysis)
 
 
 @blueprint.route('/queue')
