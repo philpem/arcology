@@ -214,6 +214,98 @@ def sanitize_extracted_tree(output_dir: Path) -> int:
     return removed
 
 
+def _archive_error(tool: str, message: str, process_output: str | None = None) -> Dict[str, Any]:
+    """Build a standard failed archive-result payload."""
+    result = {
+        'success': False,
+        'error': message,
+        'tool': tool,
+    }
+    if process_output is not None:
+        result['process_output'] = process_output
+    return result
+
+
+def _archive_success(
+    tool: str,
+    summary: str,
+    file_count: int,
+    process_output: str | None = None,
+) -> Dict[str, Any]:
+    """Build a standard successful archive-result payload."""
+    result = {
+        'success': True,
+        'tool': tool,
+        'file_count': file_count,
+        'summary': summary,
+    }
+    if process_output is not None:
+        result['process_output'] = process_output
+    return result
+
+
+def _count_extracted_files(output_dir: Path) -> int:
+    """Return the number of regular files extracted under output_dir."""
+    return sum(1 for entry in output_dir.rglob('*') if entry.is_file())
+
+
+def _finalize_extraction(
+    output_dir: Path,
+    *,
+    normalize_names: bool = True,
+    assert_confined: bool = False,
+) -> str | None:
+    """Run shared post-extraction cleanup and validation.
+
+    Returns:
+        None if finalization succeeded, otherwise an error string.
+    """
+    if normalize_names:
+        normalize_extracted_filenames(output_dir)
+    sanitize_extracted_tree(output_dir)
+    if assert_confined:
+        try:
+            _assert_confined(output_dir)
+        except ValueError as exc:
+            return str(exc)
+    return None
+
+
+def _run_extraction_command(
+    *,
+    tool: str,
+    cmd: list[str],
+    output_dir: Path,
+    summary: str,
+    cwd: str | None = None,
+    normalize_names: bool = True,
+    assert_confined: bool = False,
+) -> Dict[str, Any]:
+    """Run an extractor command and apply the common post-processing flow."""
+    result, output = run_tool_with_output(cmd, cwd=cwd)
+
+    if result.returncode != 0:
+        return _archive_error(
+            tool, f'{tool} failed with exit code {result.returncode}', output
+        )
+
+    finalize_error = _finalize_extraction(
+        output_dir,
+        normalize_names=normalize_names,
+        assert_confined=assert_confined,
+    )
+    if finalize_error:
+        return _archive_error(tool, finalize_error)
+
+    file_count = _count_extracted_files(output_dir)
+    return _archive_success(
+        tool,
+        summary.format(file_count=file_count),
+        file_count,
+        output,
+    )
+
+
 def extract_riscosarc(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     """
     Extract archive using riscosarc.
@@ -236,12 +328,11 @@ def extract_riscosarc(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     result, output = run_tool_with_output(cmd, cwd=str(output_dir))
 
     if result.returncode != 0:
-        return {
-            'success': False,
-            'error': f'riscosarc failed with exit code {result.returncode}',
-            'tool': 'riscosarc',
-            'process_output': output
-        }
+        return _archive_error(
+            'riscosarc',
+            f'riscosarc failed with exit code {result.returncode}',
+            output,
+        )
 
     # Scan for files with double extensions and rename them.
     # This generally happens with Squash, where riscosarc produces a file
@@ -256,23 +347,21 @@ def extract_riscosarc(input_path: Path, output_dir: Path) -> Dict[str, Any]:
                 f.rename(f.parent / f'{m.group(1)},{m.group(3)}')
 
     # Normalise any RISC OS Latin1 byte sequences in extracted filenames.
-    normalize_extracted_filenames(output_dir)
-    sanitize_extracted_tree(output_dir)
-    try:
-        _assert_confined(output_dir)
-    except ValueError as e:
-        return {'success': False, 'error': str(e), 'tool': 'riscosarc'}
+    finalize_error = _finalize_extraction(
+        output_dir,
+        normalize_names=True,
+        assert_confined=True,
+    )
+    if finalize_error:
+        return _archive_error('riscosarc', finalize_error)
 
-    # Count extracted files
-    file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
-
-    return {
-        'success': True,
-        'tool': 'riscosarc',
-        'file_count': file_count,
-        'summary': f'Extracted {file_count} files using riscosarc',
-        'process_output': output
-    }
+    file_count = _count_extracted_files(output_dir)
+    return _archive_success(
+        'riscosarc',
+        f'Extracted {file_count} files using riscosarc',
+        file_count,
+        output,
+    )
 
 
 def extract_tbafs(input_path: Path, output_dir: Path) -> Dict[str, Any]:
@@ -288,33 +377,14 @@ def extract_tbafs(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    cmd = ['tbafs-extractor', str(input_path), str(output_dir)]
-    result, output = run_tool_with_output(cmd)
-
-    if result.returncode != 0:
-        return {
-            'success': False,
-            'error': f'tbafs-extractor failed with exit code {result.returncode}',
-            'tool': 'tbafs-extractor',
-            'process_output': output
-        }
-
-    normalize_extracted_filenames(output_dir)
-    sanitize_extracted_tree(output_dir)
-    try:
-        _assert_confined(output_dir)
-    except ValueError as e:
-        return {'success': False, 'error': str(e), 'tool': 'tbafs-extractor'}
-
-    file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
-
-    return {
-        'success': True,
-        'tool': 'tbafs-extractor',
-        'file_count': file_count,
-        'summary': f'Extracted {file_count} files from TBAFS archive',
-        'process_output': output
-    }
+    return _run_extraction_command(
+        tool='tbafs-extractor',
+        cmd=['tbafs-extractor', str(input_path), str(output_dir)],
+        output_dir=output_dir,
+        summary='Extracted {file_count} files from TBAFS archive',
+        normalize_names=True,
+        assert_confined=True,
+    )
 
 
 def extract_zip(input_path: Path, output_dir: Path) -> Dict[str, Any]:
@@ -335,31 +405,12 @@ def extract_zip(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     except ValueError as e:
         return {'success': False, 'error': str(e), 'tool': 'unzip'}
 
-    cmd = ['unzip', '-F', '-q', str(input_path), '-d', str(output_dir)]
-    result, output = run_tool_with_output(cmd)
-
-    if result.returncode != 0:
-        return {
-            'success': False,
-            'error': f'unzip failed with exit code {result.returncode}',
-            'tool': 'unzip',
-            'process_output': output
-        }
-
-    # Normalise any raw Latin-1 byte sequences in extracted filenames
-    # (e.g. RISC OS filenames stored in the ZIP with non-UTF-8 bytes).
-    normalize_extracted_filenames(output_dir)
-    sanitize_extracted_tree(output_dir)
-
-    file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
-
-    return {
-        'success': True,
-        'tool': 'unzip',
-        'file_count': file_count,
-        'summary': f'Extracted {file_count} files from ZIP archive',
-        'process_output': output
-    }
+    return _run_extraction_command(
+        tool='unzip',
+        cmd=['unzip', '-F', '-q', str(input_path), '-d', str(output_dir)],
+        output_dir=output_dir,
+        summary='Extracted {file_count} files from ZIP archive',
+    )
 
 
 def extract_tar(input_path: Path, output_dir: Path, archive_type: str = 'tar') -> Dict[str, Any]:
@@ -395,28 +446,12 @@ def extract_tar(input_path: Path, output_dir: Path, archive_type: str = 'tar') -
     # even though GNU tar strips them by default.
     cmd = ['tar', '--no-absolute-filenames'] + flags + ['-xf', str(input_path), '-C', str(output_dir)]
 
-    result, output = run_tool_with_output(cmd)
-
-    if result.returncode != 0:
-        return {
-            'success': False,
-            'error': f'tar failed with exit code {result.returncode}',
-            'tool': 'tar',
-            'process_output': output
-        }
-
-    normalize_extracted_filenames(output_dir)
-    sanitize_extracted_tree(output_dir)
-
-    file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
-
-    return {
-        'success': True,
-        'tool': 'tar',
-        'file_count': file_count,
-        'summary': f'Extracted {file_count} files from TAR archive',
-        'process_output': output
-    }
+    return _run_extraction_command(
+        tool='tar',
+        cmd=cmd,
+        output_dir=output_dir,
+        summary='Extracted {file_count} files from TAR archive',
+    )
 
 
 def extract_rar(input_path: Path, output_dir: Path) -> Dict[str, Any]:
@@ -437,33 +472,13 @@ def extract_rar(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     except ValueError as e:
         return {'success': False, 'error': str(e), 'tool': 'unrar'}
 
-    cmd = ['unrar', 'x', '-y', str(input_path), str(output_dir) + '/']
-    result, output = run_tool_with_output(cmd)
-
-    if result.returncode != 0:
-        return {
-            'success': False,
-            'error': f'unrar failed with exit code {result.returncode}',
-            'tool': 'unrar',
-            'process_output': output
-        }
-
-    normalize_extracted_filenames(output_dir)
-    sanitize_extracted_tree(output_dir)
-    try:
-        _assert_confined(output_dir)
-    except ValueError as e:
-        return {'success': False, 'error': str(e), 'tool': 'unrar'}
-
-    file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
-
-    return {
-        'success': True,
-        'tool': 'unrar',
-        'file_count': file_count,
-        'summary': f'Extracted {file_count} files from RAR archive',
-        'process_output': output
-    }
+    return _run_extraction_command(
+        tool='unrar',
+        cmd=['unrar', 'x', '-y', str(input_path), str(output_dir) + '/'],
+        output_dir=output_dir,
+        summary='Extracted {file_count} files from RAR archive',
+        assert_confined=True,
+    )
 
 
 def extract_7z(input_path: Path, output_dir: Path) -> Dict[str, Any]:
@@ -484,27 +499,13 @@ def extract_7z(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     except ValueError as e:
         return {'success': False, 'error': str(e), 'tool': '7z'}
 
-    cmd = ['7z', 'x', '-y', f'-o{output_dir}', str(input_path)]
-    result, output = run_tool_with_output(cmd)
-
-    if result.returncode != 0:
-        return {
-            'success': False,
-            'error': f'7z failed with exit code {result.returncode}',
-            'tool': '7z',
-            'process_output': output
-        }
-
-    sanitize_extracted_tree(output_dir)
-    file_count = sum(1 for _ in output_dir.rglob('*') if _.is_file())
-
-    return {
-        'success': True,
-        'tool': '7z',
-        'file_count': file_count,
-        'summary': f'Extracted {file_count} files from 7z archive',
-        'process_output': output
-    }
+    return _run_extraction_command(
+        tool='7z',
+        cmd=['7z', 'x', '-y', f'-o{output_dir}', str(input_path)],
+        output_dir=output_dir,
+        summary='Extracted {file_count} files from 7z archive',
+        normalize_names=False,
+    )
 
 
 def decompress_single_file(input_path: Path, output_file: Path, compressor: str) -> Dict[str, Any]:
