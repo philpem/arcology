@@ -44,10 +44,30 @@ The web app is a Flask application using the application factory pattern. It ser
 | `artefacts.py` | File upload, type detection, artefact management. Also contains the `ANALYSIS_MAP` that determines which analyses are auto-queued for each artefact type. |
 | `taxonomy.py` | Platforms, categories, tags, external systems, hash databases |
 | `analysis.py` | Analysis queue UI (view, cancel, retry jobs) |
-| `search.py` | Global cross-item search using a prefix query syntax (`filename:`, `type:`, `protection:`, `mastering:`, etc.). The `type:` key accepts either a 3-digit RISC OS filetype hex code (`type:fca`) or its human-readable name (`type:Squash`) — both resolve to the same result. |
+| `search.py` | Global cross-item search using a prefix query syntax. See table below for all supported keys. |
 | `api.py` | REST API endpoints consumed by workers and external tools |
 
 Blueprints are auto-discovered and registered -- any module in `myapp/blueprints/` that defines a `blueprint` variable will be loaded automatically. Modules can also provide an `init_app(app)` function for additional setup (e.g., the API blueprint uses this to exempt itself from CSRF).
+
+**Search query syntax** — `search.py` parses a structured prefix syntax. Multiple values for the same key are OR'd; different keys are AND'd. Bare words search item/artefact names and descriptions.
+
+| Key | Aliases | Matches |
+|-----|---------|---------|
+| `filename:` | `file:` | Extracted file path (substring) |
+| `path:` | | Extracted file path (substring, same as `filename:`) |
+| `ext:` | | File extension (e.g. `ext:bas`) |
+| `type:` | `filetype:` | RISC OS filetype — 3-digit hex (`type:fea`) or name (`type:Desktop`) |
+| `label:` | `disc:` | Partition/disc label |
+| `ident:` | `gnu:`, `gnufile:` | GNU `file` type string from `PARTITION_DETECT` |
+| `fs:` | `filesystem:` | Filesystem type (e.g. `fs:adfs`) |
+| `protection:` | `prot:` | Copy-protection indicator type (e.g. `protection:bad_crc`) |
+| `mastering:` | | Mastering indicator type (e.g. `mastering:formaster`) |
+| `tag:` | | Artefact tag name |
+| `md5:` | | MD5 hash of extracted file or artefact |
+| `sha1:` | | SHA-1 hash of extracted file |
+| `sha256:` | | SHA-256 hash of extracted file or artefact |
+
+Values support `*` as a wildcard (e.g. `filename:*.bas`). Results are capped at 200 items per bucket.
 
 **Templates** are in `myapp/templates/` (Jinja2) and **static assets** in `myapp/static/` (CSS/JS).
 
@@ -93,6 +113,24 @@ The worker is a standalone Python process that polls the web app's REST API for 
 | `DISC_PROTECTION_DETECT` | HxCFE / hfe_parser | Scans for copy protection indicators (bad CRC, weak bits, DDAM, ID mismatches) |
 | `DISC_MASTERING_DETECT` | HxCFE / hfe_parser | Scans trailing tracks for mastering/duplicator fingerprints (traceback, formaster) |
 | `FORMAT_IDENTIFY` | (placeholder) | Identifies exact format/variant |
+| `CHECKSUM_COMPUTE` | (built-in) | Computes MD5/SHA-1/SHA-256 hashes for an artefact |
+| `PRODUCT_RECOGNITION` | (built-in) | Matches extracted file hashes against known-file databases |
+| `SECTOR_DUMP` | (built-in) | Extracts a raw sector dump from a flux image |
+| `ARMLOCK_REMOVE` | (built-in) | Removes ARMlock disc security from RISC OS disc images |
+
+**Worker environment variables** (all read at startup from the environment):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ARCOLOGY_API` | `http://host.docker.internal:5000/api` | Web API base URL |
+| `UPLOAD_DIR` | `/data/uploads` | Path to uploaded artefact files |
+| `OUTPUT_DIR` | `/data/outputs` | Path for analysis output files |
+| `WORKER_API_KEY` | (required) | Pre-shared key for API authentication |
+| `POLL_INTERVAL` | `10` | Seconds between polls when no job is available |
+| `TOOL_TIMEOUT` | `3600` | Per-job subprocess timeout in seconds |
+| `MAX_ARCHIVE_DEPTH` | `10` | Maximum nested archive extraction depth |
+| `MASTERING_TRACK_SCAN_COUNT` | `5` | Number of trailing tracks scanned for mastering fingerprints |
+| `LOG_LEVEL` | `INFO` | Python logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 
 ### How Web and Worker Communicate
 

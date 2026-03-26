@@ -129,6 +129,8 @@ UPLOAD_DIR=/data/uploads          # Uploaded files directory
 OUTPUT_DIR=/data/outputs          # Analysis outputs directory
 POLL_INTERVAL=10                  # Max poll interval when worker is idle (seconds)
 LOG_LEVEL=INFO                    # Logging level: DEBUG, INFO, WARNING, ERROR
+TOOL_TIMEOUT=3600                 # Subprocess timeout for external tool execution (seconds)
+MASTERING_TRACK_SCAN_COUNT=5      # Number of trailing tracks scanned for mastering fingerprints
 ```
 
 ## Quick Start (Development)
@@ -207,11 +209,19 @@ Each derived artefact (e.g., decoded IMG from SCP) triggers its own analysis cha
 
 ## API Endpoints
 
+- `GET /api/health` - Health check (unauthenticated; returns `{"status":"healthy"}`)
 - `GET/POST /api/items` - List/create items
 - `GET/PUT/DELETE /api/items/{id}` - Item operations
 - `POST /api/items/{id}/artefacts` - Add artefact
+- `POST /api/items/{id}/artefacts/upload` - Upload artefact file (multipart)
+- `GET/DELETE /api/artefacts/{id}` - Get/delete artefact
 - `GET /api/artefacts/{id}/download` - Download file
-- `GET /api/outputs/{filename}` - Get analysis output (visualisation, etc.)
 - `POST /api/artefacts/{id}/analysis` - Queue analysis
+- `GET /api/outputs/{filename}` - Get analysis output (visualisation, etc.)
 - `GET /api/analysis/pending` - Get pending jobs (for worker)
-- `PUT /api/analysis/{id}` - Update analysis result
+- `PUT /api/analysis/{id}` - Claim job or post result (for worker)
+- `GET /api/platforms` - List platforms
+- `GET /api/categories` - List categories
+- `GET /api/tags` - List tags
+- `GET /api/lookup?system=…&ref=…` - Find item by external system reference
+- `GET /api/hash-lookup?md5=…` or `?sha1=…` - Find known files by hash

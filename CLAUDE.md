@@ -121,6 +121,10 @@ docker compose up -d --scale worker=4  # Multiple workers
 docker compose logs -f web         # Web logs
 docker compose logs -f worker      # Worker logs
 docker compose down                # Stop
+
+# Maintenance
+docker compose exec web flask rebuild-search-index  # Rebuild search index
+docker compose exec web flask rescan-hashes         # Re-link files against hash DBs
 ```
 
 - Web UI: http://localhost:8000
@@ -139,6 +143,20 @@ flask db upgrade                              # Apply migrations
 flask db downgrade                            # Undo last migration
 flask db current                              # Check current revision
 flask db stamp head                           # Mark as up-to-date without running
+```
+
+### Maintenance commands
+
+```bash
+# Rebuild search index from completed analysis results
+# (run after applying search-index migrations, or to fix inconsistencies)
+flask rebuild-search-index
+
+# Re-link extracted files against hash databases
+# (run after importing a new hash database without re-running analysis)
+flask rescan-hashes                     # all artefacts
+flask rescan-hashes --artefact <UUID>   # single artefact
+flask rescan-hashes --batch-size 1000   # tune commit batch size (default 500)
 ```
 
 ### Debug tools
