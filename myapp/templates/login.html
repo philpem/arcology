@@ -4,13 +4,16 @@
 {% block page_title %}Log in{% endblock %}
 
 {% block content %}
-	<form class="form-signin" action="{{ url_for('login', next=request.args.get('next', '')) }}" method="post">
-		{{ form.hidden_tag() }}
-		<h2 class="form-signin-heading">Please log in</h2>
-
-		{{ render_form(form) }}
-	</form>
-
+	<div class="row justify-content-center align-items-center py-5" style="min-height: 70vh;">
+		<div class="col-12 col-sm-10 col-md-8 col-lg-5 col-xl-4">
+			<div class="card shadow-sm border-0">
+				<div class="card-body p-4 p-md-5">
+					<h2 class="h3 text-center mb-4">Please log in</h2>
+					{{ render_form(form, action=url_for('login', next=request.args.get('next', '')), method='post') }}
+				</div>
+			</div>
+		</div>
+	</div>
 {% endblock %}
 
 {# vim: set noai noet filetype=jinja ts=4 sw=4: #}
