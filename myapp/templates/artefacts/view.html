@@ -589,12 +589,13 @@
         {# ------------------------------------------------------------------ #}
         {% if recognised_products %}
         <div class="card mb-4 border-info">
-            <div class="card-header d-flex justify-content-between align-items-center bg-info bg-opacity-10"
-                 style="cursor: pointer;" data-bs-toggle="collapse" data-bs-target="#recognisedCollapse">
+            <div class="card-header d-flex justify-content-between align-items-center bg-info bg-opacity-10 rp-summary"
+                 style="cursor: pointer;" data-bs-toggle="collapse" data-bs-target="#recognisedCollapse"
+                 aria-expanded="false" aria-controls="recognisedCollapse">
                 <span><i class="bi bi-check2-square"></i> Recognised Items <span class="badge bg-info text-dark">{{ recognised_products|length }}</span></span>
-                <i class="bi bi-chevron-down"></i>
+                <i class="bi bi-chevron-right rp-chevron"></i>
             </div>
-            <div class="collapse show" id="recognisedCollapse">
+            <div class="collapse" id="recognisedCollapse">
                 <div class="table-responsive">
                     <table class="table table-sm mb-0">
                         <thead class="table-light"><tr><th>Product</th><th>Database</th><th>Folder path</th><th>Required</th><th>Optional</th><th>Confidence</th></tr></thead>
