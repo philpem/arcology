@@ -1745,6 +1745,16 @@ class AnalysisWorker:
                 }
             )
 
+        # Re-queue PRODUCT_RECOGNITION so the newly-extracted files are
+        # included in folder matching.  The first PRODUCT_RECOGNITION run
+        # (queued after the outer extraction) fires before this archive's
+        # contents are registered, so it cannot see them.
+        self.api.queue_analysis(
+            artefact['uuid'],
+            AnalysisType.PRODUCT_RECOGNITION.value,
+            hints={'partition_uuid': partition_uuid},
+        )
+
         tool_key = result.get('tool', 'tool').lower().replace(' ', '_')
         po = result.get('process_output')
         details: dict = {
