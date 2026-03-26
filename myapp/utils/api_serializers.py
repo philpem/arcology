@@ -3,7 +3,7 @@
 
 def item_to_dict(item, include_artefacts=False, _artefact_count=None):
     result = {
-        'id': item.id, 'uuid': item.uuid, 'name': item.name, 'description': item.description,
+        'id': item.id, 'uuid': item.uuid, 'name': item.name, 'slug': item.slug, 'description': item.description,
         'platform': {'id': item.platform.id, 'name': item.platform.name} if item.platform else None,
         'category': {'id': item.category.id, 'name': item.category.name} if item.category else None,
         'tags': [t.name for t in item.tags],
