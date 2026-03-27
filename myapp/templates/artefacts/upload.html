@@ -167,15 +167,12 @@
     }
 
     /**
-     * Strip file extension(s), handling compound extensions (.dd.zst, .tar.gz).
-     * Removes up to two dot-separated suffixes.
+     * Strip file extension(s). Always removes the last extension; if a second
+     * extension remains (e.g. .scp.gz → .scp → bare), removes that too.
      */
     function stripExtensions(filename) {
-        // Remove known compound suffixes first
-        var compound = filename.match(/^(.+?)\.(dd\.zst|dd\.gz|dd\.bz2|tar\.gz|tar\.bz2|tar\.xz)$/i);
-        if (compound) return compound[1];
-        // Otherwise strip the last extension (if any)
-        return filename.replace(/\.[^.]+$/, '');
+        var s = filename.replace(/\.[^.]+$/, '');  // strip last extension
+        return s.replace(/\.[^.]+$/, '');           // strip one more if present
     }
 
     /**
@@ -256,17 +253,16 @@
         var file = e.target.files[0];
         if (!file) return;
 
-        var result = parseArtefactFilename(file.name);
-        if (!result) return;
+        var labelField = document.getElementById('label');
+        var result     = parseArtefactFilename(file.name);
 
         // Prefill label only if currently empty.
-        var labelField = document.getElementById('label');
         if (labelField.value.trim() === '') {
-            labelField.value = result.label;
+            labelField.value = result ? result.label : stripExtensions(file.name);
         }
 
         // Pre-select platform: match option text case-insensitively.
-        if (result.platformName) {
+        if (result && result.platformName) {
             var sel    = document.getElementById('platform_id');
             var needle = result.platformName.toLowerCase();
             for (var i = 0; i < sel.options.length; i++) {
