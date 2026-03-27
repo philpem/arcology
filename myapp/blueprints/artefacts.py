@@ -943,7 +943,8 @@ def _render_artefact_view(artefact):
                 except (json.JSONDecodeError, TypeError) as e:
                     current_app.logger.warning(f"Failed to parse flux visualisation analysis details for {a.uuid}: {e}")
         if (mastering_analysis is not None and protection_analysis is not None
-                and partition_detect_details is not None):
+                and partition_detect_details is not None
+                and flux_visualisation_analysis is not None):
             break
 
     # Build a lookup of per-partition metadata from PARTITION_DETECT, keyed by
