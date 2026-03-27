@@ -17,36 +17,42 @@
             <div class="card-body">
                 <form method="post" enctype="multipart/form-data">
                     {{ form.hidden_tag() }}
-                    
+
                     <div class="mb-3">
                         {{ form.file.label(class="form-label") }}
                         {{ form.file(class="form-control") }}
                         <div class="form-text">Select the file to upload (disk image, scan, etc.)</div>
                     </div>
-                    
+
                     <div class="mb-3">
                         {{ form.label.label(class="form-label") }}
                         {{ form.label(class="form-control") }}
                         <div class="form-text">{{ form.label.description }}</div>
                     </div>
-                    
+
+                    <div class="mb-3">
+                        {{ form.platform_id.label(class="form-label") }}
+                        {{ form.platform_id(class="form-select") }}
+                        <div class="form-text">{{ form.platform_id.description }}</div>
+                    </div>
+
                     <div class="mb-3">
                         {{ form.artefact_type.label(class="form-label") }}
                         {{ form.artefact_type(class="form-select") }}
                         <div class="form-text">{{ form.artefact_type.description }}</div>
                     </div>
-                    
+
                     <div class="mb-3">
                         {{ form.description.label(class="form-label") }}
                         {{ form.description(class="form-control", rows=3) }}
                     </div>
-                    
+
                     <div class="mb-3 form-check">
                         {{ form.auto_analyse(class="form-check-input") }}
                         {{ form.auto_analyse.label(class="form-check-label") }}
                         <div class="form-text">Automatically queue appropriate analyses based on file type</div>
                     </div>
-                    
+
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary"><i class="bi bi-upload"></i> Upload</button>
                         <a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}" class="btn btn-outline-secondary">Cancel</a>
@@ -57,3 +63,218 @@
     </div>
 </div>
 {% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+(function () {
+    'use strict';
+
+    // Platform codes → human-readable name (case-insensitive lookup).
+    // Used to pre-select the Platform hint dropdown from the filename.
+    var PLATFORM_MAP = {
+        'ibmpc':      'IBM PC',
+        'c64':        'C64',
+        'amiga':      'Amiga',
+        'atarst':     'Atari ST',
+        'bbc':        'BBC Micro',
+        'cpc':        'Amstrad CPC',
+        'msx':        'MSX',
+        'spectrum':   'ZX Spectrum',
+        'apple2':     'Apple II',
+        'applemac':   'Apple Mac',
+        'cpm':        'CP/M',
+        'acornrisc':  'Acorn RISC OS',
+        'riscos':     'Acorn RISC OS',
+        'sirius':     'Victor 9000 (Sirius 1)',
+        'victor9000': 'Victor 9000 (Sirius 1)',
+        'victor9k':   'Victor 9000 (Sirius 1)'
+    };
+
+    // Disc-type codes → formatted string (inch symbol written as "in").
+    var DISC_TYPE_MAP = {
+        '8':       '8in',
+        '525':     '5.25in',
+        '525sd':   '5.25in SD',
+        '525dd':   '5.25in DD',
+        '525hd':   '5.25in HD',
+        '525dd80': '5.25in DD 40t in 80t drive',
+        '35':      '3.5in',
+        '35sd':    '3.5in SD',
+        '35dd':    '3.5in DD',
+        '35hd':    '3.5in HD',
+        '35ed':    '3.5in ED',
+        '30':      '3in',
+        'bbc80ss': 'BBC 80t SS',
+        'bbc80ds': 'BBC 80t DS'
+    };
+
+    // Words kept lowercase in title-case (unless first word or after ' - ').
+    var SMALL_WORDS = new Set([
+        'a', 'an', 'the', 'and', 'but', 'or', 'nor', 'for', 'yet',
+        'so', 'as', 'at', 'by', 'in', 'of', 'on', 'to', 'up', 'via'
+    ]);
+
+    /** Expand CamelCase into space-separated words. */
+    function splitCamelCase(str) {
+        return str
+            .replace(/([a-z])([A-Z])/g, '$1 $2')
+            .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
+    }
+
+    /** Apply title-case: keep small words lowercase unless they start a segment. */
+    function titleCase(str) {
+        return str.replace(/\S+/g, function (word, offset) {
+            var lower = word.toLowerCase();
+            // Always capitalise the first word of the whole string.
+            if (offset === 0) return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+            if (SMALL_WORDS.has(lower)) return lower;
+            return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+        });
+    }
+
+    /**
+     * Normalise a raw name segment (publisher, title part, disc-title).
+     * Splits CamelCase, applies title-case.
+     */
+    function normaliseName(raw) {
+        return titleCase(splitCamelCase(raw));
+    }
+
+    /**
+     * Normalise a title that may contain '-' subtitle separators.
+     * Each '-'-delimited part is CamelCase-expanded and title-cased,
+     * then parts are joined with ' - '.
+     */
+    function normaliseTitle(raw) {
+        var parts = raw.split('-');
+        return parts.map(function (p) { return normaliseName(p); }).join(' - ');
+    }
+
+    /**
+     * Determine whether a segment represents a disc number.
+     * Accepts "NofM" (e.g. "1of4") or a plain integer (e.g. "2").
+     */
+    function isDiscNumber(seg) {
+        return /^\d+of\d+$/i.test(seg) || /^\d+$/.test(seg);
+    }
+
+    /** Format a disc-number segment as human-readable text. */
+    function formatDiscNumber(seg) {
+        var m = seg.match(/^(\d+)of(\d+)$/i);
+        if (m) return m[1] + ' of ' + m[2];
+        return seg; // plain integer
+    }
+
+    /**
+     * Strip file extension(s). Always removes the last extension; if a second
+     * extension remains (e.g. .scp.gz → .scp → bare), removes that too.
+     */
+    function stripExtensions(filename) {
+        var s = filename.replace(/\.[^.]+$/, '');  // strip last extension
+        return s.replace(/\.[^.]+$/, '');           // strip one more if present
+    }
+
+    /**
+     * Parse an Arcarc/Tosec-style filename and return
+     * { label: string, platformName: string|null }
+     * or null if the filename does not match the expected pattern.
+     *
+     * Format: Publisher_Title[_DiscNum][_DiscTitle]__Platform-DiscType
+     */
+    function parseArtefactFilename(filename) {
+        var base = stripExtensions(filename);
+
+        // Must contain '__' separating metadata from platform/disc-type.
+        var dblIdx = base.indexOf('__');
+        if (dblIdx < 0) return null;
+
+        var metaPart     = base.substring(0, dblIdx);
+        var platformPart = base.substring(dblIdx + 2);
+
+        // metaPart must have at least Publisher and Title.
+        var metaSegs = metaPart.split('_');
+        if (metaSegs.length < 2) return null;
+
+        var publisher = metaSegs[0];
+        var titleRaw  = metaSegs[1];
+        var extraSegs = metaSegs.slice(2); // [DiscNum?, DiscTitle?]
+
+        // platformPart: split on last '-' to separate Platform from DiscType.
+        var lastDash = platformPart.lastIndexOf('-');
+        if (lastDash < 0) return null;
+        var platformRaw  = platformPart.substring(0, lastDash);
+        var discTypeRaw  = platformPart.substring(lastDash + 1);
+
+        // --- Disc number / disc title ---
+        var discNumber = null;
+        var discTitle  = null;
+        if (extraSegs.length > 0) {
+            if (isDiscNumber(extraSegs[0])) {
+                discNumber = formatDiscNumber(extraSegs[0]);
+                if (extraSegs.length > 1) {
+                    discTitle = normaliseName(extraSegs[1]);
+                }
+            } else {
+                // No disc number — first extra segment is the disc title.
+                discTitle = normaliseName(extraSegs[0]);
+            }
+        }
+
+        // --- Platform ---
+        var platformKey  = platformRaw.toLowerCase();
+        var platformName = PLATFORM_MAP[platformKey] || normaliseName(platformRaw);
+
+        // --- Disc type ---
+        var discType = DISC_TYPE_MAP[discTypeRaw.toLowerCase()] || discTypeRaw;
+
+        // --- Assemble label ---
+        var title = normaliseTitle(titleRaw);
+        var pub   = normaliseName(publisher);
+
+        var label = title + ' (' + pub + ')';
+
+        if (discNumber !== null && discTitle !== null) {
+            label += ' (' + discNumber + ' - ' + discTitle + ')';
+        } else if (discNumber !== null) {
+            label += ' (' + discNumber + ')';
+        } else if (discTitle !== null) {
+            label += ' (' + discTitle + ')';
+        }
+
+        label += ' (' + platformName + ')';
+        label += ' (' + discType + ')';
+
+        return { label: label, platformName: platformName };
+    }
+
+    // Wire up the file input.
+    document.getElementById('file').addEventListener('change', function (e) {
+        var file = e.target.files[0];
+        if (!file) return;
+
+        var labelField = document.getElementById('label');
+        var result     = parseArtefactFilename(file.name);
+
+        // Prefill label only if currently empty.
+        if (labelField.value.trim() === '') {
+            labelField.value = result ? result.label : stripExtensions(file.name);
+        }
+
+        // Pre-select platform: match option text case-insensitively.
+        if (result && result.platformName) {
+            var sel    = document.getElementById('platform_id');
+            var needle = result.platformName.toLowerCase();
+            for (var i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].text.toLowerCase() === needle) {
+                    sel.value = sel.options[i].value;
+                    break;
+                }
+            }
+        }
+    });
+}());
+</script>
+{% endblock %}
+
+# vim: ts=4 sw=4 et
