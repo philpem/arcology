@@ -2059,10 +2059,42 @@ def delete(item_id=None, artefact_id=None, root_id=None, uuid=None):
     item_url_id = artefact.item.url_id
     label = artefact.label
 
-    # Collect analysis outputs before deleting ORM rows or files.
     # Delete files for this artefact and all derived artefacts.
     _delete_artefact_files(artefact)
-    _cleanup_artefact_outputs(artefact, current_app.logger)
+
+    # Clean up analysis outputs (extraction trees, visualisations, cache).
+    from shared.storage import S3Storage
+    storage = current_app.storage
+    if isinstance(storage, S3Storage):
+        cleanup = _collect_cleanup_paths_for_artefact(artefact)
+        for filename in cleanup['output_files']:
+            try:
+                key = storage.storage_key('outputs', filename)
+                storage.delete(key)
+            except Exception as e:
+                current_app.logger.warning(f"Failed to delete output file {filename}: {e}")
+        for path in cleanup['output_dirs']:
+            try:
+                if os.path.isabs(path):
+                    parts = path.rstrip('/').split('/')
+                    try:
+                        idx = parts.index('outputs')
+                        rel = '/'.join(parts[idx + 1:])
+                    except ValueError:
+                        rel = '/'.join(parts[-3:]) if len(parts) >= 3 else parts[-1]
+                else:
+                    rel = path
+                prefix = storage.storage_key('outputs', rel)
+                storage.delete_prefix(prefix)
+            except Exception as e:
+                current_app.logger.warning(f"Failed to delete output directory {path}: {e}")
+        try:
+            cache_prefix = storage.storage_key('outputs', f'.cache/{artefact.uuid}')
+            storage.delete_prefix(cache_prefix)
+        except Exception:
+            pass
+    else:
+        _cleanup_artefact_outputs(artefact, current_app.logger)
 
     db.session.delete(artefact)
     db.session.commit()
@@ -2386,6 +2418,15 @@ def rerun_product_recognition_route(uuid):
 @login_required
 def get_output_file(filename):
     """Serve an analysis output file (visualisation, etc.) to logged-in users."""
+    storage = current_app.storage
+    key = storage.storage_key('outputs', filename)
+
+    # S3 mode: redirect to pre-signed URL
+    url = storage.presigned_url(key, filename=os.path.basename(filename))
+    if url:
+        return redirect(url)
+
+    # Local mode: serve directly with path traversal check
     folder = get_output_folder()
     file_path = os.path.realpath(os.path.join(folder, filename))
     if not file_path.startswith(os.path.realpath(folder) + os.sep):
