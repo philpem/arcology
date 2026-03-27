@@ -55,10 +55,10 @@ docker compose down
 
 # Stop and remove volumes (WARNING: deletes data)
 docker compose down -v
-
-# Rebuild the search index (after migration or to fix inconsistencies)
-docker compose exec web flask rebuild-search-index
 ```
+
+See [doc/ADMIN_COMMANDS.md](doc/ADMIN_COMMANDS.md) for admin CLI commands
+(rebuild-search-index, rescan-hashes, reanalyse, etc.).
 
 ### Database browser (Adminer)
 
