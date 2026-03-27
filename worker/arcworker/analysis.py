@@ -1865,8 +1865,8 @@ class AnalysisWorker:
                         if matched:
                             required_matched += 1
 
-                    if required_files and required_matched == 0:
-                        continue  # Not a match — no required files found
+                    if required_files and required_matched < len(required_files):
+                        continue  # Not a match — not all required files found
 
                     # Count optional matches
                     optional_matched = 0
