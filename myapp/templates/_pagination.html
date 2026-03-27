@@ -1,6 +1,7 @@
-{% macro render_pagination(pagination, endpoint, extra_args={}) %}
-{% if pagination.pages > 1 %}
+{% macro render_pagination(pagination, endpoint, extra_args={}, valid_per_page=none, view_all=false) %}
+{% if pagination.pages > 1 or valid_per_page %}
 <nav class="mt-4" aria-label="Page navigation">
+    {% if pagination.pages > 1 %}
     <ul class="pagination justify-content-center">
         {% if pagination.has_prev %}
         <li class="page-item">
@@ -28,9 +29,21 @@
         <li class="page-item disabled"><span class="page-link">›</span></li>
         {% endif %}
     </ul>
+    {% endif %}
     <p class="text-center text-muted small">
         Showing {{ ((pagination.page - 1) * pagination.per_page) + 1 }}–{{ [pagination.page * pagination.per_page, pagination.total]|min }} of {{ pagination.total }}
     </p>
+    {% if valid_per_page %}
+    <div class="d-flex justify-content-center gap-1 mt-2">
+        <span class="text-muted small me-1 align-self-center">Per page:</span>
+        {% for pp in valid_per_page %}
+        <a class="btn btn-sm {{ 'btn-secondary' if (not view_all and pagination.per_page == pp) else 'btn-outline-secondary' }}"
+           href="{{ url_for(endpoint, per_page=pp, **extra_args) }}">{{ pp }}</a>
+        {% endfor %}
+        <a class="btn btn-sm {{ 'btn-secondary' if view_all else 'btn-outline-secondary' }}"
+           href="{{ url_for(endpoint, per_page=0, **extra_args) }}">All</a>
+    </div>
+    {% endif %}
 </nav>
 {% elif pagination.total > 0 %}
 <p class="text-center text-muted small mt-3">{{ pagination.total }} result{{ 's' if pagination.total != 1 else '' }}</p>

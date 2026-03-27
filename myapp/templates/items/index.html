@@ -26,7 +26,8 @@
     {
         'q': request.args.get('q'),
         'platform_id': request.args.get('platform_id'),
-        'category_id': request.args.get('category_id')
+        'category_id': request.args.get('category_id'),
+        'per_page': request.args.get('per_page')
     }
 ) }}
 
@@ -54,6 +55,7 @@
 {{ render_pagination(pagination, 'myapp_blueprints_items.index', {
     'q': request.args.get('q'),
     'platform_id': request.args.get('platform_id'),
-    'category_id': request.args.get('category_id')
-}) }}
+    'category_id': request.args.get('category_id'),
+    'per_page': request.args.get('per_page')
+}, valid_per_page=valid_per_page, view_all=view_all) }}
 {% endblock %}

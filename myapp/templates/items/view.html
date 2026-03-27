@@ -76,7 +76,7 @@
             </div>
             {% if letter_pages %}
             <div class="card-body border-bottom py-2">
-                {{ render_letter_bar('myapp_blueprints_items.view', letter_pages, current_letter, {'uuid': item.url_id}) }}
+                {{ render_letter_bar('myapp_blueprints_items.view', letter_pages, current_letter, {'uuid': item.url_id, 'per_page': request.args.get('per_page')}) }}
             </div>
             {% endif %}
             <div class="list-group list-group-flush">
@@ -109,7 +109,7 @@
                 <div class="list-group-item text-muted text-center">No artefacts yet</div>
                 {% endfor %}
             </div>
-            {{ render_pagination(artefacts_page, 'myapp_blueprints_items.view', {'uuid': item.url_id}) }}
+            {{ render_pagination(artefacts_page, 'myapp_blueprints_items.view', {'uuid': item.url_id, 'per_page': request.args.get('per_page')}, valid_per_page=valid_per_page, view_all=view_all) }}
         </div>
     </div>
 </div>

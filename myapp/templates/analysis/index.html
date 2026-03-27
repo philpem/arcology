@@ -37,5 +37,5 @@
     </div>
 </div>
 
-{{ render_pagination(pagination, 'myapp_blueprints_analysis.index', {'status': status_filter}) }}
+{{ render_pagination(pagination, 'myapp_blueprints_analysis.index', {'status': status_filter, 'per_page': request.args.get('per_page')}, valid_per_page=valid_per_page, view_all=view_all) }}
 {% endblock %}

@@ -90,7 +90,16 @@ def index():
     query = query.options(selectinload(Item.platform), selectinload(Item.category))
 
     page = request.args.get('page', 1, type=int)
-    per_page = current_app.config.get('ITEMS_PER_PAGE', 25)
+    valid_per_page = [25, 50, 100, 250]
+    per_page_param = request.args.get('per_page', None, type=int)
+    view_all = per_page_param == 0
+    if per_page_param in valid_per_page:
+        per_page = per_page_param
+    elif view_all:
+        per_page = 10000
+        page = 1
+    else:
+        per_page = current_app.config.get('ITEMS_PER_PAGE', 25)
 
     # Compute letter-to-page mapping for A-Z jump bar
     letter_pages, current_letter = compute_letter_pages(
@@ -117,7 +126,9 @@ def index():
                            pagination=pagination,
                            form=form,
                            letter_pages=letter_pages,
-                           current_letter=current_letter)
+                           current_letter=current_letter,
+                           valid_per_page=valid_per_page,
+                           view_all=view_all)
 
 
 @blueprint.route('/new', methods=['GET', 'POST'])
@@ -158,7 +169,16 @@ def view(uuid):
     item = lookup_by_identifier(Item, uuid)
 
     page = request.args.get('page', 1, type=int)
-    per_page = current_app.config.get('ARTEFACTS_PER_PAGE', 25)
+    valid_per_page = [25, 50, 100, 250]
+    per_page_param = request.args.get('per_page', None, type=int)
+    view_all = per_page_param == 0
+    if per_page_param in valid_per_page:
+        per_page = per_page_param
+    elif view_all:
+        per_page = 10000
+        page = 1
+    else:
+        per_page = current_app.config.get('ARTEFACTS_PER_PAGE', 25)
 
     artefact_query = (
         Artefact.query
@@ -173,7 +193,8 @@ def view(uuid):
     artefacts_page = artefact_query.order_by(Artefact.label).paginate(page=page, per_page=per_page)
 
     return render_template('items/view.html', item=item, artefacts_page=artefacts_page,
-                           letter_pages=letter_pages, current_letter=current_letter)
+                           letter_pages=letter_pages, current_letter=current_letter,
+                           valid_per_page=valid_per_page, view_all=view_all)
 
 
 @blueprint.route('/<string:uuid>/edit', methods=['GET', 'POST'])

@@ -82,10 +82,21 @@ def index():
             pass
 
     page = request.args.get('page', 1, type=int)
+    valid_per_page = [25, 50, 100, 250]
+    per_page_param = request.args.get('per_page', None, type=int)
+    view_all = per_page_param == 0
+    if per_page_param in valid_per_page:
+        per_page = per_page_param
+    elif view_all:
+        per_page = 10000
+        page = 1
+    else:
+        per_page = current_app.config.get('ANALYSES_PER_PAGE', 50)
+
     # Eager-load artefact to avoid N+1 lazy loads in template
     pagination = query.options(
         joinedload(Analysis.artefact)
-    ).order_by(Analysis.created_at.desc()).paginate(page=page, per_page=current_app.config.get('ANALYSES_PER_PAGE', 50))
+    ).order_by(Analysis.created_at.desc()).paginate(page=page, per_page=per_page)
 
     # Single query for all status counts using conditional aggregation
     counts_row = db.session.query(
@@ -100,12 +111,14 @@ def index():
         'completed': counts_row.completed,
         'failed': counts_row.failed,
     }
-    
+
     return render_template('analysis/index.html',
                            analyses=pagination.items,
                            pagination=pagination,
                            status_filter=status_filter,
-                           status_counts=status_counts)
+                           status_counts=status_counts,
+                           valid_per_page=valid_per_page,
+                           view_all=view_all)
 
 
 @blueprint.route('/<string:uuid>')
