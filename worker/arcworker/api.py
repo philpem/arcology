@@ -262,7 +262,8 @@ class ArcologyAPI:
                     # Archive support fields
                     'risc_os_filetype': f.get('risc_os_filetype'),
                     'parent_file_id': f.get('parent_file_id'),
-                    'extraction_depth': f.get('extraction_depth', 0)
+                    'extraction_depth': f.get('extraction_depth', 0),
+                    'is_directory': f.get('is_directory', False),
                 })
 
             self.post(f"/partitions/{partition_uuid}/files", {'files': file_records})

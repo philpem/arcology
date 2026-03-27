@@ -1788,8 +1788,7 @@ class AnalysisWorker:
                 break
             batch = resp.get('files', [])
             all_files.extend(batch)
-            pagination = resp.get('pagination', {})
-            if page >= pagination.get('pages', 1):
+            if page >= resp.get('pages', 1):
                 break
             page += 1
 

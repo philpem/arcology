@@ -82,7 +82,8 @@ def file_to_dict(f):
         'is_archive': f.is_archive,
         'archive_format': f.archive_format,
         'parent_file_id': f.parent_file_id,
-        'extraction_depth': f.extraction_depth
+        'extraction_depth': f.extraction_depth,
+        'is_directory': f.is_directory,
     }
 
 
