@@ -8,7 +8,11 @@
             </div>
             <div class="collapse" id="recognisedCollapse">
                 <div class="table-responsive">
-                    <table class="table table-sm mb-0">
+                    <table class="table table-sm mb-0 rp-table">
+                        <colgroup>
+                            <col class="rp-col-product"><col class="rp-col-database"><col class="rp-col-path">
+                            <col class="rp-col-required"><col class="rp-col-optional"><col class="rp-col-confidence">
+                        </colgroup>
                         <thead class="table-light"><tr><th>Product</th><th>Database</th><th>Folder path</th><th>Required</th><th>Optional</th><th>Confidence</th></tr></thead>
                         {# Group repeated products so duplicates (e.g. !Boot, !Scrap on every partition)
                            are collapsed into a single row with an expandable detail section. #}

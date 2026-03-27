@@ -7,10 +7,18 @@
 {{ rollup.styles() }}
 <style>
 /* Recognised Items: chevron rotates when group is expanded */
-.rp-summary .rp-chevron { transition: transform 0.15s ease; }
+.rp-summary .rp-chevron { display: inline-block; transition: transform 0.15s ease; }
 /* Card header uses aria-expanded; per-product rows use .rp-expanded toggled by JS */
 .rp-summary[aria-expanded="true"] .rp-chevron,
 tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
+/* Fixed column widths so expanding detail rows doesn't reflow the table */
+.rp-table { table-layout: fixed; }
+.rp-table col.rp-col-product   { width: 28%; }
+.rp-table col.rp-col-database  { width: 15%; }
+.rp-table col.rp-col-path      { width: 30%; }
+.rp-table col.rp-col-required  { width:  8%; }
+.rp-table col.rp-col-optional  { width:  8%; }
+.rp-table col.rp-col-confidence{ width: 11%; }
 
 /* Protection accordion: match rollup right→down chevron style */
 #protectionAccordion .accordion-button::after {
