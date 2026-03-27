@@ -66,12 +66,12 @@
                             {% for rp in rp_instances %}
                             {% set rp_color = rp_colors[rp.partition.partition_index % rp_colors|length] %}
                             <tr class="bg-light small">
-                                <td class="ps-3">
-                                    <span class="badge bg-{{ rp_color }}"
-                                          title="Partition {{ rp.partition.partition_index }}: {{ rp.partition.label or rp.partition.filesystem.value }}">{{ rp.partition.partition_index }}</span>
-                                </td>
                                 <td></td>
-                                <td><a href="?partition_uuid={{ rp.partition.uuid }}&path={{ (rp.folder_path ~ '/')|urlencode }}&show_directories=y" class="text-decoration-none"><code>{{ rp.folder_path }}</code></a></td>
+                                <td></td>
+                                <td>
+                                    <span class="badge bg-{{ rp_color }} me-1"
+                                          title="Partition {{ rp.partition.partition_index }}: {{ rp.partition.label or rp.partition.filesystem.value }}">{{ rp.partition.partition_index }}</span><a href="?partition_uuid={{ rp.partition.uuid }}&path={{ (rp.folder_path ~ '/')|urlencode }}&show_directories=y" class="text-decoration-none"><code>{{ rp.folder_path }}</code></a>
+                                </td>
                                 <td class="text-nowrap">{{ rp.required_matched }}/{{ rp.required_total }}</td>
                                 <td class="text-nowrap">{{ rp.optional_matched }}/{{ rp.optional_total }}</td>
                                 <td>
