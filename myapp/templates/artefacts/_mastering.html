@@ -1,22 +1,16 @@
         {% if mastering_analysis and mastering_analysis.get('indicators') %}
         {% set m_indicators = mastering_analysis.get('indicators', []) %}
-        <div class="card mb-4 border-dark">
-            <div class="card-header d-flex justify-content-between align-items-center bg-dark text-white rp-summary"
-                 style="cursor: pointer;" data-bs-toggle="collapse" data-bs-target="#masteringCollapse"
-                 aria-expanded="false" aria-controls="masteringCollapse">
-                <span>
-                    <i class="bi bi-fingerprint"></i> Mastering Data
-                    <span class="badge bg-secondary ms-1">{{ m_indicators | length }}</span>
-                </span>
-                <div>
-                    <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=mastering_analysis['_analysis_uuid']) }}"
-                       class="btn btn-sm btn-outline-light me-1" onclick="event.stopPropagation()">
-                        <i class="bi bi-search"></i> Raw Analysis
-                    </a>
-                    <i class="bi bi-chevron-right rp-chevron"></i>
-                </div>
-            </div>
-            <div class="collapse" id="masteringCollapse">
+        {% call(body_slot) rollup.card(
+            collapse_id    = "masteringCollapse",
+            title          = "Mastering Data",
+            icon           = "fingerprint",
+            analysis_uuid  = mastering_analysis['_analysis_uuid'],
+            border_class   = "border-dark",
+            header_classes = "bg-dark text-white",
+        ) %}
+            {% if not body_slot %}
+                <span class="badge bg-secondary ms-1">{{ m_indicators | length }}</span>
+            {% else %}
                 <div class="card-body p-0">
                     <div class="list-group list-group-flush">
                     {% for ind in m_indicators %}
@@ -34,7 +28,7 @@
                             </dl>
                             {% endif %}
                         </div>
-                        {% elif ind.type == 'formaster' %}
+                        {% elif ind.type in ('formaster', 'bcd_timestamp') %}
                         <div class="list-group-item">
                             <div class="d-flex align-items-center mb-1">
                                 <span class="badge bg-dark me-2">Formaster</span>
@@ -68,6 +62,6 @@
                     {% endfor %}
                     </div>
                 </div>
-            </div>
-        </div>
+            {% endif %}
+        {% endcall %}
         {% endif %}

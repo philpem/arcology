@@ -3,25 +3,20 @@
         {# Group indicators by type for a concise summary #}
         {% set p_types = [] %}
         {% for ind in p_indicators %}{% if ind.type not in p_types %}{% set _ = p_types.append(ind.type) %}{% endif %}{% endfor %}
-        <div class="card mb-4 border-danger">
-            <div class="card-header d-flex justify-content-between align-items-center bg-danger text-white rp-summary"
-                 style="cursor: pointer;" data-bs-toggle="collapse" data-bs-target="#protectionCollapse"
-                 aria-expanded="false" aria-controls="protectionCollapse">
-                <span>
-                    <i class="bi bi-shield-lock-fill"></i> Copy Protection
-                    {% for t in p_types | sort %}
-                    <span class="badge bg-light text-danger ms-1">{{ t.replace('_', ' ') }}</span>
-                    {% endfor %}
-                </span>
-                <div>
-                    <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=protection_analysis['_analysis_uuid']) }}"
-                       class="btn btn-sm btn-outline-light me-1" onclick="event.stopPropagation()">
-                        <i class="bi bi-search"></i> Raw Analysis
-                    </a>
-                    <i class="bi bi-chevron-right rp-chevron"></i>
-                </div>
-            </div>
-            <div class="collapse" id="protectionCollapse">
+        {% set ptype_labels = {'weak_bits': 'Weak Bits', 'bad_crc': 'Bad CRC', 'ddam': 'DDAM', 'id_mismatch': 'ID Mismatch', 'duplicate_id': 'Duplicate ID'} %}
+        {% call(body_slot) rollup.card(
+            collapse_id    = "protectionCollapse",
+            title          = "Copy Protection",
+            icon           = "shield-lock-fill",
+            analysis_uuid  = protection_analysis['_analysis_uuid'],
+            border_class   = "border-warning",
+            header_classes = "bg-warning bg-opacity-25",
+        ) %}
+            {% if not body_slot %}
+                {% for t in p_types | sort %}
+                <span class="badge bg-warning text-dark ms-1">{{ ptype_labels.get(t, t.replace('_', ' ').title()) }}</span>
+                {% endfor %}
+            {% else %}
                 <div class="card-body p-0">
                     <div class="accordion accordion-flush" id="protectionAccordion">
                     {% for ptype in p_types | sort %}
@@ -29,8 +24,8 @@
                     <div class="accordion-item">
                         <h2 class="accordion-header">
                             <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#prot_{{ ptype }}">
-                                <span class="badge bg-danger me-2">{{ type_indicators | length }}</span>
-                                <strong>{{ ptype.replace('_', ' ').title() }}</strong>
+                                <span class="badge bg-warning text-dark me-2">{{ type_indicators | length }}</span>
+                                <strong>{{ ptype_labels.get(ptype, ptype.replace('_', ' ').title()) }}</strong>
                                 <span class="text-muted ms-2 small">
                                 {% if ptype == 'weak_bits' %}— fuzzy/uncertain bits used by some protection schemes
                                 {% elif ptype == 'bad_crc' %}— intentional CRC errors (copy-protection hallmark)
@@ -73,6 +68,6 @@
                     {% endfor %}
                     </div>
                 </div>
-            </div>
-        </div>
+            {% endif %}
+        {% endcall %}
         {% endif %}

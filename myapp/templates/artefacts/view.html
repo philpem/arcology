@@ -1,12 +1,25 @@
 {% extends "_base.html" %}
+{% import "_rollup_card.html" as rollup %}
 {% block page_title %}{{ artefact.label }}{% endblock %}
 
 {% block styles %}
 {{ super() }}
+{{ rollup.styles() }}
 <style>
 /* Recognised Items: chevron rotates when group is expanded */
 .rp-summary .rp-chevron { transition: transform 0.15s ease; }
 .rp-summary[aria-expanded="true"] .rp-chevron { transform: rotate(90deg); }
+
+/* Protection accordion: match rollup right→down chevron style */
+#protectionAccordion .accordion-button::after {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%23212529'%3e%3cpath fill-rule='evenodd' d='M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z'/%3e%3c/svg%3e");
+    transform: rotate(0deg);
+    transition: transform 0.15s ease;
+}
+#protectionAccordion .accordion-button:not(.collapsed)::after {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%23212529'%3e%3cpath fill-rule='evenodd' d='M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z'/%3e%3c/svg%3e");
+    transform: rotate(90deg);
+}
 </style>
 {% endblock %}
 
@@ -40,7 +53,7 @@
         </span>
         {% endif %}
         {% if protection_analysis and protection_analysis.get('indicators') %}
-        <span class="badge bg-danger me-1" title="Copy protection indicators found — click Analysis for details">
+        <span class="badge bg-warning text-dark me-1" title="Copy protection indicators found — click Analysis for details">
             <i class="bi bi-shield-lock-fill"></i> Copy Protected
         </span>
         {% endif %}
