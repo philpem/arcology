@@ -20,7 +20,7 @@
                         {% set first = rp_instances[0] %}
                         {% set collapse_id = 'rp-instances-' ~ product_id %}
                         {# Summary row — clickable when there are multiple instances #}
-                        <tr {% if is_multi %}class="rp-summary" role="button"
+                        <tr {% if is_multi %}class="rp-summary collapsed" role="button"
                                data-bs-toggle="collapse" data-bs-target="#{{ collapse_id }}"
                                aria-expanded="false" aria-controls="{{ collapse_id }}"{% endif %}>
                             <td>
@@ -61,28 +61,31 @@
                             {% endif %}
                         </tr>
                         {% if is_multi %}
-                        {# Expandable detail: one flex row per instance #}
-                        <tr id="{{ collapse_id }}" class="collapse">
-                            <td colspan="6" class="pt-0 pb-2 px-4 border-top-0 bg-light">
-                                {% for rp in rp_instances %}
-                                {% set rp_color = rp_colors[rp.partition.partition_index % rp_colors|length] %}
-                                <div class="d-flex align-items-center gap-3 py-1 {% if not loop.last %}border-bottom{% endif %}">
-                                    <span class="badge bg-{{ rp_color }} flex-shrink-0"
+                        {# Expandable detail: one row per instance, aligned to table columns #}
+                        <tbody id="{{ collapse_id }}" class="collapse">
+                            {% for rp in rp_instances %}
+                            {% set rp_color = rp_colors[rp.partition.partition_index % rp_colors|length] %}
+                            <tr class="bg-light small">
+                                <td class="ps-3">
+                                    <span class="badge bg-{{ rp_color }}"
                                           title="Partition {{ rp.partition.partition_index }}: {{ rp.partition.label or rp.partition.filesystem.value }}">{{ rp.partition.partition_index }}</span>
-                                    <a href="?partition_uuid={{ rp.partition.uuid }}&path={{ (rp.folder_path ~ '/')|urlencode }}&show_directories=y" class="text-decoration-none flex-grow-1 text-break"><code>{{ rp.folder_path }}</code></a>
-                                    <small class="text-muted text-nowrap">{{ rp.required_matched }}/{{ rp.required_total }} req</small>
-                                    <small class="text-muted text-nowrap">{{ rp.optional_matched }}/{{ rp.optional_total }} opt</small>
+                                </td>
+                                <td></td>
+                                <td><a href="?partition_uuid={{ rp.partition.uuid }}&path={{ (rp.folder_path ~ '/')|urlencode }}&show_directories=y" class="text-decoration-none"><code>{{ rp.folder_path }}</code></a></td>
+                                <td class="text-nowrap">{{ rp.required_matched }}/{{ rp.required_total }}</td>
+                                <td class="text-nowrap">{{ rp.optional_matched }}/{{ rp.optional_total }}</td>
+                                <td>
                                     {% if rp.required_total > 0 %}
                                     {% set pct = (rp.required_matched / rp.required_total * 100)|int %}
-                                    <div class="progress flex-shrink-0" style="height:8px; width:60px;">
+                                    <div class="progress" style="height:8px; min-width:60px">
                                         <div class="progress-bar {% if pct == 100 %}bg-success{% elif pct >= 50 %}bg-warning{% else %}bg-danger{% endif %}"
                                              style="width:{{ pct }}%"></div>
                                     </div>
-                                    {% endif %}
-                                </div>
-                                {% endfor %}
-                            </td>
-                        </tr>
+                                    {% else %}-{% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
                         {% endif %}
                         {% endfor %}
                         </tbody>
