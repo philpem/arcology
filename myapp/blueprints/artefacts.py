@@ -838,15 +838,15 @@ def _render_artefact_view(artefact):
     sort_param = request.args.get('sort', 'path')
     sort_desc = sort_param.startswith('-')
     sort_col = sort_param.lstrip('-')
+    from sqlalchemy import desc, func as _func
     _sort_columns = {
-        'path': ExtractedFile.path,
+        'path': _func.lower(ExtractedFile.path),
         'size': ExtractedFile.file_size,
         'filetype': ExtractedFile.risc_os_filetype,
         'known': ExtractedFile.is_known,
     }
-    sort_expr = _sort_columns.get(sort_col, ExtractedFile.path)
+    sort_expr = _sort_columns.get(sort_col, _func.lower(ExtractedFile.path))
     if sort_desc:
-        from sqlalchemy import desc
         sort_expr = desc(sort_expr)
 
     files_pagination = files_query.order_by(sort_expr).paginate(
@@ -891,7 +891,8 @@ def _render_artefact_view(artefact):
                 if first_dir:  # Ignore empty strings
                     subdirectories.add(first_dir)
 
-    subdirectories = sorted(subdirectories)
+    from natsort import natsorted, ns
+    subdirectories = natsorted(subdirectories, alg=ns.IGNORECASE)
 
     # Build a set of archive file paths so the template can show archive
     # icons for "directories" that are actually archives.

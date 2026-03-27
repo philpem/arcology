@@ -27,5 +27,8 @@ numpy
 # PostgreSQL (optional)
 psycopg2-binary
 
+# Natural sort
+natsort
+
 # Test reporting (JUnit XML output for CI)
 unittest-xml-reporting
