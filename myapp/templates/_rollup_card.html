@@ -27,7 +27,7 @@
    Uses the .collapsed class that Bootstrap toggles on the trigger
    rather than aria-expanded, for reliable rotation. */
 .rollup-chevron { transform: rotate(90deg); transition: transform 0.15s ease; }
-.collapsed .rollup-chevron { transform: rotate(0deg); }
+.collapsed .rollup-chevron, .collapsed.rollup-chevron-toggle .rollup-chevron { transform: rotate(0deg); }
 </style>
 {% endmacro %}
 
@@ -42,18 +42,22 @@
 {% macro card(collapse_id, title, icon, analysis_uuid, border_class="border-secondary", header_classes="bg-secondary bg-opacity-25") %}
 <div class="card mb-4 {{ border_class }}">
     <div class="card-header d-flex align-items-center {{ header_classes }}" style="padding: 0;">
-        <a class="flex-grow-1 d-flex justify-content-between align-items-center text-decoration-none text-reset px-3 py-2 rollup-header collapsed"
+        <a class="flex-grow-1 d-flex align-items-center text-decoration-none text-reset px-3 py-2 rollup-header collapsed"
            style="cursor: pointer;" data-bs-toggle="collapse" href="#{{ collapse_id }}"
            role="button" aria-expanded="false" aria-controls="{{ collapse_id }}">
             <span>
                 <i class="bi bi-{{ icon }}"></i> {{ title }}
                 {{ caller(false) }}
             </span>
-            <i class="bi bi-chevron-right rollup-chevron"></i>
         </a>
         <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=analysis_uuid) }}"
            class="btn btn-sm btn-outline-secondary me-2">
             <i class="bi bi-search"></i> Raw Analysis
+        </a>
+        <a class="text-reset px-3 py-2 rollup-chevron-toggle collapsed"
+           style="cursor: pointer;" data-bs-toggle="collapse" href="#{{ collapse_id }}"
+           role="button" aria-expanded="false" aria-controls="{{ collapse_id }}">
+            <i class="bi bi-chevron-right rollup-chevron"></i>
         </a>
     </div>
     <div class="collapse" id="{{ collapse_id }}">
