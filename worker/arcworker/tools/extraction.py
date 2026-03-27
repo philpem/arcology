@@ -304,15 +304,6 @@ def enumerate_extracted_files(
                 'size': file_size,
             }
 
-            # Detect ADFS directories (typically 2KB/2048 bytes)
-            is_directory = (
-                file_size == 2048 or  # ADFS directory size
-                filetype == 'ddc'     # RISC OS directory filetype
-            )
-
-            if is_directory:
-                file_entry['is_directory'] = True
-
             # Store RISC OS filetype (hex string like '3fb') for archive detection
             if filetype:
                 file_entry['risc_os_filetype'] = filetype
