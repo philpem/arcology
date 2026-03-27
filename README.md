@@ -55,19 +55,10 @@ docker compose down
 
 # Stop and remove volumes (WARNING: deletes data)
 docker compose down -v
-
-# Rebuild the search index (after migration or to fix inconsistencies)
-docker compose exec web flask rebuild-search-index
-
-# Re-run analysis on artefacts (requires at least one filter or --all)
-docker compose exec web flask reanalyse --all              # everything
-docker compose exec web flask reanalyse --all --dry-run    # preview only
-docker compose exec web flask reanalyse --item ca0dcd66-test
-docker compose exec web flask reanalyse --artefact-type SCP
-docker compose exec web flask reanalyse --platform "Acorn Archimedes"
-docker compose exec web flask reanalyse --tag "needs-review"
-docker compose exec web flask reanalyse --category "Games"
 ```
+
+See [doc/ADMIN_COMMANDS.md](doc/ADMIN_COMMANDS.md) for admin CLI commands
+(rebuild-search-index, rescan-hashes, reanalyse, etc.).
 
 ### Database browser (Adminer)
 
