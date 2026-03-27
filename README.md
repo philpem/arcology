@@ -130,6 +130,7 @@ OUTPUT_DIR=/data/outputs          # Analysis outputs directory
 POLL_INTERVAL=10                  # Max poll interval when worker is idle (seconds)
 LOG_LEVEL=INFO                    # Logging level: DEBUG, INFO, WARNING, ERROR
 TOOL_TIMEOUT=3600                 # Subprocess timeout for external tool execution (seconds)
+MAX_DECOMPRESSED_BYTES=10737418240  # Decompression size cap in bytes (default: 10 GiB)
 MASTERING_TRACK_SCAN_COUNT=5      # Number of trailing tracks scanned for mastering fingerprints
 ```
 

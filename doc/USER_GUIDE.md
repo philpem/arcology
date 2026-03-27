@@ -126,10 +126,14 @@ artefacts by analysis (e.g. a decoded `.img` produced from a `.scp` flux dump).
 2. Click **Upload**.
 3. Select a file. Arcology auto-detects the artefact type from the file
    extension; you can override this with the **Artefact Type** dropdown.
-4. Optionally set a label (defaults to the original filename) and description.
-5. The **Auto Analyse** checkbox (on by default) queues appropriate analyses
+4. If the filename follows the Arcarc/Tosec naming convention
+   (`Publisher_Title__Platform-DiscType`), the **Label** field and
+   **Platform hint** dropdown are prefilled automatically. You can edit
+   these before uploading.
+5. Optionally set a label (defaults to the original filename) and description.
+6. The **Auto Analyse** checkbox (on by default) queues appropriate analyses
    immediately after upload.
-6. Click **Upload**.
+7. Click **Upload**.
 
 Supported artefact types and their recognised extensions:
 
@@ -159,7 +163,8 @@ Click an artefact on the item detail page to see:
   checksums (with copy buttons)
 - **Type badge** -- the detected or manually set artefact type
 - **Tags** -- artefact-level tags shown as badges
-- **Analyses** -- status and results of each analysis run on this artefact
+- **Analyses** -- status and results of each analysis run on this artefact,
+  including inline flux visualisation plots for flux images
 - **Partitions and file listings** -- if file extraction has run, the extracted
   directory tree is shown grouped by partition
 - **Derived artefacts** -- if analysis produced new files (e.g. decoded sector

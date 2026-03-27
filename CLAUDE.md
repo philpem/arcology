@@ -45,6 +45,7 @@ arcology/
 │   │   ├── analysis.py         # Analysis queue UI
 │   │   ├── search.py           # Global cross-item search (prefix query syntax)
 │   │   └── api.py              # REST API for workers and external tools
+│   ├── cli/                    # Flask CLI commands (create-admin, rebuild-search-index, rescan-hashes, reanalyse)
 │   ├── utils/                  # Utility modules
 │   ├── templates/              # Jinja2 templates (Bootstrap 5)
 │   └── static/                 # CSS
@@ -157,7 +158,16 @@ flask rebuild-search-index
 flask rescan-hashes                     # all artefacts
 flask rescan-hashes --artefact <UUID>   # single artefact
 flask rescan-hashes --batch-size 1000   # tune commit batch size (default 500)
+
+# Bulk re-queue analysis for artefacts (clears previous results)
+flask reanalyse --all                   # every artefact
+flask reanalyse --artefact-type SCP     # filter by type
+flask reanalyse --platform "BBC Micro"  # filter by platform
+flask reanalyse --tag needs-review      # filter by tag
+flask reanalyse --all --dry-run         # preview without changes
 ```
+
+See `doc/ADMIN_COMMANDS.md` for the full reference including all flags.
 
 ### Debug tools
 

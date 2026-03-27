@@ -129,6 +129,7 @@ The worker is a standalone Python process that polls the web app's REST API for 
 | `POLL_INTERVAL` | `10` | Seconds between polls when no job is available |
 | `TOOL_TIMEOUT` | `3600` | Per-job subprocess timeout in seconds |
 | `MAX_ARCHIVE_DEPTH` | `10` | Maximum nested archive extraction depth |
+| `MAX_DECOMPRESSED_BYTES` | `10737418240` (10 GiB) | Maximum decompressed size; guards against decompression bombs |
 | `MASTERING_TRACK_SCAN_COUNT` | `5` | Number of trailing tracks scanned for mastering fingerprints |
 | `LOG_LEVEL` | `INFO` | Python logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 
