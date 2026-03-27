@@ -21,25 +21,34 @@ from shared.enums import ArtefactType
               help='Only artefacts whose item belongs to this category')
 @click.option('--artefact-type', 'artefact_type_name', default=None,
               help='Only artefacts of this type (e.g. SCP, HFE, IMG)')
+@click.option('--all', 'select_all', is_flag=True, default=False,
+              help='Reanalyse every artefact in the database')
 @click.option('--dry-run', is_flag=True, default=False,
               help='Show what would be requeued without making changes')
 @click.option('--batch-size', default=50, show_default=True,
               help='Number of artefacts to process per database commit')
 def reanalyse(item_uuid, tag_name, platform_name, category_name,
-              artefact_type_name, dry_run, batch_size):
+              artefact_type_name, select_all, dry_run, batch_size):
     """Reset and re-queue analysis for artefacts in the database.
 
-    Without filters, ALL root artefacts are reset and requeued.
-    Filters (--item, --tag, --platform, --category, --artefact-type) can
-    be combined; they are ANDed together.
+    At least one filter or --all is required. Filters (--item, --tag,
+    --platform, --category, --artefact-type) can be combined; they are
+    ANDed together.
 
     Examples:
 
-      flask reanalyse --dry-run
+      flask reanalyse --all --dry-run
       flask reanalyse --artefact-type SCP
       flask reanalyse --platform "Acorn Archimedes" --tag "needs-review"
       flask reanalyse --item abc123def456
     """
+    has_filter = any([item_uuid, tag_name, platform_name, category_name, artefact_type_name])
+
+    if not has_filter and not select_all:
+        click.echo("ERROR: specify at least one filter (--item, --tag, --platform, "
+                    "--category, --artefact-type) or use --all to reanalyse everything.", err=True)
+        raise SystemExit(1)
+
     # Build query: root artefacts only (derived are cleaned up by reset)
     query = Artefact.query.filter(Artefact.parent_artefact_id.is_(None))
 
