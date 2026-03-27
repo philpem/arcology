@@ -339,6 +339,25 @@ def enumerate_extracted_files(
 
         files.append(file_entry)
 
+    # Detect empty directories (no files underneath) and record them explicitly.
+    # Without this, empty directories are invisible in the file listing because
+    # the UI infers subdirectory buttons only from file paths.
+    for dir_path in output_dir.rglob('*'):
+        if not dir_path.is_dir():
+            continue
+        if any(True for f in dir_path.rglob('*') if f.is_file()):
+            continue  # non-empty: already represented via file paths
+        rel_path = dir_path.relative_to(output_dir)
+        dir_entry: dict = {
+            'path': sanitize_path(str(rel_path)),
+            'is_directory': True,
+        }
+        if parent_file_id is not None:
+            dir_entry['parent_file_id'] = parent_file_id
+        if extraction_depth is not None:
+            dir_entry['extraction_depth'] = extraction_depth
+        files.append(dir_entry)
+
     return files
 
 
