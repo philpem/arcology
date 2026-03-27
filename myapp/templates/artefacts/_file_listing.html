@@ -183,7 +183,7 @@
                             <td>{% if file.is_known %}{% set _db_colors = ['info', 'success', 'primary', 'danger', 'warning', 'dark'] %}{% set all_matches = file_known_matches.get(file.id, []) %}{% if all_matches %}{% for kf in all_matches %}<span class="badge bg-{{ _db_colors[kf.database_id % (_db_colors | length)] }} me-1" title="{{ kf.database.name }}">{{ kf.product.title if kf.product else kf.database.name }}</span>{% endfor %}{% else %}<span class="badge bg-{{ _db_colors[file.known_file.database_id % (_db_colors | length)] }}" title="{{ file.known_file.database.name }}">{{ file.known_file.product.title if file.known_file.product else file.known_file.database.name }}</span>{% endif %}{% endif %}</td>
                         </tr>
                         {% else %}
-                        <tr><td colspan="{% if hashdb_mode %}5{% else %}4{% endif %}" class="text-center text-muted">No files{% if not all_partitions %} - run analysis to extract file listing{% endif %}</td></tr>
+                        <tr><td colspan="{% if hashdb_mode %}5{% else %}4{% endif %}" class="text-center text-muted">{% if file_form.path.data %}This directory is empty{% elif not all_partitions %}No files - run analysis to extract file listing{% else %}No files{% endif %}</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>

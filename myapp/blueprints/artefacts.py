@@ -875,7 +875,7 @@ def _render_artefact_view(artefact):
     subdirectories = set()
 
     if all_partitions:
-        # Get all file paths matching current filter
+        # Infer subdirectories from file paths (covers non-empty directories).
         all_files = files_query.with_entities(ExtractedFile.path).all()
 
         for (file_path,) in all_files:
@@ -892,6 +892,32 @@ def _render_artefact_view(artefact):
                 first_dir = relative_path.split('/')[0]
                 if first_dir:  # Ignore empty strings
                     subdirectories.add(first_dir)
+
+        # Also surface explicit is_directory=True entries (covers empty directories
+        # recorded by the worker). These are excluded from files_query when the
+        # "Dirs" checkbox is off, so query them separately.
+        dir_entries_query = (
+            ExtractedFile.query.join(Partition)
+            .filter(
+                Partition.artefact_id.in_(all_artefact_ids),
+                ExtractedFile.is_directory == True,
+            )
+            .with_entities(ExtractedFile.path)
+        )
+        if file_form.partition_uuid.data:
+            dir_entries_query = dir_entries_query.filter(
+                Partition.uuid == file_form.partition_uuid.data
+            )
+        for (dir_path,) in dir_entries_query.all():
+            if current_path:
+                if not dir_path.startswith(current_path):
+                    continue
+                relative_path = dir_path[len(current_path):]
+            else:
+                relative_path = dir_path
+            # Only add direct children (no slash = not a deeper descendant)
+            if relative_path and '/' not in relative_path:
+                subdirectories.add(relative_path)
 
     from natsort import natsorted, ns
     subdirectories = natsorted(subdirectories, alg=ns.IGNORECASE)
