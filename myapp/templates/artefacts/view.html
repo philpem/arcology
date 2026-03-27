@@ -10,8 +10,8 @@
 .rp-summary .rp-chevron { transition: transform 0.15s ease; }
 /* Card header: Bootstrap updates aria-expanded on the div trigger */
 .rp-summary[aria-expanded="true"] .rp-chevron { transform: rotate(90deg); }
-/* Per-product row: Bootstrap toggles .collapsed on the <tr> trigger */
-tr.rp-summary:not(.collapsed) .rp-chevron { transform: rotate(90deg); }
+/* Per-product row: driven by JS collapse events toggling .rp-expanded */
+tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
 /* Make Bootstrap collapse work correctly on <tbody> (needs table-row-group, not block) */
 tbody.collapse.show { display: table-row-group; }
 tbody.collapsing { display: none; transition: none; }

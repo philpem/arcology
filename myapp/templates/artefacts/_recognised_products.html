@@ -93,4 +93,12 @@
                 </div>
             </div>
         </div>
+        <script>
+        document.querySelectorAll('tr[data-bs-target^="#rp-instances-"]').forEach(function(trigger) {
+            var target = document.querySelector(trigger.getAttribute('data-bs-target'));
+            if (!target) return;
+            target.addEventListener('show.bs.collapse', function() { trigger.classList.add('rp-expanded'); });
+            target.addEventListener('hide.bs.collapse', function() { trigger.classList.remove('rp-expanded'); });
+        });
+        </script>
         {% endif %}
