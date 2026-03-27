@@ -18,11 +18,8 @@
                         {% set rp_instances = rp_group | list %}
                         {% set is_multi = rp_instances | length > 1 %}
                         {% set first = rp_instances[0] %}
-                        {% set collapse_id = 'rp-instances-' ~ product_id %}
                         {# Summary row — clickable when there are multiple instances #}
-                        <tr {% if is_multi %}class="rp-summary collapsed" role="button"
-                               data-bs-toggle="collapse" data-bs-target="#{{ collapse_id }}"
-                               aria-expanded="false" aria-controls="{{ collapse_id }}"{% endif %}>
+                        <tr {% if is_multi %}class="rp-summary" role="button" data-rp-group="{{ product_id }}"{% endif %}>
                             <td>
                                 <strong>{{ first.product.title }}</strong>
                                 {% if is_multi %}
@@ -61,31 +58,29 @@
                             {% endif %}
                         </tr>
                         {% if is_multi %}
-                        {# Expandable detail: one row per instance, aligned to table columns #}
-                        <tbody id="{{ collapse_id }}" class="collapse">
-                            {% for rp in rp_instances %}
-                            {% set rp_color = rp_colors[rp.partition.partition_index % rp_colors|length] %}
-                            <tr class="bg-light small">
-                                <td></td>
-                                <td></td>
-                                <td>
-                                    <span class="badge bg-{{ rp_color }} me-1"
-                                          title="Partition {{ rp.partition.partition_index }}: {{ rp.partition.label or rp.partition.filesystem.value }}">{{ rp.partition.partition_index }}</span><a href="?partition_uuid={{ rp.partition.uuid }}&path={{ (rp.folder_path ~ '/')|urlencode }}&show_directories=y" class="text-decoration-none"><code>{{ rp.folder_path }}</code></a>
-                                </td>
-                                <td class="text-nowrap">{{ rp.required_matched }}/{{ rp.required_total }}</td>
-                                <td class="text-nowrap">{{ rp.optional_matched }}/{{ rp.optional_total }}</td>
-                                <td>
-                                    {% if rp.required_total > 0 %}
-                                    {% set pct = (rp.required_matched / rp.required_total * 100)|int %}
-                                    <div class="progress" style="height:8px; min-width:60px">
-                                        <div class="progress-bar {% if pct == 100 %}bg-success{% elif pct >= 50 %}bg-warning{% else %}bg-danger{% endif %}"
-                                             style="width:{{ pct }}%"></div>
-                                    </div>
-                                    {% else %}-{% endif %}
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
+                        {# Expandable detail: one row per instance, hidden until summary row is clicked #}
+                        {% for rp in rp_instances %}
+                        {% set rp_color = rp_colors[rp.partition.partition_index % rp_colors|length] %}
+                        <tr class="rp-detail d-none bg-light small" data-rp-group="{{ product_id }}">
+                            <td></td>
+                            <td></td>
+                            <td>
+                                <span class="badge bg-{{ rp_color }} me-1"
+                                      title="Partition {{ rp.partition.partition_index }}: {{ rp.partition.label or rp.partition.filesystem.value }}">{{ rp.partition.partition_index }}</span><a href="?partition_uuid={{ rp.partition.uuid }}&path={{ (rp.folder_path ~ '/')|urlencode }}&show_directories=y" class="text-decoration-none"><code>{{ rp.folder_path }}</code></a>
+                            </td>
+                            <td class="text-nowrap">{{ rp.required_matched }}/{{ rp.required_total }}</td>
+                            <td class="text-nowrap">{{ rp.optional_matched }}/{{ rp.optional_total }}</td>
+                            <td>
+                                {% if rp.required_total > 0 %}
+                                {% set pct = (rp.required_matched / rp.required_total * 100)|int %}
+                                <div class="progress" style="height:8px; min-width:60px">
+                                    <div class="progress-bar {% if pct == 100 %}bg-success{% elif pct >= 50 %}bg-warning{% else %}bg-danger{% endif %}"
+                                         style="width:{{ pct }}%"></div>
+                                </div>
+                                {% else %}-{% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
                         {% endif %}
                         {% endfor %}
                         </tbody>
@@ -94,11 +89,15 @@
             </div>
         </div>
         <script>
-        document.querySelectorAll('tr[data-bs-target^="#rp-instances-"]').forEach(function(trigger) {
-            var target = document.querySelector(trigger.getAttribute('data-bs-target'));
-            if (!target) return;
-            target.addEventListener('show.bs.collapse', function() { trigger.classList.add('rp-expanded'); });
-            target.addEventListener('hide.bs.collapse', function() { trigger.classList.remove('rp-expanded'); });
+        document.querySelectorAll('tr.rp-summary[data-rp-group]').forEach(function(trigger) {
+            trigger.addEventListener('click', function() {
+                var group = this.getAttribute('data-rp-group');
+                var expand = !this.classList.contains('rp-expanded');
+                this.classList.toggle('rp-expanded', expand);
+                document.querySelectorAll('tr.rp-detail[data-rp-group="' + group + '"]').forEach(function(row) {
+                    row.classList.toggle('d-none', !expand);
+                });
+            });
         });
         </script>
         {% endif %}

@@ -8,13 +8,9 @@
 <style>
 /* Recognised Items: chevron rotates when group is expanded */
 .rp-summary .rp-chevron { transition: transform 0.15s ease; }
-/* Card header: Bootstrap updates aria-expanded on the div trigger */
-.rp-summary[aria-expanded="true"] .rp-chevron { transform: rotate(90deg); }
-/* Per-product row: driven by JS collapse events toggling .rp-expanded */
+/* Card header uses aria-expanded; per-product rows use .rp-expanded toggled by JS */
+.rp-summary[aria-expanded="true"] .rp-chevron,
 tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
-/* Make Bootstrap collapse work correctly on <tbody> (needs table-row-group, not block) */
-tbody.collapse.show { display: table-row-group; }
-tbody.collapsing { display: none; transition: none; }
 
 /* Protection accordion: match rollup right→down chevron style */
 #protectionAccordion .accordion-button::after {
