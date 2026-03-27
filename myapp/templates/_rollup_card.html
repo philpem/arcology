@@ -24,8 +24,8 @@
 {% macro styles() %}
 <style>
 /* Rollup card: chevron rotates when section is expanded */
-.rollup-header .rollup-chevron { transition: transform 0.15s ease; }
 .rollup-header[aria-expanded="true"] .rollup-chevron { transform: rotate(90deg); }
+.rollup-chevron { transition: transform 0.15s ease; }
 </style>
 {% endmacro %}
 
@@ -33,23 +33,26 @@
    Uses {% call(body_slot) %} with a two-pass pattern:
      body_slot=false  -> caller emits header badges
      body_slot=true   -> caller emits body content
+
+   The Raw Analysis link sits OUTSIDE the data-bs-toggle element so
+   Bootstrap's capture-phase delegated handler never sees clicks on it.
 #}
 {% macro card(collapse_id, title, icon, analysis_uuid, border_class="border-secondary", header_classes="bg-secondary bg-opacity-25") %}
 <div class="card mb-4 {{ border_class }}">
-    <div class="card-header d-flex justify-content-between align-items-center {{ header_classes }} rollup-header"
-         style="cursor: pointer;" data-bs-toggle="collapse" data-bs-target="#{{ collapse_id }}"
-         aria-expanded="false" aria-controls="{{ collapse_id }}">
-        <span>
-            <i class="bi bi-{{ icon }}"></i> {{ title }}
-            {{ caller(false) }}
-        </span>
-        <div>
-            <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=analysis_uuid) }}"
-               class="btn btn-sm btn-outline-secondary me-1" onclick="event.stopPropagation()">
-                <i class="bi bi-search"></i> Raw Analysis
-            </a>
+    <div class="card-header d-flex align-items-center {{ header_classes }}" style="padding: 0;">
+        <a class="flex-grow-1 d-flex justify-content-between align-items-center text-decoration-none text-reset px-3 py-2 rollup-header"
+           style="cursor: pointer;" data-bs-toggle="collapse" href="#{{ collapse_id }}"
+           role="button" aria-expanded="false" aria-controls="{{ collapse_id }}">
+            <span>
+                <i class="bi bi-{{ icon }}"></i> {{ title }}
+                {{ caller(false) }}
+            </span>
             <i class="bi bi-chevron-right rollup-chevron"></i>
-        </div>
+        </a>
+        <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=analysis_uuid) }}"
+           class="btn btn-sm btn-outline-secondary me-2">
+            <i class="bi bi-search"></i> Raw Analysis
+        </a>
     </div>
     <div class="collapse" id="{{ collapse_id }}">
         {{ caller(true) }}
