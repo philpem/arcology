@@ -248,7 +248,6 @@ class FileSearchForm(FlaskForm):
         ('only', 'Products: Only'),
     ], default='', validators=[Optional()])
     show_directories = BooleanField('Show directories', default=False)
-    recursive = BooleanField('Recursive (show all subdirs)', default=True)
 
 
 # =============================================================================
@@ -681,7 +680,7 @@ def _render_artefact_view(artefact):
     # so that BooleanField defaults (e.g. recursive=True) apply on first load.
     # Without this, WTForms treats missing checkbox keys as False.
     _file_filter_keys = {'partition_uuid', 'filename', 'extension', 'path', 'md5', 'sha1',
-                         'hide_known', 'filter_products', 'show_directories', 'recursive'}
+                         'hide_known', 'filter_products', 'show_directories'}
     if _file_filter_keys & set(request.args.keys()):
         file_form = FileSearchForm(request.args)
     else:
@@ -770,21 +769,9 @@ def _render_artefact_view(artefact):
 
     if file_form.path.data:
         path_filter = file_form.path.data.strip()
-        if file_form.recursive.data:
-            # Recursive: show all files under this path (starts with)
-            files_query = files_query.filter(
-                ExtractedFile.path.ilike(f'{path_filter}%')
-            )
-        else:
-            # Non-recursive: only files directly in this directory (no additional slashes after path)
-            # This shows files at the current level only
-            from sqlalchemy import and_, not_, func
-            files_query = files_query.filter(
-                and_(
-                    ExtractedFile.path.ilike(f'{path_filter}%'),
-                    not_(func.substr(ExtractedFile.path, len(path_filter) + 1).contains('/'))
-                )
-            )
+        files_query = files_query.filter(
+            ExtractedFile.path.ilike(f'{path_filter}%')
+        )
 
     if file_form.md5.data:
         files_query = files_query.filter(ExtractedFile.md5 == file_form.md5.data.lower())
@@ -1042,14 +1029,11 @@ def add_to_hashdb(uuid):
     # Preserve directory navigation state across the redirect
     nav_partition_uuid = request.form.get('partition_uuid', '').strip() or None
     nav_path = request.form.get('nav_path', '').strip() or None
-    nav_recursive = request.form.get('nav_recursive', '').strip()
     redirect_kwargs = dict(item_id=artefact.item.url_id, artefact_id=artefact.url_slug, mode='hashdb')
     if nav_partition_uuid:
         redirect_kwargs['partition_uuid'] = nav_partition_uuid
     if nav_path:
         redirect_kwargs['path'] = nav_path
-    if nav_recursive:
-        redirect_kwargs['recursive'] = nav_recursive
 
     if not file_ids:
         flash('No files selected.', 'warning')
