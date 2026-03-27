@@ -909,6 +909,7 @@ def _render_artefact_view(artefact):
     protection_analysis = None
     partition_detect_details = None
     armlock_analysis = None
+    flux_visualisation_analysis = None
     for a in all_related_analyses:
         if a.status == AnalysisStatus.COMPLETED and a.details:
             if mastering_analysis is None and a.analysis_type == AnalysisType.DISC_MASTERING_DETECT:
@@ -935,8 +936,15 @@ def _render_artefact_view(artefact):
                     armlock_analysis['_analysis_uuid'] = a.uuid
                 except (json.JSONDecodeError, TypeError) as e:
                     current_app.logger.warning(f"Failed to parse ARMlock analysis details for {a.uuid}: {e}")
+            elif flux_visualisation_analysis is None and a.analysis_type == AnalysisType.FLUX_VISUALISATION:
+                try:
+                    flux_visualisation_analysis = json.loads(a.details)
+                    flux_visualisation_analysis['_analysis_uuid'] = a.uuid
+                except (json.JSONDecodeError, TypeError) as e:
+                    current_app.logger.warning(f"Failed to parse flux visualisation analysis details for {a.uuid}: {e}")
         if (mastering_analysis is not None and protection_analysis is not None
-                and partition_detect_details is not None):
+                and partition_detect_details is not None
+                and flux_visualisation_analysis is not None):
             break
 
     # Build a lookup of per-partition metadata from PARTITION_DETECT, keyed by
@@ -1002,6 +1010,7 @@ def _render_artefact_view(artefact):
                            mastering_analysis=mastering_analysis,
                            protection_analysis=protection_analysis,
                            armlock_analysis=armlock_analysis,
+                           flux_visualisation_analysis=flux_visualisation_analysis,
                            partition_detect_details=partition_detect_details,
                            partition_metadata=partition_metadata,
                            hashdb_mode=hashdb_mode,
@@ -1586,6 +1595,18 @@ def rerun_product_recognition_route(uuid):
         flash('Product recognition already pending or running — nothing new queued.', 'info')
     return _redirect_to_artefact_view(artefact)
 
+
+@blueprint.route('/outputs/<path:filename>')
+@login_required
+def get_output_file(filename):
+    """Serve an analysis output file (visualisation, etc.) to logged-in users."""
+    folder = get_output_folder()
+    file_path = os.path.realpath(os.path.join(folder, filename))
+    if not file_path.startswith(os.path.realpath(folder) + os.sep):
+        abort(404)
+    if not os.path.exists(file_path):
+        abort(404)
+    return send_file(file_path)
 
 
 # vim: ts=4 sw=4 et

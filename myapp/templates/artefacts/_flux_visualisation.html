@@ -1,0 +1,35 @@
+{% if flux_visualisation_analysis and flux_visualisation_analysis.get('outputs') %}
+{% set fv_outputs = flux_visualisation_analysis.get('outputs', []) | selectattr('type', 'equalto', 'image') | list %}
+{% if fv_outputs %}
+{% call(body_slot) rollup.card(
+    collapse_id   = "fluxVisualisationCollapse",
+    title         = "Flux Visualisation",
+    icon          = "image",
+    analysis_uuid = flux_visualisation_analysis['_analysis_uuid'],
+) %}
+    {% if not body_slot %}
+        <span class="badge bg-secondary ms-1">{{ fv_outputs | length }}</span>
+    {% else %}
+        <div class="card-body">
+            <div class="row">
+                {% for output in fv_outputs %}
+                <div class="col-md-6 mb-3">
+                    <div class="card">
+                        <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=output.filename) }}" target="_blank">
+                            <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=output.filename) }}"
+                                 class="card-img-top"
+                                 alt="{{ output.description }}"
+                                 style="cursor: pointer;">
+                        </a>
+                        <div class="card-body py-2">
+                            <small class="text-muted">{{ output.description }} ({{ output.tool }})</small>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    {% endif %}
+{% endcall %}
+{% endif %}
+{% endif %}
