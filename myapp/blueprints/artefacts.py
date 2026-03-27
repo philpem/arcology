@@ -204,6 +204,8 @@ class ArtefactUploadForm(FlaskForm):
     file = FileField('File', validators=[FileRequired()])
     label = StringField('Label', validators=[DataRequired()],
                         description='e.g., "Disc 1", "Program Disc", "Manual"')
+    platform_id = SelectField('Platform hint', coerce=int, validators=[Optional()],
+                               description='Helps analysis tools identify format')
     artefact_type = SelectField('Type (auto-detected)', coerce=str, validators=[Optional()],
                                  description='Leave as "Auto-detect" unless incorrect')
     description = TextAreaField('Description', validators=[Optional()])
@@ -1191,12 +1193,16 @@ def upload(item_id):
     """Upload a new artefact."""
     item = lookup_by_identifier(Item, item_id)
     form = ArtefactUploadForm()
-    
+
     # Build type choices with auto-detect as default
     type_choices = [('auto', '-- Auto-detect --')]
     type_choices.extend([(t.value, t.value.upper().replace('_', ' ')) for t in ArtefactType if t != ArtefactType.UNKNOWN])
     form.artefact_type.choices = type_choices
-    
+
+    # Build platform choices
+    platforms = Platform.query.order_by(Platform.name).all()
+    form.platform_id.choices = [(0, '-- No hint --')] + [(p.id, p.name) for p in platforms]
+
     if form.validate_on_submit():
         file = form.file.data
         original_filename = safe_original_filename(file.filename)
@@ -1238,7 +1244,12 @@ def upload(item_id):
 
         # Always queue checksum computation via the worker; also queue type-specific
         # analyses if the user requested auto-analyse.
-        queue_analyses_for_artefact(artefact, checksum_only=not form.auto_analyse.data)
+        hints = {}
+        if form.platform_id.data and form.platform_id.data != 0:
+            platform = Platform.query.get(form.platform_id.data)
+            if platform:
+                hints['platform'] = platform.name
+        queue_analyses_for_artefact(artefact, hints if hints else None, checksum_only=not form.auto_analyse.data)
         if form.auto_analyse.data:
             flash(f'Artefact "{artefact.label}" uploaded. Analysis queued.', 'success')
         else:
