@@ -211,6 +211,7 @@ class ArtefactUploadForm(FlaskForm):
                                  description='Leave as "Auto-detect" unless incorrect')
     description = TextAreaField('Description', validators=[Optional()])
     auto_analyse = BooleanField('Run automatic analysis', default=True)
+    upload_more = BooleanField('Upload more', default=False)
 
 
 class ArtefactEditForm(FlaskForm):
@@ -1284,8 +1285,12 @@ def upload(item_id):
         else:
             flash(f'Artefact "{artefact.label}" uploaded.', 'success')
 
+        if form.upload_more.data:
+            return redirect(url_for(f'{ROUTENAME}.upload', item_id=item.url_id, upload_more=1))
         return redirect(url_for(f'{ROUTENAME}.view', item_id=item.url_id, artefact_id=artefact.url_slug))
 
+    if request.args.get('upload_more') == '1':
+        form.upload_more.data = True
     return render_template('artefacts/upload.html', form=form, item=item)
 
 
