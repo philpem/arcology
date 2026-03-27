@@ -299,6 +299,8 @@ def _parse_armlock_options(data: bytes) -> dict:
     paths: list = []
     pos = 0x0F
     while pos < len(data):
+        if data[pos] == 0x00:   # null at start of string = list terminator
+            break
         nul = data.find(b'\x00', pos)
         end = nul if nul != -1 else len(data)
         s = data[pos:end].decode('ascii', errors='replace').strip()
