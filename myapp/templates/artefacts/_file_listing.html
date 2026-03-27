@@ -71,6 +71,7 @@
                 <input type="hidden" name="base_path" value="{{ current_path }}">
                 <input type="hidden" name="partition_uuid" value="{{ file_form.partition_uuid.data or '' }}">
                 <input type="hidden" name="nav_path" value="{{ current_path }}">
+                <input type="hidden" name="nav_recursive" value="{{ 'true' if file_form.recursive.data else '' }}">
             {% endif %}
             <div class="table-responsive">
                 {# Sortable column header macro: toggles direction when active #}

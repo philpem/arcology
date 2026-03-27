@@ -1042,11 +1042,14 @@ def add_to_hashdb(uuid):
     # Preserve directory navigation state across the redirect
     nav_partition_uuid = request.form.get('partition_uuid', '').strip() or None
     nav_path = request.form.get('nav_path', '').strip() or None
+    nav_recursive = request.form.get('nav_recursive', '').strip()
     redirect_kwargs = dict(item_id=artefact.item.url_id, artefact_id=artefact.url_slug, mode='hashdb')
     if nav_partition_uuid:
         redirect_kwargs['partition_uuid'] = nav_partition_uuid
     if nav_path:
         redirect_kwargs['path'] = nav_path
+    if nav_recursive:
+        redirect_kwargs['recursive'] = nav_recursive
 
     if not file_ids:
         flash('No files selected.', 'warning')
