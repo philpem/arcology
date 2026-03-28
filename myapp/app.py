@@ -86,6 +86,25 @@ def create_app(config_name=None):
     import json
     app.jinja_env.filters['fromjson'] = lambda s: json.loads(s) if s else {}
 
+    # Hex dump filter: converts a hex string to a formatted text hex dump
+    def _hexdump_filter(hex_str, bytes_per_row=16):
+        try:
+            data = bytes.fromhex(hex_str)
+        except (ValueError, TypeError):
+            return hex_str or ''
+        rows = []
+        for i in range(0, len(data), bytes_per_row):
+            chunk = data[i:i + bytes_per_row]
+            # Two groups of 8, separated by an extra space
+            left  = ' '.join(f'{b:02x}' for b in chunk[:8])
+            right = ' '.join(f'{b:02x}' for b in chunk[8:])
+            hex_part = f'{left}  {right}' if chunk[8:] else left
+            hex_part = hex_part.ljust(bytes_per_row * 3 + 1)
+            ascii_part = ''.join(chr(b) if 0x20 <= b < 0x7F else '.' for b in chunk)
+            rows.append(f'{i:04x}  {hex_part}  {ascii_part}')
+        return '\n'.join(rows)
+    app.jinja_env.filters['hexdump'] = _hexdump_filter
+
     # RISC OS filetype formatting
     from .riscos_filetypes import format_filetype, get_filetype_name
     app.jinja_env.filters['format_filetype'] = format_filetype

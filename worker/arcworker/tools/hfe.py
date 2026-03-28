@@ -753,10 +753,11 @@ def _try_traceback(data: bytes, track: int, side: int) -> dict | None:
         if text and any(c.isalnum() for c in text):
             fields.append(text)
     return {
-        'type':   'traceback',
-        'track':  track,
-        'side':   side,
-        'fields': fields,
+        'type':     'traceback',
+        'track':    track,
+        'side':     side,
+        'fields':   fields,
+        'data_hex': data.hex(),
     }
 
 
@@ -811,6 +812,7 @@ def _try_formaster(data: bytes, track: int, side: int,
         'format_code':        format_code,
         'format_description': format_description,
         'serial_number':      serial_number,
+        'data_hex':           data.hex(),
     }
 
     # Extended fields present in 256-byte record

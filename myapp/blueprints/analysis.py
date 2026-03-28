@@ -4,9 +4,11 @@ Arcology - Analysis Blueprint
 View and manage analysis jobs.
 """
 
+import io
+import json
 import re
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request
+from flask import Blueprint, render_template, redirect, url_for, flash, request, send_file, abort
 from flask_login import login_required
 from sqlalchemy import case, func
 from sqlalchemy.orm import joinedload
@@ -161,6 +163,33 @@ def retry(uuid):
 
     flash('Analysis requeued.', 'success')
     return _view_redirect(analysis)
+
+
+@blueprint.route('/<string:uuid>/sector/<int:idx>/download')
+@login_required
+def download_sector(uuid, idx):
+    """Download raw sector bytes for a mastering indicator."""
+    analysis = _get_analysis_or_404(uuid)
+    if not analysis.details:
+        abort(404)
+    details = json.loads(analysis.details)
+    indicators = details.get('indicators', [])
+    if idx < 0 or idx >= len(indicators):
+        abort(404)
+    ind = indicators[idx]
+    data_hex = ind.get('data_hex')
+    if not data_hex:
+        abort(404)
+    ind_type = ind.get('type', 'sector')
+    track = ind.get('track', 0)
+    side = ind.get('side', 0)
+    filename = f"{ind_type}_track{track:02d}_side{side}.bin"
+    return send_file(
+        io.BytesIO(bytes.fromhex(data_hex)),
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/octet-stream',
+    )
 
 
 @blueprint.route('/queue')
