@@ -306,6 +306,25 @@ class ArcologyAPI:
             return []
         return response.get('analyses', [])
 
+    def reset_stale_analyses(self) -> int:
+        """
+        Ask the server to reset any RUNNING jobs older than the stale timeout
+        back to PENDING.  Called on worker startup to recover from a previous crash.
+
+        Returns:
+            Number of jobs reset, or 0 on error.
+        """
+        try:
+            resp = self._request_response('post', '/analysis/reset-stale', data={})
+            resp.raise_for_status()
+            count = resp.json().get('reset', 0)
+            if count:
+                log.info(f'Recovered {count} stale analysis job(s) left by a previous worker crash')
+            return count
+        except Exception as e:
+            log.warning(f'Failed to reset stale analyses on startup: {e}')
+            return 0
+
     def claim_analysis(self, analysis_id: int) -> bool:
         """
         Attempt to claim an analysis job for processing.

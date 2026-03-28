@@ -5,8 +5,9 @@ View and manage analysis jobs.
 """
 
 import re
+from datetime import datetime, timezone, timedelta
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request
+from flask import Blueprint, render_template, redirect, url_for, flash, request, current_app
 from flask_login import login_required
 from sqlalchemy import case, func
 from sqlalchemy.orm import joinedload
@@ -56,6 +57,13 @@ def _reset_for_retry(analysis):
     analysis.success = None
     analysis.summary = None
     analysis.details = None
+
+
+def _stale_cutoff():
+    """Return the datetime before which a RUNNING job is considered stuck."""
+    seconds = current_app.config.get('STALE_JOB_TIMEOUT_SECONDS', 3600)
+    # started_at is stored as naive UTC; compare against naive UTC now
+    return datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=seconds)
 
 
 @blueprint.route('/')
@@ -141,6 +149,23 @@ def cancel(uuid):
     return redirect(url_for(f'{ROUTENAME}.index'))
 
 
+@blueprint.route('/reset-stale', methods=['POST'])
+@login_required
+@require_permission('read_write')
+def reset_stale():
+    """Reset RUNNING jobs that have been stuck longer than the stale timeout back to PENDING."""
+    cutoff = _stale_cutoff()
+    stale = Analysis.query.filter(
+        Analysis.status == AnalysisStatus.RUNNING,
+        Analysis.started_at < cutoff,
+    ).all()
+    for analysis in stale:
+        _reset_for_retry(analysis)
+    db.session.commit()
+    flash(f'Reset {len(stale)} stale job(s) back to pending.', 'success' if stale else 'info')
+    return redirect(url_for(f'{ROUTENAME}.queue'))
+
+
 @blueprint.route('/<string:uuid>/retry', methods=['POST'])
 @login_required
 @require_permission('read_write')
@@ -174,8 +199,10 @@ def queue():
     running = Analysis.query.filter(
         Analysis.status == AnalysisStatus.RUNNING
     ).options(joinedload(Analysis.artefact)).order_by(Analysis.started_at).all()
-    
-    return render_template('analysis/queue.html', pending=pending, running=running)
+
+    cutoff = _stale_cutoff()
+    return render_template('analysis/queue.html', pending=pending, running=running,
+                           stale_cutoff=cutoff)
 
 
 # vim: ts=4 sw=4 et

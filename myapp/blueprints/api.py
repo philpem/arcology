@@ -6,7 +6,7 @@ RESTful API for external integrations.
 
 import hmac
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from functools import wraps
 from flask import Blueprint, jsonify, request, current_app, send_file
 from flask_wtf.csrf import CSRFProtect
@@ -696,6 +696,39 @@ def get_pending_analyses():
         .all()
     )
     return jsonify({'analyses': [analysis_to_dict(a, include_artefact=True) for a in analyses]})
+
+
+@blueprint.route('/analysis/reset-stale', methods=['POST'])
+@require_auth('read_write')
+def reset_stale_analyses():
+    """Reset RUNNING jobs stuck longer than the stale timeout back to PENDING.
+
+    Called by the worker on startup to recover any jobs left in RUNNING state
+    by a previous worker crash.  Also callable by operators via the UI.
+    """
+    timeout_seconds = current_app.config.get('STALE_JOB_TIMEOUT_SECONDS', 3600)
+    # started_at is stored as naive UTC
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=timeout_seconds)
+    stale = Analysis.query.filter(
+        Analysis.status == AnalysisStatus.RUNNING,
+        Analysis.started_at < cutoff,
+    ).all()
+    for analysis in stale:
+        analysis.status = AnalysisStatus.PENDING
+        analysis.error_message = None
+        analysis.started_at = None
+        analysis.completed_at = None
+        analysis.tool_name = None
+        analysis.tool_version = None
+        analysis.output_url = None
+        analysis.output_path = None
+        analysis.success = None
+        analysis.summary = None
+        analysis.details = None
+    db.session.commit()
+    if stale:
+        current_app.logger.info(f'Reset {len(stale)} stale analysis job(s) to PENDING')
+    return jsonify({'reset': len(stale)})
 
 
 # =============================================================================
