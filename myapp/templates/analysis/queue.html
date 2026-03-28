@@ -5,7 +5,16 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h1><i class="bi bi-list-task"></i> Analysis Queue</h1>
-    <a href="{{ url_for('myapp_blueprints_analysis.index') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> All Analyses</a>
+    <div class="d-flex gap-2">
+        <form action="{{ url_for('myapp_blueprints_analysis.reset_stale') }}" method="post" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-warning btn-sm"
+                    onclick="return confirm('Reset all stale running jobs back to pending?')">
+                <i class="bi bi-arrow-counterclockwise"></i> Reset Stale Jobs
+            </button>
+        </form>
+        <a href="{{ url_for('myapp_blueprints_analysis.index') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> All Analyses</a>
+    </div>
 </div>
 
 <div class="card mb-4">
@@ -13,9 +22,12 @@
     {% if running %}
     <div class="list-group list-group-flush">
         {% for a in running %}
-        <div class="list-group-item d-flex justify-content-between">
+        {% set is_stale = a.started_at and a.started_at < stale_cutoff %}
+        <div class="list-group-item d-flex justify-content-between{% if is_stale %} list-group-item-warning{% endif %}">
             <span><a href="{{ url_for('myapp_blueprints_analysis.view', uuid=a.uuid) }}">#{{ a.id }}</a> {{ a.analysis_type.value|replace('_', ' ')|title }} - {{ a.artefact.label }}</span>
-            <span class="text-muted">Started {{ a.started_at.strftime('%H:%M:%S') if a.started_at else 'unknown' }}</span>
+            <span class="text-muted">
+                Started {{ a.started_at.strftime('%Y-%m-%d %H:%M:%S') if a.started_at else 'unknown' }}{% if is_stale %} <span class="badge bg-warning text-dark">stale</span>{% endif %}
+            </span>
         </div>
         {% endfor %}
     </div>

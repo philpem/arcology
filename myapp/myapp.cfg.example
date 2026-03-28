@@ -39,3 +39,8 @@ ANALYSES_SHOWN = 5      # Max completed analyses shown per artefact before "Show
 # Generate: python3 -c 'import secrets; print(f"wrk_{secrets.token_urlsafe(32)}")'
 # Must match the WORKER_API_KEY environment variable set on all worker containers.
 WORKER_API_KEY = ""
+
+# How long (in seconds) a job may stay in RUNNING state before it is considered
+# stuck and eligible for reset back to PENDING.  Set this comfortably above the
+# longest expected analysis run time.  Default: 3600 (1 hour).
+STALE_JOB_TIMEOUT_SECONDS = 3600

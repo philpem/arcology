@@ -2204,6 +2204,9 @@ class AnalysisWorker:
         log.info(f"Uploads: {self.uploads}")
         log.info(f"Outputs: {self.outputs}")
 
+        # Recover any jobs left in RUNNING state by a previous worker crash
+        self.api.reset_stale_analyses()
+
         MIN_POLL = 0.5
         current_delay = MIN_POLL
 
