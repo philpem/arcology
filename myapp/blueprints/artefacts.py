@@ -6,6 +6,7 @@ CRUD operations for digital artefacts with file upload and auto-analysis.
 
 import glob
 import os
+import re
 import hashlib
 import shutil
 import threading
@@ -400,9 +401,14 @@ def _resolve_extracted_file_path(ef):
                     return file_path
                 # RISC OS filetype suffix fallback — re-check confinement on
                 # each candidate so a glob match cannot escape real_base.
+                # Restrict to files whose comma-suffix is 1–3 hex digits so
+                # that DIM sidecar files (e.g. filename,INF) are never served
+                # in place of the actual data file.
                 candidates = [
                     f for f in glob.glob(raw_path + ',*')
-                    if os.path.isfile(f) and os.path.realpath(f).startswith(real_base + os.sep)
+                    if os.path.isfile(f)
+                    and os.path.realpath(f).startswith(real_base + os.sep)
+                    and re.search(r',[0-9a-fA-F]{1,3}$', os.path.basename(f))
                 ]
                 if candidates:
                     return candidates[0]

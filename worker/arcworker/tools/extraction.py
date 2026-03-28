@@ -90,7 +90,7 @@ exit
 
         # Count extracted files
         extracted_files = list(output_dir.rglob('*'))
-        file_count = sum(1 for f in extracted_files if f.is_file() and not f.suffix == '.inf')
+        file_count = sum(1 for f in extracted_files if f.is_file() and f.suffix.lower() != '.inf')
 
         if file_count > 0:
             # Rename any files whose names contain raw RISC OS Latin1 bytes to
@@ -281,7 +281,7 @@ def enumerate_extracted_files(
             continue
 
         # Skip .inf metadata files (Acorn DIM extraction artifacts)
-        if acorn and file_path.suffix == '.inf':
+        if acorn and file_path.suffix.lower() == '.inf':
             continue
 
         rel_path = file_path.relative_to(output_dir)
