@@ -18,7 +18,7 @@ from .artefacts import _delete_item_files
 from ..permissions import require_permission
 from ..utils.item_helpers import item_choice_list, assign_item_fields, assign_item_tags
 from ..utils.slugs import get_or_create_slug, lookup_by_identifier
-from ..utils.pagination import compute_letter_pages
+from ..utils.pagination import compute_letter_pages, resolve_per_page, VALID_PER_PAGE
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -89,17 +89,7 @@ def index():
     # Eager-load platform and category to avoid N+1 lazy loads in template
     query = query.options(selectinload(Item.platform), selectinload(Item.category))
 
-    page = request.args.get('page', 1, type=int)
-    valid_per_page = [25, 50, 100, 250]
-    per_page_param = request.args.get('per_page', None, type=int)
-    view_all = per_page_param == 0
-    if per_page_param in valid_per_page:
-        per_page = per_page_param
-    elif view_all:
-        per_page = 10000
-        page = 1
-    else:
-        per_page = current_app.config.get('ITEMS_PER_PAGE', 25)
+    per_page, page, view_all = resolve_per_page('ITEMS_PER_PAGE', 25)
 
     # Compute letter-to-page mapping for A-Z jump bar
     letter_pages, current_letter = compute_letter_pages(
@@ -127,7 +117,7 @@ def index():
                            form=form,
                            letter_pages=letter_pages,
                            current_letter=current_letter,
-                           valid_per_page=valid_per_page,
+                           valid_per_page=VALID_PER_PAGE,
                            view_all=view_all)
 
 
@@ -168,17 +158,7 @@ def view(uuid):
     """View an item and its artefacts."""
     item = lookup_by_identifier(Item, uuid)
 
-    page = request.args.get('page', 1, type=int)
-    valid_per_page = [25, 50, 100, 250]
-    per_page_param = request.args.get('per_page', None, type=int)
-    view_all = per_page_param == 0
-    if per_page_param in valid_per_page:
-        per_page = per_page_param
-    elif view_all:
-        per_page = 10000
-        page = 1
-    else:
-        per_page = current_app.config.get('ARTEFACTS_PER_PAGE', 25)
+    per_page, page, view_all = resolve_per_page('ARTEFACTS_PER_PAGE', 25)
 
     artefact_query = (
         Artefact.query
@@ -194,7 +174,7 @@ def view(uuid):
 
     return render_template('items/view.html', item=item, artefacts_page=artefacts_page,
                            letter_pages=letter_pages, current_letter=current_letter,
-                           valid_per_page=valid_per_page, view_all=view_all)
+                           valid_per_page=VALID_PER_PAGE, view_all=view_all)
 
 
 @blueprint.route('/<string:uuid>/edit', methods=['GET', 'POST'])

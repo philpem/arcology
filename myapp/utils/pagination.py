@@ -1,10 +1,15 @@
 """Pagination utilities for Arcology."""
 
+from flask import request, current_app
+from flask_login import current_user
 from sqlalchemy import func
 
+from ..extensions import db
 
 _ALPHA = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 _ALPHA_SET = set(_ALPHA)
+
+VALID_PER_PAGE = [25, 50, 100, 250]
 
 
 def compute_letter_pages(query, field, per_page, current_page=1):
@@ -78,6 +83,47 @@ def compute_letter_pages(query, field, per_page, current_page=1):
             break
 
     return letter_pages, current_letter
+
+
+def resolve_per_page(config_key, config_default=25):
+    """Resolve the per_page value from request args, user preference, or config.
+
+    Returns ``(per_page, page, view_all)``.
+
+    Priority:
+      1. Explicit ``per_page`` query parameter (if valid or 0 for "all")
+      2. User's saved ``per_page`` preference
+      3. Application config value for *config_key*
+      4. *config_default*
+
+    When an explicit per_page is provided and differs from the user's stored
+    preference, the preference is updated automatically.
+    """
+    page = request.args.get('page', 1, type=int)
+    per_page_param = request.args.get('per_page', None, type=int)
+    view_all = per_page_param == 0
+
+    if per_page_param in VALID_PER_PAGE:
+        per_page = per_page_param
+        # Save preference if it changed
+        if (current_user.is_authenticated
+                and current_user.get_preference('per_page') != per_page):
+            current_user.set_preference('per_page', per_page)
+            db.session.commit()
+    elif view_all:
+        per_page = 10000
+        page = 1
+    else:
+        # Try user preference, then config
+        saved = None
+        if current_user.is_authenticated:
+            saved = current_user.get_preference('per_page')
+        if saved in VALID_PER_PAGE:
+            per_page = saved
+        else:
+            per_page = current_app.config.get(config_key, config_default)
+
+    return per_page, page, view_all
 
 
 # vim: ts=4 sw=4 et
