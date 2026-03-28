@@ -58,6 +58,7 @@ def analysis_handler(description: str):
         @functools.wraps(fn)
         def wrapper(self, analysis: dict, artefact: dict, work_dir: Path):
             analysis_id = analysis['id']
+            analysis_uuid = analysis.get('uuid', '?')
             try:
                 return fn(self, analysis, artefact, work_dir)
             except FileNotFoundError as e:
@@ -66,7 +67,7 @@ def analysis_handler(description: str):
                 # already claimed the analysis.  Log a clean warning
                 # instead of a full traceback.
                 log.warning(
-                    f"Analysis {analysis_id} skipped: input file missing "
+                    f"Analysis {analysis_id} ({analysis_uuid}) skipped: input file missing "
                     f"(artefact was probably deleted)"
                 )
                 try:
@@ -79,7 +80,7 @@ def analysis_handler(description: str):
                 except Exception:
                     pass  # API will 404 if analysis was cascade-deleted
             except Exception as e:
-                log.exception(f"Analysis {analysis_id} failed during {description}")
+                log.exception(f"Analysis {analysis_id} ({analysis_uuid}) failed during {description}")
                 try:
                     self.api.update_analysis(
                         analysis_id,
@@ -93,7 +94,7 @@ def analysis_handler(description: str):
                     )
                 except Exception:
                     log.exception(
-                        f"Analysis {analysis_id}: failed to report failure to API "
+                        f"Analysis {analysis_id} ({analysis_uuid}): failed to report failure to API "
                         f"— job may remain in 'running' state"
                     )
         return wrapper

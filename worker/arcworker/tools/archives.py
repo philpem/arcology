@@ -30,18 +30,26 @@ def _check_archive_paths(input_path: Path, fmt: str) -> None:
                     is found.
     """
     if fmt == 'zip':
-        with zipfile.ZipFile(input_path) as zf:
-            for zi in zf.infolist():
-                name = zi.filename
-                parts = name.replace('\\', '/').split('/')
-                if os.path.isabs(name) or '..' in parts:
-                    raise ValueError(f'Unsafe path in ZIP archive: {name!r}')
-                # Reject symlink entries.  Unix-originated ZIPs encode the file mode in
-                # the upper 16 bits of external_attr; S_IFLNK == 0o120000.  A zero mode
-                # means the ZIP was created on Windows and is not a symlink.
-                mode = (zi.external_attr >> 16) & 0xFFFF
-                if mode and (mode & 0o170000) == 0o120000:
-                    raise ValueError(f'Symlink entry in ZIP archive: {name!r}')
+        try:
+            with zipfile.ZipFile(input_path) as zf:
+                for zi in zf.infolist():
+                    name = zi.filename
+                    parts = name.replace('\\', '/').split('/')
+                    if os.path.isabs(name) or '..' in parts:
+                        raise ValueError(f'Unsafe path in ZIP archive: {name!r}')
+                    # Reject symlink entries.  Unix-originated ZIPs encode the file mode in
+                    # the upper 16 bits of external_attr; S_IFLNK == 0o120000.  A zero mode
+                    # means the ZIP was created on Windows and is not a symlink.
+                    mode = (zi.external_attr >> 16) & 0xFFFF
+                    if mode and (mode & 0o170000) == 0o120000:
+                        raise ValueError(f'Symlink entry in ZIP archive: {name!r}')
+        except zipfile.BadZipFile:
+            # Python's zipfile rejects some valid vendor-specific extra fields,
+            # most commonly 0x4341 (Acorn/SparkFS RISC OS metadata), raising
+            # BadZipFile even though the archive is structurally sound and
+            # extractable by unzip/7z.  Fall back to 7z for path validation so
+            # these legitimate archives are not silently rejected.
+            _check_7z_paths(input_path)
     elif fmt == 'tar':
         with tarfile.open(input_path) as tf:
             for m in tf.getmembers():
