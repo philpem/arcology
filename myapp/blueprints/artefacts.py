@@ -837,11 +837,11 @@ def _render_artefact_view(artefact):
         sort_expr = desc(sort_expr)
 
     # Compute letter-to-page mapping for A-Z jump bar (only for path sort)
-    if sort_col == 'path' and not sort_desc:
+    if sort_col == 'path':
         from ..utils.pagination import compute_letter_pages
         letter_pages, current_letter = compute_letter_pages(
             files_query, ExtractedFile.path,
-            per_page, current_page=page
+            per_page, current_page=page, descending=sort_desc
         )
     else:
         letter_pages, current_letter = {}, ''
