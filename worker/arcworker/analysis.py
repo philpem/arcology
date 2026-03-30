@@ -1822,7 +1822,6 @@ class AnalysisWorker:
         output_subdir: str | None,
         analysis_uuid: str,
         file_index: int = 0,
-        generate_svg: bool = False,
     ) -> list[dict] | None:
         """
         Convert a single viewable file and return a list of output dicts, or
@@ -1830,7 +1829,6 @@ class AnalysisWorker:
 
         ``file_index`` is used to make temporary subdirectory names unique when
         converting multiple files within one analysis run.
-        ``generate_svg`` requests SVG output alongside PNG for Draw files.
         """
         outputs = []
 
@@ -1866,7 +1864,7 @@ class AnalysisWorker:
             from .tools.extraction import parse_acorn_filename as _parse_acorn
             true_name, _ = _parse_acorn(input_path.name)
             tmp_out = work_dir / f'draw_{file_index}'
-            result = convert_draw(input_path, tmp_out, analysis_uuid, generate_svg=generate_svg)
+            result = convert_draw(input_path, tmp_out, analysis_uuid)
             if not result['success']:
                 log.warning(f"Draw conversion failed for {input_path}: {result.get('error')}")
                 return None
@@ -1877,26 +1875,23 @@ class AnalysisWorker:
                 f'{analysis_uuid}_{file_index}_draw.png',
                 subdir=output_subdir,
             )
-            outputs.append({
+            entry = {
                 'type': 'image',
                 'filename': saved_png,
                 'name': true_name,
                 'description': true_name,
                 'tool': 'drawfile_render',
-            })
+            }
             if result['svg_path']:
+                # Save SVG and link it on the PNG entry so the viewer can use
+                # PNG as a thumbnail and open SVG on click.
                 saved_svg = self.save_output_file(
                     result['svg_path'],
                     f'{analysis_uuid}_{file_index}_draw.svg',
                     subdir=output_subdir,
                 )
-                outputs.append({
-                    'type': 'svg',
-                    'filename': saved_svg,
-                    'name': true_name,
-                    'description': f'{true_name} (SVG)',
-                    'tool': 'drawfile_render',
-                })
+                entry['svg_filename'] = saved_svg
+            outputs.append(entry)
 
         elif artefact_type == ArtefactType.ACORN_TEXT:
             from .tools.extraction import parse_acorn_filename as _parse_acorn
@@ -1948,7 +1943,6 @@ class AnalysisWorker:
           FILE_EXTRACTION and ARCHIVE_EXTRACT.
         """
         from .tools.extraction import _has_acorn_filetypes
-        from .config import DRAW_CONVERT_SVG
 
         analysis_id = analysis['id']
         analysis_uuid = analysis['uuid']
@@ -1976,7 +1970,6 @@ class AnalysisWorker:
             artefact_type = ArtefactType(artefact_type_str)
             outputs = self._convert_file_to_outputs(
                 input_path, artefact_type, work_dir, output_subdir, analysis_uuid,
-                generate_svg=DRAW_CONVERT_SVG,
             )
             if outputs is None:
                 self.fail_analysis(analysis_id, f'Conversion failed for {artefact_type_str}')
@@ -2046,7 +2039,6 @@ class AnalysisWorker:
 
             file_outputs = self._convert_file_to_outputs(
                 path, viewable_type, work_dir, output_subdir, analysis_uuid, file_index,
-                generate_svg=DRAW_CONVERT_SVG,
             )
             file_index += 1
             if file_outputs is None:
