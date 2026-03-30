@@ -1766,6 +1766,13 @@ class AnalysisWorker:
             hints={'partition_uuid': partition_uuid},
         )
 
+        # Queue FORMAT_CONVERT to scan for and convert any Sprite/Draw/Text files.
+        self.api.queue_analysis(
+            artefact['uuid'],
+            AnalysisType.FORMAT_CONVERT.value,
+            hints={'extraction_path': str(persistent_output)},
+        )
+
         tool_key = result.get('tool', 'tool').lower().replace(' ', '_')
         po = result.get('process_output')
         details: dict = {
