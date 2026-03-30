@@ -119,9 +119,9 @@
     {% for out in ns.text_outputs %}
     <div class="viewer-text mb-4">
         <div class="d-flex justify-content-between align-items-center mb-1">
-            <span class="font-monospace small text-muted">{{ out.name }}</span>
+            {% if not group.source_file %}<span class="font-monospace small text-muted">{{ out.name }}</span>{% endif %}
             <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=out.filename) }}"
-               target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary">
+               target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary ms-auto">
                 <i class="bi bi-file-text"></i> Raw
             </a>
         </div>
