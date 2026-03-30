@@ -84,18 +84,6 @@
 
 {# ── Image outputs ── #}
 {% if ns.image_outputs %}
-    {% if ns.image_outputs | length == 1 %}
-    {# Single image: centred with name below #}
-    <div class="text-center mb-4">
-        <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=ns.image_outputs[0].filename) }}"
-           target="_blank" rel="noopener">
-            <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=ns.image_outputs[0].filename) }}"
-                 class="viewer-img" alt="{{ ns.image_outputs[0].name }}">
-        </a>
-        <div class="viewer-name font-monospace mt-1 text-muted">{{ ns.image_outputs[0].name }}</div>
-    </div>
-    {% else %}
-    {# Multiple images: responsive grid #}
     <div class="row g-3 mb-4">
         {% for out in ns.image_outputs %}
         <div class="col-6 col-sm-4 col-md-3">
@@ -112,7 +100,6 @@
         </div>
         {% endfor %}
     </div>
-    {% endif %}
 {% endif %}
 
 {# ── SVG outputs ── #}
