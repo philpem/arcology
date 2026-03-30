@@ -1,11 +1,14 @@
 {% macro render_pagination(pagination, endpoint, extra_args={}, valid_per_page=none, view_all=false) %}
+{# Build a clean copy of extra_args without page/per_page — the macro sets those explicitly #}
+{% set _args = extra_args.items() | rejectattr('0', 'in', ['page', 'per_page']) | list %}
+{% set base_args = dict(_args) %}
 {% if pagination.pages > 1 or valid_per_page %}
 <nav class="mt-4" aria-label="Page navigation">
     {% if pagination.pages > 1 %}
     <ul class="pagination justify-content-center">
         {% if pagination.has_prev %}
         <li class="page-item">
-            <a class="page-link" href="{{ url_for(endpoint, page=pagination.prev_num, **extra_args) }}">‹</a>
+            <a class="page-link" href="{{ url_for(endpoint, page=pagination.prev_num, per_page=extra_args.get('per_page'), **base_args) }}">‹</a>
         </li>
         {% else %}
         <li class="page-item disabled"><span class="page-link">‹</span></li>
@@ -14,7 +17,7 @@
         {% for pg in pagination.iter_pages(left_edge=1, left_current=2, right_current=3, right_edge=1) %}
             {% if pg %}
             <li class="page-item {{ 'active' if pg == pagination.page else '' }}">
-                <a class="page-link" href="{{ url_for(endpoint, page=pg, **extra_args) }}">{{ pg }}</a>
+                <a class="page-link" href="{{ url_for(endpoint, page=pg, per_page=extra_args.get('per_page'), **base_args) }}">{{ pg }}</a>
             </li>
             {% else %}
             <li class="page-item disabled"><span class="page-link">…</span></li>
@@ -23,7 +26,7 @@
 
         {% if pagination.has_next %}
         <li class="page-item">
-            <a class="page-link" href="{{ url_for(endpoint, page=pagination.next_num, **extra_args) }}">›</a>
+            <a class="page-link" href="{{ url_for(endpoint, page=pagination.next_num, per_page=extra_args.get('per_page'), **base_args) }}">›</a>
         </li>
         {% else %}
         <li class="page-item disabled"><span class="page-link">›</span></li>
@@ -38,10 +41,10 @@
         <span class="text-muted small me-1 align-self-center">Per page:</span>
         {% for pp in valid_per_page %}
         <a class="btn btn-sm {{ 'btn-secondary' if (not view_all and pagination.per_page == pp) else 'btn-outline-secondary' }}"
-           href="{{ url_for(endpoint, per_page=pp, **extra_args) }}">{{ pp }}</a>
+           href="{{ url_for(endpoint, per_page=pp, **base_args) }}">{{ pp }}</a>
         {% endfor %}
         <a class="btn btn-sm {{ 'btn-secondary' if view_all else 'btn-outline-secondary' }}"
-           href="{{ url_for(endpoint, per_page=0, **extra_args) }}">All</a>
+           href="{{ url_for(endpoint, per_page=0, **base_args) }}">All</a>
     </div>
     {% endif %}
 </nav>
@@ -53,17 +56,20 @@
 
 {% macro render_letter_bar(endpoint, letter_pages, current_letter, extra_args={}) %}
 {% set letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' %}
+{# Strip page from extra_args — the letter bar always sets it explicitly #}
+{% set _args = extra_args.items() | rejectattr('0', 'equalto', 'page') | list %}
+{% set base_args = dict(_args) %}
 {% if letter_pages %}
 <div class="mb-3 d-flex flex-wrap gap-1 justify-content-center" role="navigation" aria-label="Alphabetical navigation">
     {% if '#' in letter_pages %}
-    <a href="{{ url_for(endpoint, page=letter_pages['#'], **extra_args) }}"
+    <a href="{{ url_for(endpoint, page=letter_pages['#'], **base_args) }}"
        class="btn btn-sm {{ 'btn-secondary' if current_letter == '#' else 'btn-outline-secondary' }}">#</a>
     {% else %}
     <span class="btn btn-sm btn-outline-secondary disabled" tabindex="-1" aria-disabled="true">#</span>
     {% endif %}
     {% for ch in letters %}
     {% if ch in letter_pages %}
-    <a href="{{ url_for(endpoint, page=letter_pages[ch], **extra_args) }}"
+    <a href="{{ url_for(endpoint, page=letter_pages[ch], **base_args) }}"
        class="btn btn-sm {{ 'btn-secondary' if current_letter == ch else 'btn-outline-secondary' }}">{{ ch }}</a>
     {% else %}
     <span class="btn btn-sm btn-outline-secondary disabled" tabindex="-1" aria-disabled="true">{{ ch }}</span>
