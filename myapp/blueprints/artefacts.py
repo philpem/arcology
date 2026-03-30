@@ -733,18 +733,22 @@ def _render_viewer(artefact):
                     out['text_content'] = None
         return {'label': source_label, 'outputs': outputs}
 
+    viewer_status = None  # 'pending', 'failed', or None (ready)
+
     if artefact.artefact_type in _viewable_types:
         # Artefact is itself a viewable type — show its own FORMAT_CONVERT output
         conv = Analysis.query.filter_by(
             artefact_id=artefact.id,
             analysis_type=AnalysisType.FORMAT_CONVERT,
-            status=AnalysisStatus.COMPLETED,
-            success=True,
-        ).first()
-        if conv:
+        ).order_by(Analysis.id.desc()).first()
+        if conv and conv.status == AnalysisStatus.COMPLETED and conv.success:
             group = _build_group_from_analysis(artefact.original_filename or artefact.label, conv)
             if group:
                 output_groups.append(group)
+        elif conv and conv.status in (AnalysisStatus.PENDING, AnalysisStatus.RUNNING):
+            viewer_status = 'pending'
+        else:
+            viewer_status = 'failed'
     else:
         # Show all derived ACORN_* artefacts across the artefact tree
         all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
@@ -752,25 +756,28 @@ def _render_viewer(artefact):
             Artefact.parent_artefact_id.in_(all_artefact_ids),
             Artefact.artefact_type.in_(_viewable_types),
         ).order_by(Artefact.id).all()
+        pending_count = 0
         for da in derived:
             conv = Analysis.query.filter_by(
                 artefact_id=da.id,
                 analysis_type=AnalysisType.FORMAT_CONVERT,
-                status=AnalysisStatus.COMPLETED,
-                success=True,
-            ).first()
-            if conv:
+            ).order_by(Analysis.id.desc()).first()
+            if conv and conv.status == AnalysisStatus.COMPLETED and conv.success:
                 group = _build_group_from_analysis(da.original_filename or da.label, conv)
                 if group:
                     output_groups.append(group)
-
-    if not output_groups:
-        abort(404)
+            elif conv and conv.status in (AnalysisStatus.PENDING, AnalysisStatus.RUNNING):
+                pending_count += 1
+        if not output_groups:
+            viewer_status = 'pending' if pending_count > 0 else 'failed'
+        elif pending_count > 0:
+            viewer_status = 'partial'
 
     return render_template(
         'artefacts/viewer.html',
         artefact=artefact,
         output_groups=output_groups,
+        viewer_status=viewer_status,
     )
 
 
@@ -1077,8 +1084,9 @@ def _render_artefact_view(artefact):
     hashdb_mode = request.args.get('mode') == 'hashdb'
 
     # Build viewable_filenames: original_filename → Artefact for derived
-    # ACORN_SPRITE / ACORN_DRAW / ACORN_TEXT artefacts that have a completed
-    # FORMAT_CONVERT analysis.  Used by the file listing "View" eye icon.
+    # ACORN_SPRITE / ACORN_DRAW / ACORN_TEXT artefacts.  Includes artefacts
+    # regardless of FORMAT_CONVERT status so the eye icon shows as soon as the
+    # artefact is registered; the viewer route handles pending/failed states.
     _viewable_types = (ArtefactType.ACORN_SPRITE, ArtefactType.ACORN_DRAW, ArtefactType.ACORN_TEXT)
     derived_viewable = Artefact.query.filter(
         Artefact.parent_artefact_id.in_(all_artefact_ids),
@@ -1086,26 +1094,13 @@ def _render_artefact_view(artefact):
     ).all()
     viewable_filenames = {}  # original_filename → Artefact
     for da in derived_viewable:
-        conv = Analysis.query.filter_by(
-            artefact_id=da.id,
-            analysis_type=AnalysisType.FORMAT_CONVERT,
-            status=AnalysisStatus.COMPLETED,
-            success=True,
-        ).first()
-        if conv and da.original_filename:
+        if da.original_filename:
             viewable_filenames[da.original_filename] = da
 
-    # Also check whether the artefact itself has a completed FORMAT_CONVERT
+    # Also check whether the artefact itself is a viewable type
     has_converted_outputs = bool(viewable_filenames)
     if not has_converted_outputs and artefact.artefact_type in _viewable_types:
-        own_conv = Analysis.query.filter_by(
-            artefact_id=artefact.id,
-            analysis_type=AnalysisType.FORMAT_CONVERT,
-            status=AnalysisStatus.COMPLETED,
-            success=True,
-        ).first()
-        if own_conv:
-            has_converted_outputs = True
+        has_converted_outputs = True
 
     # Recognised products for all partitions of this artefact tree
     recognised_products = []

@@ -54,6 +54,20 @@
     </a>
 </div>
 
+{% if viewer_status == 'pending' %}
+<div class="alert alert-info">
+    <i class="bi bi-hourglass-split"></i> Conversion in progress — please refresh in a moment.
+</div>
+{% elif viewer_status == 'failed' %}
+<div class="alert alert-warning">
+    <i class="bi bi-exclamation-triangle"></i> Conversion failed or has not been run yet. Try re-analysing the artefact.
+</div>
+{% elif viewer_status == 'partial' %}
+<div class="alert alert-info">
+    <i class="bi bi-hourglass-split"></i> Some conversions are still in progress — refresh to see more.
+</div>
+{% endif %}
+
 {% for group in output_groups %}
 {% set ns = namespace(image_outputs=[], svg_outputs=[], text_outputs=[]) %}
 {% for out in group.outputs %}

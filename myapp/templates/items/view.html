@@ -99,13 +99,17 @@
                                 <span class="badge bg-secondary">{{ artefact.artefact_type.value.upper().replace('_', ' ') }}</span>
                                 <code>{{ artefact.original_filename }}</code>
                             </p>
-                            {% if artefact.derived_artefacts %}
+                            {% set ns = namespace(has_visible=false) %}
+                            {% for derived in artefact.derived_artefacts %}{% if derived.artefact_type.value not in ['acorn_sprite', 'acorn_draw', 'acorn_text'] %}{% set ns.has_visible = true %}{% endif %}{% endfor %}
+                            {% if ns.has_visible %}
                             <div class="ms-3 mt-2 small">
                                 <i class="bi bi-arrow-return-right text-muted"></i>
                                 {% for derived in artefact.derived_artefacts %}
+                                {% if derived.artefact_type.value not in ['acorn_sprite', 'acorn_draw', 'acorn_text'] %}
                                 <a href="{{ artefact_url(derived) }}" class="me-2">
                                     {{ derived.label }} <span class="badge bg-info">{{ derived.artefact_type.value.upper() }}</span>
                                 </a>
+                                {% endif %}
                                 {% endfor %}
                             </div>
                             {% endif %}
