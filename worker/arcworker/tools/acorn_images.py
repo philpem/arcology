@@ -133,12 +133,19 @@ def convert_draw(input_path: Path, output_dir: Path, analysis_uuid: str) -> dict
     )
 
     if result.returncode != 0 or not png_path.exists():
-        error_msg = tool_output.get('stderr', '') or tool_output.get('stdout', '') or 'drawfile_render failed'
+        stderr = tool_output.get('stderr', '').strip()
+        stdout = tool_output.get('stdout', '').strip()
+        full_output = stderr or stdout or 'drawfile_render produced no output'
+        # Log the full output so the last line (the actual exception) is visible.
+        log.warning(
+            f'drawfile_render failed for {input_path} (exit {result.returncode}):\n{full_output}'
+        )
+        # Store the tail (last 500 chars) since Python tracebacks end with the exception.
         return {
             'success': False,
             'png_path': None,
             'svg_path': None,
-            'error': error_msg[:500],
+            'error': full_output[-500:],
             'tool_output': tool_output,
         }
 

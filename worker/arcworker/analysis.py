@@ -1866,8 +1866,7 @@ class AnalysisWorker:
             tmp_out = work_dir / f'draw_{file_index}'
             result = convert_draw(input_path, tmp_out, analysis_uuid)
             if not result['success']:
-                log.warning(f"Draw conversion failed for {input_path}: {result.get('error')}")
-                return None
+                return None  # convert_draw already logged the full error
             # Include file_index so multiple Draw files in the same archive
             # each get a unique output filename rather than overwriting each other.
             saved_png = self.save_output_file(
