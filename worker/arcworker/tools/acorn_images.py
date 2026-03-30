@@ -46,22 +46,27 @@ def convert_sprite(input_path: Path, output_dir: Path, analysis_uuid: str) -> di
     error = None
 
     try:
-        sf = spritefile.SpriteFile(str(input_path))
-        sprite_list = list(sf)
+        with open(str(input_path), 'rb') as fh:
+            sf = spritefile.spritefile(file=fh)
+        sprite_list = list(sf.sprites.items())  # [(name, sprite_dict), ...]
     except Exception as e:
         return {'success': False, 'sprites': [], 'error': f'Failed to open sprite file: {e}'}
 
     if not sprite_list:
         return {'success': False, 'sprites': [], 'error': 'No sprites found in file'}
 
-    for idx, sprite in enumerate(sprite_list):
+    for idx, (name, sprite) in enumerate(sprite_list):
         try:
-            name = getattr(sprite, 'name', '') or f'sprite{idx:02d}'
+            name = name or f'sprite{idx:02d}'
             safe_name = _safe_sprite_name(name, idx)
             out_filename = f'{analysis_uuid}_{idx:02d}_{safe_name}.png'
             out_path = output_dir / out_filename
 
-            img = sprite.image
+            img = Image.frombytes(
+                sprite['mode'],
+                (sprite['width'], sprite['height']),
+                bytes(sprite['image']),
+            )
             if img.mode not in ('RGB', 'RGBA'):
                 img = img.convert('RGBA')
             img.save(str(out_path), 'PNG')

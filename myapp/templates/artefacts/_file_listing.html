@@ -174,7 +174,7 @@
                                 {% endif %}
                                 {% if file.path in viewable_filenames %}
                                 <a href="{{ artefact_url(artefact, 'viewer') }}?file={{ file.path | urlencode }}"
-                                   class="text-info ms-1" title="View"><i class="bi bi-eye"></i></a>
+                                   class="text-muted ms-1" title="View"><i class="bi bi-search"></i></a>
                                 {% endif %}
                                 {% endif %}
                             </td>
