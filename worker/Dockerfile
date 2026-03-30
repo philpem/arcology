@@ -285,20 +285,16 @@ RUN python3 -m pip install --break-system-packages \
 	git+https://github.com/keirf/greaseweazle@${GREASEWEAZLE_VERSION}
 
 # Install Acorn image conversion libraries.
-# drawfile_render (dcf21 fork) — not pip-installable; clone manually.
+# drawfile_render (philpem fork with signed-coordinate fix) — not pip-installable; clone manually.
 # Pinned to a specific commit SHA — update when upgrading.
 # Current as of 2026-03-30.
 # The repo also bundles spritefile.py (by David Boddie) which is not on PyPI;
 # we expose it to the worker by setting PYTHONPATH.
-ARG DRAWFILE_RENDER_SHA=0ef83cb7575aa9ddc4103507936f71cd39df4a32
-RUN git clone https://github.com/dcf21/drawfile-render /opt/drawfile_render && \
+ARG DRAWFILE_RENDER_SHA=e6d0da64aae6dcac29831dec1762ff299579cde5
+RUN git clone https://github.com/philpem/drawfile-render /opt/drawfile_render && \
     git -C /opt/drawfile_render checkout "${DRAWFILE_RENDER_SHA}"
 # Make spritefile (bundled in drawfile_render repo) importable by the worker
 ENV PYTHONPATH="/opt/drawfile_render"
-# Patch render_drawfile.py to read Draw coordinates as signed integers
-# (avoids CAIRO_STATUS_INVALID_SIZE on files with negative bounding-box values)
-COPY worker/patches/fix_render_drawfile.py /opt/fix_render_drawfile.py
-RUN python3 /opt/fix_render_drawfile.py
 
 # Clean up build dependencies
 RUN apt -y remove python3-dev git && apt -y autoremove
