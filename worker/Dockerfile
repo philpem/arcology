@@ -275,7 +275,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 		unzip unrar tar util-linux \
 		file fdisk \
 		default-jre \
-		libcairo2
+		libcairo2 python3-cairo python3-pillow
 
 # Install Greaseweazle for disk image conversion.
 # Pinned to a specific commit SHA; update when upgrading (was: @latest).
@@ -285,20 +285,16 @@ RUN python3 -m pip install --break-system-packages \
 	git+https://github.com/keirf/greaseweazle@${GREASEWEAZLE_VERSION}
 
 # Install Acorn image conversion libraries.
-# - spritefile: reads Acorn Sprite containers and provides PIL Image objects
-# - Pillow: PIL fork used by spritefile for PNG output
-RUN python3 -m pip install --break-system-packages \
-	spritefile \
-	Pillow
-
-# Install drawfile_render (dcf21 fork) — not pip-installable; clone manually.
+# drawfile_render (dcf21 fork) — not pip-installable; clone manually.
 # Pinned to a specific commit SHA — update when upgrading.
 # Current as of 2026-03-30.
+# The repo also bundles spritefile.py (by David Boddie) which is not on PyPI;
+# we expose it to the worker by setting PYTHONPATH.
 ARG DRAWFILE_RENDER_SHA=0ef83cb7575aa9ddc4103507936f71cd39df4a32
 RUN git clone https://github.com/dcf21/drawfile-render /opt/drawfile_render && \
     git -C /opt/drawfile_render checkout "${DRAWFILE_RENDER_SHA}"
-# drawfile_render uses pycairo for rasterisation
-RUN python3 -m pip install --break-system-packages pycairo
+# Make spritefile (bundled in drawfile_render repo) importable by the worker
+ENV PYTHONPATH="/opt/drawfile_render"
 
 # Clean up build dependencies
 RUN apt -y remove python3-dev git && apt -y autoremove
