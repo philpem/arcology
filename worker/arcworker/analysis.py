@@ -1728,13 +1728,15 @@ class AnalysisWorker:
                         'path': f['path'],
                         'filename': Path(f['path']).name,
                         'extension': Path(f['path']).suffix.lstrip('.').lower() or None,
-                        'file_size': f['size'],
-                        'parent_file_id': f['parent_file_id'],
-                        'extraction_depth': f['extraction_depth'],
+                        'file_size': f.get('size'),
+                        'parent_file_id': f.get('parent_file_id'),
+                        'extraction_depth': f.get('extraction_depth'),
                         'md5': f.get('md5'),
                         'sha1': f.get('sha1'),
                         'sha256': f.get('sha256'),
                     }
+                    if f.get('is_directory'):
+                        record['is_directory'] = True
                     if f.get('risc_os_filetype'):
                         record['risc_os_filetype'] = f['risc_os_filetype']
                     file_records.append(record)
