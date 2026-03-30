@@ -32,7 +32,7 @@ from .artefacts import _delete_item_files
 from ..permissions import require_permission
 from ..utils.item_helpers import item_choice_list, assign_item_fields, assign_item_tags
 from ..utils.slugs import get_or_create_slug, lookup_by_identifier
-from ..utils.pagination import compute_letter_pages, resolve_per_page, VALID_PER_PAGE
+from ..utils.pagination import compute_letter_pages, resolve_per_page, resolve_sort, VALID_PER_PAGE
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -103,10 +103,7 @@ def index():
     # Eager-load platform and category to avoid N+1 lazy loads in template
     query = query.options(selectinload(Item.platform), selectinload(Item.category))
 
-    sort = request.args.get('sort', 'name_asc')
-    if sort not in _ITEM_SORT_OPTIONS:
-        sort = 'name_asc'
-
+    sort = resolve_sort('sort', _ITEM_SORT_OPTIONS, 'items_sort', 'name_asc')
     per_page, page, view_all = resolve_per_page('ITEMS_PER_PAGE', 25)
 
     # Compute letter-to-page mapping for A-Z jump bar (only meaningful for name sort)
@@ -182,9 +179,7 @@ def view(uuid):
 
     per_page, page, view_all = resolve_per_page('ARTEFACTS_PER_PAGE', 25)
 
-    artefact_sort = request.args.get('artefact_sort', 'label_asc')
-    if artefact_sort not in _ARTEFACT_SORT_OPTIONS:
-        artefact_sort = 'label_asc'
+    artefact_sort = resolve_sort('artefact_sort', _ARTEFACT_SORT_OPTIONS, 'artefacts_sort', 'label_asc')
 
     artefact_query = (
         Artefact.query
