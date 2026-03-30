@@ -126,4 +126,34 @@ def resolve_per_page(config_key, config_default=25):
     return per_page, page, view_all
 
 
+def resolve_sort(param_name, valid_options, preference_key, default):
+    """Resolve sort order from request arg, user preference, or default.
+
+    Returns the resolved sort key (a string from *valid_options*).
+
+    Priority:
+      1. Explicit query parameter named *param_name* (if present and valid)
+      2. User's saved preference under *preference_key*
+      3. *default*
+
+    When an explicit value is provided and differs from the user's stored
+    preference, the preference is updated automatically.
+    """
+    sort_param = request.args.get(param_name)
+
+    if sort_param in valid_options:
+        if (current_user.is_authenticated
+                and current_user.get_preference(preference_key) != sort_param):
+            current_user.set_preference(preference_key, sort_param)
+            db.session.commit()
+        return sort_param
+
+    if current_user.is_authenticated:
+        saved = current_user.get_preference(preference_key)
+        if saved in valid_options:
+            return saved
+
+    return default
+
+
 # vim: ts=4 sw=4 et
