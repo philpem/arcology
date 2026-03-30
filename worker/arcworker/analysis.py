@@ -242,7 +242,7 @@ class AnalysisWorker:
         extraction_path: str | None = None,
         path_prefix: str | None = None,
     ):
-        """Queue the standard archive-detect and product-recognition follow-ups."""
+        """Queue the standard archive-detect, product-recognition, and format-convert follow-ups."""
         archive_hints = {'partition_uuid': partition_uuid}
         if extraction_path:
             archive_hints['extraction_path'] = extraction_path
@@ -258,6 +258,12 @@ class AnalysisWorker:
             AnalysisType.PRODUCT_RECOGNITION.value,
             hints={'partition_uuid': partition_uuid},
         )
+        if extraction_path:
+            self.api.queue_analysis(
+                artefact_uuid,
+                AnalysisType.FORMAT_CONVERT.value,
+                hints={'extraction_path': extraction_path},
+            )
 
     # =========================================================================
     # Analysis Handlers
@@ -585,12 +591,6 @@ class AnalysisWorker:
                 artefact['uuid'],
                 partition.get('uuid'),
                 extraction_path=str(extract_dir),
-            )
-            # Register any Sprite/Draw/Text files for format conversion
-            self._register_acorn_viewable_artefacts(
-                analysis_id,
-                extract_dir,
-                artefact.get('label', 'extraction'),
             )
 
     @analysis_handler("checksum computation")
@@ -1766,13 +1766,6 @@ class AnalysisWorker:
             hints={'partition_uuid': partition_uuid},
         )
 
-        # Register any Sprite/Draw/Text files found in the extracted archive
-        self._register_acorn_viewable_artefacts(
-            analysis_id,
-            persistent_output,
-            artefact.get('label', 'archive'),
-        )
-
         tool_key = result.get('tool', 'tool').lower().replace(' ', '_')
         po = result.get('process_output')
         details: dict = {
@@ -1808,93 +1801,31 @@ class AnalysisWorker:
         '.txt':  ArtefactType.ACORN_TEXT,
     }
 
-    def _register_acorn_viewable_artefacts(
+    def _convert_file_to_outputs(
         self,
-        analysis_id: int,
-        extract_dir: Path,
-        base_label: str,
-    ) -> None:
+        input_path: Path,
+        artefact_type: 'ArtefactType',
+        work_dir: Path,
+        output_subdir: str | None,
+        analysis_uuid: str,
+        file_index: int = 0,
+    ) -> list[dict] | None:
         """
-        Scan extract_dir recursively and register derived artefacts for every
-        Sprite, Draw, or Text file found.  Triggers automatic FORMAT_CONVERT
-        analysis via ANALYSIS_MAP.
+        Convert a single viewable file and return a list of output dicts, or
+        None if conversion failed (caller should call fail_analysis).
 
-        Detection order:
-        1. RISC OS filetype suffix (,ff9 / ,aff / ,fff / ,feb / ,ffe)
-        2. File extension (.spr / .aff / .draw / .txt)
+        ``file_index`` is used to make temporary subdirectory names unique when
+        converting multiple files within one analysis run.
         """
-        if not extract_dir.is_dir():
-            return
-
-        for path in extract_dir.rglob('*'):
-            if not path.is_file():
-                continue
-
-            artefact_type = None
-            name_lower = path.name.lower()
-
-            # 1. Check RISC OS filetype suffix (e.g. "myfile,ff9")
-            for suffix, atype in self._RISCOS_VIEWABLE_SUFFIXES.items():
-                if name_lower.endswith(suffix):
-                    artefact_type = atype
-                    break
-
-            # 2. Fall back to extension
-            if artefact_type is None:
-                ext = path.suffix.lower()
-                artefact_type = self._EXT_VIEWABLE.get(ext)
-
-            if artefact_type is None:
-                continue
-
-            rel = path.relative_to(extract_dir)
-            label = f"{base_label}/{rel}"
-            try:
-                self.api.register_derived_artefact(
-                    analysis_id,
-                    label,
-                    path,
-                    artefact_type,
-                    auto_analyse=True,
-                )
-                log.debug(f"Registered viewable artefact: {label} ({artefact_type.value})")
-            except Exception as e:
-                log.warning(f"Failed to register viewable artefact {path}: {e}")
-
-    @analysis_handler("format conversion")
-    def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path):
-        """
-        Process FORMAT_CONVERT analysis.
-
-        Dispatches on artefact_type:
-          - ACORN_SPRITE → convert_sprite() → PNG(s) per named sprite
-          - ACORN_DRAW   → convert_draw()   → PNG (+ optional SVG)
-          - ACORN_TEXT   → read file and store as UTF-8 text output
-        """
-        analysis_id = analysis['id']
-        analysis_uuid = analysis['uuid']
-        artefact_type_str = artefact.get('artefact_type', '')
-
-        item = artefact.get('item', {})
-        item_uuid = item.get('uuid', '')
-        item_slug = item.get('slug', '')
-        artefact_uuid = artefact.get('uuid', '')
-        artefact_slug = artefact.get('slug', '')
-        item_part = f"{item_uuid}_{item_slug}" if item_slug else item_uuid
-        artefact_part = f"{artefact_uuid}_{artefact_slug}" if artefact_slug else artefact_uuid
-        output_subdir = f"{item_part}/{artefact_part}" if (item_part and artefact_part) else None
-
-        input_path = self.get_input_path(artefact, work_dir)
-
         outputs = []
 
-        if artefact_type_str == ArtefactType.ACORN_SPRITE.value:
-            tmp_out = work_dir / 'sprites'
+        if artefact_type == ArtefactType.ACORN_SPRITE:
+            tmp_out = work_dir / f'sprites_{file_index}'
             result = convert_sprite(input_path, tmp_out, analysis_uuid)
             if not result['success']:
-                self.fail_analysis(analysis_id, result['error'] or 'Sprite conversion failed')
-                return
-            for idx, sprite in enumerate(result['sprites']):
+                log.warning(f"Sprite conversion failed for {input_path}: {result.get('error')}")
+                return None
+            for sprite in result['sprites']:
                 saved = self.save_output_file(
                     sprite['path'],
                     sprite['path'].name,
@@ -1908,16 +1839,12 @@ class AnalysisWorker:
                     'tool': 'spritefile',
                 })
 
-        elif artefact_type_str == ArtefactType.ACORN_DRAW.value:
-            tmp_out = work_dir / 'draw'
+        elif artefact_type == ArtefactType.ACORN_DRAW:
+            tmp_out = work_dir / f'draw_{file_index}'
             result = convert_draw(input_path, tmp_out, analysis_uuid)
             if not result['success']:
-                self.fail_analysis(
-                    analysis_id,
-                    result['error'] or 'Draw conversion failed',
-                    details=json.dumps({'tool_output': result.get('tool_output', {})}),
-                )
-                return
+                log.warning(f"Draw conversion failed for {input_path}: {result.get('error')}")
+                return None
             saved_png = self.save_output_file(
                 result['png_path'],
                 result['png_path'].name,
@@ -1944,13 +1871,13 @@ class AnalysisWorker:
                     'tool': 'drawfile_render',
                 })
 
-        elif artefact_type_str == ArtefactType.ACORN_TEXT.value:
+        elif artefact_type == ArtefactType.ACORN_TEXT:
             try:
                 raw = input_path.read_bytes()
                 # Decode as Latin-1 (covers all Acorn/DOS byte values);
                 # normalise RISC OS line endings (0x0A) to LF.
                 text = raw.decode('latin-1').replace('\r\n', '\n').replace('\r', '\n')
-                out_filename = f'{analysis_uuid}_text.txt'
+                out_filename = f'{analysis_uuid}_{file_index}_text.txt'
                 out_path = work_dir / out_filename
                 out_path.write_text(text, encoding='utf-8')
                 saved = self.save_output_file(out_path, out_filename, subdir=output_subdir)
@@ -1962,19 +1889,136 @@ class AnalysisWorker:
                     'tool': 'builtin',
                 })
             except Exception as e:
-                self.fail_analysis(analysis_id, f'Text conversion failed: {e}')
-                return
+                log.warning(f"Text conversion failed for {input_path}: {e}")
+                return None
 
-        else:
-            self.fail_analysis(analysis_id, f'FORMAT_CONVERT not supported for artefact type: {artefact_type_str}')
+        return outputs
+
+    def _detect_viewable_type(self, path: Path) -> 'ArtefactType | None':
+        """Return the ArtefactType for a viewable file, or None if not viewable."""
+        name_lower = path.name.lower()
+        for suffix, atype in self._RISCOS_VIEWABLE_SUFFIXES.items():
+            if name_lower.endswith(suffix):
+                return atype
+        return self._EXT_VIEWABLE.get(path.suffix.lower())
+
+    @analysis_handler("format conversion")
+    def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path):
+        """
+        Process FORMAT_CONVERT analysis.  Supports two modes:
+
+        Mode 1 — Direct artefact (artefact_type is ACORN_SPRITE/DRAW/TEXT):
+          Convert the artefact's own file.  Used for directly-uploaded Acorn
+          files; triggered via ANALYSIS_MAP.
+
+        Mode 2 — Extraction scan (hints contain 'extraction_path'):
+          Scan the extraction output directory for every viewable file, convert
+          each one, and store outputs with a 'source_file' field matching
+          ExtractedFile.path (display path, Acorn filetype suffix stripped).
+          Queued automatically by queue_partition_follow_ups() after every
+          FILE_EXTRACTION and ARCHIVE_EXTRACT.
+        """
+        from .tools.extraction import _has_acorn_filetypes
+
+        analysis_id = analysis['id']
+        analysis_uuid = analysis['uuid']
+        artefact_type_str = artefact.get('artefact_type', '')
+        hints = json.loads(analysis.get('hints') or '{}')
+
+        item = artefact.get('item', {})
+        item_uuid = item.get('uuid', '')
+        item_slug = item.get('slug', '')
+        artefact_uuid = artefact.get('uuid', '')
+        artefact_slug = artefact.get('slug', '')
+        item_part = f"{item_uuid}_{item_slug}" if item_slug else item_uuid
+        artefact_part = f"{artefact_uuid}_{artefact_slug}" if artefact_slug else artefact_uuid
+        output_subdir = f"{item_part}/{artefact_part}" if (item_part and artefact_part) else None
+
+        _direct_types = (
+            ArtefactType.ACORN_SPRITE.value,
+            ArtefactType.ACORN_DRAW.value,
+            ArtefactType.ACORN_TEXT.value,
+        )
+
+        # --- Mode 1: Direct artefact conversion ---
+        if artefact_type_str in _direct_types:
+            input_path = self.get_input_path(artefact, work_dir)
+            artefact_type = ArtefactType(artefact_type_str)
+            outputs = self._convert_file_to_outputs(
+                input_path, artefact_type, work_dir, output_subdir, analysis_uuid,
+            )
+            if outputs is None:
+                self.fail_analysis(analysis_id, f'Conversion failed for {artefact_type_str}')
+                return
+            self.complete_analysis(
+                analysis_id,
+                summary=f'Converted {len(outputs)} output(s) for {artefact_type_str}',
+                details=json.dumps({
+                    'artefact_type': artefact_type_str,
+                    'outputs': outputs,
+                }),
+            )
             return
+
+        # --- Mode 2: Extraction scan ---
+        extraction_path = hints.get('extraction_path')
+        if not extraction_path:
+            self.fail_analysis(
+                analysis_id,
+                f'FORMAT_CONVERT not supported for artefact type {artefact_type_str!r} '
+                f'and no extraction_path hint provided',
+            )
+            return
+
+        extract_dir = Path(extraction_path)
+        if not extract_dir.is_dir():
+            self.fail_analysis(
+                analysis_id,
+                f'Extraction directory not found: {extraction_path}',
+            )
+            return
+
+        # Auto-detect Acorn filetype suffixes for display-path computation.
+        # Display paths must match ExtractedFile.path (Acorn suffix stripped).
+        is_acorn = _has_acorn_filetypes(extract_dir)
+
+        all_outputs = []
+        file_index = 0
+        for path in sorted(extract_dir.rglob('*')):
+            if not path.is_file():
+                continue
+            viewable_type = self._detect_viewable_type(path)
+            if viewable_type is None:
+                continue
+
+            # Compute display path (matching ExtractedFile.path in the database)
+            rel = path.relative_to(extract_dir)
+            if is_acorn:
+                true_name, _ = parse_acorn_filename(path.name)
+                if len(rel.parts) > 1:
+                    display_path = str(Path(*rel.parts[:-1]) / true_name)
+                else:
+                    display_path = true_name
+            else:
+                display_path = str(rel)
+
+            file_outputs = self._convert_file_to_outputs(
+                path, viewable_type, work_dir, output_subdir, analysis_uuid, file_index,
+            )
+            file_index += 1
+            if file_outputs is None:
+                log.warning(f"Skipping {path} — conversion failed")
+                continue
+            for out in file_outputs:
+                out['source_file'] = display_path
+            all_outputs.extend(file_outputs)
 
         self.complete_analysis(
             analysis_id,
-            summary=f'Converted {len(outputs)} output(s) for {artefact_type_str}',
+            summary=f'Converted {len(all_outputs)} output(s) from {file_index} viewable file(s)',
             details=json.dumps({
-                'artefact_type': artefact_type_str,
-                'outputs': outputs,
+                'mode': 'extraction_scan',
+                'outputs': all_outputs,
             }),
         )
 

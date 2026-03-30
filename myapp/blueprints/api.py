@@ -826,6 +826,11 @@ def produce_artefact(id):
     ).count()
 
     if already_produced == 0:
+        # Only clean up artefacts from completed or failed analyses.
+        # Excluding PENDING/RUNNING prevents concurrent sibling workers (e.g.
+        # multiple archive_extract jobs for different nested archives of the same
+        # parent) from treating each other's newly-created artefacts as "prior"
+        # and racing to delete them, causing FK violations.
         prior_derived = (
             Artefact.query
             .join(Analysis, Artefact.derived_from_analysis_id == Analysis.id)
@@ -833,17 +838,21 @@ def produce_artefact(id):
                 Artefact.parent_artefact_id == analysis.artefact_id,
                 Analysis.analysis_type == analysis.analysis_type,
                 Artefact.derived_from_analysis_id != analysis.id,
+                Analysis.status.in_([AnalysisStatus.COMPLETED, AnalysisStatus.FAILED]),
             )
             .all()
         )
-        for prior in prior_derived:
-            current_app.logger.info(
-                f"Removing prior derived artefact {prior.uuid} "
-                f"(from previous {analysis.analysis_type.value} analysis) "
-                f"before re-run"
-            )
-            _delete_artefact_files(prior)
-            db.session.delete(prior)
+        # Use no_autoflush to prevent SQLAlchemy from flushing pending deletes
+        # mid-loop when lazy-loading derived_artefacts inside _delete_artefact_files.
+        with db.session.no_autoflush:
+            for prior in prior_derived:
+                current_app.logger.info(
+                    f"Removing prior derived artefact {prior.uuid} "
+                    f"(from previous {analysis.analysis_type.value} analysis) "
+                    f"before re-run"
+                )
+                _delete_artefact_files(prior)
+                db.session.delete(prior)
         if prior_derived:
             db.session.flush()
 

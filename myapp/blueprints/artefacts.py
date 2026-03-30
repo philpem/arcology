@@ -712,18 +712,10 @@ def _render_viewer(artefact):
     """Build and render the viewer page for an artefact's converted outputs."""
     _viewable_types = (ArtefactType.ACORN_SPRITE, ArtefactType.ACORN_DRAW, ArtefactType.ACORN_TEXT)
     output_groups = []
+    output_folder = get_output_folder()
 
-    def _build_group_from_analysis(source_label, conv_analysis):
-        """Turn a completed FORMAT_CONVERT Analysis into an output group dict."""
-        try:
-            details = json.loads(conv_analysis.details or '{}')
-        except (json.JSONDecodeError, TypeError):
-            return None
-        outputs = details.get('outputs', [])
-        if not outputs:
-            return None
-        # For text outputs, read file content for inline rendering
-        output_folder = get_output_folder()
+    def _enrich_outputs(outputs):
+        """For text outputs, read file content for inline rendering."""
         for out in outputs:
             if out.get('type') == 'text':
                 try:
@@ -731,43 +723,74 @@ def _render_viewer(artefact):
                     out['text_content'] = open(text_path, encoding='utf-8', errors='replace').read()
                 except Exception:
                     out['text_content'] = None
-        return {'label': source_label, 'outputs': outputs}
+        return outputs
 
-    viewer_status = None  # 'pending', 'failed', or None (ready)
+    viewer_status = None  # 'pending', 'failed', 'partial', or None (ready)
 
     if artefact.artefact_type in _viewable_types:
-        # Artefact is itself a viewable type — show its own FORMAT_CONVERT output
+        # Mode 1: Artefact is itself a viewable type — show its own FORMAT_CONVERT output
         conv = Analysis.query.filter_by(
             artefact_id=artefact.id,
             analysis_type=AnalysisType.FORMAT_CONVERT,
         ).order_by(Analysis.id.desc()).first()
         if conv and conv.status == AnalysisStatus.COMPLETED and conv.success:
-            group = _build_group_from_analysis(artefact.original_filename or artefact.label, conv)
-            if group:
-                output_groups.append(group)
+            try:
+                details = json.loads(conv.details or '{}')
+            except (json.JSONDecodeError, TypeError):
+                details = {}
+            outputs = _enrich_outputs(details.get('outputs', []))
+            if outputs:
+                output_groups.append({
+                    'label': artefact.original_filename or artefact.label,
+                    'outputs': outputs,
+                })
         elif conv and conv.status in (AnalysisStatus.PENDING, AnalysisStatus.RUNNING):
             viewer_status = 'pending'
         else:
             viewer_status = 'failed'
     else:
-        # Show all derived ACORN_* artefacts across the artefact tree
-        all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
-        derived = Artefact.query.filter(
-            Artefact.parent_artefact_id.in_(all_artefact_ids),
-            Artefact.artefact_type.in_(_viewable_types),
-        ).order_by(Artefact.id).all()
-        pending_count = 0
-        for da in derived:
-            conv = Analysis.query.filter_by(
-                artefact_id=da.id,
+        # Mode 2: Aggregate outputs from all FORMAT_CONVERT analyses on this artefact.
+        # Multiple analyses are expected — one per FILE_EXTRACTION / ARCHIVE_EXTRACT
+        # partition queued via queue_partition_follow_ups().
+        convs = (
+            Analysis.query
+            .filter_by(
+                artefact_id=artefact.id,
                 analysis_type=AnalysisType.FORMAT_CONVERT,
-            ).order_by(Analysis.id.desc()).first()
-            if conv and conv.status == AnalysisStatus.COMPLETED and conv.success:
-                group = _build_group_from_analysis(da.original_filename or da.label, conv)
-                if group:
-                    output_groups.append(group)
-            elif conv and conv.status in (AnalysisStatus.PENDING, AnalysisStatus.RUNNING):
-                pending_count += 1
+            )
+            .order_by(Analysis.id)
+            .all()
+        )
+
+        pending_count = sum(
+            1 for c in convs
+            if c.status in (AnalysisStatus.PENDING, AnalysisStatus.RUNNING)
+        )
+
+        # Optional ?file= filter: show only outputs for a specific source file
+        file_filter = request.args.get('file')
+
+        # Collect outputs grouped by source_file
+        from collections import defaultdict
+        groups: dict[str, list] = defaultdict(list)
+        for conv in convs:
+            if not (conv.status == AnalysisStatus.COMPLETED and conv.success):
+                continue
+            try:
+                details = json.loads(conv.details or '{}')
+            except (json.JSONDecodeError, TypeError):
+                continue
+            for out in details.get('outputs', []):
+                source = out.get('source_file', '')
+                if file_filter and source != file_filter:
+                    continue
+                groups[source].append(out)
+
+        for source_file, outputs in groups.items():
+            _enrich_outputs(outputs)
+            label = source_file.split('/')[-1] if source_file else (artefact.original_filename or artefact.label)
+            output_groups.append({'label': label, 'outputs': outputs})
+
         if not output_groups:
             viewer_status = 'pending' if pending_count > 0 else 'failed'
         elif pending_count > 0:
@@ -1083,24 +1106,39 @@ def _render_artefact_view(artefact):
 
     hashdb_mode = request.args.get('mode') == 'hashdb'
 
-    # Build viewable_filenames: original_filename → Artefact for derived
-    # ACORN_SPRITE / ACORN_DRAW / ACORN_TEXT artefacts.  Includes artefacts
-    # regardless of FORMAT_CONVERT status so the eye icon shows as soon as the
-    # artefact is registered; the viewer route handles pending/failed states.
+    # Build viewable_filenames: set of ExtractedFile.path values that have
+    # completed FORMAT_CONVERT outputs.  Used to show the eye icon in the file
+    # listing only after conversion has finished.
     _viewable_types = (ArtefactType.ACORN_SPRITE, ArtefactType.ACORN_DRAW, ArtefactType.ACORN_TEXT)
-    derived_viewable = Artefact.query.filter(
-        Artefact.parent_artefact_id.in_(all_artefact_ids),
-        Artefact.artefact_type.in_(_viewable_types),
-    ).all()
-    viewable_filenames = {}  # original_filename → Artefact
-    for da in derived_viewable:
-        if da.original_filename:
-            viewable_filenames[da.original_filename] = da
+    viewable_filenames = set()  # set of file.path strings with completed outputs
+    if artefact.artefact_type not in _viewable_types:
+        convs = (
+            Analysis.query
+            .filter_by(
+                artefact_id=artefact.id,
+                analysis_type=AnalysisType.FORMAT_CONVERT,
+                success=True,
+            )
+            .filter(Analysis.status == AnalysisStatus.COMPLETED)
+            .all()
+        )
+        for conv in convs:
+            try:
+                details = json.loads(conv.details or '{}')
+            except (json.JSONDecodeError, TypeError):
+                continue
+            for out in details.get('outputs', []):
+                sf = out.get('source_file')
+                if sf:
+                    viewable_filenames.add(sf)
 
-    # Also check whether the artefact itself is a viewable type
-    has_converted_outputs = bool(viewable_filenames)
-    if not has_converted_outputs and artefact.artefact_type in _viewable_types:
-        has_converted_outputs = True
+    # "View" button: show if artefact is viewable type, or has any FORMAT_CONVERT
+    has_converted_outputs = artefact.artefact_type in _viewable_types
+    if not has_converted_outputs:
+        has_converted_outputs = Analysis.query.filter_by(
+            artefact_id=artefact.id,
+            analysis_type=AnalysisType.FORMAT_CONVERT,
+        ).first() is not None
 
     # Recognised products for all partitions of this artefact tree
     recognised_products = []
