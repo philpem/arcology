@@ -35,6 +35,11 @@ MAX_DECOMPRESSED_BYTES = int(os.environ.get('MAX_DECOMPRESSED_BYTES', str(10 * 1
 # Mastering detection: number of trailing tracks to scan
 MASTERING_TRACK_SCAN_COUNT = int(os.environ.get('MASTERING_TRACK_SCAN_COUNT', '5'))
 
+# Acorn/RISC OS Draw file conversion: also produce SVG output alongside PNG.
+# SVG is vector format and scales losslessly, but adds storage and processing time.
+# Set DRAW_CONVERT_SVG=true to enable (default: disabled).
+DRAW_CONVERT_SVG = os.environ.get('DRAW_CONVERT_SVG', 'false').lower() in ('1', 'true', 'yes')
+
 # Configure logging
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL),

@@ -81,26 +81,26 @@ def convert_sprite(input_path: Path, output_dir: Path, analysis_uuid: str) -> di
     return {'success': success, 'sprites': sprites, 'error': error if not success else None}
 
 
-def convert_draw(input_path: Path, output_dir: Path, analysis_uuid: str) -> dict:
+def convert_draw(input_path: Path, output_dir: Path, analysis_uuid: str,
+                 generate_svg: bool = False) -> dict:
     """
-    Convert an Acorn Draw file to PNG using drawfile_render (dcf21 fork).
+    Convert an Acorn Draw file to PNG (and optionally SVG) using drawfile_render.
 
     The tool is installed as a plain script at /opt/drawfile_render/render_drawfile.py
-    (not a pip package).  It is invoked with --input / --output (base path without
-    extension) and writes <base>.png.  It must be run with cwd=/opt/drawfile_render
-    because it imports sibling modules (spritefile, graphics_context, etc.) from
-    the same directory.
+    (not a pip package).  PNG is produced by invoking it as a subprocess; SVG is
+    produced by importing DrawFileRender directly (the CLI does not expose --format).
 
     Args:
         input_path: Path to the .aff/.draw file
         output_dir: Directory to write output files into
         analysis_uuid: UUID string used to prefix output filenames
+        generate_svg: Also produce an SVG alongside the PNG (default False)
 
     Returns:
         Dict with keys:
             success (bool)
             png_path (Path | None)
-            svg_path (Path | None)   # always None — CLI does not support SVG output
+            svg_path (Path | None)
             error (str | None)
             tool_output (dict)
     """
@@ -117,21 +117,41 @@ def convert_draw(input_path: Path, output_dir: Path, analysis_uuid: str) -> dict
         cwd=_DRAWFILE_RENDER_DIR,
     )
 
-    if result.returncode == 0 and png_path.exists():
+    if result.returncode != 0 or not png_path.exists():
+        error_msg = tool_output.get('stderr', '') or tool_output.get('stdout', '') or 'drawfile_render failed'
         return {
-            'success': True,
-            'png_path': png_path,
+            'success': False,
+            'png_path': None,
             'svg_path': None,
-            'error': None,
+            'error': error_msg[:500],
             'tool_output': tool_output,
         }
 
-    error_msg = tool_output.get('stderr', '') or tool_output.get('stdout', '') or 'drawfile_render failed'
+    # Optionally produce SVG by importing DrawFileRender directly.
+    # The CLI hardcodes PNG; SVG is available via the Python API.
+    # PYTHONPATH includes /opt/drawfile_render so the import works in Docker.
+    svg_path = None
+    if generate_svg:
+        svg_candidate = Path(output_base + '.svg')
+        try:
+            import sys as _sys
+            if _DRAWFILE_RENDER_DIR not in _sys.path:
+                _sys.path.insert(0, _DRAWFILE_RENDER_DIR)
+            from render_drawfile import DrawFileRender
+            df = DrawFileRender(filename=str(input_path))
+            df.render_to_context(filename=output_base, img_format='svg')
+            if svg_candidate.exists():
+                svg_path = svg_candidate
+            else:
+                log.warning(f'SVG render produced no output for {input_path}')
+        except Exception as e:
+            log.warning(f'SVG generation failed for {input_path}: {e}')
+
     return {
-        'success': False,
-        'png_path': None,
-        'svg_path': None,
-        'error': error_msg[:500],
+        'success': True,
+        'png_path': png_path,
+        'svg_path': svg_path,
+        'error': None,
         'tool_output': tool_output,
     }
 
