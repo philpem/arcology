@@ -1767,10 +1767,16 @@ class AnalysisWorker:
         )
 
         # Queue FORMAT_CONVERT to scan for and convert any Sprite/Draw/Text files.
+        # Pass path_prefix so that source_file values in analysis.details match
+        # ExtractedFile.path in the database (which has the archive's display
+        # path prepended for nested archives).
         self.api.queue_analysis(
             artefact['uuid'],
             AnalysisType.FORMAT_CONVERT.value,
-            hints={'extraction_path': str(persistent_output)},
+            hints={
+                'extraction_path': str(persistent_output),
+                'path_prefix': archive_display_path,
+            },
         )
 
         tool_key = result.get('tool', 'tool').lower().replace(' ', '_')
@@ -1989,6 +1995,12 @@ class AnalysisWorker:
         # Display paths must match ExtractedFile.path (Acorn suffix stripped).
         is_acorn = _has_acorn_filetypes(extract_dir)
 
+        # path_prefix is set when FORMAT_CONVERT was queued from process_archive_extract
+        # for a nested archive (e.g. an archive file on a disc image).  The DB
+        # registers those files with the archive's display path prepended, so
+        # source_file must include the same prefix to match ExtractedFile.path.
+        path_prefix = hints.get('path_prefix', '')  # e.g. 'Archives/Emulators.zip'
+
         all_outputs = []
         file_index = 0
         for path in sorted(extract_dir.rglob('*')):
@@ -2008,6 +2020,11 @@ class AnalysisWorker:
                     display_path = true_name
             else:
                 display_path = str(rel)
+
+            # Prepend archive path prefix for nested archives so the path matches
+            # ExtractedFile.path (which has the parent archive path prepended).
+            if path_prefix:
+                display_path = path_prefix + '/' + display_path
 
             file_outputs = self._convert_file_to_outputs(
                 path, viewable_type, work_dir, output_subdir, analysis_uuid, file_index,
