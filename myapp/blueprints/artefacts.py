@@ -356,9 +356,16 @@ def compute_file_hashes(filepath: str) -> tuple[str, str]:
 def _resolve_extracted_file_path(ef):
     """Resolve an ExtractedFile to its actual path on disk.
 
-    Looks up the FILE_EXTRACTION or ARCHIVE_EXTRACT analysis with an output_path
-    for the file's partition's artefact, then joins with ef.path.
-    Handles RISC OS filetype suffix fallback via glob.
+    Looks up completed FILE_EXTRACTION and ARCHIVE_EXTRACT analyses for the
+    file's partition's artefact, then joins their output_path with the
+    file's on-disk relative path.  Handles RISC OS filetype suffix fallback
+    via glob.
+
+    For files extracted from a nested archive (e.g. a zip inside a disc
+    image), the API prepends the parent archive's display path to ef.path so
+    the file appears nested in the UI.  That prefix is stripped here before
+    joining, because the actual files live in a separate ARCHIVE_EXTRACT
+    output directory, not under the disc's FILE_EXTRACTION tree.
 
     When the worker runs in a different container, the stored output_path
     may be an absolute path that doesn't exist on the web host (e.g.
@@ -370,14 +377,30 @@ def _resolve_extracted_file_path(ef):
     output_folder = get_output_folder()
     real_output = os.path.realpath(output_folder)
 
+    # For files nested inside an archive-within-a-disc, the DB path has the
+    # parent archive's display path prepended (e.g. "Archives/Emulators.zip/
+    # Docs/file.txt").  The actual files are in the ARCHIVE_EXTRACT output
+    # for that inner zip, so we strip the prefix to get the real disk path.
+    disk_path = ef.path
+    if ef.parent_file_id:
+        parent = ef.parent_file
+        if parent and parent.is_archive:
+            prefix = parent.path + '/'
+            if disk_path.startswith(prefix):
+                disk_path = disk_path[len(prefix):]
+
     for analysis_type in (AnalysisType.FILE_EXTRACTION, AnalysisType.ARCHIVE_EXTRACT):
-        extraction = (
+        # Use .all() so we try every extraction output for this artefact.
+        # A disc image may have multiple nested archives, each with its own
+        # ARCHIVE_EXTRACT and output_path; .first() would pick an arbitrary
+        # one that may not contain this particular file.
+        extractions = (
             Analysis.query
             .filter_by(artefact_id=ef.partition.artefact_id, analysis_type=analysis_type)
             .filter(Analysis.output_path.isnot(None), Analysis.status == AnalysisStatus.COMPLETED)
-            .first()
+            .all()
         )
-        if extraction and extraction.output_path:
+        for extraction in extractions:
             base = extraction.output_path
 
             # Build candidate base directories to try
@@ -405,7 +428,7 @@ def _resolve_extracted_file_path(ef):
                 # pass the inner confinement test and expose arbitrary host files.
                 if not real_base.startswith(real_output + os.sep):
                     continue
-                raw_path = os.path.join(resolved_base, ef.path.lstrip('/'))
+                raw_path = os.path.join(resolved_base, disk_path.lstrip('/'))
                 file_path = os.path.realpath(raw_path)
                 if not file_path.startswith(real_base + os.sep):
                     continue
