@@ -818,17 +818,8 @@ def _render_artefact_view(artefact):
             )
         )
     
-    page = request.args.get('page', 1, type=int)
-    valid_per_page = [25, 50, 100, 250]
-    per_page_param = request.args.get('per_page', None, type=int)
-    view_all = per_page_param == 0
-    if per_page_param in valid_per_page:
-        per_page = per_page_param
-    elif view_all:
-        per_page = 10000  # "view all" – large cap to avoid unbounded queries
-        page = 1
-    else:
-        per_page = current_app.config.get('FILES_PER_PAGE', 100)
+    from ..utils.pagination import resolve_per_page, VALID_PER_PAGE
+    per_page, page, view_all = resolve_per_page('FILES_PER_PAGE', 100)
 
     # Column sorting: sort=<col> ascending, sort=-<col> descending
     sort_param = request.args.get('sort', 'path')
@@ -844,6 +835,16 @@ def _render_artefact_view(artefact):
     sort_expr = _sort_columns.get(sort_col, _func.lower(ExtractedFile.path))
     if sort_desc:
         sort_expr = desc(sort_expr)
+
+    # Compute letter-to-page mapping for A-Z jump bar (only for path sort)
+    if sort_col == 'path' and not sort_desc:
+        from ..utils.pagination import compute_letter_pages
+        letter_pages, current_letter = compute_letter_pages(
+            files_query, ExtractedFile.path,
+            per_page, current_page=page
+        )
+    else:
+        letter_pages, current_letter = {}, ''
 
     files_pagination = files_query.order_by(sort_expr).paginate(
         page=page, per_page=per_page, max_per_page=per_page
@@ -1023,7 +1024,7 @@ def _render_artefact_view(artefact):
                            files_pagination=files_pagination,
                            pagination_args=pagination_args,
                            hashdb_toggle_args=hashdb_toggle_args,
-                           valid_per_page=valid_per_page,
+                           valid_per_page=VALID_PER_PAGE,
                            view_all=view_all,
                            all_partitions=all_partitions,
                            subdirectories=subdirectories,
@@ -1041,7 +1042,9 @@ def _render_artefact_view(artefact):
                            recognised_folder_paths=recognised_folder_paths,
                            hash_databases=hash_databases,
                            file_known_matches=file_known_matches,
-                           RestrictionType=RestrictionType)
+                           RestrictionType=RestrictionType,
+                           letter_pages=letter_pages,
+                           current_letter=current_letter)
 
 
 @blueprint.route('/<string:uuid>/add-to-hashdb', methods=['POST'])

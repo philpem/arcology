@@ -9,7 +9,7 @@ from typing import Optional
 import secrets
 import uuid as uuid_module
 from sqlalchemy import (
-    Column, ForeignKey, Sequence, Text, BigInteger, Index, Table
+    Column, ForeignKey, Sequence, Text, BigInteger, Index, Table, JSON
 )
 from sqlalchemy import Integer, String, Boolean, DateTime, Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -140,6 +140,7 @@ class User(db.Model):
     is_admin      = Column(Boolean, nullable=False, default=False)
     permission    = Column(SQLEnum(UserPermission), nullable=False, default=UserPermission.READ_WRITE)
     can_use_api   = Column(Boolean, nullable=False, default=False)
+    preferences   = Column(JSON, nullable=True, default=None)
 
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     restriction_bypasses: Mapped[list["UserRestrictionBypass"]] = relationship(
@@ -192,6 +193,24 @@ class User(db.Model):
             return bcrypt.checkpw(password.encode('utf-8'), self.password_hash.encode('utf-8'))
         except (ValueError, TypeError):
             return False
+
+    def get_preference(self, key, default=None):
+        """Return a single preference value, or *default* if not set."""
+        if self.preferences is None:
+            return default
+        return self.preferences.get(key, default)
+
+    def set_preference(self, key, value):
+        """Set a single preference value and mark the column as modified.
+
+        Reassigns the entire dict so SQLAlchemy detects the change
+        (JSON columns do not track in-place mutations).
+        """
+        if self.preferences is None:
+            self.preferences = {}
+        updated = dict(self.preferences)
+        updated[key] = value
+        self.preferences = updated
 
 
 class ApiKey(db.Model):

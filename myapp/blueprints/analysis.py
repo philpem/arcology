@@ -15,6 +15,7 @@ from sqlalchemy.orm import joinedload
 from ..extensions import db
 from ..database import Analysis, AnalysisStatus
 from ..permissions import require_permission
+from ..utils.pagination import resolve_per_page, VALID_PER_PAGE
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -81,11 +82,12 @@ def index():
         except ValueError:
             pass
 
-    page = request.args.get('page', 1, type=int)
+    per_page, page, view_all = resolve_per_page('ANALYSES_PER_PAGE', 50)
+
     # Eager-load artefact to avoid N+1 lazy loads in template
     pagination = query.options(
         joinedload(Analysis.artefact)
-    ).order_by(Analysis.created_at.desc()).paginate(page=page, per_page=50)
+    ).order_by(Analysis.created_at.desc()).paginate(page=page, per_page=per_page)
 
     # Single query for all status counts using conditional aggregation
     counts_row = db.session.query(
@@ -100,12 +102,14 @@ def index():
         'completed': counts_row.completed,
         'failed': counts_row.failed,
     }
-    
+
     return render_template('analysis/index.html',
                            analyses=pagination.items,
                            pagination=pagination,
                            status_filter=status_filter,
-                           status_counts=status_counts)
+                           status_counts=status_counts,
+                           valid_per_page=VALID_PER_PAGE,
+                           view_all=view_all)
 
 
 @blueprint.route('/<string:uuid>')

@@ -18,6 +18,7 @@ from .artefacts import _delete_item_files
 from ..permissions import require_permission
 from ..utils.item_helpers import item_choice_list, assign_item_fields, assign_item_tags
 from ..utils.slugs import get_or_create_slug, lookup_by_identifier
+from ..utils.pagination import compute_letter_pages, resolve_per_page, VALID_PER_PAGE
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -88,8 +89,13 @@ def index():
     # Eager-load platform and category to avoid N+1 lazy loads in template
     query = query.options(selectinload(Item.platform), selectinload(Item.category))
 
-    page = request.args.get('page', 1, type=int)
-    per_page = current_app.config.get('ITEMS_PER_PAGE', 25)
+    per_page, page, view_all = resolve_per_page('ITEMS_PER_PAGE', 25)
+
+    # Compute letter-to-page mapping for A-Z jump bar
+    letter_pages, current_letter = compute_letter_pages(
+        query, Item.name, per_page, current_page=page
+    )
+
     pagination = query.order_by(Item.name).paginate(page=page, per_page=per_page)
 
     # Compute artefact counts in a single query instead of lazy-loading per item
@@ -108,7 +114,11 @@ def index():
                            items=pagination.items,
                            artefact_counts=artefact_counts,
                            pagination=pagination,
-                           form=form)
+                           form=form,
+                           letter_pages=letter_pages,
+                           current_letter=current_letter,
+                           valid_per_page=VALID_PER_PAGE,
+                           view_all=view_all)
 
 
 @blueprint.route('/new', methods=['GET', 'POST'])
@@ -148,18 +158,23 @@ def view(uuid):
     """View an item and its artefacts."""
     item = lookup_by_identifier(Item, uuid)
 
-    page = request.args.get('page', 1, type=int)
-    per_page = current_app.config.get('ARTEFACTS_PER_PAGE', 25)
+    per_page, page, view_all = resolve_per_page('ARTEFACTS_PER_PAGE', 25)
 
-    artefacts_page = (
+    artefact_query = (
         Artefact.query
         .filter_by(item_id=item.id, parent_artefact_id=None)
         .options(selectinload(Artefact.derived_artefacts))
-        .order_by(Artefact.label)
-        .paginate(page=page, per_page=per_page)
     )
 
-    return render_template('items/view.html', item=item, artefacts_page=artefacts_page)
+    letter_pages, current_letter = compute_letter_pages(
+        artefact_query, Artefact.label, per_page, current_page=page
+    )
+
+    artefacts_page = artefact_query.order_by(Artefact.label).paginate(page=page, per_page=per_page)
+
+    return render_template('items/view.html', item=item, artefacts_page=artefacts_page,
+                           letter_pages=letter_pages, current_letter=current_letter,
+                           valid_per_page=VALID_PER_PAGE, view_all=view_all)
 
 
 @blueprint.route('/<string:uuid>/edit', methods=['GET', 'POST'])
