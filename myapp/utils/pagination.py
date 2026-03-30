@@ -12,7 +12,7 @@ _ALPHA_SET = set(_ALPHA)
 VALID_PER_PAGE = [25, 50, 100, 250]
 
 
-def compute_letter_pages(query, field, per_page, current_page=1):
+def compute_letter_pages(query, field, per_page, current_page=1, descending=False):
     """Compute letter-to-page mapping for alphabetical jump navigation.
 
     Given a query sorted alphabetically by *field*, compute which page each
@@ -20,6 +20,10 @@ def compute_letter_pages(query, field, per_page, current_page=1):
     current_letter)`` where *letter_pages* maps uppercase letters (and ``#``
     for non-alpha) to page numbers, and *current_letter* is the letter whose
     range the *current_page* falls within.
+
+    Set *descending=True* when the query is sorted Z→A.  In that case the
+    mapping is built in reverse order (Z first, ``#`` last) so that page
+    numbers reflect the actual data layout.
 
     Works with both PostgreSQL and SQLite.
     """
@@ -53,14 +57,21 @@ def compute_letter_pages(query, field, per_page, current_page=1):
         else:
             non_alpha_count += cnt
 
-    # Sort alpha letters
-    alpha_counts.sort(key=lambda x: x[0])
+    # Sort alpha letters A→Z; reverse to Z→A when descending
+    alpha_counts.sort(key=lambda x: x[0], reverse=descending)
 
-    # Build ordered list: # first (if present), then A-Z
+    # Build ordered list.
+    # Ascending:  # first (digits sort before letters), then A-Z
+    # Descending: Z-A first, then # last (digits sort after letters in DESC)
     ordered = []
-    if non_alpha_count > 0:
-        ordered.append(('#', non_alpha_count))
-    ordered.extend(alpha_counts)
+    if descending:
+        ordered.extend(alpha_counts)
+        if non_alpha_count > 0:
+            ordered.append(('#', non_alpha_count))
+    else:
+        if non_alpha_count > 0:
+            ordered.append(('#', non_alpha_count))
+        ordered.extend(alpha_counts)
 
     # Compute cumulative offset -> page number for each letter
     letter_pages = {}

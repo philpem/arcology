@@ -106,10 +106,10 @@ def index():
     sort = resolve_sort('sort', _ITEM_SORT_OPTIONS, 'items_sort', 'name_asc')
     per_page, page, view_all = resolve_per_page('ITEMS_PER_PAGE', 25)
 
-    # Compute letter-to-page mapping for A-Z jump bar (only meaningful for name sort)
-    if sort == 'name_asc':
+    # Compute letter-to-page mapping for A-Z jump bar (only meaningful for name sorts)
+    if sort in ('name_asc', 'name_desc'):
         letter_pages, current_letter = compute_letter_pages(
-            query, Item.name, per_page, current_page=page
+            query, Item.name, per_page, current_page=page, descending=(sort == 'name_desc')
         )
     else:
         letter_pages, current_letter = {}, None
@@ -187,10 +187,11 @@ def view(uuid):
         .options(selectinload(Artefact.derived_artefacts))
     )
 
-    # Compute letter-to-page mapping for A-Z jump bar (only meaningful for label sort)
-    if artefact_sort == 'label_asc':
+    # Compute letter-to-page mapping for A-Z jump bar (only meaningful for label sorts)
+    if artefact_sort in ('label_asc', 'label_desc'):
         letter_pages, current_letter = compute_letter_pages(
-            artefact_query, Artefact.label, per_page, current_page=page
+            artefact_query, Artefact.label, per_page, current_page=page,
+            descending=(artefact_sort == 'label_desc')
         )
     else:
         letter_pages, current_letter = {}, None
