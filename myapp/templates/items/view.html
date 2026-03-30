@@ -70,13 +70,23 @@
 
     <div class="col-md-8">
         <div class="card">
-            <div class="card-header d-flex justify-content-between">
+            <div class="card-header d-flex justify-content-between align-items-center">
                 <span><i class="bi bi-disc"></i> Artefacts ({{ artefacts_page.total }})</span>
-                {% if user_can_write %}<a href="{{ url_for('myapp_blueprints_artefacts.upload', item_id=item.url_id) }}" class="btn btn-sm btn-primary"><i class="bi bi-plus"></i> Upload</a>{% endif %}
+                <div class="d-flex gap-2 align-items-center">
+                    <form method="get" class="d-flex align-items-center">
+                        <select name="artefact_sort" class="form-select form-select-sm" style="width: auto;" onchange="this.form.submit()">
+                            <option value="label_asc" {% if artefact_sort == 'label_asc' %}selected{% endif %}>Label (A–Z)</option>
+                            <option value="label_desc" {% if artefact_sort == 'label_desc' %}selected{% endif %}>Label (Z–A)</option>
+                            <option value="uploaded_asc" {% if artefact_sort == 'uploaded_asc' %}selected{% endif %}>Uploaded (oldest)</option>
+                            <option value="uploaded_desc" {% if artefact_sort == 'uploaded_desc' %}selected{% endif %}>Uploaded (newest)</option>
+                        </select>
+                    </form>
+                    {% if user_can_write %}<a href="{{ url_for('myapp_blueprints_artefacts.upload', item_id=item.url_id) }}" class="btn btn-sm btn-primary"><i class="bi bi-plus"></i> Upload</a>{% endif %}
+                </div>
             </div>
             {% if letter_pages %}
             <div class="card-body border-bottom py-2">
-                {{ render_letter_bar('myapp_blueprints_items.view', letter_pages, current_letter, {'uuid': item.url_id, 'per_page': request.args.get('per_page')}) }}
+                {{ render_letter_bar('myapp_blueprints_items.view', letter_pages, current_letter, {'uuid': item.url_id, 'per_page': request.args.get('per_page'), 'artefact_sort': artefact_sort}) }}
             </div>
             {% endif %}
             <div class="list-group list-group-flush">
@@ -109,7 +119,7 @@
                 <div class="list-group-item text-muted text-center">No artefacts yet</div>
                 {% endfor %}
             </div>
-            {{ render_pagination(artefacts_page, 'myapp_blueprints_items.view', {'uuid': item.url_id, 'per_page': request.args.get('per_page')}, valid_per_page=valid_per_page, view_all=view_all) }}
+            {{ render_pagination(artefacts_page, 'myapp_blueprints_items.view', {'uuid': item.url_id, 'per_page': request.args.get('per_page'), 'artefact_sort': artefact_sort}, valid_per_page=valid_per_page, view_all=view_all) }}
         </div>
     </div>
 </div>

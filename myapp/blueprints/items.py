@@ -14,6 +14,20 @@ from sqlalchemy.orm import selectinload
 
 from ..extensions import db
 from ..database import Item, Artefact, Platform, Category, Tag, ExternalSystem, ExternalReference
+
+_ITEM_SORT_OPTIONS = {
+    'name_asc':      Item.name.asc(),
+    'name_desc':     Item.name.desc(),
+    'uploaded_asc':  Item.created_at.asc(),
+    'uploaded_desc': Item.created_at.desc(),
+}
+
+_ARTEFACT_SORT_OPTIONS = {
+    'label_asc':     Artefact.label.asc(),
+    'label_desc':    Artefact.label.desc(),
+    'uploaded_asc':  Artefact.created_at.asc(),
+    'uploaded_desc': Artefact.created_at.desc(),
+}
 from .artefacts import _delete_item_files
 from ..permissions import require_permission
 from ..utils.item_helpers import item_choice_list, assign_item_fields, assign_item_tags
@@ -89,14 +103,21 @@ def index():
     # Eager-load platform and category to avoid N+1 lazy loads in template
     query = query.options(selectinload(Item.platform), selectinload(Item.category))
 
+    sort = request.args.get('sort', 'name_asc')
+    if sort not in _ITEM_SORT_OPTIONS:
+        sort = 'name_asc'
+
     per_page, page, view_all = resolve_per_page('ITEMS_PER_PAGE', 25)
 
-    # Compute letter-to-page mapping for A-Z jump bar
-    letter_pages, current_letter = compute_letter_pages(
-        query, Item.name, per_page, current_page=page
-    )
+    # Compute letter-to-page mapping for A-Z jump bar (only meaningful for name sort)
+    if sort == 'name_asc':
+        letter_pages, current_letter = compute_letter_pages(
+            query, Item.name, per_page, current_page=page
+        )
+    else:
+        letter_pages, current_letter = {}, None
 
-    pagination = query.order_by(Item.name).paginate(page=page, per_page=per_page)
+    pagination = query.order_by(_ITEM_SORT_OPTIONS[sort]).paginate(page=page, per_page=per_page)
 
     # Compute artefact counts in a single query instead of lazy-loading per item
     item_ids = [item.id for item in pagination.items]
@@ -118,7 +139,8 @@ def index():
                            letter_pages=letter_pages,
                            current_letter=current_letter,
                            valid_per_page=VALID_PER_PAGE,
-                           view_all=view_all)
+                           view_all=view_all,
+                           sort=sort)
 
 
 @blueprint.route('/new', methods=['GET', 'POST'])
@@ -160,21 +182,30 @@ def view(uuid):
 
     per_page, page, view_all = resolve_per_page('ARTEFACTS_PER_PAGE', 25)
 
+    artefact_sort = request.args.get('artefact_sort', 'label_asc')
+    if artefact_sort not in _ARTEFACT_SORT_OPTIONS:
+        artefact_sort = 'label_asc'
+
     artefact_query = (
         Artefact.query
         .filter_by(item_id=item.id, parent_artefact_id=None)
         .options(selectinload(Artefact.derived_artefacts))
     )
 
-    letter_pages, current_letter = compute_letter_pages(
-        artefact_query, Artefact.label, per_page, current_page=page
-    )
+    # Compute letter-to-page mapping for A-Z jump bar (only meaningful for label sort)
+    if artefact_sort == 'label_asc':
+        letter_pages, current_letter = compute_letter_pages(
+            artefact_query, Artefact.label, per_page, current_page=page
+        )
+    else:
+        letter_pages, current_letter = {}, None
 
-    artefacts_page = artefact_query.order_by(Artefact.label).paginate(page=page, per_page=per_page)
+    artefacts_page = artefact_query.order_by(_ARTEFACT_SORT_OPTIONS[artefact_sort]).paginate(page=page, per_page=per_page)
 
     return render_template('items/view.html', item=item, artefacts_page=artefacts_page,
                            letter_pages=letter_pages, current_letter=current_letter,
-                           valid_per_page=VALID_PER_PAGE, view_all=view_all)
+                           valid_per_page=VALID_PER_PAGE, view_all=view_all,
+                           artefact_sort=artefact_sort)
 
 
 @blueprint.route('/<string:uuid>/edit', methods=['GET', 'POST'])
