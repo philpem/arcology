@@ -69,6 +69,22 @@ def convert_sprite(input_path: Path, output_dir: Path, analysis_uuid: str) -> di
             )
             if img.mode not in ('RGB', 'RGBA'):
                 img = img.convert('RGBA')
+
+            # Correct non-square pixels (e.g. Mode 13 / Mode 15: xdpi=90, ydpi=45).
+            # Physical pixel size = 1/dpi inches; when X and Y DPI differ the pixels
+            # are rectangular.  Scale the image so pixels become square on screen.
+            xdpi = sprite.get('dpi x', 0)
+            ydpi = sprite.get('dpi y', 0)
+            if xdpi > 0 and ydpi > 0 and xdpi != ydpi:
+                if xdpi > ydpi:
+                    # Y pixels are taller than wide — stretch height.
+                    new_h = round(img.height * xdpi / ydpi)
+                    img = img.resize((img.width, new_h), Image.NEAREST)
+                else:
+                    # X pixels are wider than tall — stretch width.
+                    new_w = round(img.width * ydpi / xdpi)
+                    img = img.resize((new_w, img.height), Image.NEAREST)
+
             img.save(str(out_path), 'PNG')
 
             sprites.append({'name': name, 'path': out_path})
