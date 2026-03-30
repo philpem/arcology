@@ -36,6 +36,7 @@ from .archives import (
     decompress_single_file,
 )
 from .armlock import detect_armlock, remove_armlock
+from .acorn_images import convert_sprite, convert_draw
 
 __all__ = [
     'run_tool',
@@ -66,6 +67,8 @@ __all__ = [
     'decompress_single_file',
     'detect_armlock',
     'remove_armlock',
+    'convert_sprite',
+    'convert_draw',
 ]
 
 # vim: ts=4 sw=4 et

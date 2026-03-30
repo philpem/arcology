@@ -283,6 +283,15 @@ ARG GREASEWEAZLE_VERSION=dcb3d5d9d71b58d51aa22938cf96272a3b507292
 RUN python3 -m pip install --break-system-packages \
 	git+https://github.com/keirf/greaseweazle@${GREASEWEAZLE_VERSION}
 
+# Install Acorn image conversion libraries.
+# - spritefile: reads Acorn Sprite containers and provides PIL Image objects
+# - Pillow: PIL fork used by spritefile for PNG output
+# - drawfile_render (dcf21 fork): converts Acorn Draw files to PNG/SVG
+RUN python3 -m pip install --break-system-packages \
+	spritefile \
+	Pillow \
+	git+https://github.com/dcf21/drawfile-render
+
 # Clean up build dependencies
 RUN apt -y remove python3-dev git && apt -y autoremove
 

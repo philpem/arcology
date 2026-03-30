@@ -93,6 +93,12 @@ EXTENSION_MAP = {
     '.arcfs': ArtefactType.ARC,
     '.spk': ArtefactType.ARC,
     '.spark': ArtefactType.ARC,
+
+    # Acorn/RISC OS native viewable formats
+    '.spr':  ArtefactType.ACORN_SPRITE,
+    '.aff':  ArtefactType.ACORN_DRAW,
+    '.draw': ArtefactType.ACORN_DRAW,
+    '.txt':  ArtefactType.ACORN_TEXT,
 }
 
 
@@ -160,6 +166,11 @@ ANALYSIS_MAP = {
     ArtefactType.RAR: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.ARC: [AnalysisType.ARCHIVE_EXTRACT],
     
+    # Acorn/RISC OS native viewable formats — convert to portable equivalents
+    ArtefactType.ACORN_SPRITE: [AnalysisType.FORMAT_CONVERT],
+    ArtefactType.ACORN_DRAW:   [AnalysisType.FORMAT_CONVERT],
+    ArtefactType.ACORN_TEXT:   [AnalysisType.FORMAT_CONVERT],
+
     # Unknown - try to identify
     ArtefactType.UNKNOWN: [AnalysisType.FORMAT_IDENTIFY],
 }
@@ -681,6 +692,88 @@ def view_legacy(uuid):
     return _render_artefact_view(artefact)
 
 
+@blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/viewer')
+@login_required
+def viewer(item_id, artefact_id):
+    """Viewer page for converted outputs (images, text, etc.)."""
+    _, artefact = _resolve_artefact(item_id, artefact_id)
+    return _render_viewer(artefact)
+
+
+@blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/viewer')
+@login_required
+def viewer_nested(item_id, root_id, artefact_id):
+    """Viewer page for converted outputs (nested artefact)."""
+    _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
+    return _render_viewer(artefact)
+
+
+def _render_viewer(artefact):
+    """Build and render the viewer page for an artefact's converted outputs."""
+    _viewable_types = (ArtefactType.ACORN_SPRITE, ArtefactType.ACORN_DRAW, ArtefactType.ACORN_TEXT)
+    output_groups = []
+
+    def _build_group_from_analysis(source_label, conv_analysis):
+        """Turn a completed FORMAT_CONVERT Analysis into an output group dict."""
+        try:
+            details = json.loads(conv_analysis.details or '{}')
+        except (json.JSONDecodeError, TypeError):
+            return None
+        outputs = details.get('outputs', [])
+        if not outputs:
+            return None
+        # For text outputs, read file content for inline rendering
+        output_folder = get_output_folder()
+        for out in outputs:
+            if out.get('type') == 'text':
+                try:
+                    text_path = os.path.join(output_folder, out['filename'])
+                    out['text_content'] = open(text_path, encoding='utf-8', errors='replace').read()
+                except Exception:
+                    out['text_content'] = None
+        return {'label': source_label, 'outputs': outputs}
+
+    if artefact.artefact_type in _viewable_types:
+        # Artefact is itself a viewable type — show its own FORMAT_CONVERT output
+        conv = Analysis.query.filter_by(
+            artefact_id=artefact.id,
+            analysis_type=AnalysisType.FORMAT_CONVERT,
+            status=AnalysisStatus.COMPLETED,
+            success=True,
+        ).first()
+        if conv:
+            group = _build_group_from_analysis(artefact.original_filename or artefact.label, conv)
+            if group:
+                output_groups.append(group)
+    else:
+        # Show all derived ACORN_* artefacts across the artefact tree
+        all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+        derived = Artefact.query.filter(
+            Artefact.parent_artefact_id.in_(all_artefact_ids),
+            Artefact.artefact_type.in_(_viewable_types),
+        ).order_by(Artefact.id).all()
+        for da in derived:
+            conv = Analysis.query.filter_by(
+                artefact_id=da.id,
+                analysis_type=AnalysisType.FORMAT_CONVERT,
+                status=AnalysisStatus.COMPLETED,
+                success=True,
+            ).first()
+            if conv:
+                group = _build_group_from_analysis(da.original_filename or da.label, conv)
+                if group:
+                    output_groups.append(group)
+
+    if not output_groups:
+        abort(404)
+
+    return render_template(
+        'artefacts/viewer.html',
+        artefact=artefact,
+        output_groups=output_groups,
+    )
+
+
 def _render_artefact_view(artefact):
 
     # Only bind to request.args when the user has actively submitted a filter,
@@ -983,6 +1076,37 @@ def _render_artefact_view(artefact):
 
     hashdb_mode = request.args.get('mode') == 'hashdb'
 
+    # Build viewable_filenames: original_filename → Artefact for derived
+    # ACORN_SPRITE / ACORN_DRAW / ACORN_TEXT artefacts that have a completed
+    # FORMAT_CONVERT analysis.  Used by the file listing "View" eye icon.
+    _viewable_types = (ArtefactType.ACORN_SPRITE, ArtefactType.ACORN_DRAW, ArtefactType.ACORN_TEXT)
+    derived_viewable = Artefact.query.filter(
+        Artefact.parent_artefact_id.in_(all_artefact_ids),
+        Artefact.artefact_type.in_(_viewable_types),
+    ).all()
+    viewable_filenames = {}  # original_filename → Artefact
+    for da in derived_viewable:
+        conv = Analysis.query.filter_by(
+            artefact_id=da.id,
+            analysis_type=AnalysisType.FORMAT_CONVERT,
+            status=AnalysisStatus.COMPLETED,
+            success=True,
+        ).first()
+        if conv and da.original_filename:
+            viewable_filenames[da.original_filename] = da
+
+    # Also check whether the artefact itself has a completed FORMAT_CONVERT
+    has_converted_outputs = bool(viewable_filenames)
+    if not has_converted_outputs and artefact.artefact_type in _viewable_types:
+        own_conv = Analysis.query.filter_by(
+            artefact_id=artefact.id,
+            analysis_type=AnalysisType.FORMAT_CONVERT,
+            status=AnalysisStatus.COMPLETED,
+            success=True,
+        ).first()
+        if own_conv:
+            has_converted_outputs = True
+
     # Recognised products for all partitions of this artefact tree
     recognised_products = []
     if all_partitions:
@@ -1044,7 +1168,9 @@ def _render_artefact_view(artefact):
                            file_known_matches=file_known_matches,
                            RestrictionType=RestrictionType,
                            letter_pages=letter_pages,
-                           current_letter=current_letter)
+                           current_letter=current_letter,
+                           viewable_filenames=viewable_filenames,
+                           has_converted_outputs=has_converted_outputs)
 
 
 @blueprint.route('/<string:uuid>/add-to-hashdb', methods=['POST'])

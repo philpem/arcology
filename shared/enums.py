@@ -39,6 +39,11 @@ class ArtefactType(enum.Enum):
     RAR        = "rar"
     ARC        = "arc"               # ArcFS / Spark (RISC OS archive)
 
+    # Acorn/RISC OS native formats (viewable/convertible)
+    ACORN_SPRITE = "acorn_sprite"    # Acorn Sprite file (may contain multiple named images)
+    ACORN_DRAW   = "acorn_draw"      # Acorn Draw file (vector drawing)
+    ACORN_TEXT   = "acorn_text"      # Acorn text/script file (Text, Obey, Command)
+
     # Unknown - needs manual identification
     UNKNOWN    = "unknown"
 
@@ -74,5 +79,8 @@ class AnalysisType(enum.Enum):
 
     # Known-product recognition
     PRODUCT_RECOGNITION    = "product_recognition"    # Match extracted files against known-product definitions
+
+    # Format conversion / viewing
+    FORMAT_CONVERT         = "format_convert"         # Convert native formats to portable equivalents (Sprite→PNG, Draw→PNG/SVG, Text→UTF-8)
 
 # vim: ts=4 sw=4 et
