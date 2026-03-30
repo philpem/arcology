@@ -133,7 +133,10 @@ artefacts by analysis (e.g. a decoded `.img` produced from a `.scp` flux dump).
 5. Optionally set a label (defaults to the original filename) and description.
 6. The **Auto Analyse** checkbox (on by default) queues appropriate analyses
    immediately after upload.
-7. Click **Upload**.
+7. To stay on the upload form after submitting (useful for bulk uploads),
+   tick the **Upload more** checkbox before clicking Upload. The form will
+   reload ready for the next file instead of redirecting to the artefact page.
+8. Click **Upload**.
 
 Supported artefact types and their recognised extensions:
 
@@ -253,7 +256,10 @@ Go to **Analysis** in the navigation bar. You can filter by status (Pending,
 Running, Completed, Failed) and click through to individual analysis details.
 
 The **View Queue** link shows pending and running jobs in priority order with
-cancel buttons.
+cancel buttons. Jobs that have been running longer than the stale timeout
+(default 1 hour) are highlighted with a warning badge. Click **Reset Stale
+Jobs** to reset any stuck jobs back to pending so they can be claimed by a
+worker again.
 
 ### Retrying Failed Analyses
 
