@@ -79,6 +79,14 @@ Use the filters at the top of the page to narrow results:
 - **Platform** -- dropdown filter by platform
 - **Category** -- dropdown filter by category
 
+An **A–Z letter bar** sits above the list. Clicking a letter jumps to the page
+where items starting with that letter begin. **#** covers items that start with
+a digit or punctuation. Letters with no matching items are shown as disabled.
+The **All** button clears any active letter jump.
+
+Use the **per-page selector** (25 / 50 / 100 / 250 / All) to control how many
+items appear per page. Your choice is remembered across sessions.
+
 Click an item name to view its detail page.
 
 ### Creating an Item
@@ -96,6 +104,9 @@ Click an item name to view its detail page.
 
 On the item detail page, click **Edit** to change any field, or **Delete** to
 remove the item and all its artefacts permanently.
+
+The item detail page also shows an **A–Z letter bar** above the artefacts list,
+and a per-page selector, using the same controls as the items list.
 
 ### External References
 
@@ -169,7 +180,8 @@ Click an artefact on the item detail page to see:
 - **Analyses** -- status and results of each analysis run on this artefact,
   including inline flux visualisation plots for flux images
 - **Partitions and file listings** -- if file extraction has run, the extracted
-  directory tree is shown grouped by partition
+  directory tree is shown grouped by partition. When the listing is sorted by
+  path, an A–Z letter bar appears for quick navigation through large directories.
 - **Derived artefacts** -- if analysis produced new files (e.g. decoded sector
   images from flux data), they appear as linked child artefacts
 - **Copy protection indicators** -- if protection scanning detected anything
@@ -254,6 +266,7 @@ reports results back.
 
 Go to **Analysis** in the navigation bar. You can filter by status (Pending,
 Running, Completed, Failed) and click through to individual analysis details.
+Use the per-page selector to control how many rows are shown.
 
 The **View Queue** link shows pending and running jobs in priority order with
 cancel buttons. Jobs that have been running longer than the stale timeout
