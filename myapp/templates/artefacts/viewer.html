@@ -77,7 +77,7 @@
     {% endif %}
 {% endfor %}
 
-{% if output_groups | length > 1 %}
+{% if output_groups | length > 1 or group.source_file %}
 <section class="mb-5">
 <h5 class="font-monospace border-bottom pb-2 mb-3">{{ group.label }}</h5>
 {% endif %}
@@ -147,7 +147,7 @@
     {% endfor %}
 {% endif %}
 
-{% if output_groups | length > 1 %}
+{% if output_groups | length > 1 or group.source_file %}
 </section>
 {% endif %}
 {% endfor %}

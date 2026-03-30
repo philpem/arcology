@@ -1863,6 +1863,8 @@ class AnalysisWorker:
                 })
 
         elif artefact_type == ArtefactType.ACORN_DRAW:
+            from .tools.extraction import parse_acorn_filename as _parse_acorn
+            true_name, _ = _parse_acorn(input_path.name)
             tmp_out = work_dir / f'draw_{file_index}'
             result = convert_draw(input_path, tmp_out, analysis_uuid, generate_svg=generate_svg)
             if not result['success']:
@@ -1878,8 +1880,8 @@ class AnalysisWorker:
             outputs.append({
                 'type': 'image',
                 'filename': saved_png,
-                'name': input_path.stem,
-                'description': input_path.stem,
+                'name': true_name,
+                'description': true_name,
                 'tool': 'drawfile_render',
             })
             if result['svg_path']:
@@ -1891,12 +1893,14 @@ class AnalysisWorker:
                 outputs.append({
                     'type': 'svg',
                     'filename': saved_svg,
-                    'name': input_path.stem,
-                    'description': f'{input_path.stem} (SVG)',
+                    'name': true_name,
+                    'description': f'{true_name} (SVG)',
                     'tool': 'drawfile_render',
                 })
 
         elif artefact_type == ArtefactType.ACORN_TEXT:
+            from .tools.extraction import parse_acorn_filename as _parse_acorn
+            true_name, _ = _parse_acorn(input_path.name)
             try:
                 raw = input_path.read_bytes()
                 # Decode as Latin-1 (covers all Acorn/DOS byte values);
@@ -1909,8 +1913,8 @@ class AnalysisWorker:
                 outputs.append({
                     'type': 'text',
                     'filename': saved,
-                    'name': input_path.stem,
-                    'description': input_path.name,
+                    'name': true_name,
+                    'description': true_name,
                     'tool': 'builtin',
                 })
             except Exception as e:

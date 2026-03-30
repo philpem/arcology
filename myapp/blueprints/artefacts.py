@@ -742,6 +742,7 @@ def _render_viewer(artefact):
             if outputs:
                 output_groups.append({
                     'label': artefact.original_filename or artefact.label,
+                    'source_file': None,
                     'outputs': outputs,
                 })
         elif conv and conv.status in (AnalysisStatus.PENDING, AnalysisStatus.RUNNING):
@@ -788,8 +789,10 @@ def _render_viewer(artefact):
 
         for source_file, outputs in groups.items():
             _enrich_outputs(outputs)
-            label = source_file.split('/')[-1] if source_file else (artefact.original_filename or artefact.label)
-            output_groups.append({'label': label, 'outputs': outputs})
+            # Use the full source_file path as the label so users can see
+            # which file in the archive produced these outputs.
+            label = source_file if source_file else (artefact.original_filename or artefact.label)
+            output_groups.append({'label': label, 'source_file': source_file, 'outputs': outputs})
 
         if not output_groups:
             viewer_status = 'pending' if pending_count > 0 else 'failed'
