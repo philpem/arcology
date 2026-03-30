@@ -295,6 +295,10 @@ RUN git clone https://github.com/dcf21/drawfile-render /opt/drawfile_render && \
     git -C /opt/drawfile_render checkout "${DRAWFILE_RENDER_SHA}"
 # Make spritefile (bundled in drawfile_render repo) importable by the worker
 ENV PYTHONPATH="/opt/drawfile_render"
+# Patch render_drawfile.py to read Draw coordinates as signed integers
+# (avoids CAIRO_STATUS_INVALID_SIZE on files with negative bounding-box values)
+COPY worker/patches/fix_render_drawfile.py /opt/fix_render_drawfile.py
+RUN python3 /opt/fix_render_drawfile.py
 
 # Clean up build dependencies
 RUN apt -y remove python3-dev git && apt -y autoremove
