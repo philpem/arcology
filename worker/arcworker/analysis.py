@@ -1839,9 +1839,17 @@ class AnalysisWorker:
                 log.warning(f"Sprite conversion failed for {input_path}: {result.get('error')}")
                 return None
             for sprite in result['sprites']:
+                # Include file_index in the saved name so that sprites from
+                # different source files within the same analysis run don't
+                # overwrite each other.  sprite['path'].name is already
+                # f'{analysis_uuid}_{idx:02d}_{safe_name}.png'; insert
+                # file_index after the uuid prefix.
+                orig_stem = sprite['path'].stem  # '{uuid}_{idx}_{name}'
+                rest = orig_stem[len(analysis_uuid) + 1:]  # '{idx}_{name}'
+                unique_name = f'{analysis_uuid}_{file_index}_{rest}.png'
                 saved = self.save_output_file(
                     sprite['path'],
-                    sprite['path'].name,
+                    unique_name,
                     subdir=output_subdir,
                 )
                 outputs.append({
@@ -1858,9 +1866,11 @@ class AnalysisWorker:
             if not result['success']:
                 log.warning(f"Draw conversion failed for {input_path}: {result.get('error')}")
                 return None
+            # Include file_index so multiple Draw files in the same archive
+            # each get a unique output filename rather than overwriting each other.
             saved_png = self.save_output_file(
                 result['png_path'],
-                result['png_path'].name,
+                f'{analysis_uuid}_{file_index}_draw.png',
                 subdir=output_subdir,
             )
             outputs.append({
@@ -1873,7 +1883,7 @@ class AnalysisWorker:
             if result['svg_path']:
                 saved_svg = self.save_output_file(
                     result['svg_path'],
-                    result['svg_path'].name,
+                    f'{analysis_uuid}_{file_index}_draw.svg',
                     subdir=output_subdir,
                 )
                 outputs.append({
