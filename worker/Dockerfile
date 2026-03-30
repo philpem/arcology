@@ -275,7 +275,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 		unzip unrar tar util-linux \
 		file fdisk \
 		default-jre \
-		libcairo2 python3-cairo python3-pillow
+		libcairo2 python3-cairo python3-cairocffi python3-pillow
 
 # Install Greaseweazle for disk image conversion.
 # Pinned to a specific commit SHA; update when upgrading (was: @latest).
@@ -283,10 +283,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 ARG GREASEWEAZLE_VERSION=dcb3d5d9d71b58d51aa22938cf96272a3b507292
 RUN python3 -m pip install --break-system-packages \
 	git+https://github.com/keirf/greaseweazle@${GREASEWEAZLE_VERSION}
-
-# cairocffi: CFFI-based Cairo bindings used by render_drawfile.py.
-# (python3-cairo/pycairo is a different binding and is not compatible.)
-RUN python3 -m pip install --break-system-packages cairocffi
 
 # Install Acorn image conversion libraries.
 # drawfile_render (dcf21 fork) — not pip-installable; clone manually.
