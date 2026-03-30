@@ -1,14 +1,14 @@
 """Add ACORN_SPRITE, ACORN_DRAW, ACORN_TEXT to artefacttype enum
 
 Revision ID: 000069caa370
-Revises: 000069c4322f
+Revises: 000069c47146
 Create Date: 2026-03-28
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = '000069caa370'
-down_revision = '000069c4322f'
+down_revision = '000069c47146'
 branch_labels = None
 depends_on = None
 
