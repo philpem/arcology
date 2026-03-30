@@ -78,7 +78,13 @@ def convert_sprite(input_path: Path, output_dir: Path, analysis_uuid: str) -> di
 
 def convert_draw(input_path: Path, output_dir: Path, analysis_uuid: str) -> dict:
     """
-    Convert an Acorn Draw file to PNG (and optionally SVG) using drawfile_render.
+    Convert an Acorn Draw file to PNG using drawfile_render (dcf21 fork).
+
+    The tool is installed as a plain script at /opt/drawfile_render/render_drawfile.py
+    (not a pip package).  It is invoked with --input / --output (base path without
+    extension) and writes <base>.png.  It must be run with cwd=/opt/drawfile_render
+    because it imports sibling modules (spritefile, graphics_context, etc.) from
+    the same directory.
 
     Args:
         input_path: Path to the .aff/.draw file
@@ -89,46 +95,39 @@ def convert_draw(input_path: Path, output_dir: Path, analysis_uuid: str) -> dict
         Dict with keys:
             success (bool)
             png_path (Path | None)
-            svg_path (Path | None)
+            svg_path (Path | None)   # always None — CLI does not support SVG output
             error (str | None)
             tool_output (dict)
     """
+    _DRAWFILE_RENDER_DIR = '/opt/drawfile_render'
+    _DRAWFILE_RENDER_SCRIPT = f'{_DRAWFILE_RENDER_DIR}/render_drawfile.py'
+
     output_dir.mkdir(parents=True, exist_ok=True)
-    png_path = output_dir / f'{analysis_uuid}_draw.png'
-    svg_path = output_dir / f'{analysis_uuid}_draw.svg'
+    # render_drawfile.py appends .png to the --output value automatically
+    output_base = str(output_dir / f'{analysis_uuid}_draw')
+    png_path = Path(output_base + '.png')
 
-    # Try PNG output first
-    result_png, tool_output_png = run_tool_with_output([
-        'python3', '-m', 'drawfile_render',
-        '--output', str(png_path),
-        str(input_path),
-    ])
+    result, tool_output = run_tool_with_output(
+        ['python3', _DRAWFILE_RENDER_SCRIPT, '--input', str(input_path), '--output', output_base],
+        cwd=_DRAWFILE_RENDER_DIR,
+    )
 
-    if result_png.returncode == 0 and png_path.exists():
-        # Optionally attempt SVG
-        result_svg, _tool_output_svg = run_tool_with_output([
-            'python3', '-m', 'drawfile_render',
-            '--format', 'svg',
-            '--output', str(svg_path),
-            str(input_path),
-        ])
-        actual_svg = svg_path if (result_svg.returncode == 0 and svg_path.exists()) else None
-
+    if result.returncode == 0 and png_path.exists():
         return {
             'success': True,
             'png_path': png_path,
-            'svg_path': actual_svg,
+            'svg_path': None,
             'error': None,
-            'tool_output': tool_output_png,
+            'tool_output': tool_output,
         }
 
-    error_msg = tool_output_png.get('stderr', '') or tool_output_png.get('stdout', '') or 'drawfile_render failed'
+    error_msg = tool_output.get('stderr', '') or tool_output.get('stdout', '') or 'drawfile_render failed'
     return {
         'success': False,
         'png_path': None,
         'svg_path': None,
         'error': error_msg[:500],
-        'tool_output': tool_output_png,
+        'tool_output': tool_output,
     }
 
 # vim: ts=4 sw=4 et
