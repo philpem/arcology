@@ -1,0 +1,2257 @@
+openapi: 3.0.3
+
+info:
+  title: Arcology API
+  version: "1.0"
+  description: |
+    REST API for Arcology, a digital artefact catalogue for retrocomputing collections.
+
+    ## Authentication
+
+    All endpoints except `/health` require an API key. Pass it in one of two ways:
+
+    - `Authorization: Bearer <key>` header
+    - `X-API-Key: <key>` header
+
+    User API keys are created via the web UI (user profile page). The analysis
+    worker uses a separate pre-shared secret configured as `WORKER_API_KEY`.
+
+    ### Permission levels
+
+    | Level | Allowed operations |
+    |---|---|
+    | `read_only` | GET requests |
+    | `read_upload` | GET + create items, artefacts, and analysis jobs |
+    | `read_write` | Full access (GET + POST + PUT + PATCH + DELETE) |
+
+    Endpoints marked **Worker only** additionally require the pre-shared
+    `WORKER_API_KEY` rather than a user API key.
+
+servers:
+  - url: /api
+    description: Arcology REST API
+
+security:
+  - ApiKeyHeader: []
+  - BearerToken: []
+
+tags:
+  - name: System
+    description: Service health and status.
+  - name: Items
+    description: Catalogue items (logical groupings of artefacts).
+  - name: Artefacts
+    description: Digital artefact files attached to items.
+  - name: Analysis
+    description: Analysis jobs queued against artefacts.
+  - name: Partitions
+    description: Filesystem partitions extracted from artefacts.
+  - name: Files
+    description: Individual files extracted from partitions or archives.
+  - name: Search
+    description: Cross-catalogue search and hash lookup.
+  - name: Taxonomy
+    description: Platforms, categories, and tags.
+  - name: Hash Databases
+    description: Known-file hash databases for product recognition.
+
+components:
+  securitySchemes:
+    ApiKeyHeader:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key passed in the `X-API-Key` header.
+    BearerToken:
+      type: http
+      scheme: bearer
+      description: API key passed as a Bearer token in the `Authorization` header.
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters or body.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing or invalid API key.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: API key lacks the required permission level.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Human-readable error message.
+      required: [error]
+
+    RestrictedDownloadError:
+      type: object
+      description: Returned when a download is blocked by a restriction.
+      properties:
+        error:
+          type: string
+          example: Download restricted
+        restrictions:
+          type: array
+          items:
+            $ref: '#/components/schemas/RestrictionType'
+      required: [error, restrictions]
+
+    # --- Enum types ---
+
+    ArtefactType:
+      type: string
+      description: |
+        Type of digital artefact:
+        - `scp` — SuperCard Pro flux image
+        - `imd` — ImageDisk sector image
+        - `hfe` — HxC Floppy Emulator image
+        - `raw_sector` — Raw sector dump
+        - `iso` — ISO 9660 disc image
+        - `raw_sector_zst` / `raw_sector_gz` / `raw_sector_bz2` — Compressed sector images
+        - `pdf` — PDF document / scan
+        - `zip` / `tar_gz` / `rar` / `arc` — Archive (`arc` = ArcFS / Spark for RISC OS)
+        - `unknown` — Unidentified; needs manual classification
+      enum:
+        - scp
+        - imd
+        - hfe
+        - raw_sector
+        - iso
+        - raw_sector_zst
+        - raw_sector_gz
+        - raw_sector_bz2
+        - pdf
+        - zip
+        - tar_gz
+        - rar
+        - arc
+        - unknown
+
+    AnalysisType:
+      type: string
+      description: |
+        Type of analysis job:
+        - `flux_visualisation` — Render flux-level graphs from SCP images
+        - `flux_decode` — Attempt to decode flux to sector data
+        - `sector_dump` — Raw sector extraction
+        - `file_extraction` — Walk the filesystem and record file listing
+        - `archive_detect` — Scan extracted files for archives by extension/magic
+        - `archive_extract` — Extract a specific archive file
+        - `metadata_extract` — Extract format metadata (track count, geometry, etc.)
+        - `partition_detect` — Detect partitions on HDD/CD images
+        - `checksum_compute` — Compute MD5 and SHA-256 hashes
+        - `format_identify` — Identify exact format variant
+        - `disc_mastering_detect` — Detect mastering tool / duplicator fingerprints
+        - `disc_protection_detect` — Detect copy-protection signals
+        - `armlock_remove` — Remove ARMlock copy protection from ADFS images
+        - `product_recognition` — Match extracted files against known-product definitions
+      enum:
+        - flux_visualisation
+        - flux_decode
+        - sector_dump
+        - file_extraction
+        - archive_detect
+        - archive_extract
+        - metadata_extract
+        - partition_detect
+        - checksum_compute
+        - format_identify
+        - disc_mastering_detect
+        - disc_protection_detect
+        - armlock_remove
+        - product_recognition
+
+    AnalysisStatus:
+      type: string
+      enum: [pending, running, completed, failed]
+
+    FilesystemType:
+      type: string
+      enum:
+        - fat12
+        - fat16
+        - fat32
+        - ntfs
+        - hpfs
+        - hfs
+        - hfs_plus
+        - adfs
+        - dfs
+        - amiga_ofs
+        - amiga_ffs
+        - iso9660
+        - cdfs
+        - cpm
+        - archive
+        - unknown
+        - other
+
+    StorageDirectory:
+      type: string
+      enum: [uploads, outputs]
+      description: >
+        `uploads` = original user-uploaded files;
+        `outputs` = derived files produced by analysis jobs.
+
+    RestrictionType:
+      type: string
+      enum: [malware, pii, copyright, legal_hold, explicit, corrupted]
+
+    # --- Taxonomy ---
+
+    PlatformRef:
+      type: object
+      nullable: true
+      description: Compact platform reference embedded in item objects.
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+
+    CategoryRef:
+      type: object
+      nullable: true
+      description: Compact category reference embedded in item objects.
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+
+    Platform:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        parent_id:
+          type: integer
+          nullable: true
+
+    Category:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        parent_id:
+          type: integer
+          nullable: true
+
+    Tag:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+
+    # --- Items ---
+
+    Item:
+      type: object
+      properties:
+        id:
+          type: integer
+        uuid:
+          type: string
+          example: a1b2c3d4e5f678901234567890abcdef
+        name:
+          type: string
+        slug:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        platform:
+          $ref: '#/components/schemas/PlatformRef'
+        category:
+          $ref: '#/components/schemas/CategoryRef'
+        tags:
+          type: array
+          items:
+            type: string
+        artefact_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ItemWithArtefacts:
+      allOf:
+        - $ref: '#/components/schemas/Item'
+        - type: object
+          properties:
+            artefacts:
+              type: array
+              items:
+                $ref: '#/components/schemas/Artefact'
+
+    PaginatedItems:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Item'
+        total:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
+        pages:
+          type: integer
+      required: [items, total, page, per_page, pages]
+
+    # --- Artefacts ---
+
+    Artefact:
+      type: object
+      properties:
+        id:
+          type: integer
+        uuid:
+          type: string
+        item_id:
+          type: integer
+        item_uuid:
+          type: string
+        label:
+          type: string
+        artefact_type:
+          $ref: '#/components/schemas/ArtefactType'
+        type_overridden:
+          type: boolean
+          description: True if the type was set manually rather than auto-detected.
+        original_filename:
+          type: string
+        file_size:
+          type: integer
+          nullable: true
+        mime_type:
+          type: string
+          nullable: true
+        md5:
+          type: string
+          nullable: true
+        sha256:
+          type: string
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+        restrictions:
+          type: array
+          items:
+            $ref: '#/components/schemas/RestrictionType'
+          description: Restriction categories that block downloads of this artefact.
+        is_restricted:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ArtefactWithPartitions:
+      allOf:
+        - $ref: '#/components/schemas/Artefact'
+        - type: object
+          properties:
+            partitions:
+              type: array
+              items:
+                $ref: '#/components/schemas/Partition'
+
+    # --- Analysis ---
+
+    Analysis:
+      type: object
+      properties:
+        id:
+          type: integer
+        uuid:
+          type: string
+        artefact_id:
+          type: integer
+        artefact_uuid:
+          type: string
+          nullable: true
+        analysis_type:
+          $ref: '#/components/schemas/AnalysisType'
+        status:
+          $ref: '#/components/schemas/AnalysisStatus'
+        tool_name:
+          type: string
+          nullable: true
+        hints:
+          type: string
+          nullable: true
+          description: JSON-encoded hints passed to the worker, e.g. `{"platform":"bbc_micro"}`.
+        output_url:
+          type: string
+          nullable: true
+        output_path:
+          type: string
+          nullable: true
+        success:
+          type: boolean
+          nullable: true
+        summary:
+          type: string
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        details:
+          type: string
+          nullable: true
+          description: JSON-encoded structured results from the analysis tool.
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    AnalysisArtefactRef:
+      type: object
+      description: Compact artefact context embedded in pending-analysis responses.
+      properties:
+        id:
+          type: integer
+        uuid:
+          type: string
+        slug:
+          type: string
+          nullable: true
+        label:
+          type: string
+        original_filename:
+          type: string
+        storage_path:
+          type: string
+        storage_directory:
+          $ref: '#/components/schemas/StorageDirectory'
+        artefact_type:
+          $ref: '#/components/schemas/ArtefactType'
+        item:
+          type: object
+          properties:
+            uuid:
+              type: string
+            slug:
+              type: string
+              nullable: true
+
+    AnalysisWithArtefact:
+      allOf:
+        - $ref: '#/components/schemas/Analysis'
+        - type: object
+          properties:
+            artefact:
+              $ref: '#/components/schemas/AnalysisArtefactRef'
+
+    # --- Partitions & Files ---
+
+    Partition:
+      type: object
+      properties:
+        id:
+          type: integer
+        uuid:
+          type: string
+        partition_index:
+          type: integer
+          description: Zero-based index of this partition within the artefact.
+        label:
+          type: string
+          nullable: true
+        filesystem:
+          $ref: '#/components/schemas/FilesystemType'
+        container_format:
+          type: string
+          nullable: true
+          description: Human-readable format description, e.g. `Acorn ADFS E`.
+        total_files:
+          type: integer
+          nullable: true
+        unique_files:
+          type: integer
+          nullable: true
+
+    ExtractedFile:
+      type: object
+      properties:
+        id:
+          type: integer
+        uuid:
+          type: string
+        path:
+          type: string
+          description: Full path of the file within the partition or archive.
+        filename:
+          type: string
+        extension:
+          type: string
+          nullable: true
+        file_size:
+          type: integer
+          nullable: true
+        md5:
+          type: string
+          nullable: true
+        sha1:
+          type: string
+          nullable: true
+        is_known:
+          type: boolean
+          description: True if this file matched an entry in a known-file hash database.
+        is_directory:
+          type: boolean
+        risc_os_filetype:
+          type: string
+          nullable: true
+          description: Three-character hex RISC OS filetype code, e.g. `3fb`.
+        is_archive:
+          type: boolean
+          description: True if this file has been identified as an extractable archive.
+        archive_format:
+          type: string
+          nullable: true
+        parent_file_id:
+          type: integer
+          nullable: true
+          description: ID of the parent archive file for nested extraction results.
+        extraction_depth:
+          type: integer
+          description: Nesting depth (0 = top-level file in the partition).
+
+    PaginatedFiles:
+      type: object
+      properties:
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExtractedFile'
+        total:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
+        pages:
+          type: integer
+      required: [files, total, page, per_page, pages]
+
+    # --- Hash databases / known files ---
+
+    KnownFile:
+      type: object
+      nullable: true
+      description: Match from a known-file hash database.
+      properties:
+        id:
+          type: integer
+        database:
+          type: string
+          description: Name of the hash database.
+        filename:
+          type: string
+        product_name:
+          type: string
+          nullable: true
+        product_version:
+          type: string
+          nullable: true
+
+    HashDatabaseSummary:
+      type: object
+      description: Compact hash database entry returned by the list endpoint.
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        version:
+          type: string
+          nullable: true
+        file_count:
+          type: integer
+        enable_product_recognition:
+          type: boolean
+
+    KnownFileDetail:
+      type: object
+      description: File hash entry as returned inside a hash database detail response.
+      properties:
+        id:
+          type: integer
+        filename:
+          type: string
+        file_size:
+          type: integer
+          nullable: true
+        md5:
+          type: string
+          nullable: true
+        sha1:
+          type: string
+          nullable: true
+        sha256:
+          type: string
+          nullable: true
+        crc32:
+          type: string
+          nullable: true
+        is_required:
+          type: boolean
+        relative_path:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+
+    KnownProductDetail:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        path_match_enabled:
+          type: boolean
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/KnownFileDetail'
+
+    HashDatabaseDetail:
+      type: object
+      description: Full hash database with all products and file hashes.
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        version:
+          type: string
+          nullable: true
+        source_url:
+          type: string
+          nullable: true
+        enable_product_recognition:
+          type: boolean
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/KnownProductDetail'
+
+    KnownFileInput:
+      type: object
+      description: File hash entry for bulk-import into a known product.
+      properties:
+        filename:
+          type: string
+        file_size:
+          type: integer
+        md5:
+          type: string
+        sha1:
+          type: string
+        sha256:
+          type: string
+        crc32:
+          type: string
+        is_required:
+          type: boolean
+          default: true
+        relative_path:
+          type: string
+        description:
+          type: string
+      required: [filename]
+
+    RecognitionConfigFile:
+      type: object
+      properties:
+        md5:
+          type: string
+          nullable: true
+        sha1:
+          type: string
+          nullable: true
+        sha256:
+          type: string
+          nullable: true
+        relative_path:
+          type: string
+          nullable: true
+
+    RecognitionConfigProduct:
+      type: object
+      properties:
+        product_id:
+          type: integer
+        title:
+          type: string
+        path_match_enabled:
+          type: boolean
+        required_files:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecognitionConfigFile'
+        optional_files:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecognitionConfigFile'
+      required: [product_id, title, path_match_enabled, required_files, optional_files]
+
+    RecognitionConfig:
+      type: object
+      description: Product-recognition configuration for one hash database.
+      properties:
+        database_id:
+          type: integer
+        name:
+          type: string
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecognitionConfigProduct'
+      required: [database_id, name, products]
+
+paths:
+
+  # ---------------------------------------------------------------------------
+  # System
+  # ---------------------------------------------------------------------------
+
+  /health:
+    get:
+      operationId: health_check
+      summary: Health check
+      description: >
+        Returns the health status of the service. Intentionally unauthenticated
+        so container orchestrators can reach it without credentials.
+      tags: [System]
+      security: []
+      responses:
+        "200":
+          description: Service is healthy.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+        "503":
+          description: Database is unavailable.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: unhealthy
+                  error:
+                    type: string
+
+  # ---------------------------------------------------------------------------
+  # Items
+  # ---------------------------------------------------------------------------
+
+  /items:
+    get:
+      operationId: list_items
+      summary: List items
+      tags: [Items]
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 25
+        - name: q
+          in: query
+          description: Case-insensitive substring search across name and description.
+          schema:
+            type: string
+        - name: platform_id
+          in: query
+          description: Filter by platform ID.
+          schema:
+            type: integer
+        - name: category_id
+          in: query
+          description: Filter by category ID.
+          schema:
+            type: integer
+        - name: tag
+          in: query
+          description: Filter by exact tag name.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Paginated list of items.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedItems'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      operationId: create_item
+      summary: Create item
+      tags: [Items]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                platform_id:
+                  type: integer
+                category_id:
+                  type: integer
+                tags:
+                  type: array
+                  items:
+                    type: string
+              required: [name]
+      responses:
+        "201":
+          description: Item created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Item'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /items/{uuid}:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        description: 32-character UUID hex string.
+        schema:
+          type: string
+    get:
+      operationId: get_item
+      summary: Get item
+      description: Returns the item including its full artefact list.
+      tags: [Items]
+      responses:
+        "200":
+          description: Item with artefacts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemWithArtefacts'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: update_item
+      summary: Update item
+      tags: [Items]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                platform_id:
+                  type: integer
+                  nullable: true
+                category_id:
+                  type: integer
+                  nullable: true
+      responses:
+        "200":
+          description: Updated item.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Item'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: delete_item
+      summary: Delete item
+      description: Permanently deletes the item and all associated artefacts and files.
+      tags: [Items]
+      responses:
+        "204":
+          description: Deleted successfully.
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /items/{item_uuid}/artefacts:
+    parameters:
+      - name: item_uuid
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: add_artefact_metadata
+      summary: Register artefact (metadata only)
+      description: >
+        Register an artefact by providing its metadata. The file must already
+        exist in the storage directory. Use this endpoint when a worker produces
+        a derived file; for client uploads use `POST /items/{item_uuid}/artefacts/upload`.
+      tags: [Artefacts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                original_filename:
+                  type: string
+                storage_path:
+                  type: string
+                  description: >
+                    Relative path within the storage directory. Must not be
+                    absolute or contain `..` path traversal.
+                artefact_type:
+                  $ref: '#/components/schemas/ArtefactType'
+                storage_directory:
+                  $ref: '#/components/schemas/StorageDirectory'
+                description:
+                  type: string
+                file_size:
+                  type: integer
+                md5:
+                  type: string
+                sha256:
+                  type: string
+              required: [label, original_filename, storage_path]
+      responses:
+        "201":
+          description: Artefact registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Artefact'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /items/{item_uuid}/artefacts/upload:
+    parameters:
+      - name: item_uuid
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: upload_artefact
+      summary: Upload artefact file
+      description: >
+        Upload a file as a new artefact. The artefact type is auto-detected
+        from the filename extension unless `artefact_type` is specified.
+      tags: [Artefacts]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The file to upload.
+                label:
+                  type: string
+                  description: Display label for the artefact.
+                artefact_type:
+                  type: string
+                  description: >
+                    Override auto-detected type. Omit or use `auto` for
+                    automatic detection from filename extension.
+                  default: auto
+                description:
+                  type: string
+                auto_analyse:
+                  type: string
+                  enum: ["true", "false"]
+                  default: "true"
+                  description: >
+                    Set to `false` to skip automatic analysis queuing after upload.
+              required: [file, label]
+      responses:
+        "201":
+          description: Artefact uploaded.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Artefact'
+                  - type: object
+                    properties:
+                      queued_analyses:
+                        type: array
+                        items:
+                          type: string
+                        description: Analysis types automatically queued after upload.
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  # ---------------------------------------------------------------------------
+  # Artefacts
+  # ---------------------------------------------------------------------------
+
+  /artefacts/{uuid}:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: get_artefact
+      summary: Get artefact
+      description: Returns the artefact including its list of partitions.
+      tags: [Artefacts]
+      responses:
+        "200":
+          description: Artefact with partitions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtefactWithPartitions'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: update_artefact
+      summary: Update artefact checksums
+      description: Update the `md5` and/or `sha256` fields on an artefact.
+      tags: [Artefacts]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                md5:
+                  type: string
+                sha256:
+                  type: string
+      responses:
+        "200":
+          description: Updated artefact.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Artefact'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: delete_artefact
+      summary: Delete artefact
+      description: Permanently deletes the artefact and removes its file from storage.
+      tags: [Artefacts]
+      responses:
+        "204":
+          description: Deleted successfully.
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /artefacts/{uuid}/download:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: download_artefact
+      summary: Download artefact file
+      description: >
+        Download the original artefact file. Returns 403 with a list of
+        restriction types if any download restrictions are set.
+      tags: [Artefacts]
+      responses:
+        "200":
+          description: File content.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          description: Download restricted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestrictedDownloadError'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /artefacts/{uuid}/partitions:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Artefact UUID.
+    post:
+      operationId: add_partition
+      summary: Add partition to artefact
+      description: >
+        Register a filesystem partition found within an artefact.
+        **Worker only** — requires the pre-shared `WORKER_API_KEY`.
+
+        Idempotent: any existing partition with the same `partition_index` is
+        replaced before the new one is inserted.
+      tags: [Partitions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                partition_index:
+                  type: integer
+                  default: 0
+                label:
+                  type: string
+                filesystem:
+                  $ref: '#/components/schemas/FilesystemType'
+                container_format:
+                  type: string
+                  description: Human-readable format, e.g. `Acorn ADFS E`.
+                total_files:
+                  type: integer
+                total_bytes:
+                  type: integer
+              required: [filesystem]
+      responses:
+        "201":
+          description: Partition created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Partition'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /artefacts/{uuid}/analysis:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: list_artefact_analyses
+      summary: List analyses for an artefact
+      tags: [Analysis]
+      responses:
+        "200":
+          description: List of analyses.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  analyses:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Analysis'
+                required: [analyses]
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: request_analysis
+      summary: Request an analysis job
+      description: >
+        Queue a new analysis job for an artefact. If an identical PENDING or
+        RUNNING job already exists (same type and hints), the existing job is
+        returned instead of creating a duplicate (idempotent).
+      tags: [Analysis]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                analysis_type:
+                  $ref: '#/components/schemas/AnalysisType'
+                tool_name:
+                  type: string
+                hints:
+                  type: string
+                  description: >
+                    JSON-encoded hints for the worker,
+                    e.g. `{"platform": "bbc_micro"}`.
+              required: [analysis_type]
+      responses:
+        "200":
+          description: Existing job returned (idempotent — job already pending or running).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Analysis'
+        "201":
+          description: New analysis job created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Analysis'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  # ---------------------------------------------------------------------------
+  # Analysis
+  # ---------------------------------------------------------------------------
+
+  /analysis/pending:
+    get:
+      operationId: get_pending_analyses
+      summary: List pending analyses
+      description: >
+        Returns up to 50 analyses with status `pending`, ordered by creation
+        time. Used by workers to poll for new jobs. Each result includes compact
+        artefact context so the worker can locate the file.
+      tags: [Analysis]
+      responses:
+        "200":
+          description: Pending analyses with artefact context.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  analyses:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AnalysisWithArtefact'
+                required: [analyses]
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /analysis/{uuid}:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Analysis UUID (32-character hex string).
+    get:
+      operationId: get_analysis
+      summary: Get analysis by UUID
+      tags: [Analysis]
+      responses:
+        "200":
+          description: Analysis object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Analysis'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /analysis/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Analysis integer ID.
+    put:
+      operationId: update_analysis
+      summary: Update analysis (worker)
+      description: >
+        Update the status and results of an analysis job. Most result fields
+        (`output_path`, `details`, `success`, `summary`, `error_message`,
+        `tool_name`, `tool_version`, `output_url`) require the pre-shared
+        `WORKER_API_KEY`; ordinary `read_write` keys may only update `status`.
+
+        To atomically claim a pending job, set `claim_worker: true` with
+        `status: running`. Only one worker will succeed; others receive 409.
+      tags: [Analysis]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  $ref: '#/components/schemas/AnalysisStatus'
+                tool_name:
+                  type: string
+                tool_version:
+                  type: string
+                output_url:
+                  type: string
+                output_path:
+                  type: string
+                  description: "**Worker only.** Relative path to output file."
+                success:
+                  type: boolean
+                  description: "**Worker only.**"
+                summary:
+                  type: string
+                  description: "**Worker only.** Short human-readable result summary."
+                details:
+                  type: string
+                  description: "**Worker only.** JSON-encoded structured results."
+                error_message:
+                  type: string
+                  description: "**Worker only.**"
+                claim_worker:
+                  type: boolean
+                  description: >
+                    If true, atomically claims the job (transitions pending →
+                    running). Returns 409 if already claimed by another worker.
+      responses:
+        "200":
+          description: Analysis updated.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Analysis'
+                  - type: object
+                    properties:
+                      claimed:
+                        type: boolean
+                        description: >
+                          Present when `claim_worker` was sent. True if this
+                          worker successfully claimed the job.
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          description: Job already claimed by another worker.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /analysis/{id}/produce-artefact:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Analysis integer ID.
+    post:
+      operationId: produce_artefact
+      summary: Register derived artefact
+      description: >
+        Register a file produced by an analysis job as a new derived artefact,
+        linked to the same item. Follow-on analyses are automatically queued
+        unless `auto_analyse` is false.
+
+        **Worker only** — requires the pre-shared `WORKER_API_KEY`.
+
+        Idempotent: if an artefact with the same `(analysis_id, storage_path)`
+        already exists it is returned with HTTP 200 rather than creating a
+        duplicate.
+      tags: [Analysis]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                original_filename:
+                  type: string
+                storage_path:
+                  type: string
+                artefact_type:
+                  $ref: '#/components/schemas/ArtefactType'
+                storage_directory:
+                  $ref: '#/components/schemas/StorageDirectory'
+                description:
+                  type: string
+                file_size:
+                  type: integer
+                mime_type:
+                  type: string
+                md5:
+                  type: string
+                sha256:
+                  type: string
+                auto_analyse:
+                  type: boolean
+                  default: true
+              required: [label, original_filename, storage_path, artefact_type]
+      responses:
+        "200":
+          description: Existing derived artefact returned (idempotent retry).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  artefact:
+                    $ref: '#/components/schemas/Artefact'
+                  queued_analyses:
+                    type: array
+                    items:
+                      type: string
+        "201":
+          description: New derived artefact created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  artefact:
+                    $ref: '#/components/schemas/Artefact'
+                  queued_analyses:
+                    type: array
+                    items:
+                      type: string
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  # ---------------------------------------------------------------------------
+  # Partitions & Files
+  # ---------------------------------------------------------------------------
+
+  /partitions/{uuid}:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: get_partition
+      summary: Get partition
+      tags: [Partitions]
+      responses:
+        "200":
+          description: Partition object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Partition'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /partitions/{uuid}/files:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Partition UUID.
+    get:
+      operationId: list_partition_files
+      summary: List files in partition
+      tags: [Partitions]
+      parameters:
+        - name: show_known
+          in: query
+          description: >
+            Include files that matched a known-file database entry.
+            Defaults to `false` (known files are hidden by default).
+          schema:
+            type: string
+            enum: ["true", "false"]
+            default: "false"
+        - name: is_archive
+          in: query
+          description: Filter by whether the file is an identified archive.
+          schema:
+            type: string
+            enum: ["true", "false"]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 100
+      responses:
+        "200":
+          description: Paginated file list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedFiles'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: add_partition_files
+      summary: Add files to partition
+      description: >
+        Bulk-register extracted files in a partition.
+        **Worker only** — requires the pre-shared `WORKER_API_KEY`.
+
+        Files already present (matched by path) are silently skipped.
+        Files are automatically linked to known-file database entries if their
+        MD5 or SHA1 matches, and download restrictions are propagated accordingly.
+      tags: [Partitions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      path:
+                        type: string
+                        description: Full path within the partition.
+                      filename:
+                        type: string
+                      extension:
+                        type: string
+                      file_size:
+                        type: integer
+                      md5:
+                        type: string
+                      sha1:
+                        type: string
+                      sha256:
+                        type: string
+                      crc32:
+                        type: string
+                      is_directory:
+                        type: boolean
+                        default: false
+                      risc_os_filetype:
+                        type: string
+                        description: Three-character hex RISC OS filetype code.
+                      parent_file_id:
+                        type: integer
+                        description: ID of parent archive file for nested extraction.
+                      extraction_depth:
+                        type: integer
+                        default: 0
+                    required: [path, filename]
+              required: [files]
+      responses:
+        "200":
+          description: Files processed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  added:
+                    type: integer
+                  skipped:
+                    type: integer
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /partitions/{uuid}/recognised-products:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Partition UUID.
+    post:
+      operationId: report_recognised_products
+      summary: Report product recognition results
+      description: >
+        Record which known products were matched in this partition.
+        **Worker only** — requires the pre-shared `WORKER_API_KEY`.
+        Any previous recognition results for this partition are replaced.
+      tags: [Partitions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                properties:
+                  product_id:
+                    type: integer
+                  folder_path:
+                    type: string
+                  required_matched:
+                    type: integer
+                  required_total:
+                    type: integer
+                  optional_matched:
+                    type: integer
+                  optional_total:
+                    type: integer
+                required:
+                  - product_id
+                  - folder_path
+                  - required_matched
+                  - required_total
+                  - optional_matched
+                  - optional_total
+      responses:
+        "200":
+          description: Results recorded.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /files/{file_id}/mark_archive:
+    parameters:
+      - name: file_id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ExtractedFile integer ID.
+    post:
+      operationId: mark_file_archive
+      summary: Mark extracted file as archive
+      description: Flag an extracted file as an archive and optionally record its format.
+      tags: [Files]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_archive:
+                  type: boolean
+                archive_format:
+                  type: string
+                  description: Archive format name, e.g. `ZIP` or `ArcFS`.
+              required: [is_archive]
+      responses:
+        "200":
+          description: Updated file object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExtractedFile'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /files/{uuid}/download:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+        description: ExtractedFile UUID.
+    get:
+      operationId: download_extracted_file
+      summary: Download extracted file
+      description: >
+        Download an individual extracted file from within a partition or archive.
+        Returns 403 if the parent artefact has download restrictions.
+      tags: [Files]
+      responses:
+        "200":
+          description: File content.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          description: Parent artefact download restricted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestrictedDownloadError'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /outputs/{filename}:
+    parameters:
+      - name: filename
+        in: path
+        required: true
+        schema:
+          type: string
+        description: >
+          Relative path within the outputs folder, e.g. `abc123/graph.png`.
+          Path traversal attempts are rejected.
+    get:
+      operationId: get_output_file
+      summary: Serve analysis output file
+      description: >
+        Serve a file from the analysis outputs directory, such as a flux
+        visualisation image or other generated artefact.
+      tags: [Files]
+      responses:
+        "200":
+          description: File content.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  # ---------------------------------------------------------------------------
+  # Search
+  # ---------------------------------------------------------------------------
+
+  /lookup:
+    get:
+      operationId: lookup_by_external
+      summary: Look up item by external reference
+      description: >
+        Find a catalogue item by its identifier in an external cataloguing system.
+      tags: [Search]
+      parameters:
+        - name: system
+          in: query
+          required: true
+          description: External system name (as configured in the taxonomy).
+          schema:
+            type: string
+        - name: external_id
+          in: query
+          required: true
+          description: Identifier in that external system.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Item with artefacts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemWithArtefacts'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /hash-lookup:
+    get:
+      operationId: hash_lookup
+      summary: Look up file by hash
+      description: >
+        Find where a file appears in the catalogue by its MD5 or SHA1 hash, and
+        check whether it matches any known-product database entry. At least one
+        of `md5` or `sha1` is required.
+      tags: [Search]
+      parameters:
+        - name: md5
+          in: query
+          schema:
+            type: string
+        - name: sha1
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Hash lookup result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  known_file:
+                    $ref: '#/components/schemas/KnownFile'
+                  found_in:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        artefact_id:
+                          type: integer
+                        item_id:
+                          type: integer
+                        item_name:
+                          type: string
+                        path:
+                          type: string
+                required: [known_file, found_in]
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---------------------------------------------------------------------------
+  # Taxonomy
+  # ---------------------------------------------------------------------------
+
+  /platforms:
+    get:
+      operationId: list_platforms
+      summary: List platforms
+      tags: [Taxonomy]
+      responses:
+        "200":
+          description: All platforms.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  platforms:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Platform'
+                required: [platforms]
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /categories:
+    get:
+      operationId: list_categories
+      summary: List categories
+      tags: [Taxonomy]
+      responses:
+        "200":
+          description: All categories.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  categories:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Category'
+                required: [categories]
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /tags:
+    get:
+      operationId: list_tags
+      summary: List tags
+      tags: [Taxonomy]
+      responses:
+        "200":
+          description: All tags.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tags:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Tag'
+                required: [tags]
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---------------------------------------------------------------------------
+  # Hash Databases
+  # ---------------------------------------------------------------------------
+
+  /hash-databases:
+    get:
+      operationId: list_hash_databases
+      summary: List hash databases
+      tags: [Hash Databases]
+      responses:
+        "200":
+          description: All hash databases (summary).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/HashDatabaseSummary'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: create_hash_database
+      summary: Create hash database
+      tags: [Hash Databases]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                version:
+                  type: string
+                source_url:
+                  type: string
+                enable_product_recognition:
+                  type: boolean
+                  default: false
+              required: [name]
+      responses:
+        "201":
+          description: Database created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  name:
+                    type: string
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          description: A database with this name already exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /hash-databases/recognition-config:
+    get:
+      operationId: hash_database_recognition_config
+      summary: Get recognition configuration
+      description: >
+        Returns full product and file-hash data for all databases that have
+        `enable_product_recognition` set to true. Used by workers to load
+        matching rules at startup.
+      tags: [Hash Databases]
+      responses:
+        "200":
+          description: Recognition configuration for all enabled databases.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RecognitionConfig'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /hash-databases/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Hash database integer ID.
+    get:
+      operationId: get_hash_database
+      summary: Get hash database
+      description: Returns full details including all products and their file hashes.
+      tags: [Hash Databases]
+      responses:
+        "200":
+          description: Hash database with products.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HashDatabaseDetail'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /hash-databases/{db_id}/products:
+    parameters:
+      - name: db_id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Hash database integer ID.
+    post:
+      operationId: create_known_product
+      summary: Create known product
+      description: Add a named product to a hash database.
+      tags: [Hash Databases]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                description:
+                  type: string
+                path_match_enabled:
+                  type: boolean
+                  default: false
+                  description: >
+                    If true, relative paths are used in addition to hashes
+                    when matching files during product recognition.
+              required: [title]
+      responses:
+        "201":
+          description: Product created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  title:
+                    type: string
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /hash-databases/{db_id}/products/{pid}/files:
+    parameters:
+      - name: db_id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Hash database integer ID.
+      - name: pid
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Known product integer ID.
+    post:
+      operationId: add_known_files_bulk
+      summary: Bulk-add known files to product
+      description: >
+        Add file hash entries to a known product. Files without a `filename`
+        field are silently skipped.
+
+        The request body may be either a JSON object with a `files` key, or a
+        bare JSON array of file objects.
+      tags: [Hash Databases]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  properties:
+                    files:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/KnownFileInput'
+                  required: [files]
+                - type: array
+                  items:
+                    $ref: '#/components/schemas/KnownFileInput'
+      responses:
+        "201":
+          description: Files added.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  added:
+                    type: integer
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
