@@ -11,9 +11,17 @@
 <div class="card mb-4">
     <div class="card-body">
         <form method="get" class="row g-3">
-            <div class="col-md-4">{{ form.q(class="form-control", placeholder="Search...") }}</div>
-            <div class="col-md-3">{{ form.platform_id(class="form-select") }}</div>
-            <div class="col-md-3">{{ form.category_id(class="form-select") }}</div>
+            <div class="col-md-3">{{ form.q(class="form-control", placeholder="Search...") }}</div>
+            <div class="col-md-2">{{ form.platform_id(class="form-select") }}</div>
+            <div class="col-md-2">{{ form.category_id(class="form-select") }}</div>
+            <div class="col-md-3">
+                <select name="sort" class="form-select">
+                    <option value="name_asc" {% if sort == 'name_asc' %}selected{% endif %}>Name (A–Z)</option>
+                    <option value="name_desc" {% if sort == 'name_desc' %}selected{% endif %}>Name (Z–A)</option>
+                    <option value="uploaded_asc" {% if sort == 'uploaded_asc' %}selected{% endif %}>Uploaded (oldest first)</option>
+                    <option value="uploaded_desc" {% if sort == 'uploaded_desc' %}selected{% endif %}>Uploaded (newest first)</option>
+                </select>
+            </div>
             <div class="col-md-2"><button type="submit" class="btn btn-secondary w-100"><i class="bi bi-search"></i> Filter</button></div>
         </form>
     </div>
@@ -27,7 +35,8 @@
         'q': request.args.get('q'),
         'platform_id': request.args.get('platform_id'),
         'category_id': request.args.get('category_id'),
-        'per_page': request.args.get('per_page')
+        'per_page': request.args.get('per_page'),
+        'sort': request.args.get('sort')
     }
 ) }}
 
@@ -56,6 +65,7 @@
     'q': request.args.get('q'),
     'platform_id': request.args.get('platform_id'),
     'category_id': request.args.get('category_id'),
-    'per_page': request.args.get('per_page')
+    'per_page': request.args.get('per_page'),
+    'sort': request.args.get('sort')
 }, valid_per_page=valid_per_page, view_all=view_all) }}
 {% endblock %}
