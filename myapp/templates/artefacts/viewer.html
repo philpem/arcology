@@ -1,0 +1,142 @@
+{% extends "_base.html" %}
+{% block page_title %}View — {{ artefact.label }}{% endblock %}
+
+{% block styles %}
+{{ super() }}
+<style>
+.viewer-img {
+    image-rendering: pixelated;
+    max-width: 100%;
+    height: auto;
+    cursor: pointer;
+    border: 1px solid #dee2e6;
+    background: repeating-conic-gradient(#e0e0e0 0% 25%, #ffffff 0% 50%)
+                0 0 / 16px 16px;
+}
+.viewer-img-card {
+    background: none;
+}
+.viewer-name {
+    font-size: 0.8rem;
+    word-break: break-all;
+}
+.viewer-text pre {
+    white-space: pre-wrap;
+    word-break: break-all;
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 0.25rem;
+    padding: 1rem;
+    font-size: 0.85rem;
+    max-height: 60vh;
+    overflow: auto;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.index') }}">Items</a></li>
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=artefact.item.url_id) }}">{{ artefact.item.name }}</a></li>
+        {% if artefact.parent_artefact %}
+        <li class="breadcrumb-item"><a href="{{ artefact_url(artefact.root_artefact) }}">{{ artefact.root_artefact.label }}</a></li>
+        {% endif %}
+        <li class="breadcrumb-item"><a href="{{ artefact_url(artefact) }}">{{ artefact.label }}</a></li>
+        <li class="breadcrumb-item active">View</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>{{ artefact.label }} <small class="text-muted fs-5">— viewer</small></h1>
+    <a href="{{ artefact_url(artefact) }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back
+    </a>
+</div>
+
+{% if viewer_status == 'pending' %}
+<div class="alert alert-info">
+    <i class="bi bi-hourglass-split"></i> Conversion in progress — please refresh in a moment.
+</div>
+{% elif viewer_status == 'failed' %}
+<div class="alert alert-warning">
+    <i class="bi bi-exclamation-triangle"></i> Conversion failed or has not been run yet. Try re-analysing the artefact.
+</div>
+{% elif viewer_status == 'partial' %}
+<div class="alert alert-info">
+    <i class="bi bi-hourglass-split"></i> Some conversions are still in progress — refresh to see more.
+</div>
+{% endif %}
+
+{% for group in output_groups %}
+{% set ns = namespace(image_outputs=[], svg_outputs=[], text_outputs=[]) %}
+{% for out in group.outputs %}
+    {% if out.type == 'image' %}{% set ns.image_outputs = ns.image_outputs + [out] %}
+    {% elif out.type == 'svg' %}{% set ns.svg_outputs = ns.svg_outputs + [out] %}
+    {% elif out.type == 'text' %}{% set ns.text_outputs = ns.text_outputs + [out] %}
+    {% endif %}
+{% endfor %}
+
+{% if output_groups | length > 1 or group.source_file %}
+<section class="mb-5">
+<h5 class="font-monospace border-bottom pb-2 mb-3">{{ group.label }}</h5>
+{% endif %}
+
+{# ── Image outputs ── #}
+{# For Draw files, out.svg_filename is set; clicking opens the SVG while PNG is the preview. #}
+{% if ns.image_outputs %}
+    <div class="row g-3 mb-4">
+        {% for out in ns.image_outputs %}
+        <div class="col-6 col-sm-4 col-md-3">
+            <div class="card viewer-img-card h-100">
+                <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=out.svg_filename if out.svg_filename else out.filename) }}"
+                   target="_blank" rel="noopener">
+                    <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=out.filename) }}"
+                         class="viewer-img card-img-top" alt="{{ out.name }}">
+                </a>
+                <div class="card-footer p-1 text-center">
+                    <span class="viewer-name font-monospace">{{ out.name }}</span>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+{% endif %}
+
+{# ── SVG outputs (other tools that produce standalone SVG without a paired PNG) ── #}
+{% if ns.svg_outputs %}
+<div class="mb-3">
+    {% for out in ns.svg_outputs %}
+    <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=out.filename) }}"
+       target="_blank" rel="noopener" class="btn btn-outline-secondary me-2">
+        <i class="bi bi-filetype-svg"></i> View SVG ({{ out.name }})
+    </a>
+    {% endfor %}
+</div>
+{% endif %}
+
+{# ── Text outputs ── #}
+{% if ns.text_outputs %}
+    {% for out in ns.text_outputs %}
+    <div class="viewer-text mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-1">
+            {% if not group.source_file %}<span class="font-monospace small text-muted">{{ out.name }}</span>{% endif %}
+            <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=out.filename) }}"
+               target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary ms-auto">
+                <i class="bi bi-file-text"></i> Raw
+            </a>
+        </div>
+        {% if out.text_content is not none %}
+        <pre>{{ out.text_content }}</pre>
+        {% else %}
+        <div class="alert alert-warning">Text content unavailable — <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=out.filename) }}" target="_blank">open raw file</a>.</div>
+        {% endif %}
+    </div>
+    {% endfor %}
+{% endif %}
+
+{% if output_groups | length > 1 or group.source_file %}
+</section>
+{% endif %}
+{% endfor %}
+{% endblock %}

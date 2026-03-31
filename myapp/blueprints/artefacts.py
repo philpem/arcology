@@ -93,6 +93,12 @@ EXTENSION_MAP = {
     '.arcfs': ArtefactType.ARC,
     '.spk': ArtefactType.ARC,
     '.spark': ArtefactType.ARC,
+
+    # Acorn/RISC OS native viewable formats
+    '.spr':  ArtefactType.ACORN_SPRITE,
+    '.aff':  ArtefactType.ACORN_DRAW,
+    '.draw': ArtefactType.ACORN_DRAW,
+    '.txt':  ArtefactType.ACORN_TEXT,
 }
 
 
@@ -160,6 +166,11 @@ ANALYSIS_MAP = {
     ArtefactType.RAR: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.ARC: [AnalysisType.ARCHIVE_EXTRACT],
     
+    # Acorn/RISC OS native viewable formats — convert to portable equivalents
+    ArtefactType.ACORN_SPRITE: [AnalysisType.FORMAT_CONVERT],
+    ArtefactType.ACORN_DRAW:   [AnalysisType.FORMAT_CONVERT],
+    ArtefactType.ACORN_TEXT:   [AnalysisType.FORMAT_CONVERT],
+
     # Unknown - try to identify
     ArtefactType.UNKNOWN: [AnalysisType.FORMAT_IDENTIFY],
 }
@@ -345,9 +356,16 @@ def compute_file_hashes(filepath: str) -> tuple[str, str]:
 def _resolve_extracted_file_path(ef):
     """Resolve an ExtractedFile to its actual path on disk.
 
-    Looks up the FILE_EXTRACTION or ARCHIVE_EXTRACT analysis with an output_path
-    for the file's partition's artefact, then joins with ef.path.
-    Handles RISC OS filetype suffix fallback via glob.
+    Looks up completed FILE_EXTRACTION and ARCHIVE_EXTRACT analyses for the
+    file's partition's artefact, then joins their output_path with the
+    file's on-disk relative path.  Handles RISC OS filetype suffix fallback
+    via glob.
+
+    For files extracted from a nested archive (e.g. a zip inside a disc
+    image), the API prepends the parent archive's display path to ef.path so
+    the file appears nested in the UI.  That prefix is stripped here before
+    joining, because the actual files live in a separate ARCHIVE_EXTRACT
+    output directory, not under the disc's FILE_EXTRACTION tree.
 
     When the worker runs in a different container, the stored output_path
     may be an absolute path that doesn't exist on the web host (e.g.
@@ -359,14 +377,30 @@ def _resolve_extracted_file_path(ef):
     output_folder = get_output_folder()
     real_output = os.path.realpath(output_folder)
 
+    # For files nested inside an archive-within-a-disc, the DB path has the
+    # parent archive's display path prepended (e.g. "Archives/Emulators.zip/
+    # Docs/file.txt").  The actual files are in the ARCHIVE_EXTRACT output
+    # for that inner zip, so we strip the prefix to get the real disk path.
+    disk_path = ef.path
+    if ef.parent_file_id:
+        parent = ef.parent_file
+        if parent and parent.is_archive:
+            prefix = parent.path + '/'
+            if disk_path.startswith(prefix):
+                disk_path = disk_path[len(prefix):]
+
     for analysis_type in (AnalysisType.FILE_EXTRACTION, AnalysisType.ARCHIVE_EXTRACT):
-        extraction = (
+        # Use .all() so we try every extraction output for this artefact.
+        # A disc image may have multiple nested archives, each with its own
+        # ARCHIVE_EXTRACT and output_path; .first() would pick an arbitrary
+        # one that may not contain this particular file.
+        extractions = (
             Analysis.query
             .filter_by(artefact_id=ef.partition.artefact_id, analysis_type=analysis_type)
             .filter(Analysis.output_path.isnot(None), Analysis.status == AnalysisStatus.COMPLETED)
-            .first()
+            .all()
         )
-        if extraction and extraction.output_path:
+        for extraction in extractions:
             base = extraction.output_path
 
             # Build candidate base directories to try
@@ -394,7 +428,7 @@ def _resolve_extracted_file_path(ef):
                 # pass the inner confinement test and expose arbitrary host files.
                 if not real_base.startswith(real_output + os.sep):
                     continue
-                raw_path = os.path.join(resolved_base, ef.path.lstrip('/'))
+                raw_path = os.path.join(resolved_base, disk_path.lstrip('/'))
                 file_path = os.path.realpath(raw_path)
                 if not file_path.startswith(real_base + os.sep):
                     continue
@@ -679,6 +713,121 @@ def view_legacy(uuid):
     """Legacy flat-URL compat shim — resolves and renders without redirect."""
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     return _render_artefact_view(artefact)
+
+
+@blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/viewer')
+@login_required
+def viewer(item_id, artefact_id):
+    """Viewer page for converted outputs (images, text, etc.)."""
+    _, artefact = _resolve_artefact(item_id, artefact_id)
+    return _render_viewer(artefact)
+
+
+@blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/viewer')
+@login_required
+def viewer_nested(item_id, root_id, artefact_id):
+    """Viewer page for converted outputs (nested artefact)."""
+    _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
+    return _render_viewer(artefact)
+
+
+def _render_viewer(artefact):
+    """Build and render the viewer page for an artefact's converted outputs."""
+    _viewable_types = (ArtefactType.ACORN_SPRITE, ArtefactType.ACORN_DRAW, ArtefactType.ACORN_TEXT)
+    output_groups = []
+    output_folder = get_output_folder()
+
+    def _enrich_outputs(outputs):
+        """For text outputs, read file content for inline rendering."""
+        for out in outputs:
+            if out.get('type') == 'text':
+                try:
+                    text_path = os.path.join(output_folder, out['filename'])
+                    out['text_content'] = open(text_path, encoding='utf-8', errors='replace').read()
+                except Exception:
+                    out['text_content'] = None
+        return outputs
+
+    viewer_status = None  # 'pending', 'failed', 'partial', or None (ready)
+
+    if artefact.artefact_type in _viewable_types:
+        # Mode 1: Artefact is itself a viewable type — show its own FORMAT_CONVERT output
+        conv = Analysis.query.filter_by(
+            artefact_id=artefact.id,
+            analysis_type=AnalysisType.FORMAT_CONVERT,
+        ).order_by(Analysis.id.desc()).first()
+        if conv and conv.status == AnalysisStatus.COMPLETED and conv.success:
+            try:
+                details = json.loads(conv.details or '{}')
+            except (json.JSONDecodeError, TypeError):
+                details = {}
+            outputs = _enrich_outputs(details.get('outputs', []))
+            if outputs:
+                output_groups.append({
+                    'label': artefact.original_filename or artefact.label,
+                    'source_file': None,
+                    'outputs': outputs,
+                })
+        elif conv and conv.status in (AnalysisStatus.PENDING, AnalysisStatus.RUNNING):
+            viewer_status = 'pending'
+        else:
+            viewer_status = 'failed'
+    else:
+        # Mode 2: Aggregate outputs from all FORMAT_CONVERT analyses on this artefact.
+        # Multiple analyses are expected — one per FILE_EXTRACTION / ARCHIVE_EXTRACT
+        # partition queued via queue_partition_follow_ups().
+        convs = (
+            Analysis.query
+            .filter_by(
+                artefact_id=artefact.id,
+                analysis_type=AnalysisType.FORMAT_CONVERT,
+            )
+            .order_by(Analysis.id)
+            .all()
+        )
+
+        pending_count = sum(
+            1 for c in convs
+            if c.status in (AnalysisStatus.PENDING, AnalysisStatus.RUNNING)
+        )
+
+        # Optional ?file= filter: show only outputs for a specific source file
+        file_filter = request.args.get('file')
+
+        # Collect outputs grouped by source_file
+        from collections import defaultdict
+        groups: dict[str, list] = defaultdict(list)
+        for conv in convs:
+            if not (conv.status == AnalysisStatus.COMPLETED and conv.success):
+                continue
+            try:
+                details = json.loads(conv.details or '{}')
+            except (json.JSONDecodeError, TypeError):
+                continue
+            for out in details.get('outputs', []):
+                source = out.get('source_file', '')
+                if file_filter and source != file_filter:
+                    continue
+                groups[source].append(out)
+
+        for source_file, outputs in groups.items():
+            _enrich_outputs(outputs)
+            # Use the full source_file path as the label so users can see
+            # which file in the archive produced these outputs.
+            label = source_file if source_file else (artefact.original_filename or artefact.label)
+            output_groups.append({'label': label, 'source_file': source_file, 'outputs': outputs})
+
+        if not output_groups:
+            viewer_status = 'pending' if pending_count > 0 else 'failed'
+        elif pending_count > 0:
+            viewer_status = 'partial'
+
+    return render_template(
+        'artefacts/viewer.html',
+        artefact=artefact,
+        output_groups=output_groups,
+        viewer_status=viewer_status,
+    )
 
 
 def _render_artefact_view(artefact):
@@ -983,6 +1132,40 @@ def _render_artefact_view(artefact):
 
     hashdb_mode = request.args.get('mode') == 'hashdb'
 
+    # Build viewable_filenames: set of ExtractedFile.path values that have
+    # completed FORMAT_CONVERT outputs.  Used to show the eye icon in the file
+    # listing only after conversion has finished.
+    _viewable_types = (ArtefactType.ACORN_SPRITE, ArtefactType.ACORN_DRAW, ArtefactType.ACORN_TEXT)
+    viewable_filenames = set()  # set of file.path strings with completed outputs
+    if artefact.artefact_type not in _viewable_types:
+        convs = (
+            Analysis.query
+            .filter_by(
+                artefact_id=artefact.id,
+                analysis_type=AnalysisType.FORMAT_CONVERT,
+                success=True,
+            )
+            .filter(Analysis.status == AnalysisStatus.COMPLETED)
+            .all()
+        )
+        for conv in convs:
+            try:
+                details = json.loads(conv.details or '{}')
+            except (json.JSONDecodeError, TypeError):
+                continue
+            for out in details.get('outputs', []):
+                sf = out.get('source_file')
+                if sf:
+                    viewable_filenames.add(sf)
+
+    # "View" button: show if artefact is viewable type, or has any FORMAT_CONVERT
+    has_converted_outputs = artefact.artefact_type in _viewable_types
+    if not has_converted_outputs:
+        has_converted_outputs = Analysis.query.filter_by(
+            artefact_id=artefact.id,
+            analysis_type=AnalysisType.FORMAT_CONVERT,
+        ).first() is not None
+
     # Recognised products for all partitions of this artefact tree
     recognised_products = []
     if all_partitions:
@@ -1044,7 +1227,9 @@ def _render_artefact_view(artefact):
                            file_known_matches=file_known_matches,
                            RestrictionType=RestrictionType,
                            letter_pages=letter_pages,
-                           current_letter=current_letter)
+                           current_letter=current_letter,
+                           viewable_filenames=viewable_filenames,
+                           has_converted_outputs=has_converted_outputs)
 
 
 @blueprint.route('/<string:uuid>/add-to-hashdb', methods=['POST'])

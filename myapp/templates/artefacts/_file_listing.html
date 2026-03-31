@@ -172,6 +172,10 @@
                                 <a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=file.uuid) }}"
                                    class="text-muted ms-1" title="Download file"><i class="bi bi-download"></i></a>
                                 {% endif %}
+                                {% if file.path in viewable_filenames %}
+                                <a href="{{ artefact_url(artefact, 'viewer') }}?file={{ file.path | urlencode }}"
+                                   class="text-muted ms-1" title="View"><i class="bi bi-search"></i></a>
+                                {% endif %}
                                 {% endif %}
                             </td>
                             <td>{% if file.is_directory %}<span class="text-muted">DIR</span>{% elif file.file_size %}{{ (file.file_size / 1024)|round(1) }} KB{% else %}-{% endif %}</td>
