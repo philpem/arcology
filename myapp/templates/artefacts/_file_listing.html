@@ -178,7 +178,8 @@
                                 {% endif %}
                                 {% if module_info is defined and file.path in module_info %}
                                 {% set mod = module_info[file.path] %}
-                                <span class="text-success ms-1" title="RISC OS Module: {{ mod.help_title or mod.title_string }}{% if mod.version %} {{ mod.version }}{% endif %}{% if mod.date %} ({{ mod.date }}){% endif %}"><i class="bi bi-cpu"></i></span>
+                                <a href="{{ artefact_url(artefact, 'viewer') }}?file={{ file.path | urlencode }}"
+                                   class="text-success ms-1" title="RISC OS Module: {{ mod.help_title or mod.title_string }}{% if mod.version %} {{ mod.version }}{% endif %}{% if mod.date %} ({{ mod.date }}){% endif %}"><i class="bi bi-cpu"></i></a>
                                 {% endif %}
                                 {% endif %}
                             </td>

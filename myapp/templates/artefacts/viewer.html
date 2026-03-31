@@ -58,13 +58,58 @@
 <div class="alert alert-info">
     <i class="bi bi-hourglass-split"></i> Conversion in progress — please refresh in a moment.
 </div>
-{% elif viewer_status == 'failed' %}
+{% elif viewer_status == 'failed' and not module_detail %}
 <div class="alert alert-warning">
     <i class="bi bi-exclamation-triangle"></i> Conversion failed or has not been run yet. Try re-analysing the artefact.
 </div>
 {% elif viewer_status == 'partial' %}
 <div class="alert alert-info">
     <i class="bi bi-hourglass-split"></i> Some conversions are still in progress — refresh to see more.
+</div>
+{% endif %}
+
+{% if module_detail %}
+<div class="card mb-4">
+    <div class="card-header">
+        <i class="bi bi-cpu text-success"></i> RISC OS Module — {{ module_detail.help_title or module_detail.title_string }}
+    </div>
+    <div class="card-body">
+        <table class="table table-sm mb-0">
+            <tbody>
+                <tr><th style="width:180px">Title string</th><td><code>{{ module_detail.title_string }}</code></td></tr>
+                {% if module_detail.help_title %}
+                <tr><th>Help title</th><td>{{ module_detail.help_title }}</td></tr>
+                {% endif %}
+                {% if module_detail.version %}
+                <tr><th>Version</th><td>{{ module_detail.version }}</td></tr>
+                {% endif %}
+                {% if module_detail.date %}
+                <tr><th>Date</th><td>{{ module_detail.date }}</td></tr>
+                {% endif %}
+                {% if module_detail.swi_chunk is not none %}
+                <tr><th>SWI chunk</th><td><code>&amp;{{ '%X' % module_detail.swi_chunk }}</code> ({{ module_detail.swi_chunk }})</td></tr>
+                {% endif %}
+                {% if module_detail.swi_names %}
+                <tr>
+                    <th>SWI names</th>
+                    <td>
+                        {% set chunk_name = module_detail.swi_names[0] %}
+                        {% for name in module_detail.swi_names[1:] %}
+                        <code>{{ chunk_name }}_{{ name }}</code>{% if not loop.last %}, {% endif %}
+                        {% endfor %}
+                    </td>
+                </tr>
+                {% endif %}
+                {% if module_detail.module_flags is not none %}
+                <tr><th>Module flags</th><td><code>&amp;{{ '%08X' % module_detail.module_flags }}</code></td></tr>
+                {% endif %}
+                {% if module_detail.module_hash %}
+                <tr><th>SHA-256</th><td><code class="small">{{ module_detail.module_hash }}</code></td></tr>
+                {% endif %}
+                <tr><th>File path</th><td><span class="font-monospace">{{ module_detail.file_path }}</span></td></tr>
+            </tbody>
+        </table>
+    </div>
 </div>
 {% endif %}
 
