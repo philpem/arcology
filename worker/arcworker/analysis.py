@@ -518,6 +518,7 @@ class AnalysisWorker:
             return json.dumps(d)
 
         if not result['success']:
+            shutil.rmtree(extract_dir, ignore_errors=True)
             self.fail_analysis(
                 analysis_id,
                 result.get('error', 'Extraction failed'),
@@ -1357,6 +1358,7 @@ class AnalysisWorker:
             return
 
         if not result['success']:
+            shutil.rmtree(extract_dir, ignore_errors=True)
             self.fail_analysis(
                 analysis_id,
                 result.get('error', 'Archive extraction failed'),
@@ -1598,15 +1600,6 @@ class AnalysisWorker:
         # Get item for hierarchical path
         item = artefact.get('item', {'uuid': 'default', 'slug': 'default'})
 
-        # Create persistent output directory using hierarchical structure
-        persistent_output = get_output_path(
-            OUTPUT_DIR,
-            item,
-            artefact,
-            analysis,
-            partition
-        )
-
         # Extract archive to temporary directory first
         temp_output_dir = work_dir / 'archive_contents'
 
@@ -1691,8 +1684,18 @@ class AnalysisWorker:
             )
             return
 
+        # Create persistent output directory only after successful extraction
+        persistent_output = get_output_path(
+            OUTPUT_DIR,
+            item,
+            artefact,
+            analysis,
+            partition
+        )
+
         # Move extracted files from temp to persistent storage
         if temp_output_dir.exists():
+            persistent_output.mkdir(parents=True, exist_ok=True)
             shutil.copytree(temp_output_dir, persistent_output, dirs_exist_ok=True)
 
         # Scan extracted files from persistent storage.
