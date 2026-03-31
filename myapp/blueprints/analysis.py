@@ -13,7 +13,7 @@ from sqlalchemy import case, func
 from sqlalchemy.orm import joinedload
 
 from ..extensions import db
-from ..database import Analysis, AnalysisStatus
+from ..database import Analysis, AnalysisStatus, Artefact
 from ..permissions import require_permission
 from ..utils.pagination import resolve_per_page, VALID_PER_PAGE
 
@@ -108,6 +108,30 @@ def index():
                            pagination=pagination,
                            status_filter=status_filter,
                            status_counts=status_counts,
+                           valid_per_page=VALID_PER_PAGE,
+                           view_all=view_all)
+
+
+@blueprint.route('/artefact/<string:uuid>')
+@login_required
+def artefact_analyses(uuid):
+    """List all analyses for an artefact and its derived artefacts."""
+    from .artefacts import get_all_derived_artefact_ids
+
+    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+
+    query = Analysis.query.filter(
+        Analysis.artefact_id.in_(all_artefact_ids)
+    ).options(joinedload(Analysis.artefact))
+
+    per_page, page, view_all = resolve_per_page('ANALYSES_PER_PAGE', 50)
+    pagination = query.order_by(Analysis.created_at.desc()).paginate(page=page, per_page=per_page)
+
+    return render_template('analysis/artefact.html',
+                           artefact=artefact,
+                           analyses=pagination.items,
+                           pagination=pagination,
                            valid_per_page=VALID_PER_PAGE,
                            view_all=view_all)
 
