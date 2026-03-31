@@ -43,6 +43,7 @@
                     <div class="col-auto">{{ file_form.filter_products(class="form-select form-select-sm", title="Filter files by product match status. 'Hide' removes files matched to a known product; 'Only' shows only files matched to a known product.") }}</div>
                     <div class="col-auto"><div class="form-check form-check-sm">{{ file_form.show_directories(class="form-check-input", title="Show directory entries in the file listing") }}<label class="form-check-label small" title="Show directory entries in the file listing">Dirs</label></div></div>
                     <div class="col-auto"><button type="submit" class="btn btn-sm btn-secondary w-100">Filter</button></div>
+                    <div class="col-auto"><a href="?{% if hashdb_mode %}mode=hashdb{% endif %}" class="btn btn-sm btn-outline-secondary w-100" title="Clear all filters">Clear</a></div>
                 </form>
             </div>
             {% if subdirectories %}
