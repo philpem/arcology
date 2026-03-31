@@ -1331,12 +1331,12 @@ def _render_artefact_view(artefact):
     if artefact.artefact_type not in _viewable_types:
         convs = (
             Analysis.query
-            .filter_by(
-                artefact_id=artefact.id,
-                analysis_type=AnalysisType.FORMAT_CONVERT,
-                success=True,
+            .filter(
+                Analysis.artefact_id.in_(all_artefact_ids),
+                Analysis.analysis_type == AnalysisType.FORMAT_CONVERT,
+                Analysis.success == True,
+                Analysis.status == AnalysisStatus.COMPLETED,
             )
-            .filter(Analysis.status == AnalysisStatus.COMPLETED)
             .all()
         )
         for conv in convs:
