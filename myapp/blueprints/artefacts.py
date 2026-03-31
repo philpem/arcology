@@ -1405,12 +1405,17 @@ def _render_artefact_view(artefact):
         .all()
     )
 
-    # Build a mapping {file_id: [inherited restrictions]} for archive-cascade display.
-    # For each file on the current page that has no direct restrictions, walk up its
-    # parent_file chain to find restrictions on enclosing archives.
+    # Build a mapping {file_id: [non-direct restrictions]} for display in the
+    # file listing.  Covers two directions:
     #
-    # Strategy: one query for the parent_id map of all files in the artefact tree,
-    # then in-memory traversal using the already-loaded direct_restrict_map.
+    #   Downward (ancestor → file): a file inside a restricted archive inherits
+    #   that archive's restrictions.
+    #
+    #   Upward (descendant → archive): an archive that contains a restricted
+    #   file is itself shown as restricted.
+    #
+    # Strategy: one query for the parent_id map of all files in the artefact
+    # tree, then two in-memory passes.
     file_inherited_restrictions: dict[int, list] = {}
     if artefact_file_restrictions:
         # direct map: file_id -> [restriction objects]
@@ -1428,6 +1433,17 @@ def _render_artefact_view(artefact):
         )
         _parent_map: dict[int, int | None] = {row.id: row.parent_file_id for row in _parent_rows}
 
+        # Pass 1 — upward: for every directly restricted file, mark all of
+        # its ancestor archives so they appear restricted in the listing.
+        for restricted_id, restr_list in _direct_map.items():
+            pid = _parent_map.get(restricted_id)
+            while pid is not None:
+                file_inherited_restrictions.setdefault(pid, []).extend(restr_list)
+                pid = _parent_map.get(pid)
+
+        # Pass 2 — downward (current page only): for files on this page that
+        # have no direct restrictions, check whether any enclosing archive is
+        # restricted and propagate that restriction down to them.
         for f in files_pagination.items:
             if f.id in _direct_map:
                 continue  # has direct restrictions — handled by file.restrictions in template
@@ -1438,7 +1454,7 @@ def _render_artefact_view(artefact):
                     inherited.extend(_direct_map[pid])
                 pid = _parent_map.get(pid)
             if inherited:
-                file_inherited_restrictions[f.id] = inherited
+                file_inherited_restrictions.setdefault(f.id, []).extend(inherited)
 
     return render_template('artefacts/view.html',
                            artefact=artefact,
