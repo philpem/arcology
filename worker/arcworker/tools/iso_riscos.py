@@ -257,6 +257,11 @@ def _walk_directory(
         if is_dir:
             dir_lba = struct.unpack_from('<I', record, 2)[0]
             dir_size = struct.unpack_from('<I', record, 10)[0]
+            # If this directory itself has a pling name, record the rename now.
+            # Without this, a pling directory that contains no typed files would
+            # never appear in rename_map and would not be physically renamed.
+            if raw_path.lower() != display_path.lower():
+                rename_map[raw_path.lower()] = display_path
             # Pass display_path as new display_prefix and raw_path as new
             # raw_prefix so that both hierarchies stay in sync.
             _walk_directory(f, dir_lba, dir_size, display_path, raw_path, result, rename_map)

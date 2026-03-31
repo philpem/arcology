@@ -168,11 +168,19 @@ class TestGetNmName(unittest.TestCase):
         nm = _make_nm_entry(b'plain.txt')
         self.assertEqual(_get_nm_name(nm), 'plain.txt')
 
-    def test_continuation_flag_returns_first_part_only(self):
-        # NM entry with flags=1 (more NM entries follow); we return what we have
+    def test_continuation_flag_concatenates_parts(self):
+        # Two consecutive NM entries: first has continuation flag, second does not.
+        # The implementation assembles both parts into a single name.
+        nm1 = _make_nm_entry(b'long_fil', flags=0x01)  # continuation set
+        nm2 = _make_nm_entry(b'ename.txt', flags=0x00)  # last entry
+        result = _get_nm_name(nm1 + nm2)
+        self.assertEqual(result, 'long_filename.txt')
+
+    def test_continuation_flag_single_part_no_crash(self):
+        # Single NM entry with continuation flag but no following entry —
+        # should return whatever data is present without crashing.
         nm = _make_nm_entry(b'partial', flags=0x01)
         result = _get_nm_name(nm)
-        # Should return the first part without crashing
         self.assertEqual(result, 'partial')
 
     def test_nm_after_other_susp_entry(self):

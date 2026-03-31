@@ -19,6 +19,7 @@ from shared.enums import ArtefactType, AnalysisType
 from .compression import decompress_if_needed, extract_partition_range, is_region_uniform
 from .api import ArcologyAPI
 from .utils.text import make_latin1_fspath, sanitize_path
+from .tools.extraction import _has_acorn_filetypes
 from .tools import (
     compute_file_hash,
     flux_visualisation_fluxfox,
@@ -602,7 +603,7 @@ class AnalysisWorker:
         # acorn='auto' so that any files whose names already carry a ',xxx'
         # suffix (e.g. from Rock Ridge NM entries preserved by 7z) are handled
         # by the existing suffix-parsing logic.
-        iso_filetype_map: dict[str, str] | None = None
+        iso_filetype_map: dict[str, str] = {}
         if artefact_type == ArtefactType.ISO.value:
             from .tools.iso_riscos import parse_iso_riscos_filetypes
             iso_filetype_map, iso_rename_map = parse_iso_riscos_filetypes(input_path)
@@ -2119,8 +2120,6 @@ class AnalysisWorker:
           Queued automatically by queue_partition_follow_ups() after every
           FILE_EXTRACTION and ARCHIVE_EXTRACT.
         """
-        from .tools.extraction import _has_acorn_filetypes
-
         analysis_id = analysis['id']
         analysis_uuid = analysis['uuid']
         artefact_type_str = artefact.get('artefact_type', '')
