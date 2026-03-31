@@ -1057,7 +1057,7 @@ def _render_artefact_view(artefact):
         # plus the N most recent completed (successful) analyses.
         # Failed and older analyses are hidden; click "Show All" to see them.
         active = [a for a in all_related_analyses
-                  if a.status in (AnalysisStatus.PENDING, AnalysisStatus.RUNNING)]
+                  if a.status in (AnalysisStatus.PENDING, AnalysisStatus.RUNNING)][:analyses_shown_limit]
         completed = [a for a in all_related_analyses
                      if a.status == AnalysisStatus.COMPLETED][:analyses_shown_limit]
         seen_ids = {a.id for a in active + completed}
