@@ -24,10 +24,8 @@ from ._selection import build_artefact_query
               help='Reanalyse every artefact in the database')
 @click.option('--dry-run', is_flag=True, default=False,
               help='Show what would be requeued without making changes')
-@click.option('--batch-size', default=50, show_default=True,
-              help='Number of artefacts to process per database commit')
 def reanalyse(item_uuid, tag_name, platform_name, category_name,
-              artefact_type_name, select_all, dry_run, batch_size):
+              artefact_type_name, select_all, dry_run):
     """Reset and re-queue analysis for artefacts in the database.
 
     At least one filter or --all is required. Filters (--item, --tag,
@@ -77,8 +75,10 @@ def reanalyse(item_uuid, tag_name, platform_name, category_name,
 
     for i, artefact in enumerate(artefacts, 1):
         click.echo(f"  [{i}/{len(artefacts)}] {artefact.uuid}  {artefact.label}")
-        cleanup = reset_artefact_for_reanalysis(artefact)
-        queue_analyses_for_artefact(artefact)
+        # commit=False on reset, commit=True on queue: one commit per artefact
+        # covers both the bulk deletes and the new analysis inserts.
+        cleanup = reset_artefact_for_reanalysis(artefact, commit=False)
+        queue_analyses_for_artefact(artefact, skip_duplicate_check=True, commit=True)
         _cleanup_analysis_outputs(
             output_folder,
             cleanup['output_files'],
@@ -88,10 +88,6 @@ def reanalyse(item_uuid, tag_name, platform_name, category_name,
         )
         processed += 1
 
-        if processed % batch_size == 0:
-            db.session.commit()
-
-    db.session.commit()
     click.echo(f"Done. {processed} artefact(s) reset and requeued for analysis.")
 
 # vim: ts=4 sw=4 et
