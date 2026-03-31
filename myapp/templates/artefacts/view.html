@@ -81,6 +81,19 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
             {% endfor %}
         </p>
         {% endif %}
+        {% if artefact_file_restrictions and not artefact.restrictions %}
+        <p class="mb-1">
+            {% set _seen = namespace(types=[]) %}
+            {% for r in artefact_file_restrictions %}
+              {% if r.restriction_type not in _seen.types %}
+                {% set _seen.types = _seen.types + [r.restriction_type] %}
+                <span class="badge bg-warning text-dark me-1" title="Restriction on individual file(s) within this artefact">
+                    <i class="bi bi-exclamation-triangle-fill"></i> {{ r.restriction_type.label }} (file)
+                </span>
+              {% endif %}
+            {% endfor %}
+        </p>
+        {% endif %}
     </div>
     <div>
         {% if artefact.restrictions %}
@@ -91,6 +104,17 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
             </a>
             {% else %}
             <button class="btn btn-danger" disabled title="Download restricted">
+                <i class="bi bi-lock-fill"></i> Restricted
+            </button>
+            {% endif %}
+        {% elif artefact_file_restrictions %}
+            {% if current_user.can_bypass_all_restrictions(artefact_file_restrictions) %}
+            <a href="{{ artefact_url(artefact, 'download', confirm_bypass='1') }}" class="btn btn-outline-danger"
+               onclick="return confirm('This artefact contains files with download restrictions. Are you sure you want to download it?')">
+                <i class="bi bi-download"></i> Download (Override)
+            </a>
+            {% else %}
+            <button class="btn btn-danger" disabled title="Download restricted (contains restricted files)">
                 <i class="bi bi-lock-fill"></i> Restricted
             </button>
             {% endif %}

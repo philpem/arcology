@@ -621,12 +621,21 @@ class ExtractedFile(db.Model):
         backref="child_files"
     )
 
+    restrictions: Mapped[list["ExtractedFileRestriction"]] = relationship(
+        back_populates="extracted_file", cascade="all, delete-orphan"
+    )
+
     __table_args__ = (
         Index("ix_extracted_files_partition_known", "partition_id", "is_known"),
         Index("ix_extracted_files_archive", "is_archive", "risc_os_filetype"),
         Index("ix_extracted_files_parent", "parent_file_id", "extraction_depth"),
         Index("ix_extracted_files_partition_path", "partition_id", "path"),
     )
+
+    @property
+    def is_restricted(self) -> bool:
+        """True if this file has any active download restrictions."""
+        return len(self.restrictions) > 0
 
 
 # =============================================================================
@@ -716,6 +725,30 @@ class ArtefactRestriction(db.Model):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     artefact: Mapped["Artefact"] = relationship(back_populates="restrictions")
+    added_by: Mapped[Optional["User"]] = relationship()
+
+
+class ExtractedFileRestriction(db.Model):
+    """A restriction on an individual extracted file.
+
+    Blocks only this file's download (and any ancestor archive/directory in the
+    same partition tree); sibling files and the parent artefact are unaffected
+    unless they also have restrictions.
+    """
+    __tablename__ = "extracted_file_restrictions"
+    __table_args__ = (
+        db.UniqueConstraint('extracted_file_id', 'restriction_type',
+                            name='uq_extracted_file_restriction_type'),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    extracted_file_id: Mapped[int] = mapped_column(ForeignKey("extracted_files.id"), index=True)
+    restriction_type: Mapped[RestrictionType] = mapped_column(SQLEnum(RestrictionType))
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    added_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("user.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    extracted_file: Mapped["ExtractedFile"] = relationship(back_populates="restrictions")
     added_by: Mapped[Optional["User"]] = relationship()
 
 

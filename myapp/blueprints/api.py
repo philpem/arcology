@@ -22,11 +22,13 @@ from ..database import (
     RecognisedProduct, StorageDirectory,
     ApiKey, ApiKeyPermission, _API_KEY_PERMISSION_ORDER,
     ArtefactProtection, ArtefactMastering, RiscosModule,
+    ExtractedFileRestriction,
 )
 from .artefacts import (
     get_artefact_path, _delete_artefact_files, _delete_item_files,
     detect_artefact_type, save_uploaded_file, compute_file_hashes,
     queue_analyses_for_artefact,
+    _collect_all_file_restrictions, _collect_ancestor_file_restrictions,
 )
 from ..utils.hash_rescan import find_known_file
 from ..utils.item_helpers import assign_item_fields, assign_item_tags
@@ -458,6 +460,17 @@ def download_extracted_file(uuid):
         return jsonify({
             'error': 'Download restricted',
             'restrictions': [r.restriction_type.value for r in artefact.restrictions],
+        }), 403
+
+    # Check file-level restrictions: own, descendants (archive contains restricted file),
+    # and ancestors (file is inside a restricted archive).
+    file_restrictions = (
+        _collect_all_file_restrictions(ef) + _collect_ancestor_file_restrictions(ef)
+    )
+    if file_restrictions:
+        return jsonify({
+            'error': 'File download restricted',
+            'restrictions': list({r.restriction_type.value for r in file_restrictions}),
         }), 403
 
     from .artefacts import _resolve_extracted_file_path
