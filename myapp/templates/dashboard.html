@@ -64,7 +64,7 @@
             <ul class="list-group list-group-flush">
                 {% for analysis in recent_analyses %}
                 <li class="list-group-item d-flex justify-content-between">
-                    <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=analysis.uuid) }}">{{ analysis.analysis_type.value|replace('_', ' ')|title }} - {{ analysis.artefact.label }}</a>
+                    <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=analysis.uuid) }}">{{ analysis.analysis_type|format_analysis_type }} - {{ analysis.artefact.label }}</a>
                     <span class="badge {{ analysis.status.value | status_badge_class }}">{{ analysis.status.value }}</span>
                 </li>
                 {% else %}

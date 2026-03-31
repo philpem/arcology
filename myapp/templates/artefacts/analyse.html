@@ -33,7 +33,7 @@
                 <h5>Analyses to be queued:</h5>
                 <ul class="mb-4">
                     {% for atype in pending_types %}
-                    <li>{{ atype.value.replace('_', ' ').title() }}</li>
+                    <li>{{ atype|format_analysis_type }}</li>
                     {% endfor %}
                 </ul>
 

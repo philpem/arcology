@@ -12,7 +12,7 @@
                     <dd>
                         <a href="{{ artefact_url(artefact.parent_artefact) }}">{{ artefact.parent_artefact.label }}</a>
                         {% if artefact.derived_from_analysis %}
-                        <span class="text-muted">(via {{ artefact.derived_from_analysis.analysis_type.value.replace('_', ' ') }})</span>
+                        <span class="text-muted">(via {{ artefact.derived_from_analysis.analysis_type|format_analysis_type }})</span>
                         {% endif %}
                     </dd>
                     {% endif %}
@@ -140,7 +140,7 @@
                 {% for analysis in analyses %}
                 <li class="list-group-item d-flex justify-content-between align-items-center">
                     <div>
-                        <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=analysis.uuid) }}">{{ analysis.analysis_type.value.replace('_', ' ').title() }}</a>
+                        <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=analysis.uuid) }}">{{ analysis.analysis_type|format_analysis_type }}</a>
                         {% if analysis.artefact_id != artefact.id %}
                         <br><small class="text-muted"><i class="bi bi-diagram-3"></i> {{ analysis.artefact.label }}</small>
                         {% endif %}
