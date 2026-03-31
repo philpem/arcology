@@ -682,6 +682,13 @@ def _populate_search_index(analysis):
                 title = mod.get('title_string', '')
                 if not title:
                     continue
+                commands = mod.get('commands', [])
+                commands_json = json.dumps([c['name'] for c in commands]) if commands else None
+                raw_swis = mod.get('swi_names')
+                if raw_swis and len(raw_swis) > 1:
+                    swi_names_json = json.dumps([f"{raw_swis[0]}_{s}" for s in raw_swis[1:]])
+                else:
+                    swi_names_json = None
                 db.session.add(RiscosModule(
                     artefact_id=analysis.artefact_id,
                     title_string=title,
@@ -691,6 +698,8 @@ def _populate_search_index(analysis):
                     swi_chunk=mod.get('swi_chunk'),
                     file_path=mod.get('file_path'),
                     module_hash=mod.get('hash'),
+                    commands=commands_json,
+                    swi_names=swi_names_json,
                 ))
 
     except Exception:

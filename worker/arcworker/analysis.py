@@ -2500,8 +2500,7 @@ class AnalysisWorker:
                 data = file_path.read_bytes()
                 result = decode_module(data)
                 result['file_path'] = db_path
-                # Exclude bulky fields from the stored details
-                result.pop('commands', None)
+                # Exclude the raw help_string (redundant with help_title)
                 result.pop('help_string', None)
                 modules.append(result)
             except ModuleParseError as e:

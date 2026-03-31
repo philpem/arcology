@@ -103,6 +103,20 @@
                 {% if module_detail.module_flags is not none %}
                 <tr><th>Module flags</th><td><code>&amp;{{ '%08X' % module_detail.module_flags }}</code></td></tr>
                 {% endif %}
+                {% if module_detail.commands %}
+                <tr>
+                    <th>Commands</th>
+                    <td>
+                        {% for cmd in module_detail.commands %}
+                        <div{% if not loop.last %} class="mb-1"{% endif %}>
+                            <code>*{{ cmd.name }}</code>
+                            {% if cmd.syntax %} <span class="text-muted small">{{ cmd.syntax }}</span>{% endif %}
+                            {% if cmd.help %}<br><span class="text-muted small">{{ cmd.help }}</span>{% endif %}
+                        </div>
+                        {% endfor %}
+                    </td>
+                </tr>
+                {% endif %}
                 {% if module_detail.module_hash %}
                 <tr><th>SHA-256</th><td><code class="small">{{ module_detail.module_hash }}</code></td></tr>
                 {% endif %}
