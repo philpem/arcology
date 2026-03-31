@@ -42,32 +42,64 @@ from .tools import (
 )
 
 
-def _pling_reversed_path(db_path: str) -> str | None:
+def _apply_pling_renames(extract_dir: Path, rename_map: dict[str, str]) -> None:
     """
-    Derive the ISO 9660 on-disk path from a pling-corrected DB path.
+    Rename ISO 9660 pling-mapped entries in the extraction directory so that
+    physical filenames match the pling-corrected DB paths.
 
-    When files are extracted from a RISC OS ISO 9660 image, directory names
-    that originally began with '!' (pling) are stored on disc with '_' in
-    place of '!' (ISO 9660 forbids '!').  Our rename map fixes the DB path
-    to use '!', but the physical file on disk still uses '_'.
+    ISO 9660 forbids '!' so Acorn mastering tools store application
+    directories (and occasionally files) as '_NAME'.  This function renames
+    them to '!NAME' so that subsequent lookups (module parser, archive
+    extraction, FORMAT_CONVERT) can find files using their DB paths directly.
 
-    This function reconstructs the disk path by replacing the leading '!'
-    with '_' in every path component.  Returns None if no component starts
-    with '!' (no substitution needed).
-
-    Example: '!ARCFS/ARCFS' → '_ARCFS/ARCFS'
-             'DIR/!SUB/FILE' → 'DIR/_SUB/FILE'
+    ``rename_map`` maps lowercase raw ISO 9660 paths to pling-corrected
+    display paths (e.g. ``'_arcfs/arcfs'`` → ``'!ARCFS/ARCFS'``).
+    The function derives the set of unique directory renames from these
+    entries and applies them shallowest-first so that parent renames happen
+    before any child entries are processed.
     """
-    parts = db_path.replace('\\', '/').split('/')
-    new_parts = []
-    changed = False
-    for part in parts:
-        if part.startswith('!'):
-            new_parts.append('_' + part[1:])
-            changed = True
-        else:
-            new_parts.append(part)
-    return '/'.join(new_parts) if changed else None
+    # Collect directory renames: src_rel → dst_rel.
+    # For each file path in rename_map, walk the components and identify
+    # every component where '_' was replaced with '!' (a pling entry).
+    dir_renames: dict[str, str] = {}
+
+    for _raw_lower, display_path in rename_map.items():
+        display_parts = display_path.split('/')
+        for i, dp in enumerate(display_parts[:-1]):  # skip the filename itself
+            if not dp.startswith('!'):
+                continue
+            # This directory component has a pling.  Reconstruct its on-disk
+            # name: '_' + everything after '!' in the display name.  ISO 9660
+            # directory names are uppercase and the display name preserves that
+            # case, so '_' + dp[1:] gives the exact on-disk name.
+            raw_component = '_' + dp[1:]
+            # Build the src path using the already-pling-corrected parent
+            # components (since we process shallowest first, parents are renamed
+            # before we need to reference them in deeper entries).
+            src_rel = '/'.join(display_parts[:i] + [raw_component])
+            dst_rel = '/'.join(display_parts[:i + 1])
+            dir_renames[src_rel] = dst_rel
+
+    # Also handle pling on the filename itself (unusual but possible).
+    for _raw_lower, display_path in rename_map.items():
+        display_parts = display_path.split('/')
+        fname = display_parts[-1]
+        if fname.startswith('!'):
+            raw_fname = '_' + fname[1:]
+            src_rel = '/'.join(display_parts[:-1] + [raw_fname])
+            dst_rel = display_path
+            dir_renames[src_rel] = dst_rel
+
+    # Sort by depth (shallowest first) so parent renames precede child renames.
+    for src_rel, dst_rel in sorted(dir_renames.items(), key=lambda x: x[0].count('/')):
+        src = extract_dir / src_rel
+        dst = extract_dir / dst_rel
+        if src.exists() and not dst.exists():
+            try:
+                src.rename(dst)
+                log.debug(f"Pling rename: {src_rel!r} → {dst_rel!r}")
+            except OSError as e:
+                log.warning(f"Could not pling-rename {src_rel!r} to {dst_rel!r}: {e}")
 
 
 def analysis_handler(description: str):
@@ -571,7 +603,6 @@ class AnalysisWorker:
         # suffix (e.g. from Rock Ridge NM entries preserved by 7z) are handled
         # by the existing suffix-parsing logic.
         iso_filetype_map: dict[str, str] | None = None
-        iso_rename_map: dict[str, str] | None = None
         if artefact_type == ArtefactType.ISO.value:
             from .tools.iso_riscos import parse_iso_riscos_filetypes
             iso_filetype_map, iso_rename_map = parse_iso_riscos_filetypes(input_path)
@@ -579,19 +610,22 @@ class AnalysisWorker:
                 f"ISO ARCHIMEDES parser found {len(iso_filetype_map)} filetype entries, "
                 f"{len(iso_rename_map)} pling renames"
             )
+            # Rename '_NAME' directories/files to '!NAME' on disk so that
+            # physical paths match the pling-corrected paths stored in the DB.
+            # This lets the module parser, archive extractor, and FORMAT_CONVERT
+            # locate files directly without any reverse-lookup logic.
+            if iso_rename_map:
+                _apply_pling_renames(extract_dir, iso_rename_map)
+
             # Write a sidecar metadata file so that FORMAT_CONVERT (queued later)
-            # can apply the same rename and filetype mappings without re-parsing
-            # the ISO.  The file is written inside extract_dir which persists for
-            # the lifetime of the partition.
-            if iso_filetype_map or iso_rename_map:
+            # can detect viewable file types from the ARCHIMEDES filetype hex
+            # without re-parsing the ISO.
+            if iso_filetype_map:
                 import json as _json
                 sidecar_path = extract_dir / '_arcology_iso_meta.json'
                 try:
                     with open(sidecar_path, 'w', encoding='utf-8') as _sf:
-                        _json.dump(
-                            {'filetype_map': iso_filetype_map, 'rename_map': iso_rename_map},
-                            _sf,
-                        )
+                        _json.dump({'filetype_map': iso_filetype_map}, _sf)
                 except OSError as _e:
                     log.warning(f"Could not write ISO metadata sidecar: {_e}")
 
@@ -607,7 +641,6 @@ class AnalysisWorker:
             extract_dir,
             acorn=acorn_mode,
             filetype_map=iso_filetype_map,
-            rename_map=iso_rename_map,
         )
 
         # Extract disc metadata from DIM report output (if Acorn)
@@ -1681,17 +1714,6 @@ class AnalysisWorker:
             candidates.append(Path(str(archive_path) + ',' + risc_os_filetype.upper()))
         candidates.append(archive_path)  # plain name: DOS, UNIX, or no-suffix fallback
 
-        # Also try with pling ('!') replaced by '_' in each path component.
-        # ISO 9660 stores '!' as '_'; the DB path is pling-corrected but the
-        # physical file on disk still uses '_'.
-        pling_disk = _pling_reversed_path(disk_relative_path)
-        if pling_disk:
-            pling_base = Path(extraction_path) / pling_disk
-            if risc_os_filetype:
-                candidates.append(Path(str(pling_base) + ',' + risc_os_filetype.lower()))
-                candidates.append(Path(str(pling_base) + ',' + risc_os_filetype.upper()))
-            candidates.append(pling_base)
-
         # For each candidate also try a Latin-1 byte variant.  Acorn filenames
         # can contain raw Latin-1 bytes (e.g. hard space 0xA0); sanitize_path()
         # converts these to proper Unicode (U+00A0) for the database, but the
@@ -2146,17 +2168,14 @@ class AnalysisWorker:
         is_acorn = _has_acorn_filetypes(extract_dir)
 
         # Load ISO ARCHIMEDES metadata sidecar written by process_file_extraction.
-        # Provides rename_map (raw ISO path → pling-corrected display path) and
-        # filetype_map (lowercase path → filetype hex) for ISO-extracted files
-        # that lack ',xxx' filename suffixes.
-        iso_rename_map: dict[str, str] = {}
+        # Provides filetype_map (lowercase path → filetype hex) for ISO-extracted
+        # files that lack ',xxx' filename suffixes.
         iso_filetype_map: dict[str, str] = {}
         sidecar_path = extract_dir / '_arcology_iso_meta.json'
         if sidecar_path.is_file():
             try:
                 with open(sidecar_path, encoding='utf-8') as _sf:
                     _meta = json.load(_sf)
-                iso_rename_map = _meta.get('rename_map') or {}
                 iso_filetype_map = _meta.get('filetype_map') or {}
             except Exception as _e:
                 log.warning(f"Could not read ISO metadata sidecar: {_e}")
@@ -2198,14 +2217,6 @@ class AnalysisWorker:
                     display_path = true_name
             else:
                 display_path = str(rel)
-
-            # Apply pling rename from ARCHIMEDES metadata sidecar so that the
-            # display path matches the pling-corrected path stored in the DB
-            # (e.g. '_ARMOVIE/SPRITES' → '!ARMOVIE/SPRITES').
-            if iso_rename_map:
-                renamed = iso_rename_map.get(display_path.lower())
-                if renamed:
-                    display_path = renamed
 
             # Prepend archive path prefix for nested archives so the path matches
             # ExtractedFile.path (which has the parent archive path prepended).
@@ -2639,16 +2650,6 @@ class AnalysisWorker:
                 candidates.append(extract_dir / (db_path + ',' + risc_os_filetype.lower()))
                 candidates.append(extract_dir / (db_path + ',' + risc_os_filetype.upper()))
             candidates.append(extract_dir / db_path)
-
-            # Also try with pling ('!') replaced by '_' in each path component.
-            # ISO 9660 stores '!' as '_'; the DB path is pling-corrected but the
-            # physical file on disk still uses '_'.
-            pling_disk = _pling_reversed_path(db_path)
-            if pling_disk:
-                if risc_os_filetype:
-                    candidates.append(extract_dir / (pling_disk + ',' + risc_os_filetype.lower()))
-                    candidates.append(extract_dir / (pling_disk + ',' + risc_os_filetype.upper()))
-                candidates.append(extract_dir / pling_disk)
 
             # Also try Latin-1 byte variants
             all_candidates = []
