@@ -46,7 +46,9 @@ def _analysis_output_path(
     analysis: Dict[str, Any],
 ) -> Path:
     """Return the analysis-level output directory path."""
-    return _artefact_output_path(output_base, item, artefact) / _segment(analysis)
+    analysis_type = analysis.get('analysis_type', 'untitled')
+    segment = f"{analysis['uuid']}_{_slug(analysis, analysis_type)}"
+    return _artefact_output_path(output_base, item, artefact) / segment
 
 
 def get_output_path(
@@ -69,7 +71,7 @@ def get_output_path(
         partition: Optional partition dict with 'partition_index' and 'slug' keys
 
     Returns:
-        Path object for output directory (created if doesn't exist)
+        Path object for output directory (not created; caller is responsible)
 
     Examples:
         >>> get_output_path(
@@ -90,7 +92,7 @@ def get_output_path(
         partition_slug = _slug(partition, str(partition_index))
         path = path / f"partition_{partition_index}_{partition_slug}"
 
-    return _ensure_dir(path)
+    return path
 
 
 def get_item_path(output_base: Path, item: Dict[str, Any]) -> Path:
