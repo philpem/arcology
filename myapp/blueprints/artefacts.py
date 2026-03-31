@@ -178,35 +178,46 @@ ANALYSIS_MAP = {
 }
 
 
-def queue_analyses_for_artefact(artefact: Artefact, hints: dict = None, checksum_only: bool = False):
+def queue_analyses_for_artefact(artefact: Artefact, hints: dict = None,
+                                checksum_only: bool = False,
+                                skip_duplicate_check: bool = False,
+                                commit: bool = True):
     """Queue appropriate analyses for an artefact based on its type.
 
     CHECKSUM_COMPUTE is always prepended as the first job regardless of artefact
     type; it does not need to appear in ANALYSIS_MAP.  Pass checksum_only=True
     to skip the type-specific analyses (used when auto-analyse is off on upload).
+
+    When called after reset_artefact_for_reanalysis, pass skip_duplicate_check=True
+    to avoid redundant SELECT queries (the reset already deleted all analyses).
+
+    Pass commit=False to defer the commit to the caller (useful for batch operations).
     """
     analysis_types = [AnalysisType.CHECKSUM_COMPUTE]
     if not checksum_only:
         analysis_types += ANALYSIS_MAP.get(artefact.artefact_type, [AnalysisType.FORMAT_IDENTIFY])
     hints_json = json.dumps(hints) if hints else None
-    
+
     for analysis_type in analysis_types:
-        # Check if this analysis is already queued/running
-        existing = Analysis.query.filter_by(
-            artefact_id=artefact.id,
-            analysis_type=analysis_type
-        ).filter(Analysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.RUNNING])).first()
-        
-        if not existing:
-            analysis = Analysis(
+        if not skip_duplicate_check:
+            # Check if this analysis is already queued/running
+            existing = Analysis.query.filter_by(
+                artefact_id=artefact.id,
+                analysis_type=analysis_type
+            ).filter(Analysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.RUNNING])).first()
+            if existing:
+                continue
+
+        analysis = Analysis(
                 artefact_id=artefact.id,
                 analysis_type=analysis_type,
                 status=AnalysisStatus.PENDING,
                 hints=hints_json
             )
-            db.session.add(analysis)
-    
-    db.session.commit()
+        db.session.add(analysis)
+
+    if commit:
+        db.session.commit()
 
 
 # =============================================================================
@@ -512,7 +523,7 @@ def _collect_all_analyses(artefact: Artefact) -> list:
     return Analysis.query.filter(Analysis.artefact_id.in_(all_ids)).order_by(Analysis.id.desc()).all()
 
 
-def reset_artefact_for_reanalysis(artefact: Artefact):
+def reset_artefact_for_reanalysis(artefact: Artefact, commit: bool = True):
     """
     Reset an artefact to its just-uploaded state ready for re-analysis.
 
@@ -522,6 +533,9 @@ def reset_artefact_for_reanalysis(artefact: Artefact):
 
     This must be called before queueing new analyses when the user triggers
     a re-analyse, so that stale results from previous runs are fully cleared.
+
+    Pass commit=False to defer the commit to the caller (useful for batch
+    operations).  The caller must call db.session.commit() afterwards.
     """
     cleanup = _collect_cleanup_paths_for_artefact(artefact, 'reset')
 
@@ -530,25 +544,43 @@ def reset_artefact_for_reanalysis(artefact: Artefact):
     for derived in artefact.derived_artefacts:
         _delete_artefact_files(derived)
 
-    # Delete derived artefacts; cascades handle their analyses, partitions,
-    # and extracted file records.
-    for derived in list(artefact.derived_artefacts):
-        db.session.delete(derived)
+    # Collect all derived artefact IDs (including nested) for bulk deletion.
+    all_derived_ids = get_all_derived_artefact_ids(artefact)
 
-    # Delete analyses directly on this artefact.
-    for analysis in list(artefact.analyses):
-        db.session.delete(analysis)
+    if all_derived_ids:
+        # Bulk-delete analyses, partitions, extracted files, protection and
+        # mastering rows for all derived artefacts in a few queries instead
+        # of loading each ORM object individually.
+        Analysis.query.filter(Analysis.artefact_id.in_(all_derived_ids)).delete(synchronize_session=False)
+        ExtractedFile.query.filter(
+            ExtractedFile.partition_id.in_(
+                db.session.query(Partition.id).filter(Partition.artefact_id.in_(all_derived_ids))
+            )
+        ).delete(synchronize_session=False)
+        Partition.query.filter(Partition.artefact_id.in_(all_derived_ids)).delete(synchronize_session=False)
+        ArtefactProtection.query.filter(ArtefactProtection.artefact_id.in_(all_derived_ids)).delete(synchronize_session=False)
+        ArtefactMastering.query.filter(ArtefactMastering.artefact_id.in_(all_derived_ids)).delete(synchronize_session=False)
+        # Break self-referential FK links before bulk-deleting derived artefacts.
+        Artefact.query.filter(Artefact.id.in_(all_derived_ids)).update(
+            {Artefact.parent_artefact_id: None}, synchronize_session=False)
+        Artefact.query.filter(Artefact.id.in_(all_derived_ids)).delete(synchronize_session=False)
 
-    # Delete partitions directly on this artefact; cascade handles ExtractedFile.
-    for partition in list(artefact.partitions):
-        db.session.delete(partition)
+    # Bulk-delete analyses and partitions directly on this artefact.
+    Analysis.query.filter_by(artefact_id=artefact.id).delete(synchronize_session=False)
+    ExtractedFile.query.filter(
+        ExtractedFile.partition_id.in_(
+            db.session.query(Partition.id).filter(Partition.artefact_id == artefact.id)
+        )
+    ).delete(synchronize_session=False)
+    Partition.query.filter_by(artefact_id=artefact.id).delete(synchronize_session=False)
 
     # Clear search index tables — protection/mastering rows are not cascade-deleted
     # with analyses, so must be explicitly removed so re-analysis starts fresh.
     ArtefactProtection.query.filter_by(artefact_id=artefact.id).delete()
     ArtefactMastering.query.filter_by(artefact_id=artefact.id).delete()
 
-    db.session.commit()
+    if commit:
+        db.session.commit()
 
     return cleanup
 

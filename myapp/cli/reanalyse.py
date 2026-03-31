@@ -74,24 +74,35 @@ def reanalyse(item_uuid, tag_name, platform_name, category_name,
 
     output_folder = get_output_folder()
     processed = 0
+    pending_cleanups = []
 
     for i, artefact in enumerate(artefacts, 1):
         click.echo(f"  [{i}/{len(artefacts)}] {artefact.uuid}  {artefact.label}")
-        cleanup = reset_artefact_for_reanalysis(artefact)
-        queue_analyses_for_artefact(artefact)
-        _cleanup_analysis_outputs(
-            output_folder,
-            cleanup['output_files'],
-            cleanup['output_dirs'],
-            cleanup['cache_dir'],
-            current_app.logger,
-        )
+        cleanup = reset_artefact_for_reanalysis(artefact, commit=False)
+        queue_analyses_for_artefact(artefact, skip_duplicate_check=True, commit=False)
+        pending_cleanups.append(cleanup)
         processed += 1
 
         if processed % batch_size == 0:
             db.session.commit()
+            # Expire cached ORM state after bulk deletes so the next batch
+            # sees fresh relationship data from the database.
+            db.session.expire_all()
+            # Run filesystem cleanup after commit so DB state is consistent.
+            for c in pending_cleanups:
+                _cleanup_analysis_outputs(
+                    output_folder, c['output_files'], c['output_dirs'],
+                    c['cache_dir'], current_app.logger,
+                )
+            pending_cleanups.clear()
+            click.echo(f"  ... committed batch ({processed}/{len(artefacts)})")
 
     db.session.commit()
+    for c in pending_cleanups:
+        _cleanup_analysis_outputs(
+            output_folder, c['output_files'], c['output_dirs'],
+            c['cache_dir'], current_app.logger,
+        )
     click.echo(f"Done. {processed} artefact(s) reset and requeued for analysis.")
 
 # vim: ts=4 sw=4 et
