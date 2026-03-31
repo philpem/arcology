@@ -867,6 +867,7 @@ def _render_viewer(artefact):
 
     viewer_status = None  # 'pending', 'failed', 'partial', or None (ready)
     file_filter = request.args.get('file')
+    all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
 
     if artefact.artefact_type in _viewable_types:
         # Mode 1: Artefact is itself a viewable type — show its own FORMAT_CONVERT output
@@ -891,14 +892,15 @@ def _render_viewer(artefact):
         else:
             viewer_status = 'failed'
     else:
-        # Mode 2: Aggregate outputs from all FORMAT_CONVERT analyses on this artefact.
+        # Mode 2: Aggregate outputs from all FORMAT_CONVERT analyses on this artefact
+        # and all derived artefacts (e.g. an ISO extracted from a ZIP).
         # Multiple analyses are expected — one per FILE_EXTRACTION / ARCHIVE_EXTRACT
         # partition queued via queue_partition_follow_ups().
         convs = (
             Analysis.query
-            .filter_by(
-                artefact_id=artefact.id,
-                analysis_type=AnalysisType.FORMAT_CONVERT,
+            .filter(
+                Analysis.artefact_id.in_(all_artefact_ids),
+                Analysis.analysis_type == AnalysisType.FORMAT_CONVERT,
             )
             .order_by(Analysis.id)
             .all()
@@ -941,8 +943,9 @@ def _render_viewer(artefact):
     module_detail = None
     if file_filter:
         # Try the RiscosModule table first for basic fields
-        mod_row = RiscosModule.query.filter_by(
-            artefact_id=artefact.id, file_path=file_filter
+        mod_row = RiscosModule.query.filter(
+            RiscosModule.artefact_id.in_(all_artefact_ids),
+            RiscosModule.file_path == file_filter,
         ).first()
         if mod_row:
             module_detail = {
@@ -955,10 +958,10 @@ def _render_viewer(artefact):
                 'file_path': mod_row.file_path,
             }
             # Enrich with swi_names and module_flags from the analysis JSON
-            mod_analysis = Analysis.query.filter_by(
-                artefact_id=artefact.id,
-                analysis_type=AnalysisType.RISCOS_MODULE_PARSE,
-                status=AnalysisStatus.COMPLETED,
+            mod_analysis = Analysis.query.filter(
+                Analysis.artefact_id.in_(all_artefact_ids),
+                Analysis.analysis_type == AnalysisType.RISCOS_MODULE_PARSE,
+                Analysis.status == AnalysisStatus.COMPLETED,
             ).order_by(Analysis.id.desc()).first()
             if mod_analysis:
                 try:
