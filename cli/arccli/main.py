@@ -39,6 +39,8 @@ def main():
 	items_list.add_argument('--platform', '-p', type=int, help='Filter by platform ID')
 	items_list.add_argument('--category', '-c', type=int, help='Filter by category ID')
 	items_list.add_argument('--tag', '-t', help='Filter by tag name')
+	items_list.add_argument('--parent', help='Filter by parent item UUID (show children of this item)')
+	items_list.add_argument('--root-only', action='store_true', help='Show only root (top-level) items')
 	items_list.add_argument('--page', type=int, default=1, help='Page number')
 	items_list.add_argument('--per-page', type=int, default=25, help='Items per page')
 
@@ -49,21 +51,24 @@ def main():
 	items_create.add_argument('--platform', '-p', type=int, help='Platform ID')
 	items_create.add_argument('--category', '-c', type=int, help='Category ID')
 	items_create.add_argument('--tags', help='Comma-separated tag names')
+	items_create.add_argument('--parent', help='Parent item UUID (creates as child of this item)')
 
 	# items view
 	items_view = items_sub.add_parser('view', help='View item details')
 	items_view.add_argument('uuid', help='Item UUID')
 
 	# items update
-	items_update = items_sub.add_parser('update', help='Update an item')
+	items_update = items_sub.add_parser('update', help='Update an item (use --parent to move it)')
 	items_update.add_argument('uuid', help='Item UUID')
 	items_update.add_argument('--name', '-n', help='New name')
 	items_update.add_argument('--description', '-d', help='New description')
 	items_update.add_argument('--platform', '-p', type=int, help='New platform ID')
 	items_update.add_argument('--category', '-c', type=int, help='New category ID')
+	items_update.add_argument('--parent', help='Move to a new parent item (provide parent UUID)')
+	items_update.add_argument('--no-parent', action='store_true', help='Make this a root item (remove parent)')
 
 	# items delete
-	items_delete = items_sub.add_parser('delete', help='Delete an item')
+	items_delete = items_sub.add_parser('delete', help='Delete an item and all its descendants')
 	items_delete.add_argument('uuid', help='Item UUID')
 	items_delete.add_argument('--yes', '-y', action='store_true', help='Skip confirmation')
 

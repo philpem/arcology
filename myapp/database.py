@@ -378,11 +378,14 @@ class Item(db.Model):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     platform_id: Mapped[Optional[int]] = mapped_column(ForeignKey("platforms.id"), index=True, nullable=True)
     category_id: Mapped[Optional[int]] = mapped_column(ForeignKey("categories.id"), index=True, nullable=True)
+    parent_id: Mapped[Optional[int]] = mapped_column(ForeignKey("items.id"), index=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     platform: Mapped[Optional["Platform"]] = relationship(back_populates="items")
     category: Mapped[Optional["Category"]] = relationship(back_populates="items")
+    parent: Mapped[Optional["Item"]] = relationship(back_populates="children", remote_side=[id])
+    children: Mapped[list["Item"]] = relationship(back_populates="parent", cascade="all, delete-orphan")
     artefacts: Mapped[list["Artefact"]] = relationship(back_populates="item", cascade="all, delete-orphan")
     tags: Mapped[list["Tag"]] = relationship(secondary=item_tags, back_populates="items")
     external_references: Mapped[list["ExternalReference"]] = relationship(back_populates="item", cascade="all, delete-orphan")
@@ -394,6 +397,51 @@ class Item(db.Model):
         if self.slug:
             return f"{prefix}-{self.slug}"
         return prefix
+
+    @property
+    def ancestors(self) -> list["Item"]:
+        """Walk up the parent chain; returns [root, ..., grandparent, parent]."""
+        chain = []
+        current = self.parent
+        while current is not None:
+            chain.append(current)
+            current = current.parent
+        chain.reverse()
+        return chain
+
+    @property
+    def breadcrumb_path(self) -> list["Item"]:
+        """Full path including self: [root, ..., parent, self]."""
+        return self.ancestors + [self]
+
+    @property
+    def effective_platform(self):
+        """Own platform, or the nearest ancestor's platform."""
+        if self.platform:
+            return self.platform
+        for ancestor in reversed(self.ancestors):
+            if ancestor.platform:
+                return ancestor.platform
+        return None
+
+    @property
+    def effective_category(self):
+        """Own category, or the nearest ancestor's category."""
+        if self.category:
+            return self.category
+        for ancestor in reversed(self.ancestors):
+            if ancestor.category:
+                return ancestor.category
+        return None
+
+    def is_ancestor_of(self, other: "Item") -> bool:
+        """Return True if self is an ancestor of other (used for cycle prevention)."""
+        current = other.parent
+        while current is not None:
+            if current.id == self.id:
+                return True
+            current = current.parent
+        return False
 
     def get_reference(self, system_name: str) -> Optional["ExternalReference"]:
         for ref in self.external_references:

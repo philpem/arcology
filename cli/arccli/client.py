@@ -106,7 +106,9 @@ class ArcologyClient:
 		return self.post_json('items', {k: v for k, v in data.items() if v is not None})
 
 	def update_item(self, uuid: str, **data) -> dict:
-		return self.put(f'items/{uuid}', {k: v for k, v in data.items() if v is not None})
+		# Keep explicit None values (e.g. parent_uuid=None to clear parent) but strip
+		# keys that were never provided (missing from kwargs means not updated).
+		return self.put(f'items/{uuid}', data)
 
 	def delete_item(self, uuid: str) -> dict:
 		return self.delete(f'items/{uuid}')

@@ -15,6 +15,11 @@ def cmd_items_list(client, args):
 		'page': args.page,
 		'per_page': args.per_page,
 	}
+	if args.parent:
+		params['parent_uuid'] = args.parent
+	elif args.root_only:
+		params['parent_uuid'] = 'none'
+
 	data = client.list_items(**params)
 
 	if args.json:
@@ -24,17 +29,25 @@ def cmd_items_list(client, args):
 	items = data.get('items', [])
 	rows = []
 	for item in items:
-		platform = item['platform']['name'] if item.get('platform') else '-'
-		category = item['category']['name'] if item.get('category') else '-'
+		# Build path prefix for non-root items
+		path = item.get('path', [])
+		name = item['name']
+		if path:
+			name = ' / '.join([p['name'] for p in path]) + ' / ' + name
+		platform = item['platform']['name'] if item.get('platform') else \
+			(item['effective_platform']['name'] + ' (inh.)' if item.get('effective_platform') else '-')
+		category = item['category']['name'] if item.get('category') else \
+			(item['effective_category']['name'] + ' (inh.)' if item.get('effective_category') else '-')
 		rows.append([
 			item['uuid'][:12],
-			truncate(item['name'], 40),
+			truncate(name, 50),
 			truncate(platform, 20),
 			truncate(category, 20),
+			str(item.get('child_count', 0)),
 			str(item.get('artefact_count', 0)),
 		])
 
-	print_table(['UUID', 'Name', 'Platform', 'Category', 'Artefacts'], rows)
+	print_table(['UUID', 'Name', 'Platform', 'Category', 'Children', 'Artefacts'], rows)
 
 	total = data.get('total', 0)
 	page = data.get('page', 1)
@@ -53,6 +66,8 @@ def cmd_items_create(client, args):
 	}
 	if args.tags:
 		data['tags'] = [t.strip() for t in args.tags.split(',')]
+	if args.parent:
+		data['parent_uuid'] = args.parent
 
 	result = client.create_item(**data)
 
@@ -62,6 +77,8 @@ def cmd_items_create(client, args):
 
 	print(f"Created item: {result['uuid']}")
 	print(f"  Name: {result['name']}")
+	if result.get('parent_uuid'):
+		print(f"  Parent: {result['parent_uuid']} ({result.get('parent_name', '')})")
 
 
 def cmd_items_view(client, args):
@@ -72,16 +89,27 @@ def cmd_items_view(client, args):
 		print_json(data)
 		return
 
+	# Show full path
+	path = data.get('path', [])
+	if path:
+		print(f"Path:  {' / '.join(p['name'] for p in path)} / {data['name']}")
 	print(f"Item: {data['name']}")
 	print(f"  UUID:        {data['uuid']}")
+	if data.get('parent_uuid'):
+		print(f"  Parent:      {data['parent_uuid']} ({data.get('parent_name', '')})")
 	if data.get('description'):
 		print(f"  Description: {data['description']}")
 	if data.get('platform'):
 		print(f"  Platform:    {data['platform']['name']}")
+	elif data.get('effective_platform'):
+		print(f"  Platform:    {data['effective_platform']['name']} (inherited)")
 	if data.get('category'):
 		print(f"  Category:    {data['category']['name']}")
+	elif data.get('effective_category'):
+		print(f"  Category:    {data['effective_category']['name']} (inherited)")
 	if data.get('tags'):
 		print(f"  Tags:        {', '.join(data['tags'])}")
+	print(f"  Children:    {data.get('child_count', 0)}")
 	print(f"  Created:     {data['created_at']}")
 
 	artefacts = data.get('artefacts', [])
@@ -96,7 +124,7 @@ def cmd_items_view(client, args):
 
 
 def cmd_items_update(client, args):
-	"""Update an item."""
+	"""Update an item (including moving it to a different parent)."""
 	data = {}
 	if args.name is not None:
 		data['name'] = args.name
@@ -106,6 +134,10 @@ def cmd_items_update(client, args):
 		data['platform_id'] = args.platform
 	if args.category is not None:
 		data['category_id'] = args.category
+	if args.parent is not None:
+		data['parent_uuid'] = args.parent
+	if args.no_parent:
+		data['parent_uuid'] = None
 
 	if not data:
 		print("Error: no fields to update.", file=sys.stderr)
@@ -118,12 +150,16 @@ def cmd_items_update(client, args):
 		return
 
 	print(f"Updated item: {result['uuid']}")
+	if result.get('parent_uuid'):
+		print(f"  Parent: {result['parent_uuid']} ({result.get('parent_name', '')})")
+	else:
+		print(f"  Parent: (root item)")
 
 
 def cmd_items_delete(client, args):
 	"""Delete an item."""
 	if not args.yes:
-		confirm = input(f"Delete item {args.uuid}? This cannot be undone. [y/N] ")
+		confirm = input(f"Delete item {args.uuid} and all its children and artefacts? This cannot be undone. [y/N] ")
 		if confirm.lower() != 'y':
 			print("Cancelled.")
 			return
