@@ -60,6 +60,16 @@ def _reset_for_retry(analysis):
     analysis.details = None
 
 
+def _status_sort_order():
+    """CASE expression for ordering analyses: running → pending → failed → completed."""
+    return case(
+        (Analysis.status == AnalysisStatus.RUNNING, 0),
+        (Analysis.status == AnalysisStatus.PENDING, 1),
+        (Analysis.status == AnalysisStatus.FAILED, 2),
+        else_=3,
+    )
+
+
 def _stale_cutoff():
     """Return the datetime before which a RUNNING job is considered stuck."""
     seconds = current_app.config.get('STALE_JOB_TIMEOUT_SECONDS', 3600)
@@ -87,7 +97,7 @@ def index():
     # Eager-load artefact to avoid N+1 lazy loads in template
     pagination = query.options(
         joinedload(Analysis.artefact)
-    ).order_by(Analysis.created_at.desc()).paginate(page=page, per_page=per_page)
+    ).order_by(_status_sort_order(), Analysis.created_at.desc()).paginate(page=page, per_page=per_page)
 
     # Single query for all status counts using conditional aggregation
     counts_row = db.session.query(
