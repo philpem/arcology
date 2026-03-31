@@ -1,14 +1,14 @@
 """Add parent_id to items for hierarchical collections
 
 Revision ID: 000069cbcb4f
-Revises: 000069cbb651
+Revises: 000069cbce32
 Create Date: 2026-03-31
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = '000069cbcb4f'
-down_revision = '000069cbb651'
+down_revision = '000069cbce32'
 branch_labels = None
 depends_on = None
 

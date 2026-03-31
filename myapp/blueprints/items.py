@@ -132,9 +132,18 @@ def index():
 
     pagination = query.order_by(_ITEM_SORT_OPTIONS[sort]).paginate(page=page, per_page=per_page)
 
-    # Compute artefact counts in a single query instead of lazy-loading per item
-    # In tree mode, collect IDs across the visible page
-    item_ids = [item.id for item in pagination.items]
+    # Build tree rows first (if tree mode) so we know all visible item IDs
+    tree_rows = None
+    if view_mode == 'tree' and not searching:
+        tree_rows = _build_tree_rows(pagination.items)
+
+    # Collect all visible item IDs — in tree mode this includes expanded children
+    if tree_rows:
+        item_ids = [item.id for item, _depth in tree_rows]
+    else:
+        item_ids = [item.id for item in pagination.items]
+
+    # Compute artefact and child counts in batch queries
     artefact_counts = {}
     child_counts = {}
     if item_ids:
@@ -153,11 +162,6 @@ def index():
         )
         child_counts = dict(child_counts_q)
 
-    # Build tree rows for tree view mode
-    tree_rows = None
-    if view_mode == 'tree' and not searching:
-        tree_rows = _build_tree_rows(pagination.items, artefact_counts, child_counts)
-
     return render_template('items/index.html',
                            items=pagination.items,
                            artefact_counts=artefact_counts,
@@ -174,11 +178,8 @@ def index():
                            searching=searching)
 
 
-def _build_tree_rows(root_items, artefact_counts, child_counts):
-    """Recursively expand root items into (item, depth) rows for tree display.
-
-    Only expands children of items visible on the current page.
-    """
+def _build_tree_rows(root_items):
+    """Recursively expand root items into (item, depth) rows for tree display."""
     rows = []
 
     def _recurse(item, depth):
@@ -293,7 +294,7 @@ def edit(uuid):
             new_parent = Item.query.get(new_parent_id)
             if new_parent and item.is_ancestor_of(new_parent):
                 flash('Cannot move an item to one of its own descendants.', 'danger')
-                return render_template('items/form.html', form=form, item=item, title='Edit Item')
+                return render_template('items/form.html', form=form, item=item, title='Edit Item', preset_parent=None)
 
         assign_item_fields(
             item,
@@ -310,7 +311,7 @@ def edit(uuid):
         flash(f'Item "{item.name}" updated successfully.', 'success')
         return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
 
-    return render_template('items/form.html', form=form, item=item, title='Edit Item')
+    return render_template('items/form.html', form=form, item=item, title='Edit Item', preset_parent=None)
 
 
 @blueprint.route('/<string:uuid>/delete', methods=['POST'])
