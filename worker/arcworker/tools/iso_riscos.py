@@ -139,6 +139,7 @@ def _walk_directory(
     display_prefix: str,
     raw_prefix: str,
     result: dict[str, str],
+    rename_map: dict[str, str],
 ) -> None:
     """
     Recursively walk an ISO 9660 directory and populate ``result`` with
@@ -154,6 +155,11 @@ def _walk_directory(
     - ``raw_prefix``: built using raw ISO 9660 directory names (e.g.
       ``_PAINT``), for when 7z used plain ISO 9660 names (no Rock Ridge).
 
+    ``rename_map`` is populated with entries mapping the lowercase raw path
+    (as 7z would extract it) to the pling-corrected display path, for every
+    file where the two differ.  This lets callers fix up stored paths so they
+    reflect the canonical RISC OS name (e.g. ``!ARMOVIE`` not ``_ARMOVIE``).
+
     Args:
         f:              Open binary file handle for the ISO.
         lba:            Logical Block Address of this directory's extent.
@@ -163,6 +169,8 @@ def _walk_directory(
         raw_prefix:     Path of this directory using raw ISO 9660 names
                         (empty string for the root directory).
         result:         Dict to populate with {lowercase_path: filetype_hex}.
+        rename_map:     Dict to populate with {lowercase_raw_path: display_path}
+                        for files whose raw path differs from display path.
     """
     # Read directory data (may span multiple sectors)
     data = bytearray()
@@ -238,7 +246,7 @@ def _walk_directory(
             dir_size = struct.unpack_from('<I', record, 10)[0]
             # Pass display_path as new display_prefix and raw_path as new
             # raw_prefix so that both hierarchies stay in sync.
-            _walk_directory(f, dir_lba, dir_size, display_path, raw_path, result)
+            _walk_directory(f, dir_lba, dir_size, display_path, raw_path, result, rename_map)
         else:
             if filetype is None:
                 continue
@@ -255,6 +263,10 @@ def _walk_directory(
             # present and directory names still use '_' instead of '!')
             if raw_path.lower() != display_path.lower():
                 keys.add(raw_path.lower())
+                # Record the rename so callers can fix up stored paths.
+                # Value is the display path (pling-corrected); key is lowercase
+                # raw path (as 7z would extract it without Rock Ridge).
+                rename_map[raw_path.lower()] = display_path
 
             # Rock Ridge alternate name paths (NM entry)
             if rr_name:
@@ -267,18 +279,26 @@ def _walk_directory(
                 # the suffix from the display_path, so we need the bare name)
                 rr_base, _ = parse_acorn_filename(rr_name)
                 if rr_base != rr_name:
-                    keys.add((f'{display_prefix}/{rr_base}' if display_prefix else rr_base).lower())
+                    rr_display_base = f'{display_prefix}/{rr_base}' if display_prefix else rr_base
+                    rr_raw_base = f'{raw_prefix}/{rr_base}' if raw_prefix else rr_base
+                    keys.add(rr_display_base.lower())
                     if raw_prefix != display_prefix:
-                        keys.add((f'{raw_prefix}/{rr_base}' if raw_prefix else rr_base).lower())
+                        keys.add(rr_raw_base.lower())
+                        # Rename map for suffix-stripped RR path (matches
+                        # enumerate_extracted_files acorn-mode display path)
+                        if rr_raw_base.lower() != rr_display_base.lower():
+                            rename_map[rr_raw_base.lower()] = rr_display_base
 
             for key in keys:
                 result[key] = filetype
 
 
-def parse_iso_riscos_filetypes(iso_path: Path) -> dict[str, str]:
+def parse_iso_riscos_filetypes(
+    iso_path: Path,
+) -> tuple[dict[str, str], dict[str, str]]:
     """
-    Parse an ISO 9660 image and return a mapping of file paths to RISC OS
-    filetypes read from the ARCHIMEDES extension.
+    Parse an ISO 9660 image and return filetype and rename mappings derived
+    from the ARCHIMEDES extension.
 
     Walks the Primary Volume Descriptor directory tree and extracts filetype
     information from ARCHIMEDES System Use blocks.  Also indexes each file
@@ -290,11 +310,23 @@ def parse_iso_riscos_filetypes(iso_path: Path) -> dict[str, str]:
     '!Paint/!RunImage' match correctly.
 
     Returns:
-        Dict mapping lowercase forward-slash-separated path strings to
-        lowercase 3-char hex filetype strings (e.g. {'apps/!paint/run': 'feb'}).
-        Returns an empty dict on any error so callers always get a usable result.
+        A 2-tuple ``(filetype_map, rename_map)``:
+
+        ``filetype_map`` maps lowercase forward-slash-separated path strings
+        to lowercase 3-char hex filetype strings.  Multiple path variants
+        (ISO 9660, Rock Ridge, pling-mapped) are all indexed so that whatever
+        name 7z chose for the extracted file, a lookup succeeds.
+
+        ``rename_map`` maps the lowercase raw ISO 9660 path (as 7z would
+        extract without Rock Ridge) to the pling-corrected display path, for
+        every file whose raw path differs from its display path (e.g.
+        ``'_armovie/sprites'`` → ``'!ARMOVIE/SPRITES'``).  Use this to fix
+        the stored file path so it reflects the canonical RISC OS name.
+
+        Both dicts are empty on any I/O or parse error (graceful degradation).
     """
-    result: dict[str, str] = {}
+    filetype_map: dict[str, str] = {}
+    rename_map: dict[str, str] = {}
     try:
         with open(iso_path, 'rb') as f:
             # Primary Volume Descriptor is at sector 16
@@ -302,21 +334,21 @@ def parse_iso_riscos_filetypes(iso_path: Path) -> dict[str, str]:
 
             # Validate PVD magic
             if len(pvd) < 156 + 34:
-                return result
+                return filetype_map, rename_map
             if pvd[0] != 0x01 or pvd[1:6] != b'CD001':
-                return result
+                return filetype_map, rename_map
 
             # Root directory record is at PVD offset 156 (34 bytes)
             root_record = pvd[156:156 + 34]
             root_lba = struct.unpack_from('<I', root_record, 2)[0]
             root_size = struct.unpack_from('<I', root_record, 10)[0]
 
-            _walk_directory(f, root_lba, root_size, '', '', result)
+            _walk_directory(f, root_lba, root_size, '', '', filetype_map, rename_map)
 
     except Exception:
         # Gracefully degrade on any I/O or parse error
         pass
 
-    return result
+    return filetype_map, rename_map
 
 # vim: ts=4 sw=4 et

@@ -250,6 +250,7 @@ def enumerate_extracted_files(
     parent_file_id: int | None = None,
     extraction_depth: int | None = None,
     filetype_map: dict[str, str] | None = None,
+    rename_map: dict[str, str] | None = None,
 ) -> list[dict]:
     """
     Enumerate files in an extraction directory and return structured file list.
@@ -270,6 +271,11 @@ def enumerate_extracted_files(
             Applied after suffix-based detection: files that already have a
             ``risc_os_filetype`` from their ``,xxx`` filename suffix are not
             overwritten.
+        rename_map: Optional mapping of lowercase raw paths to pling-corrected
+            display paths (e.g. from the ISO ARCHIMEDES extension).  When a
+            file's path matches a key, the stored path is replaced with the
+            display path so the database reflects the canonical RISC OS name
+            (e.g. ``!ARMOVIE/SPRITES`` instead of ``_ARMOVIE/SPRITES``).
 
     Returns:
         List of file dicts with path, size, hashes, and optional
@@ -323,6 +329,13 @@ def enumerate_extracted_files(
             file_entry['parent_file_id'] = parent_file_id
         if extraction_depth is not None:
             file_entry['extraction_depth'] = extraction_depth
+
+        # Apply ARCHIMEDES pling rename map: replace raw ISO 9660 path with
+        # the pling-corrected display path (e.g. _ARMOVIE → !ARMOVIE).
+        if rename_map:
+            renamed = rename_map.get(file_entry['path'].lower())
+            if renamed:
+                file_entry['path'] = sanitize_path(renamed)
 
         # Apply ARCHIMEDES/ISO filetype map for files without a suffix-derived type
         if filetype_map and 'risc_os_filetype' not in file_entry:

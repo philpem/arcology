@@ -543,10 +543,29 @@ class AnalysisWorker:
         # suffix (e.g. from Rock Ridge NM entries preserved by 7z) are handled
         # by the existing suffix-parsing logic.
         iso_filetype_map: dict[str, str] | None = None
+        iso_rename_map: dict[str, str] | None = None
         if artefact_type == ArtefactType.ISO.value:
             from .tools.iso_riscos import parse_iso_riscos_filetypes
-            iso_filetype_map = parse_iso_riscos_filetypes(input_path)
-            log.info(f"ISO ARCHIMEDES parser found {len(iso_filetype_map)} filetype entries")
+            iso_filetype_map, iso_rename_map = parse_iso_riscos_filetypes(input_path)
+            log.info(
+                f"ISO ARCHIMEDES parser found {len(iso_filetype_map)} filetype entries, "
+                f"{len(iso_rename_map)} pling renames"
+            )
+            # Write a sidecar metadata file so that FORMAT_CONVERT (queued later)
+            # can apply the same rename and filetype mappings without re-parsing
+            # the ISO.  The file is written inside extract_dir which persists for
+            # the lifetime of the partition.
+            if iso_filetype_map or iso_rename_map:
+                import json as _json
+                sidecar_path = extract_dir / '_arcology_iso_meta.json'
+                try:
+                    with open(sidecar_path, 'w', encoding='utf-8') as _sf:
+                        _json.dump(
+                            {'filetype_map': iso_filetype_map, 'rename_map': iso_rename_map},
+                            _sf,
+                        )
+                except OSError as _e:
+                    log.warning(f"Could not write ISO metadata sidecar: {_e}")
 
         # Enumerate extracted files to build file listing.
         # ISO artefacts use acorn='auto' to catch ',xxx' suffix filenames;
@@ -560,6 +579,7 @@ class AnalysisWorker:
             extract_dir,
             acorn=acorn_mode,
             filetype_map=iso_filetype_map,
+            rename_map=iso_rename_map,
         )
 
         # Extract disc metadata from DIM report output (if Acorn)
@@ -1884,6 +1904,16 @@ class AnalysisWorker:
         '.draw': ArtefactType.ACORN_DRAW,
         '.txt':  ArtefactType.ACORN_TEXT,
     }
+    # RISC OS filetype hex → viewable type, for ISO files where no ',xxx'
+    # suffix is present on the extracted filename but risc_os_filetype is
+    # available from the ARCHIMEDES extension metadata sidecar.
+    _RISCOS_HEX_VIEWABLE: dict[str, 'ArtefactType'] = {
+        'ff9': ArtefactType.ACORN_SPRITE,
+        'aff': ArtefactType.ACORN_DRAW,
+        'fff': ArtefactType.ACORN_TEXT,
+        'feb': ArtefactType.ACORN_TEXT,
+        'ffe': ArtefactType.ACORN_TEXT,
+    }
 
     def _convert_file_to_outputs(
         self,
@@ -2076,6 +2106,22 @@ class AnalysisWorker:
         # Display paths must match ExtractedFile.path (Acorn suffix stripped).
         is_acorn = _has_acorn_filetypes(extract_dir)
 
+        # Load ISO ARCHIMEDES metadata sidecar written by process_file_extraction.
+        # Provides rename_map (raw ISO path → pling-corrected display path) and
+        # filetype_map (lowercase path → filetype hex) for ISO-extracted files
+        # that lack ',xxx' filename suffixes.
+        iso_rename_map: dict[str, str] = {}
+        iso_filetype_map: dict[str, str] = {}
+        sidecar_path = extract_dir / '_arcology_iso_meta.json'
+        if sidecar_path.is_file():
+            try:
+                with open(sidecar_path, encoding='utf-8') as _sf:
+                    _meta = json.load(_sf)
+                iso_rename_map = _meta.get('rename_map') or {}
+                iso_filetype_map = _meta.get('filetype_map') or {}
+            except Exception as _e:
+                log.warning(f"Could not read ISO metadata sidecar: {_e}")
+
         # path_prefix is set when FORMAT_CONVERT was queued from process_archive_extract
         # for a nested archive (e.g. an archive file on a disc image).  The DB
         # registers those files with the archive's display path prepended, so
@@ -2087,7 +2133,19 @@ class AnalysisWorker:
         for path in sorted(extract_dir.rglob('*')):
             if not path.is_file():
                 continue
+            # Skip the ISO metadata sidecar itself
+            if path.name == '_arcology_iso_meta.json':
+                continue
             viewable_type = self._detect_viewable_type(path)
+
+            # For ISO-extracted files without ',xxx' suffixes or known extensions,
+            # fall back to the ARCHIMEDES filetype hex from the metadata sidecar.
+            if viewable_type is None and iso_filetype_map:
+                rel_lower = str(path.relative_to(extract_dir)).lower()
+                hex_type = iso_filetype_map.get(rel_lower)
+                if hex_type:
+                    viewable_type = self._RISCOS_HEX_VIEWABLE.get(hex_type)
+
             if viewable_type is None:
                 continue
 
@@ -2101,6 +2159,14 @@ class AnalysisWorker:
                     display_path = true_name
             else:
                 display_path = str(rel)
+
+            # Apply pling rename from ARCHIMEDES metadata sidecar so that the
+            # display path matches the pling-corrected path stored in the DB
+            # (e.g. '_ARMOVIE/SPRITES' → '!ARMOVIE/SPRITES').
+            if iso_rename_map:
+                renamed = iso_rename_map.get(display_path.lower())
+                if renamed:
+                    display_path = renamed
 
             # Prepend archive path prefix for nested archives so the path matches
             # ExtractedFile.path (which has the parent archive path prepended).
