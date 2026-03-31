@@ -275,7 +275,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 		unzip unrar tar util-linux \
 		file fdisk \
 		default-jre \
-		libcairo2 python3-cairo python3-cairocffi python3-pillow
+		libcairo2 python3-cairo python3-cairocffi python3-pillow \
+		fonts-freefont-ttf
 
 # Install Greaseweazle for disk image conversion.
 # Pinned to a specific commit SHA; update when upgrading (was: @latest).
@@ -290,7 +291,7 @@ RUN python3 -m pip install --break-system-packages \
 # Current as of 2026-03-30.
 # The repo also bundles spritefile.py (by David Boddie) which is not on PyPI;
 # we expose it to the worker by setting PYTHONPATH.
-ARG DRAWFILE_RENDER_SHA=cf170fdc01908496d0efe638c150778b6d96b388
+ARG DRAWFILE_RENDER_SHA=28cbc8d133536e2538a69dbf0b3114dee7ad4c17
 RUN git clone https://github.com/philpem/drawfile-render /opt/drawfile_render && \
     git -C /opt/drawfile_render checkout "${DRAWFILE_RENDER_SHA}"
 # Make spritefile (bundled in drawfile_render repo) importable by the worker
