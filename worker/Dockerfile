@@ -275,7 +275,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 		unzip unrar tar util-linux \
 		file fdisk \
 		default-jre \
-		libcairo2 python3-cairo python3-cairocffi python3-pillow \
+		libcairo2 libfontconfig1 python3-cairo python3-cairocffi python3-pillow \
 		fonts-freefont-ttf
 
 # Install Greaseweazle for disk image conversion.
@@ -288,12 +288,15 @@ RUN python3 -m pip install --break-system-packages \
 # Install Acorn image conversion libraries.
 # drawfile_render (philpem fork with signed-coordinate fix) — not pip-installable; clone manually.
 # Pinned to a specific commit SHA — update when upgrading.
-# Current as of 2026-03-30.
+# Current as of 2026-03-31.
 # The repo also bundles spritefile.py (by David Boddie) which is not on PyPI;
 # we expose it to the worker by setting PYTHONPATH.
-ARG DRAWFILE_RENDER_SHA=28cbc8d133536e2538a69dbf0b3114dee7ad4c17
-RUN git clone https://github.com/philpem/drawfile-render /opt/drawfile_render && \
-    git -C /opt/drawfile_render checkout "${DRAWFILE_RENDER_SHA}"
+# riscos-free-fonts is a submodule; --recurse-submodules fetches it, then
+# submodule update pins it to the SHA recorded in the checked-out commit.
+ARG DRAWFILE_RENDER_SHA=52c0f9fb7288fd5eef94ea9cf98e8ec64e695b35
+RUN git clone --recurse-submodules https://github.com/philpem/drawfile-render /opt/drawfile_render && \
+    git -C /opt/drawfile_render checkout "${DRAWFILE_RENDER_SHA}" && \
+    git -C /opt/drawfile_render submodule update --init --recursive
 # Make spritefile (bundled in drawfile_render repo) importable by the worker
 ENV PYTHONPATH="/opt/drawfile_render"
 
