@@ -136,7 +136,8 @@ def _walk_directory(
     f,
     lba: int,
     size: int,
-    path_prefix: str,
+    display_prefix: str,
+    raw_prefix: str,
     result: dict[str, str],
 ) -> None:
     """
@@ -147,13 +148,21 @@ def _walk_directory(
     whatever name 7z chose to use (ISO 9660, Rock Ridge, or pling-mapped)
     can be matched against the extracted file paths.
 
+    Two parallel prefixes are maintained:
+    - ``display_prefix``: built using pling-mapped directory names (e.g.
+      ``!PAINT``), for when 7z used Rock Ridge NM names that include ``!``.
+    - ``raw_prefix``: built using raw ISO 9660 directory names (e.g.
+      ``_PAINT``), for when 7z used plain ISO 9660 names (no Rock Ridge).
+
     Args:
-        f:           Open binary file handle for the ISO.
-        lba:         Logical Block Address of this directory's extent.
-        size:        Byte size of the directory extent.
-        path_prefix: Path of this directory relative to the ISO root
-                     (empty string for the root).
-        result:      Dict to populate with {lowercase_path: filetype_hex}.
+        f:              Open binary file handle for the ISO.
+        lba:            Logical Block Address of this directory's extent.
+        size:           Byte size of the directory extent.
+        display_prefix: Path of this directory using pling-mapped names
+                        (empty string for the root directory).
+        raw_prefix:     Path of this directory using raw ISO 9660 names
+                        (empty string for the root directory).
+        result:         Dict to populate with {lowercase_path: filetype_hex}.
     """
     # Read directory data (may span multiple sectors)
     data = bytearray()
@@ -205,27 +214,31 @@ def _walk_directory(
             raw_name = raw_name[:raw_name.index(';')]
         raw_name = raw_name.rstrip('.')
 
-        # System Use area starts after file identifier + optional padding byte
+        # System Use area starts after file identifier + optional padding byte.
+        # ISO 9660 requires a padding byte when L_FI is even, to keep the
+        # System Use area at an even byte boundary.
         su_start = 33 + len_fi + (1 if len_fi % 2 == 0 else 0)
         system_use = bytes(record[su_start:])
 
         filetype, has_pling = _parse_archimedes_block(system_use)
         rr_name = _get_nm_name(system_use)
 
-        # Build the display ISO 9660 name: apply pling mapping if flagged
-        iso_name = raw_name
-        if has_pling and iso_name.startswith('_'):
-            iso_name = '!' + iso_name[1:]
+        # Build the display ISO 9660 name: apply pling mapping if flagged.
+        # ISO 9660 forbids '!' so Acorn mastering tools store it as '_'.
+        display_name = raw_name
+        if has_pling and raw_name.startswith('_'):
+            display_name = '!' + raw_name[1:]
 
-        # Build full paths (forward-slash separated, relative to ISO root)
-        iso_path = f'{path_prefix}/{iso_name}' if path_prefix else iso_name
-        rr_path = (f'{path_prefix}/{rr_name}' if path_prefix else rr_name) if rr_name else None
+        # Build full paths for each of the two parallel prefix trees.
+        display_path = f'{display_prefix}/{display_name}' if display_prefix else display_name
+        raw_path = f'{raw_prefix}/{raw_name}' if raw_prefix else raw_name
 
         if is_dir:
-            # Parse subdirectory LBA + size from directory record
             dir_lba = struct.unpack_from('<I', record, 2)[0]
             dir_size = struct.unpack_from('<I', record, 10)[0]
-            _walk_directory(f, dir_lba, dir_size, iso_path, result)
+            # Pass display_path as new display_prefix and raw_path as new
+            # raw_prefix so that both hierarchies stay in sync.
+            _walk_directory(f, dir_lba, dir_size, display_path, raw_path, result)
         else:
             if filetype is None:
                 continue
@@ -234,21 +247,29 @@ def _walk_directory(
             # whichever name 7z picks for the extracted file, we find a match.
             keys: set[str] = set()
 
-            # ISO 9660 path variants
-            keys.add(iso_path.lower())
-            raw_name_path = f'{path_prefix}/{raw_name}' if path_prefix else raw_name
-            if raw_name_path != iso_path:
-                keys.add(raw_name_path.lower())
+            # Pling-mapped ISO 9660 path (matches 7z output when Rock Ridge
+            # names already have '!' restored, or for files at root level)
+            keys.add(display_path.lower())
 
-            # Rock Ridge path variants
-            if rr_path:
-                keys.add(rr_path.lower())
-                # Also index without ',xxx' filetype suffix (for files where 7z
-                # extracted with the suffix, which acorn='auto' would strip)
+            # Raw ISO 9660 path (matches 7z output when no Rock Ridge is
+            # present and directory names still use '_' instead of '!')
+            if raw_path.lower() != display_path.lower():
+                keys.add(raw_path.lower())
+
+            # Rock Ridge alternate name paths (NM entry)
+            if rr_name:
+                rr_display_path = f'{display_prefix}/{rr_name}' if display_prefix else rr_name
+                rr_raw_path = f'{raw_prefix}/{rr_name}' if raw_prefix else rr_name
+                keys.add(rr_display_path.lower())
+                if rr_raw_path.lower() != rr_display_path.lower():
+                    keys.add(rr_raw_path.lower())
+                # Also index without ',xxx' filetype suffix (acorn='auto' strips
+                # the suffix from the display_path, so we need the bare name)
                 rr_base, _ = parse_acorn_filename(rr_name)
-                rr_base_path = (f'{path_prefix}/{rr_base}' if path_prefix else rr_base)
-                if rr_base_path.lower() != rr_path.lower():
-                    keys.add(rr_base_path.lower())
+                if rr_base != rr_name:
+                    keys.add((f'{display_prefix}/{rr_base}' if display_prefix else rr_base).lower())
+                    if raw_prefix != display_prefix:
+                        keys.add((f'{raw_prefix}/{rr_base}' if raw_prefix else rr_base).lower())
 
             for key in keys:
                 result[key] = filetype
@@ -290,7 +311,7 @@ def parse_iso_riscos_filetypes(iso_path: Path) -> dict[str, str]:
             root_lba = struct.unpack_from('<I', root_record, 2)[0]
             root_size = struct.unpack_from('<I', root_record, 10)[0]
 
-            _walk_directory(f, root_lba, root_size, '', result)
+            _walk_directory(f, root_lba, root_size, '', '', result)
 
     except Exception:
         # Gracefully degrade on any I/O or parse error

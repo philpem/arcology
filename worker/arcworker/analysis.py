@@ -546,6 +546,7 @@ class AnalysisWorker:
         if artefact_type == ArtefactType.ISO.value:
             from .tools.iso_riscos import parse_iso_riscos_filetypes
             iso_filetype_map = parse_iso_riscos_filetypes(input_path)
+            log.info(f"ISO ARCHIMEDES parser found {len(iso_filetype_map)} filetype entries")
 
         # Enumerate extracted files to build file listing.
         # ISO artefacts use acorn='auto' to catch ',xxx' suffix filenames;
