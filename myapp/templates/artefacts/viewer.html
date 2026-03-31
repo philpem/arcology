@@ -69,6 +69,9 @@
 {% endif %}
 
 {% if module_detail %}
+{% if module_detail.file_path %}
+<h5 class="font-monospace border-bottom pb-2 mb-3">{{ module_detail.file_path }}</h5>
+{% endif %}
 <div class="card mb-4">
     <div class="card-header">
         <i class="bi bi-cpu text-success"></i> RISC OS Module — {{ module_detail.help_title or module_detail.title_string }}
@@ -120,7 +123,6 @@
                 {% if module_detail.module_hash %}
                 <tr><th>SHA-256</th><td><code class="small">{{ module_detail.module_hash }}</code></td></tr>
                 {% endif %}
-                <tr><th>File path</th><td><span class="font-monospace">{{ module_detail.file_path }}</span></td></tr>
             </tbody>
         </table>
     </div>
