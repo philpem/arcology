@@ -32,6 +32,7 @@
 			<code>ident:</code> <code>label:</code> <code>fs:</code>
 			<code>module:</code> (RISC OS module name)
 			<code>command:</code> (star command name)
+			<code>swi:</code> (SWI name)
 			<code>protection:</code> <code>mastering:</code> <code>tag:</code>
 			— bare words search item and artefact names &amp; descriptions.
 			Use <code>*</code> as wildcard in filename/path/tag. Quote multi-word values: <code>module:"Voice Module"</code> <code>label:"Boot Disc"</code>
@@ -141,6 +142,16 @@
 				<p class="card-text text-muted small">Find discs containing a RISC OS star command.</p>
 				<code class="d-block mb-1">command:Filer_Run</code>
 				<code class="d-block">command:Desktop*</code>
+			</div>
+		</div>
+	</div>
+	<div class="col">
+		<div class="card h-100">
+			<div class="card-header"><i class="bi bi-braces"></i> SWIs</div>
+			<div class="card-body">
+				<p class="card-text text-muted small">Find discs containing a module that provides a specific SWI.</p>
+				<code class="d-block mb-1">swi:ADFS_DiscOp</code>
+				<code class="d-block">swi:OS_*</code>
 			</div>
 		</div>
 	</div>

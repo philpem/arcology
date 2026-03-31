@@ -119,6 +119,20 @@ def _ilike(col, val):
     return col.ilike(pattern)
 
 
+def _ilike_json(col, val):
+    """Like _ilike but always wraps in %..% for JSON text column searches.
+
+    JSON columns store lists as '["Foo", "Bar"]', so even a trailing-wildcard
+    pattern like 'Desktop*' needs leading '%' to skip the '["' prefix.
+    """
+    pattern = val.replace('*', '%')
+    if not pattern.startswith('%'):
+        pattern = f'%{pattern}'
+    if not pattern.endswith('%'):
+        pattern = f'{pattern}%'
+    return col.ilike(pattern)
+
+
 def _resolve_riscos_type(val: str):
     """Return an ExtractedFile.risc_os_filetype filter for a type: term.
 
@@ -303,7 +317,33 @@ def _search_commands(tokens):
                 RiscosModule.artefact_id == Artefact.id,
                 RiscosModule.file_path == ExtractedFile.path))
             .filter(RiscosModule.commands.isnot(None))
-            .filter(_ilike(RiscosModule.commands, cmd_val))
+            .filter(_ilike_json(RiscosModule.commands, cmd_val))
+            .filter(ExtractedFile.is_directory == False)
+            .order_by(Item.name, Artefact.label, ExtractedFile.path)
+            .limit(RESULT_LIMIT + 1)
+            .all()
+        )
+        if len(q) > RESULT_LIMIT:
+            truncated = True
+        all_results.extend(q[:RESULT_LIMIT])
+    return all_results, truncated
+
+
+def _search_swis(tokens):
+    """Search RiscosModule by SWI name, returning file tuples."""
+    all_results = []
+    truncated = False
+    for swi_val in tokens.get('swi', []):
+        q = (
+            db.session.query(ExtractedFile, Partition, Artefact, Item)
+            .join(Partition, ExtractedFile.partition_id == Partition.id)
+            .join(Artefact, Partition.artefact_id == Artefact.id)
+            .join(Item, Artefact.item_id == Item.id)
+            .join(RiscosModule, and_(
+                RiscosModule.artefact_id == Artefact.id,
+                RiscosModule.file_path == ExtractedFile.path))
+            .filter(RiscosModule.swi_names.isnot(None))
+            .filter(_ilike_json(RiscosModule.swi_names, swi_val))
             .filter(ExtractedFile.is_directory == False)
             .order_by(Item.name, Artefact.label, ExtractedFile.path)
             .limit(RESULT_LIMIT + 1)
@@ -471,6 +511,13 @@ def _run_search(tokens: dict) -> dict:
         if trunc:
             results['truncated']['files'] = True
         results['files'].extend(cmd_results)
+
+    # SWI name search (results are file tuples)
+    if 'swi' in tokens:
+        swi_results, trunc = _search_swis(tokens)
+        if trunc:
+            results['truncated']['files'] = True
+        results['files'].extend(swi_results)
 
     # Tag search
     if 'tag' in tokens:

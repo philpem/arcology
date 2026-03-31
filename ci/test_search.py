@@ -110,6 +110,18 @@ class TestParseQuery(unittest.TestCase):
         tokens = self.parse('module:WindowManager')
         self.assertEqual(tokens.get('module'), ['WindowManager'])
 
+    def test_command_key(self):
+        tokens = self.parse('command:Filer_Run')
+        self.assertEqual(tokens.get('command'), ['Filer_Run'])
+
+    def test_swi_key(self):
+        tokens = self.parse('swi:ADFS_DiscOp')
+        self.assertEqual(tokens.get('swi'), ['ADFS_DiscOp'])
+
+    def test_swi_key_wildcard(self):
+        tokens = self.parse('swi:OS_*')
+        self.assertEqual(tokens.get('swi'), ['OS_*'])
+
     def test_tag_key(self):
         tokens = self.parse('tag:bbc-micro')
         self.assertEqual(tokens.get('tag'), ['bbc-micro'])
@@ -380,6 +392,8 @@ class TestSearchLogic(unittest.TestCase):
                 date='1990-01-31',
                 swi_chunk=0x400c0,
                 file_path='$.Modules.WindowManager',
+                commands='["IconBar_SetPriority"]',
+                swi_names='["Wimp_Initialise", "Wimp_CreateWindow", "Wimp_OpenWindow"]',
             ))
             _db.session.add(RiscosModule(
                 artefact_id=art.id,
@@ -388,6 +402,8 @@ class TestSearchLogic(unittest.TestCase):
                 version='2.30',
                 date='1990-02-15',
                 file_path='$.Modules.ADFS',
+                commands='["ADFS", "Back", "Bye", "Desktop_ADFS"]',
+                swi_names='["ADFS_DiscOp", "ADFS_HDC", "ADFS_Drives"]',
             ))
 
             # Tags
@@ -682,6 +698,60 @@ class TestSearchLogic(unittest.TestCase):
         mod_results = [r for r in results['artefacts'] if r['type'] == 'module']
         art_ids = [r['artefact'].id for r in mod_results]
         self.assertEqual(len(art_ids), len(set(art_ids)))
+
+    # ------------------------------------------------------------------
+    # Command searches
+    # ------------------------------------------------------------------
+
+    def test_command_search_exact(self):
+        results = self._search('command:Back')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('$.Modules.ADFS', file_paths)
+
+    def test_command_search_wildcard(self):
+        results = self._search('command:Desktop*')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('$.Modules.ADFS', file_paths)
+
+    def test_command_search_case_insensitive(self):
+        results = self._search('command:iconbar_setpriority')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('$.Modules.WindowManager', file_paths)
+
+    def test_command_search_no_match(self):
+        results = self._search('command:NonExistentCommand')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertEqual(file_paths, [])
+
+    # ------------------------------------------------------------------
+    # SWI searches
+    # ------------------------------------------------------------------
+
+    def test_swi_search_exact(self):
+        results = self._search('swi:ADFS_DiscOp')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('$.Modules.ADFS', file_paths)
+
+    def test_swi_search_wildcard(self):
+        results = self._search('swi:Wimp_*')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('$.Modules.WindowManager', file_paths)
+
+    def test_swi_search_case_insensitive(self):
+        results = self._search('swi:adfs_discop')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('$.Modules.ADFS', file_paths)
+
+    def test_swi_search_no_match(self):
+        results = self._search('swi:NonExistent_SWI')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertEqual(file_paths, [])
+
+    def test_swi_search_partial_name(self):
+        """Substring match: 'DiscOp' should match 'ADFS_DiscOp'."""
+        results = self._search('swi:DiscOp')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('$.Modules.ADFS', file_paths)
 
     # ------------------------------------------------------------------
     # Tag searches

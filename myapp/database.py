@@ -688,6 +688,7 @@ class RiscosModule(db.Model):
     file_path: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)  # Path within extraction
     module_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)  # SHA-256
     commands: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON list of command names
+    swi_names: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON list of full SWI names (e.g. ADFS_DiscOp)
 
     artefact: Mapped["Artefact"] = relationship(back_populates="riscos_modules")
 
