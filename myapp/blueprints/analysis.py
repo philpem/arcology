@@ -125,6 +125,28 @@ def artefact_analyses(uuid):
         Analysis.artefact_id.in_(all_artefact_ids)
     ).options(joinedload(Analysis.artefact))
 
+    status_filter = request.args.get('status')
+    if status_filter:
+        try:
+            status = AnalysisStatus(status_filter)
+            query = query.filter(Analysis.status == status)
+        except ValueError:
+            status_filter = None
+
+    # Status counts across all analyses for this artefact (unfiltered)
+    counts_row = db.session.query(
+        func.count(case((Analysis.status == AnalysisStatus.PENDING, 1))).label('pending'),
+        func.count(case((Analysis.status == AnalysisStatus.RUNNING, 1))).label('running'),
+        func.count(case((Analysis.status == AnalysisStatus.COMPLETED, 1))).label('completed'),
+        func.count(case((Analysis.status == AnalysisStatus.FAILED, 1))).label('failed'),
+    ).filter(Analysis.artefact_id.in_(all_artefact_ids)).one()
+    status_counts = {
+        'pending': counts_row.pending,
+        'running': counts_row.running,
+        'completed': counts_row.completed,
+        'failed': counts_row.failed,
+    }
+
     per_page, page, view_all = resolve_per_page('ANALYSES_PER_PAGE', 50)
     pagination = query.order_by(Analysis.created_at.desc()).paginate(page=page, per_page=per_page)
 
@@ -132,6 +154,8 @@ def artefact_analyses(uuid):
                            artefact=artefact,
                            analyses=pagination.items,
                            pagination=pagination,
+                           status_filter=status_filter,
+                           status_counts=status_counts,
                            valid_per_page=VALID_PER_PAGE,
                            view_all=view_all)
 

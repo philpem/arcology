@@ -13,6 +13,14 @@
 
 <h1 class="mb-4"><i class="bi bi-gear"></i> Analyses – {{ artefact.label }}</h1>
 
+<div class="btn-group mb-4">
+    <a href="{{ url_for('myapp_blueprints_analysis.artefact_analyses', uuid=artefact.uuid) }}" class="btn btn-outline-secondary {{ 'active' if not status_filter else '' }}">All</a>
+    <a href="{{ url_for('myapp_blueprints_analysis.artefact_analyses', uuid=artefact.uuid, status='pending') }}" class="btn btn-outline-warning {{ 'active' if status_filter == 'pending' else '' }}">Pending ({{ status_counts.pending }})</a>
+    <a href="{{ url_for('myapp_blueprints_analysis.artefact_analyses', uuid=artefact.uuid, status='running') }}" class="btn btn-outline-info {{ 'active' if status_filter == 'running' else '' }}">Running ({{ status_counts.running }})</a>
+    <a href="{{ url_for('myapp_blueprints_analysis.artefact_analyses', uuid=artefact.uuid, status='completed') }}" class="btn btn-outline-success {{ 'active' if status_filter == 'completed' else '' }}">Completed ({{ status_counts.completed }})</a>
+    <a href="{{ url_for('myapp_blueprints_analysis.artefact_analyses', uuid=artefact.uuid, status='failed') }}" class="btn btn-outline-danger {{ 'active' if status_filter == 'failed' else '' }}">Failed ({{ status_counts.failed }})</a>
+</div>
+
 <div class="card">
     <div class="table-responsive">
         <table class="table table-hover mb-0">
@@ -40,7 +48,7 @@
     </div>
 </div>
 
-{{ render_pagination(pagination, 'myapp_blueprints_analysis.artefact_analyses', {'uuid': artefact.uuid, 'per_page': request.args.get('per_page')}, valid_per_page=valid_per_page, view_all=view_all) }}
+{{ render_pagination(pagination, 'myapp_blueprints_analysis.artefact_analyses', {'uuid': artefact.uuid, 'status': status_filter, 'per_page': request.args.get('per_page')}, valid_per_page=valid_per_page, view_all=view_all) }}
 {% endblock %}
 
 {# vim: ts=4 sw=4 et #}
