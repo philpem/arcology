@@ -1935,12 +1935,15 @@ class AnalysisWorker:
         # The initial parse (queued by queue_partition_follow_ups after
         # FILE_EXTRACTION) runs before archive contents are registered,
         # so it never sees files inside archives.
+        # Pass path_prefix so the handler can strip the archive prefix when
+        # building on-disk paths (DB paths include the prefix, disk paths don't).
         self.api.queue_analysis(
             artefact['uuid'],
             AnalysisType.RISCOS_MODULE_PARSE.value,
             hints={
                 'partition_uuid': partition_uuid,
                 'extraction_path': str(persistent_output),
+                'path_prefix': archive_display_path,
             },
         )
 
@@ -2609,6 +2612,7 @@ class AnalysisWorker:
         hints = json.loads(analysis.get('hints') or '{}')
         partition_uuid = hints.get('partition_uuid')
         extraction_path = hints.get('extraction_path')
+        path_prefix = hints.get('path_prefix', '')  # set when queued from archive extraction
 
         if not partition_uuid:
             self.fail_analysis(analysis_id, 'No partition_uuid in analysis hints')
@@ -2622,8 +2626,18 @@ class AnalysisWorker:
             self.fail_analysis(analysis_id, 'Failed to get partition files')
             return
 
+        all_files = files_resp.get('files', [])
+
+        # When called after archive extraction, only process files that belong
+        # to that archive (DB paths are prefixed with the archive display path).
+        # Without this, a re-queued parse would re-scan the entire partition and
+        # try to open disc-level files using the wrong extraction_path.
+        if path_prefix:
+            all_files = [f for f in all_files
+                         if f.get('path', '').startswith(path_prefix + '/')]
+
         module_files = [
-            f for f in files_resp.get('files', [])
+            f for f in all_files
             if (f.get('risc_os_filetype') or '').lower() == 'ffa'
             and not f.get('is_directory', False)
         ]
@@ -2657,12 +2671,22 @@ class AnalysisWorker:
             db_path = file_data['path']
             risc_os_filetype = file_data.get('risc_os_filetype', '')
 
+            # Strip the archive path prefix to get the path relative to
+            # extract_dir.  DB paths for archive-extracted files include the
+            # archive's own display path as a prefix (e.g.
+            # "z80Em/!Z80Em/Resources/AYSound") but on disk the file is at
+            # "{extract_dir}/!Z80Em/Resources/AYSound".
+            if path_prefix and db_path.startswith(path_prefix + '/'):
+                disk_path = db_path[len(path_prefix) + 1:]
+            else:
+                disk_path = db_path
+
             # Build candidate paths (with Acorn filetype suffix variants)
             candidates = []
             if risc_os_filetype:
-                candidates.append(extract_dir / (db_path + ',' + risc_os_filetype.lower()))
-                candidates.append(extract_dir / (db_path + ',' + risc_os_filetype.upper()))
-            candidates.append(extract_dir / db_path)
+                candidates.append(extract_dir / (disk_path + ',' + risc_os_filetype.lower()))
+                candidates.append(extract_dir / (disk_path + ',' + risc_os_filetype.upper()))
+            candidates.append(extract_dir / disk_path)
 
             # Also try Latin-1 byte variants
             all_candidates = []
