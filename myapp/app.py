@@ -309,11 +309,13 @@ def _register_cli_commands(app):
     from .cli.rebuild_search_index import rebuild_search_index
     from .cli.rescan_hashes import rescan_hashes
     from .cli.reanalyse import reanalyse
+    from .cli.cancel_analysis import cancel_analysis
 
     app.cli.add_command(create_admin)
     app.cli.add_command(rebuild_search_index)
     app.cli.add_command(rescan_hashes)
     app.cli.add_command(reanalyse)
+    app.cli.add_command(cancel_analysis)
 
 
 # vim: ts=4 sw=4 et
