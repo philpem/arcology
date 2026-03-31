@@ -466,7 +466,7 @@ def _resolve_extracted_file_path(ef):
                         base = '/'.join(parts[-3:]) if len(parts) >= 3 else parts[-1]
 
                 prefix = f"outputs/{base.strip('/')}"
-                file_key = f"{prefix}/{ef.path.lstrip('/')}"
+                file_key = f"{prefix}/{disk_path.lstrip('/')}"
 
                 if storage.exists(file_key):
                     # Download to temp and return path
@@ -1943,6 +1943,42 @@ def _delete_artefact_files(artefact):
         current_app.logger.warning(f"Failed to delete file for artefact {artefact.uuid}: {e}")
 
 
+def _cleanup_artefact_outputs_s3(artefact, storage):
+    """Clean up analysis outputs for an artefact using S3 storage.
+
+    Deletes output files, output directories (extraction trees), and
+    cached partition images via the S3 storage backend.
+    """
+    cleanup = _collect_cleanup_paths_for_artefact(artefact)
+    for filename in cleanup['output_files']:
+        try:
+            key = storage.storage_key('outputs', filename)
+            storage.delete(key)
+            current_app.logger.info(f"Deleted output file: {filename}")
+        except Exception as e:
+            current_app.logger.warning(f"Failed to delete output file {filename}: {e}")
+    for path in cleanup['output_dirs']:
+        try:
+            if os.path.isabs(path):
+                parts = path.rstrip('/').split('/')
+                try:
+                    idx = parts.index('outputs')
+                    rel = '/'.join(parts[idx + 1:])
+                except ValueError:
+                    rel = '/'.join(parts[-3:]) if len(parts) >= 3 else parts[-1]
+            else:
+                rel = path
+            prefix = storage.storage_key('outputs', rel)
+            storage.delete_prefix(prefix)
+        except Exception as e:
+            current_app.logger.warning(f"Failed to delete output directory {path}: {e}")
+    try:
+        cache_prefix = storage.storage_key('outputs', f'.cache/{artefact.uuid}')
+        storage.delete_prefix(cache_prefix)
+    except Exception as e:
+        current_app.logger.warning(f"Failed to delete partition cache for artefact {artefact.uuid}: {e}")
+
+
 def _delete_item_files(item):
     """Delete all files associated with an item's artefacts before DB cascade delete.
 
@@ -1957,38 +1993,7 @@ def _delete_item_files(item):
         # Delete stored files for this artefact and all its derived artefacts.
         _delete_artefact_files(artefact)
         if isinstance(storage, S3Storage):
-            # S3 mode: use storage API for cleanup
-            cleanup = _collect_cleanup_paths_for_artefact(artefact)
-            for filename in cleanup['output_files']:
-                try:
-                    key = storage.storage_key('outputs', filename)
-                    storage.delete(key)
-                    current_app.logger.info(f"Deleted output file: {filename}")
-                except Exception as e:
-                    current_app.logger.warning(f"Failed to delete output file {filename}: {e}")
-            for path in cleanup['output_dirs']:
-                try:
-                    if os.path.isabs(path):
-                        parts = path.rstrip('/').split('/')
-                        try:
-                            idx = parts.index('outputs')
-                            rel = '/'.join(parts[idx + 1:])
-                        except ValueError:
-                            rel = '/'.join(parts[-3:]) if len(parts) >= 3 else parts[-1]
-                    else:
-                        rel = path
-                    prefix = storage.storage_key('outputs', rel)
-                    deleted = storage.delete_prefix(prefix)
-                    current_app.logger.info(f"Deleted output directory: {path} ({deleted} objects)")
-                except Exception as e:
-                    current_app.logger.warning(f"Failed to delete output directory {path}: {e}")
-            try:
-                cache_prefix = storage.storage_key('outputs', f'.cache/{artefact.uuid}')
-                deleted = storage.delete_prefix(cache_prefix)
-                if deleted:
-                    current_app.logger.info(f"Deleted partition cache for artefact {artefact.uuid} ({deleted} objects)")
-            except Exception as e:
-                current_app.logger.warning(f"Failed to delete partition cache for artefact {artefact.uuid}: {e}")
+            _cleanup_artefact_outputs_s3(artefact, storage)
         else:
             _cleanup_artefact_outputs(artefact, current_app.logger)
 
@@ -2066,33 +2071,7 @@ def delete(item_id=None, artefact_id=None, root_id=None, uuid=None):
     from shared.storage import S3Storage
     storage = current_app.storage
     if isinstance(storage, S3Storage):
-        cleanup = _collect_cleanup_paths_for_artefact(artefact)
-        for filename in cleanup['output_files']:
-            try:
-                key = storage.storage_key('outputs', filename)
-                storage.delete(key)
-            except Exception as e:
-                current_app.logger.warning(f"Failed to delete output file {filename}: {e}")
-        for path in cleanup['output_dirs']:
-            try:
-                if os.path.isabs(path):
-                    parts = path.rstrip('/').split('/')
-                    try:
-                        idx = parts.index('outputs')
-                        rel = '/'.join(parts[idx + 1:])
-                    except ValueError:
-                        rel = '/'.join(parts[-3:]) if len(parts) >= 3 else parts[-1]
-                else:
-                    rel = path
-                prefix = storage.storage_key('outputs', rel)
-                storage.delete_prefix(prefix)
-            except Exception as e:
-                current_app.logger.warning(f"Failed to delete output directory {path}: {e}")
-        try:
-            cache_prefix = storage.storage_key('outputs', f'.cache/{artefact.uuid}')
-            storage.delete_prefix(cache_prefix)
-        except Exception:
-            pass
+        _cleanup_artefact_outputs_s3(artefact, storage)
     else:
         _cleanup_artefact_outputs(artefact, current_app.logger)
 

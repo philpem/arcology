@@ -87,13 +87,23 @@ class LocalStorage(StorageBackend):
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
 
     def _resolve(self, key: str) -> Path:
-        """Resolve a storage key to a local filesystem path."""
+        """Resolve a storage key to a local filesystem path.
+
+        Raises ValueError if the key would escape the storage directory
+        (e.g. via ``..`` traversal).
+        """
         if key.startswith('uploads/'):
-            return self.uploads_dir / key[len('uploads/'):]
+            root = self.uploads_dir
+            rel = key[len('uploads/'):]
         elif key.startswith('outputs/'):
-            return self.outputs_dir / key[len('outputs/'):]
+            root = self.outputs_dir
+            rel = key[len('outputs/'):]
         else:
             raise ValueError(f"Invalid storage key (must start with 'uploads/' or 'outputs/'): {key!r}")
+        resolved = (root / rel).resolve()
+        if not str(resolved).startswith(str(root.resolve()) + os.sep) and resolved != root.resolve():
+            raise ValueError(f"Path traversal detected in storage key: {key!r}")
+        return resolved
 
     def put(self, key: str, source_path: Path) -> None:
         dest = self._resolve(key)
@@ -147,14 +157,14 @@ class LocalStorage(StorageBackend):
         results = []
         # Determine which root we're under to reconstruct keys
         if prefix.startswith('uploads/'):
-            root_dir = self.uploads_dir
+            root_dir = self.uploads_dir.resolve()
             root_prefix = 'uploads/'
         else:
-            root_dir = self.outputs_dir
+            root_dir = self.outputs_dir.resolve()
             root_prefix = 'outputs/'
         for path in base.rglob('*'):
             if path.is_file():
-                rel = path.relative_to(root_dir)
+                rel = path.resolve().relative_to(root_dir)
                 results.append(root_prefix + str(rel))
         return results
 
@@ -170,7 +180,7 @@ class LocalStorage(StorageBackend):
         dest.parent.mkdir(parents=True, exist_ok=True)
         if dest.exists():
             shutil.rmtree(dest)
-        shutil.copytree(local_dir, dest, dirs_exist_ok=True)
+        shutil.copytree(local_dir, dest)
         return sum(1 for _ in dest.rglob('*') if _.is_file())
 
     def get_tree(self, prefix: str, dest_dir: Path) -> int:
@@ -250,11 +260,14 @@ class S3Storage(StorageBackend):
         return deleted
 
     def exists(self, key: str) -> bool:
+        from botocore.exceptions import ClientError
         try:
             self._client.head_object(Bucket=self.bucket, Key=key)
             return True
-        except self._client.exceptions.ClientError:
-            return False
+        except ClientError as e:
+            if e.response['Error']['Code'] in ('404', 'NoSuchKey'):
+                return False
+            raise
 
     def list_prefix(self, prefix: str) -> list[str]:
         keys = []
@@ -336,7 +349,11 @@ def create_storage(config: dict) -> StorageBackend:
             region=region,
         )
 
-    # Default: local filesystem
+    if backend != 'local':
+        raise ValueError(
+            f"Invalid STORAGE_BACKEND: {backend!r}. Must be 'local' or 's3'."
+        )
+
     uploads = Path(config.get('UPLOAD_FOLDER', 'uploads'))
     outputs = Path(config.get('OUTPUT_FOLDER', 'outputs'))
     return LocalStorage(uploads_dir=uploads, outputs_dir=outputs)
