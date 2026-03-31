@@ -2434,7 +2434,7 @@ class AnalysisWorker:
 
         module_files = [
             f for f in files_resp.get('files', [])
-            if f.get('risc_os_filetype', '').lower() == 'ffa'
+            if (f.get('risc_os_filetype') or '').lower() == 'ffa'
             and not f.get('is_directory', False)
         ]
 
