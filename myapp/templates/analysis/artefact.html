@@ -21,7 +21,7 @@
                 {% for a in analyses %}
                 <tr>
                     <td><a href="{{ url_for('myapp_blueprints_analysis.view', uuid=a.uuid) }}">{{ a.uuid[:8] }}</a></td>
-                    <td>{{ a.analysis_type.value|replace('_', ' ')|title }}</td>
+                    <td>{{ a.analysis_type|format_analysis_type }}</td>
                     <td>
                         {% if a.artefact_id != artefact.id %}
                         <a href="{{ artefact_url(a.artefact) }}">{{ a.artefact.label }}</a>
