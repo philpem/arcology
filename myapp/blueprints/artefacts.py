@@ -1457,10 +1457,33 @@ def _render_artefact_view(artefact):
             if inherited:
                 file_ancestor_restrictions.setdefault(f.id, []).extend(inherited)
 
+    def _dedup_by_type(rlist):
+        """Return rlist with duplicate restriction_type entries removed (keeps first)."""
+        seen: set = set()
+        result = []
+        for r in rlist:
+            if r.restriction_type not in seen:
+                seen.add(r.restriction_type)
+                result.append(r)
+        return result
+
+    # Deduplicate each per-file list so that e.g. an archive containing five
+    # MALWARE-restricted files doesn't show the badge five times.
+    file_ancestor_restrictions = {
+        fid: _dedup_by_type(rlist)
+        for fid, rlist in file_ancestor_restrictions.items()
+    }
+    file_descendant_restrictions = {
+        fid: _dedup_by_type(rlist)
+        for fid, rlist in file_descendant_restrictions.items()
+    }
+
     # Legacy alias used by the download-button logic in the template — the
     # effective non-direct restrictions are the union of both directions.
     file_inherited_restrictions = {
-        fid: file_ancestor_restrictions.get(fid, []) + file_descendant_restrictions.get(fid, [])
+        fid: _dedup_by_type(
+            file_ancestor_restrictions.get(fid, []) + file_descendant_restrictions.get(fid, [])
+        )
         for fid in set(file_ancestor_restrictions) | set(file_descendant_restrictions)
     }
 

@@ -534,6 +534,196 @@ class TestApplyDatabaseRestrictions(unittest.TestCase):
 
 
 # =============================================================================
+# ExtractedFileRestriction model tests
+# =============================================================================
+
+def _make_partition_and_file(db, artefact, path='file.txt', parent=None):
+    """Create a Partition + ExtractedFile; reuses existing partition if artefact already has one."""
+    from myapp.database import Partition, ExtractedFile, FilesystemType
+    partition = Partition.query.filter_by(artefact_id=artefact.id).first()
+    if partition is None:
+        partition = Partition(
+            artefact_id=artefact.id,
+            filesystem=FilesystemType.UNKNOWN,
+            partition_index=0,
+        )
+        db.session.add(partition)
+        db.session.flush()
+
+    ef = ExtractedFile(
+        partition_id=partition.id,
+        path=path,
+        filename=path.rsplit('/', 1)[-1],
+        parent_file_id=parent.id if parent else None,
+    )
+    db.session.add(ef)
+    db.session.flush()
+    return partition, ef
+
+
+class TestExtractedFileRestriction(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app, cls.db = _create_app_and_db()
+        cls.client = cls.app.test_client()
+
+    def test_add_restriction(self):
+        with self.app.app_context():
+            from myapp.database import ExtractedFileRestriction, RestrictionType
+            _, artefact = _make_item_and_artefact(self.db)
+            _, ef = _make_partition_and_file(self.db, artefact, 'secret.doc')
+
+            r = ExtractedFileRestriction(
+                extracted_file_id=ef.id,
+                restriction_type=RestrictionType.PII,
+                reason='Contains personal data',
+            )
+            self.db.session.add(r)
+            self.db.session.commit()
+
+            self.assertTrue(ef.is_restricted)
+            self.assertEqual(len(ef.restrictions), 1)
+            self.assertEqual(ef.restrictions[0].restriction_type, RestrictionType.PII)
+            self.assertEqual(ef.restrictions[0].reason, 'Contains personal data')
+
+    def test_unique_constraint_prevents_duplicate(self):
+        with self.app.app_context():
+            from myapp.database import ExtractedFileRestriction, RestrictionType
+            from sqlalchemy.exc import IntegrityError
+            _, artefact = _make_item_and_artefact(self.db)
+            _, ef = _make_partition_and_file(self.db, artefact, 'dup.txt')
+
+            self.db.session.add(ExtractedFileRestriction(
+                extracted_file_id=ef.id,
+                restriction_type=RestrictionType.COPYRIGHT,
+            ))
+            self.db.session.commit()
+
+            self.db.session.add(ExtractedFileRestriction(
+                extracted_file_id=ef.id,
+                restriction_type=RestrictionType.COPYRIGHT,
+            ))
+            with self.assertRaises(IntegrityError):
+                self.db.session.commit()
+            self.db.session.rollback()
+
+    def test_cascade_delete_on_extracted_file(self):
+        """Deleting an ExtractedFile should cascade-delete its restrictions."""
+        with self.app.app_context():
+            from myapp.database import ExtractedFileRestriction, RestrictionType
+            _, artefact = _make_item_and_artefact(self.db)
+            _, ef = _make_partition_and_file(self.db, artefact, 'cascade.txt')
+            ef_id = ef.id
+
+            self.db.session.add(ExtractedFileRestriction(
+                extracted_file_id=ef.id,
+                restriction_type=RestrictionType.MALWARE,
+            ))
+            self.db.session.commit()
+
+            self.db.session.delete(ef)
+            self.db.session.commit()
+
+            self.assertEqual(
+                ExtractedFileRestriction.query.filter_by(extracted_file_id=ef_id).count(), 0
+            )
+
+    def test_api_download_blocked_by_file_restriction(self):
+        """GET /api/files/<uuid>/download returns 403 when the file has an EFR."""
+        with self.app.app_context():
+            from myapp.database import ExtractedFileRestriction, RestrictionType
+            _, artefact = _make_item_and_artefact(self.db)
+            _, ef = _make_partition_and_file(self.db, artefact, 'blocked.doc')
+
+            self.db.session.add(ExtractedFileRestriction(
+                extracted_file_id=ef.id,
+                restriction_type=RestrictionType.PII,
+            ))
+            self.db.session.commit()
+            ef_uuid = ef.uuid
+
+        resp = self.client.get(
+            f'/api/files/{ef_uuid}/download',
+            headers={'X-API-Key': _WORKER_KEY},
+        )
+        self.assertEqual(resp.status_code, 403)
+        data = resp.get_json()
+        self.assertIn('restrictions', data)
+        self.assertIn('pii', data['restrictions'])
+
+    def test_api_download_sibling_not_blocked(self):
+        """A sibling file (no EFR) should not be blocked when only its sibling is restricted."""
+        with self.app.app_context():
+            from myapp.database import ExtractedFileRestriction, RestrictionType
+            _, artefact = _make_item_and_artefact(self.db)
+            _, ef_restricted = _make_partition_and_file(self.db, artefact, 'secret.doc')
+            _, ef_sibling = _make_partition_and_file(self.db, artefact, 'public.txt')
+
+            self.db.session.add(ExtractedFileRestriction(
+                extracted_file_id=ef_restricted.id,
+                restriction_type=RestrictionType.PII,
+            ))
+            self.db.session.commit()
+            sibling_uuid = ef_sibling.uuid
+
+        resp = self.client.get(
+            f'/api/files/{sibling_uuid}/download',
+            headers={'X-API-Key': _WORKER_KEY},
+        )
+        # Should not be 403 (may be 404 since file doesn't exist on disk)
+        self.assertNotEqual(resp.status_code, 403)
+
+    def test_api_download_blocked_by_parent_archive_restriction(self):
+        """Downloading a file inside a restricted archive should return 403."""
+        with self.app.app_context():
+            from myapp.database import ExtractedFileRestriction, RestrictionType
+            _, artefact = _make_item_and_artefact(self.db)
+            _, archive = _make_partition_and_file(self.db, artefact, 'archive.zip')
+            _, inner = _make_partition_and_file(self.db, artefact, 'archive.zip/inner.doc',
+                                                parent=archive)
+
+            self.db.session.add(ExtractedFileRestriction(
+                extracted_file_id=archive.id,
+                restriction_type=RestrictionType.MALWARE,
+            ))
+            self.db.session.commit()
+            inner_uuid = inner.uuid
+
+        resp = self.client.get(
+            f'/api/files/{inner_uuid}/download',
+            headers={'X-API-Key': _WORKER_KEY},
+        )
+        self.assertEqual(resp.status_code, 403)
+        data = resp.get_json()
+        self.assertIn('malware', data['restrictions'])
+
+    def test_api_download_blocked_archive_with_restricted_child(self):
+        """Downloading an archive that contains a restricted file should return 403."""
+        with self.app.app_context():
+            from myapp.database import ExtractedFileRestriction, RestrictionType
+            _, artefact = _make_item_and_artefact(self.db)
+            _, archive = _make_partition_and_file(self.db, artefact, 'container.zip')
+            _, inner = _make_partition_and_file(self.db, artefact, 'container.zip/virus.exe',
+                                                parent=archive)
+
+            self.db.session.add(ExtractedFileRestriction(
+                extracted_file_id=inner.id,
+                restriction_type=RestrictionType.MALWARE,
+            ))
+            self.db.session.commit()
+            archive_uuid = archive.uuid
+
+        resp = self.client.get(
+            f'/api/files/{archive_uuid}/download',
+            headers={'X-API-Key': _WORKER_KEY},
+        )
+        self.assertEqual(resp.status_code, 403)
+        data = resp.get_json()
+        self.assertIn('malware', data['restrictions'])
+
+
+# =============================================================================
 # API extracted file download restriction tests
 # =============================================================================
 
