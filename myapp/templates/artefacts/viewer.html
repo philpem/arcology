@@ -31,6 +31,14 @@
     max-height: 60vh;
     overflow: auto;
 }
+/* Explicit-content gate */
+.explicit-gate { position: relative; }
+.explicit-content-blur { filter: blur(20px); transition: filter 0.3s; pointer-events: none; user-select: none; }
+.explicit-gate-overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.55); z-index: 10; border-radius: 0.25rem;
+}
 </style>
 {% endblock %}
 
@@ -143,6 +151,27 @@
 <h5 class="font-monospace border-bottom pb-2 mb-3">{{ group.label }}</h5>
 {% endif %}
 
+{% if group.explicit %}
+  {# ── Explicit content gate ── #}
+  {% if user_can_bypass_explicit %}
+  {# Bypass permitted: blur content with a consent overlay #}
+  <div class="explicit-gate mb-4" id="explicit-gate-{{ loop.index }}">
+    <div class="explicit-gate-overlay" id="explicit-overlay-{{ loop.index }}">
+      <span class="badge bg-danger fs-6 mb-2"><i class="bi bi-exclamation-triangle-fill"></i> Explicit Content</span>
+      <p class="text-white text-center small mb-3">This content is marked as explicit. Click to reveal.</p>
+      <button class="btn btn-outline-light btn-sm" onclick="revealExplicit({{ loop.index }})">I understand — show content</button>
+    </div>
+    <div id="explicit-content-{{ loop.index }}" class="explicit-content-blur">
+{% else %}
+  {# No bypass: content is simply hidden #}
+  <div class="alert alert-danger mb-4">
+    <i class="bi bi-lock-fill"></i> Explicit content — access restricted.
+  </div>
+  {# Hidden placeholder div so loop.index is consistent if bypass ever added #}
+  <div class="d-none">
+{% endif %}
+{% endif %}
+
 {# ── Image outputs ── #}
 {# For Draw files, out.svg_filename is set; clicking opens the SVG while PNG is the preview. #}
 {% if ns.image_outputs %}
@@ -196,8 +225,40 @@
     {% endfor %}
 {% endif %}
 
+{% if group.explicit %}
+    </div>{# closes explicit-content-N or d-none #}
+  {% if user_can_bypass_explicit %}
+  </div>{# closes explicit-gate-N #}
+  {% endif %}
+{% endif %}
+
 {% if output_groups | length > 1 or group.source_file %}
 </section>
 {% endif %}
 {% endfor %}
+
+{% if output_groups %}
+<script>
+function revealExplicit(idx) {
+    var overlay = document.getElementById('explicit-overlay-' + idx);
+    var content = document.getElementById('explicit-content-' + idx);
+    if (overlay) overlay.style.display = 'none';
+    if (content) {
+        content.classList.remove('explicit-content-blur');
+        content.style.pointerEvents = '';
+    }
+    try { sessionStorage.setItem('explicit_consent_' + idx, '1'); } catch(e) {}
+}
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('[id^="explicit-content-"]').forEach(function(el) {
+        var idx = el.id.replace('explicit-content-', '');
+        try {
+            if (sessionStorage.getItem('explicit_consent_' + idx) === '1') {
+                revealExplicit(idx);
+            }
+        } catch(e) {}
+    });
+});
+</script>
+{% endif %}
 {% endblock %}

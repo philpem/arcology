@@ -162,15 +162,41 @@
                                     {% endif %}
                                 {% endif %}
                                 {% if not file.is_directory %}
+                                {# ── Download icon — artefact-level restrictions take priority ── #}
                                 {% if artefact.restrictions and current_user.can_bypass_all_restrictions(artefact.restrictions) %}
                                 <a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=file.uuid, confirm_bypass='1') }}"
                                    class="text-danger ms-1" title="Download file (restricted — bypass active)"
                                    onclick="return confirm('This artefact has download restrictions. Download anyway?')"><i class="bi bi-download"></i></a>
                                 {% elif artefact.restrictions %}
                                 <span class="text-muted ms-1 opacity-50" title="Download restricted"><i class="bi bi-lock-fill"></i></span>
+                                {% elif file.restrictions %}
+                                  {# File-level restrictions: check against own + descendant restrictions #}
+                                  {% set _file_all_restr = file.restrictions %}
+                                  {% if current_user.can_bypass_all_restrictions(_file_all_restr) %}
+                                <a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=file.uuid, confirm_bypass='1') }}"
+                                   class="text-danger ms-1" title="Download file (file restricted — bypass active)"
+                                   onclick="return confirm('This file has download restrictions. Download anyway?')"><i class="bi bi-download"></i></a>
+                                  {% else %}
+                                <span class="text-muted ms-1 opacity-50" title="File download restricted"><i class="bi bi-lock-fill"></i></span>
+                                  {% endif %}
                                 {% else %}
                                 <a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=file.uuid) }}"
                                    class="text-muted ms-1" title="Download file"><i class="bi bi-download"></i></a>
+                                {% endif %}
+                                {# ── Restriction badges for file-level restrictions ── #}
+                                {% if file.restrictions %}
+                                  {% for r in file.restrictions %}
+                                <span class="badge bg-danger ms-1" title="{{ r.reason or 'File restriction' }}"><i class="bi bi-exclamation-triangle-fill"></i> {{ r.restriction_type.label }}</span>
+                                  {% endfor %}
+                                {% endif %}
+                                {# ── Manage file restrictions button (write users only) ── #}
+                                {% if user_can_write %}
+                                <button type="button" class="btn btn-link btn-sm p-0 ms-1 {% if file.restrictions %}text-danger{% else %}text-muted{% endif %}"
+                                        data-bs-toggle="modal" data-bs-target="#fileRestrictModal"
+                                        data-file-uuid="{{ file.uuid }}"
+                                        data-file-name="{{ file.filename }}"
+                                        data-restrictions="{{ file.restrictions | map(attribute='restriction_type') | map(attribute='value') | list | tojson }}"
+                                        title="Manage file restrictions"><i class="bi bi-shield{% if file.restrictions %}-fill{% endif %}"></i></button>
                                 {% endif %}
                                 {% if file.path in viewable_filenames %}
                                 <a href="{{ artefact_url(artefact, 'viewer') }}?file={{ file.path | urlencode }}"
@@ -375,6 +401,78 @@
             }
         });
     }
+})();
+</script>
+{% endif %}
+
+{% if user_can_write %}
+{# ── File restriction management modal ──────────────────────────────────── #}
+<div class="modal fade" id="fileRestrictModal" tabindex="-1" aria-labelledby="fileRestrictModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="fileRestrictModalLabel">File Restrictions — <span id="frm-filename" class="font-monospace"></span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="frm-current-list" class="mb-3"></div>
+        <hr>
+        <p class="text-muted small mb-2">Add restriction</p>
+        <form id="frm-add-form" method="POST">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="add">
+          <div class="row g-2">
+            <div class="col-auto">
+              <select name="category" class="form-select form-select-sm">
+                {% for rt in RestrictionType %}
+                <option value="{{ rt.value }}">{{ rt.label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col">
+              <input type="text" name="reason" class="form-control form-control-sm" placeholder="Reason (optional)">
+            </div>
+            <div class="col-auto">
+              <button type="submit" class="btn btn-sm btn-danger">Add</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+    var modal = document.getElementById('fileRestrictModal');
+    if (!modal) return;
+    modal.addEventListener('show.bs.modal', function(event) {
+        var btn = event.relatedTarget;
+        var uuid = btn.getAttribute('data-file-uuid');
+        var name = btn.getAttribute('data-file-name');
+        var restrictions = JSON.parse(btn.getAttribute('data-restrictions') || '[]');
+
+        document.getElementById('frm-filename').textContent = name;
+        document.getElementById('frm-add-form').action = '/files/' + uuid + '/restrictions';
+
+        var listEl = document.getElementById('frm-current-list');
+        if (restrictions.length === 0) {
+            listEl.innerHTML = '<p class="text-muted small mb-0">No restrictions set on this file.</p>';
+        } else {
+            var html = '<p class="text-muted small mb-1">Current restrictions:</p><div class="d-flex flex-wrap gap-1">';
+            restrictions.forEach(function(rval) {
+                html += '<form method="POST" action="/files/' + uuid + '/restrictions" class="d-inline">'
+                      + '<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">'
+                      + '<input type="hidden" name="action" value="remove">'
+                      + '<input type="hidden" name="category" value="' + rval + '">'
+                      + '<button type="submit" class="btn btn-sm btn-outline-danger">'
+                      + '<i class="bi bi-x-circle"></i> ' + rval
+                      + '</button></form>';
+            });
+            html += '</div>';
+            listEl.innerHTML = html;
+        }
+    });
 })();
 </script>
 {% endif %}

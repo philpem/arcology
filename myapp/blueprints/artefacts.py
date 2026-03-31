@@ -50,7 +50,7 @@ from ..database import (
     Analysis, AnalysisType, AnalysisStatus, Platform, StorageDirectory, Tag,
     ArtefactProtection, ArtefactMastering,
     HashDatabase, KnownProduct, KnownFile, RecognisedProduct,
-    RiscosModule, ArtefactRestriction, artefact_tags,
+    RiscosModule, ArtefactRestriction, ExtractedFileRestriction, artefact_tags,
 )
 
 ROUTENAME = __name__.replace('.', '_')
@@ -730,6 +730,73 @@ def _check_download_restrictions(artefact):
     return None
 
 
+def _collect_all_file_restrictions(ef):
+    """Return all ExtractedFileRestriction objects on ef and every descendant.
+
+    For non-archive files this is O(1).  For archives the child_files tree is
+    walked recursively; SQLAlchemy loads each level on access via the backref.
+    """
+    restrictions = list(ef.restrictions)
+    for child in ef.child_files:
+        restrictions.extend(_collect_all_file_restrictions(child))
+    return restrictions
+
+
+def _check_file_download_restrictions(ef):
+    """Return a redirect when file-level restrictions block an extracted-file download.
+
+    Called after _check_download_restrictions() has cleared artefact-level
+    restrictions.  Checks restrictions on ef itself and on any nested
+    descendants (so downloading an archive is blocked if any contained file
+    is restricted and the user cannot bypass it).
+    """
+    all_restrictions = _collect_all_file_restrictions(ef)
+    if not all_restrictions:
+        return None
+
+    if not current_user.can_bypass_all_restrictions(all_restrictions):
+        categories = ', '.join({r.restriction_type.label for r in all_restrictions})
+        flash(f'File download restricted: {categories}', 'danger')
+        return _redirect_to_artefact_view(ef.partition.artefact)
+
+    if not request.args.get('confirm_bypass'):
+        flash('This file has download restrictions. Use the download override to confirm.', 'warning')
+        return _redirect_to_artefact_view(ef.partition.artefact)
+
+    return None
+
+
+def _check_artefact_file_restrictions(artefact):
+    """Block artefact download when any extracted file within it has restrictions.
+
+    Called after _check_download_restrictions() has cleared artefact-level
+    restrictions.  Uses a single query over all partitions of this artefact.
+    Because ExtractedFileRestriction has .restriction_type, the existing
+    can_bypass_all_restrictions() method works on these objects directly.
+    """
+    file_restrictions = (
+        ExtractedFileRestriction.query
+        .join(ExtractedFile, ExtractedFileRestriction.extracted_file_id == ExtractedFile.id)
+        .join(Partition, ExtractedFile.partition_id == Partition.id)
+        .filter(Partition.artefact_id == artefact.id)
+        .all()
+    )
+
+    if not file_restrictions:
+        return None
+
+    if not current_user.can_bypass_all_restrictions(file_restrictions):
+        categories = ', '.join({r.restriction_type.label for r in file_restrictions})
+        flash(f'Download restricted (artefact contains restricted files): {categories}', 'danger')
+        return _redirect_to_artefact_view(artefact)
+
+    if not request.args.get('confirm_bypass'):
+        flash('This artefact contains files with download restrictions. Use the download override to confirm.', 'warning')
+        return _redirect_to_artefact_view(artefact)
+
+    return None
+
+
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>')
 @blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>', endpoint='view_nested')
 @login_required
@@ -887,12 +954,45 @@ def _render_viewer(artefact):
                         module_detail['commands'] = m.get('commands', [])
                         break
 
+    # ── Explicit-content gate ────────────────────────────────────────────────
+    from ..database import RestrictionType
+    explicit_type = RestrictionType.EXPLICIT
+    user_can_bypass_explicit = current_user.can_bypass_restriction(explicit_type)
+
+    # Artefact-level EXPLICIT → all groups are gated
+    artefact_is_explicit = any(
+        r.restriction_type == explicit_type for r in artefact.restrictions
+    )
+
+    # File-level EXPLICIT → find which source_file paths are gated
+    explicit_file_paths: set[str] = set()
+    if not artefact_is_explicit and artefact.partitions:
+        partition_ids = [p.id for p in artefact.partitions]
+        explicit_efs = (
+            ExtractedFile.query
+            .join(ExtractedFileRestriction,
+                  ExtractedFileRestriction.extracted_file_id == ExtractedFile.id)
+            .filter(
+                ExtractedFileRestriction.restriction_type == explicit_type,
+                ExtractedFile.partition_id.in_(partition_ids),
+            )
+            .with_entities(ExtractedFile.path)
+            .all()
+        )
+        explicit_file_paths = {row.path for row in explicit_efs}
+
+    for group in output_groups:
+        group['explicit'] = (
+            artefact_is_explicit or group.get('source_file') in explicit_file_paths
+        )
+
     return render_template(
         'artefacts/viewer.html',
         artefact=artefact,
         output_groups=output_groups,
         viewer_status=viewer_status,
         module_detail=module_detail,
+        user_can_bypass_explicit=user_can_bypass_explicit,
     )
 
 
@@ -1276,6 +1376,17 @@ def _render_artefact_view(artefact):
     else:
         hash_databases = []
 
+    # File-level restrictions on any extracted file within this artefact tree.
+    # Used to adjust the download button state when the artefact itself is
+    # unrestricted but contains restricted extracted files.
+    artefact_file_restrictions = (
+        ExtractedFileRestriction.query
+        .join(ExtractedFile, ExtractedFileRestriction.extracted_file_id == ExtractedFile.id)
+        .join(Partition, ExtractedFile.partition_id == Partition.id)
+        .filter(Partition.artefact_id.in_(all_artefact_ids))
+        .all()
+    )
+
     return render_template('artefacts/view.html',
                            artefact=artefact,
                            analyses=analyses,
@@ -1311,7 +1422,8 @@ def _render_artefact_view(artefact):
                            current_letter=current_letter,
                            viewable_filenames=viewable_filenames,
                            has_converted_outputs=has_converted_outputs,
-                           module_info=module_info)
+                           module_info=module_info,
+                           artefact_file_restrictions=artefact_file_restrictions)
 
 
 @blueprint.route('/<string:uuid>/add-to-hashdb', methods=['POST'])
@@ -1665,11 +1777,16 @@ def delete(item_id=None, artefact_id=None, root_id=None, uuid=None):
 @blueprint.route('/artefacts/<string:uuid>/download', endpoint='download_legacy')
 @login_required
 def download(item_id=None, artefact_id=None, root_id=None, uuid=None):
-    """Download the artefact file.  Restricted artefacts are blocked unless
-    the current user has bypass permissions for every restriction type."""
+    """Download the artefact file.  Blocked when the artefact itself is
+    restricted, or when any extracted file within it carries a restriction the
+    user cannot bypass."""
     artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
 
     restriction_redirect = _check_download_restrictions(artefact)
+    if restriction_redirect:
+        return restriction_redirect
+
+    restriction_redirect = _check_artefact_file_restrictions(artefact)
     if restriction_redirect:
         return restriction_redirect
 
@@ -1690,14 +1807,17 @@ def download(item_id=None, artefact_id=None, root_id=None, uuid=None):
 def download_file(uuid):
     """Download an individual extracted file from a partition.
 
-    Honours artefact-level download restrictions: if the parent artefact
-    is restricted and the user lacks bypass permissions, the download is
-    blocked.
+    Honours artefact-level restrictions first, then file-level restrictions
+    (including any restrictions on nested descendants of the file).
     """
     ef = ExtractedFile.query.filter_by(uuid=uuid).first_or_404()
     artefact = ef.partition.artefact
 
     restriction_redirect = _check_download_restrictions(artefact)
+    if restriction_redirect:
+        return restriction_redirect
+
+    restriction_redirect = _check_file_download_restrictions(ef)
     if restriction_redirect:
         return restriction_redirect
 
@@ -1756,6 +1876,59 @@ def manage_restrictions(item_id=None, artefact_id=None, root_id=None):
                 flash(f'Restriction removed: {rtype.label}', 'success')
         else:
             flash(f'Restriction not found: {rtype.label}', 'warning')
+    else:
+        flash(f'Invalid action: {action}', 'danger')
+
+    return _redirect_to_artefact_view(artefact)
+
+
+@blueprint.route('/files/<string:uuid>/restrictions', methods=['POST'], endpoint='manage_file_restrictions')
+@login_required
+@require_permission('read_write')
+def manage_file_restrictions(uuid):
+    """Add or remove a restriction on an individual extracted file."""
+    ef = ExtractedFile.query.filter_by(uuid=uuid).first_or_404()
+    artefact = ef.partition.artefact
+
+    action   = request.form.get('action', '')
+    category = request.form.get('category', '')
+    reason   = request.form.get('reason', '').strip() or None
+
+    from ..database import RestrictionType
+    try:
+        rtype = RestrictionType(category)
+    except (ValueError, KeyError):
+        flash(f'Invalid restriction type: {category}', 'danger')
+        return _redirect_to_artefact_view(artefact)
+
+    if action == 'add':
+        existing = ExtractedFileRestriction.query.filter_by(
+            extracted_file_id=ef.id, restriction_type=rtype
+        ).first()
+        if not existing:
+            db.session.add(ExtractedFileRestriction(
+                extracted_file_id=ef.id,
+                restriction_type=rtype,
+                reason=reason,
+                added_by_id=current_user.id,
+            ))
+            db.session.commit()
+            flash(f'File restriction added: {rtype.label}', 'success')
+        else:
+            flash(f'File restriction already exists: {rtype.label}', 'info')
+    elif action == 'remove':
+        existing = ExtractedFileRestriction.query.filter_by(
+            extracted_file_id=ef.id, restriction_type=rtype
+        ).first()
+        if existing:
+            if not current_user.is_admin and existing.added_by_id != current_user.id:
+                flash('Only administrators can remove restrictions added by other users.', 'danger')
+            else:
+                db.session.delete(existing)
+                db.session.commit()
+                flash(f'File restriction removed: {rtype.label}', 'success')
+        else:
+            flash(f'File restriction not found: {rtype.label}', 'warning')
     else:
         flash(f'Invalid action: {action}', 'danger')
 
