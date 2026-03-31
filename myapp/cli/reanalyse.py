@@ -1,13 +1,12 @@
-import re
 import click
 from flask import current_app
 from ..extensions import db
-from ..database import Artefact, Item, Tag, Platform, Category
+from ..database import Artefact
 from ..blueprints.artefacts import (
     reset_artefact_for_reanalysis, queue_analyses_for_artefact,
     _cleanup_analysis_outputs, get_output_folder,
 )
-from shared.enums import ArtefactType
+from ._selection import build_artefact_query
 
 
 @click.command('reanalyse')
@@ -50,40 +49,15 @@ def reanalyse(item_uuid, tag_name, platform_name, category_name,
         raise SystemExit(1)
 
     # Build query: root artefacts only (derived are cleaned up by reset)
-    query = Artefact.query.filter(Artefact.parent_artefact_id.is_(None))
-
-    if item_uuid or tag_name or platform_name or category_name:
-        query = query.join(Item)
-
-    if item_uuid:
-        identifier = item_uuid
-        if re.fullmatch(r'[0-9a-f]{32}', identifier):
-            query = query.filter(Item.uuid == identifier)
-        elif len(identifier) >= 8 and re.fullmatch(r'[0-9a-f]{8}', identifier[:8]):
-            prefix = identifier[:8]
-            query = query.filter(Item.uuid.startswith(prefix))
-        else:
-            click.echo(f"ERROR: '{identifier}' is not a valid item UUID or URL identifier.", err=True)
-            raise SystemExit(1)
-
-    if tag_name:
-        query = query.filter(Item.tags.any(Tag.name == tag_name))
-
-    if platform_name:
-        query = query.join(Platform).filter(Platform.name == platform_name)
-
-    if category_name:
-        query = query.join(Category).filter(Category.name == category_name)
-
-    if artefact_type_name:
-        try:
-            at = ArtefactType[artefact_type_name]
-        except KeyError:
-            valid = ', '.join(t.name for t in ArtefactType)
-            click.echo(f"ERROR: unknown artefact type '{artefact_type_name}'. "
-                       f"Valid types: {valid}", err=True)
-            raise SystemExit(1)
-        query = query.filter(Artefact.artefact_type == at)
+    query = build_artefact_query(
+        item_uuid=item_uuid,
+        tag_name=tag_name,
+        platform_name=platform_name,
+        category_name=category_name,
+        artefact_type_name=artefact_type_name,
+        select_all=select_all,
+        root_only=True,
+    )
 
     artefacts = query.all()
 
