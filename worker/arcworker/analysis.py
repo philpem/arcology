@@ -1931,6 +1931,19 @@ class AnalysisWorker:
             },
         )
 
+        # Queue RISCOS_MODULE_PARSE for modules inside the archive.
+        # The initial parse (queued by queue_partition_follow_ups after
+        # FILE_EXTRACTION) runs before archive contents are registered,
+        # so it never sees files inside archives.
+        self.api.queue_analysis(
+            artefact['uuid'],
+            AnalysisType.RISCOS_MODULE_PARSE.value,
+            hints={
+                'partition_uuid': partition_uuid,
+                'extraction_path': str(persistent_output),
+            },
+        )
+
         tool_key = result.get('tool', 'tool').lower().replace(' ', '_')
         po = result.get('process_output')
         details: dict = {
