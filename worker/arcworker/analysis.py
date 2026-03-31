@@ -537,8 +537,29 @@ class AnalysisWorker:
             )
             return
 
-        # Enumerate extracted files to build file listing
-        files = enumerate_extracted_files(extract_dir, acorn=is_acorn)
+        # For ISO 9660 artefacts: parse the ARCHIMEDES extension to obtain
+        # per-file RISC OS filetypes from load/exec addresses.  Also enable
+        # acorn='auto' so that any files whose names already carry a ',xxx'
+        # suffix (e.g. from Rock Ridge NM entries preserved by 7z) are handled
+        # by the existing suffix-parsing logic.
+        iso_filetype_map: dict[str, str] | None = None
+        if artefact_type == ArtefactType.ISO.value:
+            from .tools.iso_riscos import parse_iso_riscos_filetypes
+            iso_filetype_map = parse_iso_riscos_filetypes(input_path)
+
+        # Enumerate extracted files to build file listing.
+        # ISO artefacts use acorn='auto' to catch ',xxx' suffix filenames;
+        # Acorn disc images (is_acorn=True) always parse the suffix.
+        acorn_mode: bool | str
+        if artefact_type == ArtefactType.ISO.value:
+            acorn_mode = 'auto'
+        else:
+            acorn_mode = is_acorn
+        files = enumerate_extracted_files(
+            extract_dir,
+            acorn=acorn_mode,
+            filetype_map=iso_filetype_map,
+        )
 
         # Extract disc metadata from DIM report output (if Acorn)
         disc_name = None
@@ -551,6 +572,8 @@ class AnalysisWorker:
         # Determine filesystem type
         if filesystem:
             fs_type = filesystem
+        elif artefact_type == ArtefactType.ISO.value:
+            fs_type = 'iso9660'
         elif container_format:
             container_lower = container_format.lower()
             if 'adfs' in container_lower:
@@ -568,7 +591,8 @@ class AnalysisWorker:
         # container_format so the UI hover tooltip is populated.  DIM sets this
         # automatically for Acorn images; for DOS images DIM is never used.
         if not container_format:
-            _fat_labels = {
+            _iso_and_fat_labels = {
+                'iso9660': 'ISO 9660',
                 'fat12': 'DOS FAT12',
                 'fat16': 'DOS FAT16',
                 'fat32': 'DOS FAT32',
@@ -576,7 +600,7 @@ class AnalysisWorker:
                 'dos':   'DOS',
                 'msdos': 'MS-DOS',
             }
-            container_format = _fat_labels.get(fs_type)
+            container_format = _iso_and_fat_labels.get(fs_type)
 
         # Register partition and file listing in the database
         partition = self.api.register_file_listing(
