@@ -21,7 +21,7 @@
 #################
 # Build HxCFE
 #################
-FROM debian:stable AS build-hxcfe
+FROM ubuntu:24.04 AS build-hxcfe
 
 # Pinned commit SHA for the tag HxCFloppyEmulator_V2_16_13_1.
 # Update this when upgrading HxCFE.  To find the SHA for a new tag:
@@ -56,7 +56,7 @@ RUN \
 #################
 # Build Fluxfox
 #################
-FROM debian:stable AS build-fluxfox
+FROM ubuntu:24.04 AS build-fluxfox
 
 # Pinned commit SHA — update this when upgrading fluxfox.
 # Current as of 2026-03-26; branch: main
@@ -85,7 +85,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 #################
 # Build DiscImageManager
 #################
-FROM debian:stable AS build-discimagemanager
+FROM ubuntu:24.04 AS build-discimagemanager
 
 # Pinned commit SHAs — update these when upgrading DiscImageManager or its deps.
 # Current as of 2026-03-26.
@@ -156,7 +156,7 @@ RUN	\
 #################
 # Build local extraction tools
 #################
-FROM debian:stable AS build-arcology-tools
+FROM ubuntu:24.04 AS build-arcology-tools
 
 # Disable prompt during package installation
 ARG DEBIAN_FRONTEND=noninteractive
@@ -177,7 +177,7 @@ RUN \
 #################
 # Build riscosarc
 #################
-FROM debian:stable AS build-riscosarc
+FROM ubuntu:24.04 AS build-riscosarc
 
 # Pinned commit SHA — update this when upgrading riscosarc.
 # Current as of 2026-03-26; branch: master
@@ -202,7 +202,7 @@ COPY worker/tools/riscosarc /usr/local/bin/
 #################
 # Build TBAFS extractor
 #################
-FROM debian:stable AS build-tbafs
+FROM ubuntu:24.04 AS build-tbafs
 
 # Pinned commit SHA — update this when upgrading tbafs.
 # Current as of 2026-03-26; branch: main
@@ -223,7 +223,7 @@ RUN git clone https://github.com/mattgodbolt/tbafs.git /src/tbafs && \
 # Assemble final image with tools + worker
 #################
 
-FROM debian:stable
+FROM ubuntu:24.04
 
 LABEL maintainer="philpem@philpem.me.uk"
 LABEL version="0.1"
@@ -267,7 +267,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 # - default-jre: Java JRE for riscosarc
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 	--mount=type=cache,target=/var/lib/apt,sharing=locked \
-	sed -i -e 's/main/main non-free/' /etc/apt/sources.list.d/debian.sources && \
+	sed -i '/^Components:/ s/$/ multiverse/' /etc/apt/sources.list.d/ubuntu.sources && \
 	apt -y update && apt -y upgrade && \
 	apt -y install \
 		python3 python3-pip python3-dev python3-requests python3-numpy git \
@@ -299,6 +299,11 @@ RUN git clone --recurse-submodules https://github.com/philpem/drawfile-render /o
     git -C /opt/drawfile_render submodule update --init --recursive
 # Make spritefile (bundled in drawfile_render repo) importable by the worker
 ENV PYTHONPATH="/opt/drawfile_render"
+
+# Set locale so that unzip -O iso-8859-1 can output correctly-encoded UTF-8
+# filenames. Without this, the default C locale causes unzip to fail the
+# charset conversion from ISO-8859-1 to the target encoding.
+ENV LANG=C.UTF-8
 
 # Clean up build dependencies
 RUN apt -y remove python3-dev git && apt -y autoremove
