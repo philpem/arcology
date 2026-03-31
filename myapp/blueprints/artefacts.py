@@ -273,7 +273,7 @@ class FileSearchForm(FlaskForm):
         ('hide', 'Products: Hide'),
         ('only', 'Products: Only'),
     ], default='', validators=[Optional()])
-    show_directories = BooleanField('Show directories', default=False)
+    show_directories = BooleanField('Show Dirs', default=False)
 
 
 # =============================================================================
