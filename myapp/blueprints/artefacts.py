@@ -24,6 +24,7 @@ from werkzeug.utils import secure_filename
 from ..extensions import db
 from ..permissions import require_permission
 from ..utils.slugs import generate_slug, ensure_unique_slug, lookup_by_identifier, lookup_artefact_by_id
+from ..riscos_filetypes import lookup_filetype_hex
 
 
 def safe_original_filename(filename: str) -> str:
@@ -919,9 +920,16 @@ def _render_artefact_view(artefact):
             files_query = files_query.filter(ExtractedFile.filename.ilike(f'%{fn}%'))
 
     if file_form.filetype.data:
-        # Strip a leading '#' or '&' that users might include with the hex value
-        ft = file_form.filetype.data.lower().lstrip('#&')
-        files_query = files_query.filter(ExtractedFile.risc_os_filetype == ft)
+        # Strip a leading '#' or '&' that users might include with the hex value,
+        # then resolve either a hex code or a name (e.g. "Drawfile") to a hex code.
+        ft_raw = file_form.filetype.data.strip().lstrip('#&')
+        ft = lookup_filetype_hex(ft_raw)
+        if ft is None:
+            # Not a known name or valid hex — no files can match
+            from sqlalchemy import false as _false
+            files_query = files_query.filter(_false())
+        else:
+            files_query = files_query.filter(ExtractedFile.risc_os_filetype == ft)
 
     if file_form.path.data:
         path_filter = file_form.path.data.strip()
