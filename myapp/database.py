@@ -463,6 +463,9 @@ class Artefact(db.Model):
     mastering_indicators: Mapped[list["ArtefactMastering"]] = relationship(
         back_populates="artefact", cascade="all, delete-orphan"
     )
+    riscos_modules: Mapped[list["RiscosModule"]] = relationship(
+        back_populates="artefact", cascade="all, delete-orphan"
+    )
 
     # Derived artefacts (e.g., sector image from flux decode)
     parent_artefact: Mapped[Optional["Artefact"]] = relationship(
@@ -665,6 +668,27 @@ class ArtefactMastering(db.Model):
     decoded: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Decoded mastering data string
 
     artefact: Mapped["Artefact"] = relationship(back_populates="mastering_indicators")
+
+
+class RiscosModule(db.Model):
+    """RISC OS relocatable module metadata extracted from a disc or archive.
+
+    Populated server-side when a RISCOS_MODULE_PARSE analysis completes.
+    One row per module file found (a disc image may contain many).
+    """
+    __tablename__ = 'riscos_modules'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    artefact_id: Mapped[int] = mapped_column(ForeignKey('artefacts.id'), index=True)
+    title_string: Mapped[str] = mapped_column(String(255), index=True)  # Internal module name (e.g., "WindowManager")
+    help_title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Display name from help string (e.g., "Window Manager")
+    version: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # e.g., "2.05"
+    date: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # ISO date (e.g., "1990-01-31")
+    swi_chunk: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # SWI base number
+    file_path: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)  # Path within extraction
+    module_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)  # SHA-256
+
+    artefact: Mapped["Artefact"] = relationship(back_populates="riscos_modules")
 
 
 # =============================================================================

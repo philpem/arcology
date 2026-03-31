@@ -83,4 +83,7 @@ class AnalysisType(enum.Enum):
     # Format conversion / viewing
     FORMAT_CONVERT         = "format_convert"         # Convert native formats to portable equivalents (Sprite→PNG, Draw→PNG/SVG, Text→UTF-8)
 
+    # RISC OS / Acorn specific
+    RISCOS_MODULE_PARSE    = "riscos_module_parse"    # Parse RISC OS relocatable module metadata (title, version, date, SWIs, commands)
+
 # vim: ts=4 sw=4 et

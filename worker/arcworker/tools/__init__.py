@@ -37,6 +37,7 @@ from .archives import (
 )
 from .armlock import detect_armlock, remove_armlock
 from .acorn_images import convert_sprite, convert_draw
+from .riscos_module import decode_module, HelpParseError, ModuleParseError
 
 __all__ = [
     'run_tool',
@@ -69,6 +70,9 @@ __all__ = [
     'remove_armlock',
     'convert_sprite',
     'convert_draw',
+    'decode_module',
+    'HelpParseError',
+    'ModuleParseError',
 ]
 
 # vim: ts=4 sw=4 et

@@ -3,7 +3,7 @@ import click
 from ..extensions import db
 from ..database import (
     Analysis, AnalysisType, AnalysisStatus,
-    Partition, ArtefactProtection, ArtefactMastering,
+    Partition, ArtefactProtection, ArtefactMastering, RiscosModule,
 )
 
 
@@ -78,15 +78,38 @@ def _handle_partition(analysis, details):
     return 0
 
 
+def _handle_riscos_modules(analysis, details):
+    RiscosModule.query.filter_by(artefact_id=analysis.artefact_id).delete()
+    count = 0
+    for mod in details.get('modules', []):
+        title = mod.get('title_string', '')
+        if not title:
+            continue
+        db.session.add(RiscosModule(
+            artefact_id=analysis.artefact_id,
+            title_string=title,
+            help_title=mod.get('help_title'),
+            version=mod.get('version'),
+            date=mod.get('date'),
+            swi_chunk=mod.get('swi_chunk'),
+            file_path=mod.get('file_path'),
+            module_hash=mod.get('hash'),
+        ))
+        count += 1
+    return count
+
+
 @click.command('rebuild-search-index')
 def rebuild_search_index():
     """Rebuild the search index tables from completed analysis results.
 
     Reads all completed DISC_PROTECTION_DETECT, DISC_MASTERING_DETECT,
-    and PARTITION_DETECT analyses and writes structured rows to:
+    PARTITION_DETECT, and RISCOS_MODULE_PARSE analyses and writes
+    structured rows to:
       - artefact_protection
       - artefact_mastering
       - partitions.gnu_file_type
+      - riscos_modules
 
     The command is idempotent: existing rows are replaced on each run.
     Run this after applying the 20260309_000000 migration, or any time
@@ -109,12 +132,18 @@ def rebuild_search_index():
         'PARTITION_DETECT',
         _handle_partition,
     )
+    mod_count = _process_analyses(
+        AnalysisType.RISCOS_MODULE_PARSE,
+        'RISCOS_MODULE_PARSE',
+        _handle_riscos_modules,
+    )
 
     db.session.commit()
     click.echo(
         f"Done. Protection indicators: {prot_count}, "
         f"mastering indicators: {mast_count}, "
-        f"partitions updated: {part_count}."
+        f"partitions updated: {part_count}, "
+        f"RISC OS modules: {mod_count}."
     )
 
 # vim: ts=4 sw=4 et

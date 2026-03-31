@@ -91,6 +91,17 @@ def create_app(config_name=None):
     app.jinja_env.filters['format_filetype'] = format_filetype
     app.jinja_env.filters['filetype_name'] = get_filetype_name
 
+    # Analysis type display names — handles cases where the default
+    # value.replace('_', ' ').title() produces wrong capitalisation.
+    _ANALYSIS_TYPE_DISPLAY = {
+        'riscos_module_parse': 'RISC OS Module parse',
+    }
+    def _format_analysis_type(value):
+        """Format an analysis type enum value for display."""
+        s = value.value if hasattr(value, 'value') else str(value)
+        return _ANALYSIS_TYPE_DISPLAY.get(s, s.replace('_', ' ').title())
+    app.jinja_env.filters['format_analysis_type'] = _format_analysis_type
+
     # enable database logging (if enabled)
     if app.config.get('DEBUG_DB_LOG', False):
         from flask.logging import default_handler

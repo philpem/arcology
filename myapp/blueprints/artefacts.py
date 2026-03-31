@@ -50,6 +50,7 @@ from ..database import (
     Analysis, AnalysisType, AnalysisStatus, Platform, StorageDirectory, Tag,
     ArtefactProtection, ArtefactMastering,
     HashDatabase, KnownProduct, KnownFile, RecognisedProduct,
+    RiscosModule,
 )
 
 ROUTENAME = __name__.replace('.', '_')
@@ -750,6 +751,7 @@ def _render_viewer(artefact):
         return outputs
 
     viewer_status = None  # 'pending', 'failed', 'partial', or None (ready)
+    file_filter = request.args.get('file')
 
     if artefact.artefact_type in _viewable_types:
         # Mode 1: Artefact is itself a viewable type — show its own FORMAT_CONVERT output
@@ -792,10 +794,7 @@ def _render_viewer(artefact):
             if c.status in (AnalysisStatus.PENDING, AnalysisStatus.RUNNING)
         )
 
-        # Optional ?file= filter: show only outputs for a specific source file
-        file_filter = request.args.get('file')
-
-        # Collect outputs grouped by source_file
+        # Collect outputs grouped by source_file (filtered by ?file= if set)
         from collections import defaultdict
         groups: dict[str, list] = defaultdict(list)
         for conv in convs:
@@ -823,11 +822,46 @@ def _render_viewer(artefact):
         elif pending_count > 0:
             viewer_status = 'partial'
 
+    # Look up RISC OS module detail when ?file= matches a module path
+    module_detail = None
+    if file_filter:
+        # Try the RiscosModule table first for basic fields
+        mod_row = RiscosModule.query.filter_by(
+            artefact_id=artefact.id, file_path=file_filter
+        ).first()
+        if mod_row:
+            module_detail = {
+                'title_string': mod_row.title_string,
+                'help_title': mod_row.help_title,
+                'version': mod_row.version,
+                'date': mod_row.date,
+                'swi_chunk': mod_row.swi_chunk,
+                'module_hash': mod_row.module_hash,
+                'file_path': mod_row.file_path,
+            }
+            # Enrich with swi_names and module_flags from the analysis JSON
+            mod_analysis = Analysis.query.filter_by(
+                artefact_id=artefact.id,
+                analysis_type=AnalysisType.RISCOS_MODULE_PARSE,
+                status=AnalysisStatus.COMPLETED,
+            ).order_by(Analysis.id.desc()).first()
+            if mod_analysis:
+                try:
+                    details = json.loads(mod_analysis.details or '{}')
+                except (json.JSONDecodeError, TypeError):
+                    details = {}
+                for m in details.get('modules', []):
+                    if m.get('file_path') == file_filter:
+                        module_detail['swi_names'] = m.get('swi_names')
+                        module_detail['module_flags'] = m.get('module_flags')
+                        break
+
     return render_template(
         'artefacts/viewer.html',
         artefact=artefact,
         output_groups=output_groups,
         viewer_status=viewer_status,
+        module_detail=module_detail,
     )
 
 
@@ -1166,6 +1200,14 @@ def _render_artefact_view(artefact):
                 if sf:
                     viewable_filenames.add(sf)
 
+    # Build module_info: dict mapping ExtractedFile.path → module metadata for
+    # files with filetype ffa.  Used by the file listing template to show a
+    # tooltip with the module's internal name, version, and date.
+    module_info = {}
+    for mod in artefact.riscos_modules:
+        if mod.file_path:
+            module_info[mod.file_path] = mod
+
     # "View" button: show if artefact is viewable type, or has any FORMAT_CONVERT
     has_converted_outputs = artefact.artefact_type in _viewable_types
     if not has_converted_outputs:
@@ -1237,7 +1279,8 @@ def _render_artefact_view(artefact):
                            letter_pages=letter_pages,
                            current_letter=current_letter,
                            viewable_filenames=viewable_filenames,
-                           has_converted_outputs=has_converted_outputs)
+                           has_converted_outputs=has_converted_outputs,
+                           module_info=module_info)
 
 
 @blueprint.route('/<string:uuid>/add-to-hashdb', methods=['POST'])

@@ -12,7 +12,7 @@ from sqlalchemy import or_, and_, distinct
 from ..extensions import db
 from ..database import (
     Item, Artefact, Partition, ExtractedFile, FilesystemType,
-    ArtefactProtection, ArtefactMastering, Tag, artefact_tags,
+    ArtefactProtection, ArtefactMastering, RiscosModule, Tag, artefact_tags,
 )
 from ..riscos_filetypes import lookup_filetype_hex
 
@@ -262,6 +262,32 @@ def _search_mastering(tokens):
     return all_results, truncated
 
 
+def _search_modules(tokens):
+    """Search RiscosModule by module title_string."""
+    all_results = []
+    truncated = False
+    for mod_val in tokens.get('module', []):
+        q = (
+            db.session.query(RiscosModule, Artefact, Item)
+            .join(Artefact, RiscosModule.artefact_id == Artefact.id)
+            .join(Item, Artefact.item_id == Item.id)
+            .filter(_ilike(RiscosModule.title_string, mod_val))
+            .order_by(Item.name, Artefact.label)
+            .limit(RESULT_LIMIT + 1)
+            .all()
+        )
+        deduped = _dedup_by_artefact(q)
+        if len(deduped) > RESULT_LIMIT:
+            truncated = True
+            deduped = deduped[:RESULT_LIMIT]
+        all_results.extend([
+            {'type': 'module', 'module_title': m.title_string,
+             'module_version': m.version, 'artefact': a, 'item': i}
+            for m, a, i in deduped
+        ])
+    return all_results, truncated
+
+
 def _search_tags(tokens):
     """Search artefacts by tag name."""
     all_results = []
@@ -404,6 +430,13 @@ def _run_search(tokens: dict) -> dict:
         if trunc:
             results['truncated']['artefacts'] = True
         results['artefacts'].extend(mast_results)
+
+    # RISC OS module search
+    if 'module' in tokens:
+        mod_results, trunc = _search_modules(tokens)
+        if trunc:
+            results['truncated']['artefacts'] = True
+        results['artefacts'].extend(mod_results)
 
     # Tag search
     if 'tag' in tokens:

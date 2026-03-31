@@ -106,6 +106,10 @@ class TestParseQuery(unittest.TestCase):
         tokens = self.parse('mastering:traceback')
         self.assertEqual(tokens.get('mastering'), ['traceback'])
 
+    def test_module_key(self):
+        tokens = self.parse('module:WindowManager')
+        self.assertEqual(tokens.get('module'), ['WindowManager'])
+
     def test_tag_key(self):
         tokens = self.parse('tag:bbc-micro')
         self.assertEqual(tokens.get('tag'), ['bbc-micro'])
@@ -236,7 +240,7 @@ class TestSearchLogic(unittest.TestCase):
         from myapp.extensions import db as _db
         from myapp.database import (
             Item, Artefact, Partition, ExtractedFile,
-            ArtefactProtection, ArtefactMastering, Tag,
+            ArtefactProtection, ArtefactMastering, RiscosModule, Tag,
             FilesystemType, StorageDirectory,
         )
         from shared.enums import ArtefactType
@@ -342,6 +346,25 @@ class TestSearchLogic(unittest.TestCase):
                 mastering_type='formaster',
                 track=78,
                 decoded='1990-01-01',
+            ))
+
+            # RISC OS modules
+            _db.session.add(RiscosModule(
+                artefact_id=art.id,
+                title_string='WindowManager',
+                help_title='Window Manager',
+                version='2.05',
+                date='1990-01-31',
+                swi_chunk=0x400c0,
+                file_path='$.Modules.WindowManager',
+            ))
+            _db.session.add(RiscosModule(
+                artefact_id=art.id,
+                title_string='ADFS',
+                help_title='ADFS',
+                version='2.30',
+                date='1990-02-15',
+                file_path='$.Modules.ADFS',
             ))
 
             # Tags
@@ -593,6 +616,45 @@ class TestSearchLogic(unittest.TestCase):
         results = self._search('mastering:nonexistent_type')
         mast_results = [r for r in results['artefacts'] if r['type'] == 'mastering']
         self.assertEqual(mast_results, [])
+
+    # ------------------------------------------------------------------
+    # RISC OS module searches
+    # ------------------------------------------------------------------
+
+    def test_module_search_exact(self):
+        results = self._search('module:WindowManager')
+        mod_results = [r for r in results['artefacts'] if r['type'] == 'module']
+        self.assertTrue(len(mod_results) > 0)
+        self.assertEqual(mod_results[0]['module_title'], 'WindowManager')
+        self.assertEqual(mod_results[0]['module_version'], '2.05')
+
+    def test_module_search_wildcard(self):
+        results = self._search('module:Window*')
+        mod_results = [r for r in results['artefacts'] if r['type'] == 'module']
+        self.assertTrue(len(mod_results) > 0)
+
+    def test_module_search_case_insensitive(self):
+        results = self._search('module:windowmanager')
+        mod_results = [r for r in results['artefacts'] if r['type'] == 'module']
+        self.assertTrue(len(mod_results) > 0)
+
+    def test_module_search_second_module(self):
+        results = self._search('module:ADFS')
+        mod_results = [r for r in results['artefacts'] if r['type'] == 'module']
+        self.assertTrue(len(mod_results) > 0)
+
+    def test_module_search_no_match(self):
+        results = self._search('module:NonExistentModule')
+        mod_results = [r for r in results['artefacts'] if r['type'] == 'module']
+        self.assertEqual(mod_results, [])
+
+    def test_module_search_deduplication(self):
+        # Both modules belong to the same artefact; searching ADFS* should
+        # only produce one result per artefact.
+        results = self._search('module:ADFS*')
+        mod_results = [r for r in results['artefacts'] if r['type'] == 'module']
+        art_ids = [r['artefact'].id for r in mod_results]
+        self.assertEqual(len(art_ids), len(set(art_ids)))
 
     # ------------------------------------------------------------------
     # Tag searches
