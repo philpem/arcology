@@ -10,7 +10,7 @@
         <li class="breadcrumb-item"><a href="{{ artefact_url(analysis.artefact.root_artefact) }}">{{ analysis.artefact.root_artefact.label }}</a></li>
         {% endif %}
         <li class="breadcrumb-item"><a href="{{ artefact_url(analysis.artefact) }}">{{ analysis.artefact.label }}</a></li>
-        <li class="breadcrumb-item active">{{ analysis.analysis_type.value|replace('_', ' ')|title }} (#{{ analysis.id }})</li>
+        <li class="breadcrumb-item active">{{ analysis.analysis_type|format_analysis_type }} (#{{ analysis.id }})</li>
     </ol>
 </nav>
 
@@ -39,7 +39,7 @@
             <div class="card-header"><i class="bi bi-info-circle"></i> Details</div>
             <div class="card-body">
                 <dl class="mb-0">
-                    <dt>Type</dt><dd>{{ analysis.analysis_type.value|replace('_', ' ')|title }}</dd>
+                    <dt>Type</dt><dd>{{ analysis.analysis_type|format_analysis_type }}</dd>
                     <dt>Artefact</dt><dd><a href="{{ artefact_url(analysis.artefact) }}">{{ analysis.artefact.label }}</a></dd>
                     <dt>Tool</dt><dd>{{ analysis.tool_name or '-' }}{% if analysis.tool_version %} v{{ analysis.tool_version }}{% endif %}</dd>
                     <dt>Created</dt><dd>{{ analysis.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</dd>
