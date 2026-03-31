@@ -42,6 +42,34 @@ from .tools import (
 )
 
 
+def _pling_reversed_path(db_path: str) -> str | None:
+    """
+    Derive the ISO 9660 on-disk path from a pling-corrected DB path.
+
+    When files are extracted from a RISC OS ISO 9660 image, directory names
+    that originally began with '!' (pling) are stored on disc with '_' in
+    place of '!' (ISO 9660 forbids '!').  Our rename map fixes the DB path
+    to use '!', but the physical file on disk still uses '_'.
+
+    This function reconstructs the disk path by replacing the leading '!'
+    with '_' in every path component.  Returns None if no component starts
+    with '!' (no substitution needed).
+
+    Example: '!ARCFS/ARCFS' → '_ARCFS/ARCFS'
+             'DIR/!SUB/FILE' → 'DIR/_SUB/FILE'
+    """
+    parts = db_path.replace('\\', '/').split('/')
+    new_parts = []
+    changed = False
+    for part in parts:
+        if part.startswith('!'):
+            new_parts.append('_' + part[1:])
+            changed = True
+        else:
+            new_parts.append(part)
+    return '/'.join(new_parts) if changed else None
+
+
 def analysis_handler(description: str):
     """
     Decorator for analysis handler methods.
@@ -1653,6 +1681,17 @@ class AnalysisWorker:
             candidates.append(Path(str(archive_path) + ',' + risc_os_filetype.upper()))
         candidates.append(archive_path)  # plain name: DOS, UNIX, or no-suffix fallback
 
+        # Also try with pling ('!') replaced by '_' in each path component.
+        # ISO 9660 stores '!' as '_'; the DB path is pling-corrected but the
+        # physical file on disk still uses '_'.
+        pling_disk = _pling_reversed_path(disk_relative_path)
+        if pling_disk:
+            pling_base = Path(extraction_path) / pling_disk
+            if risc_os_filetype:
+                candidates.append(Path(str(pling_base) + ',' + risc_os_filetype.lower()))
+                candidates.append(Path(str(pling_base) + ',' + risc_os_filetype.upper()))
+            candidates.append(pling_base)
+
         # For each candidate also try a Latin-1 byte variant.  Acorn filenames
         # can contain raw Latin-1 bytes (e.g. hard space 0xA0); sanitize_path()
         # converts these to proper Unicode (U+00A0) for the database, but the
@@ -2600,6 +2639,16 @@ class AnalysisWorker:
                 candidates.append(extract_dir / (db_path + ',' + risc_os_filetype.lower()))
                 candidates.append(extract_dir / (db_path + ',' + risc_os_filetype.upper()))
             candidates.append(extract_dir / db_path)
+
+            # Also try with pling ('!') replaced by '_' in each path component.
+            # ISO 9660 stores '!' as '_'; the DB path is pling-corrected but the
+            # physical file on disk still uses '_'.
+            pling_disk = _pling_reversed_path(db_path)
+            if pling_disk:
+                if risc_os_filetype:
+                    candidates.append(extract_dir / (pling_disk + ',' + risc_os_filetype.lower()))
+                    candidates.append(extract_dir / (pling_disk + ',' + risc_os_filetype.upper()))
+                candidates.append(extract_dir / pling_disk)
 
             # Also try Latin-1 byte variants
             all_candidates = []
