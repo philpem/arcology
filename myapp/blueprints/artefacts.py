@@ -1405,18 +1405,19 @@ def _render_artefact_view(artefact):
         .all()
     )
 
-    # Build a mapping {file_id: [non-direct restrictions]} for display in the
-    # file listing.  Covers two directions:
+    # Build two mappings for non-direct restriction display in the file listing:
     #
-    #   Downward (ancestor → file): a file inside a restricted archive inherits
-    #   that archive's restrictions.
+    #   file_ancestor_restrictions {file_id: [restrictions]}
+    #     A file inside a restricted archive — the restriction comes from above.
     #
-    #   Upward (descendant → archive): an archive that contains a restricted
-    #   file is itself shown as restricted.
+    #   file_descendant_restrictions {file_id: [restrictions]}
+    #     An archive whose contents include a restricted file — the restriction
+    #     originates from below.
     #
     # Strategy: one query for the parent_id map of all files in the artefact
     # tree, then two in-memory passes.
-    file_inherited_restrictions: dict[int, list] = {}
+    file_ancestor_restrictions: dict[int, list] = {}
+    file_descendant_restrictions: dict[int, list] = {}
     if artefact_file_restrictions:
         # direct map: file_id -> [restriction objects]
         _direct_map: dict[int, list] = {}
@@ -1434,11 +1435,11 @@ def _render_artefact_view(artefact):
         _parent_map: dict[int, int | None] = {row.id: row.parent_file_id for row in _parent_rows}
 
         # Pass 1 — upward: for every directly restricted file, mark all of
-        # its ancestor archives so they appear restricted in the listing.
+        # its ancestor archives as having a restriction originating from below.
         for restricted_id, restr_list in _direct_map.items():
             pid = _parent_map.get(restricted_id)
             while pid is not None:
-                file_inherited_restrictions.setdefault(pid, []).extend(restr_list)
+                file_descendant_restrictions.setdefault(pid, []).extend(restr_list)
                 pid = _parent_map.get(pid)
 
         # Pass 2 — downward (current page only): for files on this page that
@@ -1454,7 +1455,14 @@ def _render_artefact_view(artefact):
                     inherited.extend(_direct_map[pid])
                 pid = _parent_map.get(pid)
             if inherited:
-                file_inherited_restrictions.setdefault(f.id, []).extend(inherited)
+                file_ancestor_restrictions.setdefault(f.id, []).extend(inherited)
+
+    # Legacy alias used by the download-button logic in the template — the
+    # effective non-direct restrictions are the union of both directions.
+    file_inherited_restrictions = {
+        fid: file_ancestor_restrictions.get(fid, []) + file_descendant_restrictions.get(fid, [])
+        for fid in set(file_ancestor_restrictions) | set(file_descendant_restrictions)
+    }
 
     return render_template('artefacts/view.html',
                            artefact=artefact,
@@ -1493,7 +1501,9 @@ def _render_artefact_view(artefact):
                            has_converted_outputs=has_converted_outputs,
                            module_info=module_info,
                            artefact_file_restrictions=artefact_file_restrictions,
-                           file_inherited_restrictions=file_inherited_restrictions)
+                           file_inherited_restrictions=file_inherited_restrictions,
+                           file_ancestor_restrictions=file_ancestor_restrictions,
+                           file_descendant_restrictions=file_descendant_restrictions)
 
 
 @blueprint.route('/<string:uuid>/add-to-hashdb', methods=['POST'])

@@ -188,10 +188,17 @@
                                   {% for r in file.restrictions %}
                                 <span class="badge bg-danger ms-1" title="{{ r.reason or 'File restriction' }}"><i class="bi bi-exclamation-triangle-fill"></i> {{ r.restriction_type.label }}</span>
                                   {% endfor %}
-                                {% elif file_inherited_restrictions.get(file.id) %}
-                                  {# Inherited from enclosing archive — show a dimmer badge #}
-                                  {% for r in file_inherited_restrictions[file.id] %}
+                                {% endif %}
+                                {% if file_ancestor_restrictions.get(file.id) %}
+                                  {# Restriction originates from an enclosing archive #}
+                                  {% for r in file_ancestor_restrictions[file.id] %}
                                 <span class="badge bg-warning text-dark ms-1" title="Inherited from enclosing archive"><i class="bi bi-exclamation-triangle-fill"></i> {{ r.restriction_type.label }}</span>
+                                  {% endfor %}
+                                {% endif %}
+                                {% if file_descendant_restrictions.get(file.id) %}
+                                  {# Restriction originates from a file contained within this archive #}
+                                  {% for r in file_descendant_restrictions[file.id] %}
+                                <span class="badge bg-warning text-dark ms-1" title="Contains restricted files"><i class="bi bi-exclamation-triangle-fill"></i> {{ r.restriction_type.label }}</span>
                                   {% endfor %}
                                 {% endif %}
                                 {# ── Manage file restrictions button (write users only) ── #}
