@@ -50,7 +50,7 @@ from ..database import (
     Analysis, AnalysisType, AnalysisStatus, Platform, StorageDirectory, Tag,
     ArtefactProtection, ArtefactMastering,
     HashDatabase, KnownProduct, KnownFile, RecognisedProduct,
-    RiscosModule,
+    RiscosModule, ArtefactRestriction, artefact_tags,
 )
 
 ROUTENAME = __name__.replace('.', '_')
@@ -547,37 +547,35 @@ def reset_artefact_for_reanalysis(artefact: Artefact, commit: bool = True):
     # Collect all derived artefact IDs (including nested) for bulk deletion.
     all_derived_ids = get_all_derived_artefact_ids(artefact)
 
+    # Collect all artefact IDs to clean (derived + root) for bulk operations.
+    all_ids = all_derived_ids + [artefact.id]
+
+    # Null out derived_from_analysis_id before deleting analyses, to avoid
+    # FK violations from artefacts -> analyses.
     if all_derived_ids:
-        # Bulk-delete analyses, partitions, extracted files, protection and
-        # mastering rows for all derived artefacts in a few queries instead
-        # of loading each ORM object individually.
-        Analysis.query.filter(Analysis.artefact_id.in_(all_derived_ids)).delete(synchronize_session=False)
-        ExtractedFile.query.filter(
-            ExtractedFile.partition_id.in_(
-                db.session.query(Partition.id).filter(Partition.artefact_id.in_(all_derived_ids))
-            )
-        ).delete(synchronize_session=False)
-        Partition.query.filter(Partition.artefact_id.in_(all_derived_ids)).delete(synchronize_session=False)
-        ArtefactProtection.query.filter(ArtefactProtection.artefact_id.in_(all_derived_ids)).delete(synchronize_session=False)
-        ArtefactMastering.query.filter(ArtefactMastering.artefact_id.in_(all_derived_ids)).delete(synchronize_session=False)
-        # Break self-referential FK links before bulk-deleting derived artefacts.
+        Artefact.query.filter(Artefact.id.in_(all_derived_ids)).update(
+            {Artefact.derived_from_analysis_id: None}, synchronize_session=False)
+
+    # Bulk-delete all referencing rows across every FK table in one pass,
+    # covering both derived artefacts and the root artefact itself.
+    Analysis.query.filter(Analysis.artefact_id.in_(all_ids)).delete(synchronize_session=False)
+    ExtractedFile.query.filter(
+        ExtractedFile.partition_id.in_(
+            db.session.query(Partition.id).filter(Partition.artefact_id.in_(all_ids))
+        )
+    ).delete(synchronize_session=False)
+    Partition.query.filter(Partition.artefact_id.in_(all_ids)).delete(synchronize_session=False)
+    ArtefactProtection.query.filter(ArtefactProtection.artefact_id.in_(all_ids)).delete(synchronize_session=False)
+    ArtefactMastering.query.filter(ArtefactMastering.artefact_id.in_(all_ids)).delete(synchronize_session=False)
+    RiscosModule.query.filter(RiscosModule.artefact_id.in_(all_ids)).delete(synchronize_session=False)
+    ArtefactRestriction.query.filter(ArtefactRestriction.artefact_id.in_(all_ids)).delete(synchronize_session=False)
+    db.session.execute(artefact_tags.delete().where(artefact_tags.c.artefact_id.in_(all_ids)))
+
+    # Delete derived artefacts: break self-referential FK, then delete.
+    if all_derived_ids:
         Artefact.query.filter(Artefact.id.in_(all_derived_ids)).update(
             {Artefact.parent_artefact_id: None}, synchronize_session=False)
         Artefact.query.filter(Artefact.id.in_(all_derived_ids)).delete(synchronize_session=False)
-
-    # Bulk-delete analyses and partitions directly on this artefact.
-    Analysis.query.filter_by(artefact_id=artefact.id).delete(synchronize_session=False)
-    ExtractedFile.query.filter(
-        ExtractedFile.partition_id.in_(
-            db.session.query(Partition.id).filter(Partition.artefact_id == artefact.id)
-        )
-    ).delete(synchronize_session=False)
-    Partition.query.filter_by(artefact_id=artefact.id).delete(synchronize_session=False)
-
-    # Clear search index tables — protection/mastering rows are not cascade-deleted
-    # with analyses, so must be explicitly removed so re-analysis starts fresh.
-    ArtefactProtection.query.filter_by(artefact_id=artefact.id).delete()
-    ArtefactMastering.query.filter_by(artefact_id=artefact.id).delete()
 
     if commit:
         db.session.commit()
