@@ -151,17 +151,11 @@
                 <li class="list-group-item text-muted">No analyses</li>
                 {% endfor %}
             </ul>
-            {% if has_hidden_analyses or show_all_analyses %}
+            {% if has_hidden_analyses %}
             <div class="card-footer">
-                {% if show_all_analyses %}
-                <a href="{{ artefact_url(artefact) }}" class="btn btn-sm btn-outline-secondary">
-                    <i class="bi bi-funnel"></i> Show Recent Only
-                </a>
-                {% elif has_hidden_analyses %}
-                <a href="{{ artefact_url(artefact, show_all_analyses='true') }}" class="btn btn-sm btn-outline-secondary">
+                <a href="{{ url_for('myapp_blueprints_analysis.artefact_analyses', uuid=artefact.uuid) }}" class="btn btn-sm btn-outline-secondary">
                     <i class="bi bi-list"></i> Show All ({{ total_analyses_count }})
                 </a>
-                {% endif %}
             </div>
             {% endif %}
         </div>

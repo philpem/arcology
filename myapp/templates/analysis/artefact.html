@@ -1,0 +1,54 @@
+{% extends "_base.html" %}
+{% from '_pagination.html' import render_pagination %}
+{% block page_title %}Analyses – {{ artefact.label }}{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=artefact.item.url_id) }}">{{ artefact.item.name }}</a></li>
+        <li class="breadcrumb-item"><a href="{{ artefact_url(artefact.root_artefact) }}">{{ artefact.root_artefact.label }}</a></li>
+        <li class="breadcrumb-item active">Analyses</li>
+    </ol>
+</nav>
+
+<h1 class="mb-4"><i class="bi bi-gear"></i> Analyses – {{ artefact.label }}</h1>
+
+<div class="btn-group mb-4">
+    <a href="{{ url_for('myapp_blueprints_analysis.artefact_analyses', uuid=artefact.uuid) }}" class="btn btn-outline-secondary {{ 'active' if not status_filter else '' }}">All</a>
+    <a href="{{ url_for('myapp_blueprints_analysis.artefact_analyses', uuid=artefact.uuid, status='pending') }}" class="btn btn-outline-warning {{ 'active' if status_filter == 'pending' else '' }}">Pending ({{ status_counts.pending }})</a>
+    <a href="{{ url_for('myapp_blueprints_analysis.artefact_analyses', uuid=artefact.uuid, status='running') }}" class="btn btn-outline-info {{ 'active' if status_filter == 'running' else '' }}">Running ({{ status_counts.running }})</a>
+    <a href="{{ url_for('myapp_blueprints_analysis.artefact_analyses', uuid=artefact.uuid, status='completed') }}" class="btn btn-outline-success {{ 'active' if status_filter == 'completed' else '' }}">Completed ({{ status_counts.completed }})</a>
+    <a href="{{ url_for('myapp_blueprints_analysis.artefact_analyses', uuid=artefact.uuid, status='failed') }}" class="btn btn-outline-danger {{ 'active' if status_filter == 'failed' else '' }}">Failed ({{ status_counts.failed }})</a>
+</div>
+
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead><tr><th>Ref</th><th>Type</th><th>Artefact</th><th>Status</th><th>Created</th></tr></thead>
+            <tbody>
+                {% for a in analyses %}
+                <tr>
+                    <td><a href="{{ url_for('myapp_blueprints_analysis.view', uuid=a.uuid) }}">{{ a.uuid[:8] }}</a></td>
+                    <td>{{ a.analysis_type|format_analysis_type }}</td>
+                    <td>
+                        {% if a.artefact_id != artefact.id %}
+                        <a href="{{ artefact_url(a.artefact) }}">{{ a.artefact.label }}</a>
+                        {% else %}
+                        {{ a.artefact.label }}
+                        {% endif %}
+                    </td>
+                    <td><span class="badge {{ a.status.value | status_badge_class }}">{{ a.status.value }}</span></td>
+                    <td>{{ a.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="text-center text-muted">No analyses</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{{ render_pagination(pagination, 'myapp_blueprints_analysis.artefact_analyses', {'uuid': artefact.uuid, 'status': status_filter, 'per_page': request.args.get('per_page')}, valid_per_page=valid_per_page, view_all=view_all) }}
+{% endblock %}
+
+{# vim: ts=4 sw=4 et #}

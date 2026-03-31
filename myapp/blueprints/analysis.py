@@ -13,7 +13,7 @@ from sqlalchemy import case, func
 from sqlalchemy.orm import joinedload
 
 from ..extensions import db
-from ..database import Analysis, AnalysisStatus
+from ..database import Analysis, AnalysisStatus, Artefact
 from ..permissions import require_permission
 from ..utils.pagination import resolve_per_page, VALID_PER_PAGE
 
@@ -60,6 +60,16 @@ def _reset_for_retry(analysis):
     analysis.details = None
 
 
+def _status_sort_order():
+    """CASE expression for ordering analyses: running → pending → failed → completed."""
+    return case(
+        (Analysis.status == AnalysisStatus.RUNNING, 0),
+        (Analysis.status == AnalysisStatus.PENDING, 1),
+        (Analysis.status == AnalysisStatus.FAILED, 2),
+        else_=3,
+    )
+
+
 def _stale_cutoff():
     """Return the datetime before which a RUNNING job is considered stuck."""
     seconds = current_app.config.get('STALE_JOB_TIMEOUT_SECONDS', 3600)
@@ -87,7 +97,7 @@ def index():
     # Eager-load artefact to avoid N+1 lazy loads in template
     pagination = query.options(
         joinedload(Analysis.artefact)
-    ).order_by(Analysis.created_at.desc()).paginate(page=page, per_page=per_page)
+    ).order_by(_status_sort_order(), Analysis.created_at.desc()).paginate(page=page, per_page=per_page)
 
     # Single query for all status counts using conditional aggregation
     counts_row = db.session.query(
@@ -104,6 +114,54 @@ def index():
     }
 
     return render_template('analysis/index.html',
+                           analyses=pagination.items,
+                           pagination=pagination,
+                           status_filter=status_filter,
+                           status_counts=status_counts,
+                           valid_per_page=VALID_PER_PAGE,
+                           view_all=view_all)
+
+
+@blueprint.route('/artefact/<string:uuid>')
+@login_required
+def artefact_analyses(uuid):
+    """List all analyses for an artefact and its derived artefacts."""
+    from .artefacts import get_all_derived_artefact_ids
+
+    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+
+    query = Analysis.query.filter(
+        Analysis.artefact_id.in_(all_artefact_ids)
+    ).options(joinedload(Analysis.artefact))
+
+    status_filter = request.args.get('status')
+    if status_filter:
+        try:
+            status = AnalysisStatus(status_filter)
+            query = query.filter(Analysis.status == status)
+        except ValueError:
+            status_filter = None
+
+    # Status counts across all analyses for this artefact (unfiltered)
+    counts_row = db.session.query(
+        func.count(case((Analysis.status == AnalysisStatus.PENDING, 1))).label('pending'),
+        func.count(case((Analysis.status == AnalysisStatus.RUNNING, 1))).label('running'),
+        func.count(case((Analysis.status == AnalysisStatus.COMPLETED, 1))).label('completed'),
+        func.count(case((Analysis.status == AnalysisStatus.FAILED, 1))).label('failed'),
+    ).filter(Analysis.artefact_id.in_(all_artefact_ids)).one()
+    status_counts = {
+        'pending': counts_row.pending,
+        'running': counts_row.running,
+        'completed': counts_row.completed,
+        'failed': counts_row.failed,
+    }
+
+    per_page, page, view_all = resolve_per_page('ANALYSES_PER_PAGE', 50)
+    pagination = query.order_by(Analysis.created_at.desc()).paginate(page=page, per_page=per_page)
+
+    return render_template('analysis/artefact.html',
+                           artefact=artefact,
                            analyses=pagination.items,
                            pagination=pagination,
                            status_filter=status_filter,
