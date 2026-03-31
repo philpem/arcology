@@ -730,6 +730,20 @@ def _check_download_restrictions(artefact):
     return None
 
 
+def _collect_ancestor_file_restrictions(ef):
+    """Return all ExtractedFileRestriction objects on any ancestor of ef.
+
+    Walks up the parent_file chain.  If an archive is restricted, every file
+    inside it is also effectively restricted.
+    """
+    restrictions = []
+    current = ef.parent_file
+    while current is not None:
+        restrictions.extend(current.restrictions)
+        current = current.parent_file
+    return restrictions
+
+
 def _collect_all_file_restrictions(ef):
     """Return all ExtractedFileRestriction objects on ef and every descendant.
 
@@ -746,11 +760,15 @@ def _check_file_download_restrictions(ef):
     """Return a redirect when file-level restrictions block an extracted-file download.
 
     Called after _check_download_restrictions() has cleared artefact-level
-    restrictions.  Checks restrictions on ef itself and on any nested
-    descendants (so downloading an archive is blocked if any contained file
-    is restricted and the user cannot bypass it).
+    restrictions.  Checks restrictions on ef itself, on any nested descendants
+    (so downloading an archive is blocked if any contained file is restricted),
+    and on any ancestor archive/directory (so a file inside a restricted archive
+    is also blocked).
     """
-    all_restrictions = _collect_all_file_restrictions(ef)
+    all_restrictions = (
+        _collect_all_file_restrictions(ef) +
+        _collect_ancestor_file_restrictions(ef)
+    )
     if not all_restrictions:
         return None
 
@@ -1387,6 +1405,41 @@ def _render_artefact_view(artefact):
         .all()
     )
 
+    # Build a mapping {file_id: [inherited restrictions]} for archive-cascade display.
+    # For each file on the current page that has no direct restrictions, walk up its
+    # parent_file chain to find restrictions on enclosing archives.
+    #
+    # Strategy: one query for the parent_id map of all files in the artefact tree,
+    # then in-memory traversal using the already-loaded direct_restrict_map.
+    file_inherited_restrictions: dict[int, list] = {}
+    if artefact_file_restrictions:
+        # direct map: file_id -> [restriction objects]
+        _direct_map: dict[int, list] = {}
+        for r in artefact_file_restrictions:
+            _direct_map.setdefault(r.extracted_file_id, []).append(r)
+
+        # parent map: file_id -> parent_file_id (None for top-level)
+        _parent_rows = (
+            ExtractedFile.query
+            .join(Partition, ExtractedFile.partition_id == Partition.id)
+            .filter(Partition.artefact_id.in_(all_artefact_ids))
+            .with_entities(ExtractedFile.id, ExtractedFile.parent_file_id)
+            .all()
+        )
+        _parent_map: dict[int, int | None] = {row.id: row.parent_file_id for row in _parent_rows}
+
+        for f in files_pagination.items:
+            if f.id in _direct_map:
+                continue  # has direct restrictions — handled by file.restrictions in template
+            inherited = []
+            pid = _parent_map.get(f.id)
+            while pid is not None:
+                if pid in _direct_map:
+                    inherited.extend(_direct_map[pid])
+                pid = _parent_map.get(pid)
+            if inherited:
+                file_inherited_restrictions[f.id] = inherited
+
     return render_template('artefacts/view.html',
                            artefact=artefact,
                            analyses=analyses,
@@ -1423,7 +1476,8 @@ def _render_artefact_view(artefact):
                            viewable_filenames=viewable_filenames,
                            has_converted_outputs=has_converted_outputs,
                            module_info=module_info,
-                           artefact_file_restrictions=artefact_file_restrictions)
+                           artefact_file_restrictions=artefact_file_restrictions,
+                           file_inherited_restrictions=file_inherited_restrictions)
 
 
 @blueprint.route('/<string:uuid>/add-to-hashdb', methods=['POST'])

@@ -162,6 +162,8 @@
                                     {% endif %}
                                 {% endif %}
                                 {% if not file.is_directory %}
+                                {# Effective restrictions = direct on this file + inherited from ancestor archives #}
+                                {% set _eff_restr = file.restrictions + file_inherited_restrictions.get(file.id, []) %}
                                 {# ── Download icon — artefact-level restrictions take priority ── #}
                                 {% if artefact.restrictions and current_user.can_bypass_all_restrictions(artefact.restrictions) %}
                                 <a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=file.uuid, confirm_bypass='1') }}"
@@ -169,10 +171,8 @@
                                    onclick="return confirm('This artefact has download restrictions. Download anyway?')"><i class="bi bi-download"></i></a>
                                 {% elif artefact.restrictions %}
                                 <span class="text-muted ms-1 opacity-50" title="Download restricted"><i class="bi bi-lock-fill"></i></span>
-                                {% elif file.restrictions %}
-                                  {# File-level restrictions: check against own + descendant restrictions #}
-                                  {% set _file_all_restr = file.restrictions %}
-                                  {% if current_user.can_bypass_all_restrictions(_file_all_restr) %}
+                                {% elif _eff_restr %}
+                                  {% if current_user.can_bypass_all_restrictions(_eff_restr) %}
                                 <a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=file.uuid, confirm_bypass='1') }}"
                                    class="text-danger ms-1" title="Download file (file restricted — bypass active)"
                                    onclick="return confirm('This file has download restrictions. Download anyway?')"><i class="bi bi-download"></i></a>
@@ -183,10 +183,15 @@
                                 <a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=file.uuid) }}"
                                    class="text-muted ms-1" title="Download file"><i class="bi bi-download"></i></a>
                                 {% endif %}
-                                {# ── Restriction badges for file-level restrictions ── #}
+                                {# ── Restriction badges (direct only; inherited shown via ancestor's own badge) ── #}
                                 {% if file.restrictions %}
                                   {% for r in file.restrictions %}
                                 <span class="badge bg-danger ms-1" title="{{ r.reason or 'File restriction' }}"><i class="bi bi-exclamation-triangle-fill"></i> {{ r.restriction_type.label }}</span>
+                                  {% endfor %}
+                                {% elif file_inherited_restrictions.get(file.id) %}
+                                  {# Inherited from enclosing archive — show a dimmer badge #}
+                                  {% for r in file_inherited_restrictions[file.id] %}
+                                <span class="badge bg-warning text-dark ms-1" title="Inherited from enclosing archive"><i class="bi bi-exclamation-triangle-fill"></i> {{ r.restriction_type.label }}</span>
                                   {% endfor %}
                                 {% endif %}
                                 {# ── Manage file restrictions button (write users only) ── #}
@@ -195,7 +200,7 @@
                                         data-bs-toggle="modal" data-bs-target="#fileRestrictModal"
                                         data-file-uuid="{{ file.uuid }}"
                                         data-file-name="{{ file.filename }}"
-                                        data-restrictions="{{ file.restrictions | map(attribute='restriction_type') | map(attribute='value') | list | tojson }}"
+                                        data-restrictions="{{ file.restrictions | map(attribute='restriction_type') | map(attribute='value') | list | tojson | forceescape }}"
                                         title="Manage file restrictions"><i class="bi bi-shield{% if file.restrictions %}-fill{% endif %}"></i></button>
                                 {% endif %}
                                 {% if file.path in viewable_filenames %}
