@@ -1259,6 +1259,18 @@ class AnalysisWorker:
 
         return None
 
+    @staticmethod
+    def _is_riscos_zip(file_path: Path) -> bool:
+        """Check whether a ZIP archive contains RISC OS metadata.
+
+        Delegates to :func:`has_riscos_zip_metadata` which scans the
+        central directory extra fields for the Acorn/SparkFS header ID
+        (0x4341).  Used to upgrade ``ArchiveType.ZIP`` to ``ZIP_RISCOS``
+        for plain ``.zip`` uploads that have no RISC OS filetype metadata.
+        """
+        from .tools.archives import has_riscos_zip_metadata
+        return has_riscos_zip_metadata(file_path)
+
     # Extracted files with these extensions are promoted to derived artefacts
     # so they get their own analysis pipeline (e.g. an ISO inside a ZIP gets
     # FILE_EXTRACTION queued automatically).  Keep in sync with EXTENSION_MAP
@@ -1337,8 +1349,16 @@ class AnalysisWorker:
             archive_type = sniffed
             archive_info = get_archive_info(archive_type)
 
+        # A plain .zip upload whose contents have RISC OS ,xxx filetype
+        # suffixes should be treated as ZIP_RISCOS so the CP437→RISC OS
+        # Latin-1 filename fix runs during extraction.
+        if archive_type == ArchiveType.ZIP and self._is_riscos_zip(input_path):
+            log.info("ZIP contains Acorn extra-field (0x4341) metadata — upgrading to ZIP_RISCOS")
+            archive_type = ArchiveType.ZIP_RISCOS
+            archive_info = get_archive_info(archive_type)
+
         # Dispatch to the correct extraction tool
-        from .tools import extract_riscosarc
+        from .tools import extract_riscosarc, extract_zip_riscos
 
         if archive_type in [ArchiveType.SPARK, ArchiveType.ARCFS,
                             ArchiveType.PACKDIR, ArchiveType.CFS, ArchiveType.SQUASH]:
@@ -1347,11 +1367,13 @@ class AnalysisWorker:
             # actually be a ZIP with RISC OS filetypes (SparkFS uses
             # filetype &DDC for both Spark and ZIP).
             if not result['success'] and archive_type == ArchiveType.SPARK:
-                result = extract_zip(input_path, extract_dir)
+                result = extract_zip_riscos(input_path, extract_dir)
                 if result['success']:
                     archive_type = ArchiveType.ZIP_RISCOS
                     archive_info = get_archive_info(archive_type)
-        elif archive_type in [ArchiveType.ZIP, ArchiveType.ZIP_RISCOS]:
+        elif archive_type == ArchiveType.ZIP_RISCOS:
+            result = extract_zip_riscos(input_path, extract_dir)
+        elif archive_type == ArchiveType.ZIP:
             result = extract_zip(input_path, extract_dir)
         elif archive_type in [ArchiveType.TAR, ArchiveType.TARGZ,
                               ArchiveType.TARBZ2, ArchiveType.TARXZ]:
@@ -1446,6 +1468,7 @@ class AnalysisWorker:
             extract_riscosarc,
             extract_tbafs,
             extract_zip,
+            extract_zip_riscos,
             extract_tar,
             extract_rar,
             extract_7z,
@@ -1631,6 +1654,13 @@ class AnalysisWorker:
             archive_type = sniffed
             archive_info = get_archive_info(archive_type)
 
+        # A ZIP detected by extension (no RISC OS filetype) whose contents
+        # have ,xxx filetype suffixes is really a RISC OS ZIP.
+        if archive_type == ArchiveType.ZIP and self._is_riscos_zip(archive_path):
+            log.info("ZIP contains Acorn extra-field (0x4341) metadata — upgrading to ZIP_RISCOS")
+            archive_type = ArchiveType.ZIP_RISCOS
+            archive_info = get_archive_info(archive_type)
+
         # Choose extraction method based on archive type
         if archive_type in [ArchiveType.ARCFS, ArchiveType.PACKDIR,
                             ArchiveType.SPARK, ArchiveType.CFS, ArchiveType.SQUASH]:
@@ -1641,7 +1671,7 @@ class AnalysisWorker:
             # Upgrade archive_type to ZIP_RISCOS so the display name reflects
             # the actual container format while keeping is_acorn_archive True.
             if not result['success'] and archive_type == ArchiveType.SPARK:
-                result = extract_zip(archive_path, temp_output_dir)
+                result = extract_zip_riscos(archive_path, temp_output_dir)
                 if result['success']:
                     archive_type = ArchiveType.ZIP_RISCOS
                     archive_info = get_archive_info(archive_type)
@@ -1662,7 +1692,10 @@ class AnalysisWorker:
         elif archive_type == ArchiveType.DOSDISC:
             result = extract_dos_7z(archive_path, temp_output_dir)
 
-        elif archive_type in [ArchiveType.ZIP, ArchiveType.ZIP_RISCOS]:
+        elif archive_type == ArchiveType.ZIP_RISCOS:
+            result = extract_zip_riscos(archive_path, temp_output_dir)
+
+        elif archive_type == ArchiveType.ZIP:
             result = extract_zip(archive_path, temp_output_dir)
 
         elif archive_type in [ArchiveType.TAR, ArchiveType.TARGZ,

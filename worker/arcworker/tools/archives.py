@@ -6,6 +6,7 @@ for use by the worker.
 """
 
 import os
+import struct
 import subprocess
 import re
 import tarfile
@@ -16,7 +17,7 @@ from typing import Dict, Any
 from .base import run_tool_with_output
 from ..compression import stream_to_file
 from ..config import log, TOOL_TIMEOUT, MAX_DECOMPRESSED_BYTES
-from ..utils.text import normalize_extracted_filenames
+from ..utils.text import normalize_extracted_filenames, fix_riscos_c1_filenames
 
 
 def _check_archive_paths(input_path: Path, fmt: str) -> None:
@@ -418,6 +419,145 @@ def extract_zip(input_path: Path, output_dir: Path) -> Dict[str, Any]:
         cmd=['unzip', '-F', '-q', str(input_path), '-d', str(output_dir)],
         output_dir=output_dir,
         summary='Extracted {file_count} files from ZIP archive',
+    )
+
+
+
+
+
+# Acorn/SparkFS extra-field header ID used in RISC OS ZIP archives.
+# This two-byte little-endian value (0x4341 = "AC") marks extra-field
+# blocks that carry RISC OS filetype, load/exec addresses and attributes.
+_ACORN_EXTRA_FIELD_ID = b'\x41\x43'   # 0x4341 little-endian
+
+
+def has_riscos_zip_metadata(zip_path: Path) -> bool:
+    """Detect whether a ZIP archive contains RISC OS metadata.
+
+    Parses the ZIP central directory and checks each entry's extra-field
+    chain for the Acorn/SparkFS header ID (0x4341).  Returns ``True`` as
+    soon as one is found.
+
+    Uses raw binary parsing with ``struct`` — **not** Python's ``zipfile``
+    module, which rejects the Acorn extra-field blocks with ``BadZipFile``.
+
+    This function is intentionally conservative: it returns ``False`` on
+    any structural parse error rather than raising.
+    """
+    try:
+        with open(zip_path, 'rb') as fh:
+            # ── Locate End-of-Central-Directory (EOCD) record ──────
+            # EOCD is at most 22 + 65535 bytes from the end of the file
+            # (22-byte fixed record + up to 65535-byte comment).
+            fh.seek(0, 2)
+            file_size = fh.tell()
+            search_start = max(0, file_size - 65557)
+            fh.seek(search_start)
+            tail = fh.read()
+
+            eocd_pos = tail.rfind(b'PK\x05\x06')
+            if eocd_pos < 0:
+                return False
+
+            eocd = tail[eocd_pos:]
+            if len(eocd) < 22:
+                return False
+
+            cd_size, cd_offset = struct.unpack_from('<II', eocd, 12)
+            if cd_offset + cd_size > file_size:
+                return False
+
+            # ── Read and walk the central directory ────────────────
+            fh.seek(cd_offset)
+            cd_data = fh.read(cd_size)
+
+            pos = 0
+            while pos + 46 <= len(cd_data):
+                if cd_data[pos:pos + 4] != b'PK\x01\x02':
+                    break
+                fname_len, extra_len, comment_len = struct.unpack_from(
+                    '<HHH', cd_data, pos + 28
+                )
+                extra_start = pos + 46 + fname_len
+                extra_end = extra_start + extra_len
+
+                # Walk extra-field chain: each block is 2-byte ID + 2-byte size + data.
+                epos = extra_start
+                while epos + 4 <= extra_end:
+                    field_id = cd_data[epos:epos + 2]
+                    field_size = struct.unpack_from('<H', cd_data, epos + 2)[0]
+                    if field_id == _ACORN_EXTRA_FIELD_ID:
+                        return True
+                    epos += 4 + field_size
+
+                pos = extra_end + comment_len
+
+    except OSError:
+        pass
+    return False
+
+
+def extract_zip_riscos(input_path: Path, output_dir: Path) -> Dict[str, Any]:
+    """Extract a RISC OS ZIP archive with correct Latin-1 filename encoding.
+
+    RISC OS archives store filenames in RISC OS Latin-1.  The hard space used
+    as a word separator in Acorn filenames is byte 0xA0.  Without special
+    handling, unzip decodes filenames as CP437, turning 0xA0 into 'á'
+    (U+00E1).
+
+    ``unzip -O iso-8859-1`` instructs unzip to interpret non-UTF-8 ZIP
+    filenames as ISO 8859-1 (Latin-1) instead.  RISC OS Latin-1 is identical
+    to ISO 8859-1 for bytes 0xA0–0xFF, so 0xA0 correctly becomes U+00A0
+    (NBSP).  Bytes 0x80–0x9F are ISO 8859-1 C1 control codes; a second pass
+    with :func:`fix_riscos_c1_filenames` remaps those to their RISC OS
+    printable-character equivalents.
+
+    Requires the container locale to be UTF-8 (``LANG=C.UTF-8`` or
+    equivalent) so that unzip's internal iconv conversion from ISO 8859-1 can
+    target UTF-8 rather than ASCII.
+
+    Args:
+        input_path: Path to ZIP file
+        output_dir: Directory to extract to
+
+    Returns:
+        Result dict with success status
+    """
+    log.info('extract_zip_riscos: extracting %s → %s', input_path, output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        _check_archive_paths(input_path, 'zip')
+    except ValueError as e:
+        return {'success': False, 'error': str(e), 'tool': 'unzip'}
+
+    result, output = run_tool_with_output(
+        ['unzip', '-F', '-O', 'iso-8859-1', '-q', str(input_path), '-d', str(output_dir)]
+    )
+
+    if result.returncode != 0:
+        return _archive_error(
+            'unzip', f'unzip failed with exit code {result.returncode}', output
+        )
+
+    # Remap ISO 8859-1 C1 control codes (U+0080–U+009F) that unzip decoded
+    # from bytes 0x80–0x9F to their RISC OS Latin-1 printable equivalents.
+    fix_riscos_c1_filenames(output_dir)
+
+    finalize_error = _finalize_extraction(
+        output_dir,
+        normalize_names=True,
+        assert_confined=True,
+    )
+    if finalize_error:
+        return _archive_error('unzip', finalize_error)
+
+    file_count = _count_extracted_files(output_dir)
+    return _archive_success(
+        'unzip',
+        f'Extracted {file_count} files from RISC OS ZIP archive',
+        file_count,
+        output,
     )
 
 

@@ -2,9 +2,12 @@
 Text and encoding utilities for handling filenames from various filesystems.
 """
 
+import logging
 import os
 from pathlib import Path
 from typing import Callable
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +241,58 @@ def normalize_extracted_filenames(
             except OSError as exc:
                 log.warning(
                     'normalize_extracted_filenames: could not rename %r → %r: %s',
+                    str(old_path), str(new_path), exc,
+                )
+
+
+# ---------------------------------------------------------------------------
+# Post-extraction RISC OS C1 fixup for ZIP archives
+# ---------------------------------------------------------------------------
+
+def fix_riscos_c1_filenames(root: Path) -> None:
+    """
+    Rename files and directories under *root* whose names contain ISO-8859-1
+    C1 control characters (U+0080–U+009F) to their RISC OS Latin-1 equivalents.
+
+    When unzip extracts a RISC OS ZIP archive with '-O iso-8859-1', bytes in
+    the range 0x80–0x9F are decoded as ISO-8859-1 C1 control codes (U+0080–
+    U+009F) rather than the RISC OS printable characters they represent.  This
+    function remaps those code points using the same _RISCOS_C1 table used by
+    decode_riscos_latin1(), restoring the correct Unicode characters
+    (e.g. 0x80 → €, 0x8C → …, 0x8D → ™).
+
+    C1 control codes never appear legitimately in filenames, so any occurrence
+    reliably indicates a misinterpreted RISC OS byte.
+
+    Renames are bottom-up (directory contents before the directory itself) to
+    avoid touching a parent directory before its children have been processed.
+    """
+    for dirpath, dirnames, filenames in os.walk(str(root), topdown=False):
+        dir_path = Path(dirpath)
+        for name in filenames + dirnames:
+            if not any(0x80 <= ord(c) <= 0x9F for c in name):
+                continue
+
+            new_name = ''.join(
+                _RISCOS_C1[ord(c)] if 0x80 <= ord(c) <= 0x9F else c
+                for c in name
+            )
+            if new_name == name:
+                continue
+
+            old_path = dir_path / name
+            new_path = dir_path / new_name
+            if new_path.exists():
+                log.warning(
+                    'fix_riscos_c1_filenames: skipping %r → %r: target exists',
+                    str(old_path), str(new_path),
+                )
+                continue
+            try:
+                old_path.rename(new_path)
+            except OSError as exc:
+                log.warning(
+                    'fix_riscos_c1_filenames: could not rename %r → %r: %s',
                     str(old_path), str(new_path), exc,
                 )
 
