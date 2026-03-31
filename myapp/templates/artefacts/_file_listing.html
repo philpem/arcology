@@ -176,6 +176,10 @@
                                 <a href="{{ artefact_url(artefact, 'viewer') }}?file={{ file.path | urlencode }}"
                                    class="text-muted ms-1" title="View"><i class="bi bi-search"></i></a>
                                 {% endif %}
+                                {% if module_info is defined and file.path in module_info %}
+                                {% set mod = module_info[file.path] %}
+                                <span class="text-success ms-1" title="RISC OS Module: {{ mod.help_title or mod.title_string }}{% if mod.version %} {{ mod.version }}{% endif %}{% if mod.date %} ({{ mod.date }}){% endif %}"><i class="bi bi-cpu"></i></span>
+                                {% endif %}
                                 {% endif %}
                             </td>
                             <td>{% if file.is_directory %}<span class="text-muted">DIR</span>{% elif file.file_size %}{{ (file.file_size / 1024)|round(1) }} KB{% else %}-{% endif %}</td>

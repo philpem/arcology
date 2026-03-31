@@ -2413,7 +2413,7 @@ class AnalysisWorker:
         and extracts metadata (title, version, date, SWIs, star commands).
         Only queued for Acorn filesystem extractions.
         """
-        from .tools.riscos_module import decode_module, HelpParseError, ModuleParseError
+        from .tools.riscos_module import decode_module, ModuleParseError
 
         analysis_id = analysis['id']
         hints = json.loads(analysis.get('hints') or '{}')
@@ -2501,7 +2501,7 @@ class AnalysisWorker:
                 result.pop('commands', None)
                 result.pop('help_string', None)
                 modules.append(result)
-            except (ModuleParseError, HelpParseError) as e:
+            except ModuleParseError as e:
                 log.warning(f"Could not parse module {db_path}: {e}")
                 parse_errors += 1
             except Exception as e:

@@ -1158,6 +1158,14 @@ def _render_artefact_view(artefact):
                 if sf:
                     viewable_filenames.add(sf)
 
+    # Build module_info: dict mapping ExtractedFile.path → module metadata for
+    # files with filetype ffa.  Used by the file listing template to show a
+    # tooltip with the module's internal name, version, and date.
+    module_info = {}
+    for mod in artefact.riscos_modules:
+        if mod.file_path:
+            module_info[mod.file_path] = mod
+
     # "View" button: show if artefact is viewable type, or has any FORMAT_CONVERT
     has_converted_outputs = artefact.artefact_type in _viewable_types
     if not has_converted_outputs:
@@ -1229,7 +1237,8 @@ def _render_artefact_view(artefact):
                            letter_pages=letter_pages,
                            current_letter=current_letter,
                            viewable_filenames=viewable_filenames,
-                           has_converted_outputs=has_converted_outputs)
+                           has_converted_outputs=has_converted_outputs,
+                           module_info=module_info)
 
 
 @blueprint.route('/<string:uuid>/add-to-hashdb', methods=['POST'])

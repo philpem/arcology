@@ -281,9 +281,11 @@ def decode_module(data, module_hash=None):
         Dict with keys: title_string, help_string, help_title, version, date,
         other, swi_chunk, swi_names, commands, module_flags, hash.
 
+        When the help string is missing or cannot be parsed, the dict is still
+        returned with help_title/version/date set to None.
+
     Raises:
         ModuleParseError: If the data is too small or structurally invalid.
-        HelpParseError: If the help string cannot be parsed (and no quirk applies).
     """
     if len(data) < 52:
         raise ModuleParseError("Data too small to be a RISC OS module (< 52 bytes)")
@@ -306,15 +308,22 @@ def decode_module(data, module_hash=None):
     (title_string, _) = _read_string(data, title_string_off)
 
     # Handle help string — check quirks first
+    help_string = None
+    help_title = None
+    version = None
+    date = None
+    other = None
+
     if module_hash in QUIRKS:
         help_string = QUIRKS[module_hash]
-    else:
-        if help_string_off == 0 or help_string_off >= len(data):
-            raise HelpParseError(None)
+    elif help_string_off != 0 and help_string_off < len(data):
         (help_string, _) = _read_string(data, help_string_off)
 
     # Parse help string into components — handle known special cases by hash
-    if module_hash == "c440c6d31d8ab3600c28ad4de2266719167e6b060f528bfd2462ee8ae0f7b497":
+    if help_string is None:
+        # No help string available — title_string is still valid
+        pass
+    elif module_hash == "c440c6d31d8ab3600c28ad4de2266719167e6b060f528bfd2462ee8ae0f7b497":
         # ARMBasicEditor in Arthur 0.30 — no version/date
         (help_title, version, date, other) = (help_string, None, None, None)
     elif module_hash == "cda6a12eb08f63aef1789a907ca626c6ef4b2a008af94e7681ac1df422b19dff":
@@ -327,10 +336,18 @@ def decode_module(data, module_hash=None):
         # Window Manager 4.100 (22 Feb 2006) — non-standard version format in RISC OS 5.11
         (help_title, version, date, other) = ("Window Manager", "4.100", "2006-02-22", None)
     else:
-        (help_title, version, date_str, other) = _parse_help_string(help_string)
-        if other == "":
+        try:
+            (help_title, version, date_str, other) = _parse_help_string(help_string)
+            if other == "":
+                other = None
+            date = _parse_module_date_string(date_str)
+        except HelpParseError:
+            # Help string present but doesn't match standard format —
+            # use the raw help string as the title and leave version/date as None
+            help_title = help_string.split('\t')[0].strip() if '\t' in help_string else help_string.strip()
+            version = None
+            date = None
             other = None
-        date = _parse_module_date_string(date_str)
 
     # SWI chunk validation
     swi_chunk_garbage = ((swi_chunk & 0xff00003f) != 0) or (swi_handler >= len(data))
