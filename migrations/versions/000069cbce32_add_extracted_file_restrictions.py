@@ -20,7 +20,7 @@ def upgrade():
         sa.Column('extracted_file_id', sa.Integer(), nullable=False),
         sa.Column('restriction_type',
                   sa.Enum('MALWARE', 'PII', 'COPYRIGHT', 'LEGAL_HOLD', 'EXPLICIT', 'CORRUPTED',
-                          name='restrictiontype'),
+                          name='restrictiontype', create_type=False),
                   nullable=False),
         sa.Column('reason', sa.Text(), nullable=True),
         sa.Column('added_by_id', sa.Integer(), nullable=True),
