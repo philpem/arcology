@@ -617,18 +617,6 @@ class AnalysisWorker:
             if iso_rename_map:
                 _apply_pling_renames(extract_dir, iso_rename_map)
 
-            # Write a sidecar metadata file so that FORMAT_CONVERT (queued later)
-            # can detect viewable file types from the ARCHIMEDES filetype hex
-            # without re-parsing the ISO.
-            if iso_filetype_map:
-                import json as _json
-                sidecar_path = extract_dir / '_arcology_iso_meta.json'
-                try:
-                    with open(sidecar_path, 'w', encoding='utf-8') as _sf:
-                        _json.dump({'filetype_map': iso_filetype_map}, _sf)
-                except OSError as _e:
-                    log.warning(f"Could not write ISO metadata sidecar: {_e}")
-
         # Enumerate extracted files to build file listing.
         # ISO artefacts use acorn='auto' to catch ',xxx' suffix filenames;
         # Acorn disc images (is_acorn=True) always parse the suffix.
@@ -642,6 +630,18 @@ class AnalysisWorker:
             acorn=acorn_mode,
             filetype_map=iso_filetype_map,
         )
+
+        # Write ISO metadata sidecar AFTER enumerate_extracted_files so it is
+        # not included in the file listing.  FORMAT_CONVERT reads this to detect
+        # viewable types without re-parsing the ISO image.
+        if iso_filetype_map:
+            import json as _json
+            sidecar_path = extract_dir / '_arcology_iso_meta.json'
+            try:
+                with open(sidecar_path, 'w', encoding='utf-8') as _sf:
+                    _json.dump({'filetype_map': iso_filetype_map}, _sf)
+            except OSError as _e:
+                log.warning(f"Could not write ISO metadata sidecar: {_e}")
 
         # Extract disc metadata from DIM report output (if Acorn)
         disc_name = None

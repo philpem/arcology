@@ -13,10 +13,13 @@ Reference:
   Acorn Application Note 273: CD ROM Drives and their Handling under RISC OS
 """
 
+import logging
 import struct
 from pathlib import Path
 
 from .extraction import parse_acorn_filename
+
+log = logging.getLogger(__name__)
 
 # ISO 9660 sector size in bytes
 _SECTOR = 2048
@@ -26,6 +29,10 @@ _ARCHIMEDES_SIG = b'ARCHIMEDES'
 
 # Minimum size of a valid ARCHIMEDES block: 10-byte sig + 4 load + 4 exec + 4 attrs = 22 bytes
 _ARCHIMEDES_MIN = 22
+
+# Total size of the ARCHIMEDES block (sig + load + exec + attrs + 10 reserved = 32 bytes).
+# SUSP scanning starts at this offset when the block is present.
+_ARCHIMEDES_SIZE = 32
 
 
 def _read_sector(f, lba: int) -> bytes:
@@ -96,7 +103,7 @@ def _get_nm_name(system_use: bytes) -> str | None:
     Returns the assembled name string, or None if no NM entry found.
     """
     # Start SUSP scan after the ARCHIMEDES block if it's present
-    offset = 32 if (len(system_use) >= 10 and system_use[:10] == _ARCHIMEDES_SIG) else 0
+    offset = _ARCHIMEDES_SIZE if (len(system_use) >= 10 and system_use[:10] == _ARCHIMEDES_SIG) else 0
 
     name_parts: list[bytes] = []
 
@@ -234,8 +241,14 @@ def _walk_directory(
         # Build the display ISO 9660 name: apply pling mapping if flagged.
         # ISO 9660 forbids '!' so Acorn mastering tools store it as '_'.
         display_name = raw_name
-        if has_pling and raw_name.startswith('_'):
-            display_name = '!' + raw_name[1:]
+        if has_pling:
+            if raw_name.startswith('_'):
+                display_name = '!' + raw_name[1:]
+            else:
+                log.warning(
+                    "ARCHIMEDES pling flag set but ISO 9660 name does not start "
+                    "with '_' — ignoring flag for %r", raw_name
+                )
 
         # Build full paths for each of the two parallel prefix trees.
         display_path = f'{display_prefix}/{display_name}' if display_prefix else display_name
@@ -345,8 +358,8 @@ def parse_iso_riscos_filetypes(
 
             _walk_directory(f, root_lba, root_size, '', '', filetype_map, rename_map)
 
-    except Exception:
-        # Gracefully degrade on any I/O or parse error
+    except (OSError, struct.error, ValueError, UnicodeDecodeError):
+        # Gracefully degrade on I/O errors and ISO parse failures
         pass
 
     return filetype_map, rename_map
