@@ -263,28 +263,55 @@ def _search_mastering(tokens):
 
 
 def _search_modules(tokens):
-    """Search RiscosModule by module title_string."""
+    """Search RiscosModule by title_string or help_title, returning file tuples."""
     all_results = []
     truncated = False
     for mod_val in tokens.get('module', []):
         q = (
-            db.session.query(RiscosModule, Artefact, Item)
-            .join(Artefact, RiscosModule.artefact_id == Artefact.id)
+            db.session.query(ExtractedFile, Partition, Artefact, Item)
+            .join(Partition, ExtractedFile.partition_id == Partition.id)
+            .join(Artefact, Partition.artefact_id == Artefact.id)
             .join(Item, Artefact.item_id == Item.id)
-            .filter(_ilike(RiscosModule.title_string, mod_val))
-            .order_by(Item.name, Artefact.label)
+            .join(RiscosModule, and_(
+                RiscosModule.artefact_id == Artefact.id,
+                RiscosModule.file_path == ExtractedFile.path))
+            .filter(or_(
+                _ilike(RiscosModule.title_string, mod_val),
+                _ilike(RiscosModule.help_title, mod_val)))
+            .filter(ExtractedFile.is_directory == False)
+            .order_by(Item.name, Artefact.label, ExtractedFile.path)
             .limit(RESULT_LIMIT + 1)
             .all()
         )
-        deduped = _dedup_by_artefact(q)
-        if len(deduped) > RESULT_LIMIT:
+        if len(q) > RESULT_LIMIT:
             truncated = True
-            deduped = deduped[:RESULT_LIMIT]
-        all_results.extend([
-            {'type': 'module', 'module_title': m.title_string,
-             'module_version': m.version, 'artefact': a, 'item': i}
-            for m, a, i in deduped
-        ])
+        all_results.extend(q[:RESULT_LIMIT])
+    return all_results, truncated
+
+
+def _search_commands(tokens):
+    """Search RiscosModule by star command name, returning file tuples."""
+    all_results = []
+    truncated = False
+    for cmd_val in tokens.get('command', []):
+        q = (
+            db.session.query(ExtractedFile, Partition, Artefact, Item)
+            .join(Partition, ExtractedFile.partition_id == Partition.id)
+            .join(Artefact, Partition.artefact_id == Artefact.id)
+            .join(Item, Artefact.item_id == Item.id)
+            .join(RiscosModule, and_(
+                RiscosModule.artefact_id == Artefact.id,
+                RiscosModule.file_path == ExtractedFile.path))
+            .filter(RiscosModule.commands.isnot(None))
+            .filter(_ilike(RiscosModule.commands, cmd_val))
+            .filter(ExtractedFile.is_directory == False)
+            .order_by(Item.name, Artefact.label, ExtractedFile.path)
+            .limit(RESULT_LIMIT + 1)
+            .all()
+        )
+        if len(q) > RESULT_LIMIT:
+            truncated = True
+        all_results.extend(q[:RESULT_LIMIT])
     return all_results, truncated
 
 
@@ -431,12 +458,19 @@ def _run_search(tokens: dict) -> dict:
             results['truncated']['artefacts'] = True
         results['artefacts'].extend(mast_results)
 
-    # RISC OS module search
+    # RISC OS module search (results are file tuples)
     if 'module' in tokens:
         mod_results, trunc = _search_modules(tokens)
         if trunc:
-            results['truncated']['artefacts'] = True
-        results['artefacts'].extend(mod_results)
+            results['truncated']['files'] = True
+        results['files'].extend(mod_results)
+
+    # Star command search (results are file tuples)
+    if 'command' in tokens:
+        cmd_results, trunc = _search_commands(tokens)
+        if trunc:
+            results['truncated']['files'] = True
+        results['files'].extend(cmd_results)
 
     # Tag search
     if 'tag' in tokens:
@@ -463,6 +497,16 @@ def _run_search(tokens: dict) -> dict:
         if trunc:
             results['truncated']['artefacts'] = True
         results['artefacts'].extend(art_text_results)
+
+    # Deduplicate file results (module/command searches may overlap with file searches)
+    seen_file_ids = set()
+    deduped_files = []
+    for row in results['files']:
+        ef = row[0]
+        if ef.id not in seen_file_ids:
+            seen_file_ids.add(ef.id)
+            deduped_files.append(row)
+    results['files'] = deduped_files
 
     return results
 

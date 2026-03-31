@@ -313,7 +313,30 @@ class TestSearchLogic(unittest.TestCase):
                 extension=None,
                 is_directory=True,
             )
-            _db.session.add_all([f1, f2, d1])
+            # Module files (matched by RiscosModule.file_path)
+            f_wm = ExtractedFile(
+                partition_id=part.id,
+                path='$.Modules.WindowManager',
+                filename='WindowManager',
+                extension=None,
+                risc_os_filetype='ffa',
+                md5='m1' + '0' * 30,
+                sha1='m1' + '0' * 38,
+                sha256='m1' + '0' * 62,
+                is_directory=False,
+            )
+            f_adfs = ExtractedFile(
+                partition_id=part.id,
+                path='$.Modules.ADFS',
+                filename='ADFS',
+                extension=None,
+                risc_os_filetype='ffa',
+                md5='m2' + '0' * 30,
+                sha1='m2' + '0' * 38,
+                sha256='m2' + '0' * 62,
+                is_directory=False,
+            )
+            _db.session.add_all([f1, f2, d1, f_wm, f_adfs])
 
             # Protection indicators
             _db.session.add(ArtefactProtection(
@@ -623,25 +646,29 @@ class TestSearchLogic(unittest.TestCase):
 
     def test_module_search_exact(self):
         results = self._search('module:WindowManager')
-        mod_results = [r for r in results['artefacts'] if r['type'] == 'module']
-        self.assertTrue(len(mod_results) > 0)
-        self.assertEqual(mod_results[0]['module_title'], 'WindowManager')
-        self.assertEqual(mod_results[0]['module_version'], '2.05')
+        # Module results now appear as file tuples in the files bucket
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('$.Modules.WindowManager', file_paths)
 
     def test_module_search_wildcard(self):
         results = self._search('module:Window*')
-        mod_results = [r for r in results['artefacts'] if r['type'] == 'module']
-        self.assertTrue(len(mod_results) > 0)
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('$.Modules.WindowManager', file_paths)
 
     def test_module_search_case_insensitive(self):
         results = self._search('module:windowmanager')
-        mod_results = [r for r in results['artefacts'] if r['type'] == 'module']
-        self.assertTrue(len(mod_results) > 0)
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('$.Modules.WindowManager', file_paths)
 
     def test_module_search_second_module(self):
         results = self._search('module:ADFS')
-        mod_results = [r for r in results['artefacts'] if r['type'] == 'module']
-        self.assertTrue(len(mod_results) > 0)
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('$.Modules.ADFS', file_paths)
+
+    def test_module_search_by_help_title(self):
+        results = self._search('module:"Window Manager"')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('$.Modules.WindowManager', file_paths)
 
     def test_module_search_no_match(self):
         results = self._search('module:NonExistentModule')

@@ -884,6 +884,7 @@ def _render_viewer(artefact):
                     if m.get('file_path') == file_filter:
                         module_detail['swi_names'] = m.get('swi_names')
                         module_detail['module_flags'] = m.get('module_flags')
+                        module_detail['commands'] = m.get('commands', [])
                         break
 
     return render_template(

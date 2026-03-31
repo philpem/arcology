@@ -31,9 +31,10 @@
 			<code>type:</code> (RISC OS hex or name) <code>ext:</code>
 			<code>ident:</code> <code>label:</code> <code>fs:</code>
 			<code>module:</code> (RISC OS module name)
+			<code>command:</code> (star command name)
 			<code>protection:</code> <code>mastering:</code> <code>tag:</code>
 			— bare words search item and artefact names &amp; descriptions.
-			Use <code>*</code> as wildcard in filename/path/tag. Quote multi-word values: <code>label:"Boot Disc"</code>
+			Use <code>*</code> as wildcard in filename/path/tag. Quote multi-word values: <code>module:"Voice Module"</code> <code>label:"Boot Disc"</code>
 		</div>
 	</div>
 </div>
@@ -126,9 +127,20 @@
 		<div class="card h-100">
 			<div class="card-header"><i class="bi bi-cpu"></i> RISC OS Modules</div>
 			<div class="card-body">
-				<p class="card-text text-muted small">Find discs containing a RISC OS module by internal name.</p>
+				<p class="card-text text-muted small">Find discs containing a RISC OS module by internal name or help title.</p>
 				<code class="d-block mb-1">module:WindowManager</code>
+				<code class="d-block mb-1">module:"Voice Module"</code>
 				<code class="d-block">module:ADFS*</code>
+			</div>
+		</div>
+	</div>
+	<div class="col">
+		<div class="card h-100">
+			<div class="card-header"><i class="bi bi-terminal"></i> Commands</div>
+			<div class="card-body">
+				<p class="card-text text-muted small">Find discs containing a RISC OS star command.</p>
+				<code class="d-block mb-1">command:Filer_Run</code>
+				<code class="d-block">command:Desktop*</code>
 			</div>
 		</div>
 	</div>
@@ -200,8 +212,18 @@
 			{% for ef, part, art, item in results.files %}
 			<tr>
 				<td>
-					<a href="{{ artefact_url(art) }}#files"
+					<a href="{{ artefact_url(art) }}?filename={{ ef.filename | urlencode }}#files"
 					   class="font-monospace text-decoration-none">{{ ef.path }}</a>
+					{% if art.restrictions and current_user.can_bypass_all_restrictions(art.restrictions) %}
+					<a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=ef.uuid, confirm_bypass='1') }}"
+					   class="text-danger ms-1" title="Download file (restricted — bypass active)"
+					   onclick="return confirm('This artefact has download restrictions. Download anyway?')"><i class="bi bi-download"></i></a>
+					{% elif art.restrictions %}
+					<span class="text-muted ms-1 opacity-50" title="Download restricted"><i class="bi bi-lock-fill"></i></span>
+					{% else %}
+					<a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=ef.uuid) }}"
+					   class="text-muted ms-1" title="Download file"><i class="bi bi-download"></i></a>
+					{% endif %}
 				</td>
 				<td>
 					{% if ef.risc_os_filetype %}
