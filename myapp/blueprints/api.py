@@ -21,7 +21,7 @@ from ..database import (
     ExternalSystem, ExternalReference, HashDatabase, KnownFile, KnownProduct,
     RecognisedProduct, StorageDirectory,
     ApiKey, ApiKeyPermission, _API_KEY_PERMISSION_ORDER,
-    ArtefactProtection, ArtefactMastering,
+    ArtefactProtection, ArtefactMastering, RiscosModule,
 )
 from .artefacts import (
     get_artefact_path, _delete_artefact_files, _delete_item_files,
@@ -675,6 +675,23 @@ def _populate_search_index(analysis):
                 Partition.query.filter_by(artefact_id=analysis.artefact_id).update(
                     {'gnu_file_type': gnu_file_type}
                 )
+
+        elif analysis.analysis_type == AnalysisType.RISCOS_MODULE_PARSE:
+            RiscosModule.query.filter_by(artefact_id=analysis.artefact_id).delete()
+            for mod in details.get('modules', []):
+                title = mod.get('title_string', '')
+                if not title:
+                    continue
+                db.session.add(RiscosModule(
+                    artefact_id=analysis.artefact_id,
+                    title_string=title,
+                    help_title=mod.get('help_title'),
+                    version=mod.get('version'),
+                    date=mod.get('date'),
+                    swi_chunk=mod.get('swi_chunk'),
+                    file_path=mod.get('file_path'),
+                    module_hash=mod.get('hash'),
+                ))
 
     except Exception:
         current_app.logger.exception(

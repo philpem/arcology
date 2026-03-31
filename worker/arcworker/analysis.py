@@ -264,6 +264,16 @@ class AnalysisWorker:
                 AnalysisType.FORMAT_CONVERT.value,
                 hints={'extraction_path': extraction_path},
             )
+        # RISC OS module metadata extraction — harmless no-op on non-Acorn
+        # extractions since only filetype ffa files are scanned.
+        module_hints = {'partition_uuid': partition_uuid}
+        if extraction_path:
+            module_hints['extraction_path'] = extraction_path
+        self.api.queue_analysis(
+            artefact_uuid,
+            AnalysisType.RISCOS_MODULE_PARSE.value,
+            hints=module_hints,
+        )
 
     # =========================================================================
     # Analysis Handlers
@@ -2395,6 +2405,124 @@ class AnalysisWorker:
             details=json.dumps(details),
         )
 
+    @analysis_handler("RISC OS module parse")
+    def process_riscos_module_parse(self, analysis: dict, artefact: dict, work_dir: Path):
+        """Parse RISC OS relocatable modules found in an extraction.
+
+        Scans partition files for filetype ffa (Module), reads each from disk,
+        and extracts metadata (title, version, date, SWIs, star commands).
+        Only queued for Acorn filesystem extractions.
+        """
+        from .tools.riscos_module import decode_module, HelpParseError, ModuleParseError
+
+        analysis_id = analysis['id']
+        hints = json.loads(analysis.get('hints') or '{}')
+        partition_uuid = hints.get('partition_uuid')
+        extraction_path = hints.get('extraction_path')
+
+        if not partition_uuid:
+            self.fail_analysis(analysis_id, 'No partition_uuid in analysis hints')
+            return
+
+        # Fetch files with RISC OS filetype ffa (Module)
+        files_resp = self.api.get(
+            f"/partitions/{partition_uuid}/files?per_page=10000&show_known=true"
+        )
+        if not files_resp:
+            self.fail_analysis(analysis_id, 'Failed to get partition files')
+            return
+
+        module_files = [
+            f for f in files_resp.get('files', [])
+            if f.get('risc_os_filetype', '').lower() == 'ffa'
+            and not f.get('is_directory', False)
+        ]
+
+        if not module_files:
+            self.complete_analysis(
+                analysis_id,
+                summary='No RISC OS modules (filetype ffa) found',
+                details=json.dumps({'modules': [], 'files_scanned': 0}),
+            )
+            return
+
+        # Determine extraction path (same logic as ARCHIVE_EXTRACT)
+        if not extraction_path:
+            artefact_uuid = artefact.get('uuid')
+            analyses_resp = self.api.get(f"/artefacts/{artefact_uuid}/analysis")
+            for a in analyses_resp.get('analyses', []):
+                if a.get('analysis_type') == 'file_extraction' and a.get('output_path'):
+                    extraction_path = a['output_path']
+                    break
+
+        if not extraction_path:
+            self.fail_analysis(analysis_id, 'Could not determine extraction path')
+            return
+
+        extract_dir = Path(extraction_path)
+        modules = []
+        parse_errors = 0
+
+        for file_data in module_files:
+            db_path = file_data['path']
+            risc_os_filetype = file_data.get('risc_os_filetype', '')
+
+            # Build candidate paths (with Acorn filetype suffix variants)
+            candidates = []
+            if risc_os_filetype:
+                candidates.append(extract_dir / (db_path + ',' + risc_os_filetype.lower()))
+                candidates.append(extract_dir / (db_path + ',' + risc_os_filetype.upper()))
+            candidates.append(extract_dir / db_path)
+
+            # Also try Latin-1 byte variants
+            all_candidates = []
+            for candidate in candidates:
+                all_candidates.append(candidate)
+                latin1_variant = make_latin1_fspath(str(candidate))
+                if latin1_variant is not None:
+                    all_candidates.append(Path(latin1_variant))
+
+            file_path = None
+            for candidate in all_candidates:
+                if candidate.is_file():
+                    file_path = candidate
+                    break
+
+            if file_path is None:
+                log.warning(f"Module file not found on disk: {db_path}")
+                parse_errors += 1
+                continue
+
+            try:
+                data = file_path.read_bytes()
+                result = decode_module(data)
+                result['file_path'] = db_path
+                # Exclude bulky fields from the stored details
+                result.pop('commands', None)
+                result.pop('help_string', None)
+                modules.append(result)
+            except (ModuleParseError, HelpParseError) as e:
+                log.warning(f"Could not parse module {db_path}: {e}")
+                parse_errors += 1
+            except Exception as e:
+                log.warning(f"Unexpected error parsing module {db_path}: {e}")
+                parse_errors += 1
+
+        summary_parts = [f'Parsed {len(modules)} RISC OS module(s)']
+        if parse_errors:
+            summary_parts.append(f'{parse_errors} could not be parsed')
+
+        self.complete_analysis(
+            analysis_id,
+            tool_name='riscos_module_parser',
+            summary=', '.join(summary_parts),
+            details=json.dumps({
+                'modules': modules,
+                'files_scanned': len(module_files),
+                'parse_errors': parse_errors,
+            }),
+        )
+
     # =========================================================================
     # Job Processing
     # =========================================================================
@@ -2430,6 +2558,7 @@ class AnalysisWorker:
                     AnalysisType.DISC_PROTECTION_DETECT.value: self.process_disc_protection_detect,
                     AnalysisType.ARMLOCK_REMOVE.value: self.process_armlock_remove,
                     AnalysisType.FORMAT_CONVERT.value: self.process_format_convert,
+                    AnalysisType.RISCOS_MODULE_PARSE.value: self.process_riscos_module_parse,
                 }
 
                 handler = handlers.get(analysis_type)
