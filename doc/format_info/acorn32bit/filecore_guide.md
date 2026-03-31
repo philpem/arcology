@@ -36,22 +36,27 @@ A FileCore disc can use one of two **map types** (old or new) and one of three *
 
 Read the disc record (see §2). The `nzones` field distinguishes the two map types by implication — but the most reliable test is to check for the **old map signature**:
 
-- **Old map (S, M, L, D)**: The disc has a 512-byte free space map in the first two sectors (disc address `0x000` and `0x100` for 256-byte sectors). Sector 0 contains 82 three-byte start addresses of free extents; sector 1 contains the corresponding 82 three-byte lengths. Both are in units of 256 bytes. Each sector ends with metadata (disc size, checksum, disc ID, boot option). The map is *not* a bit stream; it is a flat table.
+- **Old map (S, M, L, D)**: A flat free-space table occupying two 256-byte sectors at disc addresses `0x000` and `0x100`. Not a bit stream. See §2.5 for the full layout.
 
 - **New map (E, F, E+, F+, G)**: The disc record has `nzones >= 1` and `idlen >= 1`. The allocation data is a packed bit stream in zone sectors. There is no flat free-space table.
 
 A pragmatic identification approach for a disc image of unknown format (from [mdfs.net](https://mdfs.net/Docs/Comp/Disk/Format/ADFS)):
 
-1. Read 512 bytes from the start of the image. If a `"Hugo"` or `"Nick"` string is found at bytes 1–4, this is the root directory of a 256-byte-sector old-map disc (S, M, or L). The root directory starts at sector 2 (disc address `0x200`), and directories are `0x500` bytes (5 sectors) with up to 47 entries.
-2. If no match at 512 bytes, read at 1024 bytes from the start. If `"Hugo"` or `"Nick"` is found at bytes 1–4, this is a 1024-byte-sector disc. The root directory starts at logical sector 1 (disc address `0x400`), and directories are `0x800` bytes (2 sectors) with up to 77 entries. Further tests distinguish D (old map) from E/F (new map) — see step 4.
-3. On a hard disc, read the boot block at disc address `0xC00`. The disc record within (at `+0x1C0`) has an `idlen` field at offset `+0x04`. If `idlen` is non-zero, the disc uses a new map. (PRM vol. 2, ch. 28, "The disc record".)
-4. On a floppy with 1024-byte sectors, distinguish old from new map: if the first five bytes at disc address `0x000` are all zero, it is a 1024-byte-sector disc where the map is elsewhere (old map D format or new map E/F). Check for a valid new-map zone header at disc address `0x000` (non-zero `idlen` in the disc record at `+0x04`) to confirm E/F.
+1. Read at offset `0x200` (512 bytes from the start). If bytes 1–4 are `"Hugo"` or `"Nick"`, this is the root directory of a 256-byte-sector old-map disc (S, M, or L).
+
+2. If no match, read at offset `0x400` (1024 bytes). If bytes 1–4 are `"Hugo"` or `"Nick"`, this is a 1024-byte-sector disc (D, E, or F). Step 4 distinguishes old from new map.
+
+3. On a hard disc, read the boot block at disc address `0xC00`. The disc record is at offset `+0x1C0` within it. If `idlen` (disc record offset `+0x04`) is non-zero, the disc uses a new map.
+
+4. On a floppy with 1024-byte sectors, distinguish old from new map by examining disc address `0x000`:
+   - If a valid disc record is present at offset `+0x04` (non-zero `idlen`), this is a new-map disc (E or F) — the zone 0 map block starts at `0x000`.
+   - Otherwise the disc is old-map D format, where the free space map is at `0x000`–`0x1FF`.
 
 ### 1.3 How to Identify the Directory Type
 
 Having identified the map type, determine the directory format by examining the root directory's header and tail bytes:
 
-- **Old directories** (S, M, L): The directory starts with a master sequence number byte (in BCD) and a 4-byte validation string `"Hugo"`. The tail has the same validation string. Old directories are exactly `0x500` bytes (1280 bytes = 5 × 256-byte sectors) and hold up to 47 entries. 8-bit ADFS only recognises `"Hugo"` — it does not support `"Nick"`. Attributes on old directories are encoded in bit 7 of each character of the 10-byte name field (see §3.3), not in a separate attributes byte. The check byte at the end of the directory is always written as zero by 8-bit ADFS; 32-bit ADFS computes it. (See [mdfs.net](https://mdfs.net/Docs/Comp/Disk/Format/ADFS).)
+- **Old directories** (S, M, L): Exactly `0x500` bytes (5 × 256-byte sectors), up to 47 entries. The header and tail contain the validation string `"Hugo"` — 8-bit ADFS does not support `"Nick"`. Attributes are encoded in name bytes rather than a separate field (see §3.3). The check byte at the end of the directory is always zero on 8-bit ADFS; 32-bit ADFS computes it (see §A.2).
 
 - **New directories on old-map media** (D): Same entry structure as old directories but `0x800` bytes (2048 bytes = 2 × 1024-byte sectors) and up to 77 entries. Attributes are stored in a separate byte (offset `+0x19` of the entry) rather than in the name bits. The validation string may be `"Hugo"` or `"Nick"`.
 
@@ -98,16 +103,16 @@ The disc record is the single most important structure on a FileCore disc. Every
 
 | Offset | Size | Field | Notes |
 |--------|------|-------|-------|
-| +0x00 | 1 | `log2_sector_size` | Log₂ of sector size in bytes. 8 = 256B, 9 = 512B, 10 = 1024B. |
-| +0x01 | 1 | `sectors_per_track` | Physical geometry. |
+| +0x00 | 1 | `log2_sector_size` | Log₂ of sector size in bytes (8 = 256, 9 = 512, 10 = 1024). |
+| +0x01 | 1 | `sectors_per_track` | Sectors per track (physical geometry). |
 | +0x02 | 1 | `heads` | Number of disc surfaces. |
-| +0x03 | 1 | `density` | Encoding density (0=hard disc, 1=single, 2=double, 3=double+, 4=quad, 8=octal). |
+| +0x03 | 1 | `density` | Encoding density (0 = hard disc, 1 = single, 2 = double, 3 = double+, 4 = quad, 8 = octal). |
 | +0x04 | 1 | `idlen` | Fragment ID width in bits. 0 for old map. Max 15 (new map), 19 (big map, Ursula), or 21 (RISC OS 5). |
 | +0x05 | 1 | `log2_bpmb` | Log₂ of bytes per map bit (allocation unit size). |
-| +0x06 | 1 | `skew` | Zone skew for head positioning. |
-| +0x07 | 1 | `boot_option` | Boot action (0=none, 1=load, 2=run, 3=exec). |
-| +0x08 | 1 | `low_sector` | Lowest sector ID on a track. |
-| +0x09 | 1 | `nzones` | Number of zones in the allocation map. |
+| +0x06 | 1 | `skew` | Track-to-track sector skew for head positioning. |
+| +0x07 | 1 | `boot_option` | Boot action (0 = none, 1 = load, 2 = run, 3 = exec). |
+| +0x08 | 1 | `low_sector` | Lowest sector ID on a track, plus flags in bits 6–7. |
+| +0x09 | 1 | `nzones` | Number of zones in the allocation map (low byte). |
 | +0x0A | 2 | `zone_spare` | Cross-zone continuation bits per zone boundary. |
 | +0x0C | 4 | `root_dir` | Disc address of the root directory (see §2.3). |
 | +0x10 | 4 | `disc_size` | Total disc size in bytes (low 32 bits). |
@@ -169,7 +174,7 @@ The zone map is the allocation structure for new-map discs. It consists of `nzon
 
 The map is **double-copied**: a second copy of all `nzones` sectors follows immediately after the first. This allows recovery if one copy is damaged. The total map area on disc is therefore `2 × nzones` sectors. (Nick Reeves, "New Disc File Structure for RISC OS": "A double copied map".)
 
-Each zone's map block is one sector. Zone 0's block has a 64-byte header (4-byte zone header + 60-byte disc record copy); all other zones have a 4-byte header. The remainder is the allocation bit stream.
+Each zone's map block is one sector. Zone 0's block has a 4-byte zone header followed by a 60-byte copy of the disc record (64 bytes total before the allocation bits begin). All other zones have only the 4-byte zone header. The remainder of each sector is the allocation bit stream.
 
 **Zone header (4 bytes, all zones):**
 
@@ -259,17 +264,18 @@ bit_pos = zone_header_size * 8    # 64*8 for zone 0, 4*8 for others
 zone_end = sector_size * 8
 alloc_unit = 0                    # within this zone
 
-while bit_pos < zone_end:
-    if alloc_unit < zone_spare and zone > 0:
-        # continuation from previous zone
-        bit_pos += 1
-        alloc_unit += 1
-        continue
+# Skip zone_spare continuation bits (these belong to the
+# previous zone's last fragment, not a new fragment here).
+if zone > 0:
+    bit_pos += zone_spare
+    alloc_unit += zone_spare
 
+while bit_pos < zone_end:
     # read fragment ID
     id = read_bits(map_data, bit_pos, idlen)
     frag_start = alloc_unit
     bit_pos += idlen
+    alloc_unit += idlen
 
     # count the zero bits + terminating 1
     while bit_pos < zone_end:
@@ -322,19 +328,69 @@ Old and new directories share a common structure with minor layout differences. 
 
 The entries are terminated by a NUL byte in the name field of the next (empty) slot.
 
-**Attributes:** On large-sector directories (D, E, F, E+, F+, G), the byte at offset `+0x19` stores attributes. The on-disc representation matches FileCore's internal format: bit 0 = owner read (`ReadBit`), bit 1 = owner write (`WriteBit`), bit 2 = locked (`IntLockedBit`), bit 3 = directory (`DirBit`), bit 4 = public read (`PublicReadBit`, also treated as a second owner-read bit for compatibility with 6502 ADFS "E" files), bit 5 = public write (`PublicWriteBit`), bits 6–7 = reserved (must be 0). There are no execute bits. Note: the FileSwitch external API returns the locked bit in bit 3 and does not expose the directory bit; FileCore converts between these representations internally. (Source: `s/Defns`, lines 300–318.)
+**Attributes:** On large-sector directories (D, E, F, E+, F+, G), the byte at offset `+0x19` stores attributes. The on-disc representation matches FileCore's internal format:
 
-On small-sector old directories (S, M, L), there is no separate attributes byte. Instead, attributes are encoded in **bit 7 of each character** of the 10-byte name field: byte 0 bit 7 = owner read, byte 1 bit 7 = owner write, byte 2 bit 7 = locked, byte 3 bit 7 = directory, byte 4 bit 7 = not publicly readable ("E" bit in 6502 ADFS; 32-bit FileCore treats this as a second owner-read bit), bytes 5–7 encode public access bits (read, write), byte 8 bit 7 = private/public flag. The actual character is in bits 0–6, making filenames effectively 7-bit ASCII on S/M/L discs. (See [mdfs.net](https://mdfs.net/Docs/Comp/Disk/Format/ADFS).)
+- Bit 0: owner read (`ReadBit`)
+- Bit 1: owner write (`WriteBit`)
+- Bit 2: locked (`IntLockedBit`)
+- Bit 3: directory (`DirBit`)
+- Bit 4: public read (`PublicReadBit`; also treated as a second owner-read bit for compatibility with 6502 ADFS "E" files)
+- Bit 5: public write (`PublicWriteBit`)
+- Bits 6–7: reserved per the Acorn specification
+
+There are no execute bits. The FileSwitch external API returns the locked bit in bit 3 and does not expose the directory bit; FileCore converts between these representations internally. (Source: `s/Defns`, lines 300–318.)
+
+Although the specification says bits 6–7 must be zero, RISC OS 5 FileCore includes them in its attribute masks (`IntAttMask` = `0xFF`) and silently preserves them on read and write. They are only stripped when writing to old-format (S/M/L) directories. Some systems are known to set these bits; the reasons are unknown. Tools reading disc images should not reject entries with these bits set, but should write them clear when creating new entries.
+
+On small-sector old directories (S, M, L), there is no separate attributes byte. Instead, attributes are encoded in **bit 7 of each character** of the first five bytes of the 10-byte name field:
+
+- Byte 0 bit 7: owner read (R)
+- Byte 1 bit 7: owner write (W)
+- Byte 2 bit 7: locked (L)
+- Byte 3 bit 7: directory (D)
+- Byte 4 bit 7: execute-only/private (E)
+- Bytes 5–9: pure name characters, no attribute significance
+
+The actual character is in bits 0–6, making filenames effectively 7-bit ASCII on S/M/L discs. The attribute table in the ADFS 1.30 ROM is the literal string `"RWLDE"`, indexed by byte position. (Verified against the [ADFS 1.30 disassembly](https://acornaeology.uk/acorn-adfs/1.30.html): `set_rwl_attribute_bit` at &99C9, `print_entry_name_and_access` at &92DE.)
 
 **Old vs new directory tail differences:**
 
 There are three tail layouts depending on directory type. All are read "backwards" from the end of the directory:
 
-In **small-sector old directories** (S, M, L — `0x500` bytes total), the tail at offset `0x4CB` is: `0x00` end marker, directory name (10 bytes), parent start sector (3 bytes), directory title (19 bytes), reserved (14 bytes, zero), end sequence number (1 byte, BCD), end validation `"Hugo"` (4 bytes), check byte (1 byte — always zero on 8-bit ADFS, computed by 32-bit ADFS).
+In **small-sector old directories** (S, M, L — `0x500` bytes total), the tail starts at offset `0x4CB`:
 
-In **large-sector old directories** (D — `0x800` bytes total), the tail at offset `0x7D7` is: `0x00` end marker, reserved (2 bytes, zero), parent start sector (3 bytes), directory title (19 bytes), directory name (10 bytes), end sequence number, end validation `"Hugo"` or `"Nick"`, check byte.
+- `0x00` end marker (1 byte)
+- Directory name (10 bytes)
+- Parent start sector (3 bytes)
+- Directory title (19 bytes)
+- Reserved (14 bytes, zero)
+- End sequence number (1 byte, BCD)
+- End validation `"Hugo"` (4 bytes)
+- Check byte (1 byte — always zero on 8-bit ADFS, computed by 32-bit ADFS)
 
-In **new directories** (E, F — `0x800` bytes or LFAU-dependent), the tail layout matches the large-sector old directory but the field ordering in the middle portion differs slightly: directory name comes before title, and the parent field stores an indirect disc address (SIN) rather than a start sector. The validation string is `"Nick"`. (Source: Nick Reeves' E Format Design Document.)
+In **large-sector old directories** (D — `0x800` bytes total), the tail starts at offset `0x7D7`:
+
+- `0x00` end marker (1 byte)
+- Reserved (2 bytes, zero)
+- Parent start sector (3 bytes)
+- Directory title (19 bytes)
+- Directory name (10 bytes)
+- End sequence number (1 byte)
+- End validation `"Hugo"` or `"Nick"` (4 bytes)
+- Check byte (1 byte)
+
+In **new directories** (E, F — `0x800` bytes or LFAU-dependent), the tail has the same fields as the large-sector old directory but with different ordering and addressing:
+
+- `0x00` end marker (1 byte)
+- Reserved (2 bytes, zero)
+- Parent indirect disc address / SIN (3 bytes, not a raw sector address)
+- Directory name (10 bytes)
+- Directory title (19 bytes)
+- End sequence number (1 byte)
+- End validation `"Nick"` (4 bytes)
+- Check byte (1 byte)
+
+(Source: Nick Reeves' E Format Design Document.)
 
 A directory is reported as **"Broken"** if the master sequence number and validation string at the start (bytes `0x000`–`0x004`) do not match those at the end (`0x4FA`–`0x4FE` for small directories, `0x7FA`–`0x7FE` for large/new directories).
 
@@ -478,7 +534,7 @@ The name heap is a contiguous block within the directory, located after the dire
 
 A disc formatted as E+ or F+ cannot be read by versions of RISC OS earlier than 4.0. RISC OS 3.x will see the disc but will report "Broken directory" when trying to open any directory, because the `"SBPr"` signature doesn't match `"Hugo"` or `"Nick"`.
 
-The `big_flag` in the disc record (§2.1) allows RISC OS to identify at mount time whether the disc uses big directories, so it can reject incompatible discs gracefully rather than attempting to parse them.
+The `format_version` field in the disc record (§2.1) allows RISC OS to identify at mount time whether the disc uses big directories, so it can reject incompatible discs gracefully rather than attempting to parse them.
 
 ---
 
@@ -791,24 +847,24 @@ At disc address `0xC00`:
 
 For each zone `z` from 0 to `nzones - 1`:
 
-1. Compute the disc address of this zone's map block. For a single-zone disc this is `0x000`. For multi-zone discs, use the zone address formula from §2.4.
+a. Compute the disc address of this zone's map block. For a single-zone disc this is `0x000`. For multi-zone discs, use the zone address formula from §2.4.
 
-2. Write the 4-byte zone header:
+b. Write the 4-byte zone header:
    - `ZoneCheck`: will be computed last.
    - `FreeLink`: bit offset to the first free fragment (computed below).
    - `CrossCheck`: set so that all zones' CrossCheck bytes XOR to `0xFF`.
 
-3. For zone 0 only: write the disc record copy at offset `+0x04` (60 bytes of the 64-byte disc record, as the first 4 bytes of zone 0 are the zone header).
+c. For zone 0 only: write the disc record copy at offset `+0x04` (60 bytes of the 64-byte disc record, as the first 4 bytes of zone 0 are the zone header).
 
-4. Write the allocation bit stream. On a fresh disc, the stream contains exactly two fragments:
+d. Write the allocation bit stream. On a fresh disc, the stream contains exactly two fragments:
    - **Fragment ID 2 (system object)**: Covers the map sectors + root directory + boot block. Set the `idlen`-bit ID field to `2`, followed by enough `0` bits and a terminating `1` to cover the required number of allocation units.
    - **Fragment ID 0 (free space)**: Covers the rest of the zone. Set the `idlen`-bit ID field to `0` (end of free chain), followed by `0` bits and a terminating `1` covering the remaining allocation units.
 
    For multi-zone discs, only the zone(s) containing the system object will have fragment ID 2. All other zones will contain a single free fragment covering the entire zone (after the `zone_spare` continuation bits).
 
-5. Set `FreeLink` to point to the free fragment's position in the bit stream.
+e. Set `FreeLink` to point to the free fragment's position in the bit stream.
 
-6. Compute and write `ZoneCheck` using the algorithm from §A.1.
+f. Compute and write `ZoneCheck` using the algorithm from §A.1.
 
 #### Step 4: Write the root directory
 
@@ -867,7 +923,12 @@ Map bit stream (7680 bits):
 - Fragment ID 0 (free, chain terminator): 15-bit ID = `0x0000`, then enough bits to cover the remaining ~796 allocation units. That's `15 + 795 + 1 = 811` bits: `[15-bit id=0][795 zero bits][1]`.
 - The rest of the 7680 bits are unused (past the end of the disc's allocation units).
 
-`FreeLink` = bit offset from byte 1 to the start of the free fragment = bit offset of the free fragment within the allocation area + 8 (since FreeLink measures from byte 1). With the system fragment being 18 bits starting at bit 512 (= 64 × 8, after the 64-byte header), the free fragment starts at bit 530 in the sector. FreeLink = 530 - 8 = 522. Set bit 15 (top bit always set): FreeLink = `0x820A`.
+`FreeLink` calculation:
+
+- The allocation bits start after the 64-byte zone 0 header, at bit 512 (= 64 × 8).
+- The system fragment is 18 bits long, so the free fragment starts at bit 512 + 18 = 530.
+- `FreeLink` is measured from byte 1 of the sector (i.e. from bit 8), so: FreeLink = 530 − 8 = 522.
+- Bit 15 is always set: FreeLink = 522 | 0x8000 = `0x820A`.
 
 ### C.5 Old Map Formatting (L, D)
 
@@ -913,7 +974,7 @@ There is no boot block on floppy discs. Hard discs with old maps do have a boot 
 
 **FreeLink** — 16-bit field at offset `+0x01` in each zone header. Points to the first free fragment in the zone (as a bit offset from byte 1 of the zone). Bit 15 is always set. A value of `0x8000` means no free space in this zone.
 
-**Hugo** — The 4-byte magic string `"Hugo"` at the start of old-format directories (S, M, L, D, E, F). Named after Hugo Sherlock-Mayson. Repeated in the tail as a validation word.
+**Hugo** — The 4-byte magic string `"Hugo"` at the start of old-format directories (S, M, L, D, E, F). Named after Hugo Tyson. Repeated in the tail as a validation word.
 
 **idlen** — Disc record field: the number of bits used for fragment IDs in the zone map. Determines the maximum number of objects on disc (2^idlen − 3 usable IDs). Typically 15 for floppies and old-format hard discs. The Acorn Phase 1 spec (Ursula) raised the limit to 19 for big map discs; RISC OS 5 (FileCore 3.75, 2017) raised it further to 21.
 
@@ -935,9 +996,7 @@ There is no boot block on floppy discs. Hard discs with old maps do have a boot 
 
 **Old map** — Flat free-space table used by S, M, L, and D. Two 256-byte sectors at disc addresses `0x000` and `0x100`, containing 82 three-byte (start, length) pairs in 256-byte units.
 
-**oven** — The 4-byte magic string `"oven"` at the end of the tail in big directories. It is the second half of the `"SBPr"` / `"oven"` pair (analogous to `"Hugo"` / `"Nick"` in older formats).
-
-**SBPr** — The 4-byte magic string `"SBPr"` in the header of big directories (E+, F+, G), at offset +0x04. Named after Simon Beaumont and Paul Richardson. The corresponding tail magic is `"oven"`.
+**SBPr / oven** — The 4-byte magic strings `"SBPr"` (header, offset +0x04) and `"oven"` (tail) in big directories (E+, F+, G), analogous to `"Hugo"` / `"Nick"` in older formats. Defined as the single 8-byte literal `"SBProven"` in the source (`s/BigDirCode` line 71), a reference to `sproven`, the Acorn login of Simon Proven, who designed and implemented big directory support.
 
 **Sequence number** — A byte stored in both the header and tail of every directory. Incremented on each directory update. A mismatch between header and tail indicates the directory was not completely written (e.g. power loss).
 
