@@ -452,6 +452,8 @@ def _resolve_extracted_file_path(ef):
 
             # --- S3 storage mode ---
             if isinstance(storage, S3Storage):
+                from botocore.exceptions import ClientError
+
                 # output_path should be a relative path (or S3 key prefix)
                 if os.path.isabs(base):
                     # Legacy absolute path — strip to relative
@@ -468,25 +470,35 @@ def _resolve_extracted_file_path(ef):
                 prefix = f"outputs/{base.strip('/')}"
                 file_key = f"{prefix}/{disk_path.lstrip('/')}"
 
-                if storage.exists(file_key):
-                    # Download to temp and return path
-                    tmp_dir = tempfile.mkdtemp(prefix='arcology_ef_')
-                    dest = os.path.join(tmp_dir, ef.filename)
-                    storage.get(file_key, dest)
-                    return dest
+                # Build candidate keys.  If the file has a known RISC OS
+                # filetype, try ,xxx suffix variants (both cases) before
+                # the plain key.  This avoids an expensive list_prefix()
+                # call — each HEAD/GET is ~12x cheaper than a LIST on AWS.
+                s3_candidates = []
+                if ef.risc_os_filetype:
+                    s3_candidates.append(file_key + ',' + ef.risc_os_filetype.lower())
+                    s3_candidates.append(file_key + ',' + ef.risc_os_filetype.upper())
+                s3_candidates.append(file_key)
 
-                # RISC OS filetype suffix fallback
-                parent_prefix = file_key.rsplit('/', 1)[0] + '/' if '/' in file_key else ''
-                candidates = [
-                    k for k in storage.list_prefix(parent_prefix)
-                    if k.startswith(file_key + ',')
-                    and re.search(r',[0-9a-fA-F]{1,3}$', k.rsplit('/', 1)[-1])
-                ]
-                if candidates:
-                    tmp_dir = tempfile.mkdtemp(prefix='arcology_ef_')
-                    dest = os.path.join(tmp_dir, candidates[0].rsplit('/', 1)[-1])
-                    storage.get(candidates[0], dest)
-                    return dest
+                for key in s3_candidates:
+                    try:
+                        tmp_dir = tempfile.mkdtemp(prefix='arcology_ef_')
+                        dest = os.path.join(tmp_dir, key.rsplit('/', 1)[-1])
+                        storage.get(key, dest)
+                        return dest
+                    except ClientError as e:
+                        if e.response['Error']['Code'] in ('404', 'NoSuchKey'):
+                            # Clean up empty temp dir
+                            try:
+                                os.unlink(dest)
+                            except OSError:
+                                pass
+                            try:
+                                os.rmdir(tmp_dir)
+                            except OSError:
+                                pass
+                            continue
+                        raise
 
                 continue
 

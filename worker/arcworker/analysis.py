@@ -235,9 +235,13 @@ class AnalysisWorker:
             # S3 mode: download to work_dir
             input_path = work_dir / storage_path
             if not input_path.exists():
-                if not self.storage.exists(key):
-                    raise FileNotFoundError(f"Input file not found in storage: {key}")
-                self.storage.get(key, input_path)
+                from botocore.exceptions import ClientError
+                try:
+                    self.storage.get(key, input_path)
+                except ClientError as e:
+                    if e.response['Error']['Code'] in ('404', 'NoSuchKey'):
+                        raise FileNotFoundError(f"Input file not found in storage: {key}")
+                    raise
 
         if not input_path.exists():
             raise FileNotFoundError(f"Input file not found: {input_path}")
@@ -444,7 +448,11 @@ class AnalysisWorker:
                     return candidate
             return None
 
-        # S3 mode: try each candidate key, download the first that exists
+        # S3 mode: try downloading each candidate key directly.
+        # Using get() with a 404 catch is one S3 call per attempt vs
+        # exists() + get() = two calls for the successful candidate.
+        from botocore.exceptions import ClientError
+
         prefix = extraction_path.lstrip('/')
         base_key = f"outputs/{prefix}/{relative_path.lstrip('/')}"
 
@@ -455,11 +463,16 @@ class AnalysisWorker:
         candidates.append(base_key)
 
         for key in candidates:
-            if self.storage.exists(key):
-                local_path = dest_dir / Path(key).name
+            local_path = dest_dir / Path(key).name
+            try:
                 self.storage.get(key, local_path)
                 log.info(f"Downloaded single file from S3: {key}")
                 return local_path
+            except ClientError as e:
+                if e.response['Error']['Code'] in ('404', 'NoSuchKey'):
+                    local_path.unlink(missing_ok=True)
+                    continue
+                raise
 
         return None
 
@@ -704,6 +717,7 @@ class AnalysisWorker:
             else:
                 # S3 mode or different worker: try to download from storage cache
                 from shared.storage import S3Storage
+                from botocore.exceptions import ClientError
                 if isinstance(self.storage, S3Storage):
                     try:
                         rel = local_path.relative_to(self.outputs)
@@ -712,10 +726,13 @@ class AnalysisWorker:
                         cache_key = self.storage.storage_key(
                             'outputs', f".cache/{artefact['uuid']}/{local_path.name}")
                     dest = work_dir / local_path.name
-                    if self.storage.exists(cache_key):
+                    try:
                         self.storage.get(cache_key, dest)
                         input_path = dest
                         log.info(f"Downloaded cached partition image from storage: {cache_key}")
+                    except ClientError as e:
+                        if e.response['Error']['Code'] not in ('404', 'NoSuchKey'):
+                            raise
         if input_path is None:
             input_path = self.get_input_path(artefact, work_dir)
 
