@@ -10,6 +10,8 @@ from flask_wtf import FlaskForm
 from wtforms import StringField, TextAreaField, SelectField
 from wtforms.validators import DataRequired, Optional, Length
 
+from sqlalchemy import func
+
 from ..extensions import db
 from ..database import Platform, Category, Tag, ExternalSystem, HashDatabase
 from ..permissions import require_permission
@@ -122,7 +124,7 @@ def _delete_with_guards(obj, endpoint: str, success_label: str, guards: list[tup
 @blueprint.route('/platforms')
 @login_required
 def platforms():
-    platforms = Platform.query.filter(Platform.parent_id.is_(None)).order_by(Platform.name).all()
+    platforms = Platform.query.filter(Platform.parent_id.is_(None)).order_by(func.lower(Platform.name)).all()
     return render_template('taxonomy/platforms.html', platforms=platforms)
 
 
@@ -183,7 +185,7 @@ def delete_platform(id):
 @blueprint.route('/categories')
 @login_required
 def categories():
-    categories = Category.query.filter(Category.parent_id.is_(None)).order_by(Category.name).all()
+    categories = Category.query.filter(Category.parent_id.is_(None)).order_by(func.lower(Category.name)).all()
     return render_template('taxonomy/categories.html', categories=categories)
 
 
@@ -242,7 +244,7 @@ def delete_category(id):
 @blueprint.route('/tags')
 @login_required
 def tags():
-    tags = Tag.query.order_by(Tag.name).all()
+    tags = Tag.query.order_by(func.lower(Tag.name)).all()
     return render_template('taxonomy/tags.html', tags=tags)
 
 
@@ -277,7 +279,7 @@ def delete_tag(id):
 @blueprint.route('/external-systems')
 @login_required
 def external_systems():
-    systems = ExternalSystem.query.order_by(ExternalSystem.name).all()
+    systems = ExternalSystem.query.order_by(func.lower(ExternalSystem.name)).all()
     return render_template('taxonomy/external_systems.html', systems=systems)
 
 

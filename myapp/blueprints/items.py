@@ -16,15 +16,15 @@ from ..extensions import db
 from ..database import Item, Artefact, Platform, Category, Tag, ExternalSystem, ExternalReference
 
 _ITEM_SORT_OPTIONS = {
-    'name_asc':      Item.name.asc(),
-    'name_desc':     Item.name.desc(),
+    'name_asc':      func.lower(Item.name).asc(),
+    'name_desc':     func.lower(Item.name).desc(),
     'uploaded_asc':  Item.created_at.asc(),
     'uploaded_desc': Item.created_at.desc(),
 }
 
 _ARTEFACT_SORT_OPTIONS = {
-    'label_asc':     Artefact.label.asc(),
-    'label_desc':    Artefact.label.desc(),
+    'label_asc':     func.lower(Artefact.label).asc(),
+    'label_desc':    func.lower(Artefact.label).desc(),
     'uploaded_asc':  Artefact.created_at.asc(),
     'uploaded_desc': Artefact.created_at.desc(),
 }
