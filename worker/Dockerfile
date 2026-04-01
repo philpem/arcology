@@ -270,7 +270,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 	sed -i '/^Components:/ s/$/ multiverse/' /etc/apt/sources.list.d/ubuntu.sources && \
 	apt -y update && apt -y upgrade && \
 	apt -y install \
-		python3 python3-pip python3-dev python3-requests python3-numpy git \
+		python3 python3-pip python3-dev python3-requests python3-numpy python3-boto3 git \
 		p7zip-full zstd gzip bzip2 xz-utils \
 		unzip unrar tar util-linux \
 		file fdisk \
@@ -284,11 +284,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 ARG GREASEWEAZLE_VERSION=26690f89967d519e0106ab9566019a026b920bb4
 RUN python3 -m pip install --break-system-packages \
 	git+https://github.com/keirf/greaseweazle@${GREASEWEAZLE_VERSION}
-
-# Install boto3 for S3-compatible storage backend (optional, only used when
-# STORAGE_BACKEND=s3 is set).  Installed unconditionally so the worker image
-# supports both local and S3 modes without rebuilding.
-RUN python3 -m pip install --break-system-packages boto3
 
 # Install Acorn image conversion libraries.
 # drawfile_render (philpem fork with signed-coordinate fix) — not pip-installable; clone manually.
