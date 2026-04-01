@@ -2358,11 +2358,11 @@ def compute_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None
     """Compute file hashes for an artefact."""
     artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
 
-    key = get_artefact_storage_key(artefact)
-
-    if not current_app.storage.exists(key):
-        flash('File not found.', 'error')
+    if not artefact.storage_path:
+        flash('File not found — artefact has no stored file.', 'error')
         return _redirect_to_artefact_view(artefact)
+
+    key = get_artefact_storage_key(artefact)
 
     try:
         artefact.md5, artefact.sha256 = compute_file_hashes(key, use_storage=True)
