@@ -1535,7 +1535,24 @@ def _render_artefact_view(artefact):
                            artefact_file_restrictions=artefact_file_restrictions,
                            file_inherited_restrictions=file_inherited_restrictions,
                            file_ancestor_restrictions=file_ancestor_restrictions,
-                           file_descendant_restrictions=file_descendant_restrictions)
+                           file_descendant_restrictions=file_descendant_restrictions,
+                           move_item_choices=_move_item_choices(artefact))
+
+
+def _move_item_choices(artefact):
+    """Build item selector choices for the move-artefact form.
+
+    Returns an empty list when the artefact is derived (cannot be moved).
+    Items are shown with depth-based indentation to reflect hierarchy.
+    """
+    if artefact.parent_artefact_id is not None:
+        return []
+
+    from ..utils.item_helpers import indented_item_choices
+    return indented_item_choices(
+        value_fn=lambda item: item.url_id,
+        exclude_ids={artefact.item_id},
+    )
 
 
 @blueprint.route('/<string:uuid>/add-to-hashdb', methods=['POST'])
@@ -1859,6 +1876,61 @@ def _delete_item_files(item):
         # Delete stored files for this artefact and all its derived artefacts.
         _delete_artefact_files(artefact)
         _cleanup_artefact_outputs(artefact, current_app.logger)
+
+
+def move_artefact_to_item(artefact, new_item):
+    """Move a root artefact (and all its derived artefacts) to a different item.
+
+    Only root artefacts (parent_artefact_id is None) may be moved.
+    Slug uniqueness is re-checked in the target item; slugs are regenerated on
+    collision.  This is a pure DB operation — no files move on disk.
+    """
+    if artefact.parent_artefact_id is not None:
+        raise ValueError('Only root artefacts can be moved')
+    if artefact.item_id == new_item.id:
+        raise ValueError('Artefact is already in this item')
+
+    def _update_item_id(art, target_item_id):
+        art.item_id = target_item_id
+        # Ensure slug is unique within the target item
+        art.slug = ensure_unique_slug(
+            art.slug, Artefact, existing_id=art.id,
+            scope_filter={'item_id': target_item_id},
+        )
+        for derived in art.derived_artefacts:
+            _update_item_id(derived, target_item_id)
+
+    _update_item_id(artefact, new_item.id)
+    db.session.commit()
+
+
+@blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/move', methods=['POST'])
+@login_required
+@require_permission('read_write')
+def move(item_id=None, artefact_id=None):
+    """Move a root artefact to a different item."""
+    artefact = _get_artefact_or_404(item_id, artefact_id)
+
+    if artefact.parent_artefact_id is not None:
+        flash('Only root artefacts can be moved.', 'danger')
+        return _redirect_to_artefact_view(artefact)
+
+    target_uuid = request.form.get('target_item_uuid')
+    if not target_uuid:
+        flash('No target item selected.', 'danger')
+        return _redirect_to_artefact_view(artefact)
+
+    target_item = lookup_by_identifier(Item, target_uuid)
+
+    if target_item.id == artefact.item_id:
+        flash('Artefact is already in that item.', 'warning')
+        return _redirect_to_artefact_view(artefact)
+
+    old_item_name = artefact.item.name
+    move_artefact_to_item(artefact, target_item)
+
+    flash(f'Artefact "{artefact.label}" moved from "{old_item_name}" to "{target_item.name}".', 'success')
+    return _redirect_to_artefact_view(artefact)
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/delete', methods=['POST'])

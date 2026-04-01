@@ -2,11 +2,19 @@
 
 
 def item_to_dict(item, include_artefacts=False, _artefact_count=None):
+    ep = item.effective_platform
+    ec = item.effective_category
     result = {
         'id': item.id, 'uuid': item.uuid, 'name': item.name, 'slug': item.slug, 'description': item.description,
+        'parent_uuid': item.parent.uuid if item.parent else None,
+        'parent_name': item.parent.name if item.parent else None,
+        'path': [{'uuid': a.uuid, 'name': a.name} for a in item.ancestors],
         'platform': {'id': item.platform.id, 'name': item.platform.name} if item.platform else None,
         'category': {'id': item.category.id, 'name': item.category.name} if item.category else None,
+        'effective_platform': {'id': ep.id, 'name': ep.name} if ep else None,
+        'effective_category': {'id': ec.id, 'name': ec.name} if ec else None,
         'tags': [t.name for t in item.tags],
+        'child_count': len(item.children),
         'artefact_count': _artefact_count if _artefact_count is not None else len(item.artefacts),
         'created_at': item.created_at.isoformat(), 'updated_at': item.updated_at.isoformat()
     }
@@ -18,7 +26,8 @@ def item_to_dict(item, include_artefacts=False, _artefact_count=None):
 def artefact_to_dict(artefact, include_partitions=False):
     result = {
         'id': artefact.id, 'uuid': artefact.uuid, 'item_id': artefact.item_id,
-        'item_uuid': artefact.item.uuid, 'label': artefact.label,
+        'item_uuid': artefact.item.uuid, 'item_name': artefact.item.name,
+        'label': artefact.label,
         'artefact_type': artefact.artefact_type.value,
         'type_overridden': artefact.type_overridden,
         'original_filename': artefact.original_filename,

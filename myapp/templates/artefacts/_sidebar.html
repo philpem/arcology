@@ -48,6 +48,33 @@
             </div>
         </div>
 
+        {% if user_can_write and move_item_choices %}
+        <div class="card mb-4">
+            <div class="card-header">
+                <a class="text-decoration-none" data-bs-toggle="collapse" href="#moveSection" role="button" aria-expanded="false" aria-controls="moveSection">
+                    <i class="bi bi-arrow-right-square"></i> Move to Item
+                </a>
+            </div>
+            <div class="collapse" id="moveSection">
+                <div class="card-body">
+                    <form action="{{ url_for('myapp_blueprints_artefacts.move', item_id=artefact.item.url_id, artefact_id=artefact.url_slug) }}" method="post">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="mb-2">
+                            <select name="target_item_uuid" class="form-select form-select-sm" required>
+                                <option value="">-- Select target item --</option>
+                                {% for uuid, name in move_item_choices %}
+                                <option value="{{ uuid }}">{{ name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-sm btn-outline-primary w-100"><i class="bi bi-arrow-right-square"></i> Move Artefact</button>
+                    </form>
+                    <small class="text-muted mt-1 d-block">Derived artefacts will follow automatically.</small>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
         {% if user_can_write %}
         <div class="card mb-4">
             <div class="card-header">

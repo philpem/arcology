@@ -106,7 +106,9 @@ class ArcologyClient:
 		return self.post_json('items', {k: v for k, v in data.items() if v is not None})
 
 	def update_item(self, uuid: str, **data) -> dict:
-		return self.put(f'items/{uuid}', {k: v for k, v in data.items() if v is not None})
+		# Keep explicit None values (e.g. parent_uuid=None to clear parent) but strip
+		# keys that were never provided (missing from kwargs means not updated).
+		return self.put(f'items/{uuid}', data)
 
 	def delete_item(self, uuid: str) -> dict:
 		return self.delete(f'items/{uuid}')
@@ -128,6 +130,9 @@ class ArcologyClient:
 
 	def get_artefact(self, uuid: str) -> dict:
 		return self.get(f'artefacts/{uuid}')
+
+	def move_artefact(self, uuid: str, target_item_uuid: str) -> dict:
+		return self.post_json(f'artefacts/{uuid}/move', {'target_item_uuid': target_item_uuid})
 
 	def list_platforms(self) -> dict:
 		return self.get('platforms')

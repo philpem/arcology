@@ -328,7 +328,14 @@
 			<tbody>
 			{% for item in results.catalogue_items %}
 			<tr>
-				<td><a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a></td>
+				<td>
+					{% if item.ancestors %}
+					<small class="text-muted d-block">
+						{% for ancestor in item.ancestors %}<a href="{{ url_for('myapp_blueprints_items.view', uuid=ancestor.url_id) }}" class="text-muted">{{ ancestor.name }}</a> / {% endfor %}
+					</small>
+					{% endif %}
+					<a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a>
+				</td>
 				<td>{{ item.platform.name if item.platform else '-' }}</td>
 				<td>{{ item.category.name if item.category else '-' }}</td>
 				<td><span class="badge bg-secondary">{{ item.artefacts|length }}</span></td>

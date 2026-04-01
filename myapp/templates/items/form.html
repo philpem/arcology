@@ -5,7 +5,17 @@
 <nav aria-label="breadcrumb" class="mb-3">
     <ol class="breadcrumb">
         <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.index') }}">Items</a></li>
-        {% if item %}<li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a></li>{% endif %}
+        {% if item %}
+        {% for ancestor in item.ancestors %}
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=ancestor.url_id) }}">{{ ancestor.name }}</a></li>
+        {% endfor %}
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a></li>
+        {% elif preset_parent %}
+        {% for ancestor in preset_parent.ancestors %}
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=ancestor.url_id) }}">{{ ancestor.name }}</a></li>
+        {% endfor %}
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=preset_parent.url_id) }}">{{ preset_parent.name }}</a></li>
+        {% endif %}
         <li class="breadcrumb-item active">{{ title }}</li>
     </ol>
 </nav>
@@ -19,9 +29,16 @@
                     {{ form.hidden_tag() }}
                     <div class="mb-3">{{ form.name.label(class="form-label") }}{{ form.name(class="form-control") }}</div>
                     <div class="mb-3">{{ form.description.label(class="form-label") }}{{ form.description(class="form-control", rows=4) }}</div>
+                    <div class="mb-3">{{ form.parent_id.label(class="form-label") }}{{ form.parent_id(class="form-select") }}
+                        <div class="form-text">Place this item under another item in the collection hierarchy.</div>
+                    </div>
                     <div class="row">
-                        <div class="col-md-6 mb-3">{{ form.platform_id.label(class="form-label") }}{{ form.platform_id(class="form-select") }}</div>
-                        <div class="col-md-6 mb-3">{{ form.category_id.label(class="form-label") }}{{ form.category_id(class="form-select") }}</div>
+                        <div class="col-md-6 mb-3">{{ form.platform_id.label(class="form-label") }}{{ form.platform_id(class="form-select") }}
+                            <div class="form-text">Leave blank to inherit from parent.</div>
+                        </div>
+                        <div class="col-md-6 mb-3">{{ form.category_id.label(class="form-label") }}{{ form.category_id(class="form-select") }}
+                            <div class="form-text">Leave blank to inherit from parent.</div>
+                        </div>
                     </div>
                     <div class="mb-3">{{ form.tags.label(class="form-label") }}{{ form.tags(class="form-control") }}<div class="form-text">Comma-separated</div></div>
                     <div class="d-flex gap-2">

@@ -14,7 +14,7 @@
             <div class="col-md-3">{{ form.q(class="form-control", placeholder="Search...") }}</div>
             <div class="col-md-2">{{ form.platform_id(class="form-select") }}</div>
             <div class="col-md-2">{{ form.category_id(class="form-select") }}</div>
-            <div class="col-md-3">
+            <div class="col-md-2">
                 <select name="sort" class="form-select">
                     <option value="name_asc" {% if sort == 'name_asc' %}selected{% endif %}>Name (A–Z)</option>
                     <option value="name_desc" {% if sort == 'name_desc' %}selected{% endif %}>Name (Z–A)</option>
@@ -22,7 +22,16 @@
                     <option value="uploaded_desc" {% if sort == 'uploaded_desc' %}selected{% endif %}>Uploaded (newest first)</option>
                 </select>
             </div>
-            <div class="col-md-2"><button type="submit" class="btn btn-secondary w-100"><i class="bi bi-search"></i> Filter</button></div>
+            <div class="col-md-1"><button type="submit" class="btn btn-secondary w-100"><i class="bi bi-search"></i> Filter</button></div>
+            {% if not searching %}
+            <div class="col-md-2">
+                {% if view_mode == 'tree' %}
+                <a href="{{ url_for('myapp_blueprints_items.index', q=request.args.get('q'), platform_id=request.args.get('platform_id'), category_id=request.args.get('category_id'), sort=request.args.get('sort'), per_page=request.args.get('per_page'), view='flat') }}" class="btn btn-outline-secondary w-100"><i class="bi bi-list-ul"></i> Flat view</a>
+                {% else %}
+                <a href="{{ url_for('myapp_blueprints_items.index', q=request.args.get('q'), platform_id=request.args.get('platform_id'), category_id=request.args.get('category_id'), sort=request.args.get('sort'), per_page=request.args.get('per_page'), view='tree') }}" class="btn btn-outline-secondary w-100"><i class="bi bi-diagram-3"></i> Tree view</a>
+                {% endif %}
+            </div>
+            {% endif %}
         </form>
     </div>
 </div>
@@ -36,26 +45,51 @@
         'platform_id': request.args.get('platform_id'),
         'category_id': request.args.get('category_id'),
         'per_page': request.args.get('per_page'),
-        'sort': request.args.get('sort')
+        'sort': request.args.get('sort'),
+        'view': view_mode
     }
 ) }}
 
 <div class="card">
     <div class="table-responsive">
         <table class="table table-hover mb-0">
-            <thead><tr><th>Name</th><th>Platform</th><th>Category</th><th>Artefacts</th><th>Updated</th></tr></thead>
+            <thead><tr><th>Name</th><th>Platform</th><th>Category</th><th>Children</th><th>Artefacts</th><th>Updated</th></tr></thead>
             <tbody>
+                {% if view_mode == 'tree' and tree_rows and not searching %}
+                {% for item, depth in tree_rows %}
+                <tr>
+                    <td style="padding-left: {{ 1 + depth * 1.5 }}rem;">
+                        {% if depth > 0 %}<i class="bi bi-arrow-return-right text-muted me-1"></i>{% endif %}
+                        <a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a>
+                    </td>
+                    <td>{{ item.platform.name if item.platform else ('<span class="text-muted fst-italic">' ~ (item.effective_platform.name if item.effective_platform else '-') ~ '</span>')|safe }}</td>
+                    <td>{{ item.category.name if item.category else ('<span class="text-muted fst-italic">' ~ (item.effective_category.name if item.effective_category else '-') ~ '</span>')|safe }}</td>
+                    <td><span class="badge bg-secondary">{{ child_counts.get(item.id, 0) }}</span></td>
+                    <td><span class="badge bg-secondary">{{ artefact_counts.get(item.id, 0) }}</span></td>
+                    <td>{{ item.updated_at.strftime('%Y-%m-%d') }}</td>
+                </tr>
+                {% endfor %}
+                {% else %}
                 {% for item in items %}
                 <tr>
-                    <td><a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a></td>
-                    <td>{{ item.platform.name if item.platform else '-' }}</td>
-                    <td>{{ item.category.name if item.category else '-' }}</td>
+                    <td>
+                        {% if item.parent %}
+                        <small class="text-muted d-block">
+                            {% for ancestor in item.ancestors %}<a href="{{ url_for('myapp_blueprints_items.view', uuid=ancestor.url_id) }}" class="text-muted">{{ ancestor.name }}</a> / {% endfor %}
+                        </small>
+                        {% endif %}
+                        <a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a>
+                    </td>
+                    <td>{{ item.platform.name if item.platform else ('<span class="text-muted fst-italic">' ~ (item.effective_platform.name if item.effective_platform else '-') ~ '</span>')|safe }}</td>
+                    <td>{{ item.category.name if item.category else ('<span class="text-muted fst-italic">' ~ (item.effective_category.name if item.effective_category else '-') ~ '</span>')|safe }}</td>
+                    <td><span class="badge bg-secondary">{{ child_counts.get(item.id, 0) }}</span></td>
                     <td><span class="badge bg-secondary">{{ artefact_counts.get(item.id, 0) }}</span></td>
                     <td>{{ item.updated_at.strftime('%Y-%m-%d') }}</td>
                 </tr>
                 {% else %}
-                <tr><td colspan="5" class="text-center text-muted">No items found</td></tr>
+                <tr><td colspan="6" class="text-center text-muted">No items found</td></tr>
                 {% endfor %}
+                {% endif %}
             </tbody>
         </table>
     </div>
@@ -66,6 +100,7 @@
     'platform_id': request.args.get('platform_id'),
     'category_id': request.args.get('category_id'),
     'per_page': request.args.get('per_page'),
-    'sort': request.args.get('sort')
+    'sort': request.args.get('sort'),
+    'view': view_mode
 }, valid_per_page=valid_per_page, view_all=view_all) }}
 {% endblock %}

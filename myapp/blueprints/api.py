@@ -27,7 +27,7 @@ from ..database import (
 from .artefacts import (
     get_artefact_path, _delete_artefact_files, _delete_item_files,
     detect_artefact_type, save_uploaded_file, compute_file_hashes,
-    queue_analyses_for_artefact,
+    queue_analyses_for_artefact, move_artefact_to_item,
     _collect_all_file_restrictions, _collect_ancestor_file_restrictions,
 )
 from ..utils.hash_rescan import find_known_file
@@ -268,12 +268,24 @@ def list_items():
         query = query.filter(Item.category_id == request.args.get('category_id', type=int))
     if request.args.get('tag'):
         query = query.filter(Item.tags.any(Tag.name == request.args['tag']))
+    # Filter by parent: ?parent_uuid=<uuid> or ?parent_uuid=none for root items only
+    parent_uuid_param = request.args.get('parent_uuid')
+    if parent_uuid_param is not None:
+        if parent_uuid_param.lower() in ('none', 'null', ''):
+            query = query.filter(Item.parent_id.is_(None))
+        else:
+            parent = Item.query.filter(Item.uuid == parent_uuid_param).first()
+            if parent is None:
+                return error_response('Parent item not found', 404)
+            query = query.filter(Item.parent_id == parent.id)
 
     # Eager-load relationships accessed by item_to_dict to avoid N+1
     query = query.options(
         selectinload(Item.platform),
         selectinload(Item.category),
         selectinload(Item.tags),
+        selectinload(Item.parent),
+        selectinload(Item.children),
     )
 
     pagination = query.order_by(Item.name).paginate(page=page, per_page=per_page)
@@ -305,7 +317,14 @@ def create_item():
         return error
     if 'name' not in data:
         return error_response('Name is required')
-    
+
+    parent_id = None
+    if data.get('parent_uuid'):
+        parent = Item.query.filter(Item.uuid == data['parent_uuid']).first()
+        if parent is None:
+            return error_response('Parent item not found', 404)
+        parent_id = parent.id
+
     item = Item()
     assign_item_fields(
         item,
@@ -313,9 +332,10 @@ def create_item():
         description=data.get('description'),
         platform_id=data.get('platform_id'),
         category_id=data.get('category_id'),
+        parent_id=parent_id,
     )
     assign_item_tags(item, data.get('tags'))
-    
+
     db.session.add(item)
     db.session.commit()
     item.slug = ensure_unique_slug(generate_slug(item.name), Item)
@@ -341,6 +361,16 @@ def update_item(uuid):
     if 'description' in data: item.description = data['description']
     if 'platform_id' in data: item.platform_id = data['platform_id']
     if 'category_id' in data: item.category_id = data['category_id']
+    if 'parent_uuid' in data:
+        if data['parent_uuid'] is None:
+            item.parent_id = None
+        else:
+            new_parent = Item.query.filter(Item.uuid == data['parent_uuid']).first()
+            if new_parent is None:
+                return error_response('Parent item not found', 404)
+            if new_parent.id == item.id or item.is_ancestor_of(new_parent):
+                return error_response('Cannot move an item to itself or one of its descendants', 400)
+            item.parent_id = new_parent.id
     db.session.commit()
     return jsonify(item_to_dict(item))
 
@@ -349,10 +379,17 @@ def update_item(uuid):
 @require_auth('read_write')
 def delete_item(uuid):
     item = _get_item_or_404(uuid)
-    _delete_item_files(item)
+    _delete_item_files_api(item)
     db.session.delete(item)
     db.session.commit()
     return '', 204
+
+
+def _delete_item_files_api(item):
+    """Recursively delete artefact files on disk for item and all descendants."""
+    _delete_item_files(item)
+    for child in item.children:
+        _delete_item_files_api(child)
 
 
 # =============================================================================
@@ -409,6 +446,37 @@ def delete_artefact(uuid):
     db.session.delete(artefact)
     db.session.commit()
     return '', 204
+
+
+@blueprint.route('/artefacts/<string:uuid>/move', methods=['POST'])
+@require_auth('read_write')
+def move_artefact(uuid):
+    """Move a root artefact (and its derived artefacts) to a different item."""
+    artefact = _get_artefact_or_404(uuid)
+    data, error = _json_object()
+    if error:
+        return error
+
+    target_uuid = data.get('target_item_uuid')
+    if not target_uuid:
+        return error_response('target_item_uuid is required', 400)
+
+    if artefact.parent_artefact_id is not None:
+        return error_response('Only root artefacts can be moved', 400)
+
+    target_item = Item.query.filter_by(uuid=target_uuid).first()
+    if not target_item:
+        return error_response('Target item not found', 404)
+
+    if target_item.id == artefact.item_id:
+        return error_response('Artefact is already in that item', 400)
+
+    try:
+        move_artefact_to_item(artefact, target_item)
+    except ValueError as e:
+        return error_response(str(e), 400)
+
+    return jsonify(artefact_to_dict(artefact))
 
 
 @blueprint.route('/artefacts/<string:uuid>', methods=['PATCH'])
