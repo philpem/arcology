@@ -2724,15 +2724,19 @@ class AnalysisWorker:
         if parse_errors:
             summary_parts.append(f'{parse_errors} could not be parsed')
 
+        details_dict: dict = {
+            'modules': modules,
+            'files_scanned': len(module_files),
+            'parse_errors': parse_errors,
+        }
+        if path_prefix:
+            details_dict['path_prefix'] = path_prefix
+
         self.complete_analysis(
             analysis_id,
             tool_name='riscos_module_parser',
             summary=', '.join(summary_parts),
-            details=json.dumps({
-                'modules': modules,
-                'files_scanned': len(module_files),
-                'parse_errors': parse_errors,
-            }),
+            details=json.dumps(details_dict),
         )
 
     # =========================================================================
