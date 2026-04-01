@@ -273,7 +273,7 @@ class FileSearchForm(FlaskForm):
         ('hide', 'Products: Hide'),
         ('only', 'Products: Only'),
     ], default='', validators=[Optional()])
-    show_directories = BooleanField('Show directories', default=False)
+    show_directories = BooleanField('Show Dirs', default=False)
 
 
 # =============================================================================
@@ -1094,9 +1094,7 @@ def _render_artefact_view(artefact):
     if file_form.partition_uuid.data:
         files_query = files_query.filter(Partition.uuid == file_form.partition_uuid.data)
 
-    # Hide directories by default (unless explicitly requested)
-    if not file_form.show_directories.data:
-        files_query = files_query.filter(ExtractedFile.is_directory == False)
+    # Show empty directory entries so users can see the full disc structure
 
     if file_form.filename.data:
         fn = file_form.filename.data

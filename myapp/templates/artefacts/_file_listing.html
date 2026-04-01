@@ -23,9 +23,9 @@
                 {% endif %}
             </div>
             <div class="card-body border-bottom">
-                <form method="get" class="row g-2">
+                <form method="get" class="d-flex flex-wrap align-items-end gap-2">
                 {% if hashdb_mode %}<input type="hidden" name="mode" value="hashdb">{% endif %}
-                    <div class="col-md-2">
+                    <div style="width: 180px;">
                         <select name="partition_uuid" class="form-select form-select-sm" title="Filter files by disk partition. Select a specific partition or show files from all partitions.">
                             <option value="">All Partitions</option>
                             {% for p in all_partitions %}
@@ -35,15 +35,13 @@
                             {% endfor %}
                         </select>
                     </div>
-                    <div class="col-md-2">{{ file_form.filename(class="form-control form-control-sm", placeholder="Filename (glob: *.txt)", title="Filter by filename. Supports glob wildcards: * matches any characters, ? matches a single character. Example: *.txt, README*") }}</div>
-                    <div class="col-md-1">{{ file_form.filetype(class="form-control form-control-sm", placeholder="Filetype", title="Filter by RISC OS filetype code (hex). Leading # or & is stripped automatically. Example: fff, Text") }}</div>
-                    <div class="col-md-2">{{ file_form.path(class="form-control form-control-sm", placeholder="Path (e.g., Games/)", title="Filter by directory path. Shows files within the given path. Use with Recursive to include all subdirectories.") }}</div>
-                    <div class="col-md-1">{{ file_form.md5(class="form-control form-control-sm", placeholder="MD5", title="Filter by exact MD5 hash (32-character hex string)") }}</div>
-                    <div class="col-auto">{{ file_form.hide_known(class="form-select form-select-sm", title="Filter files by hash database match status. 'Hide' removes files matching known hashes; 'Only' shows only files matching known hashes.") }}</div>
-                    <div class="col-auto">{{ file_form.filter_products(class="form-select form-select-sm", title="Filter files by product match status. 'Hide' removes files matched to a known product; 'Only' shows only files matched to a known product.") }}</div>
-                    <div class="col-auto"><div class="form-check form-check-sm">{{ file_form.show_directories(class="form-check-input", title="Show directory entries in the file listing") }}<label class="form-check-label small" title="Show directory entries in the file listing">Dirs</label></div></div>
-                    <div class="col-auto"><button type="submit" class="btn btn-sm btn-secondary w-100">Filter</button></div>
-                    <div class="col-auto"><a href="?{% if hashdb_mode %}mode=hashdb{% endif %}" class="btn btn-sm btn-outline-secondary w-100" title="Clear all filters">Clear</a></div>
+                    <div style="width: 180px;">{{ file_form.filename(class="form-control form-control-sm", placeholder="Filename (glob: *.txt)", title="Filter by filename. Supports glob wildcards: * matches any characters, ? matches a single character. Example: *.txt, README*") }}</div>
+                    <div style="width: 100px;">{{ file_form.filetype(class="form-control form-control-sm", placeholder="Filetype", title="Filter by RISC OS filetype code (hex). Leading # or & is stripped automatically. Example: fff, Text") }}</div>
+                    <div>{{ file_form.hide_known(class="form-select form-select-sm", title="Filter files by hash database match status. 'Hide' removes files matching known hashes; 'Only' shows only files matching known hashes.") }}</div>
+                    <div>{{ file_form.filter_products(class="form-select form-select-sm", title="Filter files by product match status. 'Hide' removes files matched to a known product; 'Only' shows only files matched to a known product.") }}</div>
+                    <div class="flex-grow-1"></div>
+                    <button type="submit" class="btn btn-sm btn-secondary">Filter</button>
+                    <a href="?{% if hashdb_mode %}mode=hashdb{% endif %}" class="btn btn-sm btn-outline-secondary" title="Clear all filters">Clear</a>
                 </form>
             </div>
             {% if subdirectories %}
