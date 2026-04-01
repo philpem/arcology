@@ -1548,25 +1548,11 @@ def _move_item_choices(artefact):
     if artefact.parent_artefact_id is not None:
         return []
 
-    all_items = Item.query.order_by(Item.name).all()
-    id_to_item = {item.id: item for item in all_items}
-
-    def _depth(item):
-        d = 0
-        current = item.parent_id
-        while current is not None:
-            d += 1
-            parent = id_to_item.get(current)
-            current = parent.parent_id if parent else None
-        return d
-
-    choices = []
-    for item in all_items:
-        if item.id == artefact.item_id:
-            continue
-        indent = '\u00a0\u00a0\u00a0\u00a0' * _depth(item)
-        choices.append((item.url_id, f"{indent}{item.name}"))
-    return choices
+    from ..utils.item_helpers import indented_item_choices
+    return indented_item_choices(
+        value_fn=lambda item: item.url_id,
+        exclude_ids={artefact.item_id},
+    )
 
 
 @blueprint.route('/<string:uuid>/add-to-hashdb', methods=['POST'])
