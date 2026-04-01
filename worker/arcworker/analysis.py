@@ -398,26 +398,70 @@ class AnalysisWorker:
         shutil.rmtree(extract_dir, ignore_errors=True)
         log.info(f"Cleaned up local extraction directory: {extract_dir}")
 
-    def _resolve_extraction_path(self, extraction_path: str) -> Path:
-        """Resolve an extraction path from hints/DB to a local directory.
+    def _resolve_single_extraction_file(
+        self,
+        extraction_path: str,
+        relative_path: str,
+        dest_dir: Path,
+        risc_os_filetype: str | None = None,
+    ) -> Path | None:
+        """Download a single file from an extraction tree.
 
-        In local mode, resolves relative path under outputs dir.
-        In S3 mode, downloads the extraction tree to a temp directory.
+        In local mode, resolves the path on the local filesystem.
+        In S3 mode, downloads only the one file needed instead of
+        the entire extraction tree.
+
+        Tries RISC OS filetype suffix variants (,ddc / ,DDC) when
+        risc_os_filetype is provided, then the plain name as fallback.
+
+        Returns the local path to the file, or None if not found.
         """
         from shared.storage import LocalStorage
 
         if isinstance(self.storage, LocalStorage):
             path = Path(extraction_path)
-            if path.is_absolute():
-                return path
-            return self.outputs / extraction_path
+            if not path.is_absolute():
+                path = self.outputs / extraction_path
+            base = path / relative_path
 
-        # S3 mode: download to temp
-        prefix = self.storage.storage_key('outputs', extraction_path.lstrip('/'))
-        tmp_dir = Path(tempfile.mkdtemp(prefix='arcology_extract_'))
-        count = self.storage.get_tree(prefix, tmp_dir)
-        log.info(f"Downloaded {count} files from storage prefix: {prefix}")
-        return tmp_dir
+            # Build candidates list (filetype suffix variants + plain)
+            candidates = []
+            if risc_os_filetype:
+                candidates.append(Path(str(base) + ',' + risc_os_filetype.lower()))
+                candidates.append(Path(str(base) + ',' + risc_os_filetype.upper()))
+            candidates.append(base)
+
+            # Also try Latin-1 byte variants for each candidate
+            all_candidates = []
+            for candidate in candidates:
+                all_candidates.append(candidate)
+                latin1_variant = make_latin1_fspath(str(candidate))
+                if latin1_variant is not None:
+                    all_candidates.append(Path(latin1_variant))
+
+            for candidate in all_candidates:
+                if candidate.exists():
+                    return candidate
+            return None
+
+        # S3 mode: try each candidate key, download the first that exists
+        prefix = extraction_path.lstrip('/')
+        base_key = f"outputs/{prefix}/{relative_path.lstrip('/')}"
+
+        candidates = []
+        if risc_os_filetype:
+            candidates.append(base_key + ',' + risc_os_filetype.lower())
+            candidates.append(base_key + ',' + risc_os_filetype.upper())
+        candidates.append(base_key)
+
+        for key in candidates:
+            if self.storage.exists(key):
+                local_path = dest_dir / Path(key).name
+                self.storage.get(key, local_path)
+                log.info(f"Downloaded single file from S3: {key}")
+                return local_path
+
+        return None
 
     def _cleanup_partition_cache(self, artefact_uuid: str) -> None:
         """Remove local partition cache for an artefact if no jobs still need it.
@@ -1853,41 +1897,22 @@ class AnalysisWorker:
             disk_relative_path = db_path[len(path_prefix) + 1:]
         else:
             disk_relative_path = db_path
-        resolved_extraction = self._resolve_extraction_path(extraction_path)
-        archive_path = resolved_extraction / disk_relative_path
 
-        # Build a list of name variants to try in order.  DIM writes Acorn
-        # files with a RISC OS filetype suffix (e.g. "Palette,DDC") in either
-        # all-lowercase or all-uppercase.  Non-Acorn tools (7z, etc.) write the
-        # plain name with no suffix.  Try the suffix variants first (when a
-        # filetype is known), then the plain name as the final fallback.
         risc_os_filetype = target_file.get('risc_os_filetype')
-        candidates = []
-        if risc_os_filetype:
-            candidates.append(Path(str(archive_path) + ',' + risc_os_filetype.lower()))
-            candidates.append(Path(str(archive_path) + ',' + risc_os_filetype.upper()))
-        candidates.append(archive_path)  # plain name: DOS, UNIX, or no-suffix fallback
 
-        # For each candidate also try a Latin-1 byte variant.  Acorn filenames
-        # can contain raw Latin-1 bytes (e.g. hard space 0xA0); sanitize_path()
-        # converts these to proper Unicode (U+00A0) for the database, but the
-        # file on disk still has the single raw byte.  Python would encode
-        # U+00A0 as two UTF-8 bytes (0xC2 0xA0) when calling exists(), so we
-        # also try a surrogate-escaped path that maps back to the raw byte.
-        all_candidates = []
-        for candidate in candidates:
-            all_candidates.append(candidate)
-            latin1_variant = make_latin1_fspath(str(candidate))
-            if latin1_variant is not None:
-                all_candidates.append(Path(latin1_variant))
-
-        for candidate in all_candidates:
-            if candidate.exists():
-                archive_path = candidate
-                break
-
-        if not archive_path.exists():
-            self.fail_analysis(analysis_id, f'Archive file not found at {archive_path}')
+        # Download only the single file needed — not the entire extraction
+        # tree.  In S3 mode this avoids downloading thousands of files just
+        # to read one archive.
+        archive_path = self._resolve_single_extraction_file(
+            extraction_path, disk_relative_path, work_dir,
+            risc_os_filetype=risc_os_filetype,
+        )
+        if not archive_path:
+            self.fail_analysis(
+                analysis_id,
+                f'Archive file not found: {disk_relative_path} '
+                f'(extraction_path={extraction_path})',
+            )
             return
 
         # Get item for hierarchical path
