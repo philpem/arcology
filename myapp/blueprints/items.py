@@ -28,7 +28,7 @@ _ARTEFACT_SORT_OPTIONS = {
     'uploaded_asc':  Artefact.created_at.asc(),
     'uploaded_desc': Artefact.created_at.desc(),
 }
-from .artefacts import _delete_item_files
+from .artefacts import bulk_delete_item
 from ..permissions import require_permission
 from ..utils.item_helpers import item_choice_list, item_parent_choice_list, assign_item_fields, assign_item_tags
 
@@ -324,24 +324,13 @@ def delete(uuid):
     name = item.name
     parent = item.parent
 
-    # Delete files on disk for this item and all descendants before DB cascade.
-    _delete_item_files_recursive(item)
-
-    db.session.delete(item)
-    db.session.commit()
+    bulk_delete_item(item)
 
     flash(f'Item "{name}" deleted.', 'success')
     # Redirect to parent if we came from within the hierarchy
     if parent:
         return redirect(url_for(f'{ROUTENAME}.view', uuid=parent.url_id))
     return redirect(url_for(f'{ROUTENAME}.index'))
-
-
-def _delete_item_files_recursive(item):
-    """Delete artefact files on disk for an item and all its descendants."""
-    _delete_item_files(item)
-    for child in item.children:
-        _delete_item_files_recursive(child)
 
 
 @blueprint.route('/<string:uuid>/references/add', methods=['GET', 'POST'])

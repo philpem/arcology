@@ -628,16 +628,28 @@ def _collect_all_analyses(artefact: Artefact) -> list:
 def _bulk_delete_artefact_dependents(artefact_ids: list[int]):
     """Bulk-delete all referencing rows across every FK table for the given artefact IDs.
 
-    Deletes analyses, extracted files, partitions, protection/mastering/module
-    records, restrictions, and tag associations.  Does NOT delete the artefacts
-    themselves — call ``_bulk_delete_artefacts`` for that.
+    Deletes analyses, extracted file restrictions, recognised products,
+    extracted files, partitions, protection/mastering/module records,
+    artefact restrictions, and tag associations.  Does NOT delete the
+    artefacts themselves — call ``_bulk_delete_artefacts`` for that.
     """
     Analysis.query.filter(Analysis.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
+    partition_subq = db.session.query(Partition.id).filter(
+        Partition.artefact_id.in_(artefact_ids)).subquery()
+    ef_subq = db.session.query(ExtractedFile.id).filter(
+        ExtractedFile.partition_id.in_(db.session.query(partition_subq.c.id))).subquery()
+    ExtractedFileRestriction.query.filter(
+        ExtractedFileRestriction.extracted_file_id.in_(
+            db.session.query(ef_subq.c.id)
+        )).delete(synchronize_session=False)
+    RecognisedProduct.query.filter(
+        RecognisedProduct.partition_id.in_(
+            db.session.query(partition_subq.c.id)
+        )).delete(synchronize_session=False)
     ExtractedFile.query.filter(
         ExtractedFile.partition_id.in_(
-            db.session.query(Partition.id).filter(Partition.artefact_id.in_(artefact_ids))
-        )
-    ).delete(synchronize_session=False)
+            db.session.query(partition_subq.c.id)
+        )).delete(synchronize_session=False)
     Partition.query.filter(Partition.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
     ArtefactProtection.query.filter(ArtefactProtection.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
     ArtefactMastering.query.filter(ArtefactMastering.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
@@ -2276,6 +2288,222 @@ def move(item_id=None, artefact_id=None):
 
     flash(f'Artefact "{artefact.label}" moved from "{old_item_name}" to "{target_item.name}".', 'success')
     return _redirect_to_artefact_view(artefact)
+
+
+def _collect_item_artefact_ids(item_ids):
+    """Collect all artefact IDs for a list of items (direct + all derived) via CTE.
+
+    Returns (all_ids, direct_ids) where all_ids includes derived artefacts.
+    """
+    from sqlalchemy import select as sa_select
+
+    direct_ids = [r[0] for r in db.session.execute(
+        sa_select(Artefact.id).where(Artefact.item_id.in_(item_ids))
+    ).all()]
+    if not direct_ids:
+        return [], []
+
+    # Recursive CTE: find all derived artefacts from any artefact in this item
+    base = sa_select(Artefact.id).where(Artefact.parent_artefact_id.in_(direct_ids))
+    cte = base.cte(name='item_derived', recursive=True)
+    recursive = sa_select(Artefact.id).where(Artefact.parent_artefact_id == cte.c.id)
+    cte = cte.union_all(recursive)
+    derived_ids = [r[0] for r in db.session.execute(sa_select(cte.c.id)).all()]
+
+    all_ids = direct_ids + derived_ids
+    return all_ids, direct_ids
+
+
+def _collect_item_cleanup_paths(item, all_artefact_ids):
+    """Collect all file paths to delete for an item using bulk queries.
+
+    Returns a dict with keys: artefact_files, output_folder, output_files,
+    output_dirs, cache_dirs.  All values are plain strings so the result
+    can be used in a background thread without ORM access.
+    """
+    from sqlalchemy import select as sa_select
+
+    upload_folder = get_upload_folder()
+    output_folder = get_output_folder()
+
+    # Artefact storage files
+    artefact_files = []
+    if all_artefact_ids:
+        rows = db.session.execute(
+            sa_select(Artefact.storage_directory, Artefact.storage_path)
+            .where(Artefact.id.in_(all_artefact_ids))
+        ).all()
+        for storage_dir, storage_path in rows:
+            if storage_path:
+                folder = output_folder if storage_dir == StorageDirectory.OUTPUTS else upload_folder
+                artefact_files.append(os.path.join(folder, storage_path))
+
+    # Analysis output dirs and named output files
+    output_dirs = []
+    output_files = []
+    if all_artefact_ids:
+        rows = db.session.execute(
+            sa_select(Analysis.output_path, Analysis.details)
+            .where(Analysis.artefact_id.in_(all_artefact_ids))
+        ).all()
+        for output_path, details in rows:
+            if output_path:
+                output_dirs.append(output_path)
+            if details:
+                try:
+                    parsed = json.loads(details)
+                    if 'outputs' in parsed and isinstance(parsed['outputs'], list):
+                        for output in parsed['outputs']:
+                            if 'filename' in output:
+                                output_files.append(output['filename'])
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    pass
+
+    # Cache dirs (one per artefact UUID)
+    cache_dirs = []
+    if all_artefact_ids:
+        uuids = db.session.execute(
+            sa_select(Artefact.uuid).where(Artefact.id.in_(all_artefact_ids))
+        ).scalars().all()
+        for u in uuids:
+            cache_dir = os.path.join(output_folder, '.cache', u)
+            cache_dirs.append(cache_dir)
+
+    return {
+        'artefact_files': artefact_files,
+        'output_folder': output_folder,
+        'output_files': output_files,
+        'output_dirs': output_dirs,
+        'cache_dirs': cache_dirs,
+    }
+
+
+def _background_cleanup_item_files(cleanup, logger_name):
+    """Delete item files in a background thread.  No ORM/app context needed."""
+    import logging
+    logger = logging.getLogger(logger_name)
+    output_folder = cleanup['output_folder']
+    real_output = os.path.realpath(output_folder)
+
+    def _is_safe(p):
+        return os.path.realpath(p).startswith(real_output + os.sep)
+
+    def _prune_empty_parents(path):
+        current = os.path.dirname(os.path.realpath(path))
+        while current.startswith(real_output + os.sep):
+            try:
+                os.rmdir(current)
+            except OSError:
+                break
+            current = os.path.dirname(current)
+
+    # Remove artefact storage files
+    for path in cleanup['artefact_files']:
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception as e:
+            logger.warning(f"Failed to delete artefact file {path}: {e}")
+
+    # Remove named output files
+    for filename in cleanup['output_files']:
+        path = os.path.join(output_folder, filename)
+        if not _is_safe(path):
+            continue
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception as e:
+            logger.warning(f"Failed to delete output file {filename}: {e}")
+
+    # Remove output directories
+    for opath in cleanup['output_dirs']:
+        local_path = _map_output_path_to_local_root(opath, output_folder)
+        if not _is_safe(local_path):
+            continue
+        try:
+            if os.path.exists(local_path):
+                shutil.rmtree(local_path)
+                _prune_empty_parents(local_path)
+        except Exception as e:
+            logger.warning(f"Failed to delete output directory {opath}: {e}")
+
+    # Remove cache directories
+    for cache_dir in cleanup['cache_dirs']:
+        try:
+            if os.path.exists(cache_dir):
+                shutil.rmtree(cache_dir)
+        except Exception as e:
+            logger.warning(f"Failed to delete cache dir {cache_dir}: {e}")
+
+
+def _collect_all_item_ids(item):
+    """Collect the item's ID and all descendant item IDs via recursive CTE."""
+    from sqlalchemy import select as sa_select
+
+    base = sa_select(Item.id).where(Item.parent_id == item.id)
+    cte = base.cte(name='item_descendants', recursive=True)
+    recursive = sa_select(Item.id).where(Item.parent_id == cte.c.id)
+    cte = cte.union_all(recursive)
+    descendant_ids = [r[0] for r in db.session.execute(sa_select(cte.c.id)).all()]
+    return [item.id] + descendant_ids
+
+
+def bulk_delete_item(item):
+    """Delete an item, its descendants, and all related records using bulk SQL.
+
+    Handles item hierarchy (parent/child items) by collecting all descendant
+    items first, then bulk-deleting all artefacts across the entire tree.
+
+    Replaces the previous approach of ORM cascade delete which loaded every
+    related object into memory and emitted individual DELETEs — too slow for
+    items with thousands of artefacts.
+
+    File cleanup runs in a background daemon thread after the DB commit.
+    """
+    from ..database import ExternalReference, item_tags
+
+    # Phase 1: Collect all item IDs (this item + all descendants)
+    all_item_ids = _collect_all_item_ids(item)
+
+    # Phase 2: Collect all artefact IDs via CTE
+    all_ids, direct_ids = _collect_item_artefact_ids(all_item_ids)
+
+    # Phase 3: Collect file paths before deleting DB records
+    cleanup = _collect_item_cleanup_paths(item, all_ids)
+    logger_name = current_app.logger.name
+
+    # Phase 4: Bulk SQL deletes in FK-safe order
+    if all_ids:
+        # Null out derived_from_analysis_id before deleting analyses
+        Artefact.query.filter(Artefact.id.in_(all_ids)).update(
+            {Artefact.derived_from_analysis_id: None}, synchronize_session=False)
+
+        _bulk_delete_artefact_dependents(all_ids)
+        _bulk_delete_artefacts(all_ids)
+
+    # Item-level children (external refs, tags for all items in hierarchy)
+    ExternalReference.query.filter(
+        ExternalReference.item_id.in_(all_item_ids)
+    ).delete(synchronize_session=False)
+    db.session.execute(
+        item_tags.delete().where(item_tags.c.item_id.in_(all_item_ids)))
+
+    # Break item self-referential FK, then delete all items
+    Item.query.filter(Item.id.in_(all_item_ids)).update(
+        {Item.parent_id: None}, synchronize_session=False)
+    Item.query.filter(Item.id.in_(all_item_ids)).delete(
+        synchronize_session=False)
+
+    db.session.commit()
+
+    # Phase 5: Background file cleanup (no ORM needed)
+    t = threading.Thread(
+        target=_background_cleanup_item_files,
+        args=(cleanup, logger_name),
+        daemon=True,
+    )
+    t.start()
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/delete', methods=['POST'])

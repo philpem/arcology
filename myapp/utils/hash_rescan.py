@@ -8,7 +8,7 @@ the worker's folder-level product recognition after hash database changes.
 
 import json
 
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 
 from ..extensions import db
 from ..database import (
@@ -68,17 +68,37 @@ def _dedupe_known_files(matches):
 
 
 def _refresh_partition_unique_counts(partition_ids):
-    """Refresh unique_files counters for all touched partitions."""
-    for pid in partition_ids:
-        partition = db.session.get(Partition, pid)
-        if partition:
-            partition.unique_files = (
-                ExtractedFile.query
-                .filter_by(partition_id=pid, is_known=False)
-                .count()
-            )
-    if partition_ids:
-        db.session.commit()
+    """Refresh unique_files counters for all touched partitions.
+
+    Uses a single aggregate query instead of one COUNT per partition.
+    """
+    if not partition_ids:
+        return
+
+    pid_list = list(partition_ids)
+
+    # Single query: count unknown non-directory files per partition.
+    rows = (
+        db.session.query(
+            ExtractedFile.partition_id,
+            func.count(ExtractedFile.id),
+        )
+        .filter(
+            ExtractedFile.partition_id.in_(pid_list),
+            ExtractedFile.is_known == False,
+            ExtractedFile.is_directory == False,
+        )
+        .group_by(ExtractedFile.partition_id)
+        .all()
+    )
+    count_map = dict(rows)
+
+    # Update all affected partitions (including those with zero unknown files).
+    partitions = Partition.query.filter(Partition.id.in_(pid_list)).all()
+    for partition in partitions:
+        partition.unique_files = count_map.get(partition.id, 0)
+
+    db.session.commit()
 
 
 def find_known_file(md5=None, sha1=None, file_size=None):
@@ -228,6 +248,78 @@ def apply_database_restrictions(artefact):
     return added
 
 
+def _find_known_files_batch(extracted_files):
+    """Batch-fetch the best KnownFile match for a list of ExtractedFiles.
+
+    Returns a dict mapping extracted_file.id -> KnownFile (or absent if no
+    match).  Uses a single query to fetch all candidate KnownFiles from
+    active databases, then matches in-memory using the same AND logic as
+    find_known_file().
+
+    This replaces calling find_known_file() per file (N+1 queries) with a
+    single bulk query per batch.
+    """
+    # Collect unique hash values from this batch
+    md5s = set()
+    sha1s = set()
+    files_to_match = []
+    for ef in extracted_files:
+        if ef.is_directory:
+            continue
+        files_to_match.append(ef)
+        if ef.md5:
+            md5s.add(ef.md5.lower())
+        if ef.sha1:
+            sha1s.add(ef.sha1.lower())
+
+    if not md5s and not sha1s:
+        return {}
+
+    # Single query: fetch all candidate KnownFiles from active databases
+    conditions = []
+    if md5s:
+        conditions.append(KnownFile.md5.in_(list(md5s)))
+    if sha1s:
+        conditions.append(KnownFile.sha1.in_(list(sha1s)))
+
+    candidates = (
+        _active_known_file_query()
+        .filter(or_(*conditions))
+        .order_by(KnownFile.id)
+        .all()
+    )
+
+    # Build lookup indexes
+    by_md5 = {}
+    by_sha1 = {}
+    for kf in candidates:
+        if kf.md5:
+            by_md5.setdefault(kf.md5.lower(), []).append(kf)
+        if kf.sha1:
+            by_sha1.setdefault(kf.sha1.lower(), []).append(kf)
+
+    # Match each file using same AND logic as find_known_file:
+    # all provided fields (md5, sha1, file_size) must match.
+    result = {}
+    for ef in files_to_match:
+        pool = None
+        if ef.md5:
+            pool = set(by_md5.get(ef.md5.lower(), []))
+        if ef.sha1:
+            sha1_set = set(by_sha1.get(ef.sha1.lower(), []))
+            pool = pool & sha1_set if pool is not None else sha1_set
+        if pool is None:
+            continue
+        # file_size filter: keep candidates where either side is None or sizes match
+        if ef.file_size is not None:
+            pool = {kf for kf in pool
+                    if kf.file_size is None or kf.file_size == ef.file_size}
+        if pool:
+            result[ef.id] = min(pool, key=lambda kf: kf.id)
+
+    return result
+
+
 def rescan_hashes_for_queryset(query, batch_size=500):
     """Re-link hashes for an ExtractedFile queryset.
 
@@ -235,8 +327,8 @@ def rescan_hashes_for_queryset(query, batch_size=500):
     seen), which is stable even if the query's filter condition changes as
     rows are updated (e.g. is_known=False flipping to True mid-scan).
 
-    Calls find_known_file() for each non-directory file and updates
-    is_known / known_file_id as needed.  After processing, refreshes the
+    Uses _find_known_files_batch() to match each batch with a single DB
+    query instead of one query per file.  After processing, refreshes the
     unique_files counter on every affected Partition.
 
     Returns (updated, total) — updated is the number of rows whose
@@ -258,13 +350,15 @@ def rescan_hashes_for_queryset(query, batch_size=500):
         if not batch:
             break
 
+        matches = _find_known_files_batch(batch)
+
         for ef in batch:
             total += 1
+            last_id = ef.id
             if ef.is_directory:
-                last_id = ef.id
                 continue
 
-            known = find_known_file(md5=ef.md5, sha1=ef.sha1, file_size=ef.file_size)
+            known = matches.get(ef.id)
             new_id = known.id if known else None
             new_flag = known is not None
 
@@ -273,8 +367,6 @@ def rescan_hashes_for_queryset(query, batch_size=500):
                 ef.is_known = new_flag
                 affected_partition_ids.add(ef.partition_id)
                 updated += 1
-
-            last_id = ef.id
 
         db.session.commit()
 

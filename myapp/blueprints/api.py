@@ -26,7 +26,8 @@ from ..database import (
 )
 from .artefacts import (
     get_artefact_path, get_artefact_storage_key, _delete_artefact_files,
-    _delete_item_files, detect_artefact_type, save_uploaded_file,
+    bulk_delete_item,
+    detect_artefact_type, save_uploaded_file,
     compute_file_hashes, queue_analyses_for_artefact, move_artefact_to_item,
     _collect_all_file_restrictions, _collect_ancestor_file_restrictions,
 )
@@ -379,17 +380,8 @@ def update_item(uuid):
 @require_auth('read_write')
 def delete_item(uuid):
     item = _get_item_or_404(uuid)
-    _delete_item_files_api(item)
-    db.session.delete(item)
-    db.session.commit()
+    bulk_delete_item(item)
     return '', 204
-
-
-def _delete_item_files_api(item):
-    """Recursively delete artefact files on disk for item and all descendants."""
-    _delete_item_files(item)
-    for child in item.children:
-        _delete_item_files_api(child)
 
 
 # =============================================================================
