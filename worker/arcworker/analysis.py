@@ -242,17 +242,24 @@ class AnalysisWorker:
         if not input_path.exists():
             raise FileNotFoundError(f"Input file not found: {input_path}")
 
+        # Save stats before decompression — the compressed file may be deleted
+        # during decompression (e.g. in S3 mode where the downloaded file IS
+        # the compressed copy that gets cleaned up).
+        compressed_name = input_path.name
+        compressed_size = input_path.stat().st_size
+        compression_format = input_path.suffix.lower()
+
         result = decompress_if_needed(input_path, work_dir)
 
         # Track decompression metadata for handlers that need it
         if result != input_path:
             self._decompression_info = {
                 'was_decompressed': True,
-                'compressed_name': input_path.name,
-                'compressed_size': input_path.stat().st_size,
+                'compressed_name': compressed_name,
+                'compressed_size': compressed_size,
                 'decompressed_name': result.name,
                 'decompressed_size': result.stat().st_size,
-                'compression_format': input_path.suffix.lower(),
+                'compression_format': compression_format,
             }
         else:
             self._decompression_info = None
