@@ -280,20 +280,20 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 # Install Greaseweazle for disk image conversion.
 # Pinned to a specific commit SHA; update when upgrading (was: @latest).
-# Current as of 2026-03-26.
-ARG GREASEWEAZLE_VERSION=dcb3d5d9d71b58d51aa22938cf96272a3b507292
+# Current as of 2026-04-01.
+ARG GREASEWEAZLE_VERSION=26690f89967d519e0106ab9566019a026b920bb4
 RUN python3 -m pip install --break-system-packages \
 	git+https://github.com/keirf/greaseweazle@${GREASEWEAZLE_VERSION}
 
 # Install Acorn image conversion libraries.
 # drawfile_render (philpem fork with signed-coordinate fix) — not pip-installable; clone manually.
 # Pinned to a specific commit SHA — update when upgrading.
-# Current as of 2026-03-31.
+# Current as of 2026-04-01.
 # The repo also bundles spritefile.py (by David Boddie) which is not on PyPI;
 # we expose it to the worker by setting PYTHONPATH.
 # riscos-free-fonts is a submodule; --recurse-submodules fetches it, then
 # submodule update pins it to the SHA recorded in the checked-out commit.
-ARG DRAWFILE_RENDER_SHA=52c0f9fb7288fd5eef94ea9cf98e8ec64e695b35
+ARG DRAWFILE_RENDER_SHA=0f6dc646482847fcc7235ed97d7d2226c094ea0e
 RUN git clone --recurse-submodules https://github.com/philpem/drawfile-render /opt/drawfile_render && \
     git -C /opt/drawfile_render checkout "${DRAWFILE_RENDER_SHA}" && \
     git -C /opt/drawfile_render submodule update --init --recursive
