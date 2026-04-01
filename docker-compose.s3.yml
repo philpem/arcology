@@ -5,30 +5,33 @@
 #
 #   docker compose -f docker-compose.yml -f docker-compose.s3.yml up -d
 #
-# Before first start:
-#   1. Create data directory:
-#      mkdir -p data/garage
+# First-time setup:
 #
-#   2. Start Garage first to generate its node ID:
+#   1. Create data directory and generate Garage secrets:
+#      mkdir -p data/garage
+#      openssl rand -hex 32 > data/garage/rpc_secret
+#      openssl rand -hex 32 > data/garage/admin_token
+#
+#   2. Start Garage:
 #      docker compose -f docker-compose.yml -f docker-compose.s3.yml up garage -d
 #
-#   3. Configure Garage (one-time setup):
-#      ADMIN_TOKEN=$(docker compose -f docker-compose.yml -f docker-compose.s3.yml exec garage cat /var/lib/garage/admin_token)
-#      # Get node ID and configure layout:
+#   3. Configure Garage layout, keys, and bucket (one-time):
+#      ADMIN_TOKEN=$(cat data/garage/admin_token)
+#      # Get node ID:
 #      curl -s -H "Authorization: Bearer $ADMIN_TOKEN" http://localhost:3903/v1/status
+#      # Assign layout (replace <NODE_ID> with the id from above):
 #      curl -H "Authorization: Bearer $ADMIN_TOKEN" -X POST http://localhost:3903/v1/layout/assign \
 #        -d '[{"id":"<NODE_ID>","zone":"dc1","capacity":1000000000,"tags":["node1"]}]'
 #      curl -H "Authorization: Bearer $ADMIN_TOKEN" -X POST http://localhost:3903/v1/layout/apply \
 #        -d '{"version":1}'
-#      # Create access key:
+#      # Create S3 access key:
 #      curl -s -H "Authorization: Bearer $ADMIN_TOKEN" -X POST http://localhost:3903/v1/key
-#      # Note the accessKeyId and secretAccessKey from the response and add to .env:
+#      # Add the accessKeyId and secretAccessKey from the response to .env:
 #      #   S3_ACCESS_KEY=<accessKeyId>
 #      #   S3_SECRET_KEY=<secretAccessKey>
-#      # Create bucket:
+#      # Create bucket and grant access:
 #      curl -H "Authorization: Bearer $ADMIN_TOKEN" -X POST http://localhost:3903/v1/bucket \
 #        -d '{"globalAliases":["arcology"]}'
-#      # Allow the key to access the bucket:
 #      curl -H "Authorization: Bearer $ADMIN_TOKEN" -X POST http://localhost:3903/v1/bucket/allow \
 #        -d '{"bucketId":"<BUCKET_ID>","accessKeyId":"<ACCESS_KEY_ID>","permissions":{"read":true,"write":true,"owner":true}}'
 #
@@ -48,11 +51,9 @@ services:
   # Replace with your preferred S3-compatible service if needed.
   garage:
     image: dxflrs/garage:v1.1.0
-    entrypoint: ["/bin/sh", "/garage-entrypoint.sh", "server"]
     volumes:
       - ./data/garage:/var/lib/garage
       - ./docker/garage.toml:/etc/garage.toml:ro
-      - ./docker/garage-entrypoint.sh:/garage-entrypoint.sh:ro
     ports:
       - "3900:3900"   # S3 API
       - "3903:3903"   # Admin API (for initial setup only)
