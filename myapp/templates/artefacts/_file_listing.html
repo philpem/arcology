@@ -39,7 +39,6 @@
                     <div style="width: 100px;">{{ file_form.filetype(class="form-control form-control-sm", placeholder="Filetype", title="Filter by RISC OS filetype code (hex). Leading # or & is stripped automatically. Example: fff, Text") }}</div>
                     <div>{{ file_form.hide_known(class="form-select form-select-sm", title="Filter files by hash database match status. 'Hide' removes files matching known hashes; 'Only' shows only files matching known hashes.") }}</div>
                     <div>{{ file_form.filter_products(class="form-select form-select-sm", title="Filter files by product match status. 'Hide' removes files matched to a known product; 'Only' shows only files matched to a known product.") }}</div>
-                    <div><div class="form-check mb-0">{{ file_form.show_directories(class="form-check-input", id="show_directories", title="Include directory and folder entries in the file listing. Directories are hidden by default since most users only need to see files.") }}<label class="form-check-label small" for="show_directories" title="Include directory and folder entries in the file listing. Directories are hidden by default since most users only need to see files.">Show Dirs</label></div></div>
                     <div class="flex-grow-1"></div>
                     <button type="submit" class="btn btn-sm btn-secondary">Filter</button>
                     <a href="?{% if hashdb_mode %}mode=hashdb{% endif %}" class="btn btn-sm btn-outline-secondary" title="Clear all filters">Clear</a>
