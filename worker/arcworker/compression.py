@@ -124,8 +124,10 @@ def decompress_if_needed(input_path: Path, work_dir: Path) -> Path:
         log.info(f"Compressed file detected: {input_path.name} ({suffix}, {compressed_size:,} bytes)")
 
         # Copy compressed file to work dir so the tool runs with a local path.
+        # Skip if the file is already in work_dir (e.g. S3 mode downloads there).
         compressed_copy = work_dir / input_path.name
-        shutil.copy(input_path, compressed_copy)
+        if input_path.resolve() != compressed_copy.resolve():
+            shutil.copy(input_path, compressed_copy)
 
         # Decompress via stdout, enforcing MAX_DECOMPRESSED_BYTES and TOOL_TIMEOUT
         # mid-stream.  stream_to_file() uses select() so it never blocks longer
