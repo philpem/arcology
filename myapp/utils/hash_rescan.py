@@ -14,7 +14,7 @@ from ..extensions import db
 from ..database import (
     ExtractedFile, Partition, KnownFile, HashDatabase,
     Analysis, AnalysisType, AnalysisStatus,
-    ArtefactRestriction,
+    ArtefactRestriction, ExtractedFileRestriction,
 )
 
 
@@ -166,9 +166,9 @@ def apply_database_restrictions(artefact):
     if not partition_ids:
         return 0
 
-    # Find all (restriction_type, database_name) pairs from matched databases
+    # Find all (restriction_type, database_name, extracted_file_id) tuples from matched databases
     rows = (
-        db.session.query(HashDatabase.restriction_type, HashDatabase.name)
+        db.session.query(HashDatabase.restriction_type, HashDatabase.name, ExtractedFile.id)
         .join(KnownFile, KnownFile.database_id == HashDatabase.id)
         .join(ExtractedFile, ExtractedFile.known_file_id == KnownFile.id)
         .filter(
@@ -177,19 +177,38 @@ def apply_database_restrictions(artefact):
             HashDatabase.is_active == True,
             HashDatabase.restriction_type.isnot(None),
         )
-        .distinct()
         .all()
     )
 
     if not rows:
         return 0
 
-    # Group database names by restriction type
+    # Group database names and file IDs by restriction type
     rtype_to_names = {}
-    for rtype, name in rows:
-        rtype_to_names.setdefault(rtype, []).append(name)
+    rtype_to_ef_ids = {}
+    for rtype, name, ef_id in rows:
+        rtype_to_names.setdefault(rtype, set()).add(name)
+        rtype_to_ef_ids.setdefault(rtype, set()).add(ef_id)
 
-    # Get existing restriction types for this artefact
+    # Apply per-file restrictions to each matching ExtractedFile
+    for rtype, ef_ids in rtype_to_ef_ids.items():
+        db_list = ', '.join(sorted(rtype_to_names[rtype]))
+        already_restricted = {
+            r.extracted_file_id
+            for r in ExtractedFileRestriction.query.filter(
+                ExtractedFileRestriction.extracted_file_id.in_(ef_ids),
+                ExtractedFileRestriction.restriction_type == rtype,
+            ).all()
+        }
+        for ef_id in ef_ids:
+            if ef_id not in already_restricted:
+                db.session.add(ExtractedFileRestriction(
+                    extracted_file_id=ef_id,
+                    restriction_type=rtype,
+                    reason=f'Automatically applied: file matches {db_list}',
+                ))
+
+    # Get existing artefact-level restriction types
     existing = {r.restriction_type for r in artefact.restrictions}
 
     added = 0
@@ -203,7 +222,7 @@ def apply_database_restrictions(artefact):
             ))
             added += 1
 
-    if added:
+    if added or rtype_to_ef_ids:
         db.session.commit()
 
     return added
