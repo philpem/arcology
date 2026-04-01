@@ -550,8 +550,15 @@ def _map_output_path_to_local_root(path: str, output_folder: str) -> str:
     same files under its own mount point (for example
     ``/app/instance/outputs/...``). This helper rewrites the absolute path onto
     the local output root before cleanup-time safety checks.
+
+    Relative paths (used in S3 mode) are joined with output_folder directly.
     """
     real_output = os.path.realpath(output_folder)
+
+    # Relative paths: join directly with output_folder
+    if not os.path.isabs(path):
+        return os.path.realpath(os.path.join(real_output, path))
+
     real_path = os.path.realpath(path)
 
     if real_path == real_output or real_path.startswith(real_output + os.sep):
