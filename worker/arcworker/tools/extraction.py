@@ -249,6 +249,7 @@ def enumerate_extracted_files(
     acorn: bool | str = False,
     parent_file_id: int | None = None,
     extraction_depth: int | None = None,
+    filetype_map: dict[str, str] | None = None,
 ) -> list[dict]:
     """
     Enumerate files in an extraction directory and return structured file list.
@@ -264,6 +265,11 @@ def enumerate_extracted_files(
         parent_file_id: If set, included in every file entry (used by
             nested-archive extraction to record lineage).
         extraction_depth: If set, included in every file entry.
+        filetype_map: Optional mapping of lowercase file paths to RISC OS
+            filetype hex strings (e.g. from the ISO ARCHIMEDES extension).
+            Applied after suffix-based detection: files that already have a
+            ``risc_os_filetype`` from their ``,xxx`` filename suffix are not
+            overwritten.
 
     Returns:
         List of file dicts with path, size, hashes, and optional
@@ -317,6 +323,12 @@ def enumerate_extracted_files(
             file_entry['parent_file_id'] = parent_file_id
         if extraction_depth is not None:
             file_entry['extraction_depth'] = extraction_depth
+
+        # Apply ARCHIMEDES/ISO filetype map for files without a suffix-derived type
+        if filetype_map and 'risc_os_filetype' not in file_entry:
+            mapped_type = filetype_map.get(file_entry['path'].lower())
+            if mapped_type:
+                file_entry['risc_os_filetype'] = mapped_type
 
         # Compute hashes so they can be stored in the DB at registration time.
         # This avoids needing to locate the file on disk later (e.g. for hash

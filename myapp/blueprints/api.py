@@ -690,7 +690,22 @@ def _populate_search_index(analysis):
                 )
 
         elif analysis.analysis_type == AnalysisType.RISCOS_MODULE_PARSE:
-            RiscosModule.query.filter_by(artefact_id=analysis.artefact_id).delete()
+            path_prefix = details.get('path_prefix', '')
+            if path_prefix:
+                # Scoped deletion: only remove modules from this archive's
+                # path prefix so concurrent nested-archive jobs don't clobber
+                # each other's results.
+                RiscosModule.query.filter(
+                    RiscosModule.artefact_id == analysis.artefact_id,
+                    RiscosModule.file_path.like(path_prefix + '/%'),
+                ).delete(synchronize_session=False)
+            elif details.get('modules'):
+                # Only clear all when top-level scan actually found modules
+                # (disc image case). If 0 modules found with no prefix, preserve
+                # rows from nested-archive scans to avoid a race where a
+                # re-analysis top-level job runs before nested archives are
+                # re-extracted and wipes all previously stored module data.
+                RiscosModule.query.filter_by(artefact_id=analysis.artefact_id).delete()
             for mod in details.get('modules', []):
                 title = mod.get('title_string', '')
                 if not title:

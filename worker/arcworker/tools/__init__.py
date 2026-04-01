@@ -19,6 +19,7 @@ from .extraction import (
     enumerate_extracted_files,
     parse_acorn_filename,
 )
+from .iso_riscos import parse_iso_riscos_filetypes
 from .partition import (
     detect_partitions_sfdisk,
     detect_acorn_adfs,
@@ -56,6 +57,7 @@ __all__ = [
     'extract_iso_7z',
     'enumerate_extracted_files',
     'parse_acorn_filename',
+    'parse_iso_riscos_filetypes',
     'detect_partitions_sfdisk',
     'detect_acorn_adfs',
     'detect_acorn_partitions',

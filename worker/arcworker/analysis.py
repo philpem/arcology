@@ -19,6 +19,7 @@ from shared.enums import ArtefactType, AnalysisType
 from .compression import decompress_if_needed, extract_partition_range, is_region_uniform
 from .api import ArcologyAPI
 from .utils.text import make_latin1_fspath, sanitize_path
+from .tools.extraction import _has_acorn_filetypes
 from .tools import (
     compute_file_hash,
     flux_visualisation_fluxfox,
@@ -40,6 +41,66 @@ from .tools import (
     convert_sprite,
     convert_draw,
 )
+
+
+def _apply_pling_renames(extract_dir: Path, rename_map: dict[str, str]) -> None:
+    """
+    Rename ISO 9660 pling-mapped entries in the extraction directory so that
+    physical filenames match the pling-corrected DB paths.
+
+    ISO 9660 forbids '!' so Acorn mastering tools store application
+    directories (and occasionally files) as '_NAME'.  This function renames
+    them to '!NAME' so that subsequent lookups (module parser, archive
+    extraction, FORMAT_CONVERT) can find files using their DB paths directly.
+
+    ``rename_map`` maps lowercase raw ISO 9660 paths to pling-corrected
+    display paths (e.g. ``'_arcfs/arcfs'`` → ``'!ARCFS/ARCFS'``).
+    The function derives the set of unique directory renames from these
+    entries and applies them shallowest-first so that parent renames happen
+    before any child entries are processed.
+    """
+    # Collect directory renames: src_rel → dst_rel.
+    # For each file path in rename_map, walk the components and identify
+    # every component where '_' was replaced with '!' (a pling entry).
+    dir_renames: dict[str, str] = {}
+
+    for _raw_lower, display_path in rename_map.items():
+        display_parts = display_path.split('/')
+        for i, dp in enumerate(display_parts[:-1]):  # skip the filename itself
+            if not dp.startswith('!'):
+                continue
+            # This directory component has a pling.  Reconstruct its on-disk
+            # name: '_' + everything after '!' in the display name.  ISO 9660
+            # directory names are uppercase and the display name preserves that
+            # case, so '_' + dp[1:] gives the exact on-disk name.
+            raw_component = '_' + dp[1:]
+            # Build the src path using the already-pling-corrected parent
+            # components (since we process shallowest first, parents are renamed
+            # before we need to reference them in deeper entries).
+            src_rel = '/'.join(display_parts[:i] + [raw_component])
+            dst_rel = '/'.join(display_parts[:i + 1])
+            dir_renames[src_rel] = dst_rel
+
+    # Also handle pling on the filename itself (unusual but possible).
+    for _raw_lower, display_path in rename_map.items():
+        display_parts = display_path.split('/')
+        fname = display_parts[-1]
+        if fname.startswith('!'):
+            raw_fname = '_' + fname[1:]
+            src_rel = '/'.join(display_parts[:-1] + [raw_fname])
+            dst_rel = display_path
+            dir_renames[src_rel] = dst_rel
+
+    # Sort by depth (shallowest first) so parent renames precede child renames.
+    for src_rel, dst_rel in sorted(dir_renames.items(), key=lambda x: x[0].count('/')):
+        src = extract_dir / src_rel
+        dst = extract_dir / dst_rel
+        if src.exists() and not dst.exists():
+            try:
+                src.rename(dst)
+                log.debug(f"Pling rename: {src_rel!r} → {dst_rel!r}")
+            except OSError as e:
+                log.warning(f"Could not pling-rename {src_rel!r} to {dst_rel!r}: {e}")
 
 
 def analysis_handler(description: str):
@@ -537,8 +598,51 @@ class AnalysisWorker:
             )
             return
 
-        # Enumerate extracted files to build file listing
-        files = enumerate_extracted_files(extract_dir, acorn=is_acorn)
+        # For ISO 9660 artefacts: parse the ARCHIMEDES extension to obtain
+        # per-file RISC OS filetypes from load/exec addresses.  Also enable
+        # acorn='auto' so that any files whose names already carry a ',xxx'
+        # suffix (e.g. from Rock Ridge NM entries preserved by 7z) are handled
+        # by the existing suffix-parsing logic.
+        iso_filetype_map: dict[str, str] = {}
+        if artefact_type == ArtefactType.ISO.value:
+            from .tools.iso_riscos import parse_iso_riscos_filetypes
+            iso_filetype_map, iso_rename_map = parse_iso_riscos_filetypes(input_path)
+            log.info(
+                f"ISO ARCHIMEDES parser found {len(iso_filetype_map)} filetype entries, "
+                f"{len(iso_rename_map)} pling renames"
+            )
+            # Rename '_NAME' directories/files to '!NAME' on disk so that
+            # physical paths match the pling-corrected paths stored in the DB.
+            # This lets the module parser, archive extractor, and FORMAT_CONVERT
+            # locate files directly without any reverse-lookup logic.
+            if iso_rename_map:
+                _apply_pling_renames(extract_dir, iso_rename_map)
+
+        # Enumerate extracted files to build file listing.
+        # ISO artefacts use acorn='auto' to catch ',xxx' suffix filenames;
+        # Acorn disc images (is_acorn=True) always parse the suffix.
+        acorn_mode: bool | str
+        if artefact_type == ArtefactType.ISO.value:
+            acorn_mode = 'auto'
+        else:
+            acorn_mode = is_acorn
+        files = enumerate_extracted_files(
+            extract_dir,
+            acorn=acorn_mode,
+            filetype_map=iso_filetype_map,
+        )
+
+        # Write ISO metadata sidecar AFTER enumerate_extracted_files so it is
+        # not included in the file listing.  FORMAT_CONVERT reads this to detect
+        # viewable types without re-parsing the ISO image.
+        if iso_filetype_map:
+            import json as _json
+            sidecar_path = extract_dir / '_arcology_iso_meta.json'
+            try:
+                with open(sidecar_path, 'w', encoding='utf-8') as _sf:
+                    _json.dump({'filetype_map': iso_filetype_map}, _sf)
+            except OSError as _e:
+                log.warning(f"Could not write ISO metadata sidecar: {_e}")
 
         # Extract disc metadata from DIM report output (if Acorn)
         disc_name = None
@@ -551,6 +655,8 @@ class AnalysisWorker:
         # Determine filesystem type
         if filesystem:
             fs_type = filesystem
+        elif artefact_type == ArtefactType.ISO.value:
+            fs_type = 'iso9660'
         elif container_format:
             container_lower = container_format.lower()
             if 'adfs' in container_lower:
@@ -568,7 +674,8 @@ class AnalysisWorker:
         # container_format so the UI hover tooltip is populated.  DIM sets this
         # automatically for Acorn images; for DOS images DIM is never used.
         if not container_format:
-            _fat_labels = {
+            _iso_and_fat_labels = {
+                'iso9660': 'ISO 9660',
                 'fat12': 'DOS FAT12',
                 'fat16': 'DOS FAT16',
                 'fat32': 'DOS FAT32',
@@ -576,7 +683,7 @@ class AnalysisWorker:
                 'dos':   'DOS',
                 'msdos': 'MS-DOS',
             }
-            container_format = _fat_labels.get(fs_type)
+            container_format = _iso_and_fat_labels.get(fs_type)
 
         # Register partition and file listing in the database
         partition = self.api.register_file_listing(
@@ -1825,6 +1932,22 @@ class AnalysisWorker:
             },
         )
 
+        # Queue RISCOS_MODULE_PARSE for modules inside the archive.
+        # The initial parse (queued by queue_partition_follow_ups after
+        # FILE_EXTRACTION) runs before archive contents are registered,
+        # so it never sees files inside archives.
+        # Pass path_prefix so the handler can strip the archive prefix when
+        # building on-disk paths (DB paths include the prefix, disk paths don't).
+        self.api.queue_analysis(
+            artefact['uuid'],
+            AnalysisType.RISCOS_MODULE_PARSE.value,
+            hints={
+                'partition_uuid': partition_uuid,
+                'extraction_path': str(persistent_output),
+                'path_prefix': archive_display_path,
+            },
+        )
+
         tool_key = result.get('tool', 'tool').lower().replace(' ', '_')
         po = result.get('process_output')
         details: dict = {
@@ -1858,6 +1981,16 @@ class AnalysisWorker:
         '.aff':  ArtefactType.ACORN_DRAW,
         '.draw': ArtefactType.ACORN_DRAW,
         '.txt':  ArtefactType.ACORN_TEXT,
+    }
+    # RISC OS filetype hex → viewable type, for ISO files where no ',xxx'
+    # suffix is present on the extracted filename but risc_os_filetype is
+    # available from the ARCHIMEDES extension metadata sidecar.
+    _RISCOS_HEX_VIEWABLE: dict[str, 'ArtefactType'] = {
+        'ff9': ArtefactType.ACORN_SPRITE,
+        'aff': ArtefactType.ACORN_DRAW,
+        'fff': ArtefactType.ACORN_TEXT,
+        'feb': ArtefactType.ACORN_TEXT,
+        'ffe': ArtefactType.ACORN_TEXT,
     }
 
     def _convert_file_to_outputs(
@@ -1987,8 +2120,6 @@ class AnalysisWorker:
           Queued automatically by queue_partition_follow_ups() after every
           FILE_EXTRACTION and ARCHIVE_EXTRACT.
         """
-        from .tools.extraction import _has_acorn_filetypes
-
         analysis_id = analysis['id']
         analysis_uuid = analysis['uuid']
         artefact_type_str = artefact.get('artefact_type', '')
@@ -2051,6 +2182,19 @@ class AnalysisWorker:
         # Display paths must match ExtractedFile.path (Acorn suffix stripped).
         is_acorn = _has_acorn_filetypes(extract_dir)
 
+        # Load ISO ARCHIMEDES metadata sidecar written by process_file_extraction.
+        # Provides filetype_map (lowercase path → filetype hex) for ISO-extracted
+        # files that lack ',xxx' filename suffixes.
+        iso_filetype_map: dict[str, str] = {}
+        sidecar_path = extract_dir / '_arcology_iso_meta.json'
+        if sidecar_path.is_file():
+            try:
+                with open(sidecar_path, encoding='utf-8') as _sf:
+                    _meta = json.load(_sf)
+                iso_filetype_map = _meta.get('filetype_map') or {}
+            except Exception as _e:
+                log.warning(f"Could not read ISO metadata sidecar: {_e}")
+
         # path_prefix is set when FORMAT_CONVERT was queued from process_archive_extract
         # for a nested archive (e.g. an archive file on a disc image).  The DB
         # registers those files with the archive's display path prepended, so
@@ -2062,7 +2206,19 @@ class AnalysisWorker:
         for path in sorted(extract_dir.rglob('*')):
             if not path.is_file():
                 continue
+            # Skip the ISO metadata sidecar itself
+            if path.name == '_arcology_iso_meta.json':
+                continue
             viewable_type = self._detect_viewable_type(path)
+
+            # For ISO-extracted files without ',xxx' suffixes or known extensions,
+            # fall back to the ARCHIMEDES filetype hex from the metadata sidecar.
+            if viewable_type is None and iso_filetype_map:
+                rel_lower = str(path.relative_to(extract_dir)).lower()
+                hex_type = iso_filetype_map.get(rel_lower)
+                if hex_type:
+                    viewable_type = self._RISCOS_HEX_VIEWABLE.get(hex_type)
+
             if viewable_type is None:
                 continue
 
@@ -2455,6 +2611,7 @@ class AnalysisWorker:
         hints = json.loads(analysis.get('hints') or '{}')
         partition_uuid = hints.get('partition_uuid')
         extraction_path = hints.get('extraction_path')
+        path_prefix = hints.get('path_prefix', '')  # set when queued from archive extraction
 
         if not partition_uuid:
             self.fail_analysis(analysis_id, 'No partition_uuid in analysis hints')
@@ -2468,8 +2625,18 @@ class AnalysisWorker:
             self.fail_analysis(analysis_id, 'Failed to get partition files')
             return
 
+        all_files = files_resp.get('files', [])
+
+        # When called after archive extraction, only process files that belong
+        # to that archive (DB paths are prefixed with the archive display path).
+        # Without this, a re-queued parse would re-scan the entire partition and
+        # try to open disc-level files using the wrong extraction_path.
+        if path_prefix:
+            all_files = [f for f in all_files
+                         if f.get('path', '').startswith(path_prefix + '/')]
+
         module_files = [
-            f for f in files_resp.get('files', [])
+            f for f in all_files
             if (f.get('risc_os_filetype') or '').lower() == 'ffa'
             and not f.get('is_directory', False)
         ]
@@ -2503,12 +2670,22 @@ class AnalysisWorker:
             db_path = file_data['path']
             risc_os_filetype = file_data.get('risc_os_filetype', '')
 
+            # Strip the archive path prefix to get the path relative to
+            # extract_dir.  DB paths for archive-extracted files include the
+            # archive's own display path as a prefix (e.g.
+            # "z80Em/!Z80Em/Resources/AYSound") but on disk the file is at
+            # "{extract_dir}/!Z80Em/Resources/AYSound".
+            if path_prefix and db_path.startswith(path_prefix + '/'):
+                disk_path = db_path[len(path_prefix) + 1:]
+            else:
+                disk_path = db_path
+
             # Build candidate paths (with Acorn filetype suffix variants)
             candidates = []
             if risc_os_filetype:
-                candidates.append(extract_dir / (db_path + ',' + risc_os_filetype.lower()))
-                candidates.append(extract_dir / (db_path + ',' + risc_os_filetype.upper()))
-            candidates.append(extract_dir / db_path)
+                candidates.append(extract_dir / (disk_path + ',' + risc_os_filetype.lower()))
+                candidates.append(extract_dir / (disk_path + ',' + risc_os_filetype.upper()))
+            candidates.append(extract_dir / disk_path)
 
             # Also try Latin-1 byte variants
             all_candidates = []
@@ -2547,15 +2724,19 @@ class AnalysisWorker:
         if parse_errors:
             summary_parts.append(f'{parse_errors} could not be parsed')
 
+        details_dict: dict = {
+            'modules': modules,
+            'files_scanned': len(module_files),
+            'parse_errors': parse_errors,
+        }
+        if path_prefix:
+            details_dict['path_prefix'] = path_prefix
+
         self.complete_analysis(
             analysis_id,
             tool_name='riscos_module_parser',
             summary=', '.join(summary_parts),
-            details=json.dumps({
-                'modules': modules,
-                'files_scanned': len(module_files),
-                'parse_errors': parse_errors,
-            }),
+            details=json.dumps(details_dict),
         )
 
     # =========================================================================

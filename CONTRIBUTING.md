@@ -380,6 +380,57 @@ This creates the `migrations/` directory structure and generates an initial migr
 - **If you get "Can't locate revision"** after pulling changes, you may need to `flask db upgrade` to apply migrations created by others.
 - **To start fresh** during development (throwing away all data), drop the database and re-run `flask db upgrade`.
 
+### Worker and Analysis Pipeline: Common Pitfalls
+
+#### `FORMAT_CONVERT` view icons not appearing
+
+The file listing shows an eye icon next to a file when its path appears in `viewable_filenames`. That set is built by collecting every `source_file` value from completed `FORMAT_CONVERT` analysis outputs. **The value must be a byte-for-byte match against `ExtractedFile.path` as stored in the database.**
+
+Common causes of a mismatch:
+
+- **Case differences.** `ExtractedFile.path` goes through `sanitize_path()` which passes the string as-is (no case folding). If the worker stores `source_file = 'myfile.txt'` but the DB has `'MyFile,fff'` (with `,xxx` suffix stripped in one place but not the other), the lookup silently fails.
+- **Backslash vs forward slash.** Always use forward slashes; `sanitize_path()` normalises separators on write, but hand-assembled paths in the worker must match.
+- **Leading slash or extra path component.** `ExtractedFile.path` is relative to the extraction root (no leading slash). Make sure `source_file` is built the same way — typically `str(path.relative_to(extract_dir))`.
+- **Acorn `,xxx` suffix.** When `acorn=True` or `acorn='auto'` is passed to `enumerate_extracted_files()`, the `,xxx` suffix is stripped from the stored path. The worker's `FORMAT_CONVERT` handler must strip the same suffix when constructing `source_file`, or the comparison will never match.
+
+Quick diagnostic: add a temporary `log.info()` to print `source_file` values alongside `ExtractedFile.path` values and diff them.
+
+#### `viewable_filenames` scope: always use `all_artefact_ids`
+
+The artefact detail page assembles `all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)` and uses it for all partition/file queries. The `viewable_filenames` query **must** also use this list, not just `artefact.id`.
+
+If you scope it to a single artefact ID, `FORMAT_CONVERT` analyses that ran against a *derived* artefact (e.g. an ISO that was extracted from a ZIP) will be invisible, even though their output files are shown in the listing. The symptom is that `FORMAT_CONVERT` appears completed and the SVG files exist in `data/outputs/`, but no eye icons appear.
+
+#### Physical path vs DB display path
+
+The worker extracts files to a temporary directory. The path stored in `ExtractedFile.path` is the **display path** — the filename as it would appear to a user. For RISC OS disc images this may differ from the on-disk name:
+
+- **Acorn `,xxx` suffix**: on disk the file may be named `!Run,feb`; the DB stores `!Run`.
+- **RISC OS ISO pling-renaming**: ISO 9660 forbids `!` so tools store `_PAINT` on disc. `FILE_EXTRACTION` physically renames these directories to `!PAINT` during extraction, so subsequent handlers (`ARCHIVE_EXTRACT`, `RISCOS_MODULE_PARSE`, `FORMAT_CONVERT`) can open the file at the pling-correct path without any reverse-lookup.
+
+If you add a new handler that opens extracted files by DB path, the physical file **will** be at that path (because of the rename) — no special translation is needed. If you bypass the physical rename and try to open files by their raw ISO 9660 name, you will get file-not-found errors for any application directory.
+
+#### `acorn` mode and `filetype_map` in `enumerate_extracted_files()`
+
+`enumerate_extracted_files()` supports two separate RISC OS metadata mechanisms that should be used together for ISOs:
+
+- `acorn='auto'` — scans filenames for `,xxx` hex suffixes (e.g. from Rock Ridge NM entries) and strips them from display paths, storing the hex value as `risc_os_filetype`.
+- `filetype_map` — a `{lowercase_path: filetype_hex}` dict derived from the ARCHIMEDES ISO 9660 extension. Applied *after* suffix-based detection; entries already having a `risc_os_filetype` from the suffix are not overwritten.
+
+For RISC OS ISOs, always pass both. RISC OS CD mastering tools sometimes use Rock Ridge names with `,xxx` suffixes, sometimes ARCHIMEDES blocks, and sometimes both. Passing only one will leave filetypes `NULL` for files that used the other mechanism.
+
+#### Derived artefacts and follow-on analysis chains
+
+Registering a derived artefact via the API causes the web app to check `ANALYSIS_MAP` and automatically queue follow-on analyses. This is intentional, but it means a chain of several workers can be processing the same original artefact concurrently. Keep handlers idempotent and do not assume that derived artefacts registered in one job are visible to handlers running in parallel.
+
+#### Worker has no direct database access
+
+All data exchange goes through the REST API. If you need information from the database in a worker handler (e.g. previously registered file paths), you must expose it via an API endpoint and fetch it from the worker. Do not add SQLAlchemy imports to the worker package.
+
+#### `_arcology_iso_meta.json` sidecar file
+
+`FILE_EXTRACTION` writes a JSON sidecar `_arcology_iso_meta.json` into the extraction output directory. It carries metadata (currently the ARCHIMEDES `filetype_map`) that `FORMAT_CONVERT` cannot cheaply recompute. The sidecar lives alongside the extracted files in `data/outputs/`. If you add new persistent metadata to this sidecar, document its schema in a comment near the write site in `analysis.py`.
+
 ### Code Style
 
 - **Indentation**: 4 spaces per level (PEP 8). Do not use tabs.
