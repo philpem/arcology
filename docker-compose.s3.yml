@@ -48,9 +48,11 @@ services:
   # Replace with your preferred S3-compatible service if needed.
   garage:
     image: dxflrs/garage:v1.1.0
+    entrypoint: ["/bin/sh", "/garage-entrypoint.sh", "server"]
     volumes:
       - ./data/garage:/var/lib/garage
       - ./docker/garage.toml:/etc/garage.toml:ro
+      - ./docker/garage-entrypoint.sh:/garage-entrypoint.sh:ro
     ports:
       - "3900:3900"   # S3 API
       - "3903:3903"   # Admin API (for initial setup only)
