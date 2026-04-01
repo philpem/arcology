@@ -14,7 +14,7 @@ from flask_wtf import FlaskForm
 from wtforms import StringField, TextAreaField, SelectField, BooleanField
 from wtforms.validators import DataRequired, Optional, Length
 
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 
 from ..extensions import db
 from ..database import Platform, HashDatabase, KnownProduct, KnownFile, ExtractedFile, Partition, Artefact, Item, RestrictionType
@@ -159,7 +159,7 @@ def _platform_choices():
 @blueprint.route('/')
 @login_required
 def index():
-    databases = HashDatabase.query.order_by(HashDatabase.name).all()
+    databases = HashDatabase.query.order_by(func.lower(HashDatabase.name)).all()
     return render_template('hashdb/index.html', databases=databases)
 
 
@@ -193,8 +193,8 @@ def new():
 @login_required
 def view(id):
     database = HashDatabase.query.get_or_404(id)
-    products = KnownProduct.query.filter_by(database_id=id).order_by(KnownProduct.title).all()
-    platforms = Platform.query.order_by(Platform.name).all()
+    products = KnownProduct.query.filter_by(database_id=id).order_by(func.lower(KnownProduct.title)).all()
+    platforms = Platform.query.order_by(func.lower(Platform.name)).all()
     return render_template('hashdb/view.html',
                            database=database,
                            products=products,
@@ -248,7 +248,7 @@ def search(id):
         .join(KnownFile, ExtractedFile.known_file_id == KnownFile.id)
         .filter(kf_filter)
         .filter(ExtractedFile.is_directory == False)
-        .order_by(KnownFile.filename, Item.name, Artefact.label, ExtractedFile.path)
+        .order_by(func.lower(KnownFile.filename), func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path))
         .limit(SEARCH_LIMIT + 1)
         .all()
     )
@@ -386,7 +386,7 @@ def toggle_active(id):
 def export(id):
     database = HashDatabase.query.get_or_404(id)
     fmt = request.args.get('format', 'json').lower()
-    products = KnownProduct.query.filter_by(database_id=id).order_by(KnownProduct.title).all()
+    products = KnownProduct.query.filter_by(database_id=id).order_by(func.lower(KnownProduct.title)).all()
 
     if fmt == 'csv':
         output = io.StringIO()
