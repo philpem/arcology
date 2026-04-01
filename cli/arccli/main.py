@@ -72,6 +72,15 @@ def main():
 	items_delete.add_argument('uuid', help='Item UUID')
 	items_delete.add_argument('--yes', '-y', action='store_true', help='Skip confirmation')
 
+	# ---- artefacts ----
+	artefacts_parser = subparsers.add_parser('artefacts', help='Artefact management')
+	artefacts_sub = artefacts_parser.add_subparsers(dest='artefacts_command')
+
+	# artefacts move
+	artefacts_move = artefacts_sub.add_parser('move', help='Move an artefact to a different item')
+	artefacts_move.add_argument('uuid', help='Artefact UUID')
+	artefacts_move.add_argument('--to', required=True, dest='target_item_uuid', help='Target item UUID')
+
 	# ---- upload ----
 	upload_parser = subparsers.add_parser('upload', help='Upload artefacts to an item')
 	upload_parser.add_argument('item_uuid', help='Item UUID to upload to')
@@ -153,6 +162,7 @@ def _dispatch(client, args):
 	from .commands.items import (
 		cmd_items_list, cmd_items_create, cmd_items_view,
 		cmd_items_update, cmd_items_delete,
+		cmd_artefact_move,
 	)
 	from .commands.upload import cmd_upload
 	from .commands.download import cmd_download
@@ -175,6 +185,13 @@ def _dispatch(client, args):
 			cmd_items_delete(client, args)
 		else:
 			print("Usage: arco items {list|create|view|update|delete}", file=sys.stderr)
+			sys.exit(1)
+
+	elif args.command == 'artefacts':
+		if args.artefacts_command == 'move':
+			cmd_artefact_move(client, args)
+		else:
+			print("Usage: arco artefacts {move}", file=sys.stderr)
 			sys.exit(1)
 
 	elif args.command == 'upload':

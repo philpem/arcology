@@ -26,7 +26,8 @@ def item_to_dict(item, include_artefacts=False, _artefact_count=None):
 def artefact_to_dict(artefact, include_partitions=False):
     result = {
         'id': artefact.id, 'uuid': artefact.uuid, 'item_id': artefact.item_id,
-        'item_uuid': artefact.item.uuid, 'label': artefact.label,
+        'item_uuid': artefact.item.uuid, 'item_name': artefact.item.name,
+        'label': artefact.label,
         'artefact_type': artefact.artefact_type.value,
         'type_overridden': artefact.type_overridden,
         'original_filename': artefact.original_filename,

@@ -167,4 +167,14 @@ def cmd_items_delete(client, args):
 	client.delete_item(args.uuid)
 	print(f"Deleted item: {args.uuid}")
 
+
+def cmd_artefact_move(client, args):
+	"""Move an artefact to a different item."""
+	result = client.move_artefact(args.uuid, args.target_item_uuid)
+
+	if args.json:
+		print_json(result)
+	else:
+		print(f"Moved artefact '{result.get('label', args.uuid)}' to item '{result.get('item_name', result.get('item_uuid', ''))}'")
+
 # vim: ts=4 sw=4 noet

@@ -322,5 +322,152 @@ class TestItemHierarchyAPI(unittest.TestCase):
         self.assertEqual(data['child_count'], 2)
 
 
+
+# =============================================================================
+# Move artefact tests
+# =============================================================================
+
+class TestMoveArtefact(unittest.TestCase):
+    """Test moving artefacts between items via REST API."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app, cls.db = _create_app_and_db()
+        cls.client = cls.app.test_client()
+        _worker_key = os.environ['WORKER_API_KEY']
+        cls.headers = {'X-API-Key': _worker_key, 'Content-Type': 'application/json'}
+
+    def setUp(self):
+        from myapp.database import Item, Artefact
+        with self.app.app_context():
+            self.db.session.query(Artefact).delete()
+            self.db.session.query(Item).filter(Item.name.like('test-mv-%')).delete()
+            self.db.session.commit()
+
+    def _post(self, url, data):
+        return self.client.post(url, data=json.dumps(data), headers=self.headers)
+
+    def _get(self, url, params=None):
+        return self.client.get(url, query_string=params, headers=self.headers)
+
+    def _create_item(self, name, parent_uuid=None):
+        data = {'name': name}
+        if parent_uuid:
+            data['parent_uuid'] = parent_uuid
+        resp = self._post('/api/items', data)
+        self.assertEqual(resp.status_code, 201)
+        return json.loads(resp.data)['uuid']
+
+    def _create_artefact(self, item_uuid, label='Test Artefact'):
+        """Create a minimal artefact via direct DB insertion."""
+        from myapp.database import Item, Artefact, ArtefactType
+        from myapp.utils.slugs import generate_slug, ensure_unique_slug
+        with self.app.app_context():
+            item = Item.query.filter_by(uuid=item_uuid).first()
+            slug = ensure_unique_slug(generate_slug(label), Artefact, scope_filter={'item_id': item.id})
+            artefact = Artefact(
+                item_id=item.id,
+                label=label,
+                slug=slug,
+                artefact_type=ArtefactType.RAW_SECTOR,
+                original_filename='test.img',
+                storage_path='test-fake-path.img',
+            )
+            self.db.session.add(artefact)
+            self.db.session.commit()
+            return artefact.uuid
+
+    def _create_derived_artefact(self, parent_uuid, label='Derived'):
+        """Create a derived artefact under a parent artefact."""
+        from myapp.database import Artefact, ArtefactType
+        from myapp.utils.slugs import generate_slug, ensure_unique_slug
+        with self.app.app_context():
+            parent = Artefact.query.filter_by(uuid=parent_uuid).first()
+            slug = ensure_unique_slug(generate_slug(label), Artefact, scope_filter={'item_id': parent.item_id})
+            derived = Artefact(
+                item_id=parent.item_id,
+                parent_artefact_id=parent.id,
+                label=label,
+                slug=slug,
+                artefact_type=ArtefactType.RAW_SECTOR,
+                original_filename='derived.img',
+                storage_path='derived-fake-path.img',
+            )
+            self.db.session.add(derived)
+            self.db.session.commit()
+            return derived.uuid
+
+    def test_move_root_artefact(self):
+        """Move a root artefact from Item A to Item B."""
+        item_a = self._create_item('test-mv-source')
+        item_b = self._create_item('test-mv-target')
+        art_uuid = self._create_artefact(item_a, 'movable')
+
+        resp = self._post(f'/api/artefacts/{art_uuid}/move', {'target_item_uuid': item_b})
+        self.assertEqual(resp.status_code, 200)
+        data = json.loads(resp.data)
+        self.assertEqual(data['item_uuid'], item_b)
+
+    def test_move_with_derived_artefacts(self):
+        """Moving a root artefact also moves all derived artefacts."""
+        item_a = self._create_item('test-mv-src-derived')
+        item_b = self._create_item('test-mv-tgt-derived')
+        root_uuid = self._create_artefact(item_a, 'root-art')
+        derived_uuid = self._create_derived_artefact(root_uuid, 'derived-art')
+
+        resp = self._post(f'/api/artefacts/{root_uuid}/move', {'target_item_uuid': item_b})
+        self.assertEqual(resp.status_code, 200)
+
+        # Check derived artefact also moved
+        resp2 = self._get(f'/api/artefacts/{derived_uuid}')
+        self.assertEqual(resp2.status_code, 200)
+        derived_data = json.loads(resp2.data)
+        self.assertEqual(derived_data['item_uuid'], item_b)
+
+    def test_move_derived_artefact_rejected(self):
+        """Moving a derived (non-root) artefact should fail."""
+        item_a = self._create_item('test-mv-reject-src')
+        item_b = self._create_item('test-mv-reject-tgt')
+        root_uuid = self._create_artefact(item_a, 'root')
+        derived_uuid = self._create_derived_artefact(root_uuid, 'derived')
+
+        resp = self._post(f'/api/artefacts/{derived_uuid}/move', {'target_item_uuid': item_b})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_move_to_nonexistent_item(self):
+        """Moving to a non-existent item returns 404."""
+        item_a = self._create_item('test-mv-noexist-src')
+        art_uuid = self._create_artefact(item_a)
+
+        resp = self._post(f'/api/artefacts/{art_uuid}/move',
+                          {'target_item_uuid': 'deadbeefdeadbeefdeadbeefdeadbeef'})
+        self.assertEqual(resp.status_code, 404)
+
+    def test_move_to_same_item_rejected(self):
+        """Moving to the same item returns 400."""
+        item_a = self._create_item('test-mv-same')
+        art_uuid = self._create_artefact(item_a)
+
+        resp = self._post(f'/api/artefacts/{art_uuid}/move', {'target_item_uuid': item_a})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_slug_collision_on_move(self):
+        """If target item already has an artefact with the same slug, it should be renamed."""
+        item_a = self._create_item('test-mv-slug-src')
+        item_b = self._create_item('test-mv-slug-tgt')
+        # Create artefacts with same label (=> same slug) in both items
+        art_a = self._create_artefact(item_a, 'duplicate-label')
+        _art_b = self._create_artefact(item_b, 'duplicate-label')
+
+        resp = self._post(f'/api/artefacts/{art_a}/move', {'target_item_uuid': item_b})
+        self.assertEqual(resp.status_code, 200)
+        # The moved artefact should have a different slug now (e.g. duplicate-label-2)
+        with self.app.app_context():
+            from myapp.database import Artefact
+            moved = Artefact.query.filter_by(uuid=art_a).first()
+            self.assertNotEqual(moved.slug, 'duplicate-label')
+            self.assertTrue(moved.slug.startswith('duplicate-label'))
+
+
 if __name__ == '__main__':
     unittest.main()

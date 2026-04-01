@@ -27,7 +27,7 @@ from ..database import (
 from .artefacts import (
     get_artefact_path, _delete_artefact_files, _delete_item_files,
     detect_artefact_type, save_uploaded_file, compute_file_hashes,
-    queue_analyses_for_artefact,
+    queue_analyses_for_artefact, move_artefact_to_item,
     _collect_all_file_restrictions, _collect_ancestor_file_restrictions,
 )
 from ..utils.hash_rescan import find_known_file
@@ -446,6 +446,37 @@ def delete_artefact(uuid):
     db.session.delete(artefact)
     db.session.commit()
     return '', 204
+
+
+@blueprint.route('/artefacts/<string:uuid>/move', methods=['POST'])
+@require_auth('read_write')
+def move_artefact(uuid):
+    """Move a root artefact (and its derived artefacts) to a different item."""
+    artefact = _get_artefact_or_404(uuid)
+    data, error = _json_object()
+    if error:
+        return error
+
+    target_uuid = data.get('target_item_uuid')
+    if not target_uuid:
+        return error_response('target_item_uuid is required', 400)
+
+    if artefact.parent_artefact_id is not None:
+        return error_response('Only root artefacts can be moved', 400)
+
+    target_item = Item.query.filter_by(uuid=target_uuid).first()
+    if not target_item:
+        return error_response('Target item not found', 404)
+
+    if target_item.id == artefact.item_id:
+        return error_response('Artefact is already in that item', 400)
+
+    try:
+        move_artefact_to_item(artefact, target_item)
+    except ValueError as e:
+        return error_response(str(e), 400)
+
+    return jsonify(artefact_to_dict(artefact))
 
 
 @blueprint.route('/artefacts/<string:uuid>', methods=['PATCH'])

@@ -131,6 +131,9 @@ class ArcologyClient:
 	def get_artefact(self, uuid: str) -> dict:
 		return self.get(f'artefacts/{uuid}')
 
+	def move_artefact(self, uuid: str, target_item_uuid: str) -> dict:
+		return self.post_json(f'artefacts/{uuid}/move', {'target_item_uuid': target_item_uuid})
+
 	def list_platforms(self) -> dict:
 		return self.get('platforms')
 
