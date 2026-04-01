@@ -108,8 +108,9 @@ def index():
     if form.category_id.data and form.category_id.data != 0:
         query = query.filter(Item.category_id == form.category_id.data)
 
-    # In flat mode (not searching), show only root items
-    if view_mode == 'flat' and not searching:
+    # In flat and tree modes (not searching), paginate only root items;
+    # tree mode recursively expands children via _build_tree_rows.
+    if view_mode in ('flat', 'tree') and not searching:
         query = query.filter(Item.parent_id.is_(None))
 
     # Eager-load platform, category, and children to avoid N+1 lazy loads in template
