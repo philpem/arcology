@@ -385,6 +385,7 @@ class AnalysisWorker:
         """Upload an extraction directory tree to storage (S3 mode).
 
         In local mode this is a no-op since the files are already in place.
+        In S3 mode, uploads the tree then removes the local copy.
         """
         from shared.storage import LocalStorage
         if isinstance(self.storage, LocalStorage):
@@ -393,6 +394,9 @@ class AnalysisWorker:
         prefix = self.storage.storage_key('outputs', rel)
         count = self.storage.put_tree(prefix, extract_dir)
         log.info(f"Uploaded {count} files to storage prefix: {prefix}")
+        # Remove local copy — the canonical version is now in S3
+        shutil.rmtree(extract_dir, ignore_errors=True)
+        log.info(f"Cleaned up local extraction directory: {extract_dir}")
 
     def _resolve_extraction_path(self, extraction_path: str) -> Path:
         """Resolve an extraction path from hints/DB to a local directory.
@@ -414,6 +418,45 @@ class AnalysisWorker:
         count = self.storage.get_tree(prefix, tmp_dir)
         log.info(f"Downloaded {count} files from storage prefix: {prefix}")
         return tmp_dir
+
+    def _cleanup_partition_cache(self, artefact_uuid: str) -> None:
+        """Remove local partition cache for an artefact if no jobs still need it.
+
+        In S3 mode the cache is already in object storage, so the local copy
+        is only kept as a convenience for subsequent analyses on the same
+        worker.  Once all analyses for the artefact have finished (no pending
+        or running jobs remain), the local cache directory is safe to delete.
+
+        In local mode this is a no-op — the cache is the permanent copy.
+        """
+        from shared.storage import LocalStorage
+        if isinstance(self.storage, LocalStorage):
+            return
+
+        cache_dir = self.outputs / '.cache' / artefact_uuid
+        if not cache_dir.exists():
+            return
+
+        # Ask the API whether any analyses are still pending or running
+        try:
+            resp = self.api.get(f'/artefacts/{artefact_uuid}/analysis')
+            if resp and 'analyses' in resp:
+                active = [
+                    a for a in resp['analyses']
+                    if a.get('status') in ('pending', 'running')
+                ]
+                if active:
+                    log.debug(
+                        f"Keeping partition cache for {artefact_uuid}: "
+                        f"{len(active)} analyses still active"
+                    )
+                    return
+        except Exception as e:
+            log.warning(f"Could not check analysis status for cache cleanup: {e}")
+            return
+
+        shutil.rmtree(cache_dir, ignore_errors=True)
+        log.info(f"Cleaned up local partition cache: {cache_dir}")
 
     # =========================================================================
     # Analysis Handlers
@@ -2907,6 +2950,13 @@ class AnalysisWorker:
                         f"Analysis {analysis_id}: failed to report failure to API "
                         f"— job may remain in 'running' state"
                     )
+            finally:
+                # In S3 mode, clean up the local partition cache once all
+                # analyses for this artefact have finished.
+                try:
+                    self._cleanup_partition_cache(artefact['uuid'])
+                except Exception:
+                    pass  # Best-effort cleanup, don't block on errors
 
     def claim_and_process(self) -> int:
         """
