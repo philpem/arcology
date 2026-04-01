@@ -956,6 +956,9 @@ def _render_viewer(artefact):
                 'swi_chunk': mod_row.swi_chunk,
                 'module_hash': mod_row.module_hash,
                 'file_path': mod_row.file_path,
+                'swi_names': None,
+                'module_flags': None,
+                'commands': [],
             }
             # Enrich with swi_names and module_flags from the analysis JSON
             mod_analysis = Analysis.query.filter(
