@@ -285,6 +285,11 @@ ARG GREASEWEAZLE_VERSION=26690f89967d519e0106ab9566019a026b920bb4
 RUN python3 -m pip install --break-system-packages \
 	git+https://github.com/keirf/greaseweazle@${GREASEWEAZLE_VERSION}
 
+# Install boto3 for S3-compatible storage backend (optional, only used when
+# STORAGE_BACKEND=s3 is set).  Installed unconditionally so the worker image
+# supports both local and S3 modes without rebuilding.
+RUN python3 -m pip install --break-system-packages boto3
+
 # Install Acorn image conversion libraries.
 # drawfile_render (philpem fork with signed-coordinate fix) — not pip-installable; clone manually.
 # Pinned to a specific commit SHA — update when upgrading.
