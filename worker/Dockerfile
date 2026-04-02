@@ -87,23 +87,28 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 #################
 FROM ubuntu:24.04 AS build-discimagemanager
 
-# Pinned commit SHAs — update these when upgrading DiscImageManager or its deps.
-# Current as of 2026-03-26.
+# If 1, build from source
+ARG DISCIMAGEMANAGER_SOURCEBUILD=1
+
+# Github repo location
+# Currently we use a fork, but it would be nice to move back to upstream.
+#ARG DISCIMAGEMANAGER_REPO=https://github.com/geraldholdsworth/DiscImageManager
+ARG DISCIMAGEMANAGER_REPO=https://github.com/philpem/DiscImageManager
+
+# Pinned commit SHAs/tags: update these when upgrading DiscImageManager or its deps.
+# Current as of 2026-04-02.
 #ARG DISCIMAGEMANAGER_VERSION=1.49
-ARG DISCIMAGEMANAGER_VERSION=4ff5f97167f393520c8382514e09bfcf56af2638
+ARG DISCIMAGEMANAGER_VERSION=285e859658a6b88e4324eb299efa7f73ef91a74a
+
+# SpriteToBitmap and GJHCustomComponents pinned commit SHAs
+ARG DISCIMAGEMANAGER_STB_VERSION=2cbd3ac945186bb5ed7e31685ee4e8287589ddd9
+ARG DISCIMAGEMANAGER_GJHCC_VERSION=9f1397c7cb69aa117cfebf687eee701866f9da7c
+
 # Binary release version — only used when DISCIMAGEMANAGER_SOURCEBUILD=0.
 # Kept separate from DISCIMAGEMANAGER_VERSION (a commit SHA for source builds)
 # so the binary download URL stays valid when the source SHA changes.
 ARG DISCIMAGEMANAGER_BINARY_VERSION=1.49
 ARG DISCIMAGEMANAGER_URL=https://github.com/geraldholdsworth/DiscImageManager/releases/download/${DISCIMAGEMANAGER_BINARY_VERSION}/Disc.Image.Manager.${DISCIMAGEMANAGER_BINARY_VERSION}.Linux.64.bit.Intel.zip
-# Github repo location
-#ARG DISCIMAGEMANAGER_REPO=https://github.com/geraldholdsworth/DiscImageManager
-ARG DISCIMAGEMANAGER_REPO=https://github.com/philpem/DiscImageManager
-# If 1, build from source
-ARG DISCIMAGEMANAGER_SOURCEBUILD=1
-# SpriteToBitmap and GJHCustomComponents pinned commit SHAs
-ARG DISCIMAGEMANAGER_STB_VERSION=2cbd3ac945186bb5ed7e31685ee4e8287589ddd9
-ARG DISCIMAGEMANAGER_GJHCC_VERSION=9f1397c7cb69aa117cfebf687eee701866f9da7c
 
 # Disable prompt during package installation
 ARG DEBIAN_FRONTEND=noninteractive
