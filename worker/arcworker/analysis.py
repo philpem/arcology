@@ -2369,7 +2369,20 @@ class AnalysisWorker:
             )
             return
 
-        extract_dir = Path(extraction_path)
+        # Resolve extraction path to a local directory.  In local mode
+        # this just resolves relative to the outputs dir.  In S3 mode
+        # the entire tree is needed (rglob scan), so download it once.
+        from shared.storage import LocalStorage
+        if isinstance(self.storage, LocalStorage):
+            extract_dir = Path(extraction_path)
+            if not extract_dir.is_absolute():
+                extract_dir = self.outputs / extraction_path
+        else:
+            prefix = self.storage.storage_key('outputs', extraction_path.lstrip('/'))
+            extract_dir = work_dir / 'extraction_tree'
+            count = self.storage.get_tree(prefix, extract_dir)
+            log.info(f"Downloaded {count} files from storage for format conversion")
+
         if not extract_dir.is_dir():
             self.fail_analysis(
                 analysis_id,
@@ -2861,7 +2874,6 @@ class AnalysisWorker:
             self.fail_analysis(analysis_id, 'Could not determine extraction path')
             return
 
-        extract_dir = Path(extraction_path)
         modules = []
         parse_errors = 0
 
@@ -2879,26 +2891,10 @@ class AnalysisWorker:
             else:
                 disk_path = db_path
 
-            # Build candidate paths (with Acorn filetype suffix variants)
-            candidates = []
-            if risc_os_filetype:
-                candidates.append(extract_dir / (disk_path + ',' + risc_os_filetype.lower()))
-                candidates.append(extract_dir / (disk_path + ',' + risc_os_filetype.upper()))
-            candidates.append(extract_dir / disk_path)
-
-            # Also try Latin-1 byte variants
-            all_candidates = []
-            for candidate in candidates:
-                all_candidates.append(candidate)
-                latin1_variant = make_latin1_fspath(str(candidate))
-                if latin1_variant is not None:
-                    all_candidates.append(Path(latin1_variant))
-
-            file_path = None
-            for candidate in all_candidates:
-                if candidate.is_file():
-                    file_path = candidate
-                    break
+            file_path = self._resolve_single_extraction_file(
+                extraction_path, disk_path, work_dir,
+                risc_os_filetype=risc_os_filetype or None,
+            )
 
             if file_path is None:
                 log.warning(f"Module file not found on disk: {db_path}")
