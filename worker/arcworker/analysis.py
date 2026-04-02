@@ -19,7 +19,6 @@ from shared.enums import ArtefactType, AnalysisType
 from .compression import decompress_if_needed, extract_partition_range, is_region_uniform
 from .api import ArcologyAPI
 from .utils.text import make_latin1_fspath, sanitize_path
-from .tools.extraction import _has_acorn_filetypes
 from .tools import (
     compute_file_hash,
     flux_visualisation_fluxfox,
@@ -360,7 +359,10 @@ class AnalysisWorker:
             self.api.queue_analysis(
                 artefact_uuid,
                 AnalysisType.FORMAT_CONVERT.value,
-                hints={'extraction_path': extraction_path},
+                hints={
+                    'extraction_path': extraction_path,
+                    'partition_uuid': partition_uuid,
+                },
             )
         # RISC OS module metadata extraction — harmless no-op on non-Acorn
         # extractions since only filetype ffa files are scanned.
@@ -2124,6 +2126,7 @@ class AnalysisWorker:
             hints={
                 'extraction_path': str(persistent_output),
                 'path_prefix': archive_display_path,
+                'partition_uuid': partition_uuid,
             },
         )
 
@@ -2361,6 +2364,8 @@ class AnalysisWorker:
 
         # --- Mode 2: Extraction scan ---
         extraction_path = hints.get('extraction_path')
+        partition_uuid = hints.get('partition_uuid')
+        path_prefix = hints.get('path_prefix', '')  # e.g. 'Archives/Emulators.zip'
         if not extraction_path:
             self.fail_analysis(
                 analysis_id,
@@ -2369,93 +2374,68 @@ class AnalysisWorker:
             )
             return
 
-        # Resolve extraction path to a local directory.  In local mode
-        # this just resolves relative to the outputs dir.  In S3 mode
-        # the entire tree is needed (rglob scan), so download it once.
-        from shared.storage import LocalStorage
-        if isinstance(self.storage, LocalStorage):
-            extract_dir = Path(extraction_path)
-            if not extract_dir.is_absolute():
-                extract_dir = self.outputs / extraction_path
-        else:
-            prefix = self.storage.storage_key('outputs', extraction_path.lstrip('/'))
-            extract_dir = work_dir / 'extraction_tree'
-            count = self.storage.get_tree(prefix, extract_dir)
-            log.info(f"Downloaded {count} files from storage for format conversion")
+        # Determine viewable type from DB metadata.  Returns None for
+        # files that are not viewable (not a sprite, draw, or text file).
+        def _viewable_type_from_db(file_data: dict) -> 'ArtefactType | None':
+            ft = (file_data.get('risc_os_filetype') or '').lower()
+            if ft:
+                vt = self._RISCOS_HEX_VIEWABLE.get(ft)
+                if vt:
+                    return vt
+            filename = file_data.get('filename', '')
+            ext = os.path.splitext(filename)[1].lower()
+            return self._EXT_VIEWABLE.get(ext)
 
-        if not extract_dir.is_dir():
-            self.fail_analysis(
-                analysis_id,
-                f'Extraction directory not found: {extraction_path}',
+        # Query file list from the database via API instead of scanning the
+        # filesystem.  This avoids downloading the entire extraction tree
+        # in S3 mode — only the viewable files will be fetched individually.
+        viewable_files: list[tuple[dict, 'ArtefactType']] = []
+        if partition_uuid:
+            files_resp = self.api.get(
+                f"/partitions/{partition_uuid}/files?per_page=10000&show_known=true"
             )
-            return
+            all_files = files_resp.get('files', []) if files_resp else []
 
-        # Auto-detect Acorn filetype suffixes for display-path computation.
-        # Display paths must match ExtractedFile.path (Acorn suffix stripped).
-        is_acorn = _has_acorn_filetypes(extract_dir)
+            # Filter to files in our extraction context
+            if path_prefix:
+                all_files = [f for f in all_files
+                             if f.get('path', '').startswith(path_prefix + '/')]
 
-        # Load ISO ARCHIMEDES metadata sidecar written by process_file_extraction.
-        # Provides filetype_map (lowercase path → filetype hex) for ISO-extracted
-        # files that lack ',xxx' filename suffixes.
-        iso_filetype_map: dict[str, str] = {}
-        sidecar_path = extract_dir / '_arcology_iso_meta.json'
-        if sidecar_path.is_file():
-            try:
-                with open(sidecar_path, encoding='utf-8') as _sf:
-                    _meta = json.load(_sf)
-                iso_filetype_map = _meta.get('filetype_map') or {}
-            except Exception as _e:
-                log.warning(f"Could not read ISO metadata sidecar: {_e}")
-
-        # path_prefix is set when FORMAT_CONVERT was queued from process_archive_extract
-        # for a nested archive (e.g. an archive file on a disc image).  The DB
-        # registers those files with the archive's display path prepended, so
-        # source_file must include the same prefix to match ExtractedFile.path.
-        path_prefix = hints.get('path_prefix', '')  # e.g. 'Archives/Emulators.zip'
+            for file_data in all_files:
+                if file_data.get('is_directory', False):
+                    continue
+                vt = _viewable_type_from_db(file_data)
+                if vt is not None:
+                    viewable_files.append((file_data, vt))
 
         all_outputs = []
         file_index = 0
-        for path in sorted(extract_dir.rglob('*')):
-            if not path.is_file():
-                continue
-            # Skip the ISO metadata sidecar itself
-            if path.name == '_arcology_iso_meta.json':
-                continue
-            viewable_type = self._detect_viewable_type(path)
+        for file_data, viewable_type in viewable_files:
+            db_path = file_data['path']
 
-            # For ISO-extracted files without ',xxx' suffixes or known extensions,
-            # fall back to the ARCHIMEDES filetype hex from the metadata sidecar.
-            if viewable_type is None and iso_filetype_map:
-                rel_lower = str(path.relative_to(extract_dir)).lower()
-                hex_type = iso_filetype_map.get(rel_lower)
-                if hex_type:
-                    viewable_type = self._RISCOS_HEX_VIEWABLE.get(hex_type)
-
-            if viewable_type is None:
-                continue
-
-            # Compute display path (matching ExtractedFile.path in the database)
-            rel = path.relative_to(extract_dir)
-            if is_acorn:
-                true_name, _ = parse_acorn_filename(path.name)
-                if len(rel.parts) > 1:
-                    display_path = str(Path(*rel.parts[:-1]) / true_name)
-                else:
-                    display_path = true_name
+            # Strip the archive path prefix to get the on-disk relative path
+            if path_prefix and db_path.startswith(path_prefix + '/'):
+                disk_path = db_path[len(path_prefix) + 1:]
             else:
-                display_path = str(rel)
+                disk_path = db_path
 
-            # Prepend archive path prefix for nested archives so the path matches
-            # ExtractedFile.path (which has the parent archive path prepended).
-            if path_prefix:
-                display_path = path_prefix + '/' + display_path
+            file_path = self._resolve_single_extraction_file(
+                extraction_path, disk_path, work_dir,
+                risc_os_filetype=file_data.get('risc_os_filetype') or None,
+            )
+            if file_path is None:
+                log.warning(f"Viewable file not found: {db_path}")
+                continue
+
+            # display_path is the DB path (already matches ExtractedFile.path)
+            display_path = db_path
 
             file_outputs = self._convert_file_to_outputs(
-                path, viewable_type, work_dir, output_subdir, analysis_uuid, file_index,
+                file_path, viewable_type, work_dir, output_subdir, analysis_uuid, file_index,
             )
             file_index += 1
             if file_outputs is None:
-                log.warning(f"Skipping {path} — conversion failed")
+                log.warning(f"Skipping {file_path} — conversion failed")
                 continue
             for out in file_outputs:
                 out['source_file'] = display_path
