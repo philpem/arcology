@@ -2383,7 +2383,7 @@ class AnalysisWorker:
                 if vt:
                     return vt
             filename = file_data.get('filename', '')
-            ext = os.path.splitext(filename)[1].lower()
+            ext = Path(filename).suffix.lower()
             return self._EXT_VIEWABLE.get(ext)
 
         # Query file list from the database via API instead of scanning the
