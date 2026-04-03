@@ -207,11 +207,19 @@ class S3Storage(StorageBackend):
     """
 
     def __init__(self, endpoint_url: str, bucket: str,
-                 access_key: str, secret_key: str, region: str = 'us-east-1'):
+                 access_key: str, secret_key: str, region: str = 'us-east-1',
+                 public_url: str | None = None):
         import boto3
         from botocore.config import Config as BotoConfig
 
         self.bucket = bucket
+        self._endpoint_url = endpoint_url
+        # Public URL for presigned URLs that browsers will fetch.
+        # When S3 runs inside Docker (e.g. Garage), the internal endpoint
+        # (http://garage:3900) is unreachable from the browser.  Set
+        # S3_PUBLIC_URL to the externally-reachable URL (e.g.
+        # http://localhost:3900) so presigned URLs work.
+        self._public_url = public_url
         self._client = boto3.client(
             's3',
             endpoint_url=endpoint_url,
@@ -281,11 +289,15 @@ class S3Storage(StorageBackend):
         params = {'Bucket': self.bucket, 'Key': key}
         if filename:
             params['ResponseContentDisposition'] = f'attachment; filename="{filename}"'
-        return self._client.generate_presigned_url(
+        url = self._client.generate_presigned_url(
             'get_object',
             Params=params,
             ExpiresIn=expires,
         )
+        # Rewrite internal endpoint to public URL for browser access
+        if self._public_url and self._endpoint_url:
+            url = url.replace(self._endpoint_url, self._public_url, 1)
+        return url
 
     def put_tree(self, prefix: str, local_dir: Path) -> int:
         local_dir = Path(local_dir)
@@ -335,6 +347,7 @@ def create_storage(config: dict) -> StorageBackend:
         access_key = config.get('S3_ACCESS_KEY')
         secret_key = config.get('S3_SECRET_KEY')
         region = config.get('S3_REGION', 'us-east-1')
+        public_url = config.get('S3_PUBLIC_URL')
 
         if not all([endpoint, access_key, secret_key]):
             raise RuntimeError(
@@ -347,6 +360,7 @@ def create_storage(config: dict) -> StorageBackend:
             access_key=access_key,
             secret_key=secret_key,
             region=region,
+            public_url=public_url,
         )
 
     if backend != 'local':

@@ -81,6 +81,7 @@ S3_BUCKET=arcology
 S3_ACCESS_KEY=GK...          # Key ID from step 3
 S3_SECRET_KEY=...            # Secret Key from step 3
 S3_REGION=garage
+S3_PUBLIC_URL=http://localhost:3900  # Browser-reachable URL for file downloads
 ```
 
 ### 5. Start the full stack
@@ -121,6 +122,7 @@ variables.
 | `S3_ACCESS_KEY` | — | S3 access key ID (required for S3) |
 | `S3_SECRET_KEY` | — | S3 secret access key (required for S3) |
 | `S3_REGION` | `us-east-1` | S3 region (use `garage` for Garage) |
+| `S3_PUBLIC_URL` | (same as endpoint) | Browser-reachable S3 URL for presigned download links. Set this when `S3_ENDPOINT_URL` is a Docker-internal hostname (e.g. `http://garage:3900`) that browsers cannot reach. |
 
 ## How it works
 

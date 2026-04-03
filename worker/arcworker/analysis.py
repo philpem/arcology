@@ -185,7 +185,8 @@ class AnalysisWorker:
         if storage is None:
             from shared.storage import create_storage
             from .config import (STORAGE_BACKEND, S3_ENDPOINT_URL, S3_BUCKET,
-                                 S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION)
+                                 S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION,
+                                 S3_PUBLIC_URL)
             storage = create_storage({
                 'STORAGE_BACKEND': STORAGE_BACKEND,
                 'S3_ENDPOINT_URL': S3_ENDPOINT_URL,
@@ -193,6 +194,7 @@ class AnalysisWorker:
                 'S3_ACCESS_KEY': S3_ACCESS_KEY,
                 'S3_SECRET_KEY': S3_SECRET_KEY,
                 'S3_REGION': S3_REGION,
+                'S3_PUBLIC_URL': S3_PUBLIC_URL,
                 'UPLOAD_FOLDER': str(upload_dir),
                 'OUTPUT_FOLDER': str(output_dir),
             })

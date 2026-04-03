@@ -42,6 +42,7 @@ S3_BUCKET = os.environ.get('S3_BUCKET', 'arcology')
 S3_ACCESS_KEY = os.environ.get('S3_ACCESS_KEY', '')
 S3_SECRET_KEY = os.environ.get('S3_SECRET_KEY', '')
 S3_REGION = os.environ.get('S3_REGION', 'us-east-1')
+S3_PUBLIC_URL = os.environ.get('S3_PUBLIC_URL', '')
 
 # Configure logging
 logging.basicConfig(

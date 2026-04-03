@@ -35,7 +35,8 @@ def create_app(config_name=None):
     # Load settings from environment, overriding config file where set
     for env_key in ('SECRET_KEY', 'SQLALCHEMY_DATABASE_URI', 'WORKER_API_KEY',
                     'STORAGE_BACKEND', 'S3_ENDPOINT_URL', 'S3_BUCKET',
-                    'S3_ACCESS_KEY', 'S3_SECRET_KEY', 'S3_REGION'):
+                    'S3_ACCESS_KEY', 'S3_SECRET_KEY', 'S3_REGION',
+                    'S3_PUBLIC_URL'):
         env_val = os.environ.get(env_key)
         if env_val:
             app.config[env_key] = env_val

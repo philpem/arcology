@@ -953,11 +953,13 @@ def _render_viewer(artefact):
 
     def _enrich_outputs(outputs):
         """For text outputs, read file content for inline rendering."""
+        storage = current_app.storage
         for out in outputs:
             if out.get('type') == 'text':
                 try:
-                    text_path = os.path.join(output_folder, out['filename'])
-                    out['text_content'] = open(text_path, encoding='utf-8', errors='replace').read()
+                    key = storage.storage_key('outputs', out['filename'])
+                    with storage.open_read(key) as f:
+                        out['text_content'] = f.read().decode('utf-8', errors='replace')
                 except Exception:
                     out['text_content'] = None
         return outputs
