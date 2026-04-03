@@ -1,14 +1,14 @@
 """Add TBAFS artefact type
 
 Revision ID: 000069d03ed7
-Revises: 000069cbb651
+Revises: 000069cbce32
 Create Date: 2026-04-03
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = '000069d03ed7'
-down_revision = '000069cbb651'
+down_revision = '000069cbce32'
 branch_labels = None
 depends_on = None
 
