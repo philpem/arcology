@@ -213,13 +213,6 @@ class S3Storage(StorageBackend):
         from botocore.config import Config as BotoConfig
 
         self.bucket = bucket
-        self._endpoint_url = endpoint_url
-        # Public URL for presigned URLs that browsers will fetch.
-        # When S3 runs inside Docker (e.g. Garage), the internal endpoint
-        # (http://garage:3900) is unreachable from the browser.  Set
-        # S3_PUBLIC_URL to the externally-reachable URL (e.g.
-        # http://localhost:3900) so presigned URLs work.
-        self._public_url = public_url
         self._client = boto3.client(
             's3',
             endpoint_url=endpoint_url,
@@ -228,6 +221,22 @@ class S3Storage(StorageBackend):
             region_name=region,
             config=BotoConfig(signature_version='s3v4'),
         )
+        # Presigned URLs must be signed against the hostname the browser
+        # will use.  When S3 runs inside Docker (e.g. Garage at
+        # http://garage:3900), that internal hostname is unreachable from
+        # the browser.  A separate client configured with the public URL
+        # ensures the signature matches the host the browser sends.
+        if public_url and public_url != endpoint_url:
+            self._public_client = boto3.client(
+                's3',
+                endpoint_url=public_url,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                region_name=region,
+                config=BotoConfig(signature_version='s3v4'),
+            )
+        else:
+            self._public_client = self._client
         log.info(f"S3 storage: endpoint={endpoint_url} bucket={bucket}")
 
     def put(self, key: str, source_path: Path) -> None:
@@ -289,15 +298,11 @@ class S3Storage(StorageBackend):
         params = {'Bucket': self.bucket, 'Key': key}
         if filename:
             params['ResponseContentDisposition'] = f'attachment; filename="{filename}"'
-        url = self._client.generate_presigned_url(
+        return self._public_client.generate_presigned_url(
             'get_object',
             Params=params,
             ExpiresIn=expires,
         )
-        # Rewrite internal endpoint to public URL for browser access
-        if self._public_url and self._endpoint_url:
-            url = url.replace(self._endpoint_url, self._public_url, 1)
-        return url
 
     def put_tree(self, prefix: str, local_dir: Path) -> int:
         local_dir = Path(local_dir)
