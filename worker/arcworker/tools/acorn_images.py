@@ -8,9 +8,6 @@ import re
 from pathlib import Path
 
 from ..config import log
-from .base import run_tool_with_output
-from ..utils.text import sanitize_filename
-
 
 def _safe_sprite_name(name: str, index: int) -> str:
     """Return a filesystem-safe version of a sprite name."""
@@ -99,11 +96,10 @@ def convert_sprite(input_path: Path, output_dir: Path, analysis_uuid: str) -> di
 
 def convert_draw(input_path: Path, output_dir: Path, analysis_uuid: str) -> dict:
     """
-    Convert an Acorn Draw file to PNG + SVG using drawfile_render.
+    Convert an Acorn Draw file to SVG using drawfile_render.
 
     The tool is installed as a plain script at /opt/drawfile_render/render_drawfile.py
-    (not a pip package).  PNG is produced by invoking it as a subprocess; SVG is
-    produced by importing DrawFileRender directly (the CLI hardcodes PNG output).
+    (not a pip package).  SVG is produced by importing DrawFileRender directly.
     PYTHONPATH includes /opt/drawfile_render so the import works in Docker.
 
     Args:
@@ -114,44 +110,17 @@ def convert_draw(input_path: Path, output_dir: Path, analysis_uuid: str) -> dict
     Returns:
         Dict with keys:
             success (bool)
-            png_path (Path | None)
-            svg_path (Path | None)   — None only if SVG generation failed
+            svg_path (Path | None)
             error (str | None)
             tool_output (dict)
     """
     _DRAWFILE_RENDER_DIR = '/opt/drawfile_render'
-    _DRAWFILE_RENDER_SCRIPT = f'{_DRAWFILE_RENDER_DIR}/render_drawfile.py'
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    # render_drawfile.py appends .png to the --output value automatically
     output_base = str(output_dir / f'{analysis_uuid}_draw')
-    png_path = Path(output_base + '.png')
-
-    result, tool_output = run_tool_with_output(
-        ['python3', _DRAWFILE_RENDER_SCRIPT, '--input', str(input_path), '--output', output_base],
-        cwd=_DRAWFILE_RENDER_DIR,
-    )
-
-    if result.returncode != 0 or not png_path.exists():
-        stderr = tool_output.get('stderr', '').strip()
-        stdout = tool_output.get('stdout', '').strip()
-        full_output = stderr or stdout or 'drawfile_render produced no output'
-        # Log the full output so the last line (the actual exception) is visible.
-        log.warning(
-            f'drawfile_render failed for {input_path} (exit {result.returncode}):\n{full_output}'
-        )
-        # Store the tail (last 500 chars) since Python tracebacks end with the exception.
-        return {
-            'success': False,
-            'png_path': None,
-            'svg_path': None,
-            'error': full_output[-500:],
-            'tool_output': tool_output,
-        }
-
-    # Always produce SVG — it is the click-through target in the viewer.
-    svg_path = None
     svg_candidate = Path(output_base + '.svg')
+    tool_output = {}
+
     try:
         import sys as _sys
         if _DRAWFILE_RENDER_DIR not in _sys.path:
@@ -159,17 +128,27 @@ def convert_draw(input_path: Path, output_dir: Path, analysis_uuid: str) -> dict
         from render_drawfile import DrawFileRender
         df = DrawFileRender(filename=str(input_path))
         df.render_to_context(filename=output_base, img_format='svg')
-        if svg_candidate.exists():
-            svg_path = svg_candidate
-        else:
-            log.warning(f'SVG render produced no output for {input_path}')
     except Exception as e:
         log.warning(f'SVG generation failed for {input_path}: {e}')
+        return {
+            'success': False,
+            'svg_path': None,
+            'error': str(e),
+            'tool_output': tool_output,
+        }
+
+    if not svg_candidate.exists():
+        log.warning(f'drawfile_render produced no SVG output for {input_path}')
+        return {
+            'success': False,
+            'svg_path': None,
+            'error': 'drawfile_render produced no output',
+            'tool_output': tool_output,
+        }
 
     return {
         'success': True,
-        'png_path': png_path,
-        'svg_path': svg_path,
+        'svg_path': svg_candidate,
         'error': None,
         'tool_output': tool_output,
     }

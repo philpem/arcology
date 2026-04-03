@@ -173,13 +173,12 @@
 {% endif %}
 
 {# ── Image outputs ── #}
-{# For Draw files, out.svg_filename is set; clicking opens the SVG while PNG is the preview. #}
 {% if ns.image_outputs %}
     <div class="row g-3 mb-4">
         {% for out in ns.image_outputs %}
         <div class="col-6 col-sm-4 col-md-3">
             <div class="card viewer-img-card h-100">
-                <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=out.svg_filename if out.svg_filename else out.filename) }}"
+                <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=out.filename) }}"
                    target="_blank" rel="noopener">
                     <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=out.filename) }}"
                          class="viewer-img card-img-top" alt="{{ out.name }}">

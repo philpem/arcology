@@ -2048,28 +2048,18 @@ class AnalysisWorker:
                 return None  # convert_draw already logged the full error
             # Include file_index so multiple Draw files in the same archive
             # each get a unique output filename rather than overwriting each other.
-            saved_png = self.save_output_file(
-                result['png_path'],
-                f'{analysis_uuid}_{file_index}_draw.png',
+            saved_svg = self.save_output_file(
+                result['svg_path'],
+                f'{analysis_uuid}_{file_index}_draw.svg',
                 subdir=output_subdir,
             )
-            entry = {
+            outputs.append({
                 'type': 'image',
-                'filename': saved_png,
+                'filename': saved_svg,
                 'name': true_name,
                 'description': true_name,
                 'tool': 'drawfile_render',
-            }
-            if result['svg_path']:
-                # Save SVG and link it on the PNG entry so the viewer can use
-                # PNG as a thumbnail and open SVG on click.
-                saved_svg = self.save_output_file(
-                    result['svg_path'],
-                    f'{analysis_uuid}_{file_index}_draw.svg',
-                    subdir=output_subdir,
-                )
-                entry['svg_filename'] = saved_svg
-            outputs.append(entry)
+            })
 
         elif artefact_type == ArtefactType.ACORN_TEXT:
             from .tools.extraction import parse_acorn_filename as _parse_acorn
