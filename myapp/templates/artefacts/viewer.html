@@ -178,9 +178,11 @@
         {% for out in ns.image_outputs %}
         <div class="col-6 col-sm-4 col-md-3">
             <div class="card viewer-img-card h-100">
-                <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=out.filename) }}"
+                {# Prefer svg_filename for old results where PNG was stored as filename; new results store SVG directly as filename. #}
+                {% set preview_file = out.svg_filename if out.svg_filename else out.filename %}
+                <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
                    target="_blank" rel="noopener">
-                    <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=out.filename) }}"
+                    <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
                          class="viewer-img card-img-top" alt="{{ out.name }}">
                 </a>
                 <div class="card-footer p-1 text-center">
