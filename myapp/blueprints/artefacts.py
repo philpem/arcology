@@ -95,6 +95,8 @@ EXTENSION_MAP = {
     '.arcfs': ArtefactType.ARC,
     '.spk': ArtefactType.ARC,
     '.spark': ArtefactType.ARC,
+    '.b21':   ArtefactType.TBAFS,
+    '.tbafs': ArtefactType.TBAFS,
 
     # Acorn/RISC OS native viewable formats
     '.spr':  ArtefactType.ACORN_SPRITE,
@@ -167,6 +169,7 @@ ANALYSIS_MAP = {
     ArtefactType.TARGZ: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.RAR: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.ARC: [AnalysisType.ARCHIVE_EXTRACT],
+    ArtefactType.TBAFS: [AnalysisType.ARCHIVE_EXTRACT],
     
     # Acorn/RISC OS native viewable formats — convert to portable equivalents
     ArtefactType.ACORN_SPRITE: [AnalysisType.FORMAT_CONVERT],

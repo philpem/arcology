@@ -38,6 +38,7 @@ class ArtefactType(enum.Enum):
     TARGZ      = "tar_gz"
     RAR        = "rar"
     ARC        = "arc"               # ArcFS / Spark (RISC OS archive)
+    TBAFS      = "tbafs"             # TBAFS archive (RISC OS filetype &B21)
 
     # Acorn/RISC OS native formats (viewable/convertible)
     ACORN_SPRITE = "acorn_sprite"    # Acorn Sprite file (may contain multiple named images)

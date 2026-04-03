@@ -97,7 +97,7 @@ ARCHIVE_FORMATS = {
         'name': 'TBAFS Archive',
         'category': ArchiveCategory.ARCHIVE,
         'risc_os_filetype': 'b21',
-        'extensions': [],
+        'extensions': ['.b21', '.tbafs'],
         'tool': 'tbafs-extractor',
         'description': 'TBAFS archive format',
         'extract_creates_dir': True,
