@@ -1364,6 +1364,10 @@ class AnalysisWorker:
         if len(header) >= 4 and header[:4] == b'PK\x03\x04':
             return ArchiveType.ZIP
 
+        # TBAFS: "TAFS" followed by 0xC8
+        if len(header) >= 5 and header[:4] == b'TAFS' and header[4] == 0xC8:
+            return ArchiveType.TBAFS
+
         return None
 
     @staticmethod
@@ -1465,7 +1469,7 @@ class AnalysisWorker:
             archive_info = get_archive_info(archive_type)
 
         # Dispatch to the correct extraction tool
-        from .tools import extract_riscosarc, extract_zip_riscos
+        from .tools import extract_riscosarc, extract_zip_riscos, extract_tbafs
 
         if archive_type in [ArchiveType.SPARK, ArchiveType.ARCFS,
                             ArchiveType.PACKDIR, ArchiveType.CFS, ArchiveType.SQUASH]:
@@ -1478,6 +1482,8 @@ class AnalysisWorker:
                 if result['success']:
                     archive_type = ArchiveType.ZIP_RISCOS
                     archive_info = get_archive_info(archive_type)
+        elif archive_type == ArchiveType.TBAFS:
+            result = extract_tbafs(input_path, extract_dir)
         elif archive_type == ArchiveType.ZIP_RISCOS:
             result = extract_zip_riscos(input_path, extract_dir)
         elif archive_type == ArchiveType.ZIP:

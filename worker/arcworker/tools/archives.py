@@ -388,7 +388,7 @@ def extract_tbafs(input_path: Path, output_dir: Path) -> Dict[str, Any]:
 
     return _run_extraction_command(
         tool='tbafs-extractor',
-        cmd=['tbafs-extractor', str(input_path), str(output_dir)],
+        cmd=['tbafs-extractor', 'x', str(input_path), '-o', str(output_dir)],
         output_dir=output_dir,
         summary='Extracted {file_count} files from TBAFS archive',
         normalize_names=True,
