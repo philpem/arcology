@@ -690,7 +690,7 @@ class ExtractedFile(db.Model):
         Root-level files return '' (no path filter, shows all files).
         """
         if self.is_archive or self.is_directory:
-            return self.path
+            return self.path + '/'
         if '/' in self.path:
             return self.path.rsplit('/', 1)[0] + '/'
         return ''
