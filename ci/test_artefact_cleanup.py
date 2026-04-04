@@ -53,6 +53,13 @@ class TestArtefactCleanupRegression(unittest.TestCase):
         os.makedirs(self.upload_folder, exist_ok=True)
         os.makedirs(self.output_folder, exist_ok=True)
 
+        # Re-initialise storage backend with updated folder paths
+        from shared.storage import create_storage
+        storage_config = dict(self.app.config)
+        storage_config['UPLOAD_FOLDER'] = self.upload_folder
+        storage_config['OUTPUT_FOLDER'] = self.output_folder
+        self.app.storage = create_storage(storage_config)
+
         self.client = self.app.test_client()
         self.db = _db
 

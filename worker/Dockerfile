@@ -275,7 +275,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 	sed -i '/^Components:/ s/$/ multiverse/' /etc/apt/sources.list.d/ubuntu.sources && \
 	apt -y update && apt -y upgrade && \
 	apt -y install \
-		python3 python3-pip python3-dev python3-requests python3-numpy git \
+		python3 python3-pip python3-dev python3-requests python3-numpy python3-boto3 git \
 		p7zip-full zstd gzip bzip2 xz-utils \
 		unzip unrar tar util-linux \
 		file fdisk \

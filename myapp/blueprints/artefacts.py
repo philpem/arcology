@@ -9,6 +9,7 @@ import os
 import re
 import hashlib
 import shutil
+import tempfile
 import threading
 import uuid
 import json
@@ -320,23 +321,43 @@ def _get_storage_extension(filename: str) -> str:
 def save_uploaded_file(file) -> tuple[str, int]:
     """
     Save an uploaded file and return (storage_path, file_size).
-    Files are stored in UPLOAD_FOLDER with a UUID-based name to avoid conflicts.
+    Files are stored via the storage backend with a UUID-based name to avoid conflicts.
     """
-    folder = get_upload_folder()
+    storage = current_app.storage
 
     # Generate unique storage name while preserving extension
     # Uses compound extension detection so drive.dd.zst -> <uuid>.dd.zst
     original_name = secure_filename(file.filename)
     ext = _get_storage_extension(original_name)
     storage_name = f"{uuid.uuid4().hex}{ext}"
-    storage_path = os.path.join(folder, storage_name)
-    
-    # Save file
-    file.save(storage_path)
-    file_size = os.path.getsize(storage_path)
-    
+
+    # Save to a temp file first, then put into storage
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+        file.save(tmp)
+        tmp_path = tmp.name
+
+    try:
+        file_size = os.path.getsize(tmp_path)
+        key = storage.storage_key('uploads', storage_name)
+        storage.put(key, tmp_path)
+    finally:
+        # Clean up temp file (if storage backend copied it elsewhere)
+        try:
+            os.unlink(tmp_path)
+        except FileNotFoundError:
+            pass
+
     # Return relative path for storage in DB
     return storage_name, file_size
+
+
+def get_artefact_storage_key(artefact: Artefact) -> str:
+    """Get the storage key for an artefact.
+
+    Returns a key like 'uploads/abc123.img' or 'outputs/xyz789.png'.
+    """
+    directory = 'outputs' if artefact.storage_directory == StorageDirectory.OUTPUTS else 'uploads'
+    return current_app.storage.storage_key(directory, artefact.storage_path)
 
 
 def get_artefact_path(artefact: Artefact) -> str:
@@ -356,16 +377,28 @@ def get_artefact_path(artefact: Artefact) -> str:
     return full_path
 
 
-def compute_file_hashes(filepath: str) -> tuple[str, str]:
-    """Compute MD5 and SHA256 hashes for a file."""
+def compute_file_hashes(filepath_or_key: str, use_storage: bool = False) -> tuple[str, str]:
+    """Compute MD5 and SHA256 hashes for a file.
+
+    Args:
+        filepath_or_key: Either a local filesystem path or a storage key.
+        use_storage: If True, read from the storage backend using key.
+    """
     md5_hash = hashlib.md5()
     sha256_hash = hashlib.sha256()
-    
-    with open(filepath, 'rb') as f:
+
+    if use_storage:
+        f = current_app.storage.open_read(filepath_or_key)
+    else:
+        f = open(filepath_or_key, 'rb')
+
+    try:
         for chunk in iter(lambda: f.read(8192), b''):
             md5_hash.update(chunk)
             sha256_hash.update(chunk)
-    
+    finally:
+        f.close()
+
     return md5_hash.hexdigest(), sha256_hash.hexdigest()
 
 
@@ -390,8 +423,9 @@ def _resolve_extracted_file_path(ef):
 
     Returns the full filesystem path as a string, or None if not found.
     """
-    output_folder = get_output_folder()
-    real_output = os.path.realpath(output_folder)
+    from shared.storage import S3Storage
+
+    storage = current_app.storage
 
     # For files nested inside an archive-within-a-disc, the DB path has the
     # parent archive's display path prepended (e.g. "Archives/Emulators.zip/
@@ -418,6 +452,62 @@ def _resolve_extracted_file_path(ef):
         )
         for extraction in extractions:
             base = extraction.output_path
+
+            # --- S3 storage mode ---
+            if isinstance(storage, S3Storage):
+                from botocore.exceptions import ClientError
+
+                # output_path should be a relative path (or S3 key prefix)
+                if os.path.isabs(base):
+                    # Legacy absolute path — strip to relative
+                    # e.g. /data/outputs/item/art/analysis -> item/art/analysis
+                    parts = base.rstrip('/').split('/')
+                    # Find 'outputs' in the path and take everything after
+                    try:
+                        idx = parts.index('outputs')
+                        base = '/'.join(parts[idx + 1:])
+                    except ValueError:
+                        # No 'outputs' segment, use the last 3 parts as best guess
+                        base = '/'.join(parts[-3:]) if len(parts) >= 3 else parts[-1]
+
+                prefix = f"outputs/{base.strip('/')}"
+                file_key = f"{prefix}/{disk_path.lstrip('/')}"
+
+                # Build candidate keys.  If the file has a known RISC OS
+                # filetype, try ,xxx suffix variants (both cases) before
+                # the plain key.  This avoids an expensive list_prefix()
+                # call — each HEAD/GET is ~12x cheaper than a LIST on AWS.
+                s3_candidates = []
+                if ef.risc_os_filetype:
+                    s3_candidates.append(file_key + ',' + ef.risc_os_filetype.lower())
+                    s3_candidates.append(file_key + ',' + ef.risc_os_filetype.upper())
+                s3_candidates.append(file_key)
+
+                for key in s3_candidates:
+                    try:
+                        tmp_dir = tempfile.mkdtemp(prefix='arcology_ef_')
+                        dest = os.path.join(tmp_dir, key.rsplit('/', 1)[-1])
+                        storage.get(key, dest)
+                        return dest
+                    except ClientError as e:
+                        if e.response['Error']['Code'] in ('404', 'NoSuchKey'):
+                            # Clean up empty temp dir
+                            try:
+                                os.unlink(dest)
+                            except OSError:
+                                pass
+                            try:
+                                os.rmdir(tmp_dir)
+                            except OSError:
+                                pass
+                            continue
+                        raise
+
+                continue
+
+            # --- Local storage mode ---
+            output_folder = get_output_folder()
+            real_output = os.path.realpath(output_folder)
 
             # Build candidate base directories to try
             bases_to_try = []
@@ -475,8 +565,15 @@ def _map_output_path_to_local_root(path: str, output_folder: str) -> str:
     same files under its own mount point (for example
     ``/app/instance/outputs/...``). This helper rewrites the absolute path onto
     the local output root before cleanup-time safety checks.
+
+    Relative paths (used in S3 mode) are joined with output_folder directly.
     """
     real_output = os.path.realpath(output_folder)
+
+    # Relative paths: join directly with output_folder
+    if not os.path.isabs(path):
+        return os.path.realpath(os.path.join(real_output, path))
+
     real_path = os.path.realpath(path)
 
     if real_path == real_output or real_path.startswith(real_output + os.sep):
@@ -859,11 +956,13 @@ def _render_viewer(artefact):
 
     def _enrich_outputs(outputs):
         """For text outputs, read file content for inline rendering."""
+        storage = current_app.storage
         for out in outputs:
             if out.get('type') == 'text':
                 try:
-                    text_path = os.path.join(output_folder, out['filename'])
-                    out['text_content'] = open(text_path, encoding='utf-8', errors='replace').read()
+                    key = storage.storage_key('outputs', out['filename'])
+                    with storage.open_read(key) as f:
+                        out['text_content'] = f.read().decode('utf-8', errors='replace')
                 except Exception:
                     out['text_content'] = None
         return outputs
@@ -1869,14 +1968,50 @@ def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
 
 def _delete_artefact_files(artefact):
     """Recursively delete files for an artefact and all its derived artefacts."""
+    storage = current_app.storage
     for derived in artefact.derived_artefacts:
         _delete_artefact_files(derived)
     try:
-        full_path = get_artefact_path(artefact)
-        if os.path.exists(full_path):
-            os.remove(full_path)
+        key = get_artefact_storage_key(artefact)
+        storage.delete(key)
     except Exception as e:
         current_app.logger.warning(f"Failed to delete file for artefact {artefact.uuid}: {e}")
+
+
+def _cleanup_artefact_outputs_s3(artefact, storage):
+    """Clean up analysis outputs for an artefact using S3 storage.
+
+    Deletes output files, output directories (extraction trees), and
+    cached partition images via the S3 storage backend.
+    """
+    cleanup = _collect_cleanup_paths_for_artefact(artefact)
+    for filename in cleanup['output_files']:
+        try:
+            key = storage.storage_key('outputs', filename)
+            storage.delete(key)
+            current_app.logger.info(f"Deleted output file: {filename}")
+        except Exception as e:
+            current_app.logger.warning(f"Failed to delete output file {filename}: {e}")
+    for path in cleanup['output_dirs']:
+        try:
+            if os.path.isabs(path):
+                parts = path.rstrip('/').split('/')
+                try:
+                    idx = parts.index('outputs')
+                    rel = '/'.join(parts[idx + 1:])
+                except ValueError:
+                    rel = '/'.join(parts[-3:]) if len(parts) >= 3 else parts[-1]
+            else:
+                rel = path
+            prefix = storage.storage_key('outputs', rel)
+            storage.delete_prefix(prefix)
+        except Exception as e:
+            current_app.logger.warning(f"Failed to delete output directory {path}: {e}")
+    try:
+        cache_prefix = storage.storage_key('outputs', f'.cache/{artefact.uuid}')
+        storage.delete_prefix(cache_prefix)
+    except Exception as e:
+        current_app.logger.warning(f"Failed to delete partition cache for artefact {artefact.uuid}: {e}")
 
 
 def _delete_item_files(item):
@@ -1886,10 +2021,16 @@ def _delete_item_files(item):
     analysis output directories, named output files, and cached partition images.
     Must be called while the ORM relationships are still intact (before db.session.delete).
     """
+    storage = current_app.storage
+    from shared.storage import S3Storage
+
     for artefact in item.artefacts:
         # Delete stored files for this artefact and all its derived artefacts.
         _delete_artefact_files(artefact)
-        _cleanup_artefact_outputs(artefact, current_app.logger)
+        if isinstance(storage, S3Storage):
+            _cleanup_artefact_outputs_s3(artefact, storage)
+        else:
+            _cleanup_artefact_outputs(artefact, current_app.logger)
 
 
 def move_artefact_to_item(artefact, new_item):
@@ -1958,10 +2099,16 @@ def delete(item_id=None, artefact_id=None, root_id=None, uuid=None):
     item_url_id = artefact.item.url_id
     label = artefact.label
 
-    # Collect analysis outputs before deleting ORM rows or files.
     # Delete files for this artefact and all derived artefacts.
     _delete_artefact_files(artefact)
-    _cleanup_artefact_outputs(artefact, current_app.logger)
+
+    # Clean up analysis outputs (extraction trees, visualisations, cache).
+    from shared.storage import S3Storage
+    storage = current_app.storage
+    if isinstance(storage, S3Storage):
+        _cleanup_artefact_outputs_s3(artefact, storage)
+    else:
+        _cleanup_artefact_outputs(artefact, current_app.logger)
 
     db.session.delete(artefact)
     db.session.commit()
@@ -1988,8 +2135,16 @@ def download(item_id=None, artefact_id=None, root_id=None, uuid=None):
     if restriction_redirect:
         return restriction_redirect
 
-    full_path = get_artefact_path(artefact)
+    storage = current_app.storage
+    key = get_artefact_storage_key(artefact)
 
+    # S3 mode: redirect to pre-signed URL
+    url = storage.presigned_url(key, filename=artefact.original_filename)
+    if url:
+        return redirect(url)
+
+    # Local mode: serve file directly
+    full_path = get_artefact_path(artefact)
     if not os.path.exists(full_path):
         abort(404, description='File not found')
 
@@ -2219,14 +2374,14 @@ def compute_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None
     """Compute file hashes for an artefact."""
     artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
 
-    full_path = get_artefact_path(artefact)
-
-    if not os.path.exists(full_path):
-        flash('File not found.', 'error')
+    if not artefact.storage_path:
+        flash('File not found — artefact has no stored file.', 'error')
         return _redirect_to_artefact_view(artefact)
 
+    key = get_artefact_storage_key(artefact)
+
     try:
-        artefact.md5, artefact.sha256 = compute_file_hashes(full_path)
+        artefact.md5, artefact.sha256 = compute_file_hashes(key, use_storage=True)
         db.session.commit()
         flash('Hashes computed successfully.', 'success')
     except Exception as e:
@@ -2277,6 +2432,15 @@ def rerun_product_recognition_route(uuid):
 @login_required
 def get_output_file(filename):
     """Serve an analysis output file (visualisation, etc.) to logged-in users."""
+    storage = current_app.storage
+    key = storage.storage_key('outputs', filename)
+
+    # S3 mode: redirect to pre-signed URL
+    url = storage.presigned_url(key, filename=os.path.basename(filename))
+    if url:
+        return redirect(url)
+
+    # Local mode: serve directly with path traversal check
     folder = get_output_folder()
     file_path = os.path.realpath(os.path.join(folder, filename))
     if not file_path.startswith(os.path.realpath(folder) + os.sep):

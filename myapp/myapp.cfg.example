@@ -44,3 +44,18 @@ WORKER_API_KEY = ""
 # stuck and eligible for reset back to PENDING.  Set this comfortably above the
 # longest expected analysis run time.  Default: 3600 (1 hour).
 STALE_JOB_TIMEOUT_SECONDS = 3600
+
+# Storage backend: 'local' (default) or 's3'
+# Local mode uses the filesystem (UPLOAD_FOLDER/OUTPUT_FOLDER above).
+# S3 mode enables distributed workers on separate machines.
+# See docker-compose.s3.yml for a full example with Garage.
+#STORAGE_BACKEND = "local"
+
+# S3-compatible storage settings (only used when STORAGE_BACKEND = 's3')
+# Works with Garage, SeaweedFS, AWS S3, or any S3-compatible service.
+#S3_ENDPOINT_URL = "http://garage:3900"
+#S3_BUCKET = "arcology"
+#S3_ACCESS_KEY = ""
+#S3_SECRET_KEY = ""
+#S3_REGION = "garage"
+#S3_PUBLIC_URL = "http://localhost:3900"  # Browser-reachable URL for presigned links

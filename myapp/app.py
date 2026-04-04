@@ -33,7 +33,10 @@ def create_app(config_name=None):
     app.config.from_pyfile(config_name or 'myapp.cfg', silent=True)
 
     # Load settings from environment, overriding config file where set
-    for env_key in ('SECRET_KEY', 'SQLALCHEMY_DATABASE_URI', 'WORKER_API_KEY'):
+    for env_key in ('SECRET_KEY', 'SQLALCHEMY_DATABASE_URI', 'WORKER_API_KEY',
+                    'STORAGE_BACKEND', 'S3_ENDPOINT_URL', 'S3_BUCKET',
+                    'S3_ACCESS_KEY', 'S3_SECRET_KEY', 'S3_REGION',
+                    'S3_PUBLIC_URL'):
         env_val = os.environ.get(env_key)
         if env_val:
             app.config[env_key] = env_val
@@ -73,6 +76,20 @@ def create_app(config_name=None):
     login_manager.init_app(app)
     bootstrap.init_app(app)
     csrf.init_app(app)
+
+    # Initialise storage backend (local filesystem or S3-compatible)
+    from shared.storage import create_storage
+    storage_config = dict(app.config)
+    # Resolve relative folder paths to absolute for local storage
+    upload_folder = app.config.get('UPLOAD_FOLDER', 'uploads')
+    output_folder = app.config.get('OUTPUT_FOLDER', 'outputs')
+    if not os.path.isabs(upload_folder):
+        upload_folder = os.path.join(app.instance_path, upload_folder)
+    if not os.path.isabs(output_folder):
+        output_folder = os.path.join(app.instance_path, output_folder)
+    storage_config['UPLOAD_FOLDER'] = upload_folder
+    storage_config['OUTPUT_FOLDER'] = output_folder
+    app.storage = create_storage(storage_config)
 
     # Flask-Login configuration
     login_manager.login_view = 'login'

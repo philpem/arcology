@@ -19,7 +19,6 @@ from shared.enums import ArtefactType, AnalysisType
 from .compression import decompress_if_needed, extract_partition_range, is_region_uniform
 from .api import ArcologyAPI
 from .utils.text import make_latin1_fspath, sanitize_path
-from .tools.extraction import _has_acorn_filetypes
 from .tools import (
     compute_file_hash,
     flux_visualisation_fluxfox,
@@ -167,7 +166,8 @@ def analysis_handler(description: str):
 class AnalysisWorker:
     """Main worker class that processes analysis jobs."""
 
-    def __init__(self, api_url: str, upload_dir: Path, output_dir: Path, api_key: str = ''):
+    def __init__(self, api_url: str, upload_dir: Path, output_dir: Path,
+                 api_key: str = '', storage=None):
         """
         Initialize the worker.
 
@@ -176,17 +176,39 @@ class AnalysisWorker:
             upload_dir: Directory where uploaded artefacts are stored
             output_dir: Directory for analysis outputs (e.g., visualisations)
             api_key: Worker API key for authentication
+            storage: StorageBackend instance (if None, creates from config)
         """
         self.uploads = upload_dir
         self.outputs = output_dir
         self.outputs.mkdir(parents=True, exist_ok=True)
-        self.api = ArcologyAPI(api_url, upload_dir, output_dir, api_key=api_key)
+
+        if storage is None:
+            from shared.storage import create_storage
+            from .config import (STORAGE_BACKEND, S3_ENDPOINT_URL, S3_BUCKET,
+                                 S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION,
+                                 S3_PUBLIC_URL)
+            storage = create_storage({
+                'STORAGE_BACKEND': STORAGE_BACKEND,
+                'S3_ENDPOINT_URL': S3_ENDPOINT_URL,
+                'S3_BUCKET': S3_BUCKET,
+                'S3_ACCESS_KEY': S3_ACCESS_KEY,
+                'S3_SECRET_KEY': S3_SECRET_KEY,
+                'S3_REGION': S3_REGION,
+                'S3_PUBLIC_URL': S3_PUBLIC_URL,
+                'UPLOAD_FOLDER': str(upload_dir),
+                'OUTPUT_FOLDER': str(output_dir),
+            })
+        self.storage = storage
+
+        self.api = ArcologyAPI(api_url, upload_dir, output_dir,
+                               api_key=api_key, storage=storage)
         self._decompression_info = None  # Set by get_input_path() when decompression occurs
 
     def get_input_path(self, artefact: dict, work_dir: Path) -> Path:
         """
         Get input file path, decompressing if needed.
 
+        In S3 mode, downloads the file from storage to work_dir first.
         After calling this method, self._decompression_info is set to a dict
         with decompression details if the file was compressed, or None otherwise.
         Handlers can use this to include decompression info in their output.
@@ -204,14 +226,33 @@ class AnalysisWorker:
         storage_path = artefact['storage_path']
         storage_directory = artefact.get('storage_directory', 'uploads')
 
-        # Use uploads or outputs directory based on storage_directory field
-        if storage_directory == 'outputs':
-            input_path = self.outputs / storage_path
+        key = self.storage.storage_key(storage_directory, storage_path)
+
+        from shared.storage import LocalStorage
+        if isinstance(self.storage, LocalStorage):
+            # Local mode: use direct filesystem path
+            input_path = self.storage.local_path(key)
         else:
-            input_path = self.uploads / storage_path
+            # S3 mode: download to work_dir
+            input_path = work_dir / storage_path
+            if not input_path.exists():
+                from botocore.exceptions import ClientError
+                try:
+                    self.storage.get(key, input_path)
+                except ClientError as e:
+                    if e.response['Error']['Code'] in ('404', 'NoSuchKey'):
+                        raise FileNotFoundError(f"Input file not found in storage: {key}")
+                    raise
 
         if not input_path.exists():
             raise FileNotFoundError(f"Input file not found: {input_path}")
+
+        # Save stats before decompression — the compressed file may be deleted
+        # during decompression (e.g. in S3 mode where the downloaded file IS
+        # the compressed copy that gets cleaned up).
+        compressed_name = input_path.name
+        compressed_size = input_path.stat().st_size
+        compression_format = input_path.suffix.lower()
 
         result = decompress_if_needed(input_path, work_dir)
 
@@ -219,11 +260,11 @@ class AnalysisWorker:
         if result != input_path:
             self._decompression_info = {
                 'was_decompressed': True,
-                'compressed_name': input_path.name,
-                'compressed_size': input_path.stat().st_size,
+                'compressed_name': compressed_name,
+                'compressed_size': compressed_size,
                 'decompressed_name': result.name,
                 'decompressed_size': result.stat().st_size,
-                'compression_format': input_path.suffix.lower(),
+                'compression_format': compression_format,
             }
         else:
             self._decompression_info = None
@@ -232,7 +273,7 @@ class AnalysisWorker:
 
     def save_output_file(self, source_path: Path, filename: str, subdir: str | None = None) -> str:
         """
-        Save an output file (like a visualisation) to the outputs directory.
+        Save an output file (like a visualisation) to storage.
 
         Args:
             source_path: Path to the generated file
@@ -243,14 +284,11 @@ class AnalysisWorker:
             The relative path for use in URLs (subdir/filename or just filename)
         """
         if subdir:
-            dest_dir = self.outputs / subdir
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            dest_path = dest_dir / filename
             relative_path = f"{subdir}/{filename}"
         else:
-            dest_path = self.outputs / filename
             relative_path = filename
-        shutil.copy(source_path, dest_path)
+        key = self.storage.storage_key('outputs', relative_path)
+        self.storage.put(key, source_path)
         return relative_path
 
     def fail_analysis(self, analysis_id: int, error_message: str, **kwargs):
@@ -323,7 +361,10 @@ class AnalysisWorker:
             self.api.queue_analysis(
                 artefact_uuid,
                 AnalysisType.FORMAT_CONVERT.value,
-                hints={'extraction_path': extraction_path},
+                hints={
+                    'extraction_path': extraction_path,
+                    'partition_uuid': partition_uuid,
+                },
             )
         # RISC OS module metadata extraction — harmless no-op on non-Acorn
         # extractions since only filetype ffa files are scanned.
@@ -335,6 +376,148 @@ class AnalysisWorker:
             AnalysisType.RISCOS_MODULE_PARSE.value,
             hints=module_hints,
         )
+
+    def _relative_output_path(self, extract_dir: Path) -> str:
+        """Convert an absolute extraction directory to a relative path for storage.
+
+        Returns the path relative to the outputs directory, suitable for
+        storing in Analysis.output_path and as a storage key prefix.
+        """
+        try:
+            return str(extract_dir.relative_to(self.outputs))
+        except ValueError:
+            # Not under outputs dir — return as-is (shouldn't happen normally)
+            return str(extract_dir)
+
+    def _upload_extraction_tree(self, extract_dir: Path) -> None:
+        """Upload an extraction directory tree to storage (S3 mode).
+
+        In local mode this is a no-op since the files are already in place.
+        In S3 mode, uploads the tree then removes the local copy.
+        """
+        from shared.storage import LocalStorage
+        if isinstance(self.storage, LocalStorage):
+            return
+        rel = self._relative_output_path(extract_dir)
+        prefix = self.storage.storage_key('outputs', rel)
+        count = self.storage.put_tree(prefix, extract_dir)
+        log.info(f"Uploaded {count} files to storage prefix: {prefix}")
+        # Remove local copy — the canonical version is now in S3
+        shutil.rmtree(extract_dir, ignore_errors=True)
+        log.info(f"Cleaned up local extraction directory: {extract_dir}")
+
+    def _resolve_single_extraction_file(
+        self,
+        extraction_path: str,
+        relative_path: str,
+        dest_dir: Path,
+        risc_os_filetype: str | None = None,
+    ) -> Path | None:
+        """Download a single file from an extraction tree.
+
+        In local mode, resolves the path on the local filesystem.
+        In S3 mode, downloads only the one file needed instead of
+        the entire extraction tree.
+
+        Tries RISC OS filetype suffix variants (,ddc / ,DDC) when
+        risc_os_filetype is provided, then the plain name as fallback.
+
+        Returns the local path to the file, or None if not found.
+        """
+        from shared.storage import LocalStorage
+
+        if isinstance(self.storage, LocalStorage):
+            path = Path(extraction_path)
+            if not path.is_absolute():
+                path = self.outputs / extraction_path
+            base = path / relative_path
+
+            # Build candidates list (filetype suffix variants + plain)
+            candidates = []
+            if risc_os_filetype:
+                candidates.append(Path(str(base) + ',' + risc_os_filetype.lower()))
+                candidates.append(Path(str(base) + ',' + risc_os_filetype.upper()))
+            candidates.append(base)
+
+            # Also try Latin-1 byte variants for each candidate
+            all_candidates = []
+            for candidate in candidates:
+                all_candidates.append(candidate)
+                latin1_variant = make_latin1_fspath(str(candidate))
+                if latin1_variant is not None:
+                    all_candidates.append(Path(latin1_variant))
+
+            for candidate in all_candidates:
+                if candidate.exists():
+                    return candidate
+            return None
+
+        # S3 mode: try downloading each candidate key directly.
+        # Using get() with a 404 catch is one S3 call per attempt vs
+        # exists() + get() = two calls for the successful candidate.
+        from botocore.exceptions import ClientError
+
+        prefix = extraction_path.lstrip('/')
+        base_key = f"outputs/{prefix}/{relative_path.lstrip('/')}"
+
+        candidates = []
+        if risc_os_filetype:
+            candidates.append(base_key + ',' + risc_os_filetype.lower())
+            candidates.append(base_key + ',' + risc_os_filetype.upper())
+        candidates.append(base_key)
+
+        for key in candidates:
+            local_path = dest_dir / Path(key).name
+            try:
+                self.storage.get(key, local_path)
+                log.info(f"Downloaded single file from S3: {key}")
+                return local_path
+            except ClientError as e:
+                if e.response['Error']['Code'] in ('404', 'NoSuchKey'):
+                    local_path.unlink(missing_ok=True)
+                    continue
+                raise
+
+        return None
+
+    def _cleanup_partition_cache(self, artefact_uuid: str) -> None:
+        """Remove local partition cache for an artefact if no jobs still need it.
+
+        In S3 mode the cache is already in object storage, so the local copy
+        is only kept as a convenience for subsequent analyses on the same
+        worker.  Once all analyses for the artefact have finished (no pending
+        or running jobs remain), the local cache directory is safe to delete.
+
+        In local mode this is a no-op — the cache is the permanent copy.
+        """
+        from shared.storage import LocalStorage
+        if isinstance(self.storage, LocalStorage):
+            return
+
+        cache_dir = self.outputs / '.cache' / artefact_uuid
+        if not cache_dir.exists():
+            return
+
+        # Ask the API whether any analyses are still pending or running
+        try:
+            resp = self.api.get(f'/artefacts/{artefact_uuid}/analysis')
+            if resp and 'analyses' in resp:
+                active = [
+                    a for a in resp['analyses']
+                    if a.get('status') in ('pending', 'running')
+                ]
+                if active:
+                    log.debug(
+                        f"Keeping partition cache for {artefact_uuid}: "
+                        f"{len(active)} analyses still active"
+                    )
+                    return
+        except Exception as e:
+            log.warning(f"Could not check analysis status for cache cleanup: {e}")
+            return
+
+        shutil.rmtree(cache_dir, ignore_errors=True)
+        log.info(f"Cleaned up local partition cache: {cache_dir}")
 
     # =========================================================================
     # Analysis Handlers
@@ -529,10 +712,32 @@ class AnalysisWorker:
         # Use cached partition image from PARTITION_DETECT when available,
         # avoiding redundant decompression of the original artefact.
         partition_image_path = hints.get('partition_image_path')
-        if partition_image_path and Path(partition_image_path).exists():
-            input_path = Path(partition_image_path)
-            log.info(f"Using cached partition image: {input_path}")
-        else:
+        input_path = None
+        if partition_image_path:
+            local_path = Path(partition_image_path)
+            if local_path.exists():
+                input_path = local_path
+                log.info(f"Using cached partition image: {input_path}")
+            else:
+                # S3 mode or different worker: try to download from storage cache
+                from shared.storage import S3Storage
+                from botocore.exceptions import ClientError
+                if isinstance(self.storage, S3Storage):
+                    try:
+                        rel = local_path.relative_to(self.outputs)
+                        cache_key = self.storage.storage_key('outputs', str(rel))
+                    except ValueError:
+                        cache_key = self.storage.storage_key(
+                            'outputs', f".cache/{artefact['uuid']}/{local_path.name}")
+                    dest = work_dir / local_path.name
+                    try:
+                        self.storage.get(cache_key, dest)
+                        input_path = dest
+                        log.info(f"Downloaded cached partition image from storage: {cache_key}")
+                    except ClientError as e:
+                        if e.response['Error']['Code'] not in ('404', 'NoSuchKey'):
+                            raise
+        if input_path is None:
             input_path = self.get_input_path(artefact, work_dir)
 
         # Get Item for hierarchical path
@@ -701,11 +906,15 @@ class AnalysisWorker:
             partition_index=partition_index,
         )
 
+        # Upload extraction tree to storage (no-op in local mode)
+        self._upload_extraction_tree(extract_dir)
+        rel_output_path = self._relative_output_path(extract_dir)
+
         self.complete_analysis(
             analysis_id,
             tool_name=result['tool'],
             summary=f'Extracted {len(files)} files ({fs_type})',
-            output_path=str(extract_dir),
+            output_path=rel_output_path,
             details=_build_details({'file_count': len(files)})
         )
 
@@ -714,7 +923,7 @@ class AnalysisWorker:
             self.queue_partition_follow_ups(
                 artefact['uuid'],
                 partition.get('uuid'),
-                extraction_path=str(extract_dir),
+                extraction_path=rel_output_path,
             )
 
     @analysis_handler("checksum computation")
@@ -1105,6 +1314,10 @@ class AnalysisWorker:
                     idx = partition['index']
                     partition_path = cache_dir / f"partition_{idx}.img"
                     shutil.copy(input_path, partition_path)
+                    # Upload cached partition to storage (no-op in local mode)
+                    cache_key = self.storage.storage_key(
+                        'outputs', f".cache/{artefact['uuid']}/partition_{idx}.img")
+                    self.storage.put(cache_key, partition_path)
                     partition_image_paths[idx] = str(partition_path)
                     log.info(f"Cached decompressed image as {partition_path}")
 
@@ -1545,10 +1758,14 @@ class AnalysisWorker:
                 derived_count += 1
                 log.info(f"Promoted {file_path.name} to derived {artefact_type.value} artefact")
 
+        # Upload extraction tree to storage (no-op in local mode)
+        self._upload_extraction_tree(extract_dir)
+        rel_output_path = self._relative_output_path(extract_dir)
+
         self.complete_analysis(
             analysis_id,
             tool_name=result['tool'],
-            output_path=str(extract_dir),
+            output_path=rel_output_path,
             summary=f"Extracted {len(files)} files from {archive_info['name']}"
                     + (f" ({derived_count} promoted to artefacts)" if derived_count else ""),
             details=json.dumps({
@@ -1562,7 +1779,7 @@ class AnalysisWorker:
             self.queue_partition_follow_ups(
                 artefact['uuid'],
                 partition.get('uuid'),
-                extraction_path=str(extract_dir),
+                extraction_path=rel_output_path,
             )
 
     @analysis_handler("archive extraction")
@@ -1713,40 +1930,22 @@ class AnalysisWorker:
             disk_relative_path = db_path[len(path_prefix) + 1:]
         else:
             disk_relative_path = db_path
-        archive_path = Path(extraction_path) / disk_relative_path
 
-        # Build a list of name variants to try in order.  DIM writes Acorn
-        # files with a RISC OS filetype suffix (e.g. "Palette,DDC") in either
-        # all-lowercase or all-uppercase.  Non-Acorn tools (7z, etc.) write the
-        # plain name with no suffix.  Try the suffix variants first (when a
-        # filetype is known), then the plain name as the final fallback.
         risc_os_filetype = target_file.get('risc_os_filetype')
-        candidates = []
-        if risc_os_filetype:
-            candidates.append(Path(str(archive_path) + ',' + risc_os_filetype.lower()))
-            candidates.append(Path(str(archive_path) + ',' + risc_os_filetype.upper()))
-        candidates.append(archive_path)  # plain name: DOS, UNIX, or no-suffix fallback
 
-        # For each candidate also try a Latin-1 byte variant.  Acorn filenames
-        # can contain raw Latin-1 bytes (e.g. hard space 0xA0); sanitize_path()
-        # converts these to proper Unicode (U+00A0) for the database, but the
-        # file on disk still has the single raw byte.  Python would encode
-        # U+00A0 as two UTF-8 bytes (0xC2 0xA0) when calling exists(), so we
-        # also try a surrogate-escaped path that maps back to the raw byte.
-        all_candidates = []
-        for candidate in candidates:
-            all_candidates.append(candidate)
-            latin1_variant = make_latin1_fspath(str(candidate))
-            if latin1_variant is not None:
-                all_candidates.append(Path(latin1_variant))
-
-        for candidate in all_candidates:
-            if candidate.exists():
-                archive_path = candidate
-                break
-
-        if not archive_path.exists():
-            self.fail_analysis(analysis_id, f'Archive file not found at {archive_path}')
+        # Download only the single file needed — not the entire extraction
+        # tree.  In S3 mode this avoids downloading thousands of files just
+        # to read one archive.
+        archive_path = self._resolve_single_extraction_file(
+            extraction_path, disk_relative_path, work_dir,
+            risc_os_filetype=risc_os_filetype,
+        )
+        if not archive_path:
+            self.fail_analysis(
+                analysis_id,
+                f'Archive file not found: {disk_relative_path} '
+                f'(extraction_path={extraction_path})',
+            )
             return
 
         # Get item for hierarchical path
@@ -1922,7 +2121,7 @@ class AnalysisWorker:
                 AnalysisType.ARCHIVE_DETECT.value,
                 hints={
                     'partition_uuid': partition_uuid,
-                    'extraction_path': str(persistent_output),
+                    'extraction_path': self._relative_output_path(persistent_output),
                     'path_prefix': archive_display_path,
                 }
             )
@@ -1947,6 +2146,7 @@ class AnalysisWorker:
             hints={
                 'extraction_path': str(persistent_output),
                 'path_prefix': archive_display_path,
+                'partition_uuid': partition_uuid,
             },
         )
 
@@ -1976,10 +2176,14 @@ class AnalysisWorker:
         if po:
             details[tool_key] = {'process_output': po}
 
+        # Upload extraction tree to storage (no-op in local mode)
+        self._upload_extraction_tree(persistent_output)
+        rel_output_path = self._relative_output_path(persistent_output)
+
         self.complete_analysis(
             analysis_id,
             tool_name=result['tool'],
-            output_path=str(persistent_output),
+            output_path=rel_output_path,
             summary=f"Extracted {len(files)} files from {archive_info['name']} archive",
             details=json.dumps(details)
         )
@@ -2170,6 +2374,8 @@ class AnalysisWorker:
 
         # --- Mode 2: Extraction scan ---
         extraction_path = hints.get('extraction_path')
+        partition_uuid = hints.get('partition_uuid')
+        path_prefix = hints.get('path_prefix', '')  # e.g. 'Archives/Emulators.zip'
         if not extraction_path:
             self.fail_analysis(
                 analysis_id,
@@ -2178,80 +2384,68 @@ class AnalysisWorker:
             )
             return
 
-        extract_dir = Path(extraction_path)
-        if not extract_dir.is_dir():
-            self.fail_analysis(
-                analysis_id,
-                f'Extraction directory not found: {extraction_path}',
+        # Determine viewable type from DB metadata.  Returns None for
+        # files that are not viewable (not a sprite, draw, or text file).
+        def _viewable_type_from_db(file_data: dict) -> 'ArtefactType | None':
+            ft = (file_data.get('risc_os_filetype') or '').lower()
+            if ft:
+                vt = self._RISCOS_HEX_VIEWABLE.get(ft)
+                if vt:
+                    return vt
+            filename = file_data.get('filename', '')
+            ext = Path(filename).suffix.lower()
+            return self._EXT_VIEWABLE.get(ext)
+
+        # Query file list from the database via API instead of scanning the
+        # filesystem.  This avoids downloading the entire extraction tree
+        # in S3 mode — only the viewable files will be fetched individually.
+        viewable_files: list[tuple[dict, 'ArtefactType']] = []
+        if partition_uuid:
+            files_resp = self.api.get(
+                f"/partitions/{partition_uuid}/files?per_page=10000&show_known=true"
             )
-            return
+            all_files = files_resp.get('files', []) if files_resp else []
 
-        # Auto-detect Acorn filetype suffixes for display-path computation.
-        # Display paths must match ExtractedFile.path (Acorn suffix stripped).
-        is_acorn = _has_acorn_filetypes(extract_dir)
+            # Filter to files in our extraction context
+            if path_prefix:
+                all_files = [f for f in all_files
+                             if f.get('path', '').startswith(path_prefix + '/')]
 
-        # Load ISO ARCHIMEDES metadata sidecar written by process_file_extraction.
-        # Provides filetype_map (lowercase path → filetype hex) for ISO-extracted
-        # files that lack ',xxx' filename suffixes.
-        iso_filetype_map: dict[str, str] = {}
-        sidecar_path = extract_dir / '_arcology_iso_meta.json'
-        if sidecar_path.is_file():
-            try:
-                with open(sidecar_path, encoding='utf-8') as _sf:
-                    _meta = json.load(_sf)
-                iso_filetype_map = _meta.get('filetype_map') or {}
-            except Exception as _e:
-                log.warning(f"Could not read ISO metadata sidecar: {_e}")
-
-        # path_prefix is set when FORMAT_CONVERT was queued from process_archive_extract
-        # for a nested archive (e.g. an archive file on a disc image).  The DB
-        # registers those files with the archive's display path prepended, so
-        # source_file must include the same prefix to match ExtractedFile.path.
-        path_prefix = hints.get('path_prefix', '')  # e.g. 'Archives/Emulators.zip'
+            for file_data in all_files:
+                if file_data.get('is_directory', False):
+                    continue
+                vt = _viewable_type_from_db(file_data)
+                if vt is not None:
+                    viewable_files.append((file_data, vt))
 
         all_outputs = []
         file_index = 0
-        for path in sorted(extract_dir.rglob('*')):
-            if not path.is_file():
-                continue
-            # Skip the ISO metadata sidecar itself
-            if path.name == '_arcology_iso_meta.json':
-                continue
-            viewable_type = self._detect_viewable_type(path)
+        for file_data, viewable_type in viewable_files:
+            db_path = file_data['path']
 
-            # For ISO-extracted files without ',xxx' suffixes or known extensions,
-            # fall back to the ARCHIMEDES filetype hex from the metadata sidecar.
-            if viewable_type is None and iso_filetype_map:
-                rel_lower = str(path.relative_to(extract_dir)).lower()
-                hex_type = iso_filetype_map.get(rel_lower)
-                if hex_type:
-                    viewable_type = self._RISCOS_HEX_VIEWABLE.get(hex_type)
-
-            if viewable_type is None:
-                continue
-
-            # Compute display path (matching ExtractedFile.path in the database)
-            rel = path.relative_to(extract_dir)
-            if is_acorn:
-                true_name, _ = parse_acorn_filename(path.name)
-                if len(rel.parts) > 1:
-                    display_path = str(Path(*rel.parts[:-1]) / true_name)
-                else:
-                    display_path = true_name
+            # Strip the archive path prefix to get the on-disk relative path
+            if path_prefix and db_path.startswith(path_prefix + '/'):
+                disk_path = db_path[len(path_prefix) + 1:]
             else:
-                display_path = str(rel)
+                disk_path = db_path
 
-            # Prepend archive path prefix for nested archives so the path matches
-            # ExtractedFile.path (which has the parent archive path prepended).
-            if path_prefix:
-                display_path = path_prefix + '/' + display_path
+            file_path = self._resolve_single_extraction_file(
+                extraction_path, disk_path, work_dir,
+                risc_os_filetype=file_data.get('risc_os_filetype') or None,
+            )
+            if file_path is None:
+                log.warning(f"Viewable file not found: {db_path}")
+                continue
+
+            # display_path is the DB path (already matches ExtractedFile.path)
+            display_path = db_path
 
             file_outputs = self._convert_file_to_outputs(
-                path, viewable_type, work_dir, output_subdir, analysis_uuid, file_index,
+                file_path, viewable_type, work_dir, output_subdir, analysis_uuid, file_index,
             )
             file_index += 1
             if file_outputs is None:
-                log.warning(f"Skipping {path} — conversion failed")
+                log.warning(f"Skipping {file_path} — conversion failed")
                 continue
             for out in file_outputs:
                 out['source_file'] = display_path
@@ -2670,7 +2864,6 @@ class AnalysisWorker:
             self.fail_analysis(analysis_id, 'Could not determine extraction path')
             return
 
-        extract_dir = Path(extraction_path)
         modules = []
         parse_errors = 0
 
@@ -2688,26 +2881,10 @@ class AnalysisWorker:
             else:
                 disk_path = db_path
 
-            # Build candidate paths (with Acorn filetype suffix variants)
-            candidates = []
-            if risc_os_filetype:
-                candidates.append(extract_dir / (disk_path + ',' + risc_os_filetype.lower()))
-                candidates.append(extract_dir / (disk_path + ',' + risc_os_filetype.upper()))
-            candidates.append(extract_dir / disk_path)
-
-            # Also try Latin-1 byte variants
-            all_candidates = []
-            for candidate in candidates:
-                all_candidates.append(candidate)
-                latin1_variant = make_latin1_fspath(str(candidate))
-                if latin1_variant is not None:
-                    all_candidates.append(Path(latin1_variant))
-
-            file_path = None
-            for candidate in all_candidates:
-                if candidate.is_file():
-                    file_path = candidate
-                    break
+            file_path = self._resolve_single_extraction_file(
+                extraction_path, disk_path, work_dir,
+                risc_os_filetype=risc_os_filetype or None,
+            )
 
             if file_path is None:
                 log.warning(f"Module file not found on disk: {db_path}")
@@ -2801,6 +2978,13 @@ class AnalysisWorker:
                         f"Analysis {analysis_id}: failed to report failure to API "
                         f"— job may remain in 'running' state"
                     )
+            finally:
+                # In S3 mode, clean up the local partition cache once all
+                # analyses for this artefact have finished.
+                try:
+                    self._cleanup_partition_cache(artefact['uuid'])
+                except Exception:
+                    pass  # Best-effort cleanup, don't block on errors
 
     def claim_and_process(self) -> int:
         """

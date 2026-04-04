@@ -30,5 +30,8 @@ psycopg2-binary
 # Natural sort
 natsort
 
+# S3-compatible object storage (optional, for distributed workers)
+boto3
+
 # Test reporting (JUnit XML output for CI)
 unittest-xml-reporting
