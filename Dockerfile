@@ -20,6 +20,7 @@ RUN set -e; \
 COPY myapp/ /app/myapp/
 COPY shared/ /app/shared/
 COPY migrations/ /app/migrations/
+COPY doc/ /app/doc/
 COPY .flaskenv /app/
 COPY .git /app/.git
 WORKDIR /app
