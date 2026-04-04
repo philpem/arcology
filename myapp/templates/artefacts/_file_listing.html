@@ -109,8 +109,9 @@
                         {# Check if this directory row has a recognised product match #}
                         {% set rp_match = recognised_folder_paths.get(file.path) if file.is_directory else none %}
                         {# Strip the current path prefix for display; show only relative path within the browsed directory #}
-                        {% set file_display_path = file.path[current_path|length:] if current_path else file.path %}
-                        {% set file_display_parts = file_display_path.split('/') %}
+                        {% set _raw_display = file.path[current_path|length:] if current_path else file.path %}
+                        {% set file_display_path = _raw_display.lstrip('/') %}
+                        {% set file_display_parts = file_display_path.split('/') if file_display_path else [file.path.split('/')[-1]] %}
                         <tr class="{{ 'table-secondary' if file.is_known else '' }}{{ ' fst-italic' if file.is_directory else '' }}" id="file-row-{{ file.id }}">
                             {% if hashdb_mode %}
                             <td>{% if not file.is_directory %}<input type="checkbox" name="file_ids" value="{{ file.id }}" class="file-checkbox">{% endif %}</td>
