@@ -1,7 +1,6 @@
 """Debug commands for diagnosing analysis and extraction issues."""
 
 import json
-import sys
 from datetime import datetime
 
 from ..formatting import print_json, print_table, truncate

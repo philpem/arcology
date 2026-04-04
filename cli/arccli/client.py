@@ -143,7 +143,6 @@ class ArcologyClient:
 	def list_tags(self) -> dict:
 		return self.get('tags')
 
-
 	def get_analysis(self, uuid: str) -> dict:
 		return self.get(f'analysis/{uuid}')
 
