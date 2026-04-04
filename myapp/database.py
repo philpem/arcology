@@ -681,6 +681,21 @@ class ExtractedFile(db.Model):
     )
 
     @property
+    def browse_path(self) -> str:
+        """Path parameter value to navigate to this file in context.
+
+        For archives and directories, returns path + '/' to browse inside.
+        For regular files, returns the parent directory path so the file
+        is shown in its directory context.
+        Root-level files return '' (no path filter, shows all files).
+        """
+        if self.is_archive or self.is_directory:
+            return self.path + '/'
+        if '/' in self.path:
+            return self.path.rsplit('/', 1)[0] + '/'
+        return ''
+
+    @property
     def is_restricted(self) -> bool:
         """True if this file has any active download restrictions."""
         return len(self.restrictions) > 0
