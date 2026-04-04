@@ -127,7 +127,6 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
         {% if has_converted_outputs %}
         <a href="{{ artefact_url(artefact, 'viewer') }}" class="btn btn-outline-info"><i class="bi bi-eye"></i> View</a>
         {% endif %}
-        <a href="{{ url_for('myapp_blueprints_artefacts.tree', uuid=artefact.root_artefact.uuid) }}" class="btn btn-outline-secondary"><i class="bi bi-diagram-3"></i> Processing Tree</a>
         {% if user_can_write %}
         <a href="{{ artefact_url(artefact, 'analyse') }}" class="btn btn-primary"><i class="bi bi-gear"></i> Re-analyse</a>
         <a href="{{ artefact_url(artefact, 'edit') }}" class="btn btn-outline-primary"><i class="bi bi-pencil"></i> Edit</a>
