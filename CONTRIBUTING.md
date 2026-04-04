@@ -433,6 +433,25 @@ All data exchange goes through the REST API. If you need information from the da
 
 `FILE_EXTRACTION` writes a JSON sidecar `_arcology_iso_meta.json` into the extraction output directory. It carries metadata (currently the ARCHIMEDES `filetype_map`) that `FORMAT_CONVERT` cannot cheaply recompute. The sidecar lives alongside the extracted files in `data/outputs/`. If you add new persistent metadata to this sidecar, document its schema in a comment near the write site in `analysis.py`.
 
+#### Filename normalisation (`normalize_extracted_filenames`)
+
+External extraction tools (DIM, 7z) may write filenames containing raw byte
+sequences — for example, RISC OS Latin-1 characters in the 0x80–0x9F range that
+the kernel stores as surrogate-escaped strings on Linux.
+`normalize_extracted_filenames(root)` in `worker/arcworker/utils/text.py` walks
+the extraction directory bottom-up and renames these files to their correct
+Unicode equivalents.
+
+It must be called **before** `enumerate_extracted_files()` and before INF
+sidecar processing.  Currently called by `extract_acorn_disc_image_manager()`
+(RISC OS Latin-1 decoder) and `extract_dos_7z()` (CP850 decoder via the
+`decoder` parameter).  See `doc/format_info/acorn32bit/risc_os_character_set.md`
+for details on the RISC OS character mapping.
+
+When adding a new extraction tool that may produce non-ASCII filenames, call
+`normalize_extracted_filenames(output_dir)` with an appropriate `decoder`
+function before returning.
+
 #### RISC OS INF sidecar files
 
 Some extraction tools (currently Disc Image Manager; others may follow) produce
@@ -444,12 +463,12 @@ metadata that cannot be represented on Unix filesystems:
 ```
 
 `process_inf_sidecars()` in `worker/arcworker/tools/extraction.py` is the
-reusable pre-processing step.  It runs **before** `enumerate_extracted_files()`
-at all three extraction call sites in `analysis.py`:
-
-1. `process_file_extraction()` — disc image extraction (produces INFs today via DIM)
-2. `_extract_top_level_archive()` — top-level archive extraction (hook in place, no tool produces INFs yet)
-3. `process_archive_extract()` — nested archive extraction (hook in place, no tool produces INFs yet)
+reusable pre-processing step.  Each extraction tool that produces INF files is
+responsible for calling it **before** returning, so that the INFs are processed
+and deleted before `enumerate_extracted_files()` runs.  Currently only
+`extract_acorn_disc_image_manager()` calls it.  The collected metadata dict is
+returned in the tool's result under the key `'inf_metadata'`, which the caller
+passes through to `enumerate_extracted_files()`.
 
 The function:
 
@@ -487,11 +506,14 @@ The following `ExtractedFile` columns are populated from INF metadata:
 | `attributes` | String(50) | `'WR/r'` | INF field 5, stored as-is (letters or hex) |
 
 **Extending to other tools:**  If a new extraction tool produces standard `.inf`
-sidecar files, no code changes are needed — the hooks are already in place.  If
-the tool uses a different INF format or filename translation scheme, extend
-`_parse_inf_line()` or add a `translation_table` parameter to
-`process_inf_sidecars()`.  The translation table is defined as `_BBC_TO_DOS` /
-`_DOS_TO_BBC` in `extraction.py`.
+sidecar files, call `process_inf_sidecars(output_dir)` inside the tool's
+extraction wrapper (before it returns) and include the result in the return dict
+as `'inf_metadata'`.  See `extract_acorn_disc_image_manager()` for the pattern.
+The caller must then pass this dict through to `enumerate_extracted_files()` via
+its `inf_metadata` parameter.  If the tool uses a different INF format or
+filename translation scheme, extend `_parse_inf_line()` or add a
+`translation_table` parameter to `process_inf_sidecars()`.  The translation
+table is defined as `_BBC_TO_DOS` / `_DOS_TO_BBC` in `extraction.py`.
 
 Tests: `ci/test_inf_processing.py` (44 tests covering parsing, translation, and
 end-to-end `process_inf_sidecars()` behaviour).

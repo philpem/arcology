@@ -30,7 +30,6 @@ from .tools import (
     extract_acorn_disc_image_manager,
     extract_dos_7z,
     enumerate_extracted_files,
-    process_inf_sidecars,
     parse_acorn_filename,
     detect_partitions_sfdisk,
     detect_acorn_adfs,
@@ -619,11 +618,10 @@ class AnalysisWorker:
             if iso_rename_map:
                 _apply_pling_renames(extract_dir, iso_rename_map)
 
-        # Process INF sidecar files before enumeration so that files are
-        # renamed to their correct BBC names and metadata is collected.
-        inf_metadata = process_inf_sidecars(extract_dir)
-        if inf_metadata:
-            log.info(f"Processed {len(inf_metadata)} INF sidecar files")
+        # DIM processes INF sidecar files during extraction and returns
+        # the collected metadata.  For non-DIM paths (DOS/ISO), no INFs
+        # are produced so the dict is empty.
+        inf_metadata = result.get('inf_metadata', {})
 
         # Enumerate extracted files to build file listing.
         # ISO artefacts use acorn='auto' to catch ',xxx' suffix filenames;
@@ -1520,8 +1518,7 @@ class AnalysisWorker:
             )
             return
 
-        inf_metadata = process_inf_sidecars(extract_dir)
-        files = enumerate_extracted_files(extract_dir, acorn='auto', inf_metadata=inf_metadata)
+        files = enumerate_extracted_files(extract_dir, acorn='auto')
 
         partition = self.api.register_file_listing(
             artefact['uuid'], files, 'archive',
@@ -1878,13 +1875,11 @@ class AnalysisWorker:
             ArchiveType.SQUASH, ArchiveType.FCFS,
         )
 
-        inf_metadata = process_inf_sidecars(persistent_output)
         files = enumerate_extracted_files(
             persistent_output,
             acorn=is_acorn_archive,
             parent_file_id=file_id,
             extraction_depth=extraction_depth,
-            inf_metadata=inf_metadata,
         )
 
         # Register extracted files in the same partition with parent_file_id

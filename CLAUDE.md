@@ -273,14 +273,11 @@ collected before hashing and enumeration.  It returns a `dict[str, dict]`
 mapping display paths to metadata, which is passed as the `inf_metadata`
 parameter to `enumerate_extracted_files()`.
 
-**Currently wired up at all three extraction call sites** in
-`worker/arcworker/analysis.py`:
-
-| Call site | When INF files are produced today |
-|-----------|----------------------------------|
-| `process_file_extraction()` | Yes — DIM extracts Acorn disc images with `.inf` sidecars |
-| `_extract_top_level_archive()` | Not yet — none of the current archive extractors produce INFs, but the hook is in place |
-| `process_archive_extract()` (nested) | Not yet — same as above |
+Each extraction tool that produces INF files is responsible for calling
+`process_inf_sidecars()` before it returns and including the result in its
+return dict as `'inf_metadata'`.  The caller passes this through to
+`enumerate_extracted_files()`.  Currently only
+`extract_acorn_disc_image_manager()` calls it.
 
 #### How it works
 
@@ -323,16 +320,19 @@ To add INF support to a new extraction tool:
 
 1. Ensure the tool writes standard `.inf` sidecar files alongside extracted
    data files (one `.inf` per file, same base name).
-2. The call to `process_inf_sidecars()` is already in place at all three
-   extraction sites — no code changes needed unless the tool uses a different
-   INF format or character encoding.
-3. If the tool uses a **different filename translation table** (e.g. a
+2. Call `process_inf_sidecars(output_dir)` inside the tool's extraction
+   wrapper (before returning) and include the result in the return dict as
+   `'inf_metadata'`.  See `extract_acorn_disc_image_manager()` for the
+   pattern.
+3. The caller must pass the `'inf_metadata'` dict through to
+   `enumerate_extracted_files()` via its `inf_metadata` parameter.
+4. If the tool uses a **different filename translation table** (e.g. a
    platform-specific mapping), either:
    - Add a `translation_table` parameter to `process_inf_sidecars()`, or
    - Normalise filenames in the tool's extraction wrapper before
      `process_inf_sidecars()` runs (the same approach used by
      `normalize_extracted_filenames()` for RISC OS Latin-1 byte sequences).
-4. If the tool's INF format differs from the standard (extra fields, different
+5. If the tool's INF format differs from the standard (extra fields, different
    field order), extend `_parse_inf_line()` in `extraction.py`.
 
 #### Database fields populated from INF metadata

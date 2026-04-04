@@ -41,7 +41,10 @@ _DEBUG_KEEP_OUTFILES = False
 def extract_acorn_disc_image_manager(input_path: Path, output_dir: Path) -> dict:
     """
     Extract files from Acorn DFS/ADFS disc image using Disc Image Manager.
-    Creates INF files for metadata.
+
+    DIM produces INF sidecar files alongside extracted data files.  These are
+    processed in-place: metadata is collected, files are renamed from
+    DOS-encoded names to BBC originals, and the INF files are deleted.
 
     Args:
         input_path: Path to Acorn disc image
@@ -88,20 +91,29 @@ exit
                 'process_output': process_output,
             }
 
-        # Count extracted files
+        # Pre-process extracted files before counting:
+        # 1. Normalise RISC OS Latin-1 byte sequences in filenames to Unicode.
+        # 2. Process INF sidecar files (extract metadata, rename DOS-encoded
+        #    filenames to BBC originals, delete the .inf files).
+        # Both must happen before enumerate_extracted_files() or any
+        # downstream tool receives these paths.
         extracted_files = list(output_dir.rglob('*'))
-        file_count = sum(1 for f in extracted_files if f.is_file() and f.suffix.lower() != '.inf')
+        has_files = any(f.is_file() for f in extracted_files)
+
+        inf_metadata = {}
+        if has_files:
+            normalize_extracted_filenames(output_dir)
+            inf_metadata = process_inf_sidecars(output_dir)
+
+        file_count = sum(1 for f in output_dir.rglob('*') if f.is_file())
 
         if file_count > 0:
-            # Rename any files whose names contain raw RISC OS Latin1 bytes to
-            # their correct Unicode equivalents.  This must happen before
-            # enumerate_extracted_files() or any tool receives these paths.
-            normalize_extracted_filenames(output_dir)
             return {
                 'success': True,
                 'tool': 'DiscImageManager',
                 'output_dir': str(output_dir),
                 'file_count': file_count,
+                'inf_metadata': inf_metadata,
                 'summary': f'Extracted {file_count} files from Acorn disc image',
                 'process_output': process_output
             }
@@ -289,10 +301,6 @@ def enumerate_extracted_files(
 
     for file_path in output_dir.rglob('*'):
         if not file_path.is_file():
-            continue
-
-        # Skip .inf metadata files (Acorn DIM extraction artifacts)
-        if acorn and file_path.suffix.lower() == '.inf':
             continue
 
         rel_path = file_path.relative_to(output_dir)
