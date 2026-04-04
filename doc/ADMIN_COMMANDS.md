@@ -38,11 +38,23 @@ flask rescan-hashes --batch-size 1000        # larger batches
 
 ## reanalyse
 
-Reset and re-queue analysis for artefacts. Clears all previous analysis
-results, derived artefacts, and output files, then queues fresh analyses
-based on each artefact's type.
+Reset and re-queue analysis for artefacts.
 
-At least one filter or `--all` is required.
+**Single-analysis retry** — retry one specific failed analysis without
+disturbing other completed work on the same artefact:
+
+```bash
+flask reanalyse --analysis ANALYSIS_UUID
+flask reanalyse --analysis ANALYSIS_UUID --dry-run
+```
+
+This deletes only that analysis and any artefacts it produced, then queues
+a fresh job of the same type.  Use `arco debug errors ARTEFACT_UUID` to
+find the analysis UUID.
+
+**Full artefact reset** — clears all previous analysis results, derived
+artefacts, and output files, then queues fresh analyses based on each
+artefact's type.  At least one filter or `--all` is required.
 
 ```bash
 # Reanalyse everything
@@ -74,6 +86,7 @@ Options:
 
 | Flag | Description |
 |------|-------------|
+| `--analysis UUID` | Retry a single analysis by UUID (lightweight, preserves other results) |
 | `--all` | Select every artefact in the database |
 | `--item UUID` | Restrict to artefacts belonging to a single item |
 | `--tag NAME` | Restrict to items with this tag |

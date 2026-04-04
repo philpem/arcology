@@ -268,6 +268,79 @@ arco status ARTEFACT_UUID
 
 ---
 
+### `arco debug analysis`
+
+Show full details for a single analysis job, including tool info, timing,
+process logs (command, exit code, stdout/stderr), and exception traces.
+
+```
+arco debug analysis ANALYSIS_UUID
+arco debug analysis ANALYSIS_UUID --json
+```
+
+---
+
+### `arco debug errors`
+
+Show all failed analyses for an artefact and all its derived descendants
+in one view.
+
+```
+arco debug errors ARTEFACT_UUID
+arco debug errors ARTEFACT_UUID --all    # include non-failures too
+```
+
+| Flag | Description |
+|------|-------------|
+| `--all` | Show all analyses, not just failures |
+
+---
+
+### `arco debug tree`
+
+Show the artefact derivation tree: artefact → analyses → produced artefacts,
+recursively.  Each analysis shows a status icon (`+` completed, `X` failed,
+`~` pending/running) and truncated error message if failed.
+
+```
+arco debug tree ARTEFACT_UUID
+```
+
+Example output:
+
+```
+[scp] MyDisc.scp (a1b2c3d4)
+  + flux_decode  completed  greaseweazle 1.2
+    [raw_sector] MyDisc.img (e5f6g7h8)
+      + file_extraction  completed  adfutils 0.3
+      X metadata_extract  FAILED  "Unsupported ADFS variant"
+```
+
+---
+
+### `arco debug failures`
+
+Search failed analyses across the entire system with optional filters.
+
+```
+arco debug failures
+arco debug failures --type file_extraction
+arco debug failures --tool 7z --since 2025-01-01
+arco debug failures --error "BadZipFile" --per-page 100
+```
+
+| Flag | Description |
+|------|-------------|
+| `--type TYPE` | Filter by analysis type (e.g. `file_extraction`, `flux_decode`) |
+| `--tool NAME` | Filter by tool name (e.g. `7z`, `fluxfox`) |
+| `--since DATE` | Only failures after this date (ISO format) |
+| `--until DATE` | Only failures before this date (ISO format) |
+| `--error TEXT` | Filter by error message substring |
+| `--page N` | Page number (default: 1) |
+| `--per-page N` | Results per page (default: 50) |
+
+---
+
 ### `arco platforms`
 
 List all platforms with their IDs.
