@@ -85,6 +85,8 @@ def file_to_dict(f):
         'filename': f.filename,
         'extension': f.extension,
         'file_size': f.file_size,
+        'modified_time': f.modified_time.isoformat() if f.modified_time else None,
+        'created_time': f.created_time.isoformat() if f.created_time else None,
         'md5': f.md5,
         'sha1': f.sha1,
         'is_known': f.is_known,

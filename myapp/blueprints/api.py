@@ -1125,12 +1125,21 @@ def add_files(uuid):
             skipped += 1
             continue
 
+        modified_time = None
+        modified_time_str = f.get('modified_time')
+        if modified_time_str:
+            try:
+                modified_time = datetime.fromisoformat(modified_time_str)
+            except (ValueError, TypeError):
+                pass
+
         ef = ExtractedFile(
             partition_id=partition.id,
             path=path,
             filename=f['filename'],
             extension=f.get('extension'),
             file_size=f.get('file_size'),
+            modified_time=modified_time,
             md5=f.get('md5'),
             sha1=f.get('sha1'),
             sha256=f.get('sha256'),
