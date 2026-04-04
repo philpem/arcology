@@ -263,6 +263,7 @@ class ArcologyAPI:
                     'filename': Path(path).name,
                     'extension': Path(path).suffix.lstrip('.').lower() or None,
                     'file_size': f.get('size'),
+                    'modified_time': f.get('modified_time'),
                     'crc32': f.get('crc32'),
                     'md5': f.get('md5'),
                     'sha1': f.get('sha1'),
