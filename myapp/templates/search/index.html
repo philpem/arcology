@@ -223,7 +223,7 @@
 			{% for ef, part, art, item in results.files %}
 			<tr>
 				<td>
-					<a href="{{ artefact_url(art) }}?filename={{ ef.filename | urlencode }}#files"
+					<a href="{{ artefact_url(art) }}?path={{ ef.browse_path | urlencode }}#files"
 					   class="font-monospace text-decoration-none">{{ ef.path }}</a>
 					{% if art.restrictions and current_user.can_bypass_all_restrictions(art.restrictions) %}
 					<a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=ef.uuid, confirm_bypass='1') }}"

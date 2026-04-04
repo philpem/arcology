@@ -1123,9 +1123,20 @@ def _render_artefact_view(artefact):
 
     if file_form.path.data:
         path_filter = file_form.path.data.strip()
-        files_query = files_query.filter(
-            ExtractedFile.path.ilike(f'{path_filter}%')
-        )
+        if path_filter.endswith('/'):
+            # Directory browse: plain prefix match (existing behaviour)
+            files_query = files_query.filter(
+                ExtractedFile.path.ilike(f'{path_filter}%')
+            )
+        else:
+            # Exact entry (e.g. from search result link) plus all contents
+            from sqlalchemy import or_
+            files_query = files_query.filter(
+                or_(
+                    ExtractedFile.path == path_filter,
+                    ExtractedFile.path.ilike(f'{path_filter}/%')
+                )
+            )
 
     if file_form.md5.data:
         files_query = files_query.filter(ExtractedFile.md5 == file_form.md5.data.lower())
