@@ -343,6 +343,20 @@ Example output:
 
 ---
 
+### `arco debug processing-tree`
+
+Show the full processing pipeline for an artefact as a tree: artefacts,
+their analyses (flat and grouped by file path for archive/format-convert
+operations), and all derived child artefacts, recursively. Always shows the
+root artefact even if a derived artefact UUID is given.
+
+```
+arco debug processing-tree ARTEFACT_UUID
+arco debug processing-tree ARTEFACT_UUID --json
+```
+
+---
+
 ### `arco debug failures`
 
 Search failed analyses across the entire system with optional filters.

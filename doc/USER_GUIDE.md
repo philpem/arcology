@@ -192,9 +192,13 @@ Click an artefact on the item detail page to see:
 - **Type badge** -- the detected or manually set artefact type
 - **Tags** -- artefact-level tags shown as badges
 - **Analyses** -- a summary of completed analyses with status badges; the
-  **Show All** link opens a dedicated paginated analyses page. Flux
-  visualisation plots are shown inline. The raw JSON details panel is open
-  by default.
+  **Show All** link opens a dedicated paginated analyses page. The
+  **Processing Tree** button opens a collapsible tree showing the full
+  artefact derivation hierarchy: each artefact node lists its analyses with
+  status icons, archive and format-convert operations grouped by file path,
+  and child artefacts nested below. The tree auto-refreshes every 10 seconds
+  while any job is pending or running. Flux visualisation plots are shown
+  inline on the artefact page. The raw JSON details panel is open by default.
 - **Partitions and file listings** -- if file extraction has run, the extracted
   directory tree is shown grouped by partition. When the listing is sorted by
   path, an A–Z letter bar appears for quick navigation through large directories.
