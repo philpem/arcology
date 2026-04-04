@@ -20,6 +20,13 @@ from ..config import log, TOOL_TIMEOUT, MAX_DECOMPRESSED_BYTES
 from ..utils.text import normalize_extracted_filenames, fix_riscos_c1_filenames
 
 
+def _validate_entry_path(name: str, fmt: str) -> None:
+    """Raise ValueError if *name* is absolute or contains '..' components."""
+    parts = name.replace('\\', '/').split('/')
+    if os.path.isabs(name) or '..' in parts:
+        raise ValueError(f'Unsafe path in {fmt} archive: {name!r}')
+
+
 def _check_archive_paths(input_path: Path, fmt: str) -> None:
     """Reject the archive if any entry contains an unsafe path or link target.
 
@@ -35,9 +42,7 @@ def _check_archive_paths(input_path: Path, fmt: str) -> None:
             with zipfile.ZipFile(input_path) as zf:
                 for zi in zf.infolist():
                     name = zi.filename
-                    parts = name.replace('\\', '/').split('/')
-                    if os.path.isabs(name) or '..' in parts:
-                        raise ValueError(f'Unsafe path in ZIP archive: {name!r}')
+                    _validate_entry_path(name, 'ZIP')
                     # Reject symlink entries.  Unix-originated ZIPs encode the file mode in
                     # the upper 16 bits of external_attr; S_IFLNK == 0o120000.  A zero mode
                     # means the ZIP was created on Windows and is not a symlink.
@@ -54,17 +59,11 @@ def _check_archive_paths(input_path: Path, fmt: str) -> None:
     elif fmt == 'tar':
         with tarfile.open(input_path) as tf:
             for m in tf.getmembers():
-                parts = m.name.replace('\\', '/').split('/')
-                if os.path.isabs(m.name) or '..' in parts:
-                    raise ValueError(f'Unsafe path in TAR archive: {m.name!r}')
+                _validate_entry_path(m.name, 'TAR')
                 # Also validate symlink and hardlink targets so that a relative link
                 # like '../../etc/passwd' cannot escape the extraction directory.
                 if m.issym() or m.islnk():
-                    link_parts = m.linkname.replace('\\', '/').split('/')
-                    if os.path.isabs(m.linkname) or '..' in link_parts:
-                        raise ValueError(
-                            f'Unsafe link target in TAR archive: {m.linkname!r}'
-                        )
+                    _validate_entry_path(m.linkname, 'TAR link target')
 
 
 # Matches symlink-mode Unix permission strings (e.g. 'lrwxrwxrwx') or a
@@ -97,19 +96,14 @@ def _check_7z_paths(input_path: Path) -> None:
     path = None
     is_symlink = False
 
-    def _validate(name: str, symlink: bool) -> None:
-        if symlink:
-            raise ValueError(f'Symlink entry in 7z archive: {name!r}')
-        parts = name.replace('\\', '/').split('/')
-        if os.path.isabs(name) or '..' in parts:
-            raise ValueError(f'Unsafe path in 7z archive: {name!r}')
-
     for line in result.stdout.decode('utf-8', errors='replace').splitlines():
         if line == '----------':
             if past_header:
                 # End of a member block — validate collected path before reset.
                 if path is not None:
-                    _validate(path, is_symlink)
+                    if is_symlink:
+                        raise ValueError(f'Symlink entry in 7z archive: {path!r}')
+                    _validate_entry_path(path, '7z')
                 path = None
                 is_symlink = False
             else:
@@ -130,7 +124,9 @@ def _check_7z_paths(input_path: Path) -> None:
 
     # Validate the last member block (output may not end with '----------').
     if past_header and path is not None:
-        _validate(path, is_symlink)
+        if is_symlink:
+            raise ValueError(f'Symlink entry in 7z archive: {path!r}')
+        _validate_entry_path(path, '7z')
 
 
 def _check_rar_paths(input_path: Path) -> None:
@@ -158,9 +154,7 @@ def _check_rar_paths(input_path: Path) -> None:
         if line.startswith('Name:'):
             # Validate the previous entry before moving on to the next.
             if current_name is not None:
-                parts = current_name.replace('\\', '/').split('/')
-                if os.path.isabs(current_name) or '..' in parts:
-                    raise ValueError(f'Unsafe path in RAR archive: {current_name!r}')
+                _validate_entry_path(current_name, 'RAR')
             current_name = line[5:].strip()
         elif line.startswith('Type:'):
             type_val = line[5:].strip().lower()
@@ -170,9 +164,7 @@ def _check_rar_paths(input_path: Path) -> None:
 
     # Validate the final entry.
     if current_name is not None:
-        parts = current_name.replace('\\', '/').split('/')
-        if os.path.isabs(current_name) or '..' in parts:
-            raise ValueError(f'Unsafe path in RAR archive: {current_name!r}')
+        _validate_entry_path(current_name, 'RAR')
 
 
 def _assert_confined(output_dir: Path) -> None:
@@ -412,13 +404,14 @@ def extract_zip(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     try:
         _check_archive_paths(input_path, 'zip')
     except ValueError as e:
-        return {'success': False, 'error': str(e), 'tool': 'unzip'}
+        return _archive_error('unzip', str(e))
 
     return _run_extraction_command(
         tool='unzip',
         cmd=['unzip', '-F', '-q', str(input_path), '-d', str(output_dir)],
         output_dir=output_dir,
         summary='Extracted {file_count} files from ZIP archive',
+        assert_confined=True,
     )
 
 
@@ -529,7 +522,7 @@ def extract_zip_riscos(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     try:
         _check_archive_paths(input_path, 'zip')
     except ValueError as e:
-        return {'success': False, 'error': str(e), 'tool': 'unzip'}
+        return _archive_error('unzip', str(e))
 
     result, output = run_tool_with_output(
         ['unzip', '-F', '-O', 'iso-8859-1', '-q', str(input_path), '-d', str(output_dir)]
@@ -588,7 +581,7 @@ def extract_tar(input_path: Path, output_dir: Path, archive_type: str = 'tar') -
     try:
         _check_archive_paths(input_path, 'tar')
     except ValueError as e:
-        return {'success': False, 'error': str(e), 'tool': 'tar'}
+        return _archive_error('tar', str(e))
 
     # --no-absolute-filenames: explicitly reject entries with leading '/'
     # even though GNU tar strips them by default.
@@ -599,6 +592,7 @@ def extract_tar(input_path: Path, output_dir: Path, archive_type: str = 'tar') -
         cmd=cmd,
         output_dir=output_dir,
         summary='Extracted {file_count} files from TAR archive',
+        assert_confined=True,
     )
 
 
@@ -618,7 +612,7 @@ def extract_rar(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     try:
         _check_rar_paths(input_path)
     except ValueError as e:
-        return {'success': False, 'error': str(e), 'tool': 'unrar'}
+        return _archive_error('unrar', str(e))
 
     return _run_extraction_command(
         tool='unrar',
@@ -645,7 +639,7 @@ def extract_7z(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     try:
         _check_7z_paths(input_path)
     except ValueError as e:
-        return {'success': False, 'error': str(e), 'tool': '7z'}
+        return _archive_error('7z', str(e))
 
     return _run_extraction_command(
         tool='7z',
@@ -653,6 +647,7 @@ def extract_7z(input_path: Path, output_dir: Path) -> Dict[str, Any]:
         output_dir=output_dir,
         summary='Extracted {file_count} files from 7z archive',
         normalize_names=False,
+        assert_confined=True,
     )
 
 
