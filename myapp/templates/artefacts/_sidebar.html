@@ -2,6 +2,9 @@
             <div class="card-header"><i class="bi bi-info-circle"></i> Details</div>
             <div class="card-body">
                 <dl class="mb-0">
+                    {% if artefact.description %}
+                    <dt>Description</dt><dd>{{ artefact.description }}</dd>
+                    {% endif %}
                     <dt>Original Filename</dt><dd><code>{{ artefact.original_filename }}</code></dd>
                     <dt>Size</dt><dd>{% if artefact.file_size %}{{ (artefact.file_size / 1024 / 1024)|round(2) }} MB{% else %}-{% endif %}</dd>
                     <dt>MIME Type</dt><dd>{{ artefact.mime_type or '-' }}</dd>
