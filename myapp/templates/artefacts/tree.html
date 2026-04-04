@@ -25,15 +25,15 @@
 {# ------------------------------------------------------------------ #}
 {% macro status_badge(status_value) %}
 {% if status_value == 'completed' %}
-<span class="badge bg-success"><i class="bi bi-check-circle-fill me-1"></i>completed</span>
+<i class="bi bi-check-circle-fill text-success" title="completed"></i>
 {% elif status_value == 'running' %}
-<span class="badge bg-info text-dark"><i class="bi bi-arrow-repeat pt-spin me-1"></i>running</span>
+<i class="bi bi-arrow-repeat text-info pt-spin" title="running"></i>
 {% elif status_value == 'pending' %}
-<span class="badge bg-warning text-dark"><i class="bi bi-hourglass me-1"></i>pending</span>
+<i class="bi bi-hourglass text-warning" title="pending"></i>
 {% elif status_value == 'failed' %}
-<span class="badge bg-danger"><i class="bi bi-x-circle-fill me-1"></i>failed</span>
+<i class="bi bi-x-circle-fill text-danger" title="failed"></i>
 {% else %}
-<span class="badge bg-secondary">{{ status_value }}</span>
+<i class="bi bi-question-circle text-secondary" title="{{ status_value }}"></i>
 {% endif %}
 {% endmacro %}
 
@@ -57,8 +57,8 @@
             <div class="d-flex align-items-center gap-2 py-1 border-bottom border-light">
                 <i class="bi bi-gear text-muted flex-shrink-0 small"></i>
                 <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=analysis.uuid) }}"
-                   class="text-decoration-none small flex-grow-1">{{ analysis.analysis_type|format_analysis_type }}</a>
-                <div class="flex-shrink-0">{{ status_badge(analysis.status.value) }}</div>
+                   class="text-decoration-none small">{{ analysis.analysis_type|format_analysis_type }}</a>
+                {{ status_badge(analysis.status.value) }}
             </div>
             {% endfor %}
             {% if child.children %}
@@ -110,7 +110,7 @@
                 <li class="pt-analysis-row d-flex align-items-center gap-2 py-1 border-bottom border-light">
                     <i class="bi bi-gear text-muted flex-shrink-0"></i>
                     <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=analysis.uuid) }}"
-                       class="text-decoration-none text-truncate flex-grow-1">
+                       class="text-decoration-none">
                         {{ analysis.analysis_type|format_analysis_type }}
                     </a>
                     {# Top-level archive extract: show format name since no file path #}
@@ -123,7 +123,7 @@
                     {% if analysis.id in child_analysis_ids %}
                     <small class="text-muted text-nowrap"><i class="bi bi-arrow-down-right"></i> produced</small>
                     {% endif %}
-                    <div class="flex-shrink-0">{{ status_badge(analysis.status.value) }}</div>
+                    {{ status_badge(analysis.status.value) }}
                 </li>
                 {% endfor %}
             </ul>
