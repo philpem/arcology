@@ -23,7 +23,7 @@
             <tbody>
                 {% for a in analyses %}
                 <tr>
-                    <td><a href="{{ url_for('myapp_blueprints_analysis.view', uuid=a.uuid) }}">{{ a.uuid[:8] }}</a></td>
+                    <td><a href="{{ url_for('myapp_blueprints_analysis.view', uuid=a.uuid) }}">#{{ a.id }}</a></td>
                     <td>{{ a.analysis_type|format_analysis_type }}</td>
                     <td><a href="{{ artefact_url(a.artefact) }}">{{ a.artefact.label }}</a></td>
                     <td><span class="badge {{ a.status.value | status_badge_class }}">{{ a.status.value }}</span></td>
