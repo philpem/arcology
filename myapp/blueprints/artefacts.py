@@ -1288,6 +1288,7 @@ def _render_artefact_view(artefact):
         'size': ExtractedFile.file_size,
         'filetype': ExtractedFile.risc_os_filetype,
         'known': ExtractedFile.is_known,
+        'date': ExtractedFile.modified_time,
     }
     sort_expr = _sort_columns.get(sort_col, _func.lower(ExtractedFile.path))
     if sort_desc:
