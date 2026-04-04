@@ -13,7 +13,7 @@
                                 {% set segment_path = path_parts[:i+1]|join('/') + '/' %}
                                 <a href="?{{ dict(pagination_args, path=segment_path)|urlencode }}" class="text-primary text-decoration-none"><code>{{ path_parts[i] }}</code></a>
                             {% else %}
-                                <code class="text-primary">{{ path_parts[i] }}</code>
+                                <code class="text-muted">{{ path_parts[i] }}</code>
                             {% endif %}
                         {% endfor %}
                         <a href="?{{ dict(pagination_args, path='')|urlencode }}" class="btn btn-sm btn-outline-secondary ms-2" title="Clear path filter">
