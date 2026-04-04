@@ -129,7 +129,8 @@ components:
         - `iso` — ISO 9660 disc image
         - `raw_sector_zst` / `raw_sector_gz` / `raw_sector_bz2` — Compressed sector images
         - `pdf` — PDF document / scan
-        - `zip` / `tar_gz` / `rar` / `arc` — Archive (`arc` = ArcFS / Spark for RISC OS)
+        - `zip` / `tar_gz` / `rar` / `arc` / `tbafs` — Archives (`arc` = ArcFS/Spark, `tbafs` = TBAFS RISC OS archive)
+        - `acorn_sprite` / `acorn_draw` / `acorn_text` — Acorn/RISC OS native viewable formats
         - `unknown` — Unidentified; needs manual classification
       enum:
         - scp
@@ -145,6 +146,10 @@ components:
         - tar_gz
         - rar
         - arc
+        - tbafs
+        - acorn_sprite
+        - acorn_draw
+        - acorn_text
         - unknown
 
     AnalysisType:
@@ -165,6 +170,8 @@ components:
         - `disc_protection_detect` — Detect copy-protection signals
         - `armlock_remove` — Remove ARMlock copy protection from ADFS images
         - `product_recognition` — Match extracted files against known-product definitions
+        - `format_convert` — Convert native formats to portable equivalents (Sprite→PNG, Draw→SVG, Text→UTF-8)
+        - `riscos_module_parse` — Parse RISC OS relocatable module metadata (title, version, SWIs, commands)
       enum:
         - flux_visualisation
         - flux_decode
@@ -180,6 +187,8 @@ components:
         - disc_protection_detect
         - armlock_remove
         - product_recognition
+        - format_convert
+        - riscos_module_parse
 
     AnalysisStatus:
       type: string
@@ -758,6 +767,40 @@ components:
             $ref: '#/components/schemas/RecognitionConfigFile'
       required: [product_id, title, path_match_enabled, required_files, optional_files]
 
+    AnalysisTreeNode:
+      type: object
+      description: >
+        One node in the recursive analysis derivation tree returned by
+        `GET /artefacts/{uuid}/analysis/tree`. Each artefact node lists its
+        analyses; each analysis lists the artefacts it produced (which in turn
+        have their own analyses, and so on).
+      properties:
+        uuid:
+          type: string
+        label:
+          type: string
+        artefact_type:
+          $ref: '#/components/schemas/ArtefactType'
+        original_filename:
+          type: string
+        parent_artefact_uuid:
+          type: string
+          nullable: true
+        derived_from_analysis_uuid:
+          type: string
+          nullable: true
+        analyses:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/Analysis'
+              - type: object
+                properties:
+                  produced_artefacts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AnalysisTreeNode'
+
     RecognitionConfig:
       type: object
       description: Product-recognition configuration for one hash database.
@@ -1201,6 +1244,49 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
 
+  /artefacts/{uuid}/move:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Artefact UUID. Must be a root artefact (not derived).
+    post:
+      operationId: move_artefact
+      summary: Move artefact to a different item
+      description: >
+        Move a root artefact (and all its derived descendants) to a different
+        catalogue item. Only root artefacts (those not derived from an analysis)
+        may be moved.
+      tags: [Artefacts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_item_uuid:
+                  type: string
+                  description: UUID of the destination item.
+              required: [target_item_uuid]
+      responses:
+        "200":
+          description: Artefact moved; returns updated artefact.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Artefact'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
   /artefacts/{uuid}/partitions:
     parameters:
       - name: uuid
@@ -1331,6 +1417,85 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
 
+  /artefacts/{uuid}/analysis/tree:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: get_artefact_analysis_tree
+      summary: Get analysis derivation tree
+      description: >
+        Returns the full recursive derivation tree for an artefact: each
+        artefact node contains its analyses, and each analysis contains the
+        artefacts it produced (which in turn have their own analyses, etc.).
+      tags: [Analysis]
+      responses:
+        "200":
+          description: Derivation tree rooted at this artefact.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  artefact:
+                    $ref: '#/components/schemas/AnalysisTreeNode'
+                required: [artefact]
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /artefacts/{uuid}/analysis/recursive:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: get_artefact_analyses_recursive
+      summary: List all analyses recursively
+      description: >
+        Returns a flat list of all analyses for an artefact and all its
+        descendants, across the full derivation tree.
+      tags: [Analysis]
+      parameters:
+        - name: status
+          in: query
+          description: Filter by status, e.g. `failed`.
+          schema:
+            $ref: '#/components/schemas/AnalysisStatus'
+      responses:
+        "200":
+          description: Flat list of analyses with summary counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  artefact_uuid:
+                    type: string
+                  artefact_label:
+                    type: string
+                  analyses:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AnalysisWithArtefact'
+                  total:
+                    type: integer
+                  failed:
+                    type: integer
+                required: [artefact_uuid, artefact_label, analyses, total, failed]
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
   # ---------------------------------------------------------------------------
   # Analysis
   # ---------------------------------------------------------------------------
@@ -1359,6 +1524,102 @@ paths:
                 required: [analyses]
         "401":
           $ref: '#/components/responses/Unauthorized'
+
+  /analysis/failures:
+    get:
+      operationId: search_failed_analyses
+      summary: Search failed analyses
+      description: >
+        Search failed analyses system-wide with optional filters. Results are
+        ordered by completion time descending (most recent first).
+      tags: [Analysis]
+      parameters:
+        - name: analysis_type
+          in: query
+          schema:
+            $ref: '#/components/schemas/AnalysisType'
+        - name: tool_name
+          in: query
+          schema:
+            type: string
+        - name: since
+          in: query
+          description: ISO 8601 datetime — return failures completed after this time.
+          schema:
+            type: string
+            format: date-time
+        - name: until
+          in: query
+          description: ISO 8601 datetime — return failures completed before this time.
+          schema:
+            type: string
+            format: date-time
+        - name: error
+          in: query
+          description: Substring match against the error message (case-insensitive).
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 50
+            description: Maximum 200.
+      responses:
+        "200":
+          description: Paginated list of failed analyses with artefact context.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  failures:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AnalysisWithArtefact'
+                  total:
+                    type: integer
+                  page:
+                    type: integer
+                  per_page:
+                    type: integer
+                required: [failures, total, page, per_page]
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /analysis/reset-stale:
+    post:
+      operationId: reset_stale_analyses
+      summary: Reset stale running analyses
+      description: >
+        Resets any analyses that have been in `running` state longer than the
+        configured stale-job timeout (default 1 hour) back to `pending`, so
+        they can be picked up again. Used by workers on startup to recover from
+        crashes, and by operators via the UI.
+      tags: [Analysis]
+      responses:
+        "200":
+          description: Number of jobs reset.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reset:
+                    type: integer
+                    description: Number of stale analyses reset to pending.
+                required: [reset]
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
 
   /analysis/{uuid}:
     parameters:
