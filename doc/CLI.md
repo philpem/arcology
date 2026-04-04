@@ -118,6 +118,7 @@ arco items list --platform 3
 arco items list --category 7 --per-page 50
 arco items list --tag "acorn"
 arco items list --page 2
+arco items list --parent ITEM_UUID   # list children of a specific item
 ```
 
 | Flag | Description |
@@ -126,6 +127,7 @@ arco items list --page 2
 | `--platform ID`, `-p ID` | Filter by platform ID |
 | `--category ID`, `-c ID` | Filter by category ID |
 | `--tag NAME`, `-t NAME` | Filter by tag name |
+| `--parent UUID` | Show only direct children of this item |
 | `--page N` | Page number (default: 1) |
 | `--per-page N` | Results per page (default: 25) |
 
@@ -141,6 +143,7 @@ Create a new item.
 arco items create --name "BBC Micro DFS Disc"
 arco items create --name "Amiga Workbench 2.1" --platform 5 --category 3
 arco items create --name "Archimedes Games" --tags "acorn,risc-os,games"
+arco items create --name "Side A" --parent PARENT_UUID   # create as child item
 ```
 
 | Flag | Description |
@@ -150,6 +153,7 @@ arco items create --name "Archimedes Games" --tags "acorn,risc-os,games"
 | `--platform ID`, `-p ID` | Platform ID |
 | `--category ID`, `-c ID` | Category ID |
 | `--tags NAMES` | Comma-separated tag names |
+| `--parent UUID` | Parent item UUID (makes this a child of that item) |
 
 Prints the new item's UUID on success.
 
@@ -172,6 +176,8 @@ Change fields on an existing item.
 ```
 arco items update a1b2c3d4... --name "Corrected Title"
 arco items update a1b2c3d4... --platform 3 --category 2
+arco items update a1b2c3d4... --parent PARENT_UUID   # move under a parent
+arco items update a1b2c3d4... --no-parent            # make a root item
 ```
 
 | Flag | Description |
@@ -180,6 +186,8 @@ arco items update a1b2c3d4... --platform 3 --category 2
 | `--description TEXT`, `-d TEXT` | New description |
 | `--platform ID`, `-p ID` | New platform ID |
 | `--category ID`, `-c ID` | New category ID |
+| `--parent UUID` | Move item under a new parent |
+| `--no-parent` | Remove parent (make a root-level item) |
 
 ---
 
@@ -191,6 +199,23 @@ Delete an item and all its artefacts. **This cannot be undone.**
 arco items delete a1b2c3d4...
 arco items delete a1b2c3d4... --yes   # skip confirmation
 ```
+
+---
+
+### `arco artefacts move`
+
+Move a root artefact to a different item. Derived artefacts follow
+automatically. The artefact's slug is re-checked for uniqueness in the target
+item, with automatic collision resolution if needed.
+
+```
+arco artefacts move ARTEFACT_UUID --to TARGET_ITEM_UUID
+```
+
+| Argument/Flag | Description |
+|---------------|-------------|
+| `ARTEFACT_UUID` | UUID of the artefact to move (must be a root artefact, not derived) |
+| `--to UUID` | **Required.** UUID of the target item |
 
 ---
 
@@ -314,6 +339,20 @@ Example output:
     [raw_sector] MyDisc.img (e5f6g7h8)
       + file_extraction  completed  adfutils 0.3
       X metadata_extract  FAILED  "Unsupported ADFS variant"
+```
+
+---
+
+### `arco debug processing-tree`
+
+Show the full processing pipeline for an artefact as a tree: artefacts,
+their analyses (flat and grouped by file path for archive/format-convert
+operations), and all derived child artefacts, recursively. Always shows the
+root artefact even if a derived artefact UUID is given.
+
+```
+arco debug processing-tree ARTEFACT_UUID
+arco debug processing-tree ARTEFACT_UUID --json
 ```
 
 ---

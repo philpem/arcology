@@ -45,6 +45,7 @@ arcology/
 │   │   ├── analysis.py         # Analysis queue UI
 │   │   ├── search.py           # Global cross-item search (prefix query syntax)
 │   │   └── api.py              # REST API for workers and external tools
+│   ├── cli/                    # Flask CLI commands (create-admin, rebuild-search-index, rescan-hashes, reanalyse)
 │   ├── utils/                  # Utility modules
 │   ├── templates/              # Jinja2 templates (Bootstrap 5)
 │   └── static/                 # CSS
@@ -121,6 +122,10 @@ docker compose up -d --scale worker=4  # Multiple workers
 docker compose logs -f web         # Web logs
 docker compose logs -f worker      # Worker logs
 docker compose down                # Stop
+
+# Maintenance
+docker compose exec web flask rebuild-search-index  # Rebuild search index
+docker compose exec web flask rescan-hashes         # Re-link files against hash DBs
 ```
 
 - Web UI: http://localhost:8000
@@ -140,6 +145,35 @@ flask db downgrade                            # Undo last migration
 flask db current                              # Check current revision
 flask db stamp head                           # Mark as up-to-date without running
 ```
+
+### Maintenance commands
+
+```bash
+# Rebuild search index from completed analysis results
+# (run after applying search-index migrations, or to fix inconsistencies)
+flask rebuild-search-index
+
+# Re-link extracted files against hash databases
+# (run after importing a new hash database without re-running analysis)
+flask rescan-hashes                     # all artefacts
+flask rescan-hashes --artefact <UUID>   # single artefact
+flask rescan-hashes --batch-size 1000   # tune commit batch size (default 500)
+
+# Bulk re-queue analysis for artefacts (clears previous results)
+flask reanalyse --all                   # every artefact
+flask reanalyse --artefact-type SCP     # filter by type
+flask reanalyse --platform "BBC Micro"  # filter by platform
+flask reanalyse --tag needs-review      # filter by tag
+flask reanalyse --analysis <UUID>       # retry a single analysis
+flask reanalyse --all --dry-run         # preview without changes
+
+# Cancel pending analyses without resetting artefact data
+flask cancel-analysis --all             # every pending analysis
+flask cancel-analysis --artefact <UUID> # all pending on one artefact
+flask cancel-analysis --all --include-running  # also cancel running
+```
+
+See `doc/ADMIN_COMMANDS.md` for the full reference including all flags.
 
 ### Debug tools
 
@@ -362,6 +396,7 @@ Upload triggers auto-analysis based on `ANALYSIS_MAP` -> worker claims job atomi
 |------|------|
 | `shared/enums.py` | `ArtefactType` and `AnalysisType` — single source of truth for web, worker, and CLI |
 | `shared/archive_formats.py` | `ArchiveType`, `ARCHIVE_FORMATS`, helpers — single source of truth |
+| `shared/storage.py` | Storage backend abstraction (`LocalStorage` and `S3Storage`); selected via `STORAGE_BACKEND` env var |
 | `myapp/database.py` | All SQLAlchemy models and web-specific enums (`AnalysisStatus`, `FilesystemType`, etc.) |
 | `myapp/blueprints/artefacts.py` | `EXTENSION_MAP` (type detection) and `ANALYSIS_MAP` (auto-analysis rules) |
 | `myapp/blueprints/search.py` | Global search: `parse_query()`, `_run_search()`, prefix query syntax |
@@ -425,3 +460,4 @@ Worker external tools (compiled in worker Dockerfile): Fluxfox (Rust), HxCFE (C)
 - **Do NOT use Python's `zipfile` module on RISC OS ZIPs.** RISC OS ZIP archives contain Acorn-specific extra-field blocks (ID `0x4341` / "AC") that `zipfile.ZipFile` rejects with `BadZipFile`. Any code that needs to read RISC OS ZIP metadata (filenames, structure) must parse the ZIP central directory manually with `struct`, or shell out to `unzip`. The worker's `_is_riscos_zip()` and `extract_zip_riscos()` both avoid `zipfile` for this reason.
 - **Migration branch conflicts**: If two PRs both add a migration extending the same chain head, merging both creates "Multiple head revisions." CI detects this on PRs via `ci/check_migration_conflict.py`. A pre-push hook is available in `hooks/` (`git config core.hooksPath hooks`). See `doc/MIGRATION_CONFLICTS.md` for resolution steps.
 - Upload limit is 4GB (`MAX_CONTENT_LENGTH` in config)
+- `STALE_JOB_TIMEOUT_SECONDS` (default 3600) controls how long a job may stay in `RUNNING` state before it is considered stuck and eligible for reset back to `PENDING`. Set this above the longest expected analysis run time.

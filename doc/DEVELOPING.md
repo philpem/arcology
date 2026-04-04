@@ -34,14 +34,17 @@ all migrations in a transaction by default, so using `bind.execute()` directly
 will appear to succeed (Alembic stamps the revision) but the new enum value
 will **not** actually be persisted in the database.
 
-Always use an autocommit connection for these statements:
+Set `autocommit = True` at module level in the migration file to run it outside
+any transaction block:
 
 ```python
+# At module level, after depends_on:
+autocommit = True
+
 def upgrade():
     bind = op.get_bind()
     if bind.dialect.name == 'postgresql':
-        conn = bind.execution_options(isolation_level='AUTOCOMMIT')
-        conn.execute(sa.text("ALTER TYPE myenum ADD VALUE IF NOT EXISTS 'NEW_VALUE'"))
+        op.execute(sa.text("ALTER TYPE myenum ADD VALUE IF NOT EXISTS 'NEW_VALUE'"))
 ```
 
 If a migration was already stamped but the enum value is missing, roll the
@@ -63,4 +66,4 @@ To log all queries which are sent to the database, enable `DEBUG_DB_LOG`.
 
 ## Running under Gunicorn
 
-`gunicorn -b 0.0.0.0:5000 'myapp.app:create_app()'`
+`gunicorn -b 0.0.0.0:8000 'myapp.app:create_app()'`
