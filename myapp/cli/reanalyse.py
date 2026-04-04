@@ -1,15 +1,23 @@
+import json
 import click
 from flask import current_app
 from ..extensions import db
-from ..database import Artefact
+from ..database import (
+    Artefact, Analysis, AnalysisStatus, Partition, ExtractedFile,
+    ArtefactProtection, ArtefactMastering, RiscosModule, ArtefactRestriction,
+    artefact_tags,
+)
 from ..blueprints.artefacts import (
     reset_artefact_for_reanalysis, queue_analyses_for_artefact,
-    _cleanup_analysis_outputs, get_output_folder,
+    _cleanup_analysis_outputs, _delete_artefact_files,
+    get_all_derived_artefact_ids, get_output_folder,
 )
 from ._selection import build_artefact_query
 
 
 @click.command('reanalyse')
+@click.option('--analysis', 'analysis_uuid', default=None,
+              help='UUID of a single analysis to retry (resets only that analysis and its output)')
 @click.option('--item', 'item_uuid', default=None,
               help='UUID of a single item (reanalyse only its artefacts)')
 @click.option('--tag', 'tag_name', default=None,
@@ -24,26 +32,147 @@ from ._selection import build_artefact_query
               help='Reanalyse every artefact in the database')
 @click.option('--dry-run', is_flag=True, default=False,
               help='Show what would be requeued without making changes')
-def reanalyse(item_uuid, tag_name, platform_name, category_name,
+def reanalyse(analysis_uuid, item_uuid, tag_name, platform_name, category_name,
               artefact_type_name, select_all, dry_run):
     """Reset and re-queue analysis for artefacts in the database.
 
-    At least one filter or --all is required. Filters (--item, --tag,
-    --platform, --category, --artefact-type) can be combined; they are
-    ANDed together.
+    Use --analysis <uuid> to retry a single analysis without disturbing other
+    completed work on the same artefact.  All other options reset the entire
+    artefact (all analyses, derived artefacts, partitions and extracted files).
+
+    At least one filter or --all is required for artefact-level reanalysis.
+    Filters (--item, --tag, --platform, --category, --artefact-type) can be
+    combined; they are ANDed together.
 
     Examples:
 
+      flask reanalyse --analysis abc123def456
       flask reanalyse --all --dry-run
       flask reanalyse --artefact-type SCP
       flask reanalyse --platform "Acorn Archimedes" --tag "needs-review"
       flask reanalyse --item abc123def456
     """
+    # -----------------------------------------------------------------------
+    # Single analysis retry
+    # -----------------------------------------------------------------------
+    if analysis_uuid:
+        analysis = Analysis.query.filter_by(uuid=analysis_uuid).first()
+        if not analysis:
+            click.echo(f"ERROR: analysis '{analysis_uuid}' not found.", err=True)
+            raise SystemExit(1)
+
+        artefact = analysis.artefact
+        analysis_type = analysis.analysis_type
+        hints = analysis.hints
+
+        click.echo(
+            f"{'[DRY RUN] ' if dry_run else ''}Retrying analysis {analysis_uuid} "
+            f"({analysis_type.name}) on artefact {artefact.uuid} ({artefact.label})."
+        )
+
+        # Collect produced artefacts (direct + nested descendants via CTE).
+        produced_direct = Artefact.query.filter_by(derived_from_analysis_id=analysis.id).all()
+        all_produced_ids = []
+        for pa in produced_direct:
+            all_produced_ids.append(pa.id)
+            all_produced_ids.extend(get_all_derived_artefact_ids(pa))
+
+        if all_produced_ids:
+            click.echo(f"  Will delete {len(all_produced_ids)} produced artefact(s).")
+
+        if dry_run:
+            return
+
+        # Collect output paths before deletion.
+        output_files = []
+        output_dirs = []
+        if analysis.output_path:
+            output_dirs.append(analysis.output_path)
+        if analysis.details:
+            try:
+                details = json.loads(analysis.details)
+                if isinstance(details.get('outputs'), list):
+                    for out in details['outputs']:
+                        if 'filename' in out:
+                            output_files.append(out['filename'])
+            except (json.JSONDecodeError, KeyError, TypeError):
+                pass
+
+        # Delete storage files for all produced artefacts before DB cleanup.
+        for pa in produced_direct:
+            _delete_artefact_files(pa)
+
+        if all_produced_ids:
+            # Null FK back-references before deleting analyses on produced artefacts.
+            Artefact.query.filter(Artefact.id.in_(all_produced_ids)).update(
+                {Artefact.derived_from_analysis_id: None}, synchronize_session=False)
+            # Bulk-delete dependents of produced artefacts.
+            Analysis.query.filter(
+                Analysis.artefact_id.in_(all_produced_ids)
+            ).delete(synchronize_session=False)
+            ExtractedFile.query.filter(
+                ExtractedFile.partition_id.in_(
+                    db.session.query(Partition.id).filter(
+                        Partition.artefact_id.in_(all_produced_ids)
+                    )
+                )
+            ).delete(synchronize_session=False)
+            Partition.query.filter(
+                Partition.artefact_id.in_(all_produced_ids)
+            ).delete(synchronize_session=False)
+            ArtefactProtection.query.filter(
+                ArtefactProtection.artefact_id.in_(all_produced_ids)
+            ).delete(synchronize_session=False)
+            ArtefactMastering.query.filter(
+                ArtefactMastering.artefact_id.in_(all_produced_ids)
+            ).delete(synchronize_session=False)
+            RiscosModule.query.filter(
+                RiscosModule.artefact_id.in_(all_produced_ids)
+            ).delete(synchronize_session=False)
+            ArtefactRestriction.query.filter(
+                ArtefactRestriction.artefact_id.in_(all_produced_ids)
+            ).delete(synchronize_session=False)
+            db.session.execute(
+                artefact_tags.delete().where(artefact_tags.c.artefact_id.in_(all_produced_ids))
+            )
+            # Break self-referential FK, then delete produced artefacts.
+            Artefact.query.filter(Artefact.id.in_(all_produced_ids)).update(
+                {Artefact.parent_artefact_id: None}, synchronize_session=False)
+            Artefact.query.filter(
+                Artefact.id.in_(all_produced_ids)
+            ).delete(synchronize_session=False)
+
+        db.session.delete(analysis)
+
+        # Queue a fresh analysis of the same type/hints.
+        new_analysis = Analysis(
+            artefact_id=artefact.id,
+            analysis_type=analysis_type,
+            status=AnalysisStatus.PENDING,
+            hints=hints,
+        )
+        db.session.add(new_analysis)
+        db.session.commit()
+
+        # Clean up output files from the old analysis.
+        output_folder = get_output_folder()
+        cache_dir = ''  # no cache to clear for a single analysis
+        _cleanup_analysis_outputs(
+            output_folder, output_files, output_dirs, cache_dir, current_app.logger,
+        )
+
+        click.echo(f"Done. Analysis requeued as {new_analysis.uuid}.")
+        return
+
+    # -----------------------------------------------------------------------
+    # Artefact-level reanalysis (existing behaviour)
+    # -----------------------------------------------------------------------
     has_filter = any([item_uuid, tag_name, platform_name, category_name, artefact_type_name])
 
     if not has_filter and not select_all:
-        click.echo("ERROR: specify at least one filter (--item, --tag, --platform, "
-                    "--category, --artefact-type) or use --all to reanalyse everything.", err=True)
+        click.echo("ERROR: specify --analysis <uuid>, at least one filter (--item, --tag, "
+                    "--platform, --category, --artefact-type), or use --all to reanalyse "
+                    "everything.", err=True)
         raise SystemExit(1)
 
     # Build query: root artefacts only (derived are cleaned up by reset)

@@ -144,6 +144,22 @@ class ArcologyClient:
 		return self.get('tags')
 
 
+	def get_analysis(self, uuid: str) -> dict:
+		return self.get(f'analysis/{uuid}')
+
+	def get_artefact_analyses_recursive(self, uuid: str, status: str = None) -> dict:
+		params = {}
+		if status:
+			params['status'] = status
+		return self.get(f'artefacts/{uuid}/analysis/recursive', params=params or None)
+
+	def get_artefact_tree(self, uuid: str) -> dict:
+		return self.get(f'artefacts/{uuid}/analysis/tree')
+
+	def search_failures(self, **params) -> dict:
+		return self.get('analysis/failures', params={k: v for k, v in params.items() if v is not None})
+
+
 def compute_file_hashes(filepath: str) -> tuple[str, str]:
 	"""Compute MD5 and SHA256 hashes for a file."""
 	md5_hash = hashlib.md5()

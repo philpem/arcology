@@ -48,7 +48,7 @@ def analysis_to_dict(analysis, include_artefact=False):
         'id': analysis.id, 'uuid': analysis.uuid, 'artefact_id': analysis.artefact_id,
         'artefact_uuid': analysis.artefact.uuid if analysis.artefact else None,
         'analysis_type': analysis.analysis_type.value, 'status': analysis.status.value,
-        'tool_name': analysis.tool_name, 'hints': analysis.hints,
+        'tool_name': analysis.tool_name, 'tool_version': analysis.tool_version, 'hints': analysis.hints,
         'output_url': analysis.output_url,
         'output_path': analysis.output_path,
         'success': analysis.success, 'summary': analysis.summary, 'error_message': analysis.error_message,

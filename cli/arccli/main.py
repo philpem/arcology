@@ -101,6 +101,33 @@ def main():
 	subparsers.add_parser('categories', help='List categories')
 	subparsers.add_parser('tags', help='List tags')
 
+	# ---- debug ----
+	debug_parser = subparsers.add_parser('debug', help='Debug and analysis diagnostic tools')
+	debug_sub = debug_parser.add_subparsers(dest='debug_command')
+
+	# debug analysis
+	debug_analysis = debug_sub.add_parser('analysis', help='Show full analysis details')
+	debug_analysis.add_argument('uuid', help='Analysis UUID')
+
+	# debug errors
+	debug_errors = debug_sub.add_parser('errors', help='Show failed analyses for artefact tree')
+	debug_errors.add_argument('uuid', help='Artefact UUID')
+	debug_errors.add_argument('--all', action='store_true', help='Show all analyses, not just failures')
+
+	# debug tree
+	debug_tree = debug_sub.add_parser('tree', help='Show artefact derivation tree')
+	debug_tree.add_argument('uuid', help='Artefact UUID')
+
+	# debug failures
+	debug_failures = debug_sub.add_parser('failures', help='Search failed analyses system-wide')
+	debug_failures.add_argument('--type', dest='analysis_type', help='Filter by analysis type')
+	debug_failures.add_argument('--tool', dest='tool_name', help='Filter by tool name')
+	debug_failures.add_argument('--since', help='Failures after this date (ISO format)')
+	debug_failures.add_argument('--until', help='Failures before this date (ISO format)')
+	debug_failures.add_argument('--error', help='Filter by error message substring')
+	debug_failures.add_argument('--page', type=int, default=1, help='Page number')
+	debug_failures.add_argument('--per-page', type=int, default=50, dest='per_page', help='Results per page')
+
 	# ---- status ----
 	status_parser = subparsers.add_parser('status', help='Show artefact analysis status')
 	status_parser.add_argument('uuid', help='Artefact UUID')
@@ -208,6 +235,22 @@ def _dispatch(client, args):
 
 	elif args.command == 'tags':
 		cmd_tags(client, args)
+
+	elif args.command == 'debug':
+		from .commands.debug import (
+			cmd_debug_analysis, cmd_debug_errors, cmd_debug_tree, cmd_debug_failures
+		)
+		if args.debug_command == 'analysis':
+			cmd_debug_analysis(client, args)
+		elif args.debug_command == 'errors':
+			cmd_debug_errors(client, args)
+		elif args.debug_command == 'tree':
+			cmd_debug_tree(client, args)
+		elif args.debug_command == 'failures':
+			cmd_debug_failures(client, args)
+		else:
+			print("Usage: arco debug {analysis|errors|tree|failures}", file=sys.stderr)
+			sys.exit(1)
 
 	elif args.command == 'status':
 		cmd_status(client, args)
