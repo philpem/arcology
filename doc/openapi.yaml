@@ -767,6 +767,57 @@ components:
             $ref: '#/components/schemas/RecognitionConfigFile'
       required: [product_id, title, path_match_enabled, required_files, optional_files]
 
+    ProcessingPathTree:
+      type: object
+      description: >
+        A tree of path-bearing analyses grouped by filesystem path component.
+        Each level holds the analyses whose output path segment matches that
+        name, plus nested child levels.
+      properties:
+        analyses:
+          type: array
+          items:
+            $ref: '#/components/schemas/Analysis'
+        children:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/ProcessingPathTree'
+      required: [analyses, children]
+
+    ProcessingTreeNode:
+      type: object
+      description: >
+        One node in the processing tree returned by
+        `GET /artefacts/{uuid}/processing-tree`. Contains the artefact's own
+        analyses, an optional path-tree grouping for path-bearing analyses
+        (archive extract, format convert, etc.), and recursively nested child
+        artefacts produced by those analyses.
+      properties:
+        uuid:
+          type: string
+        label:
+          type: string
+        artefact_type:
+          $ref: '#/components/schemas/ArtefactType'
+        original_filename:
+          type: string
+        derived_from_analysis_uuid:
+          type: string
+          nullable: true
+        analyses:
+          type: array
+          items:
+            $ref: '#/components/schemas/Analysis'
+        path_tree:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ProcessingPathTree'
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProcessingTreeNode'
+      required: [uuid, label, artefact_type, original_filename, analyses, children]
+
     AnalysisTreeNode:
       type: object
       description: >
@@ -1491,6 +1542,53 @@ paths:
                 required: [artefact_uuid, artefact_label, analyses, total, failed]
         "400":
           $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /artefacts/{uuid}/processing-tree:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+        description: >
+          Artefact UUID. The endpoint always navigates to the root artefact of
+          the given UUID, so any artefact in the derivation chain may be passed.
+    get:
+      operationId: get_artefact_processing_tree
+      summary: Get processing tree
+      description: >
+        Returns the full processing tree for an artefact's root, grouping
+        analyses by artefact with path-bearing analyses (archive extract,
+        format convert, etc.) additionally organised under a hierarchical
+        file-path tree. Includes aggregate status counts.
+      tags: [Analysis]
+      responses:
+        "200":
+          description: Processing tree rooted at the root artefact.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  artefact:
+                    $ref: '#/components/schemas/ProcessingTreeNode'
+                  status_counts:
+                    type: object
+                    description: Count of analyses in each status across the whole tree.
+                    additionalProperties:
+                      type: integer
+                    example:
+                      completed: 12
+                      failed: 1
+                      pending: 0
+                      running: 0
+                  total_count:
+                    type: integer
+                required: [artefact, status_counts, total_count]
         "401":
           $ref: '#/components/responses/Unauthorized'
         "404":
