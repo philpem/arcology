@@ -532,6 +532,112 @@ class TestApplyDatabaseRestrictions(unittest.TestCase):
             self.assertEqual(added, 0)
             self.assertFalse(artefact.is_restricted)
 
+    def test_file_restriction_applied_on_hashdb_match(self):
+        """apply_database_restrictions() should also create an ExtractedFileRestriction
+        on each matched file when the database has restriction_type set."""
+        with self.app.app_context():
+            from myapp.database import (
+                HashDatabase, KnownFile, Partition, ExtractedFile,
+                FilesystemType, RestrictionType, ExtractedFileRestriction,
+            )
+            from myapp.utils.hash_rescan import apply_database_restrictions
+
+            _, artefact = _make_item_and_artefact(self.db)
+
+            db_malware = HashDatabase(
+                name='Malware DB 2',
+                restriction_type=RestrictionType.MALWARE,
+            )
+            self.db.session.add(db_malware)
+            self.db.session.flush()
+
+            kf = KnownFile(database_id=db_malware.id, filename='trojan.exe',
+                           md5='aabbccdd' * 4, file_size=1234)
+            self.db.session.add(kf)
+            self.db.session.flush()
+
+            partition = Partition(
+                artefact_id=artefact.id,
+                filesystem=FilesystemType.UNKNOWN,
+                partition_index=0,
+            )
+            self.db.session.add(partition)
+            self.db.session.flush()
+
+            ef = ExtractedFile(
+                partition_id=partition.id,
+                path='trojan.exe',
+                filename='trojan.exe',
+                md5='aabbccdd' * 4,
+                file_size=1234,
+                is_known=True,
+                known_file_id=kf.id,
+            )
+            self.db.session.add(ef)
+            self.db.session.commit()
+
+            apply_database_restrictions(artefact)
+
+            efr = ExtractedFileRestriction.query.filter_by(
+                extracted_file_id=ef.id,
+                restriction_type=RestrictionType.MALWARE,
+            ).first()
+            self.assertIsNotNone(efr)
+            self.assertIn('Malware DB 2', efr.reason)
+
+    def test_file_restriction_idempotent(self):
+        """Calling apply_database_restrictions() twice should not create duplicate
+        ExtractedFileRestriction rows."""
+        with self.app.app_context():
+            from myapp.database import (
+                HashDatabase, KnownFile, Partition, ExtractedFile,
+                FilesystemType, RestrictionType, ExtractedFileRestriction,
+            )
+            from myapp.utils.hash_rescan import apply_database_restrictions
+
+            _, artefact = _make_item_and_artefact(self.db)
+
+            db_malware = HashDatabase(
+                name='Malware DB 3',
+                restriction_type=RestrictionType.MALWARE,
+            )
+            self.db.session.add(db_malware)
+            self.db.session.flush()
+
+            kf = KnownFile(database_id=db_malware.id, filename='dup.exe',
+                           md5='11223344' * 4, file_size=99)
+            self.db.session.add(kf)
+            self.db.session.flush()
+
+            partition = Partition(
+                artefact_id=artefact.id,
+                filesystem=FilesystemType.UNKNOWN,
+                partition_index=0,
+            )
+            self.db.session.add(partition)
+            self.db.session.flush()
+
+            ef = ExtractedFile(
+                partition_id=partition.id,
+                path='dup.exe',
+                filename='dup.exe',
+                md5='11223344' * 4,
+                file_size=99,
+                is_known=True,
+                known_file_id=kf.id,
+            )
+            self.db.session.add(ef)
+            self.db.session.commit()
+
+            apply_database_restrictions(artefact)
+            apply_database_restrictions(artefact)  # second call
+
+            count = ExtractedFileRestriction.query.filter_by(
+                extracted_file_id=ef.id,
+                restriction_type=RestrictionType.MALWARE,
+            ).count()
+            self.assertEqual(count, 1)
+
 
 # =============================================================================
 # ExtractedFileRestriction model tests
