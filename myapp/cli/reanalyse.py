@@ -2,14 +2,11 @@ import json
 import click
 from flask import current_app
 from ..extensions import db
-from ..database import (
-    Artefact, Analysis, AnalysisStatus, Partition, ExtractedFile,
-    ArtefactProtection, ArtefactMastering, RiscosModule, ArtefactRestriction,
-    artefact_tags,
-)
+from ..database import Artefact, Analysis, AnalysisStatus
 from ..blueprints.artefacts import (
     reset_artefact_for_reanalysis, queue_analyses_for_artefact,
     _cleanup_analysis_outputs, _delete_artefact_files,
+    _bulk_delete_artefact_dependents, _bulk_delete_artefacts,
     get_all_derived_artefact_ids, get_output_folder,
 )
 from ._selection import build_artefact_query
@@ -106,41 +103,8 @@ def reanalyse(analysis_uuid, item_uuid, tag_name, platform_name, category_name,
             # Null FK back-references before deleting analyses on produced artefacts.
             Artefact.query.filter(Artefact.id.in_(all_produced_ids)).update(
                 {Artefact.derived_from_analysis_id: None}, synchronize_session=False)
-            # Bulk-delete dependents of produced artefacts.
-            Analysis.query.filter(
-                Analysis.artefact_id.in_(all_produced_ids)
-            ).delete(synchronize_session=False)
-            ExtractedFile.query.filter(
-                ExtractedFile.partition_id.in_(
-                    db.session.query(Partition.id).filter(
-                        Partition.artefact_id.in_(all_produced_ids)
-                    )
-                )
-            ).delete(synchronize_session=False)
-            Partition.query.filter(
-                Partition.artefact_id.in_(all_produced_ids)
-            ).delete(synchronize_session=False)
-            ArtefactProtection.query.filter(
-                ArtefactProtection.artefact_id.in_(all_produced_ids)
-            ).delete(synchronize_session=False)
-            ArtefactMastering.query.filter(
-                ArtefactMastering.artefact_id.in_(all_produced_ids)
-            ).delete(synchronize_session=False)
-            RiscosModule.query.filter(
-                RiscosModule.artefact_id.in_(all_produced_ids)
-            ).delete(synchronize_session=False)
-            ArtefactRestriction.query.filter(
-                ArtefactRestriction.artefact_id.in_(all_produced_ids)
-            ).delete(synchronize_session=False)
-            db.session.execute(
-                artefact_tags.delete().where(artefact_tags.c.artefact_id.in_(all_produced_ids))
-            )
-            # Break self-referential FK, then delete produced artefacts.
-            Artefact.query.filter(Artefact.id.in_(all_produced_ids)).update(
-                {Artefact.parent_artefact_id: None}, synchronize_session=False)
-            Artefact.query.filter(
-                Artefact.id.in_(all_produced_ids)
-            ).delete(synchronize_session=False)
+            _bulk_delete_artefact_dependents(all_produced_ids)
+            _bulk_delete_artefacts(all_produced_ids)
 
         db.session.delete(analysis)
 

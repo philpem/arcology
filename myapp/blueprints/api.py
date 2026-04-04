@@ -616,35 +616,9 @@ def get_artefact_analysis_tree(uuid):
 
     Recursively walks: artefact -> analyses -> produced_artefacts -> analyses -> ...
     """
+    from ..utils.api_serializers import analysis_tree_node
     artefact = _get_artefact_or_404(uuid)
-
-    def _artefact_node(a):
-        node = {
-            'uuid': a.uuid, 'label': a.label,
-            'artefact_type': a.artefact_type.value,
-            'original_filename': a.original_filename,
-            'parent_artefact_uuid': a.parent.uuid if a.parent_artefact_id else None,
-            'derived_from_analysis_uuid': a.derived_from_analysis.uuid if a.derived_from_analysis_id else None,
-        }
-        analyses = Analysis.query.filter_by(artefact_id=a.id).order_by(Analysis.id).all()
-        node['analyses'] = []
-        for an in analyses:
-            an_dict = {
-                'uuid': an.uuid, 'analysis_type': an.analysis_type.value,
-                'status': an.status.value, 'tool_name': an.tool_name,
-                'tool_version': an.tool_version,
-                'success': an.success, 'summary': an.summary,
-                'error_message': an.error_message,
-                'created_at': an.created_at.isoformat(),
-                'started_at': an.started_at.isoformat() if an.started_at else None,
-                'completed_at': an.completed_at.isoformat() if an.completed_at else None,
-            }
-            produced = Artefact.query.filter_by(derived_from_analysis_id=an.id).order_by(Artefact.id).all()
-            an_dict['produced_artefacts'] = [_artefact_node(p) for p in produced]
-            node['analyses'].append(an_dict)
-        return node
-
-    return jsonify({'artefact': _artefact_node(artefact)})
+    return jsonify({'artefact': analysis_tree_node(artefact)})
 
 
 @blueprint.route('/artefacts/<string:uuid>/analysis/recursive', methods=['GET'])

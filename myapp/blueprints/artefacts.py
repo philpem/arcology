@@ -523,6 +523,37 @@ def _collect_all_analyses(artefact: Artefact) -> list:
     return Analysis.query.filter(Analysis.artefact_id.in_(all_ids)).order_by(Analysis.id.desc()).all()
 
 
+def _bulk_delete_artefact_dependents(artefact_ids: list[int]):
+    """Bulk-delete all referencing rows across every FK table for the given artefact IDs.
+
+    Deletes analyses, extracted files, partitions, protection/mastering/module
+    records, restrictions, and tag associations.  Does NOT delete the artefacts
+    themselves — call ``_bulk_delete_artefacts`` for that.
+    """
+    Analysis.query.filter(Analysis.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
+    ExtractedFile.query.filter(
+        ExtractedFile.partition_id.in_(
+            db.session.query(Partition.id).filter(Partition.artefact_id.in_(artefact_ids))
+        )
+    ).delete(synchronize_session=False)
+    Partition.query.filter(Partition.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
+    ArtefactProtection.query.filter(ArtefactProtection.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
+    ArtefactMastering.query.filter(ArtefactMastering.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
+    RiscosModule.query.filter(RiscosModule.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
+    ArtefactRestriction.query.filter(ArtefactRestriction.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
+    db.session.execute(artefact_tags.delete().where(artefact_tags.c.artefact_id.in_(artefact_ids)))
+
+
+def _bulk_delete_artefacts(artefact_ids: list[int]):
+    """Delete artefact rows after their dependents have been removed.
+
+    Breaks the self-referential parent FK before deleting.
+    """
+    Artefact.query.filter(Artefact.id.in_(artefact_ids)).update(
+        {Artefact.parent_artefact_id: None}, synchronize_session=False)
+    Artefact.query.filter(Artefact.id.in_(artefact_ids)).delete(synchronize_session=False)
+
+
 def reset_artefact_for_reanalysis(artefact: Artefact, commit: bool = True):
     """
     Reset an artefact to its just-uploaded state ready for re-analysis.
@@ -556,26 +587,11 @@ def reset_artefact_for_reanalysis(artefact: Artefact, commit: bool = True):
         Artefact.query.filter(Artefact.id.in_(all_derived_ids)).update(
             {Artefact.derived_from_analysis_id: None}, synchronize_session=False)
 
-    # Bulk-delete all referencing rows across every FK table in one pass,
-    # covering both derived artefacts and the root artefact itself.
-    Analysis.query.filter(Analysis.artefact_id.in_(all_ids)).delete(synchronize_session=False)
-    ExtractedFile.query.filter(
-        ExtractedFile.partition_id.in_(
-            db.session.query(Partition.id).filter(Partition.artefact_id.in_(all_ids))
-        )
-    ).delete(synchronize_session=False)
-    Partition.query.filter(Partition.artefact_id.in_(all_ids)).delete(synchronize_session=False)
-    ArtefactProtection.query.filter(ArtefactProtection.artefact_id.in_(all_ids)).delete(synchronize_session=False)
-    ArtefactMastering.query.filter(ArtefactMastering.artefact_id.in_(all_ids)).delete(synchronize_session=False)
-    RiscosModule.query.filter(RiscosModule.artefact_id.in_(all_ids)).delete(synchronize_session=False)
-    ArtefactRestriction.query.filter(ArtefactRestriction.artefact_id.in_(all_ids)).delete(synchronize_session=False)
-    db.session.execute(artefact_tags.delete().where(artefact_tags.c.artefact_id.in_(all_ids)))
+    _bulk_delete_artefact_dependents(all_ids)
 
     # Delete derived artefacts: break self-referential FK, then delete.
     if all_derived_ids:
-        Artefact.query.filter(Artefact.id.in_(all_derived_ids)).update(
-            {Artefact.parent_artefact_id: None}, synchronize_session=False)
-        Artefact.query.filter(Artefact.id.in_(all_derived_ids)).delete(synchronize_session=False)
+        _bulk_delete_artefacts(all_derived_ids)
 
     if commit:
         db.session.commit()
