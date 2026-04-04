@@ -618,6 +618,109 @@ def get_analysis(uuid):
     return jsonify(analysis_to_dict(analysis))
 
 
+@blueprint.route('/artefacts/<string:uuid>/analysis/tree', methods=['GET'])
+@require_auth('read_only')
+def get_artefact_analysis_tree(uuid):
+    """Return the full derivation tree for an artefact.
+
+    Recursively walks: artefact -> analyses -> produced_artefacts -> analyses -> ...
+    """
+    from ..utils.api_serializers import analysis_tree_node
+    artefact = _get_artefact_or_404(uuid)
+    return jsonify({'artefact': analysis_tree_node(artefact)})
+
+
+@blueprint.route('/artefacts/<string:uuid>/analysis/recursive', methods=['GET'])
+@require_auth('read_only')
+def get_artefact_analyses_recursive(uuid):
+    """Return all analyses for an artefact and all its descendants (flat list).
+
+    Optional query param: ?status=failed to filter by status.
+    """
+    from .artefacts import _collect_all_analyses
+    artefact = _get_artefact_or_404(uuid)
+    analyses = _collect_all_analyses(artefact)
+
+    status_filter = request.args.get('status')
+    if status_filter:
+        try:
+            target_status = AnalysisStatus(status_filter)
+        except ValueError:
+            return error_response(f'Invalid status: {status_filter}')
+        analyses = [a for a in analyses if a.status == target_status]
+
+    total = len(analyses)
+    failed = sum(1 for a in analyses if a.status == AnalysisStatus.FAILED)
+
+    return jsonify({
+        'artefact_uuid': artefact.uuid,
+        'artefact_label': artefact.label,
+        'analyses': [analysis_to_dict(a, include_artefact=True) for a in analyses],
+        'total': total,
+        'failed': failed,
+    })
+
+
+@blueprint.route('/analysis/failures', methods=['GET'])
+@require_auth('read_only')
+def search_failed_analyses():
+    """Search failed analyses system-wide with optional filters.
+
+    Query params: analysis_type, tool_name, since, until, error, page, per_page.
+    """
+    query = Analysis.query.filter(Analysis.status == AnalysisStatus.FAILED)
+
+    analysis_type = request.args.get('analysis_type')
+    if analysis_type:
+        try:
+            at = AnalysisType(analysis_type)
+        except ValueError:
+            return error_response(f'Invalid analysis_type: {analysis_type}')
+        query = query.filter(Analysis.analysis_type == at)
+
+    tool_name = request.args.get('tool_name')
+    if tool_name:
+        query = query.filter(Analysis.tool_name == tool_name)
+
+    since = request.args.get('since')
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since)
+        except ValueError:
+            return error_response(f'Invalid since date: {since}')
+        query = query.filter(Analysis.completed_at >= since_dt)
+
+    until = request.args.get('until')
+    if until:
+        try:
+            until_dt = datetime.fromisoformat(until)
+        except ValueError:
+            return error_response(f'Invalid until date: {until}')
+        query = query.filter(Analysis.completed_at <= until_dt)
+
+    error_pattern = request.args.get('error')
+    if error_pattern:
+        query = query.filter(Analysis.error_message.ilike(f'%{error_pattern}%'))
+
+    query = query.options(
+        joinedload(Analysis.artefact).joinedload(Artefact.item)
+    ).order_by(Analysis.completed_at.desc())
+
+    page = request.args.get('page', 1, type=int)
+    per_page = min(request.args.get('per_page', 50, type=int), 200)
+    offset = (page - 1) * per_page
+
+    total = query.count()
+    analyses = query.offset(offset).limit(per_page).all()
+
+    return jsonify({
+        'failures': [analysis_to_dict(a, include_artefact=True) for a in analyses],
+        'total': total,
+        'page': page,
+        'per_page': per_page,
+    })
+
+
 @blueprint.route('/analysis/<int:id>', methods=['PUT'])
 @require_auth('read_write')
 def update_analysis(id):
