@@ -52,16 +52,15 @@
         <i class="bi bi-file-earmark-zip text-secondary flex-shrink-0 small" style="margin-top:0.2rem;"></i>
         {% endif %}
         <div class="flex-grow-1">
-            <div class="d-flex align-items-center gap-2 flex-wrap">
-                <code class="small">{{ name }}</code>
-                {% for analysis in child.analyses %}
-                <span class="d-inline-flex align-items-center gap-1">
-                    <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=analysis.uuid) }}"
-                       class="text-decoration-none small">{{ analysis.analysis_type|format_analysis_type }}</a>
-                    {{ status_badge(analysis.status.value) }}
-                </span>
-                {% endfor %}
+            <code class="small">{{ name }}</code>
+            {% for analysis in child.analyses %}
+            <div class="d-flex align-items-center gap-2 py-1 border-bottom border-light">
+                <i class="bi bi-gear text-muted flex-shrink-0 small"></i>
+                <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=analysis.uuid) }}"
+                   class="text-decoration-none small flex-grow-1">{{ analysis.analysis_type|format_analysis_type }}</a>
+                <div class="flex-shrink-0">{{ status_badge(analysis.status.value) }}</div>
             </div>
+            {% endfor %}
             {% if child.children %}
             <div class="ms-2 border-start border-2 ps-2">{{ render_path_tree(child) }}</div>
             {% endif %}
