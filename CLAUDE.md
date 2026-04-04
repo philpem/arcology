@@ -261,11 +261,11 @@ automatically — this only applies to hand-written migrations.
 
 #### Migration filename convention
 
-Migration files must be named `YYYYMMDD_description.py` (e.g.
-`20260404_add_riscos_load_exec_address.py`).  An optional `_HHMM` time
-suffix is allowed after the date when multiple migrations share the same
-date (e.g. `20260331_1147_add_user_preferences_column.py`).  Do **not**
-use the hex revision ID as the filename prefix.
+Migration files must be named `YYYYMMDD_HHMM_description.py` using the
+current UTC time (e.g. `20260404_0142_add_riscos_load_exec_address.py`).
+The `_HHMM` suffix avoids conflicts when multiple tasks create migrations
+on the same date.  Do **not** use the hex revision ID as the filename
+prefix.
 
 ### RISC OS INF sidecar file processing
 
