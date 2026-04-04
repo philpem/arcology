@@ -38,14 +38,49 @@
 {% endmacro %}
 
 {# ------------------------------------------------------------------ #}
-{# Recursive node macro                                                #}
+{# Path tree macro — renders a nested file-path tree of analyses      #}
+{# node: {'children': {name: node}, 'analyses': [Analysis]}          #}
+{# ------------------------------------------------------------------ #}
+{% macro render_path_tree(node) %}
+<ul class="list-unstyled mb-0">
+{% for name, child in node.children | dictsort %}
+<li class="pt-analysis-row py-1">
+    <div class="d-flex align-items-start gap-2">
+        {% if child.children %}
+        <i class="bi bi-folder2 text-warning flex-shrink-0 small" style="margin-top:0.2rem;"></i>
+        {% else %}
+        <i class="bi bi-file-earmark-zip text-secondary flex-shrink-0 small" style="margin-top:0.2rem;"></i>
+        {% endif %}
+        <div class="flex-grow-1">
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                <code class="small">{{ name }}</code>
+                {% for analysis in child.analyses %}
+                <span class="d-inline-flex align-items-center gap-1">
+                    <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=analysis.uuid) }}"
+                       class="text-decoration-none small">{{ analysis.analysis_type|format_analysis_type }}</a>
+                    {{ status_badge(analysis.status.value) }}
+                </span>
+                {% endfor %}
+            </div>
+            {% if child.children %}
+            <div class="ms-2 border-start border-2 ps-2">{{ render_path_tree(child) }}</div>
+            {% endif %}
+        </div>
+    </div>
+</li>
+{% endfor %}
+</ul>
+{% endmacro %}
+
+{# ------------------------------------------------------------------ #}
+{# Recursive artefact node macro                                       #}
 {# ------------------------------------------------------------------ #}
 {% macro render_node(node, depth=0) %}
 {% set art = node.artefact %}
 {% set collapse_id = 'pt-node-' ~ art.uuid %}
 <div class="pt-node mb-2">
 
-    {# --- Node header (collapsible toggle for children, always open at depth 0) --- #}
+    {# --- Node header (collapsible toggle) --- #}
     <button class="btn btn-outline-secondary pt-toggle-btn d-flex align-items-center gap-2 py-2 px-3"
             type="button"
             data-bs-toggle="collapse"
@@ -68,7 +103,7 @@
     <div class="collapse show" id="{{ collapse_id }}">
         <div class="pt-node-body py-2">
 
-            {# Analysis list #}
+            {# Flat analysis list (analyses with no file-path context) #}
             {% if node.analyses %}
             {% set child_analysis_ids = node.children | map(attribute='artefact') | map(attribute='derived_from_analysis_id') | list %}
             <ul class="list-unstyled mb-0">
@@ -79,29 +114,11 @@
                        class="text-decoration-none text-truncate flex-grow-1">
                         {{ analysis.analysis_type|format_analysis_type }}
                     </a>
-                    {# Show input filename for archive/conversion analyses #}
+                    {# Top-level archive extract: show format name since no file path #}
                     {% if analysis.analysis_type.value == 'archive_extract' and analysis.hints %}
                     {% set h = analysis.hints | fromjson %}
-                    {% if h.file_id and hint_file_map.get(h.file_id) %}
-                    <small class="text-muted text-nowrap text-truncate" style="max-width:14rem;" title="{{ hint_file_map[h.file_id].path }}">
-                        <i class="bi bi-file-zip"></i> {{ hint_file_map[h.file_id].filename }}
-                    </small>
-                    {% elif h.archive_format %}
+                    {% if h.archive_format %}
                     <small class="text-muted text-nowrap"><i class="bi bi-file-zip"></i> {{ h.archive_format }}</small>
-                    {% endif %}
-                    {% elif analysis.analysis_type.value == 'archive_detect' and analysis.hints %}
-                    {% set h = analysis.hints | fromjson %}
-                    {% if h.path_prefix %}
-                    <small class="text-muted text-nowrap text-truncate" style="max-width:14rem;" title="{{ h.path_prefix }}">
-                        <i class="bi bi-search"></i> {{ h.path_prefix.split('/')[-1] or h.path_prefix }}
-                    </small>
-                    {% endif %}
-                    {% elif analysis.analysis_type.value == 'format_convert' and analysis.hints %}
-                    {% set h = analysis.hints | fromjson %}
-                    {% if h.path_prefix %}
-                    <small class="text-muted text-nowrap text-truncate" style="max-width:14rem;" title="{{ h.path_prefix }}">
-                        <i class="bi bi-arrow-left-right"></i> {{ h.path_prefix.split('/')[-1] or h.path_prefix }}
-                    </small>
                     {% endif %}
                     {% endif %}
                     {% if analysis.id in child_analysis_ids %}
@@ -111,11 +128,20 @@
                 </li>
                 {% endfor %}
             </ul>
-            {% else %}
+            {% endif %}
+
+            {# Path tree (analyses grouped by file path within the artefact) #}
+            {% if node.path_tree %}
+            <div class="{% if node.analyses %}mt-2 pt-2 border-top border-light{% endif %}">
+                {{ render_path_tree(node.path_tree) }}
+            </div>
+            {% endif %}
+
+            {% if not node.analyses and not node.path_tree %}
             <p class="text-muted small mb-0"><i class="bi bi-dash"></i> No analyses</p>
             {% endif %}
 
-            {# Child nodes (derived artefacts) #}
+            {# Child artefact nodes (derived artefacts) #}
             {% for child in node.children %}
             <div class="pt-child">
                 {{ render_node(child, depth + 1) }}
