@@ -34,6 +34,9 @@
             <div class="card-header"><i class="bi bi-info-circle"></i> Details</div>
             <div class="card-body">
                 <dl class="mb-0">
+                    {% if item.description %}
+                    <dt>Description</dt><dd>{{ item.description }}</dd>
+                    {% endif %}
                     {% if item.parent %}
                     <dt>Parent</dt>
                     <dd><a href="{{ url_for('myapp_blueprints_items.view', uuid=item.parent.url_id) }}">{{ item.parent.name }}</a></dd>
@@ -59,9 +62,6 @@
                         {% endif %}
                     </dd>
                     <dt>Tags</dt><dd>{% for tag in item.tags %}<span class="badge bg-info">{{ tag.name }}</span> {% else %}<span class="text-muted">None</span>{% endfor %}</dd>
-                    {% if item.description %}
-                    <dt>Description</dt><dd>{{ item.description }}</dd>
-                    {% endif %}
                 </dl>
             </div>
         </div>
