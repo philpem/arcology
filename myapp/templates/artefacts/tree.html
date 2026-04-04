@@ -1,0 +1,179 @@
+{% extends "_base.html" %}
+{% block page_title %}Processing Tree &mdash; {{ artefact.label }}{% endblock %}
+
+{% block styles %}
+{{ super() }}
+{% if has_active_analyses %}
+<meta http-equiv="refresh" content="10">
+{% endif %}
+<style>
+.pt-node { position: relative; }
+.pt-node-body { border-left: 2px solid #dee2e6; margin-left: 0.75rem; padding-left: 0.75rem; }
+.pt-analysis-row { font-size: 0.875rem; }
+.pt-analysis-row + .pt-child { margin-top: 0.5rem; }
+.pt-child { margin-top: 0.5rem; }
+.pt-toggle-btn { text-align: left; width: 100%; }
+.pt-toggle-btn .pt-chevron { transition: transform 0.15s ease; display: inline-block; }
+.pt-toggle-btn[aria-expanded="true"] .pt-chevron { transform: rotate(90deg); }
+@keyframes pt-spin { to { transform: rotate(360deg); } }
+.pt-spin { display: inline-block; animation: pt-spin 1s linear infinite; }
+</style>
+{% endblock %}
+
+{# ------------------------------------------------------------------ #}
+{# Status badge macro                                                  #}
+{# ------------------------------------------------------------------ #}
+{% macro status_badge(status_value) %}
+{% if status_value == 'completed' %}
+<span class="badge bg-success"><i class="bi bi-check-circle-fill me-1"></i>completed</span>
+{% elif status_value == 'running' %}
+<span class="badge bg-info text-dark"><i class="bi bi-arrow-repeat pt-spin me-1"></i>running</span>
+{% elif status_value == 'pending' %}
+<span class="badge bg-warning text-dark"><i class="bi bi-hourglass me-1"></i>pending</span>
+{% elif status_value == 'failed' %}
+<span class="badge bg-danger"><i class="bi bi-x-circle-fill me-1"></i>failed</span>
+{% else %}
+<span class="badge bg-secondary">{{ status_value }}</span>
+{% endif %}
+{% endmacro %}
+
+{# ------------------------------------------------------------------ #}
+{# Recursive node macro                                                #}
+{# ------------------------------------------------------------------ #}
+{% macro render_node(node, depth=0) %}
+{% set art = node.artefact %}
+{% set collapse_id = 'pt-node-' ~ art.uuid %}
+<div class="pt-node mb-2">
+
+    {# --- Node header (collapsible toggle for children, always open at depth 0) --- #}
+    <button class="btn btn-outline-secondary pt-toggle-btn d-flex align-items-center gap-2 py-2 px-3"
+            type="button"
+            data-bs-toggle="collapse"
+            data-bs-target="#{{ collapse_id }}"
+            aria-expanded="true"
+            aria-controls="{{ collapse_id }}">
+        <i class="bi bi-chevron-right pt-chevron"></i>
+        <span class="badge bg-secondary">{{ art.artefact_type.value.upper().replace('_', ' ') }}</span>
+        <strong class="me-1">{{ art.label }}</strong>
+        {% if art.derived_from_analysis %}
+        <small class="text-muted fw-normal">via {{ art.derived_from_analysis.analysis_type|format_analysis_type }}</small>
+        {% endif %}
+        <a href="{{ artefact_url(art) }}"
+           class="btn btn-sm btn-link p-0 ms-auto text-decoration-none"
+           onclick="event.stopPropagation();"
+           title="View artefact"><i class="bi bi-box-arrow-up-right"></i></a>
+    </button>
+
+    {# --- Collapsible body --- #}
+    <div class="collapse show" id="{{ collapse_id }}">
+        <div class="pt-node-body py-2">
+
+            {# Analysis list #}
+            {% if node.analyses %}
+            {% set child_analysis_ids = node.children | map(attribute='artefact') | map(attribute='derived_from_analysis_id') | list %}
+            <ul class="list-unstyled mb-0">
+                {% for analysis in node.analyses %}
+                <li class="pt-analysis-row d-flex align-items-center gap-2 py-1 border-bottom border-light">
+                    <i class="bi bi-gear text-muted flex-shrink-0"></i>
+                    <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=analysis.uuid) }}"
+                       class="text-decoration-none text-truncate flex-grow-1">
+                        {{ analysis.analysis_type|format_analysis_type }}
+                    </a>
+                    {% if analysis.id in child_analysis_ids %}
+                    <small class="text-muted text-nowrap"><i class="bi bi-arrow-down-right"></i> produced</small>
+                    {% endif %}
+                    <div class="flex-shrink-0">{{ status_badge(analysis.status.value) }}</div>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="text-muted small mb-0"><i class="bi bi-dash"></i> No analyses</p>
+            {% endif %}
+
+            {# Child nodes (derived artefacts) #}
+            {% for child in node.children %}
+            <div class="pt-child">
+                {{ render_node(child, depth + 1) }}
+            </div>
+            {% endfor %}
+
+        </div>
+    </div>
+</div>
+{% endmacro %}
+
+{# ================================================================== #}
+{# Page content                                                        #}
+{# ================================================================== #}
+{% block content %}
+
+{# Breadcrumb #}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.index') }}">Items</a></li>
+        {% for ancestor in artefact.item.ancestors %}
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=ancestor.url_id) }}">{{ ancestor.name }}</a></li>
+        {% endfor %}
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=artefact.item.url_id) }}">{{ artefact.item.name }}</a></li>
+        <li class="breadcrumb-item"><a href="{{ artefact_url(artefact) }}">{{ artefact.label }}</a></li>
+        <li class="breadcrumb-item active">Processing Tree</li>
+    </ol>
+</nav>
+
+{# Page header #}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1><i class="bi bi-diagram-3 me-2"></i>Processing Tree</h1>
+        <p class="text-muted mb-0">{{ artefact.label }}</p>
+    </div>
+    <div class="d-flex gap-2 align-items-center">
+        {% if has_active_analyses %}
+        <span class="badge bg-info text-dark"><i class="bi bi-arrow-repeat pt-spin me-1"></i>Auto-refreshing</span>
+        {% endif %}
+        <a href="{{ artefact_url(artefact) }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Artefact
+        </a>
+    </div>
+</div>
+
+{# Summary badges #}
+{% if total_count %}
+<div class="mb-4 d-flex gap-2 flex-wrap align-items-center">
+    <span class="text-muted small">{{ total_count }} total &mdash;</span>
+    {% if status_counts.completed %}
+    <span class="badge bg-success"><i class="bi bi-check-circle-fill me-1"></i>{{ status_counts.completed }} completed</span>
+    {% endif %}
+    {% if status_counts.running %}
+    <span class="badge bg-info text-dark"><i class="bi bi-arrow-repeat pt-spin me-1"></i>{{ status_counts.running }} running</span>
+    {% endif %}
+    {% if status_counts.pending %}
+    <span class="badge bg-warning text-dark"><i class="bi bi-hourglass me-1"></i>{{ status_counts.pending }} pending</span>
+    {% endif %}
+    {% if status_counts.failed %}
+    <span class="badge bg-danger"><i class="bi bi-x-circle-fill me-1"></i>{{ status_counts.failed }} failed</span>
+    {% endif %}
+</div>
+{% endif %}
+
+{# Tree #}
+<div class="card">
+    <div class="card-body p-3">
+        {{ render_node(tree) }}
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+// Keep chevron in sync with Bootstrap collapse state
+document.querySelectorAll('[data-bs-toggle="collapse"]').forEach(function(btn) {
+    var targetId = btn.getAttribute('data-bs-target');
+    var target = document.querySelector(targetId);
+    if (!target) return;
+    target.addEventListener('show.bs.collapse', function() { btn.setAttribute('aria-expanded', 'true'); });
+    target.addEventListener('hide.bs.collapse', function() { btn.setAttribute('aria-expanded', 'false'); });
+});
+</script>
+{% endblock %}

@@ -654,6 +654,60 @@ def _bulk_delete_artefacts(artefact_ids: list[int]):
     Artefact.query.filter(Artefact.id.in_(artefact_ids)).delete(synchronize_session=False)
 
 
+def _build_processing_tree(root: Artefact) -> tuple[dict, bool]:
+    """Build a nested tree structure for the processing tree view.
+
+    Returns (tree_node, has_active_analyses).  tree_node is a nested dict:
+        {'artefact': Artefact, 'analyses': [Analysis, ...], 'children': [node, ...]}
+
+    All data is fetched in two flat queries (no N+1) and assembled in Python.
+    """
+    from collections import defaultdict
+
+    all_ids = [root.id] + get_all_derived_artefact_ids(root)
+
+    all_artefacts = Artefact.query.filter(Artefact.id.in_(all_ids)).all()
+    artefact_map = {a.id: a for a in all_artefacts}
+
+    children_map: dict[int, list] = defaultdict(list)
+    for a in all_artefacts:
+        if a.parent_artefact_id is not None:
+            children_map[a.parent_artefact_id].append(a)
+
+    all_analyses = (
+        Analysis.query
+        .filter(Analysis.artefact_id.in_(all_ids))
+        .order_by(Analysis.id)
+        .all()
+    )
+
+    analyses_map: dict[int, list] = defaultdict(list)
+    for analysis in all_analyses:
+        analyses_map[analysis.artefact_id].append(analysis)
+
+    has_active = any(
+        a.status in (AnalysisStatus.PENDING, AnalysisStatus.RUNNING)
+        for a in all_analyses
+    )
+
+    status_counts = {s.value: 0 for s in AnalysisStatus}
+    for a in all_analyses:
+        status_counts[a.status.value] += 1
+    total_count = len(all_analyses)
+
+    def _build(aid: int) -> dict:
+        return {
+            'artefact': artefact_map[aid],
+            'analyses': analyses_map.get(aid, []),
+            'children': [
+                _build(c.id)
+                for c in sorted(children_map.get(aid, []), key=lambda x: x.id)
+            ],
+        }
+
+    return _build(root.id), has_active, status_counts, total_count
+
+
 def reset_artefact_for_reanalysis(artefact: Artefact, commit: bool = True):
     """
     Reset an artefact to its just-uploaded state ready for re-analysis.
@@ -946,6 +1000,25 @@ def view_legacy(uuid):
     """Legacy flat-URL compat shim — resolves and renders without redirect."""
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     return _render_artefact_view(artefact)
+
+
+@blueprint.route('/artefacts/<string:uuid>/tree')
+@login_required
+def tree(uuid):
+    """Processing tree view — shows the full artefact derivation tree with analysis status."""
+    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    root = artefact.root_artefact
+    if root is not artefact:
+        return redirect(url_for(f'{ROUTENAME}.tree', uuid=root.uuid))
+    tree_data, has_active, status_counts, total_count = _build_processing_tree(root)
+    return render_template(
+        'artefacts/tree.html',
+        artefact=root,
+        tree=tree_data,
+        has_active_analyses=has_active,
+        status_counts=status_counts,
+        total_count=total_count,
+    )
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/viewer')
