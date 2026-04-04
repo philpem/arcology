@@ -108,6 +108,9 @@
                         {% set partition_color = partition_colors[file.partition.partition_index % partition_colors|length] %}
                         {# Check if this directory row has a recognised product match #}
                         {% set rp_match = recognised_folder_paths.get(file.path) if file.is_directory else none %}
+                        {# Strip the current path prefix for display; show only relative path within the browsed directory #}
+                        {% set file_display_path = file.path[current_path|length:] if current_path else file.path %}
+                        {% set file_display_parts = file_display_path.split('/') %}
                         <tr class="{{ 'table-secondary' if file.is_known else '' }}{{ ' fst-italic' if file.is_directory else '' }}" id="file-row-{{ file.id }}">
                             {% if hashdb_mode %}
                             <td>{% if not file.is_directory %}<input type="checkbox" name="file_ids" value="{{ file.id }}" class="file-checkbox">{% endif %}</td>
@@ -118,7 +121,7 @@
                                     <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=file.path + '/') | urlencode }}"
                                        class="text-primary text-decoration-none"
                                        title="Browse directory">
-                                        <i class="bi bi-folder-fill"></i> <strong>{{ file.path }}</strong>
+                                        <i class="bi bi-folder-fill"></i> {% if current_path %}<span class="text-muted">… /</span> {% endif %}<strong>{{ file_display_path }}</strong>
                                     </a>
                                     {% if rp_match %}
                                     <span class="badge bg-info ms-1" title="Recognised: {{ rp_match.product.title }} ({{ rp_match.product.database.name }}) — {{ rp_match.required_matched }}/{{ rp_match.required_total }} required matched">
@@ -128,17 +131,24 @@
                                 {% elif file.is_archive %}
                                     {# Archive - render like a directory but with an archive icon #}
                                     {% set path_parts = file.path.split('/') %}
-                                    {% if path_parts|length > 1 %}
+                                    {% if current_path %}
+                                        <span class="text-muted">… /</span>
+                                        {% for i in range(file_display_parts|length - 1) %}
+                                            {% set build_path = current_path + file_display_parts[:i+1]|join('/') + '/' %}
+                                            <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=build_path) | urlencode }}"
+                                               class="text-muted text-decoration-none"
+                                               title="Browse {{ build_path }}">
+                                                {% if build_path.rstrip('/') in archive_paths %}<i class="bi bi-file-zip"></i>{% else %}<i class="bi bi-folder"></i>{% endif %}
+                                                {{ file_display_parts[i] }}
+                                            </a> /
+                                        {% endfor %}
+                                    {% elif path_parts|length > 1 %}
                                         {% for i in range(path_parts|length - 1) %}
                                             {% set build_path = path_parts[:i+1]|join('/') + '/' %}
                                             <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=build_path) | urlencode }}"
                                                class="text-muted text-decoration-none"
                                                title="Browse {{ build_path }}">
-                                                {% if build_path.rstrip('/') in archive_paths %}
-                                                <i class="bi bi-file-zip"></i>
-                                                {% else %}
-                                                <i class="bi bi-folder"></i>
-                                                {% endif %}
+                                                {% if build_path.rstrip('/') in archive_paths %}<i class="bi bi-file-zip"></i>{% else %}<i class="bi bi-folder"></i>{% endif %}
                                                 {{ path_parts[i] }}
                                             </a> /
                                         {% endfor %}
@@ -146,22 +156,31 @@
                                     <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=file.path + '/') | urlencode }}"
                                        class="text-primary text-decoration-none"
                                        title="Browse archive contents">
-                                        <i class="bi bi-file-zip-fill"></i> <strong>{{ path_parts[-1] }}</strong>
+                                        <i class="bi bi-file-zip-fill"></i> <strong>{{ file_display_parts[-1] }}</strong>
                                     </a>
                                 {% else %}
                                     {% set path_parts = file.path.split('/') %}
-                                    {% if path_parts|length > 1 %}
+                                    {% if current_path %}
+                                        {# Show only the path relative to the current directory, prefixed with … #}
+                                        <span class="text-muted">… /</span>
+                                        {% for i in range(file_display_parts|length - 1) %}
+                                            {% set build_path = current_path + file_display_parts[:i+1]|join('/') + '/' %}
+                                            <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=build_path) | urlencode }}"
+                                               class="text-muted text-decoration-none"
+                                               title="Browse {{ build_path }}">
+                                                {% if build_path.rstrip('/') in archive_paths %}<i class="bi bi-file-zip"></i>{% else %}<i class="bi bi-folder"></i>{% endif %}
+                                                {{ file_display_parts[i] }}
+                                            </a> /
+                                        {% endfor %}
+                                        <code>{{ file_display_parts[-1] }}</code>
+                                    {% elif path_parts|length > 1 %}
                                         {# Show directory path as clickable links, with archive icon for archive components #}
                                         {% for i in range(path_parts|length - 1) %}
                                             {% set build_path = path_parts[:i+1]|join('/') + '/' %}
                                             <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=build_path) | urlencode }}"
                                                class="text-muted text-decoration-none"
                                                title="Browse {{ build_path }}">
-                                                {% if build_path.rstrip('/') in archive_paths %}
-                                                <i class="bi bi-file-zip"></i>
-                                                {% else %}
-                                                <i class="bi bi-folder"></i>
-                                                {% endif %}
+                                                {% if build_path.rstrip('/') in archive_paths %}<i class="bi bi-file-zip"></i>{% else %}<i class="bi bi-folder"></i>{% endif %}
                                                 {{ path_parts[i] }}
                                             </a> /
                                         {% endfor %}
