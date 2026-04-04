@@ -2291,17 +2291,14 @@ def move(item_id=None, artefact_id=None):
 
 
 def _collect_item_artefact_ids(item_ids):
-    """Collect all artefact IDs for a list of items (direct + all derived) via CTE.
-
-    Returns (all_ids, direct_ids) where all_ids includes derived artefacts.
-    """
+    """Collect all artefact IDs for a list of items (direct + all derived) via CTE."""
     from sqlalchemy import select as sa_select
 
     direct_ids = [r[0] for r in db.session.execute(
         sa_select(Artefact.id).where(Artefact.item_id.in_(item_ids))
     ).all()]
     if not direct_ids:
-        return [], []
+        return []
 
     # Recursive CTE: find all derived artefacts from any artefact in this item
     base = sa_select(Artefact.id).where(Artefact.parent_artefact_id.in_(direct_ids))
@@ -2310,131 +2307,110 @@ def _collect_item_artefact_ids(item_ids):
     cte = cte.union_all(recursive)
     derived_ids = [r[0] for r in db.session.execute(sa_select(cte.c.id)).all()]
 
-    all_ids = direct_ids + derived_ids
-    return all_ids, direct_ids
+    return direct_ids + derived_ids
 
 
-def _collect_item_cleanup_paths(item, all_artefact_ids):
-    """Collect all file paths to delete for an item using bulk queries.
+def _collect_item_cleanup_keys(all_artefact_ids):
+    """Collect all storage keys and cache prefixes for cleanup.
 
-    Returns a dict with keys: artefact_files, output_folder, output_files,
-    output_dirs, cache_dirs.  All values are plain strings so the result
-    can be used in a background thread without ORM access.
+    Returns a dict with keys: artefact_keys, output_file_keys, output_dir_prefixes,
+    cache_prefixes.  All values are storage key strings usable with the storage backend.
     """
     from sqlalchemy import select as sa_select
 
-    upload_folder = get_upload_folder()
-    output_folder = get_output_folder()
+    artefact_keys = []
+    cache_prefixes = []
+    output_dir_prefixes = []
+    output_file_keys = []
 
-    # Artefact storage files
-    artefact_files = []
-    if all_artefact_ids:
-        rows = db.session.execute(
-            sa_select(Artefact.storage_directory, Artefact.storage_path)
-            .where(Artefact.id.in_(all_artefact_ids))
-        ).all()
-        for storage_dir, storage_path in rows:
-            if storage_path:
-                folder = output_folder if storage_dir == StorageDirectory.OUTPUTS else upload_folder
-                artefact_files.append(os.path.join(folder, storage_path))
+    if not all_artefact_ids:
+        return {
+            'artefact_keys': artefact_keys,
+            'output_file_keys': output_file_keys,
+            'output_dir_prefixes': output_dir_prefixes,
+            'cache_prefixes': cache_prefixes,
+        }
+
+    # Single query for artefact storage keys and cache prefixes
+    rows = db.session.execute(
+        sa_select(Artefact.storage_directory, Artefact.storage_path, Artefact.uuid)
+        .where(Artefact.id.in_(all_artefact_ids))
+    ).all()
+    for storage_dir, storage_path, artefact_uuid in rows:
+        if storage_path:
+            directory = 'outputs' if storage_dir == StorageDirectory.OUTPUTS else 'uploads'
+            artefact_keys.append(f"{directory}/{storage_path}")
+        cache_prefixes.append(f"outputs/.cache/{artefact_uuid}")
 
     # Analysis output dirs and named output files
-    output_dirs = []
-    output_files = []
-    if all_artefact_ids:
-        rows = db.session.execute(
-            sa_select(Analysis.output_path, Analysis.details)
-            .where(Analysis.artefact_id.in_(all_artefact_ids))
-        ).all()
-        for output_path, details in rows:
-            if output_path:
-                output_dirs.append(output_path)
-            if details:
+    rows = db.session.execute(
+        sa_select(Analysis.output_path, Analysis.details)
+        .where(Analysis.artefact_id.in_(all_artefact_ids))
+    ).all()
+    for output_path, details in rows:
+        if output_path:
+            # output_path may be absolute (/data/outputs/...) or relative;
+            # normalise to a storage key prefix under 'outputs/'.
+            if os.path.isabs(output_path):
+                parts = output_path.rstrip('/').split('/')
                 try:
-                    parsed = json.loads(details)
-                    if 'outputs' in parsed and isinstance(parsed['outputs'], list):
-                        for output in parsed['outputs']:
-                            if 'filename' in output:
-                                output_files.append(output['filename'])
-                except (json.JSONDecodeError, KeyError, TypeError):
-                    pass
-
-    # Cache dirs (one per artefact UUID)
-    cache_dirs = []
-    if all_artefact_ids:
-        uuids = db.session.execute(
-            sa_select(Artefact.uuid).where(Artefact.id.in_(all_artefact_ids))
-        ).scalars().all()
-        for u in uuids:
-            cache_dir = os.path.join(output_folder, '.cache', u)
-            cache_dirs.append(cache_dir)
+                    idx = parts.index('outputs')
+                    rel = '/'.join(parts[idx + 1:])
+                except ValueError:
+                    rel = '/'.join(parts[-3:]) if len(parts) >= 3 else parts[-1]
+            else:
+                rel = output_path
+            output_dir_prefixes.append(f"outputs/{rel}")
+        if details:
+            try:
+                parsed = json.loads(details)
+                if 'outputs' in parsed and isinstance(parsed['outputs'], list):
+                    for output in parsed['outputs']:
+                        if 'filename' in output:
+                            output_file_keys.append(f"outputs/{output['filename']}")
+            except (json.JSONDecodeError, KeyError, TypeError):
+                pass
 
     return {
-        'artefact_files': artefact_files,
-        'output_folder': output_folder,
-        'output_files': output_files,
-        'output_dirs': output_dirs,
-        'cache_dirs': cache_dirs,
+        'artefact_keys': artefact_keys,
+        'output_file_keys': output_file_keys,
+        'output_dir_prefixes': output_dir_prefixes,
+        'cache_prefixes': cache_prefixes,
     }
 
 
-def _background_cleanup_item_files(cleanup, logger_name):
-    """Delete item files in a background thread.  No ORM/app context needed."""
+def _background_cleanup_item_files(cleanup, storage, logger_name):
+    """Delete item files in a background thread using the storage backend.
+
+    Works with both LocalStorage and S3Storage since all paths are expressed
+    as storage keys.  No ORM/app context needed.
+    """
     import logging
     logger = logging.getLogger(logger_name)
-    output_folder = cleanup['output_folder']
-    real_output = os.path.realpath(output_folder)
 
-    def _is_safe(p):
-        return os.path.realpath(p).startswith(real_output + os.sep)
-
-    def _prune_empty_parents(path):
-        current = os.path.dirname(os.path.realpath(path))
-        while current.startswith(real_output + os.sep):
-            try:
-                os.rmdir(current)
-            except OSError:
-                break
-            current = os.path.dirname(current)
-
-    # Remove artefact storage files
-    for path in cleanup['artefact_files']:
+    for key in cleanup['artefact_keys']:
         try:
-            if os.path.exists(path):
-                os.remove(path)
+            storage.delete(key)
         except Exception as e:
-            logger.warning(f"Failed to delete artefact file {path}: {e}")
+            logger.warning(f"Failed to delete artefact file {key}: {e}")
 
-    # Remove named output files
-    for filename in cleanup['output_files']:
-        path = os.path.join(output_folder, filename)
-        if not _is_safe(path):
-            continue
+    for key in cleanup['output_file_keys']:
         try:
-            if os.path.exists(path):
-                os.remove(path)
+            storage.delete(key)
         except Exception as e:
-            logger.warning(f"Failed to delete output file {filename}: {e}")
+            logger.warning(f"Failed to delete output file {key}: {e}")
 
-    # Remove output directories
-    for opath in cleanup['output_dirs']:
-        local_path = _map_output_path_to_local_root(opath, output_folder)
-        if not _is_safe(local_path):
-            continue
+    for prefix in cleanup['output_dir_prefixes']:
         try:
-            if os.path.exists(local_path):
-                shutil.rmtree(local_path)
-                _prune_empty_parents(local_path)
+            storage.delete_prefix(prefix)
         except Exception as e:
-            logger.warning(f"Failed to delete output directory {opath}: {e}")
+            logger.warning(f"Failed to delete output directory {prefix}: {e}")
 
-    # Remove cache directories
-    for cache_dir in cleanup['cache_dirs']:
+    for prefix in cleanup['cache_prefixes']:
         try:
-            if os.path.exists(cache_dir):
-                shutil.rmtree(cache_dir)
+            storage.delete_prefix(prefix)
         except Exception as e:
-            logger.warning(f"Failed to delete cache dir {cache_dir}: {e}")
+            logger.warning(f"Failed to delete cache {prefix}: {e}")
 
 
 def _collect_all_item_ids(item):
@@ -2467,10 +2443,11 @@ def bulk_delete_item(item):
     all_item_ids = _collect_all_item_ids(item)
 
     # Phase 2: Collect all artefact IDs via CTE
-    all_ids, direct_ids = _collect_item_artefact_ids(all_item_ids)
+    all_ids = _collect_item_artefact_ids(all_item_ids)
 
-    # Phase 3: Collect file paths before deleting DB records
-    cleanup = _collect_item_cleanup_paths(item, all_ids)
+    # Phase 3: Collect storage keys before deleting DB records
+    cleanup = _collect_item_cleanup_keys(all_ids)
+    storage = current_app.storage
     logger_name = current_app.logger.name
 
     # Phase 4: Bulk SQL deletes in FK-safe order
@@ -2497,10 +2474,10 @@ def bulk_delete_item(item):
 
     db.session.commit()
 
-    # Phase 5: Background file cleanup (no ORM needed)
+    # Phase 5: Background file cleanup via storage backend (no ORM needed)
     t = threading.Thread(
         target=_background_cleanup_item_files,
-        args=(cleanup, logger_name),
+        args=(cleanup, storage, logger_name),
         daemon=True,
     )
     t.start()

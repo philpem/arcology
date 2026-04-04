@@ -1342,7 +1342,7 @@ class TestBulkDeleteItem(unittest.TestCase):
 
             # Verify records exist
             self.assertEqual(Artefact.query.filter_by(item_id=item_id).count(), 2)
-            self.assertEqual(ExtractedFile.query.count() > 0, True)
+            self.assertGreater(ExtractedFile.query.count(), 0)
 
             # Run bulk delete
             bulk_delete_item(item)
