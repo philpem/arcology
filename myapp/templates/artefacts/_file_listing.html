@@ -108,8 +108,10 @@
                         {% set partition_color = partition_colors[file.partition.partition_index % partition_colors|length] %}
                         {# Check if this directory row has a recognised product match #}
                         {% set rp_match = recognised_folder_paths.get(file.path) if file.is_directory else none %}
+                        {# Normalise current_path to always end with '/' so build_path concatenation is correct #}
+                        {% set _cp = current_path.rstrip('/') + '/' if current_path else '' %}
                         {# Strip the current path prefix for display; show only relative path within the browsed directory #}
-                        {% set _raw_display = file.path[current_path|length:] if current_path else file.path %}
+                        {% set _raw_display = file.path[_cp|length:] if _cp else file.path %}
                         {% set file_display_path = _raw_display.lstrip('/') %}
                         {% set file_display_parts = file_display_path.split('/') if file_display_path else [file.path.split('/')[-1]] %}
                         <tr class="{{ 'table-secondary' if file.is_known else '' }}{{ ' fst-italic' if file.is_directory else '' }}" id="file-row-{{ file.id }}">
@@ -135,7 +137,7 @@
                                     {% if current_path %}
                                         <span class="text-muted">… /</span>
                                         {% for i in range(file_display_parts|length - 1) %}
-                                            {% set build_path = current_path + file_display_parts[:i+1]|join('/') + '/' %}
+                                            {% set build_path = _cp + file_display_parts[:i+1]|join('/') + '/' %}
                                             <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=build_path) | urlencode }}"
                                                class="text-muted text-decoration-none"
                                                title="Browse {{ build_path }}">
@@ -165,7 +167,7 @@
                                         {# Show only the path relative to the current directory, prefixed with … #}
                                         <span class="text-muted">… /</span>
                                         {% for i in range(file_display_parts|length - 1) %}
-                                            {% set build_path = current_path + file_display_parts[:i+1]|join('/') + '/' %}
+                                            {% set build_path = _cp + file_display_parts[:i+1]|join('/') + '/' %}
                                             <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=build_path) | urlencode }}"
                                                class="text-muted text-decoration-none"
                                                title="Browse {{ build_path }}">
