@@ -41,7 +41,10 @@ _DEBUG_KEEP_OUTFILES = False
 def extract_acorn_disc_image_manager(input_path: Path, output_dir: Path) -> dict:
     """
     Extract files from Acorn DFS/ADFS disc image using Disc Image Manager.
-    Creates INF files for metadata.
+
+    DIM produces INF sidecar files alongside extracted data files.  These are
+    processed in-place: metadata is collected, files are renamed from
+    DOS-encoded names to BBC originals, and the INF files are deleted.
 
     Args:
         input_path: Path to Acorn disc image
@@ -88,20 +91,29 @@ exit
                 'process_output': process_output,
             }
 
-        # Count extracted files
+        # Pre-process extracted files before counting:
+        # 1. Normalise RISC OS Latin-1 byte sequences in filenames to Unicode.
+        # 2. Process INF sidecar files (extract metadata, rename DOS-encoded
+        #    filenames to BBC originals, delete the .inf files).
+        # Both must happen before enumerate_extracted_files() or any
+        # downstream tool receives these paths.
         extracted_files = list(output_dir.rglob('*'))
-        file_count = sum(1 for f in extracted_files if f.is_file() and f.suffix.lower() != '.inf')
+        has_files = any(f.is_file() for f in extracted_files)
+
+        inf_metadata = {}
+        if has_files:
+            normalize_extracted_filenames(output_dir)
+            inf_metadata = process_inf_sidecars(output_dir)
+
+        file_count = sum(1 for f in output_dir.rglob('*') if f.is_file())
 
         if file_count > 0:
-            # Rename any files whose names contain raw RISC OS Latin1 bytes to
-            # their correct Unicode equivalents.  This must happen before
-            # enumerate_extracted_files() or any tool receives these paths.
-            normalize_extracted_filenames(output_dir)
             return {
                 'success': True,
                 'tool': 'DiscImageManager',
                 'output_dir': str(output_dir),
                 'file_count': file_count,
+                'inf_metadata': inf_metadata,
                 'summary': f'Extracted {file_count} files from Acorn disc image',
                 'process_output': process_output
             }
@@ -250,6 +262,7 @@ def enumerate_extracted_files(
     parent_file_id: int | None = None,
     extraction_depth: int | None = None,
     filetype_map: dict[str, str] | None = None,
+    inf_metadata: dict[str, dict] | None = None,
 ) -> list[dict]:
     """
     Enumerate files in an extraction directory and return structured file list.
@@ -270,6 +283,10 @@ def enumerate_extracted_files(
             Applied after suffix-based detection: files that already have a
             ``risc_os_filetype`` from their ``,xxx`` filename suffix are not
             overwritten.
+        inf_metadata: Optional mapping of display paths to RISC OS metadata
+            dicts (from :func:`process_inf_sidecars`).  Keys are
+            ``load_address``, ``exec_address``, and optionally
+            ``risc_os_filetype`` and ``attributes``.
 
     Returns:
         List of file dicts with path, size, hashes, and optional
@@ -284,10 +301,6 @@ def enumerate_extracted_files(
 
     for file_path in output_dir.rglob('*'):
         if not file_path.is_file():
-            continue
-
-        # Skip .inf metadata files (Acorn DIM extraction artifacts)
-        if acorn and file_path.suffix.lower() == '.inf':
             continue
 
         rel_path = file_path.relative_to(output_dir)
@@ -329,6 +342,19 @@ def enumerate_extracted_files(
             mapped_type = filetype_map.get(file_entry['path'].lower())
             if mapped_type:
                 file_entry['risc_os_filetype'] = mapped_type
+
+        # Apply INF sidecar metadata (load/exec addresses, filetype, attributes)
+        if inf_metadata:
+            inf_entry = inf_metadata.get(file_entry['path'])
+            if inf_entry:
+                if 'load_address' in inf_entry:
+                    file_entry['load_address'] = inf_entry['load_address']
+                if 'exec_address' in inf_entry:
+                    file_entry['exec_address'] = inf_entry['exec_address']
+                if 'attributes' in inf_entry:
+                    file_entry['attributes'] = inf_entry['attributes']
+                if 'risc_os_filetype' in inf_entry and 'risc_os_filetype' not in file_entry:
+                    file_entry['risc_os_filetype'] = inf_entry['risc_os_filetype']
 
         # Compute hashes so they can be stored in the DB at registration time.
         # This avoids needing to locate the file on disk later (e.g. for hash
@@ -391,6 +417,237 @@ def parse_acorn_filename(filename: str) -> tuple[str, str | None]:
     if match:
         return match.group(1), match.group(2).lower()
     return filename, None
+
+
+def _get_riscos_filetype(load_addr: int) -> str | None:
+    """Extract a RISC OS filetype from a load address.
+
+    When the top 12 bits of the load address (bits 31:20) are all 0xFFF,
+    the file is date-stamped and bits 19:8 hold the 12-bit filetype.
+
+    Returns the filetype as a lowercase 3-char hex string (e.g. 'fff'),
+    or None if the load address is not in date-stamped format.
+    """
+    if (load_addr >> 20) == 0xFFF:
+        filetype = (load_addr >> 8) & 0xFFF
+        return f'{filetype:03x}'
+    return None
+
+
+# BBC Micro <-> DOS/host filename character translation.
+# Files stored on a host filesystem use the DOS-safe characters (right);
+# the INF file records the original BBC characters (left).
+_BBC_TO_DOS = {'#': '?', '.': '/', '$': '<', '^': '>', '&': '+', '@': '=', '%': ';'}
+_DOS_TO_BBC = {v: k for k, v in _BBC_TO_DOS.items()}
+
+
+def _translate_filename_dos_to_bbc(name: str) -> str:
+    """Translate a DOS-encoded filename back to its BBC original."""
+    return ''.join(_DOS_TO_BBC.get(c, c) for c in name)
+
+
+def _translate_filename_bbc_to_dos(name: str) -> str:
+    """Translate a BBC filename to its DOS/host filesystem equivalent."""
+    return ''.join(_BBC_TO_DOS.get(c, c) for c in name)
+
+
+def _parse_inf_line(line: str) -> dict | None:
+    """Parse a single INF file line into a metadata dict.
+
+    INF format::
+
+        <filename> <load> <exec> [<length>] [<access>] [<extra info>]
+
+    The filename may be quoted if it contains spaces.  Load, exec, and
+    length are hex values.  Access can be letters or a hex number.
+
+    Returns a dict with keys ``filename``, ``load_address``,
+    ``exec_address``, and optionally ``risc_os_filetype`` and
+    ``attributes``, or None if the line cannot be parsed.
+    """
+    line = line.strip()
+    if not line:
+        return None
+
+    # Extract filename (possibly quoted)
+    if line.startswith('"'):
+        end_quote = line.find('"', 1)
+        if end_quote == -1:
+            return None
+        filename = line[1:end_quote]
+        rest = line[end_quote + 1:].split()
+    else:
+        parts = line.split()
+        if len(parts) < 3:
+            return None
+        filename = parts[0]
+        rest = parts[1:]
+
+    if len(rest) < 2:
+        return None
+
+    try:
+        load_int = int(rest[0], 16)
+        exec_int = int(rest[1], 16)
+    except (ValueError, IndexError):
+        return None
+
+    result = {
+        'filename': filename,
+        'load_address': f'{load_int:08x}',
+        'exec_address': f'{exec_int:08x}',
+    }
+
+    # Derive filetype from load address
+    filetype = _get_riscos_filetype(load_int)
+    if filetype:
+        result['risc_os_filetype'] = filetype
+
+    # Access field (after optional length)
+    # rest[2] could be length (hex) or access (letters/hex).
+    # Length is always a hex number; access can be letters like "WR/r" or "L".
+    # Heuristic: if rest[2] is a pure hex number AND there's a rest[3],
+    # treat rest[2] as length and rest[3] as access.  Otherwise treat
+    # rest[2] as access if it contains non-hex-digit letters.
+    if len(rest) >= 3:
+        field2 = rest[2]
+        try:
+            int(field2, 16)
+            is_hex = True
+        except ValueError:
+            is_hex = False
+
+        if is_hex and len(rest) >= 4:
+            # rest[2] is length, rest[3] is access
+            result['attributes'] = rest[3]
+        elif not is_hex:
+            # rest[2] is access (contains non-hex letters)
+            result['attributes'] = field2
+        # If rest[2] is hex and no rest[3], it's length with no access field
+
+    return result
+
+
+import logging
+_log = logging.getLogger(__name__)
+
+
+def process_inf_sidecars(output_dir: Path) -> dict[str, dict]:
+    """Process RISC OS INF sidecar files in an extraction directory.
+
+    For each ``.inf`` file found (case-insensitive), if a data file with
+    the same name (minus the ``.inf`` extension) exists alongside it:
+
+    1. Parse the INF to extract load/exec addresses, filetype, and attributes.
+    2. Rename the data file from its DOS-encoded name to the BBC original
+       (if they differ), preserving any ``,xxx`` filetype suffix.
+    3. Delete the INF file.
+
+    Must be called **before** :func:`enumerate_extracted_files` so that
+    files have their final names when enumeration and hashing occur.
+
+    Args:
+        output_dir: Root directory containing extracted files and INF sidecars.
+
+    Returns:
+        Dict mapping relative paths (post-rename, relative to *output_dir*)
+        to metadata dicts with ``load_address``, ``exec_address``, and
+        optionally ``risc_os_filetype`` and ``attributes``.
+    """
+    metadata: dict[str, dict] = {}
+
+    # Collect all INF files first (avoid modifying tree while iterating).
+    inf_files = sorted(
+        (p for p in output_dir.rglob('*') if p.is_file() and p.suffix.lower() == '.inf'),
+        key=lambda p: len(p.parts),
+        reverse=True,  # deepest first to avoid path invalidation
+    )
+
+    for inf_path in inf_files:
+        # The data file has the same path minus the .inf extension.
+        data_path = inf_path.with_suffix('')
+        if not data_path.exists():
+            # Also try without case sensitivity on the data filename -
+            # the INF might be uppercase while the data file isn't, or
+            # vice versa.  But the primary check is exact match.
+            continue
+
+        # Parse the INF
+        try:
+            try:
+                content = inf_path.read_text(encoding='utf-8')
+            except UnicodeDecodeError:
+                content = inf_path.read_text(encoding='latin-1')
+        except OSError as e:
+            _log.warning(f"Could not read INF file {inf_path}: {e}")
+            continue
+
+        parsed = _parse_inf_line(content)
+        if parsed is None:
+            _log.warning(f"Could not parse INF file {inf_path}")
+            continue
+
+        bbc_filename = parsed.pop('filename')
+
+        # Determine if the data file needs renaming.
+        # The data file on disk may use DOS-translated characters.
+        # The INF contains the original BBC filename.
+        # Preserve any ,xxx filetype suffix that DIM may have added.
+        current_name = data_path.name
+        current_stem, current_suffix_type = parse_acorn_filename(current_name)
+
+        # Translate the BBC name to DOS to see if it matches the on-disk name
+        bbc_as_dos = _translate_filename_bbc_to_dos(bbc_filename)
+
+        new_name = current_name
+        if current_stem != bbc_filename and (current_stem == bbc_as_dos or current_name == bbc_as_dos):
+            # The on-disk name is the DOS-encoded version; rename to BBC
+            if current_suffix_type is not None:
+                new_name = bbc_filename + ',' + current_suffix_type
+            else:
+                new_name = bbc_filename
+        elif current_stem == bbc_as_dos and current_stem != bbc_filename:
+            # Same case as above but stem matched
+            if current_suffix_type is not None:
+                new_name = bbc_filename + ',' + current_suffix_type
+            else:
+                new_name = bbc_filename
+
+        # Perform the rename if needed
+        final_path = data_path
+        if new_name != current_name:
+            target = data_path.parent / new_name
+            if target.exists() and target != data_path:
+                _log.warning(
+                    f"Cannot rename {data_path.name} -> {new_name}: "
+                    f"target already exists"
+                )
+            else:
+                try:
+                    data_path.rename(target)
+                    final_path = target
+                except OSError as e:
+                    _log.warning(f"Failed to rename {data_path} -> {target}: {e}")
+
+        # Delete the INF file
+        try:
+            inf_path.unlink()
+        except OSError as e:
+            _log.warning(f"Could not delete INF file {inf_path}: {e}")
+
+        # Store metadata keyed by relative path (post-rename).
+        # Use the display path that enumerate_extracted_files will produce:
+        # for Acorn files with ,xxx suffix, the display path strips the suffix.
+        rel_path = final_path.relative_to(output_dir)
+        display_name, _ = parse_acorn_filename(final_path.name)
+        if len(rel_path.parts) > 1:
+            display_rel = str(Path(*rel_path.parts[:-1]) / display_name)
+        else:
+            display_rel = display_name
+
+        metadata[display_rel] = parsed
+
+    return metadata
 
 
 def _parse_dim_report(output: str) -> dict:

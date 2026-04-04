@@ -618,6 +618,11 @@ class AnalysisWorker:
             if iso_rename_map:
                 _apply_pling_renames(extract_dir, iso_rename_map)
 
+        # DIM processes INF sidecar files during extraction and returns
+        # the collected metadata.  For non-DIM paths (DOS/ISO), no INFs
+        # are produced so the dict is empty.
+        inf_metadata = result.get('inf_metadata', {})
+
         # Enumerate extracted files to build file listing.
         # ISO artefacts use acorn='auto' to catch ',xxx' suffix filenames;
         # Acorn disc images (is_acorn=True) always parse the suffix.
@@ -630,6 +635,7 @@ class AnalysisWorker:
             extract_dir,
             acorn=acorn_mode,
             filetype_map=iso_filetype_map,
+            inf_metadata=inf_metadata,
         )
 
         # Write ISO metadata sidecar AFTER enumerate_extracted_files so it is
@@ -1898,6 +1904,12 @@ class AnalysisWorker:
                         record['is_directory'] = True
                     if f.get('risc_os_filetype'):
                         record['risc_os_filetype'] = f['risc_os_filetype']
+                    if f.get('load_address'):
+                        record['load_address'] = f['load_address']
+                    if f.get('exec_address'):
+                        record['exec_address'] = f['exec_address']
+                    if f.get('attributes'):
+                        record['attributes'] = f['attributes']
                     file_records.append(record)
                 self.api.post(f"/partitions/{partition_uuid}/files", {'files': file_records})
 

@@ -259,6 +259,99 @@ python3 -c "import time; print(hex(int(time.time()))[2:].zfill(12))"
 Alembic-generated migrations (`flask db migrate`) produce their own random IDs
 automatically — this only applies to hand-written migrations.
 
+#### Migration filename convention
+
+Migration files must be named `YYYYMMDD_HHMM_description.py` using the
+current UTC time (e.g. `20260404_0142_add_riscos_load_exec_address.py`).
+The `_HHMM` suffix avoids conflicts when multiple tasks create migrations
+on the same date.  Do **not** use the hex revision ID as the filename
+prefix.
+
+### RISC OS INF sidecar file processing
+
+Several BBC Micro and RISC OS tools (currently Disc Image Manager; others may
+follow) produce `.inf` sidecar files alongside extracted files.  These contain
+metadata that Unix filesystems cannot represent: load address, exec address,
+RISC OS filetype, file attributes, and the original BBC filename.
+
+`process_inf_sidecars(output_dir)` in `worker/arcworker/tools/extraction.py` is
+the reusable pre-processing step.  It must be called **before**
+`enumerate_extracted_files()` so that files are renamed and metadata is
+collected before hashing and enumeration.  It returns a `dict[str, dict]`
+mapping display paths to metadata, which is passed as the `inf_metadata`
+parameter to `enumerate_extracted_files()`.
+
+Each extraction tool that produces INF files is responsible for calling
+`process_inf_sidecars()` before it returns and including the result in its
+return dict as `'inf_metadata'`.  The caller passes this through to
+`enumerate_extracted_files()`.  Currently only
+`extract_acorn_disc_image_manager()` calls it.
+
+#### How it works
+
+1. Walks `output_dir` for files with `.inf` extension (case-insensitive).
+2. Validates each INF has a matching data file (same path minus `.inf`).
+3. Parses INF contents: `<filename> <load_hex> <exec_hex> [<length_hex>] [<access>]`.
+4. Derives RISC OS filetype from load address when date-stamped (top 12 bits = `0xFFF`).
+5. Renames data file from DOS-encoded name to original BBC name if needed.
+6. Deletes the INF file.
+7. Returns metadata dict for `enumerate_extracted_files()` to merge into file records.
+
+#### BBC ↔ DOS filename character translation
+
+Files stored on a DOS/Windows host filesystem use safe substitution characters.
+The INF records the original BBC character.  On Linux all BBC characters are
+valid, so files are renamed back to the BBC originals.
+
+```
+BBC    DOS
+ #  ↔  ?
+ .  ↔  /
+ $  ↔  <
+ ^  ↔  >
+ &  ↔  +
+ @  ↔  =
+ %  ↔  ;
+```
+
+The translation table is defined as `_BBC_TO_DOS` / `_DOS_TO_BBC` in
+`extraction.py`.  To add or change mappings, edit both dicts (they are
+inverses of each other).
+
+> **Note:** The `.` ↔ `/` mapping means these characters cannot appear in
+> filenames on DOS/Windows hosts (since `/` is a path separator).  On Linux
+> both are valid filename characters, so the rename works correctly.
+
+#### Extending to other archive processors
+
+To add INF support to a new extraction tool:
+
+1. Ensure the tool writes standard `.inf` sidecar files alongside extracted
+   data files (one `.inf` per file, same base name).
+2. Call `process_inf_sidecars(output_dir)` inside the tool's extraction
+   wrapper (before returning) and include the result in the return dict as
+   `'inf_metadata'`.  See `extract_acorn_disc_image_manager()` for the
+   pattern.
+3. The caller must pass the `'inf_metadata'` dict through to
+   `enumerate_extracted_files()` via its `inf_metadata` parameter.
+4. If the tool uses a **different filename translation table** (e.g. a
+   platform-specific mapping), either:
+   - Add a `translation_table` parameter to `process_inf_sidecars()`, or
+   - Normalise filenames in the tool's extraction wrapper before
+     `process_inf_sidecars()` runs (the same approach used by
+     `normalize_extracted_filenames()` for RISC OS Latin-1 byte sequences).
+5. If the tool's INF format differs from the standard (extra fields, different
+   field order), extend `_parse_inf_line()` in `extraction.py`.
+
+#### Database fields populated from INF metadata
+
+| `ExtractedFile` column | Source | Example |
+|------------------------|--------|---------|
+| `load_address` (String(8)) | INF field 2, zero-padded hex | `'fffffd00'` |
+| `exec_address` (String(8)) | INF field 3, zero-padded hex | `'ffffff00'` |
+| `risc_os_filetype` (String(3)) | Derived from load address bits 19:8 | `'ffd'` |
+| `attributes` (String(50)) | INF field 5, stored as-is | `'WR/r'`, `'L'`, `'33'` |
+
 ### Analysis pipeline flow
 
 Upload triggers auto-analysis based on `ANALYSIS_MAP` -> worker claims job atomically -> processes with external tools -> reports results via API -> derived artefacts trigger follow-on analyses (e.g., flux -> decode -> file listing).
@@ -275,6 +368,7 @@ Upload triggers auto-analysis based on `ANALYSIS_MAP` -> worker claims job atomi
 | `myapp/blueprints/api.py` | REST API consumed by workers and CLI |
 | `myapp/riscos_filetypes.py` | RISC OS filetype hex↔name mapping; `lookup_filetype_hex()` |
 | `worker/arcworker/analysis.py` | Worker job handlers |
+| `worker/arcworker/tools/extraction.py` | File extraction tools, INF sidecar processing, BBC↔DOS filename translation |
 | `cli/arccli/main.py` | CLI entry point and argument parsing |
 | `cli/arccli/client.py` | CLI HTTP client for the REST API |
 | `myapp/app.py` | Application factory, login/error handlers, blueprint registration |
@@ -295,6 +389,7 @@ Automated tests live in `ci/` and run in the `app-tests` GitHub Actions job (SQL
 | `ci/test_checksum_compute.py` | Hash computation |
 | `ci/test_url_identifiers.py` | URL-safe identifiers and slug generation |
 | `ci/test_fk_violations.py` | FK cascade deletes, defensive checks, M2M cleanup, nullable FK edge cases (SQLite FK enforcement enabled) |
+| `ci/test_inf_processing.py` | RISC OS INF sidecar parsing, BBC↔DOS filename translation, `process_inf_sidecars()` end-to-end |
 
 Run locally:
 

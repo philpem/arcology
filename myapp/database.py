@@ -656,6 +656,8 @@ class ExtractedFile(db.Model):
     is_directory: Mapped[bool] = mapped_column(Boolean, default=False, index=True)  # True if this is a directory entry
     archive_format: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # e.g., 'ArcFS', 'ZIP', 'CFS'
     risc_os_filetype: Mapped[Optional[str]] = mapped_column(String(3), nullable=True, index=True)  # Hex filetype (e.g., '3fb')
+    load_address: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)  # RISC OS load address (8-char hex, e.g., 'fffff300')
+    exec_address: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)  # RISC OS exec address (8-char hex)
     extraction_depth: Mapped[int] = mapped_column(Integer, default=0)  # Nesting level (0=top-level)
 
     partition: Mapped["Partition"] = relationship(back_populates="files")

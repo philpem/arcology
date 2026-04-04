@@ -261,6 +261,9 @@ class ArcologyAPI:
                     'sha256': f.get('sha256'),
                     # Archive support fields
                     'risc_os_filetype': f.get('risc_os_filetype'),
+                    'load_address': f.get('load_address'),
+                    'exec_address': f.get('exec_address'),
+                    'attributes': f.get('attributes'),
                     'parent_file_id': f.get('parent_file_id'),
                     'extraction_depth': f.get('extraction_depth', 0),
                     'is_directory': f.get('is_directory', False),

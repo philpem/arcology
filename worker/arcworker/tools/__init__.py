@@ -17,6 +17,7 @@ from .extraction import (
     extract_dos_7z,
     extract_iso_7z,
     enumerate_extracted_files,
+    process_inf_sidecars,
     parse_acorn_filename,
 )
 from .iso_riscos import parse_iso_riscos_filetypes
@@ -56,6 +57,7 @@ __all__ = [
     'extract_dos_7z',
     'extract_iso_7z',
     'enumerate_extracted_files',
+    'process_inf_sidecars',
     'parse_acorn_filename',
     'parse_iso_riscos_filetypes',
     'detect_partitions_sfdisk',
