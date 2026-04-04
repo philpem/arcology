@@ -301,6 +301,57 @@ class AnalysisWorker:
             **kwargs,
         )
 
+    def _resolve_partition_image(
+        self,
+        partition_image_path: str | None,
+        artefact: dict,
+        work_dir: Path,
+    ) -> Path:
+        """Resolve a cached partition image path, downloading from S3 if needed.
+
+        PARTITION_DETECT caches decompressed partition images locally and uploads
+        them to S3.  Downstream handlers (FILE_EXTRACTION, ARMLOCK_REMOVE) receive
+        the local path as a hint, but on a different worker or after a restart the
+        file may only exist in S3.
+
+        Resolution order:
+        1. Hint path exists locally → use it directly.
+        2. S3 storage active → download from S3 cache to work_dir.
+        3. Hint absent or not found anywhere → fall back to get_input_path().
+
+        Args:
+            partition_image_path: Value of the 'partition_image_path' hint, or None.
+            artefact: Artefact dict from the API (needs 'uuid').
+            work_dir: Temporary working directory for S3 downloads.
+
+        Returns:
+            Path to the resolved input file.
+        """
+        if partition_image_path:
+            local_path = Path(partition_image_path)
+            if local_path.exists():
+                log.info(f"Using cached partition image: {local_path}")
+                return local_path
+            # S3 mode or different worker: try to download from storage cache
+            from shared.storage import S3Storage
+            from botocore.exceptions import ClientError
+            if isinstance(self.storage, S3Storage):
+                try:
+                    rel = local_path.relative_to(self.outputs)
+                    cache_key = self.storage.storage_key('outputs', str(rel))
+                except ValueError:
+                    cache_key = self.storage.storage_key(
+                        'outputs', f".cache/{artefact['uuid']}/{local_path.name}")
+                dest = work_dir / local_path.name
+                try:
+                    self.storage.get(cache_key, dest)
+                    log.info(f"Downloaded cached partition image from storage: {cache_key}")
+                    return dest
+                except ClientError as e:
+                    if e.response['Error']['Code'] not in ('404', 'NoSuchKey'):
+                        raise
+        return self.get_input_path(artefact, work_dir)
+
     def complete_analysis(self, analysis_id: int, summary: str | None = None, **kwargs):
         """Report a completed successful analysis to the API."""
         payload = {
@@ -711,34 +762,8 @@ class AnalysisWorker:
 
         # Use cached partition image from PARTITION_DETECT when available,
         # avoiding redundant decompression of the original artefact.
-        partition_image_path = hints.get('partition_image_path')
-        input_path = None
-        if partition_image_path:
-            local_path = Path(partition_image_path)
-            if local_path.exists():
-                input_path = local_path
-                log.info(f"Using cached partition image: {input_path}")
-            else:
-                # S3 mode or different worker: try to download from storage cache
-                from shared.storage import S3Storage
-                from botocore.exceptions import ClientError
-                if isinstance(self.storage, S3Storage):
-                    try:
-                        rel = local_path.relative_to(self.outputs)
-                        cache_key = self.storage.storage_key('outputs', str(rel))
-                    except ValueError:
-                        cache_key = self.storage.storage_key(
-                            'outputs', f".cache/{artefact['uuid']}/{local_path.name}")
-                    dest = work_dir / local_path.name
-                    try:
-                        self.storage.get(cache_key, dest)
-                        input_path = dest
-                        log.info(f"Downloaded cached partition image from storage: {cache_key}")
-                    except ClientError as e:
-                        if e.response['Error']['Code'] not in ('404', 'NoSuchKey'):
-                            raise
-        if input_path is None:
-            input_path = self.get_input_path(artefact, work_dir)
+        input_path = self._resolve_partition_image(
+            hints.get('partition_image_path'), artefact, work_dir)
 
         # Get Item for hierarchical path
         item = artefact.get('item', {'uuid': 'default', 'slug': 'default'})
@@ -2711,34 +2736,8 @@ class AnalysisWorker:
         partition_index = hints.get('partition_index', 0)
 
         # Use cached decompressed path if available (from PARTITION_DETECT).
-        partition_image_path = hints.get('partition_image_path')
-        input_path = None
-        if partition_image_path:
-            local_path = Path(partition_image_path)
-            if local_path.exists():
-                input_path = local_path
-                log.info(f"Using cached partition image: {input_path}")
-            else:
-                # S3 mode or different worker: try to download from storage cache
-                from shared.storage import S3Storage
-                from botocore.exceptions import ClientError
-                if isinstance(self.storage, S3Storage):
-                    try:
-                        rel = local_path.relative_to(self.outputs)
-                        cache_key = self.storage.storage_key('outputs', str(rel))
-                    except ValueError:
-                        cache_key = self.storage.storage_key(
-                            'outputs', f".cache/{artefact['uuid']}/{local_path.name}")
-                    dest = work_dir / local_path.name
-                    try:
-                        self.storage.get(cache_key, dest)
-                        input_path = dest
-                        log.info(f"Downloaded cached partition image from storage: {cache_key}")
-                    except ClientError as e:
-                        if e.response['Error']['Code'] not in ('404', 'NoSuchKey'):
-                            raise
-        if input_path is None:
-            input_path = self.get_input_path(artefact, work_dir)
+        input_path = self._resolve_partition_image(
+            hints.get('partition_image_path'), artefact, work_dir)
 
         # Re-run detection to capture full details for the analysis record.
         detection = detect_armlock(input_path)
