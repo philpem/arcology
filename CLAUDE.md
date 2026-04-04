@@ -259,6 +259,14 @@ python3 -c "import time; print(hex(int(time.time()))[2:].zfill(12))"
 Alembic-generated migrations (`flask db migrate`) produce their own random IDs
 automatically — this only applies to hand-written migrations.
 
+#### Migration filename convention
+
+Migration files must be named `YYYYMMDD_description.py` (e.g.
+`20260404_add_riscos_load_exec_address.py`).  An optional `_HHMM` time
+suffix is allowed after the date when multiple migrations share the same
+date (e.g. `20260331_1147_add_user_preferences_column.py`).  Do **not**
+use the hex revision ID as the filename prefix.
+
 ### RISC OS INF sidecar file processing
 
 Several BBC Micro and RISC OS tools (currently Disc Image Manager; others may
