@@ -379,6 +379,7 @@ This creates the `migrations/` directory structure and generates an initial migr
 - **If you get "Target database is not up to date"**, run `flask db upgrade` first to bring your database to the latest migration before generating a new one.
 - **If you get "Can't locate revision"** after pulling changes, you may need to `flask db upgrade` to apply migrations created by others.
 - **To start fresh** during development (throwing away all data), drop the database and re-run `flask db upgrade`.
+- **Watch out for migration branch conflicts.** If two PRs both add a migration at the same time, they'll share the same `down_revision` and cause a "Multiple head revisions" error after merge. CI detects this automatically on PRs. You can also install the local pre-push hook: `git config core.hooksPath hooks`. See [doc/MIGRATION_CONFLICTS.md](doc/MIGRATION_CONFLICTS.md) for details.
 
 ### Worker and Analysis Pipeline: Common Pitfalls
 
