@@ -24,7 +24,7 @@ blueprint = Blueprint(ROUTENAME, __name__, url_prefix='/analysis', template_fold
 
 def init_app(app):
     """Register menu items."""
-    app.add_menu_item("Analysis", f"{ROUTENAME}.index", 300)
+    app.add_menu_item("Analysis", f"{ROUTENAME}.queue", 300)
 
 
 def _get_analysis_or_404(uuid):
