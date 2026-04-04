@@ -164,7 +164,13 @@ flask reanalyse --all                   # every artefact
 flask reanalyse --artefact-type SCP     # filter by type
 flask reanalyse --platform "BBC Micro"  # filter by platform
 flask reanalyse --tag needs-review      # filter by tag
+flask reanalyse --analysis <UUID>       # retry a single analysis
 flask reanalyse --all --dry-run         # preview without changes
+
+# Cancel pending analyses without resetting artefact data
+flask cancel-analysis --all             # every pending analysis
+flask cancel-analysis --artefact <UUID> # all pending on one artefact
+flask cancel-analysis --all --include-running  # also cancel running
 ```
 
 See `doc/ADMIN_COMMANDS.md` for the full reference including all flags.
@@ -390,6 +396,7 @@ Upload triggers auto-analysis based on `ANALYSIS_MAP` -> worker claims job atomi
 |------|------|
 | `shared/enums.py` | `ArtefactType` and `AnalysisType` — single source of truth for web, worker, and CLI |
 | `shared/archive_formats.py` | `ArchiveType`, `ARCHIVE_FORMATS`, helpers — single source of truth |
+| `shared/storage.py` | Storage backend abstraction (`LocalStorage` and `S3Storage`); selected via `STORAGE_BACKEND` env var |
 | `myapp/database.py` | All SQLAlchemy models and web-specific enums (`AnalysisStatus`, `FilesystemType`, etc.) |
 | `myapp/blueprints/artefacts.py` | `EXTENSION_MAP` (type detection) and `ANALYSIS_MAP` (auto-analysis rules) |
 | `myapp/blueprints/search.py` | Global search: `parse_query()`, `_run_search()`, prefix query syntax |

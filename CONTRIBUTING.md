@@ -66,6 +66,9 @@ Blueprints are auto-discovered and registered -- any module in `myapp/blueprints
 | `md5:` | | MD5 hash of extracted file or artefact |
 | `sha1:` | | SHA-1 hash of extracted file |
 | `sha256:` | | SHA-256 hash of extracted file or artefact |
+| `module:` | | RISC OS module title (e.g. `module:WindowManager`) |
+| `command:` | | RISC OS star command provided by a module (e.g. `command:Desktop`) |
+| `swi:` | | RISC OS SWI name provided by a module (e.g. `swi:Wimp_Poll`) |
 
 Values support `*` as a wildcard (e.g. `filename:*.bas`). Results are capped at 200 items per bucket.
 
@@ -117,6 +120,8 @@ The worker is a standalone Python process that polls the web app's REST API for 
 | `PRODUCT_RECOGNITION` | (built-in) | Matches extracted file hashes against known-file databases |
 | `SECTOR_DUMP` | (built-in) | Extracts a raw sector dump from a flux image |
 | `ARMLOCK_REMOVE` | (built-in) | Removes ARMlock disc security from RISC OS disc images |
+| `FORMAT_CONVERT` | drawfile-render, spritefile | Converts Acorn/RISC OS native formats (Draw, Sprite, text) to portable equivalents (SVG, PNG) for inline viewing |
+| `RISCOS_MODULE_PARSE` | (built-in, Peter Howkins' module parser) | Extracts metadata (title, version, SWIs, star commands) from RISC OS relocatable module files (filetype FFA) |
 
 **Worker environment variables** (all read at startup from the environment):
 
@@ -126,6 +131,12 @@ The worker is a standalone Python process that polls the web app's REST API for 
 | `UPLOAD_DIR` | `/data/uploads` | Path to uploaded artefact files |
 | `OUTPUT_DIR` | `/data/outputs` | Path for analysis output files |
 | `WORKER_API_KEY` | (required) | Pre-shared key for API authentication |
+| `STORAGE_BACKEND` | `local` | Storage backend: `local` (default) or `s3` (S3-compatible) |
+| `S3_ENDPOINT_URL` | (required for S3) | S3 endpoint URL (e.g. `https://s3.amazonaws.com`) |
+| `S3_BUCKET` | (required for S3) | S3 bucket name |
+| `S3_ACCESS_KEY` | (required for S3) | S3 access key ID |
+| `S3_SECRET_KEY` | (required for S3) | S3 secret access key |
+| `S3_REGION` | (optional for S3) | S3 region (e.g. `us-east-1`) |
 | `POLL_INTERVAL` | `10` | Seconds between polls when no job is available |
 | `TOOL_TIMEOUT` | `3600` | Per-job subprocess timeout in seconds |
 | `MAX_ARCHIVE_DEPTH` | `10` | Maximum nested archive extraction depth |

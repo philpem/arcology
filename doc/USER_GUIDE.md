@@ -68,16 +68,24 @@ or "BBC Micro Welcome Disc". Each item can hold multiple artefacts (the actual
 files), be classified by platform and category, and tagged for flexible
 filtering.
 
+Items can be nested to form a hierarchy -- for example a "Sega" item could
+contain a "Sonic the Hedgehog" child item which holds the actual disc image
+artefacts. Platform and category are inherited from the nearest ancestor that
+has them set.
+
 ### Browsing Items
 
-Go to **Items** in the top navigation bar. The list page shows every item with
-its platform, category, artefact count, and last-updated date.
+Go to **Items** in the top navigation bar. The list page shows all items with
+their platform, category, artefact count, and last-updated date. The **tree**
+view shows the full parent/child hierarchy with indentation; the **flat** view
+shows all items as a simple list.
 
 Use the filters at the top of the page to narrow results:
 
 - **Search** -- text search across item names and descriptions
 - **Platform** -- dropdown filter by platform
 - **Category** -- dropdown filter by category
+- **Sort** -- Name (A–Z / Z–A) or Uploaded (oldest / newest)
 
 An **A–Z letter bar** sits above the list. Clicking a letter jumps to the page
 where items starting with that letter begin. **#** covers items that start with
@@ -98,15 +106,21 @@ Click an item name to view its detail page.
    - **Platform** -- the computer system this item relates to
    - **Category** -- the type of software or media
    - **Tags** -- comma-separated labels (e.g. `bbc-micro, games, dfs`)
+   - **Parent Item** -- optionally nest this item under an existing item
 3. Click **Save**.
+
+To create a child of an existing item, click **New Child Item** on the parent's
+detail page instead.
 
 ### Editing and Deleting Items
 
-On the item detail page, click **Edit** to change any field, or **Delete** to
-remove the item and all its artefacts permanently.
+On the item detail page, click **Edit** to change any field (including moving
+the item to a different parent), or **Delete** to remove the item and all its
+artefacts and children permanently.
 
-The item detail page also shows an **A–Z letter bar** above the artefacts list,
-and a per-page selector, using the same controls as the items list.
+The item detail page shows an **A–Z letter bar** and **sort/per-page controls**
+above the artefacts list, and a **Child Items** section listing any items nested
+under this one.
 
 ### External References
 
@@ -177,11 +191,19 @@ Click an artefact on the item detail page to see:
   checksums (with copy buttons)
 - **Type badge** -- the detected or manually set artefact type
 - **Tags** -- artefact-level tags shown as badges
-- **Analyses** -- status and results of each analysis run on this artefact,
-  including inline flux visualisation plots for flux images
+- **Analyses** -- a summary of completed analyses with status badges; the
+  **Show All** link opens a dedicated paginated analyses page. Flux
+  visualisation plots are shown inline. The raw JSON details panel is open
+  by default.
 - **Partitions and file listings** -- if file extraction has run, the extracted
   directory tree is shown grouped by partition. When the listing is sorted by
   path, an A–Z letter bar appears for quick navigation through large directories.
+  Each subdirectory row shows a file count badge; click it to browse into that
+  directory. A **breadcrumb** at the top of the file card shows your current
+  path with each segment clickable. Use the **Clear** button to reset filters.
+  The file table includes a **Date** column (modification or creation time).
+  RISC OS native files (Acorn Sprite, Draw, text) that have been converted
+  display an eye icon; click it to view the file inline.
 - **Derived artefacts** -- if analysis produced new files (e.g. decoded sector
   images from flux data), they appear as linked child artefacts
 - **Copy protection indicators** -- if protection scanning detected anything
@@ -195,16 +217,26 @@ Click an artefact on the item detail page to see:
 
 Click the **Download** button on an artefact page. Administrators can apply
 download restrictions to individual artefacts (for malware, PII, copyright, or
-other reasons). If a restriction applies:
+other reasons). Restrictions can also be applied at the individual file level
+within an extracted listing. If a restriction applies:
 
 - Users with a bypass for that restriction type see a
   **Download (Override)** button.
 - Users without a bypass see a disabled **Restricted** button with the reason.
 
+Explicit content restrictions additionally hide the file listing until the user
+actively chooses to reveal it.
+
 ### Editing and Deleting
 
 Click **Edit** to change the label, type override, description, or tags.
 Click **Delete** to permanently remove the artefact and all its analyses.
+
+### Moving an Artefact
+
+Root artefacts (not derived ones) can be reassigned to a different item. On
+the artefact detail page, use the **Move to item** form in the sidebar to
+select the target item. All derived artefacts move with it automatically.
 
 ### Re-analysing
 
@@ -257,6 +289,8 @@ reports results back.
 | Metadata Extract | SCP, IMD, ISO | Computes hashes and extracts format-specific metadata |
 | Checksum Compute | (manual) | Computes MD5/SHA-1/SHA-256 for an artefact |
 | Format Identify | IMD, HFE, RAW_SECTOR | Identifies the exact disc format variant |
+| Format Convert | (after file extraction, RISC OS files) | Converts Acorn Sprite, Draw, and text files to PNG/SVG for inline viewing |
+| RISC OS Module Parse | (after file extraction, filetype FFA) | Extracts module title, version, star commands, and SWIs for search |
 | Disc Protection Detect | HFE | Scans for copy-protection indicators |
 | Disc Mastering Detect | HFE | Scans trailing tracks for mastering fingerprints |
 | Product Recognition | (after file extraction) | Matches extracted files against known-product hash databases |
@@ -314,6 +348,9 @@ same key are OR'd together; different keys are AND'd.
 | `md5:` | | MD5 hash |
 | `sha1:` | | SHA-1 hash |
 | `sha256:` | | SHA-256 hash |
+| `module:` | | RISC OS module title (e.g. `module:WindowManager`) |
+| `command:` | | RISC OS star command provided by a module (e.g. `command:Desktop`) |
+| `swi:` | | RISC OS SWI name provided by a module (e.g. `swi:Wimp_Poll`) |
 
 ### Wildcards and Quoting
 
@@ -340,6 +377,9 @@ protection:bad_crc fs:adfs            # Protected ADFS discs
 tag:bbc-micro ext:bas                 # BASIC files tagged "bbc-micro"
 md5:d41d8cd98f00b204e9800998ecf8427e  # Find a file by hash
 mastering:formaster                   # Discs with Formaster mastering data
+module:WindowManager                  # Find the WindowManager module
+command:Desktop                       # Find modules providing the *Desktop command
+swi:Wimp_Poll                         # Find modules providing the Wimp_Poll SWI
 ```
 
 ### Result Buckets

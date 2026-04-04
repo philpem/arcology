@@ -95,3 +95,48 @@ Options:
 | `--artefact-type TYPE` | Restrict to this artefact type (e.g. `SCP`, `HFE`, `IMG`) |
 | `--dry-run` | Show what would be requeued without making changes |
 | `--batch-size N` | Commit every N artefacts (default: 50) |
+
+## cancel-analysis
+
+Delete PENDING analyses without resetting artefact data or re-queuing
+anything. Useful for clearing a backlog or removing unwanted jobs queued in
+error.
+
+Cancels PENDING analyses by default. Add `--include-running` to also cancel
+analyses already claimed by a worker (the worker will finish processing but
+its result will be silently discarded).
+
+Exactly one selection method is required.
+
+```bash
+# Single analysis by UUID
+flask cancel-analysis --analysis ANALYSIS_UUID
+
+# All pending analyses on one artefact
+flask cancel-analysis --artefact ARTEFACT_UUID
+
+# All pending analyses matching artefact filters (same flags as reanalyse)
+flask cancel-analysis --all
+flask cancel-analysis --all --dry-run
+flask cancel-analysis --item ITEM_UUID
+flask cancel-analysis --platform "Acorn Archimedes"
+flask cancel-analysis --tag needs-review --artefact-type HFE
+
+# Also cancel RUNNING analyses
+flask cancel-analysis --all --include-running
+```
+
+Options:
+
+| Flag | Description |
+|------|-------------|
+| `--analysis UUID` | Cancel a single analysis by UUID |
+| `--artefact UUID` | Cancel all pending analyses on one artefact |
+| `--all` | Select every artefact in the database |
+| `--item UUID` | Restrict to a single item (URL identifier or full UUID) |
+| `--tag NAME` | Restrict to items with this tag |
+| `--platform NAME` | Restrict to items on this platform |
+| `--category NAME` | Restrict to items in this category |
+| `--artefact-type TYPE` | Restrict to this artefact type (e.g. `SCP`, `HFE`) |
+| `--include-running` | Also cancel RUNNING analyses |
+| `--dry-run` | Show what would be cancelled without making changes |
