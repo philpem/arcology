@@ -44,6 +44,14 @@ jobs:
       - name: Check migration sanity
         run: python ci/check_migration_sanity.py
 
+      - name: Fetch target branch for migration conflict check
+        if: github.event_name == 'pull_request'
+        run: git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1
+
+      - name: Check cross-branch migration conflicts
+        if: github.event_name == 'pull_request'
+        run: python ci/check_migration_conflict.py --target-ref origin/${{ github.event.pull_request.base.ref }}
+
       - name: Unit tests (stdlib only, no dependencies)
         # test_slug.py is the only test that can run without pip install.
         # All other test_*.py files are discovered in the app-tests job.

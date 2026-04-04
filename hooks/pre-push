@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Pre-push hook: detect Alembic migration conflicts before pushing.
+#
+# Install:  git config core.hooksPath hooks
+# Bypass:   git push --no-verify
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# Read push details from stdin (format: <local ref> <local sha> <remote ref> <remote sha>)
+has_migrations=false
+while read -r local_ref local_sha remote_ref remote_sha; do
+    # Skip deletes
+    if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+        continue
+    fi
+
+    # Determine range to check
+    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+        # New branch -- check all commits reachable from local but not remote tracking
+        range="$local_sha"
+    else
+        range="$remote_sha..$local_sha"
+    fi
+
+    # Check if any migration files changed in the push range
+    if git diff --name-only "$range" -- migrations/versions/ 2>/dev/null | grep -q .; then
+        has_migrations=true
+        break
+    fi
+done
+
+if [ "$has_migrations" = false ]; then
+    exit 0
+fi
+
+echo "pre-push: Migration files detected in push, running checks..."
+
+# Layer 1: Within-branch sanity check (linear chain, autocommit, etc.)
+echo "  Running migration sanity check..."
+python "$REPO_ROOT/ci/check_migration_sanity.py" || exit 1
+
+# Layer 2: Cross-branch conflict check against origin/master
+if git rev-parse --verify origin/master >/dev/null 2>&1; then
+    echo "  Running cross-branch migration conflict check..."
+    python "$REPO_ROOT/ci/check_migration_conflict.py" --target-ref origin/master || exit 1
+fi
+
+echo "pre-push: All migration checks passed."
