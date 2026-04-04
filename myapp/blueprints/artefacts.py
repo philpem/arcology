@@ -654,6 +654,158 @@ def _bulk_delete_artefacts(artefact_ids: list[int]):
     Artefact.query.filter(Artefact.id.in_(artefact_ids)).delete(synchronize_session=False)
 
 
+def _analysis_file_path(analysis, hint_file_map: dict) -> str | None:
+    """Return the file/dir path for an analysis that operates on a specific
+    extracted file, or None for analyses that have no path context.
+
+    Path-bearing analyses:
+      ARCHIVE_EXTRACT  — path of the archive file being extracted
+                         (from hint file_id → ExtractedFile.path)
+      ARCHIVE_DETECT   — path_prefix of the archive being scanned for
+                         nested archives (empty → top-level, returns None)
+      FORMAT_CONVERT   — path_prefix of the archive being converted
+                         (empty → direct artefact convert, returns None)
+      RISCOS_MODULE_PARSE — path_prefix of the archive context
+                         (empty → top-level scan, returns None)
+    """
+    import json as _json
+    from shared.enums import AnalysisType as _AT
+
+    if not analysis.hints:
+        return None
+    try:
+        h = _json.loads(analysis.hints)
+    except Exception:
+        return None
+
+    atype = analysis.analysis_type
+    if atype == _AT.ARCHIVE_EXTRACT:
+        fid = h.get('file_id')
+        if fid and fid in hint_file_map:
+            return hint_file_map[fid]['path']
+        return None
+    if atype in (_AT.ARCHIVE_DETECT, _AT.FORMAT_CONVERT, _AT.RISCOS_MODULE_PARSE):
+        prefix = h.get('path_prefix', '')
+        return prefix if prefix else None
+    return None
+
+
+def _build_file_path_tree(path_analyses: list[tuple[str, object]]) -> dict:
+    """Build a nested dict tree from [(path, analysis), ...].
+
+    Each node: {'children': {name: node, ...}, 'analyses': [Analysis, ...]}
+    The root node's children are the top-level path components.  Children
+    dicts preserve insertion order and are later sorted by the template.
+    """
+    root: dict = {'children': {}, 'analyses': []}
+    for path, analysis in path_analyses:
+        parts = [p for p in path.split('/') if p]
+        node = root
+        for part in parts:
+            if part not in node['children']:
+                node['children'][part] = {'children': {}, 'analyses': []}
+            node = node['children'][part]
+        node['analyses'].append(analysis)
+    return root
+
+
+def _build_processing_tree(root: Artefact) -> tuple[dict, bool, dict, int]:
+    """Build a nested tree structure for the processing tree view.
+
+    Returns (tree_node, has_active_analyses, status_counts, total_count).
+    Each tree_node is a dict:
+      {
+        'artefact':   Artefact,
+        'analyses':   [Analysis, ...],   # non-path analyses (flat list)
+        'path_tree':  dict | None,       # nested path tree (see _build_file_path_tree)
+        'children':   [node, ...],       # derived artefact child nodes
+      }
+
+    Analyses that have a file-path context (ARCHIVE_EXTRACT with a file_id,
+    ARCHIVE_DETECT / FORMAT_CONVERT with a path_prefix) are separated out of
+    the flat 'analyses' list and placed in 'path_tree' so the template can
+    render them as a hierarchical file-path tree.
+
+    All data is fetched in flat queries (no N+1) and assembled in Python.
+    """
+    import json as _json
+    from collections import defaultdict
+    from shared.enums import AnalysisType as _AT
+
+    all_ids = [root.id] + get_all_derived_artefact_ids(root)
+
+    all_artefacts = Artefact.query.filter(Artefact.id.in_(all_ids)).all()
+    artefact_map = {a.id: a for a in all_artefacts}
+
+    children_map: dict[int, list] = defaultdict(list)
+    for a in all_artefacts:
+        if a.parent_artefact_id is not None:
+            children_map[a.parent_artefact_id].append(a)
+
+    all_analyses = (
+        Analysis.query
+        .filter(Analysis.artefact_id.in_(all_ids))
+        .order_by(Analysis.id)
+        .all()
+    )
+
+    analyses_map: dict[int, list] = defaultdict(list)
+    for analysis in all_analyses:
+        analyses_map[analysis.artefact_id].append(analysis)
+
+    has_active = any(
+        a.status in (AnalysisStatus.PENDING, AnalysisStatus.RUNNING)
+        for a in all_analyses
+    )
+
+    status_counts = {s.value: 0 for s in AnalysisStatus}
+    for a in all_analyses:
+        status_counts[a.status.value] += 1
+    total_count = len(all_analyses)
+
+    # Resolve ARCHIVE_EXTRACT file_ids → ExtractedFile paths in one query.
+    file_ids = []
+    for analysis in all_analyses:
+        if analysis.analysis_type == _AT.ARCHIVE_EXTRACT and analysis.hints:
+            try:
+                fid = _json.loads(analysis.hints).get('file_id')
+                if fid:
+                    file_ids.append(fid)
+            except Exception:
+                pass
+
+    hint_file_map: dict[int, dict] = {}
+    if file_ids:
+        rows = (
+            ExtractedFile.query
+            .filter(ExtractedFile.id.in_(file_ids))
+            .with_entities(ExtractedFile.id, ExtractedFile.path, ExtractedFile.filename)
+            .all()
+        )
+        hint_file_map = {r.id: {'path': r.path, 'filename': r.filename} for r in rows}
+
+    def _build(aid: int) -> dict:
+        plain: list = []
+        path_items: list[tuple[str, object]] = []
+        for a in analyses_map.get(aid, []):
+            p = _analysis_file_path(a, hint_file_map)
+            if p is not None:
+                path_items.append((p, a))
+            else:
+                plain.append(a)
+        return {
+            'artefact': artefact_map[aid],
+            'analyses': plain,
+            'path_tree': _build_file_path_tree(path_items) if path_items else None,
+            'children': [
+                _build(c.id)
+                for c in sorted(children_map.get(aid, []), key=lambda x: x.id)
+            ],
+        }
+
+    return _build(root.id), has_active, status_counts, total_count
+
+
 def reset_artefact_for_reanalysis(artefact: Artefact, commit: bool = True):
     """
     Reset an artefact to its just-uploaded state ready for re-analysis.
@@ -946,6 +1098,25 @@ def view_legacy(uuid):
     """Legacy flat-URL compat shim — resolves and renders without redirect."""
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     return _render_artefact_view(artefact)
+
+
+@blueprint.route('/artefacts/<string:uuid>/tree')
+@login_required
+def tree(uuid):
+    """Processing tree view — shows the full artefact derivation tree with analysis status."""
+    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    root = artefact.root_artefact
+    if root is not artefact:
+        return redirect(url_for(f'{ROUTENAME}.tree', uuid=root.uuid))
+    tree_data, has_active, status_counts, total_count = _build_processing_tree(root)
+    return render_template(
+        'artefacts/tree.html',
+        artefact=root,
+        tree=tree_data,
+        has_active_analyses=has_active,
+        status_counts=status_counts,
+        total_count=total_count,
+    )
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/viewer')

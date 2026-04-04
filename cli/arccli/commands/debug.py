@@ -182,6 +182,70 @@ def _print_tree_node(artefact, indent):
 			_print_tree_node(produced, indent + 2)
 
 
+def cmd_debug_processing_tree(client, args):
+	"""Show the processing tree (artefact → path-grouped analyses → derived artefacts)."""
+	data = client.get_processing_tree(args.uuid)
+
+	if args.json:
+		print_json(data)
+		return
+
+	counts = data.get('status_counts', {})
+	total = data.get('total_count', 0)
+	parts = [f"{total} analyses"]
+	for status in ('completed', 'running', 'pending', 'failed'):
+		n = counts.get(status, 0)
+		if n:
+			parts.append(f"{n} {status}")
+	print(', '.join(parts))
+	print()
+	_print_processing_node(data['artefact'], indent=0)
+
+
+def _print_processing_node(node, indent):
+	"""Recursively print a processing tree node."""
+	prefix = '  ' * indent
+	print(f"{prefix}[{node['artefact_type']}] {node['label']} ({node['uuid'][:8]})")
+
+	for analysis in node.get('analyses', []):
+		_print_processing_analysis(analysis, prefix + '  ')
+
+	path_tree = node.get('path_tree')
+	if path_tree:
+		_print_path_tree(path_tree, prefix + '  ')
+
+	for child in node.get('children', []):
+		_print_processing_node(child, indent + 2)
+
+
+def _print_processing_analysis(analysis, prefix):
+	"""Print a single analysis line."""
+	status = analysis['status']
+	if status == 'completed' and analysis['success'] is not False:
+		icon = '+'
+	elif status == 'failed':
+		icon = 'X'
+	elif status in ('pending', 'running'):
+		icon = '~'
+	else:
+		icon = '?'
+	error_suffix = ''
+	if analysis['error_message']:
+		error_suffix = f'  "{truncate(analysis["error_message"], 60)}"'
+	print(f"{prefix}{icon} {analysis['analysis_type']}  {status}{error_suffix}")
+
+
+def _print_path_tree(node, prefix, path=''):
+	"""Recursively print the path-grouped sub-tree."""
+	for name in sorted(node.get('children', {}).keys()):
+		child = node['children'][name]
+		child_path = f"{path}/{name}" if path else name
+		print(f"{prefix}  {child_path}/")
+		for analysis in child.get('analyses', []):
+			_print_processing_analysis(analysis, prefix + '    ')
+		_print_path_tree(child, prefix + '  ', child_path)
+
+
 def cmd_debug_failures(client, args):
 	"""Search for failed analyses across the system."""
 	params = {

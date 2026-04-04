@@ -630,6 +630,22 @@ def get_artefact_analysis_tree(uuid):
     return jsonify({'artefact': analysis_tree_node(artefact)})
 
 
+@blueprint.route('/artefacts/<string:uuid>/processing-tree', methods=['GET'])
+@require_auth('read_only')
+def get_artefact_processing_tree(uuid):
+    """Return the full processing tree for an artefact.
+
+    Always navigates to the root artefact of the given UUID.  Returns a
+    nested structure grouping analyses by artefact, with path-bearing
+    analyses (archive extract, format convert, etc.) grouped under their
+    file-path context.
+    """
+    from ..utils.api_serializers import processing_tree_to_dict
+    artefact = _get_artefact_or_404(uuid)
+    root = artefact.root_artefact
+    return jsonify(processing_tree_to_dict(root))
+
+
 @blueprint.route('/artefacts/<string:uuid>/analysis/recursive', methods=['GET'])
 @require_auth('read_only')
 def get_artefact_analyses_recursive(uuid):

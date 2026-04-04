@@ -128,6 +128,67 @@ def analysis_tree_node(artefact):
     return node
 
 
+def processing_tree_to_dict(root_artefact):
+    """Return the full processing tree as a JSON-safe dict.
+
+    Delegates to _build_processing_tree (efficient flat queries, no N+1) and
+    converts the resulting ORM-object tree into plain dicts for JSON
+    serialisation.
+
+    Return structure::
+
+        {
+          'artefact': {  # recursive
+            'uuid': ..., 'label': ..., 'artefact_type': ...,
+            'original_filename': ..., 'derived_from_analysis_uuid': ...,
+            'analyses': [analysis_to_dict(a), ...],
+            'path_tree': {               # None when no path-bearing analyses
+              'analyses': [...],
+              'children': {name: <same>, ...}
+            },
+            'children': [<same>, ...]    # derived artefact nodes
+          },
+          'status_counts': {'completed': n, 'failed': n, ...},
+          'total_count': n
+        }
+    """
+    from ..blueprints.artefacts import _build_processing_tree
+
+    tree_node, _has_active, status_counts, total_count = _build_processing_tree(root_artefact)
+
+    def _path_tree_to_dict(node):
+        return {
+            'analyses': [analysis_to_dict(a) for a in node['analyses']],
+            'children': {
+                name: _path_tree_to_dict(child)
+                for name, child in node['children'].items()
+            },
+        }
+
+    def _node_to_dict(node):
+        art = node['artefact']
+        return {
+            'uuid': art.uuid,
+            'label': art.label,
+            'artefact_type': art.artefact_type.value,
+            'original_filename': art.original_filename,
+            'derived_from_analysis_uuid': (
+                art.derived_from_analysis.uuid if art.derived_from_analysis_id else None
+            ),
+            'analyses': [analysis_to_dict(a) for a in node['analyses']],
+            'path_tree': (
+                _path_tree_to_dict(node['path_tree']) if node['path_tree'] else None
+            ),
+            'children': [_node_to_dict(c) for c in node['children']],
+        }
+
+    return {
+        'artefact': _node_to_dict(tree_node),
+        'status_counts': status_counts,
+        'total_count': total_count,
+    }
+
+
 def known_file_to_dict(kf):
     if not kf:
         return None

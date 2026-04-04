@@ -181,11 +181,14 @@
                 <li class="list-group-item text-muted">No analyses</li>
                 {% endfor %}
             </ul>
-            {% if has_hidden_analyses %}
-            <div class="card-footer">
+            <div class="card-footer d-flex gap-2 flex-wrap">
+                {% if has_hidden_analyses %}
                 <a href="{{ url_for('myapp_blueprints_analysis.artefact_analyses', uuid=artefact.uuid) }}" class="btn btn-sm btn-outline-secondary">
                     <i class="bi bi-list"></i> Show All ({{ total_analyses_count }})
                 </a>
+                {% endif %}
+                <a href="{{ url_for('myapp_blueprints_artefacts.tree', uuid=artefact.root_artefact.uuid) }}" class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-diagram-3"></i> Processing Tree
+                </a>
             </div>
-            {% endif %}
         </div>
