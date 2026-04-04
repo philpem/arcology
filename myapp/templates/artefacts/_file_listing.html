@@ -98,6 +98,7 @@
                         {% if hashdb_mode %}<th><input type="checkbox" id="select-all-files" title="Select all on this page"></th>{% endif %}
                         {{ sort_th('Path', 'path') }}
                         {{ sort_th('Size', 'size') }}
+                        {{ sort_th('Date', 'date') }}
                         {{ sort_th('Filetype', 'filetype') }}
                         {{ sort_th('Known', 'known') }}
                     </tr></thead>
@@ -253,6 +254,7 @@
                                 {% endif %}
                             </td>
                             <td>{% if file.is_directory %}<span class="text-muted">DIR</span>{% elif file.file_size %}{{ (file.file_size / 1024)|round(1) }} KB{% else %}-{% endif %}</td>
+                            <td class="text-nowrap">{% set _fdate = file.modified_time or file.created_time %}{% if _fdate %}<span class="text-muted small" title="{{ 'modified' if file.modified_time else 'created' }}: {{ _fdate.isoformat() }}">{{ _fdate.strftime('%Y-%m-%d %H:%M') }}</span>{% else %}-{% endif %}</td>
                             <td>
                                 {% if file.risc_os_filetype %}
                                     <span class="text-muted" title="{{ file.risc_os_filetype | format_filetype }}">
@@ -263,7 +265,7 @@
                             <td>{% if file.is_known %}{% set _db_colors = ['info', 'success', 'primary', 'danger', 'warning', 'dark'] %}{% set all_matches = file_known_matches.get(file.id, []) %}{% if all_matches %}{% for kf in all_matches %}<span class="badge bg-{{ _db_colors[kf.database_id % (_db_colors | length)] }} me-1" title="{{ kf.database.name }}">{{ kf.product.title if kf.product else kf.database.name }}</span>{% endfor %}{% else %}<span class="badge bg-{{ _db_colors[file.known_file.database_id % (_db_colors | length)] }}" title="{{ file.known_file.database.name }}">{{ file.known_file.product.title if file.known_file.product else file.known_file.database.name }}</span>{% endif %}{% endif %}</td>
                         </tr>
                         {% else %}
-                        <tr><td colspan="{% if hashdb_mode %}5{% else %}4{% endif %}" class="text-center text-muted">{% if file_form.path.data %}This directory is empty{% elif not all_partitions %}No files - run analysis to extract file listing{% else %}No files{% endif %}</td></tr>
+                        <tr><td colspan="{% if hashdb_mode %}6{% else %}5{% endif %}" class="text-center text-muted">{% if file_form.path.data %}This directory is empty{% elif not all_partitions %}No files - run analysis to extract file listing{% else %}No files{% endif %}</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
