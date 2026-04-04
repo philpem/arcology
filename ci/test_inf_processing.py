@@ -27,9 +27,12 @@ if _REPO_ROOT not in sys.path:
 os.environ.setdefault('WORKER_API_KEY', 'test')
 
 
+from datetime import datetime
+
 from worker.arcworker.tools.extraction import (
     _parse_inf_line,
     _get_riscos_filetype,
+    _riscos_timestamp_to_datetime,
     _translate_filename_bbc_to_dos,
     _translate_filename_dos_to_bbc,
     process_inf_sidecars,
@@ -395,6 +398,104 @@ class TestProcessInfSidecars(unittest.TestCase):
         root = self._make_tree({})
         meta = process_inf_sidecars(root)
         self.assertEqual(meta, {})
+
+
+# =============================================================================
+# _riscos_timestamp_to_datetime
+# =============================================================================
+
+class TestRiscosTimestampToDatetime(unittest.TestCase):
+    """Decode RISC OS 5-byte date-stamp to UTC datetime."""
+
+    def _make_load_exec(self, filetype: int, cs: int) -> tuple[int, int]:
+        """Build load/exec address pair for a given filetype and centisecond count."""
+        high = (cs >> 32) & 0xFF
+        load = 0xFFF00000 | ((filetype & 0xFFF) << 8) | high
+        exec_ = cs & 0xFFFFFFFF
+        return load, exec_
+
+    def test_not_date_stamped_returns_none(self):
+        """Load address without 0xFFF prefix gives None."""
+        self.assertIsNone(_riscos_timestamp_to_datetime(0x00001900, 0x00008023))
+
+    def test_zero_load_addr_returns_none(self):
+        self.assertIsNone(_riscos_timestamp_to_datetime(0, 0))
+
+    def test_risc_os_epoch(self):
+        """cs=0 corresponds to the RISC OS epoch: 1900-01-01 00:00:00."""
+        # load_addr with FFF prefix, FD filetype, low byte 0x00; exec = 0
+        result = _riscos_timestamp_to_datetime(0xFFFFFD00, 0x00000000)
+        self.assertEqual(result, datetime(1900, 1, 1, 0, 0, 0))
+
+    def test_unix_epoch(self):
+        """cs=220898880000 → 1970-01-01 00:00:00 UTC."""
+        cs = 220898880000  # seconds from 1900-01-01 to 1970-01-01 * 100
+        load, exec_ = self._make_load_exec(0xFFD, cs)
+        result = _riscos_timestamp_to_datetime(load, exec_)
+        self.assertEqual(result, datetime(1970, 1, 1, 0, 0, 0))
+
+    def test_known_date_roundtrip(self):
+        """Round-trip: encode a known datetime, decode it back."""
+        import calendar
+        expected = datetime(1994, 10, 1, 0, 0, 0)
+        # RISC OS centiseconds = Unix seconds * 100 + epoch offset
+        cs = calendar.timegm(expected.timetuple()) * 100 + 220898880000
+        load, exec_ = self._make_load_exec(0xFFD, cs)
+        result = _riscos_timestamp_to_datetime(load, exec_)
+        self.assertEqual(result, expected)
+
+    def test_returns_naive_datetime(self):
+        """Returned datetime is naive (no tzinfo attached)."""
+        result = _riscos_timestamp_to_datetime(0xFFFFFD00, 0x00000000)
+        self.assertIsNotNone(result)
+        self.assertIsNone(result.tzinfo)
+
+    def test_different_filetype_same_timestamp(self):
+        """Filetype bits do not affect the decoded timestamp."""
+        import calendar
+        dt = datetime(1990, 6, 15, 12, 0, 0)
+        cs = calendar.timegm(dt.timetuple()) * 100 + 220898880000
+        load_ffd, exec_ = self._make_load_exec(0xFFD, cs)
+        load_fff, _    = self._make_load_exec(0xFFF, cs)
+        self.assertEqual(
+            _riscos_timestamp_to_datetime(load_ffd, exec_),
+            _riscos_timestamp_to_datetime(load_fff, exec_),
+        )
+
+
+# =============================================================================
+# _parse_inf_line — timestamp fields
+# =============================================================================
+
+class TestParseInfLineTimestamp(unittest.TestCase):
+    """Verify _parse_inf_line() emits modified_time for date-stamped files."""
+
+    def test_date_stamped_has_modified_time(self):
+        """Date-stamped load address → modified_time included."""
+        result = _parse_inf_line('MYFILE FFFFFD00 FFFFFF00')
+        self.assertIn('modified_time', result)
+
+    def test_non_date_stamped_no_modified_time(self):
+        """Non-date-stamped load address → no modified_time."""
+        result = _parse_inf_line('LOADER 00001900 00008023')
+        self.assertNotIn('modified_time', result)
+
+    def test_modified_time_parses_as_iso_datetime(self):
+        """modified_time value is a valid ISO 8601 datetime string."""
+        result = _parse_inf_line('MYFILE FFFFFD00 FFFFFF00')
+        ts_str = result['modified_time']
+        # Should not raise
+        dt = datetime.fromisoformat(ts_str)
+        self.assertIsInstance(dt, datetime)
+
+    def test_modified_time_matches_decoder(self):
+        """modified_time agrees with _riscos_timestamp_to_datetime."""
+        load_hex, exec_hex = 'FFFFFD00', 'FFFFFF00'
+        result = _parse_inf_line(f'F {load_hex} {exec_hex}')
+        expected = _riscos_timestamp_to_datetime(
+            int(load_hex, 16), int(exec_hex, 16)
+        )
+        self.assertEqual(datetime.fromisoformat(result['modified_time']), expected)
 
 
 if __name__ == '__main__':

@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .base import run_tool_with_output
@@ -304,7 +305,9 @@ def enumerate_extracted_files(
             continue
 
         rel_path = file_path.relative_to(output_dir)
-        file_size = file_path.stat().st_size
+        stat = file_path.stat()
+        file_size = stat.st_size
+        mtime = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).replace(tzinfo=None)
 
         if acorn:
             # Parse Acorn filename to extract filetype
@@ -321,6 +324,7 @@ def enumerate_extracted_files(
             file_entry = {
                 'path': sanitize_path(display_path),
                 'size': file_size,
+                'modified_time': mtime.isoformat(),
             }
 
             # Store RISC OS filetype (hex string like '3fb') for archive detection
@@ -330,6 +334,7 @@ def enumerate_extracted_files(
             file_entry = {
                 'path': sanitize_path(str(rel_path)),
                 'size': file_size,
+                'modified_time': mtime.isoformat(),
             }
 
         if parent_file_id is not None:
@@ -343,7 +348,8 @@ def enumerate_extracted_files(
             if mapped_type:
                 file_entry['risc_os_filetype'] = mapped_type
 
-        # Apply INF sidecar metadata (load/exec addresses, filetype, attributes)
+        # Apply INF sidecar metadata (load/exec addresses, filetype, attributes,
+        # and RISC OS timestamp which overrides the filesystem mtime).
         if inf_metadata:
             inf_entry = inf_metadata.get(file_entry['path'])
             if inf_entry:
@@ -355,6 +361,8 @@ def enumerate_extracted_files(
                     file_entry['attributes'] = inf_entry['attributes']
                 if 'risc_os_filetype' in inf_entry and 'risc_os_filetype' not in file_entry:
                     file_entry['risc_os_filetype'] = inf_entry['risc_os_filetype']
+                if 'modified_time' in inf_entry:
+                    file_entry['modified_time'] = inf_entry['modified_time']
 
         # Compute hashes so they can be stored in the DB at registration time.
         # This avoids needing to locate the file on disk later (e.g. for hash
@@ -434,6 +442,30 @@ def _get_riscos_filetype(load_addr: int) -> str | None:
     return None
 
 
+def _riscos_timestamp_to_datetime(load_addr: int, exec_addr: int) -> datetime | None:
+    """Decode a RISC OS 5-byte date-stamp to a naive UTC datetime.
+
+    RISC OS date-stamped files store a 40-bit centisecond count since
+    1900-01-01 00:00:00 UTC split across load and exec addresses when the
+    top 12 bits of the load address are 0xFFF.  The low byte of the load
+    address is the most-significant byte of the 5-byte timestamp; the full
+    exec address provides the remaining four bytes.
+
+    Returns None if the load address is not in date-stamped format, or if
+    the resulting timestamp is out of range for a Python datetime.
+    """
+    if (load_addr >> 20) != 0xFFF:
+        return None
+    cs = ((load_addr & 0xFF) << 32) | exec_addr   # centiseconds since 1900-01-01
+    # Difference between RISC OS epoch (1900-01-01) and Unix epoch (1970-01-01):
+    # 70 years with 17 leap years = 25567 days = 2208988800 s = 220898880000 cs
+    unix_cs = cs - 220898880000
+    try:
+        return datetime.fromtimestamp(unix_cs / 100, tz=timezone.utc).replace(tzinfo=None)
+    except (OSError, OverflowError, ValueError):
+        return None
+
+
 # BBC Micro <-> DOS/host filename character translation.
 # Files stored on a host filesystem use the DOS-safe characters (right);
 # the INF file records the original BBC characters (left).
@@ -498,10 +530,13 @@ def _parse_inf_line(line: str) -> dict | None:
         'exec_address': f'{exec_int:08x}',
     }
 
-    # Derive filetype from load address
+    # Derive filetype and timestamp from load address (date-stamped files only)
     filetype = _get_riscos_filetype(load_int)
     if filetype:
         result['risc_os_filetype'] = filetype
+    ts = _riscos_timestamp_to_datetime(load_int, exec_int)
+    if ts is not None:
+        result['modified_time'] = ts.isoformat()
 
     # Access field (after optional length)
     # rest[2] could be length (hex) or access (letters/hex).
