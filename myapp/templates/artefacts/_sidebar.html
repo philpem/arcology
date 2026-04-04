@@ -20,6 +20,9 @@
                     <dt>Tags</dt>
                     <dd>{% for tag in artefact.tags %}<span class="badge bg-info text-dark me-1">{{ tag.name }}</span>{% endfor %}</dd>
                     {% endif %}
+                    {% if artefact.description %}
+                    <dt>Description</dt><dd>{{ artefact.description }}</dd>
+                    {% endif %}
                 </dl>
                 {% if user_can_write %}
                 <div class="d-flex gap-2 mt-3 flex-wrap">

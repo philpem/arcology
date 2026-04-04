@@ -59,16 +59,12 @@
                         {% endif %}
                     </dd>
                     <dt>Tags</dt><dd>{% for tag in item.tags %}<span class="badge bg-info">{{ tag.name }}</span> {% else %}<span class="text-muted">None</span>{% endfor %}</dd>
+                    {% if item.description %}
+                    <dt>Description</dt><dd>{{ item.description }}</dd>
+                    {% endif %}
                 </dl>
             </div>
         </div>
-
-        {% if item.description %}
-        <div class="card mb-4">
-            <div class="card-header"><i class="bi bi-card-text"></i> Description</div>
-            <div class="card-body">{{ item.description }}</div>
-        </div>
-        {% endif %}
 
         <div class="card mb-4">
             <div class="card-header d-flex justify-content-between">
