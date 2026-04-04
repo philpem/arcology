@@ -155,6 +155,9 @@ class ArcologyClient:
 	def get_artefact_tree(self, uuid: str) -> dict:
 		return self.get(f'artefacts/{uuid}/analysis/tree')
 
+	def get_processing_tree(self, uuid: str) -> dict:
+		return self.get(f'artefacts/{uuid}/processing-tree')
+
 	def search_failures(self, **params) -> dict:
 		return self.get('analysis/failures', params={k: v for k, v in params.items() if v is not None})
 

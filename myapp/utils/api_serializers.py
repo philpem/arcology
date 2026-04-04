@@ -128,6 +128,123 @@ def analysis_tree_node(artefact):
     return node
 
 
+def processing_tree_to_dict(root_artefact):
+    """Return the full processing tree as a JSON-safe dict.
+
+    Mirrors the logic in artefacts._build_processing_tree but returns plain
+    dicts suitable for JSON serialisation.  Uses flat queries (no N+1).
+
+    Return structure::
+
+        {
+          'artefact': {  # recursive
+            'uuid': ..., 'label': ..., 'artefact_type': ...,
+            'original_filename': ..., 'derived_from_analysis_uuid': ...,
+            'analyses': [analysis_to_dict(a), ...],
+            'path_tree': {               # None when no path-bearing analyses
+              'analyses': [...],
+              'children': {name: <same>, ...}
+            },
+            'children': [<same>, ...]    # derived artefact nodes
+          },
+          'status_counts': {'completed': n, 'failed': n, ...},
+          'total_count': n
+        }
+    """
+    import json as _json
+    from collections import defaultdict
+    from ..database import Analysis, AnalysisStatus, Artefact, ExtractedFile
+    from ..blueprints.artefacts import get_all_derived_artefact_ids, _analysis_file_path, _build_file_path_tree
+
+    all_ids = [root_artefact.id] + get_all_derived_artefact_ids(root_artefact)
+    all_artefacts = Artefact.query.filter(Artefact.id.in_(all_ids)).all()
+    artefact_map = {a.id: a for a in all_artefacts}
+
+    children_map: dict = defaultdict(list)
+    for a in all_artefacts:
+        if a.parent_artefact_id is not None:
+            children_map[a.parent_artefact_id].append(a)
+
+    all_analyses = (
+        Analysis.query
+        .filter(Analysis.artefact_id.in_(all_ids))
+        .order_by(Analysis.id)
+        .all()
+    )
+    analyses_map: dict = defaultdict(list)
+    for a in all_analyses:
+        analyses_map[a.artefact_id].append(a)
+
+    # Resolve ARCHIVE_EXTRACT file_ids → ExtractedFile paths in one query.
+    from shared.enums import AnalysisType as _AT
+    file_ids = []
+    for a in all_analyses:
+        if a.analysis_type == _AT.ARCHIVE_EXTRACT and a.hints:
+            try:
+                fid = _json.loads(a.hints).get('file_id')
+                if fid:
+                    file_ids.append(fid)
+            except Exception:
+                pass
+    hint_file_map: dict = {}
+    if file_ids:
+        rows = (
+            ExtractedFile.query
+            .filter(ExtractedFile.id.in_(file_ids))
+            .with_entities(ExtractedFile.id, ExtractedFile.path, ExtractedFile.filename)
+            .all()
+        )
+        hint_file_map = {r.id: {'path': r.path, 'filename': r.filename} for r in rows}
+
+    status_counts = {s.value: 0 for s in AnalysisStatus}
+    for a in all_analyses:
+        status_counts[a.status.value] += 1
+
+    def _path_tree_to_dict(node):
+        return {
+            'analyses': [analysis_to_dict(a) for a in node['analyses']],
+            'children': {
+                name: _path_tree_to_dict(child)
+                for name, child in node['children'].items()
+            },
+        }
+
+    def _build(aid):
+        plain = []
+        path_items = []
+        for a in analyses_map.get(aid, []):
+            p = _analysis_file_path(a, hint_file_map)
+            if p is not None:
+                path_items.append((p, a))
+            else:
+                plain.append(a)
+        art = artefact_map[aid]
+        return {
+            'uuid': art.uuid,
+            'label': art.label,
+            'artefact_type': art.artefact_type.value,
+            'original_filename': art.original_filename,
+            'derived_from_analysis_uuid': (
+                art.derived_from_analysis.uuid if art.derived_from_analysis_id else None
+            ),
+            'analyses': [analysis_to_dict(a) for a in plain],
+            'path_tree': (
+                _path_tree_to_dict(_build_file_path_tree(path_items))
+                if path_items else None
+            ),
+            'children': [
+                _build(c.id)
+                for c in sorted(children_map.get(aid, []), key=lambda x: x.id)
+            ],
+        }
+
+    return {
+        'artefact': _build(root_artefact.id),
+        'status_counts': status_counts,
+        'total_count': len(all_analyses),
+    }
+
+
 def known_file_to_dict(kf):
     if not kf:
         return None

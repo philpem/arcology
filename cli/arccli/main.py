@@ -118,6 +118,10 @@ def main():
 	debug_tree = debug_sub.add_parser('tree', help='Show artefact derivation tree')
 	debug_tree.add_argument('uuid', help='Artefact UUID')
 
+	# debug processing-tree
+	debug_ptree = debug_sub.add_parser('processing-tree', help='Show processing tree (artefact → path-grouped analyses → derived artefacts)')
+	debug_ptree.add_argument('uuid', help='Artefact UUID')
+
 	# debug failures
 	debug_failures = debug_sub.add_parser('failures', help='Search failed analyses system-wide')
 	debug_failures.add_argument('--type', dest='analysis_type', help='Filter by analysis type')
@@ -238,7 +242,8 @@ def _dispatch(client, args):
 
 	elif args.command == 'debug':
 		from .commands.debug import (
-			cmd_debug_analysis, cmd_debug_errors, cmd_debug_tree, cmd_debug_failures
+			cmd_debug_analysis, cmd_debug_errors, cmd_debug_tree, cmd_debug_failures,
+			cmd_debug_processing_tree,
 		)
 		if args.debug_command == 'analysis':
 			cmd_debug_analysis(client, args)
@@ -246,10 +251,12 @@ def _dispatch(client, args):
 			cmd_debug_errors(client, args)
 		elif args.debug_command == 'tree':
 			cmd_debug_tree(client, args)
+		elif args.debug_command == 'processing-tree':
+			cmd_debug_processing_tree(client, args)
 		elif args.debug_command == 'failures':
 			cmd_debug_failures(client, args)
 		else:
-			print("Usage: arco debug {analysis|errors|tree|failures}", file=sys.stderr)
+			print("Usage: arco debug {analysis|errors|tree|processing-tree|failures}", file=sys.stderr)
 			sys.exit(1)
 
 	elif args.command == 'status':
