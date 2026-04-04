@@ -654,15 +654,22 @@ def _bulk_delete_artefacts(artefact_ids: list[int]):
     Artefact.query.filter(Artefact.id.in_(artefact_ids)).delete(synchronize_session=False)
 
 
-def _build_processing_tree(root: Artefact) -> tuple[dict, bool]:
+def _build_processing_tree(root: Artefact) -> tuple[dict, bool, dict, int, dict]:
     """Build a nested tree structure for the processing tree view.
 
-    Returns (tree_node, has_active_analyses).  tree_node is a nested dict:
+    Returns (tree_node, has_active_analyses, status_counts, total_count, hint_file_map).
+    tree_node is a nested dict:
         {'artefact': Artefact, 'analyses': [Analysis, ...], 'children': [node, ...]}
 
-    All data is fetched in two flat queries (no N+1) and assembled in Python.
+    hint_file_map maps ExtractedFile.id -> {'path': str, 'filename': str} for
+    every file_id referenced in ARCHIVE_EXTRACT hints, so the template can
+    display which archive file is being extracted without extra queries.
+
+    All data is fetched in flat queries (no N+1) and assembled in Python.
     """
+    import json as _json
     from collections import defaultdict
+    from shared.enums import AnalysisType as _AT
 
     all_ids = [root.id] + get_all_derived_artefact_ids(root)
 
@@ -695,6 +702,29 @@ def _build_processing_tree(root: Artefact) -> tuple[dict, bool]:
         status_counts[a.status.value] += 1
     total_count = len(all_analyses)
 
+    # Collect file_ids from ARCHIVE_EXTRACT hints so we can show the
+    # archive filename in the tree without per-analysis lazy loads.
+    file_ids = []
+    for analysis in all_analyses:
+        if analysis.analysis_type == _AT.ARCHIVE_EXTRACT and analysis.hints:
+            try:
+                h = _json.loads(analysis.hints)
+                fid = h.get('file_id')
+                if fid:
+                    file_ids.append(fid)
+            except Exception:
+                pass
+
+    hint_file_map: dict[int, dict] = {}
+    if file_ids:
+        rows = (
+            ExtractedFile.query
+            .filter(ExtractedFile.id.in_(file_ids))
+            .with_entities(ExtractedFile.id, ExtractedFile.path, ExtractedFile.filename)
+            .all()
+        )
+        hint_file_map = {r.id: {'path': r.path, 'filename': r.filename} for r in rows}
+
     def _build(aid: int) -> dict:
         return {
             'artefact': artefact_map[aid],
@@ -705,7 +735,7 @@ def _build_processing_tree(root: Artefact) -> tuple[dict, bool]:
             ],
         }
 
-    return _build(root.id), has_active, status_counts, total_count
+    return _build(root.id), has_active, status_counts, total_count, hint_file_map
 
 
 def reset_artefact_for_reanalysis(artefact: Artefact, commit: bool = True):
@@ -1010,7 +1040,7 @@ def tree(uuid):
     root = artefact.root_artefact
     if root is not artefact:
         return redirect(url_for(f'{ROUTENAME}.tree', uuid=root.uuid))
-    tree_data, has_active, status_counts, total_count = _build_processing_tree(root)
+    tree_data, has_active, status_counts, total_count, hint_file_map = _build_processing_tree(root)
     return render_template(
         'artefacts/tree.html',
         artefact=root,
@@ -1018,6 +1048,7 @@ def tree(uuid):
         has_active_analyses=has_active,
         status_counts=status_counts,
         total_count=total_count,
+        hint_file_map=hint_file_map,
     )
 
 

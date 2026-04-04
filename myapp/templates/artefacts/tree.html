@@ -79,6 +79,31 @@
                        class="text-decoration-none text-truncate flex-grow-1">
                         {{ analysis.analysis_type|format_analysis_type }}
                     </a>
+                    {# Show input filename for archive/conversion analyses #}
+                    {% if analysis.analysis_type.value == 'archive_extract' and analysis.hints %}
+                    {% set h = analysis.hints | fromjson %}
+                    {% if h.file_id and hint_file_map.get(h.file_id) %}
+                    <small class="text-muted text-nowrap text-truncate" style="max-width:14rem;" title="{{ hint_file_map[h.file_id].path }}">
+                        <i class="bi bi-file-zip"></i> {{ hint_file_map[h.file_id].filename }}
+                    </small>
+                    {% elif h.archive_format %}
+                    <small class="text-muted text-nowrap"><i class="bi bi-file-zip"></i> {{ h.archive_format }}</small>
+                    {% endif %}
+                    {% elif analysis.analysis_type.value == 'archive_detect' and analysis.hints %}
+                    {% set h = analysis.hints | fromjson %}
+                    {% if h.path_prefix %}
+                    <small class="text-muted text-nowrap text-truncate" style="max-width:14rem;" title="{{ h.path_prefix }}">
+                        <i class="bi bi-search"></i> {{ h.path_prefix.split('/')[-1] or h.path_prefix }}
+                    </small>
+                    {% endif %}
+                    {% elif analysis.analysis_type.value == 'format_convert' and analysis.hints %}
+                    {% set h = analysis.hints | fromjson %}
+                    {% if h.path_prefix %}
+                    <small class="text-muted text-nowrap text-truncate" style="max-width:14rem;" title="{{ h.path_prefix }}">
+                        <i class="bi bi-arrow-left-right"></i> {{ h.path_prefix.split('/')[-1] or h.path_prefix }}
+                    </small>
+                    {% endif %}
+                    {% endif %}
                     {% if analysis.id in child_analysis_ids %}
                     <small class="text-muted text-nowrap"><i class="bi bi-arrow-down-right"></i> produced</small>
                     {% endif %}
