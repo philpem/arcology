@@ -408,8 +408,9 @@ The worker extracts files to a temporary directory. The path stored in `Extracte
 
 - **Acorn `,xxx` suffix**: on disk the file may be named `!Run,feb`; the DB stores `!Run`.
 - **RISC OS ISO pling-renaming**: ISO 9660 forbids `!` so tools store `_PAINT` on disc. `FILE_EXTRACTION` physically renames these directories to `!PAINT` during extraction, so subsequent handlers (`ARCHIVE_EXTRACT`, `RISCOS_MODULE_PARSE`, `FORMAT_CONVERT`) can open the file at the pling-correct path without any reverse-lookup.
+- **INF sidecar renaming**: some tools write files with DOS-encoded characters (e.g. `?` instead of BBC `#`). `process_inf_sidecars()` renames these to the original BBC names before enumeration, so on-disk names match DB paths.
 
-If you add a new handler that opens extracted files by DB path, the physical file **will** be at that path (because of the rename) — no special translation is needed. If you bypass the physical rename and try to open files by their raw ISO 9660 name, you will get file-not-found errors for any application directory.
+If you add a new handler that opens extracted files by DB path, the physical file **will** be at that path (because of the renames above) — no special translation is needed. If you bypass the physical rename and try to open files by their raw names, you will get file-not-found errors.
 
 #### `acorn` mode and `filetype_map` in `enumerate_extracted_files()`
 
@@ -431,6 +432,69 @@ All data exchange goes through the REST API. If you need information from the da
 #### `_arcology_iso_meta.json` sidecar file
 
 `FILE_EXTRACTION` writes a JSON sidecar `_arcology_iso_meta.json` into the extraction output directory. It carries metadata (currently the ARCHIMEDES `filetype_map`) that `FORMAT_CONVERT` cannot cheaply recompute. The sidecar lives alongside the extracted files in `data/outputs/`. If you add new persistent metadata to this sidecar, document its schema in a comment near the write site in `analysis.py`.
+
+#### RISC OS INF sidecar files
+
+Some extraction tools (currently Disc Image Manager; others may follow) produce
+`.inf` sidecar files alongside extracted data files.  These carry RISC OS
+metadata that cannot be represented on Unix filesystems:
+
+```
+<filename> <load_hex> <exec_hex> [<length_hex>] [<access>] [<extra info>]
+```
+
+`process_inf_sidecars()` in `worker/arcworker/tools/extraction.py` is the
+reusable pre-processing step.  It runs **before** `enumerate_extracted_files()`
+at all three extraction call sites in `analysis.py`:
+
+1. `process_file_extraction()` — disc image extraction (produces INFs today via DIM)
+2. `_extract_top_level_archive()` — top-level archive extraction (hook in place, no tool produces INFs yet)
+3. `process_archive_extract()` — nested archive extraction (hook in place, no tool produces INFs yet)
+
+The function:
+
+1. Finds `.inf` files (case-insensitive: `.inf`, `.INF`, `.Inf`, etc.).
+2. Validates each has a matching data file (same path minus the `.inf` extension).
+3. Parses the INF to extract load address, exec address, filetype, and attributes.
+4. Renames the data file from its DOS-encoded name to the original BBC name using
+   this character translation table:
+
+   | BBC | DOS |
+   |-----|-----|
+   | `#` | `?` |
+   | `.` | `/` |
+   | `$` | `<` |
+   | `^` | `>` |
+   | `&` | `+` |
+   | `@` | `=` |
+   | `%` | `;` |
+
+   The rename only fires when the on-disk name matches the DOS-encoded version of
+   the BBC name from the INF.  If the file is already named correctly (e.g. DIM
+   output), no rename occurs.
+
+5. Deletes the INF file.
+6. Returns a metadata dict that `enumerate_extracted_files()` merges into file
+   records via its `inf_metadata` parameter.
+
+The following `ExtractedFile` columns are populated from INF metadata:
+
+| Column | Type | Example | Source |
+|--------|------|---------|--------|
+| `load_address` | String(8) | `'fffffd00'` | INF field 2, zero-padded lowercase hex |
+| `exec_address` | String(8) | `'ffffff00'` | INF field 3, zero-padded lowercase hex |
+| `risc_os_filetype` | String(3) | `'ffd'` | Derived from load address bits 19:8 when date-stamped |
+| `attributes` | String(50) | `'WR/r'` | INF field 5, stored as-is (letters or hex) |
+
+**Extending to other tools:**  If a new extraction tool produces standard `.inf`
+sidecar files, no code changes are needed — the hooks are already in place.  If
+the tool uses a different INF format or filename translation scheme, extend
+`_parse_inf_line()` or add a `translation_table` parameter to
+`process_inf_sidecars()`.  The translation table is defined as `_BBC_TO_DOS` /
+`_DOS_TO_BBC` in `extraction.py`.
+
+Tests: `ci/test_inf_processing.py` (44 tests covering parsing, translation, and
+end-to-end `process_inf_sidecars()` behaviour).
 
 ### Code Style
 
