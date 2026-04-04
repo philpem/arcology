@@ -2712,9 +2712,32 @@ class AnalysisWorker:
 
         # Use cached decompressed path if available (from PARTITION_DETECT).
         partition_image_path = hints.get('partition_image_path')
+        input_path = None
         if partition_image_path:
-            input_path = Path(partition_image_path)
-        else:
+            local_path = Path(partition_image_path)
+            if local_path.exists():
+                input_path = local_path
+                log.info(f"Using cached partition image: {input_path}")
+            else:
+                # S3 mode or different worker: try to download from storage cache
+                from shared.storage import S3Storage
+                from botocore.exceptions import ClientError
+                if isinstance(self.storage, S3Storage):
+                    try:
+                        rel = local_path.relative_to(self.outputs)
+                        cache_key = self.storage.storage_key('outputs', str(rel))
+                    except ValueError:
+                        cache_key = self.storage.storage_key(
+                            'outputs', f".cache/{artefact['uuid']}/{local_path.name}")
+                    dest = work_dir / local_path.name
+                    try:
+                        self.storage.get(cache_key, dest)
+                        input_path = dest
+                        log.info(f"Downloaded cached partition image from storage: {cache_key}")
+                    except ClientError as e:
+                        if e.response['Error']['Code'] not in ('404', 'NoSuchKey'):
+                            raise
+        if input_path is None:
             input_path = self.get_input_path(artefact, work_dir)
 
         # Re-run detection to capture full details for the analysis record.
