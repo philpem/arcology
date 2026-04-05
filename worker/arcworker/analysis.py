@@ -1612,6 +1612,10 @@ class AnalysisWorker:
         if len(header) >= 5 and header[:4] == b'TAFS' and header[4] == 0xC8:
             return ArchiveType.TBAFS
 
+        # X-Files: "XFIL" magic at offset 0
+        if len(header) >= 4 and header[:4] == b'XFIL':
+            return ArchiveType.XFILES
+
         return None
 
     @staticmethod
@@ -1828,6 +1832,7 @@ class AnalysisWorker:
         from .tools import (
             extract_riscosarc,
             extract_tbafs,
+            extract_xfiles,
             extract_zip,
             extract_zip_riscos,
             extract_tar,
@@ -2022,6 +2027,9 @@ class AnalysisWorker:
         elif archive_type == ArchiveType.TBAFS:
             result = extract_tbafs(archive_path, temp_output_dir)
 
+        elif archive_type == ArchiveType.XFILES:
+            result = extract_xfiles(archive_path, temp_output_dir)
+
         elif archive_type == ArchiveType.FCFS:
             # Convert FCFS to raw, then extract as ADFS
             raw_path = work_dir / 'converted.img'
@@ -2104,6 +2112,7 @@ class AnalysisWorker:
             acorn=is_acorn_archive,
             parent_file_id=file_id,
             extraction_depth=extraction_depth,
+            inf_metadata=result.get('inf_metadata'),
         )
 
         # Register extracted files in the same partition with parent_file_id

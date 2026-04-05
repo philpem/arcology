@@ -107,7 +107,7 @@ ARCHIVE_FORMATS = {
         'category': ArchiveCategory.ARCHIVE,
         'risc_os_filetype': 'b23',
         'extensions': [],
-        'tool': 'custom',
+        'tool': 'python',
         'description': 'X-Files archive with long filenames',
         'extract_creates_dir': True,
     },

@@ -31,6 +31,7 @@ from .partition import (
 from .archives import (
     extract_riscosarc,
     extract_tbafs,
+    extract_xfiles,
     extract_zip,
     extract_zip_riscos,
     has_riscos_zip_metadata,
@@ -67,6 +68,7 @@ __all__ = [
     'detect_fat_filesystem',
     'extract_riscosarc',
     'extract_tbafs',
+    'extract_xfiles',
     'extract_zip',
     'extract_zip_riscos',
     'has_riscos_zip_metadata',
