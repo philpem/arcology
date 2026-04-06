@@ -2192,7 +2192,7 @@ class AnalysisWorker:
             artefact['uuid'],
             AnalysisType.FORMAT_CONVERT.value,
             hints={
-                'extraction_path': str(persistent_output),
+                'extraction_path': self._relative_output_path(persistent_output),
                 'path_prefix': archive_display_path,
                 'partition_uuid': partition_uuid,
             },
@@ -2209,7 +2209,7 @@ class AnalysisWorker:
             AnalysisType.RISCOS_MODULE_PARSE.value,
             hints={
                 'partition_uuid': partition_uuid,
-                'extraction_path': str(persistent_output),
+                'extraction_path': self._relative_output_path(persistent_output),
                 'path_prefix': archive_display_path,
             },
         )
