@@ -6,10 +6,18 @@ security checks, and metadata extraction without requiring any external tools or
 a running database.
 """
 
+import os
 import struct
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+os.environ.setdefault('WORKER_API_KEY', 'test')
 
 
 # ---------------------------------------------------------------------------
@@ -198,13 +206,6 @@ class TestXFilesExtraction(unittest.TestCase):
 
     def _run_extract(self, image_bytes: bytes):
         """Write *image_bytes* to a temp file, run extract_xfiles, return result."""
-        # Import here so the test can run without the full worker stack installed
-        # as long as the worker package is on sys.path.
-        import sys
-        repo_root = str(Path(__file__).parent.parent)
-        if repo_root not in sys.path:
-            sys.path.insert(0, repo_root)
-
         from worker.arcworker.tools.archives import extract_xfiles
 
         with tempfile.TemporaryDirectory() as tmpdir:
