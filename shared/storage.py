@@ -273,7 +273,12 @@ class S3Storage(StorageBackend):
         dest.parent.mkdir(parents=True, exist_ok=True)
         try:
             self._client.download_file(self.bucket, key, str(dest))
-        except (BotoCoreError, BotoClientError) as exc:
+        except BotoClientError as exc:
+            code = exc.response.get('Error', {}).get('Code', '')
+            if code in ('404', 'NoSuchKey'):
+                raise FileNotFoundError(f"S3 object not found: '{key}'") from exc
+            raise IOError(f"S3 download failed for '{key}': {exc}") from exc
+        except BotoCoreError as exc:
             raise IOError(f"S3 download failed for '{key}': {exc}") from exc
 
     def open_read(self, key: str) -> BinaryIO:
@@ -286,7 +291,12 @@ class S3Storage(StorageBackend):
                 spool.write(chunk)
             spool.seek(0)
             return spool
-        except (BotoCoreError, BotoClientError) as exc:
+        except BotoClientError as exc:
+            code = exc.response.get('Error', {}).get('Code', '')
+            if code in ('404', 'NoSuchKey'):
+                raise FileNotFoundError(f"S3 object not found: '{key}'") from exc
+            raise IOError(f"S3 read failed for '{key}': {exc}") from exc
+        except BotoCoreError as exc:
             raise IOError(f"S3 read failed for '{key}': {exc}") from exc
 
     def delete(self, key: str) -> None:
