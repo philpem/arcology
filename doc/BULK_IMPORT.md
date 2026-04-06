@@ -1,6 +1,6 @@
 # Bulk Import Tool
 
-`devtools/bulk-import.py` walks a local directory tree and imports files into
+`arco bulk-import` walks a local directory tree and imports files into
 Arcology as Items and Artefacts. The Arcology worker pipeline then handles
 extraction, hashing, archive detection, file listing, and product recognition
 automatically.
@@ -9,34 +9,34 @@ automatically.
 
 - A running Arcology instance with the REST API accessible
 - An API key with read/write permissions (`WORKER_API_KEY` or a dedicated key)
-- Python 3.10+ with the `requests` library
+- The `arco` CLI installed (`pip install -e cli/` or `pipx install git+https://github.com/philpem/arcology.git#subdirectory=cli`)
 - A local copy of the archive to import
 
 ## Quick start
 
 ```bash
 # Preview what would be imported:
-python3 devtools/bulk-import.py \
+arco bulk-import \
     --archive-dir ~/my-archive --tag myimport \
     --dry-run -v
 
 # Import everything:
-python3 devtools/bulk-import.py \
+arco bulk-import \
     --archive-dir ~/my-archive --tag myimport \
     --api-key YOUR_KEY
 
 # Import a flat directory of disc images as a single Item:
-python3 devtools/bulk-import.py \
+arco bulk-import \
     --archive-dir ~/my-discs --tag discs --flat \
     --api-key YOUR_KEY
 
 # Import the arcarc.nl archive (preset handles tag, prefix, categories):
-python3 devtools/bulk-import.py \
+arco bulk-import \
     --archive-dir ~/arcarc/archive --arcarc \
     --api-key YOUR_KEY
 
 # Resume after interruption:
-python3 devtools/bulk-import.py \
+arco bulk-import \
     --archive-dir ~/my-archive --tag myimport \
     --api-key YOUR_KEY --resume
 ```
@@ -128,7 +128,7 @@ Every imported Item is tagged with `--tag` plus the lowercase collection name
 ```
 
 ```bash
-bulk-import.py --archive-dir ~/archive --tag myimport
+arco bulk-import --archive-dir ~/archive --tag myimport
 ```
 
 | Item | Artefact label | Source path |
@@ -145,7 +145,7 @@ subdirectory. No Arcology category is assigned (no `--category-map`).
 Same directory as above:
 
 ```bash
-bulk-import.py --archive-dir ~/archive --tag myimport \
+arco bulk-import --archive-dir ~/archive --tag myimport \
     --name-prefix "Source" --category-map "Apps=Applications"
 ```
 
@@ -168,7 +168,7 @@ bulk-import.py --archive-dir ~/archive --tag myimport \
 ```
 
 ```bash
-bulk-import.py --archive-dir ~/my-discs --tag discs --flat
+arco bulk-import --archive-dir ~/my-discs --tag discs --flat
 ```
 
 | Item | Artefact label | Source path |
@@ -212,7 +212,7 @@ inside a subdirectory.
 ```
 
 ```bash
-bulk-import.py --archive-dir ~/arcarc/archive --arcarc
+arco bulk-import --archive-dir ~/arcarc/archive --arcarc
 ```
 
 | Item | Arcology category | Artefact label | Why |
@@ -238,7 +238,7 @@ Deep nesting under `GCC (FR)/` preserves version directories so that
 Same arcarc structure, but only import Apps:
 
 ```bash
-bulk-import.py --archive-dir ~/arcarc/archive --arcarc --categories Apps
+arco bulk-import --archive-dir ~/arcarc/archive --arcarc --categories Apps
 ```
 
 Only `Arcarc: Apps` is created. `Games`, `!Compilations`, and all other
@@ -247,7 +247,7 @@ top-level directories are skipped entirely.
 Multiple categories can be selected:
 
 ```bash
-bulk-import.py --archive-dir ~/arcarc/archive --arcarc --categories Apps,Games
+arco bulk-import --archive-dir ~/arcarc/archive --arcarc --categories Apps,Games
 ```
 
 ## Options reference
@@ -255,8 +255,6 @@ bulk-import.py --archive-dir ~/arcarc/archive --arcarc --categories Apps,Games
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--archive-dir PATH` | *(required)* | Local directory to import |
-| `--api-url URL` | `$ARCOLOGY_API` or `http://localhost:5000/api` | Arcology API URL |
-| `--api-key KEY` | `$WORKER_API_KEY` | API key for authentication |
 | `--tag TAG` | *(required)* | Tag applied to all imported Items |
 | `--categories LIST` | *(all)* | Filter by top-level directory, comma-separated |
 | `--skip-dirs LIST` | *(none)* | Skip directories by name at any level, comma-separated |
@@ -295,10 +293,10 @@ To delete all Items from a previous import:
 
 ```bash
 # Shows what would be deleted, prompts for confirmation:
-python3 devtools/bulk-import.py --purge --tag myimport --api-key YOUR_KEY
+arco bulk-import --purge --tag myimport --api-key YOUR_KEY
 
 # Delete without confirmation:
-python3 devtools/bulk-import.py --purge --tag myimport --api-key YOUR_KEY --yes
+arco bulk-import --purge --tag myimport --api-key YOUR_KEY --yes
 ```
 
 This deletes Items and all their Artefacts (including uploaded files and

@@ -136,6 +136,83 @@ def main():
 	status_parser = subparsers.add_parser('status', help='Show artefact analysis status')
 	status_parser.add_argument('uuid', help='Artefact UUID')
 
+	# ---- bulk-import ----
+	bulk_parser = subparsers.add_parser('bulk-import', help='Bulk import a file archive into Arcology')
+	bulk_parser.add_argument('--archive-dir', default=None,
+	                         help='Local mirror root (required unless --purge)')
+	bulk_parser.add_argument('--tag', default=None,
+	                         help='Tag for imported items (required unless --arcarc)')
+	bulk_parser.add_argument('--categories', default=None,
+	                         help='Filter by top-level directory (comma-separated)')
+	bulk_parser.add_argument('--skip-dirs', default=None,
+	                         help='Comma-separated directory names to skip')
+	bulk_parser.add_argument('--skip-ext', default=None,
+	                         help='Comma-separated extensions to skip (e.g. .pdf,.txt)')
+	bulk_parser.add_argument('--platform', default=None,
+	                         help='Platform name to assign')
+	bulk_parser.add_argument('--name-prefix', default=None,
+	                         help='Prefix for item names')
+	bulk_parser.add_argument('--category-map', default=None,
+	                         help='Directory-to-category mapping as K=V,...')
+	bulk_parser.add_argument('--no-auto-analyse', action='store_true',
+	                         help='Upload without triggering automatic analysis')
+	bulk_parser.add_argument('--smart-labels', action='store_true',
+	                         help='Strip single-char groupings and use filename alone when self-describing')
+	bulk_parser.add_argument('--flat', action='store_true',
+	                         help='Treat archive-dir as a single collection')
+	bulk_parser.add_argument('--arcarc', action='store_true',
+	                         help='Preset for arcarc.nl (sets tag, prefix, category map, smart labels)')
+	bulk_parser.add_argument('--resume', action='store_true',
+	                         help='Skip artefacts whose filename already exists on the Item')
+	bulk_parser.add_argument('--dry-run', action='store_true',
+	                         help='Scan only, do not import')
+	bulk_parser.add_argument('-v', '--verbose', action='store_true')
+	bulk_parser.add_argument('--purge', action='store_true',
+	                         help='Delete all items with the given tag instead of importing')
+	bulk_parser.add_argument('--yes', '-y', action='store_true',
+	                         help='Skip confirmation prompt for --purge')
+
+	# ---- hashdb ----
+	hashdb_parser = subparsers.add_parser('hashdb', help='Hash database management')
+	hashdb_sub = hashdb_parser.add_subparsers(dest='hashdb_command')
+
+	# hashdb list
+	hashdb_sub.add_parser('list', help='List all hash databases')
+
+	# hashdb export
+	hashdb_export = hashdb_sub.add_parser('export', help='Export a hash database to a file')
+	hashdb_export.add_argument('id', type=int, help='Database ID')
+	hashdb_export.add_argument('output_file', help='Output file path')
+	hashdb_export.add_argument('--format', choices=['json', 'csv'], default='json')
+
+	# hashdb import
+	hashdb_import = hashdb_sub.add_parser('import', help='Import a hash database from a file')
+	hashdb_import.add_argument('input_file', help='Input file path')
+	hashdb_import.add_argument('--format', choices=['json', 'csv', 'auto'], default='auto',
+	                           help='File format (default: auto-detect from extension)')
+	hashdb_import.add_argument('--name', help='Override database name')
+	hashdb_import.add_argument('--merge', action='store_true',
+	                           help='Add to an existing database with the same name')
+
+	# hashdb generate-arcarc
+	hashdb_gen = hashdb_sub.add_parser('generate-arcarc',
+	                                   help='Generate HashDB JSON from arcarc items in Arcology')
+	hashdb_gen.add_argument('--output', default='arcarc-hashdb.json',
+	                        help='Output JSON file (default: arcarc-hashdb.json)')
+	hashdb_gen.add_argument('--tag', default='arcarc',
+	                        help='Filter items by tag (default: arcarc)')
+	hashdb_gen.add_argument('--multi-disc', choices=['merge', 'separate', 'both'],
+	                        default='separate', dest='multi_disc',
+	                        help='Multi-disc handling (default: separate)')
+	hashdb_gen.add_argument('--root-files', choices=['include', 'skip', 'flag'],
+	                        default='include', dest='root_files',
+	                        help='Root-level file handling (default: include)')
+	hashdb_gen.add_argument('--db-name', default='Arcarc RISC OS Archive', dest='db_name',
+	                        help='HashDB name')
+	hashdb_gen.add_argument('-v', '--verbose', action='store_true')
+	hashdb_gen.add_argument('--dry-run', action='store_true',
+	                        help='Scan only, report what would be included')
+
 	args = parser.parse_args()
 
 	if not args.command:
@@ -261,6 +338,25 @@ def _dispatch(client, args):
 
 	elif args.command == 'status':
 		cmd_status(client, args)
+
+	elif args.command == 'bulk-import':
+		from .commands.bulk_import import cmd_bulk_import
+		cmd_bulk_import(client, args)
+
+	elif args.command == 'hashdb':
+		from .commands.hashdb import cmd_hashdb_list, cmd_hashdb_export, cmd_hashdb_import
+		from .commands.hashdb_generate import cmd_hashdb_generate_arcarc
+		if args.hashdb_command == 'list':
+			cmd_hashdb_list(client, args)
+		elif args.hashdb_command == 'export':
+			cmd_hashdb_export(client, args)
+		elif args.hashdb_command == 'import':
+			cmd_hashdb_import(client, args)
+		elif args.hashdb_command == 'generate-arcarc':
+			cmd_hashdb_generate_arcarc(client, args)
+		else:
+			print("Usage: arco hashdb {list|export|import|generate-arcarc}", file=sys.stderr)
+			sys.exit(1)
 
 	else:
 		print(f"Unknown command: {args.command}", file=sys.stderr)

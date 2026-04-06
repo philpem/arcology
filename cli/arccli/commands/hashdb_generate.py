@@ -1,55 +1,20 @@
-#!/usr/bin/env python3
 """
-import-arcarc-hashdb — Generate HashDB JSON from arcarc items already imported
-into Arcology.
+arco hashdb generate-arcarc — Generate HashDB JSON from arcarc items in Arcology.
 
-Queries the Arcology API for items tagged with a given tag (default: "arcarc"),
-fetches their extracted file listings, identifies RISC OS application directories,
+Queries the Arcology API for items tagged with a given tag, fetches their
+extracted file listings, identifies RISC OS application directories,
 classifies files as Required/Optional, and outputs HashDB-compatible JSON.
-
-The output can be imported into Arcology's hash database system via:
-    python devtools/arcology-hashdb.py import <output-file>
-
-Prerequisites:
-    Items must have been imported into Arcology (e.g. via import-arcarc.py) and
-    the worker must have completed file extraction analyses.
-
-Usage:
-    import-arcarc-hashdb.py [options]
-
-Options:
-    --api-url URL         Arcology API URL (default: $ARCOLOGY_API or http://localhost:5000/api)
-    --api-key KEY         API key (default: $WORKER_API_KEY)
-    --output PATH         Output JSON file (default: arcarc-hashdb.json)
-    --tag TAG             Filter items by tag (default: arcarc)
-    --multi-disc MODE     merge | separate | both (default: separate)
-    --root-files MODE     include | skip | flag (default: include)
-    --db-name NAME        HashDB name (default: "Arcarc RISC OS Archive")
-    --verbose / -v        Verbose logging
-    --dry-run             Scan only, report what would be included
-
-Examples:
-    # Generate HashDB from all arcarc items:
-    import-arcarc-hashdb.py --output arcarc-hashdb.json
-
-    # Merge multi-disc applications, skip root files:
-    import-arcarc-hashdb.py --multi-disc merge --root-files skip
-
-    # Import the result:
-    python devtools/arcology-hashdb.py import arcarc-hashdb.json
 """
 
-import argparse
 import json
 import logging
-import os
 import re
 import sys
 from datetime import date
 
-import requests
+from ..client import ArcologyClient
 
-log = logging.getLogger('import-arcarc-hashdb')
+log = logging.getLogger('arco.hashdb.generate-arcarc')
 
 
 # ---------------------------------------------------------------------------
@@ -63,75 +28,7 @@ FT_SPRITE = 'ff9'
 FT_MODULE = 'ffa'
 FT_UTILITY = 'ffc'
 
-# Filetypes that indicate code / binary — always Required
 REQUIRED_FILETYPES = {FT_BASIC, FT_ABSOLUTE, FT_TEMPLATE, FT_MODULE, FT_UTILITY}
-
-
-# ---------------------------------------------------------------------------
-# API helpers
-# ---------------------------------------------------------------------------
-
-def build_client(api_url: str, api_key: str):
-    """Create an authenticated requests session."""
-    session = requests.Session()
-    session.headers.update({
-        'X-API-Key': api_key,
-        'Authorization': f'Bearer {api_key}',
-    })
-    return session, api_url.rstrip('/')
-
-
-def fetch_all_items(session, api_url: str, tag: str) -> list[dict]:
-    """Fetch all items with the given tag, handling pagination."""
-    items = []
-    page = 1
-    while True:
-        resp = session.get(f'{api_url}/items', params={
-            'tag': tag,
-            'per_page': 100,
-            'page': page,
-        })
-        resp.raise_for_status()
-        data = resp.json()
-        page_items = data.get('items', [])
-        items.extend(page_items)
-        if page >= data.get('pages', 1):
-            break
-        page += 1
-    return items
-
-
-def fetch_item_detail(session, api_url: str, uuid: str) -> dict:
-    """Fetch full item detail including artefacts."""
-    resp = session.get(f'{api_url}/items/{uuid}')
-    resp.raise_for_status()
-    return resp.json()
-
-
-def fetch_artefact_detail(session, api_url: str, uuid: str) -> dict:
-    """Fetch artefact detail including partitions."""
-    resp = session.get(f'{api_url}/artefacts/{uuid}')
-    resp.raise_for_status()
-    return resp.json()
-
-
-def fetch_partition_files(session, api_url: str, partition_uuid: str) -> list[dict]:
-    """Fetch all files in a partition, handling pagination."""
-    files = []
-    page = 1
-    while True:
-        resp = session.get(f'{api_url}/partitions/{partition_uuid}/files', params={
-            'show_known': 'true',
-            'per_page': 500,
-            'page': page,
-        })
-        resp.raise_for_status()
-        data = resp.json()
-        files.extend(data.get('files', []))
-        if page >= data.get('pages', 1):
-            break
-        page += 1
-    return files
 
 
 # ---------------------------------------------------------------------------
@@ -171,17 +68,11 @@ def parse_artefact_label(label: str) -> dict:
 
 def find_app_directories(files: list[dict], root_mode: str,
                          disc_label: str) -> dict[str, list[dict]]:
-    """
-    Group extracted files by application directory.
-
-    Files inside !-prefixed directories are grouped by that directory name.
-    Root-level files are handled according to root_mode.
-    """
+    """Group extracted files by application directory."""
     app_dirs: dict[str, list[dict]] = {}
     root_files: list[dict] = []
 
     for f in files:
-        # Skip directory entries themselves
         if f.get('is_directory'):
             continue
 
@@ -196,7 +87,6 @@ def find_app_directories(files: list[dict], root_mode: str,
         else:
             root_files.append(f)
 
-    # Handle root files
     if root_files and root_mode != 'skip':
         if root_mode == 'flag':
             key = f'[Root] {disc_label}'
@@ -212,28 +102,20 @@ def find_app_directories(files: list[dict], root_mode: str,
 # ---------------------------------------------------------------------------
 
 def classify_file(f: dict, verbose: bool = False) -> bool:
-    """
-    Determine if a file should be Required (True) or Optional (False).
-
-    Classification is based on RISC OS filetype and filename conventions.
-    """
+    """Determine if a file should be Required (True) or Optional (False)."""
     filename = f.get('filename', '')
     filetype = f.get('risc_os_filetype')
 
-    # Code/binary filetypes are always Required
     if filetype in REQUIRED_FILETYPES:
         if verbose:
             log.info('    REQUIRED (filetype %s): %s', filetype, f.get('path', ''))
         return True
 
-    # !Sprites or !SpritesNN with sprite filetype
     if filetype == FT_SPRITE and re.match(r'^!Sprites\d*$', filename, re.IGNORECASE):
         if verbose:
             log.info('    REQUIRED (app sprites): %s', f.get('path', ''))
         return True
 
-    # !Boot and !Run are Optional by default when using API approach
-    # (we can't inspect file content to detect boilerplate)
     if verbose:
         log.info('    OPTIONAL: %s', f.get('path', ''))
     return False
@@ -254,13 +136,11 @@ def build_product_files(app_files: list[dict], verbose: bool = False) -> list[di
             'is_required': is_req,
             'relative_path': f.get('path', ''),
         }
-        # Include available hashes
         if f.get('md5'):
             entry['md5'] = f['md5']
         if f.get('sha1'):
             entry['sha1'] = f['sha1']
 
-        # Skip entries with no hashes (can't identify them)
         if not entry.get('md5') and not entry.get('sha1'):
             continue
 
@@ -283,10 +163,8 @@ def build_product_title(name: str, version: str | None = None,
 # Main processing
 # ---------------------------------------------------------------------------
 
-def process_item(session, api_url: str, item: dict, args) -> list[dict]:
-    """
-    Process a single Arcology Item and return product dicts for HashDB.
-    """
+def _process_item(client: ArcologyClient, item: dict, args) -> list[dict]:
+    """Process a single Arcology Item and return product dicts for HashDB."""
     products = []
     item_name = item['name']
     category = ''
@@ -295,42 +173,37 @@ def process_item(session, api_url: str, item: dict, args) -> list[dict]:
             category = tag
             break
 
-    # Fetch full item detail with artefacts
-    item_detail = fetch_item_detail(session, api_url, item['uuid'])
+    item_detail = client.get_item(item['uuid'])
     artefacts = item_detail.get('artefacts', [])
 
     if not artefacts:
         log.debug('  No artefacts for item: %s', item_name)
         return products
 
-    # Collect per-artefact results
     artefact_results = []
 
     for art in artefacts:
         art_uuid = art['uuid']
         art_label = art.get('label', art.get('original_filename', ''))
 
-        # Fetch artefact detail with partitions
-        art_detail = fetch_artefact_detail(session, api_url, art_uuid)
+        art_detail = client.get_artefact(art_uuid)
         partitions = art_detail.get('partitions', [])
 
         if not partitions:
             log.debug('  No partitions for artefact: %s', art_label)
             continue
 
-        # Parse disc number from label
         parsed = parse_artefact_label(art_label)
 
         all_files = []
         for part in partitions:
             part_uuid = part['uuid']
-            files = fetch_partition_files(session, api_url, part_uuid)
+            files = client.get_partition_files_all(part_uuid, show_known='true')
             all_files.extend(files)
 
         if not all_files:
             continue
 
-        # Identify application directories
         app_dirs = find_app_directories(all_files, args.root_files, art_label)
 
         artefact_results.append({
@@ -344,7 +217,6 @@ def process_item(session, api_url: str, item: dict, args) -> list[dict]:
     if not artefact_results:
         return products
 
-    # Determine version from first artefact that has one
     version = None
     for ar in artefact_results:
         if ar['version']:
@@ -372,7 +244,6 @@ def process_item(session, api_url: str, item: dict, args) -> list[dict]:
                     })
 
     if args.multi_disc in ('merge', 'both'):
-        # Merge all artefacts — group by app directory across discs
         merged: dict[str, list[dict]] = {}
         for ar in artefact_results:
             disc_num = ar['disc_number']
@@ -380,14 +251,12 @@ def process_item(session, api_url: str, item: dict, args) -> list[dict]:
                 if app_dir_name not in merged:
                     merged[app_dir_name] = []
                 for f in app_files:
-                    # Prefix path for multi-disc disambiguation
                     if is_multi_disc and disc_num is not None:
                         f = dict(f)
                         f['path'] = f'Disk {disc_num}/{f.get("path", "")}'
                     merged[app_dir_name].append(f)
 
         for app_dir_name, all_files in merged.items():
-            # Deduplicate by md5 + path
             seen = set()
             deduped = []
             for f in all_files:
@@ -410,48 +279,13 @@ def process_item(session, api_url: str, item: dict, args) -> list[dict]:
     return products
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description='Generate HashDB JSON from arcarc items in Arcology',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
-    )
-    parser.add_argument('--api-url',
-                        default=os.environ.get('ARCOLOGY_API', 'http://localhost:5000/api'),
-                        help='Arcology API URL')
-    parser.add_argument('--api-key',
-                        default=os.environ.get('WORKER_API_KEY', ''),
-                        help='API key')
-    parser.add_argument('--output', default='arcarc-hashdb.json', type=str,
-                        help='Output JSON file (default: arcarc-hashdb.json)')
-    parser.add_argument('--tag', default='arcarc',
-                        help='Filter items by tag (default: arcarc)')
-    parser.add_argument('--multi-disc', choices=['merge', 'separate', 'both'],
-                        default='separate',
-                        help='Multi-disc handling (default: separate)')
-    parser.add_argument('--root-files', choices=['include', 'skip', 'flag'],
-                        default='include',
-                        help='Root-level file handling (default: include)')
-    parser.add_argument('--db-name', default='Arcarc RISC OS Archive',
-                        help='HashDB name')
-    parser.add_argument('-v', '--verbose', action='store_true')
-    parser.add_argument('--dry-run', action='store_true',
-                        help='Scan only, report what would be included')
-
-    args = parser.parse_args()
-
+def cmd_hashdb_generate_arcarc(client: ArcologyClient, args):
+    """Generate HashDB JSON from arcarc items in Arcology."""
     level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(level=level, format='%(message)s', stream=sys.stderr)
 
-    if not args.api_key:
-        log.error('No API key set. Use --api-key or $WORKER_API_KEY.')
-        sys.exit(1)
-
-    session, api_url = build_client(args.api_url, args.api_key)
-
-    # Fetch all items with the target tag
     log.info('Fetching items tagged "%s"...', args.tag)
-    items = fetch_all_items(session, api_url, args.tag)
+    items = client.list_items_all(tag=args.tag)
 
     if not items:
         log.error('No items found with tag "%s"', args.tag)
@@ -468,14 +302,13 @@ def main():
                      item['name'], tags, item.get('artefact_count', 0))
         return
 
-    # Process each item
     all_products = []
     items_with_files = 0
     items_without_files = 0
 
     for i, item in enumerate(items, 1):
         log.info('[%d/%d] %s', i, len(items), item['name'])
-        products = process_item(session, api_url, item, args)
+        products = _process_item(client, item, args)
 
         if products:
             all_products.extend(products)
@@ -484,7 +317,6 @@ def main():
             items_without_files += 1
             log.debug('  No products generated')
 
-    # Generate output JSON
     output_data = {
         'schema_version': 1,
         'database': {
@@ -496,7 +328,6 @@ def main():
         'products': all_products,
     }
 
-    # Stats
     total_files = sum(len(p['files']) for p in all_products)
     required_files = sum(
         sum(1 for f in p['files'] if f['is_required'])
@@ -504,7 +335,6 @@ def main():
     )
     optional_files = total_files - required_files
 
-    # Write output
     with open(args.output, 'w', encoding='utf-8') as fh:
         json.dump(output_data, fh, indent=2, default=str)
 
@@ -517,10 +347,6 @@ def main():
              total_files, required_files, optional_files)
     log.info('Output:           %s', args.output)
     log.info('')
-    log.info('Import with:  python devtools/arcology-hashdb.py import %s', args.output)
-
-
-if __name__ == '__main__':
-    main()
+    log.info('Import with:  arco hashdb import %s', args.output)
 
 # vim: ts=4 sw=4 et
