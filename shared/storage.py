@@ -227,11 +227,15 @@ class S3Storage(StorageBackend):
         # FlexibleChecksumError.  Setting 'when_required' / 'when_supported'
         # restores the pre-1.35 behaviour: only send/validate checksums when
         # the operation explicitly requires them.
-        _cfg = BotoConfig(
-            signature_version='s3v4',
-            request_checksum_calculation='when_required',
-            response_checksum_validation='when_supported',
-        )
+        # Older botocore (<1.35) doesn't recognise these keys, so fall back.
+        try:
+            _cfg = BotoConfig(
+                signature_version='s3v4',
+                request_checksum_calculation='when_required',
+                response_checksum_validation='when_supported',
+            )
+        except TypeError:
+            _cfg = BotoConfig(signature_version='s3v4')
         self._client = boto3.client(
             's3',
             endpoint_url=endpoint_url,
