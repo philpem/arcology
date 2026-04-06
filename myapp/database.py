@@ -908,6 +908,41 @@ class KnownFile(db.Model):
     )
 
 
+class HashRescanStatus(enum.Enum):
+    RUNNING   = "running"
+    COMPLETED = "completed"
+    FAILED    = "failed"
+
+
+class HashRescanJob(db.Model):
+    """Tracks a background hash-rescan operation triggered from the UI.
+
+    One row per rescan run.  The status column is written by the background
+    thread and read by any gunicorn worker that renders the hashdb pages —
+    all coordination goes through the database so the status is consistent
+    across all worker processes.
+    """
+    __tablename__ = "hash_rescan_jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Which database triggered the rescan (NULL = triggered from the index page).
+    database_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("hash_databases.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    status: Mapped[HashRescanStatus] = mapped_column(
+        SQLEnum(HashRescanStatus, name="hashrescanstatus"), nullable=False
+    )
+    files_updated: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    files_total: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    queued_analyses: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    database: Mapped[Optional["HashDatabase"]] = relationship()
+
+
 class RecognisedProduct(db.Model):
     """Result of a PRODUCT_RECOGNITION analysis: a folder matched a KnownProduct."""
     __tablename__ = "recognised_products"

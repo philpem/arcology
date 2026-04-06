@@ -7,8 +7,10 @@ Hash databases, known products, and file recognition.
 import csv
 import io
 import json
+import threading
+from datetime import datetime, timezone
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request, Response
+from flask import Blueprint, render_template, redirect, url_for, flash, request, Response, current_app
 from flask_login import login_required
 from flask_wtf import FlaskForm
 from wtforms import StringField, TextAreaField, SelectField, BooleanField
@@ -17,7 +19,11 @@ from wtforms.validators import DataRequired, Optional, Length
 from sqlalchemy import or_, func
 
 from ..extensions import db
-from ..database import Platform, HashDatabase, KnownProduct, KnownFile, ExtractedFile, Partition, Artefact, Item, RestrictionType
+from ..database import (
+    Platform, HashDatabase, KnownProduct, KnownFile, ExtractedFile,
+    Partition, Artefact, Item, RestrictionType,
+    HashRescanJob, HashRescanStatus,
+)
 from ..permissions import require_permission
 from ..utils.web_forms import redirect_local
 from ..utils.db_helpers import normalize_hash, model_choice_list
@@ -160,7 +166,8 @@ def _platform_choices():
 @login_required
 def index():
     databases = HashDatabase.query.order_by(func.lower(HashDatabase.name)).all()
-    return render_template('hashdb/index.html', databases=databases)
+    rescan_job = HashRescanJob.query.order_by(HashRescanJob.id.desc()).first()
+    return render_template('hashdb/index.html', databases=databases, rescan_job=rescan_job)
 
 
 # =============================================================================
@@ -195,11 +202,13 @@ def view(id):
     database = HashDatabase.query.get_or_404(id)
     products = KnownProduct.query.filter_by(database_id=id).order_by(func.lower(KnownProduct.title)).all()
     platforms = Platform.query.order_by(func.lower(Platform.name)).all()
+    rescan_job = HashRescanJob.query.order_by(HashRescanJob.id.desc()).first()
     return render_template('hashdb/view.html',
                            database=database,
                            products=products,
                            platforms=platforms,
-                           RestrictionType=RestrictionType)
+                           RestrictionType=RestrictionType,
+                           rescan_job=rescan_job)
 
 
 SEARCH_LIMIT = 200
@@ -271,6 +280,16 @@ def search(id):
                            SEARCH_LIMIT=SEARCH_LIMIT)
 
 
+@blueprint.route('/<int:id>/<int:pid>')
+@login_required
+def view_product(id, pid):
+    database = HashDatabase.query.get_or_404(id)
+    product = KnownProduct.query.filter_by(id=pid, database_id=id).first_or_404()
+    return render_template('hashdb/edit_product.html',
+                           database=database,
+                           product=product)
+
+
 @blueprint.route('/<int:id>/edit', methods=['POST'])
 @login_required
 @require_permission('read_write')
@@ -302,7 +321,7 @@ def delete(id):
     kf_ids = [
         kf.id
         for product in database.known_products
-        for kf in product.files
+        for kf in product.known_files
     ]
     affected_ef_ids = []
     if kf_ids:
@@ -420,6 +439,7 @@ def export(id):
             'description': database.description,
             'version': database.version,
             'source_url': database.source_url,
+            'enable_product_recognition': database.enable_product_recognition,
         },
         'products': [
             {
@@ -503,6 +523,7 @@ def import_database():
                 description=db_info.get('description'),
                 version=db_info.get('version'),
                 source_url=db_info.get('source_url'),
+                enable_product_recognition=db_info.get('enable_product_recognition', False),
             )
             db.session.add(database)
             db.session.flush()
@@ -619,6 +640,133 @@ def import_database():
 
 
 # =============================================================================
+# Background rescan
+# =============================================================================
+
+def _run_rescan_background(app, job_id):
+    """Background thread: run a full hash rescan and update the HashRescanJob row.
+
+    All state is stored in the database so every gunicorn worker process
+    sees the same status — no in-process shared state is used.
+    """
+    from ..utils.hash_rescan import (
+        rescan_hashes_all, queue_product_recognition_for_partitions,
+        apply_database_restrictions,
+    )
+
+    with app.app_context():
+        job = db.session.get(HashRescanJob, job_id)
+        if not job:
+            return
+        job.started_at = datetime.now(timezone.utc)
+        db.session.commit()
+
+        try:
+            updated, total = rescan_hashes_all()
+
+            # Apply auto-restrictions from flagged databases to artefacts
+            # whose extracted files now match those databases.
+            has_flagged_db = HashDatabase.query.filter(
+                HashDatabase.is_active == True,
+                HashDatabase.restriction_type.isnot(None),
+            ).first()
+            if has_flagged_db:
+                affected_artefacts = (
+                    Artefact.query
+                    .join(Partition, Partition.artefact_id == Artefact.id)
+                    .join(ExtractedFile, ExtractedFile.partition_id == Partition.id)
+                    .join(KnownFile, ExtractedFile.known_file_id == KnownFile.id)
+                    .join(HashDatabase, KnownFile.database_id == HashDatabase.id)
+                    .filter(
+                        ExtractedFile.is_known == True,
+                        HashDatabase.restriction_type.isnot(None),
+                    )
+                    .distinct()
+                    .all()
+                )
+                for artefact in affected_artefacts:
+                    apply_database_restrictions(artefact)
+
+            # Queue product recognition for all partitions that have files,
+            # but only for databases that have it enabled.
+            queued = 0
+            has_recognition = HashDatabase.query.filter_by(
+                is_active=True, enable_product_recognition=True
+            ).first()
+            if has_recognition:
+                partition_ids = {
+                    row[0] for row in
+                    Partition.query
+                    .with_entities(Partition.id)
+                    .filter(Partition.total_files > 0)
+                    .all()
+                }
+                queued = queue_product_recognition_for_partitions(partition_ids)
+
+            job.status = HashRescanStatus.COMPLETED
+            job.files_updated = updated
+            job.files_total = total
+            job.queued_analyses = queued
+        except Exception as e:
+            job.status = HashRescanStatus.FAILED
+            job.error_message = str(e)
+        finally:
+            job.completed_at = datetime.now(timezone.utc)
+            db.session.commit()
+
+
+def _start_rescan(database_id):
+    """Create a HashRescanJob and launch the background thread.
+
+    Returns (job, None) on success or (None, error_message) if a rescan
+    is already running.
+    """
+    running = HashRescanJob.query.filter_by(status=HashRescanStatus.RUNNING).first()
+    if running:
+        return None, 'A rescan is already in progress.'
+
+    job = HashRescanJob(
+        database_id=database_id,
+        status=HashRescanStatus.RUNNING,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.session.add(job)
+    db.session.commit()
+
+    app = current_app._get_current_object()
+    t = threading.Thread(target=_run_rescan_background, args=(app, job.id), daemon=True)
+    t.start()
+    return job, None
+
+
+@blueprint.route('/rescan', methods=['POST'])
+@login_required
+@require_permission('read_write')
+def rescan_all():
+    """Trigger a full collection-wide hash rescan (from the index page)."""
+    job, err = _start_rescan(database_id=None)
+    if err:
+        flash(err, 'warning')
+    else:
+        flash('Hash rescan started in the background.', 'info')
+    return redirect(url_for(f'{ROUTENAME}.index'))
+
+
+@blueprint.route('/<int:id>/rescan', methods=['POST'])
+@login_required
+@require_permission('read_write')
+def rescan(id):
+    """Trigger a full collection-wide hash rescan (from a database view page)."""
+    HashDatabase.query.get_or_404(id)
+    job, err = _start_rescan(database_id=id)
+    if err:
+        flash(err, 'warning')
+    else:
+        flash('Hash rescan started in the background.', 'info')
+    return redirect(url_for(f'{ROUTENAME}.view', id=id))
+
+
+# =============================================================================
 # Known Products
 # =============================================================================
 
@@ -640,7 +788,7 @@ def new_known_product(db_id):
     db.session.add(product)
     db.session.commit()
     flash(f'Product "{product.title}" added.', 'success')
-    return redirect(_view_anchor(db_id, f'#product-{product.id}'))
+    return redirect(url_for(f'{ROUTENAME}.view_product', id=db_id, pid=product.id))
 
 
 @blueprint.route('/<int:db_id>/products/<int:pid>/edit', methods=['POST'])
@@ -657,7 +805,7 @@ def edit_known_product(db_id, pid):
     product.path_match_enabled = 'path_match_enabled' in request.form
     db.session.commit()
     flash(f'Product "{product.title}" updated.', 'success')
-    return redirect(_view_anchor(db_id, f'#product-{pid}'))
+    return redirect(url_for(f'{ROUTENAME}.view_product', id=db_id, pid=pid))
 
 
 @blueprint.route('/<int:db_id>/products/<int:pid>/delete', methods=['POST'])
@@ -726,14 +874,14 @@ def add_known_file(db_id, pid):
     filename = request.form.get('filename', '').strip()
     if not filename:
         flash('Filename is required.', 'danger')
-        return redirect(_view_anchor(db_id, f'#product-{pid}'))
+        return redirect(url_for(f'{ROUTENAME}.view_product', id=db_id, pid=pid))
     md5 = normalize_hash(request.form.get('md5'))
     sha1 = normalize_hash(request.form.get('sha1'))
     sha256 = normalize_hash(request.form.get('sha256'))
     crc32 = normalize_hash(request.form.get('crc32'))
     if not any([md5, sha1, sha256, crc32]):
         flash('At least one hash is required.', 'danger')
-        return redirect(_view_anchor(db_id, f'#product-{pid}'))
+        return redirect(url_for(f'{ROUTENAME}.view_product', id=db_id, pid=pid))
     file_size_str = request.form.get('file_size', '').strip()
     file_size = int(file_size_str) if file_size_str.isdigit() else None
     kf = KnownFile(
@@ -759,7 +907,7 @@ def add_known_file(db_id, pid):
         if product.database.enable_product_recognition:
             partition_ids = _partition_ids_for_hashes(kf.md5, kf.sha1, kf.file_size)
             queue_product_recognition_for_partitions(partition_ids)
-    return redirect(_view_anchor(db_id, f'#product-{pid}'))
+    return redirect(url_for(f'{ROUTENAME}.view_product', id=db_id, pid=pid))
 
 
 @blueprint.route('/<int:db_id>/products/<int:pid>/files/<int:fid>/edit', methods=['POST'])
@@ -770,7 +918,7 @@ def edit_known_file(db_id, pid, fid):
     filename = request.form.get('filename', '').strip()
     if not filename:
         flash('Filename is required.', 'danger')
-        return redirect(_view_anchor(db_id, f'#product-{pid}'))
+        return redirect(url_for(f'{ROUTENAME}.view_product', id=db_id, pid=pid))
     kf_id = kf.id
     is_active = kf.database.is_active
     enable_recognition = kf.database.enable_product_recognition
@@ -796,7 +944,7 @@ def edit_known_file(db_id, pid, fid):
         if enable_recognition:
             partition_ids = _partition_ids_for_hashes(kf.md5, kf.sha1, kf.file_size)
             queue_product_recognition_for_partitions(partition_ids)
-    return redirect(_view_anchor(db_id, f'#product-{pid}'))
+    return redirect(url_for(f'{ROUTENAME}.view_product', id=db_id, pid=pid))
 
 
 @blueprint.route('/<int:db_id>/products/<int:pid>/files/<int:fid>/delete', methods=['POST'])
@@ -849,7 +997,7 @@ def delete_known_file(db_id, pid, fid):
         if enable_recognition and pre_delete_partition_ids:
             queue_product_recognition_for_partitions(pre_delete_partition_ids)
 
-    return redirect(_view_anchor(db_id, f'#product-{pid}'))
+    return redirect(url_for(f'{ROUTENAME}.view_product', id=db_id, pid=pid))
 
 
 # vim: ts=4 sw=4 et

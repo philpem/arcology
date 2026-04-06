@@ -1,0 +1,217 @@
+{% extends "_base.html" %}
+{% block page_title %}{{ product.title }} — {{ database.name }}{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_hashdb.index') }}">Hash Databases</a></li>
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_hashdb.view', id=database.id) }}">{{ database.name }}</a></li>
+        <li class="breadcrumb-item active">{{ product.title }}</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+        <h1 class="mb-0"><i class="bi bi-box"></i> {{ product.title }}</h1>
+        <p class="text-muted small mb-0 mt-1">
+            {{ product.known_files|length }} file{% if product.known_files|length != 1 %}s{% endif %}
+            {% if product.path_match_enabled %} &middot; <span class="text-info fw-semibold">path matching</span>{% endif %}
+        </p>
+    </div>
+    <div class="d-flex gap-2 mt-1">
+        <a href="{{ url_for('myapp_blueprints_hashdb.search', id=database.id, product_id=product.id) }}"
+           class="btn btn-outline-primary btn-sm">
+            <i class="bi bi-search"></i> Find in collection
+        </a>
+        {% if user_can_write %}
+        <button class="btn btn-outline-secondary btn-sm" type="button"
+                data-bs-toggle="collapse" data-bs-target="#editProductForm">
+            <i class="bi bi-pencil"></i> Edit product
+        </button>
+        <form action="{{ url_for('myapp_blueprints_hashdb.delete_known_product', db_id=database.id, pid=product.id) }}" method="post" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-danger btn-sm"
+                    onclick="return confirm('Delete product {{ product.title|e }} and all its files?')">
+                <i class="bi bi-trash"></i> Delete product
+            </button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+{% if user_can_write %}
+<div class="collapse mb-3" id="editProductForm">
+    <div class="card card-body bg-light">
+        <form action="{{ url_for('myapp_blueprints_hashdb.edit_known_product', db_id=database.id, pid=product.id) }}" method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label form-label-sm">Title</label>
+                    <input type="text" name="title" class="form-control form-control-sm" value="{{ product.title }}" required>
+                </div>
+                <div class="col-md-5">
+                    <label class="form-label form-label-sm">Description</label>
+                    <input type="text" name="description" class="form-control form-control-sm" value="{{ product.description or '' }}">
+                </div>
+                <div class="col-md-2">
+                    <div class="form-check mt-3">
+                        <input type="checkbox" name="path_match_enabled" class="form-check-input" id="ep_path" value="1"{% if product.path_match_enabled %} checked{% endif %}>
+                        <label class="form-check-label form-label-sm" for="ep_path">Path matching</label>
+                    </div>
+                </div>
+                <div class="col-md-1">
+                    <button type="submit" class="btn btn-primary btn-sm w-100">Save</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+<!-- Files table -->
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <h5 class="mb-0"><i class="bi bi-files"></i> Files</h5>
+    {% if user_can_write %}
+    <button class="btn btn-primary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#addFileForm">
+        <i class="bi bi-plus-lg"></i> Add File
+    </button>
+    {% endif %}
+</div>
+
+{% if user_can_write %}
+<div class="collapse mb-3" id="addFileForm">
+    <div class="card card-body bg-light py-2">
+        <form action="{{ url_for('myapp_blueprints_hashdb.add_known_file', db_id=database.id, pid=product.id) }}" method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="row g-1 align-items-end">
+                <div class="col-md-2">
+                    <label class="form-label form-label-sm mb-0">Filename <span class="text-danger">*</span></label>
+                    <input type="text" name="filename" class="form-control form-control-sm" required>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label form-label-sm mb-0">Rel. path</label>
+                    <input type="text" name="relative_path" class="form-control form-control-sm" placeholder="e.g. !RunImage">
+                </div>
+                <div class="col-md-1">
+                    <label class="form-label form-label-sm mb-0">Size</label>
+                    <input type="number" name="file_size" class="form-control form-control-sm">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label form-label-sm mb-0">MD5</label>
+                    <input type="text" name="md5" class="form-control form-control-sm font-monospace" maxlength="32">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label form-label-sm mb-0">SHA1</label>
+                    <input type="text" name="sha1" class="form-control form-control-sm font-monospace" maxlength="40">
+                </div>
+                <div class="col-md-1">
+                    <label class="form-label form-label-sm mb-0">SHA256</label>
+                    <input type="text" name="sha256" class="form-control form-control-sm font-monospace" maxlength="64">
+                </div>
+                <div class="col-auto">
+                    <div class="form-check mt-3">
+                        <input type="checkbox" name="is_required" class="form-check-input" value="1" checked>
+                        <label class="form-check-label form-label-sm">Required</label>
+                    </div>
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="btn btn-primary btn-sm mt-3">Add</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+<div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-1" style="font-size:0.85em">
+        <thead class="table-light">
+            <tr>
+                <th>Filename</th>
+                <th>Rel. path</th>
+                <th>Required</th>
+                <th>Size</th>
+                <th>MD5</th>
+                <th>SHA1</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for kf in product.known_files %}
+            <tr id="file-{{ kf.id }}">
+                <td><code>{{ kf.filename }}</code></td>
+                <td>{{ kf.relative_path or '' }}</td>
+                <td>
+                    {% if kf.is_required %}
+                    <span class="badge bg-danger">Required</span>
+                    {% else %}
+                    <span class="badge bg-secondary">Optional</span>
+                    {% endif %}
+                </td>
+                <td>{{ kf.file_size if kf.file_size is not none else '—' }}</td>
+                <td><code class="text-break">{{ kf.md5 or '—' }}</code></td>
+                <td><code class="text-break">{{ kf.sha1 or '—' }}</code></td>
+                <td class="text-nowrap">
+                    <a href="{{ url_for('myapp_blueprints_hashdb.search', id=database.id, file_id=kf.id) }}"
+                       class="btn btn-outline-secondary btn-sm py-0" title="Find this file in the collection"><i class="bi bi-search"></i></a>
+                    {% if user_can_write %}
+                    <button class="btn btn-outline-secondary btn-sm py-0" type="button"
+                            data-bs-toggle="collapse" data-bs-target="#editFile-{{ kf.id }}"
+                            title="Edit"><i class="bi bi-pencil"></i></button>
+                    <form action="{{ url_for('myapp_blueprints_hashdb.delete_known_file', db_id=database.id, pid=product.id, fid=kf.id) }}" method="post" class="d-inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-outline-danger btn-sm py-0"
+                                onclick="return confirm('Delete {{ kf.filename|e }}?')"
+                                title="Delete"><i class="bi bi-trash"></i></button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% if user_can_write %}
+            <tr class="collapse" id="editFile-{{ kf.id }}">
+                <td colspan="7" class="bg-light">
+                    <form action="{{ url_for('myapp_blueprints_hashdb.edit_known_file', db_id=database.id, pid=product.id, fid=kf.id) }}" method="post">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="row g-1 align-items-end py-1">
+                            <div class="col-md-2">
+                                <label class="form-label form-label-sm mb-0">Filename</label>
+                                <input type="text" name="filename" class="form-control form-control-sm" value="{{ kf.filename }}" required>
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label form-label-sm mb-0">Rel. path</label>
+                                <input type="text" name="relative_path" class="form-control form-control-sm" value="{{ kf.relative_path or '' }}">
+                            </div>
+                            <div class="col-md-1">
+                                <label class="form-label form-label-sm mb-0">Size</label>
+                                <input type="number" name="file_size" class="form-control form-control-sm" value="{{ kf.file_size or '' }}">
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label form-label-sm mb-0">MD5</label>
+                                <input type="text" name="md5" class="form-control form-control-sm font-monospace" value="{{ kf.md5 or '' }}" maxlength="32">
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label form-label-sm mb-0">SHA1</label>
+                                <input type="text" name="sha1" class="form-control form-control-sm font-monospace" value="{{ kf.sha1 or '' }}" maxlength="40">
+                            </div>
+                            <div class="col-md-1">
+                                <div class="form-check mt-3">
+                                    <input type="checkbox" name="is_required" class="form-check-input" value="1"{% if kf.is_required %} checked{% endif %}>
+                                    <label class="form-check-label form-label-sm">Req.</label>
+                                </div>
+                            </div>
+                            <div class="col-md-1">
+                                <button type="submit" class="btn btn-primary btn-sm w-100 mt-3">Save</button>
+                            </div>
+                        </div>
+                    </form>
+                </td>
+            </tr>
+            {% endif %}
+        {% else %}
+            <tr><td colspan="7" class="text-muted text-center">No files in this product yet.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% endblock %}

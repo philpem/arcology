@@ -2,6 +2,10 @@
 {% block page_title %}{{ database.name }}{% endblock %}
 
 {% block content %}
+{% if rescan_job and rescan_job.status.value == 'running' %}
+<meta http-equiv="refresh" content="5">
+{% endif %}
+
 <nav aria-label="breadcrumb" class="mb-3">
     <ol class="breadcrumb">
         <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_hashdb.index') }}">Hash Databases</a></li>
@@ -9,7 +13,7 @@
     </ol>
 </nav>
 
-<div class="d-flex justify-content-between align-items-start mb-1">
+<div class="d-flex justify-content-between align-items-start mb-2">
     <div>
         <h1 class="mb-0"><i class="bi bi-database"></i> {{ database.name }}</h1>
         <p class="text-muted small mb-0 mt-1">
@@ -21,6 +25,16 @@
         <a href="{{ url_for('myapp_blueprints_hashdb.search', id=database.id) }}" class="btn btn-outline-primary btn-sm">
             <i class="bi bi-search"></i> Find in collection
         </a>
+        {% if user_can_write %}
+        <form action="{{ url_for('myapp_blueprints_hashdb.rescan', id=database.id) }}" method="post" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-secondary btn-sm"
+                    title="Rescan all artefacts against active hash databases"
+                    {% if rescan_job and rescan_job.status.value == 'running' %}disabled{% endif %}>
+                <i class="bi bi-arrow-repeat"></i> Rescan
+            </button>
+        </form>
+        {% endif %}
         <div class="dropdown">
             <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown">
                 <i class="bi bi-download"></i> Export
@@ -39,147 +53,171 @@
     </div>
 </div>
 
-<div class="row g-3 mt-1">
-    <!-- Sidebar: DB metadata / settings -->
-    <div class="col-md-3">
-        <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center py-1">
-                <span class="small"><i class="bi bi-info-circle"></i> Details</span>
-                {% if user_can_write %}<button class="btn btn-sm btn-outline-secondary py-0" type="button" data-bs-toggle="collapse" data-bs-target="#editDbForm"><i class="bi bi-pencil"></i></button>{% endif %}
+{% if rescan_job %}
+{% if rescan_job.status.value == 'running' %}
+<div class="alert alert-info d-flex align-items-center gap-2 mb-2">
+    <div class="spinner-border spinner-border-sm flex-shrink-0" role="status"><span class="visually-hidden">Running…</span></div>
+    <div>Hash rescan in progress — this page will refresh automatically.</div>
+</div>
+{% elif rescan_job.status.value == 'completed' %}
+<div class="alert alert-success alert-dismissible fade show mb-2" role="alert">
+    <i class="bi bi-check-circle"></i>
+    Rescan completed: {{ rescan_job.files_updated }} of {{ rescan_job.files_total }} files updated{% if rescan_job.queued_analyses %}, {{ rescan_job.queued_analyses }} product recognition job(s) queued{% endif %}.
+    <small class="text-muted ms-2">{{ rescan_job.completed_at.strftime('%Y-%m-%d %H:%M') if rescan_job.completed_at }}</small>
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% elif rescan_job.status.value == 'failed' %}
+<div class="alert alert-danger alert-dismissible fade show mb-2" role="alert">
+    <i class="bi bi-exclamation-triangle"></i> Rescan failed: {{ rescan_job.error_message or 'unknown error' }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+{% endif %}
+
+<!-- Details bar -->
+<div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center py-1">
+        <span class="small"><i class="bi bi-info-circle"></i> Details</span>
+        {% if user_can_write %}<button class="btn btn-sm btn-outline-secondary py-0" type="button" data-bs-toggle="collapse" data-bs-target="#editDbForm"><i class="bi bi-pencil"></i></button>{% endif %}
+    </div>
+    <div class="card-body py-2 px-3">
+        <div class="row g-3 align-items-center">
+            <div class="col-auto">
+                <span class="text-muted small">Platform</span><br>
+                <span class="small">{{ database.platform.name if database.platform else 'All' }}</span>
             </div>
-            <div class="card-body py-2 px-3">
-                <dl class="mb-0 small">
-                    <dt>Platform</dt><dd>{{ database.platform.name if database.platform else 'All' }}</dd>
-                    <dt title="Version or release identifier of the source data (e.g. 2.73.1)">Version</dt>
-                    <dd>{{ database.version or '—' }}</dd>
-                    <dt title="URL to the original source data or reference this database was derived from">Source</dt>
-                    <dd>
-                        {% if database.source_url %}
-                        <a href="{{ database.source_url }}" target="_blank" rel="noopener">{{ database.source_url|truncate(30) }}</a>
-                        {% else %}—{% endif %}
-                    </dd>
-                    {% if database.description %}<dt>Notes</dt><dd>{{ database.description }}</dd>{% endif %}
-                    <dt>Auto-restrict</dt>
-                    <dd>{% if database.restriction_type %}<span class="badge bg-danger">{{ database.restriction_type.label }}</span>{% else %}—{% endif %}</dd>
-                    <dt>Updated</dt><dd>{{ database.updated_at.strftime('%Y-%m-%d') }}</dd>
-                </dl>
-                <!-- Active toggle -->
-                <hr class="my-2">
-                <div class="d-flex justify-content-between align-items-center mb-1">
-                    <span class="small"
-                          title="When off, this database is excluded from hash lookups and rescan operations">
-                        Active
-                    </span>
-                    {% if user_can_write %}
-                    <form action="{{ url_for('myapp_blueprints_hashdb.toggle_active', id=database.id) }}" method="post" class="d-inline">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit"
-                                class="btn btn-sm {% if database.is_active %}btn-success{% else %}btn-outline-secondary{% endif %}"
-                                title="{% if database.is_active %}Click to disable this database{% else %}Click to enable this database{% endif %}">
-                            {% if database.is_active %}
-                            <i class="bi bi-toggle-on"></i> On
-                            {% else %}
-                            <i class="bi bi-toggle-off"></i> Off
-                            {% endif %}
-                        </button>
-                    </form>
-                    {% else %}
-                    <span class="badge {% if database.is_active %}bg-success{% else %}bg-secondary{% endif %}">
-                        {% if database.is_active %}On{% else %}Off{% endif %}
-                    </span>
-                    {% endif %}
-                </div>
-                <!-- Folder recognition toggle -->
-                <div class="d-flex justify-content-between align-items-center">
-                    <span class="small"
-                          title="When on, the worker matches extracted disc folders against product definitions in this database and reports recognised applications">
-                        Folder recognition
-                    </span>
-                    {% if user_can_write %}
-                    <form action="{{ url_for('myapp_blueprints_hashdb.toggle_recognition', id=database.id) }}" method="post" class="d-inline">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit"
-                                class="btn btn-sm {% if database.enable_product_recognition %}btn-success{% else %}btn-outline-secondary{% endif %}"
-                                title="{% if database.enable_product_recognition %}Click to disable folder recognition{% else %}Click to enable folder recognition{% endif %}">
-                            {% if database.enable_product_recognition %}
-                            <i class="bi bi-toggle-on"></i> On
-                            {% else %}
-                            <i class="bi bi-toggle-off"></i> Off
-                            {% endif %}
-                        </button>
-                    </form>
-                    {% else %}
-                    <span class="badge {% if database.enable_product_recognition %}bg-success{% else %}bg-secondary{% endif %}">
-                        {% if database.enable_product_recognition %}On{% else %}Off{% endif %}
-                    </span>
-                    {% endif %}
-                </div>
+            <div class="col-auto">
+                <span class="text-muted small" title="Version or release identifier of the source data (e.g. 2.73.1)">Version</span><br>
+                <span class="small">{{ database.version or '—' }}</span>
             </div>
-            {% if user_can_write %}
-            <div class="collapse" id="editDbForm">
-                <div class="card-footer bg-light">
-                    <form action="{{ url_for('myapp_blueprints_hashdb.edit', id=database.id) }}" method="post">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <div class="mb-2">
-                            <label class="form-label form-label-sm">Name</label>
-                            <input type="text" name="name" class="form-control form-control-sm" value="{{ database.name }}" required>
-                        </div>
-                        <div class="mb-2">
-                            <label class="form-label form-label-sm">Description</label>
-                            <textarea name="description" class="form-control form-control-sm" rows="2">{{ database.description or '' }}</textarea>
-                        </div>
-                        <div class="mb-2">
-                            <label class="form-label form-label-sm"
-                                   title="URL to the original source data or reference this database was derived from">
-                                Source URL
-                            </label>
-                            <input type="url" name="source_url" class="form-control form-control-sm" value="{{ database.source_url or '' }}">
-                        </div>
-                        <div class="mb-2">
-                            <label class="form-label form-label-sm"
-                                   title="Version or release identifier of the source data (e.g. 2.73.1, 2024-Q1)">
-                                Version
-                            </label>
-                            <input type="text" name="version" class="form-control form-control-sm" value="{{ database.version or '' }}" maxlength="50">
-                        </div>
-                        <div class="mb-2">
-                            <label class="form-label form-label-sm">Platform</label>
-                            <select name="platform_id" class="form-select form-select-sm">
-                                <option value="0"{% if not database.platform_id %} selected{% endif %}>-- All Platforms --</option>
-                                {% for p in platforms %}
-                                <option value="{{ p.id }}"{% if database.platform_id == p.id %} selected{% endif %}>{{ p.name }}</option>
-                                {% endfor %}
-                            </select>
-                        </div>
-                        <div class="mb-2 form-check">
+            <div class="col-auto">
+                <span class="text-muted small" title="URL to the original source data or reference this database was derived from">Source</span><br>
+                <span class="small">
+                    {% if database.source_url %}
+                    <a href="{{ database.source_url }}" target="_blank" rel="noopener">{{ database.source_url|truncate(40) }}</a>
+                    {% else %}—{% endif %}
+                </span>
+            </div>
+            {% if database.description %}
+            <div class="col-auto">
+                <span class="text-muted small">Notes</span><br>
+                <span class="small">{{ database.description }}</span>
+            </div>
+            {% endif %}
+            <div class="col-auto">
+                <span class="text-muted small">Updated</span><br>
+                <span class="small">{{ database.updated_at.strftime('%Y-%m-%d') }}</span>
+            </div>
+            {% if database.restriction_type %}
+            <div class="col-auto">
+                <span class="text-muted small">Auto-restrict</span><br>
+                <span class="badge bg-danger small">{{ database.restriction_type.label }}</span>
+            </div>
+            {% endif %}
+            <div class="col-auto ms-auto">
+                <span class="text-muted small d-block mb-1"
+                      title="When off, this database is excluded from hash lookups and rescan operations">Active</span>
+                {% if user_can_write %}
+                <form action="{{ url_for('myapp_blueprints_hashdb.toggle_active', id=database.id) }}" method="post" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit"
+                            class="btn btn-sm {% if database.is_active %}btn-success{% else %}btn-outline-secondary{% endif %}"
+                            title="{% if database.is_active %}Click to disable this database{% else %}Click to enable this database{% endif %}">
+                        {% if database.is_active %}<i class="bi bi-toggle-on"></i> On{% else %}<i class="bi bi-toggle-off"></i> Off{% endif %}
+                    </button>
+                </form>
+                {% else %}
+                <span class="badge {% if database.is_active %}bg-success{% else %}bg-secondary{% endif %}">
+                    {% if database.is_active %}On{% else %}Off{% endif %}
+                </span>
+                {% endif %}
+            </div>
+            <div class="col-auto">
+                <span class="text-muted small d-block mb-1"
+                      title="When on, the worker matches extracted disc folders against product definitions in this database and reports recognised applications">Folder recognition</span>
+                {% if user_can_write %}
+                <form action="{{ url_for('myapp_blueprints_hashdb.toggle_recognition', id=database.id) }}" method="post" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit"
+                            class="btn btn-sm {% if database.enable_product_recognition %}btn-success{% else %}btn-outline-secondary{% endif %}"
+                            title="{% if database.enable_product_recognition %}Click to disable folder recognition{% else %}Click to enable folder recognition{% endif %}">
+                        {% if database.enable_product_recognition %}<i class="bi bi-toggle-on"></i> On{% else %}<i class="bi bi-toggle-off"></i> Off{% endif %}
+                    </button>
+                </form>
+                {% else %}
+                <span class="badge {% if database.enable_product_recognition %}bg-success{% else %}bg-secondary{% endif %}">
+                    {% if database.enable_product_recognition %}On{% else %}Off{% endif %}
+                </span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% if user_can_write %}
+    <div class="collapse" id="editDbForm">
+        <div class="card-footer bg-light">
+            <form action="{{ url_for('myapp_blueprints_hashdb.edit', id=database.id) }}" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-3">
+                        <label class="form-label form-label-sm">Name</label>
+                        <input type="text" name="name" class="form-control form-control-sm" value="{{ database.name }}" required>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label form-label-sm">Description</label>
+                        <input type="text" name="description" class="form-control form-control-sm" value="{{ database.description or '' }}">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label form-label-sm"
+                               title="URL to the original source data or reference this database was derived from">
+                            Source URL
+                        </label>
+                        <input type="url" name="source_url" class="form-control form-control-sm" value="{{ database.source_url or '' }}">
+                    </div>
+                    <div class="col-md-1">
+                        <label class="form-label form-label-sm"
+                               title="Version or release identifier of the source data (e.g. 2.73.1, 2024-Q1)">
+                            Version
+                        </label>
+                        <input type="text" name="version" class="form-control form-control-sm" value="{{ database.version or '' }}" maxlength="50">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label form-label-sm">Platform</label>
+                        <select name="platform_id" class="form-select form-select-sm">
+                            <option value="0"{% if not database.platform_id %} selected{% endif %}>-- All Platforms --</option>
+                            {% for p in platforms %}
+                            <option value="{{ p.id }}"{% if database.platform_id == p.id %} selected{% endif %}>{{ p.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-auto">
+                        <div class="form-check">
                             <input type="checkbox" name="enable_product_recognition" class="form-check-input" id="epr" value="1"{% if database.enable_product_recognition %} checked{% endif %}>
                             <label class="form-check-label form-label-sm" for="epr"
                                    title="When enabled, the worker matches extracted disc folders against product definitions in this database">
                                 Folder recognition
                             </label>
                         </div>
-                        <div class="mb-2">
-                            <label class="form-label form-label-sm">Auto-restrict</label>
-                            <select name="restriction_type" class="form-select form-select-sm">
-                                <option value="">-- None --</option>
-                                {% for rtype in RestrictionType %}
-                                <option value="{{ rtype.value }}"{% if database.restriction_type == rtype %} selected{% endif %}>{{ rtype.label }}</option>
-                                {% endfor %}
-                            </select>
-                            <div class="form-text">Artefacts containing matched files will automatically be restricted with this category.</div>
-                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label form-label-sm">Auto-restrict</label>
+                        <select name="restriction_type" class="form-select form-select-sm">
+                            <option value="">-- None --</option>
+                            {% for rtype in RestrictionType %}
+                            <option value="{{ rtype.value }}"{% if database.restriction_type == rtype %} selected{% endif %}>{{ rtype.label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-auto">
                         <button type="submit" class="btn btn-primary btn-sm">Save</button>
-                    </form>
+                    </div>
                 </div>
-            </div>
-            {% endif %}
+            </form>
         </div>
     </div>
+    {% endif %}
+</div>
 
-    <!-- Main area: Products -->
-    <div class="col-md-9">
-
-<!-- Products header + new product form -->
+<!-- Products -->
 <div class="d-flex justify-content-between align-items-center mb-2">
     <h5 class="mb-0"><i class="bi bi-boxes"></i> Products</h5>
     {% if user_can_write %}
@@ -221,221 +259,44 @@
 </div>
 {% endif %}
 
-<div class="accordion" id="productsAccordion">
-{% for product in products %}
-<div class="accordion-item" id="product-{{ product.id }}">
-    <h2 class="accordion-header">
-        <button class="accordion-button{% if loop.index > 1 %} collapsed{% endif %}" type="button"
-                data-bs-toggle="collapse" data-bs-target="#collapse-{{ product.id }}">
-            <span class="fw-semibold me-2">{{ product.title }}</span>
-            <span class="badge bg-secondary me-2">{{ product.known_files|length }} file{% if product.known_files|length != 1 %}s{% endif %}</span>
-            {% if product.path_match_enabled %}<span class="badge bg-info me-2">path matching</span>{% endif %}
-            {% if product.description %}<span class="text-muted small fw-normal">{{ product.description|truncate(60) }}</span>{% endif %}
-        </button>
-    </h2>
-    <div id="collapse-{{ product.id }}" class="accordion-collapse collapse{% if loop.index == 1 %} show{% endif %}">
-        <div class="accordion-body p-2">
-
-            <!-- Product action bar -->
-            <div class="d-flex gap-2 mb-2">
-                <a href="{{ url_for('myapp_blueprints_hashdb.search', id=database.id, product_id=product.id) }}"
-                   class="btn btn-outline-primary btn-sm">
-                    <i class="bi bi-search"></i> Find in collection
-                </a>
-                {% if user_can_write %}
-                <button class="btn btn-outline-secondary btn-sm" type="button"
-                        data-bs-toggle="collapse" data-bs-target="#editProduct-{{ product.id }}">
-                    <i class="bi bi-pencil"></i> Edit product
-                </button>
-                <form action="{{ url_for('myapp_blueprints_hashdb.delete_known_product', db_id=database.id, pid=product.id) }}" method="post" class="d-inline">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-outline-danger btn-sm"
-                            onclick="return confirm('Delete product {{ product.title|e }} and all its files?')">
-                        <i class="bi bi-trash"></i> Delete product
-                    </button>
-                </form>
-                {% endif %}
-            </div>
-            {% if user_can_write %}
-            <div class="collapse mb-2" id="editProduct-{{ product.id }}">
-                <div class="card card-body bg-light py-2">
-                    <form action="{{ url_for('myapp_blueprints_hashdb.edit_known_product', db_id=database.id, pid=product.id) }}" method="post">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <div class="row g-2 align-items-end">
-                            <div class="col-md-4">
-                                <label class="form-label form-label-sm">Title</label>
-                                <input type="text" name="title" class="form-control form-control-sm" value="{{ product.title }}" required>
-                            </div>
-                            <div class="col-md-5">
-                                <label class="form-label form-label-sm">Description</label>
-                                <input type="text" name="description" class="form-control form-control-sm" value="{{ product.description or '' }}">
-                            </div>
-                            <div class="col-md-2">
-                                <div class="form-check mt-3">
-                                    <input type="checkbox" name="path_match_enabled" class="form-check-input" id="ep_path_{{ product.id }}" value="1"{% if product.path_match_enabled %} checked{% endif %}>
-                                    <label class="form-check-label form-label-sm" for="ep_path_{{ product.id }}">Path matching</label>
-                                </div>
-                            </div>
-                            <div class="col-md-1">
-                                <button type="submit" class="btn btn-primary btn-sm w-100">Save</button>
-                            </div>
-                        </div>
-                    </form>
-                </div>
-            </div>
-            {% endif %}
-
-            <!-- Files table -->
-            <div class="table-responsive">
-                <table class="table table-sm table-hover align-middle mb-1" style="font-size:0.85em">
-                    <thead class="table-light">
-                        <tr>
-                            <th>Filename</th>
-                            <th>Rel. path</th>
-                            <th>Required</th>
-                            <th>Size</th>
-                            <th>MD5</th>
-                            <th>SHA1</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                    {% for kf in product.known_files %}
-                        <tr id="file-{{ kf.id }}">
-                            <td><code>{{ kf.filename }}</code></td>
-                            <td>{{ kf.relative_path or '' }}</td>
-                            <td>
-                                {% if kf.is_required %}
-                                <span class="badge bg-danger">Required</span>
-                                {% else %}
-                                <span class="badge bg-secondary">Optional</span>
-                                {% endif %}
-                            </td>
-                            <td>{{ kf.file_size if kf.file_size is not none else '—' }}</td>
-                            <td><code class="text-break">{{ kf.md5 or '—' }}</code></td>
-                            <td><code class="text-break">{{ kf.sha1 or '—' }}</code></td>
-                            <td class="text-nowrap">
-                                <a href="{{ url_for('myapp_blueprints_hashdb.search', id=database.id, file_id=kf.id) }}"
-                                   class="btn btn-outline-secondary btn-sm py-0" title="Find this file in the collection"><i class="bi bi-search"></i></a>
-                                {% if user_can_write %}
-                                <button class="btn btn-outline-secondary btn-sm py-0" type="button"
-                                        data-bs-toggle="collapse" data-bs-target="#editFile-{{ kf.id }}"
-                                        title="Edit"><i class="bi bi-pencil"></i></button>
-                                <form action="{{ url_for('myapp_blueprints_hashdb.delete_known_file', db_id=database.id, pid=product.id, fid=kf.id) }}" method="post" class="d-inline">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <button type="submit" class="btn btn-outline-danger btn-sm py-0"
-                                            onclick="return confirm('Delete {{ kf.filename|e }}?')"
-                                            title="Delete"><i class="bi bi-trash"></i></button>
-                                </form>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% if user_can_write %}
-                        <tr class="collapse" id="editFile-{{ kf.id }}">
-                            <td colspan="7" class="bg-light">
-                                <form action="{{ url_for('myapp_blueprints_hashdb.edit_known_file', db_id=database.id, pid=product.id, fid=kf.id) }}" method="post">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <div class="row g-1 align-items-end py-1">
-                                        <div class="col-md-2">
-                                            <label class="form-label form-label-sm mb-0">Filename</label>
-                                            <input type="text" name="filename" class="form-control form-control-sm" value="{{ kf.filename }}" required>
-                                        </div>
-                                        <div class="col-md-2">
-                                            <label class="form-label form-label-sm mb-0">Rel. path</label>
-                                            <input type="text" name="relative_path" class="form-control form-control-sm" value="{{ kf.relative_path or '' }}">
-                                        </div>
-                                        <div class="col-md-1">
-                                            <label class="form-label form-label-sm mb-0">Size</label>
-                                            <input type="number" name="file_size" class="form-control form-control-sm" value="{{ kf.file_size or '' }}">
-                                        </div>
-                                        <div class="col-md-2">
-                                            <label class="form-label form-label-sm mb-0">MD5</label>
-                                            <input type="text" name="md5" class="form-control form-control-sm font-monospace" value="{{ kf.md5 or '' }}" maxlength="32">
-                                        </div>
-                                        <div class="col-md-2">
-                                            <label class="form-label form-label-sm mb-0">SHA1</label>
-                                            <input type="text" name="sha1" class="form-control form-control-sm font-monospace" value="{{ kf.sha1 or '' }}" maxlength="40">
-                                        </div>
-                                        <div class="col-md-1">
-                                            <div class="form-check mt-3">
-                                                <input type="checkbox" name="is_required" class="form-check-input" value="1"{% if kf.is_required %} checked{% endif %}>
-                                                <label class="form-check-label form-label-sm">Req.</label>
-                                            </div>
-                                        </div>
-                                        <div class="col-md-1">
-                                            <button type="submit" class="btn btn-primary btn-sm w-100 mt-3">Save</button>
-                                        </div>
-                                    </div>
-                                </form>
-                            </td>
-                        </tr>
-                        {% endif %}
-                    {% else %}
-                        <tr><td colspan="7" class="text-muted text-center">No files in this product yet.</td></tr>
-                    {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-
-            {% if user_can_write %}
-            <!-- Add file form -->
-            <div class="mt-1">
-                <button class="btn btn-outline-primary btn-sm" type="button"
-                        data-bs-toggle="collapse" data-bs-target="#addFile-{{ product.id }}">
-                    <i class="bi bi-plus-lg"></i> Add file
-                </button>
-                <div class="collapse mt-2" id="addFile-{{ product.id }}">
-                    <div class="card card-body bg-light py-2">
-                        <form action="{{ url_for('myapp_blueprints_hashdb.add_known_file', db_id=database.id, pid=product.id) }}" method="post">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <div class="row g-1 align-items-end">
-                                <div class="col-md-2">
-                                    <label class="form-label form-label-sm mb-0">Filename <span class="text-danger">*</span></label>
-                                    <input type="text" name="filename" class="form-control form-control-sm" required>
-                                </div>
-                                <div class="col-md-2">
-                                    <label class="form-label form-label-sm mb-0">Rel. path</label>
-                                    <input type="text" name="relative_path" class="form-control form-control-sm" placeholder="e.g. !RunImage">
-                                </div>
-                                <div class="col-md-1">
-                                    <label class="form-label form-label-sm mb-0">Size</label>
-                                    <input type="number" name="file_size" class="form-control form-control-sm">
-                                </div>
-                                <div class="col-md-2">
-                                    <label class="form-label form-label-sm mb-0">MD5</label>
-                                    <input type="text" name="md5" class="form-control form-control-sm font-monospace" maxlength="32">
-                                </div>
-                                <div class="col-md-2">
-                                    <label class="form-label form-label-sm mb-0">SHA1</label>
-                                    <input type="text" name="sha1" class="form-control form-control-sm font-monospace" maxlength="40">
-                                </div>
-                                <div class="col-md-1">
-                                    <div class="form-check mt-3">
-                                        <input type="checkbox" name="is_required" class="form-check-input" value="1" checked>
-                                        <label class="form-check-label form-label-sm">Required</label>
-                                    </div>
-                                </div>
-                                <div class="col-md-1">
-                                    <button type="submit" class="btn btn-primary btn-sm w-100 mt-3">Add</button>
-                                </div>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            </div>
-            {% endif %}
-
-        </div><!-- accordion-body -->
-    </div><!-- accordion-collapse -->
-</div><!-- accordion-item -->
+{% if products %}
+<table class="table table-sm table-hover align-middle">
+    <thead class="table-light">
+        <tr>
+            <th>Product</th>
+            <th>Description</th>
+            <th>Files</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for product in products %}
+    <tr>
+        <td>
+            <span class="fw-semibold">{{ product.title }}</span>
+            {% if product.path_match_enabled %}<span class="badge bg-info ms-1">path matching</span>{% endif %}
+        </td>
+        <td class="text-muted small">{{ product.description or '' }}</td>
+        <td><span class="badge bg-secondary">{{ product.known_files|length }}</span></td>
+        <td class="text-end">
+            <a href="{{ url_for('myapp_blueprints_hashdb.search', id=database.id, product_id=product.id) }}"
+               class="btn btn-outline-primary btn-sm py-0" title="Find this product in the collection">
+                <i class="bi bi-search"></i>
+            </a>
+            <a href="{{ url_for('myapp_blueprints_hashdb.view_product', id=database.id, pid=product.id) }}"
+               class="btn btn-outline-secondary btn-sm py-0">
+                <i class="bi bi-pencil"></i> Edit
+            </a>
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
 {% else %}
 <div class="alert alert-info">
     No products defined yet.
     {% if user_can_write %}Click <strong>New Product</strong> above to add one.{% endif %}
 </div>
-{% endfor %}
-</div><!-- accordion -->
+{% endif %}
 
-    </div><!-- col-md-9 -->
-</div><!-- row -->
 {% endblock %}

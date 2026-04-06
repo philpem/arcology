@@ -2,10 +2,21 @@
 {% block page_title %}Hash Databases{% endblock %}
 
 {% block content %}
+{% if rescan_job and rescan_job.status.value == 'running' %}
+<meta http-equiv="refresh" content="5">
+{% endif %}
+
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h1><i class="bi bi-database"></i> Hash Databases</h1>
     <div class="d-flex gap-2">
         {% if user_can_write %}
+        <form action="{{ url_for('myapp_blueprints_hashdb.rescan_all') }}" method="post" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-secondary"
+                    {% if rescan_job and rescan_job.status.value == 'running' %}disabled{% endif %}>
+                <i class="bi bi-arrow-repeat"></i> Rescan All
+            </button>
+        </form>
         <button class="btn btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#importForm">
             <i class="bi bi-upload"></i> Import
         </button>
@@ -15,6 +26,27 @@
         {% endif %}
     </div>
 </div>
+
+{% if rescan_job %}
+{% if rescan_job.status.value == 'running' %}
+<div class="alert alert-info d-flex align-items-center gap-2 mb-3">
+    <div class="spinner-border spinner-border-sm flex-shrink-0" role="status"><span class="visually-hidden">Running…</span></div>
+    <div>Hash rescan in progress — this page will refresh automatically.</div>
+</div>
+{% elif rescan_job.status.value == 'completed' %}
+<div class="alert alert-success alert-dismissible fade show mb-3" role="alert">
+    <i class="bi bi-check-circle"></i>
+    Rescan completed: {{ rescan_job.files_updated }} of {{ rescan_job.files_total }} files updated{% if rescan_job.queued_analyses %}, {{ rescan_job.queued_analyses }} product recognition job(s) queued{% endif %}.
+    <small class="text-muted ms-2">{{ rescan_job.completed_at.strftime('%Y-%m-%d %H:%M') if rescan_job.completed_at }}</small>
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% elif rescan_job.status.value == 'failed' %}
+<div class="alert alert-danger alert-dismissible fade show mb-3" role="alert">
+    <i class="bi bi-exclamation-triangle"></i> Rescan failed: {{ rescan_job.error_message or 'unknown error' }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+{% endif %}
 
 {% if user_can_write %}
 <div class="collapse mb-4" id="importForm">
