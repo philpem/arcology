@@ -1064,7 +1064,25 @@ class AnalysisWorker:
             )
             return
 
-        # No format recognised yet.
+        # Archive magic detection: catch files uploaded without a recognised
+        # extension (e.g. a bare X-Files or TBAFS archive with no ".b23"/".b21"
+        # suffix).  Uses the same signature table as the extraction pipeline so
+        # every archive type that can be extracted is also detectable here.
+        sniffed = self._sniff_archive_magic(input_path)
+        if sniffed is not None:
+            self.api.queue_analysis(
+                artefact['uuid'],
+                AnalysisType.ARCHIVE_EXTRACT.value,
+                hints={'archive_type': sniffed.value},
+            )
+            self.complete_analysis(
+                analysis_id,
+                summary=f'Identified as {sniffed.value} archive by magic bytes; queued extraction',
+                details=json.dumps({'detected': sniffed.value}),
+            )
+            return
+
+        # No format recognised.
         self.complete_analysis(
             analysis_id,
             summary='Format not identified',
@@ -1612,6 +1630,10 @@ class AnalysisWorker:
         if len(header) >= 5 and header[:4] == b'TAFS' and header[4] == 0xC8:
             return ArchiveType.TBAFS
 
+        # X-Files: "XFIL" magic at offset 0
+        if len(header) >= 4 and header[:4] == b'XFIL':
+            return ArchiveType.XFILES
+
         return None
 
     @staticmethod
@@ -1713,7 +1735,7 @@ class AnalysisWorker:
             archive_info = get_archive_info(archive_type)
 
         # Dispatch to the correct extraction tool
-        from .tools import extract_riscosarc, extract_zip_riscos, extract_tbafs
+        from .tools import extract_riscosarc, extract_zip_riscos, extract_tbafs, extract_xfiles
 
         if archive_type in [ArchiveType.SPARK, ArchiveType.ARCFS,
                             ArchiveType.PACKDIR, ArchiveType.CFS, ArchiveType.SQUASH]:
@@ -1728,6 +1750,8 @@ class AnalysisWorker:
                     archive_info = get_archive_info(archive_type)
         elif archive_type == ArchiveType.TBAFS:
             result = extract_tbafs(input_path, extract_dir)
+        elif archive_type == ArchiveType.XFILES:
+            result = extract_xfiles(input_path, extract_dir)
         elif archive_type == ArchiveType.ZIP_RISCOS:
             result = extract_zip_riscos(input_path, extract_dir)
         elif archive_type == ArchiveType.ZIP:
@@ -1756,7 +1780,10 @@ class AnalysisWorker:
             )
             return
 
-        files = enumerate_extracted_files(extract_dir, acorn='auto')
+        files = enumerate_extracted_files(
+            extract_dir, acorn='auto',
+            inf_metadata=result.get('inf_metadata'),
+        )
 
         partition = self.api.register_file_listing(
             artefact['uuid'], files, 'archive',
@@ -1828,6 +1855,7 @@ class AnalysisWorker:
         from .tools import (
             extract_riscosarc,
             extract_tbafs,
+            extract_xfiles,
             extract_zip,
             extract_zip_riscos,
             extract_tar,
@@ -2022,6 +2050,9 @@ class AnalysisWorker:
         elif archive_type == ArchiveType.TBAFS:
             result = extract_tbafs(archive_path, temp_output_dir)
 
+        elif archive_type == ArchiveType.XFILES:
+            result = extract_xfiles(archive_path, temp_output_dir)
+
         elif archive_type == ArchiveType.FCFS:
             # Convert FCFS to raw, then extract as ADFS
             raw_path = work_dir / 'converted.img'
@@ -2104,6 +2135,7 @@ class AnalysisWorker:
             acorn=is_acorn_archive,
             parent_file_id=file_id,
             extraction_depth=extraction_depth,
+            inf_metadata=result.get('inf_metadata'),
         )
 
         # Register extracted files in the same partition with parent_file_id

@@ -98,6 +98,7 @@ EXTENSION_MAP = {
     '.spark': ArtefactType.ARC,
     '.b21':   ArtefactType.TBAFS,
     '.tbafs': ArtefactType.TBAFS,
+    '.b23':   ArtefactType.XFILES,
 
     # Acorn/RISC OS native viewable formats
     '.spr':  ArtefactType.ACORN_SPRITE,
@@ -123,7 +124,7 @@ def detect_artefact_type(filename: str) -> ArtefactType:
     
     # Get extension
     _, ext = os.path.splitext(filename_lower)
-    
+
     return EXTENSION_MAP.get(ext, ArtefactType.UNKNOWN)
 
 
@@ -170,8 +171,9 @@ ANALYSIS_MAP = {
     ArtefactType.TARGZ: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.RAR: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.ARC: [AnalysisType.ARCHIVE_EXTRACT],
-    ArtefactType.TBAFS: [AnalysisType.ARCHIVE_EXTRACT],
-    
+    ArtefactType.TBAFS:  [AnalysisType.ARCHIVE_EXTRACT],
+    ArtefactType.XFILES: [AnalysisType.ARCHIVE_EXTRACT],
+
     # Acorn/RISC OS native viewable formats — convert to portable equivalents
     ArtefactType.ACORN_SPRITE: [AnalysisType.FORMAT_CONVERT],
     ArtefactType.ACORN_DRAW:   [AnalysisType.FORMAT_CONVERT],

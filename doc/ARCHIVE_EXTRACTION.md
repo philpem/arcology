@@ -23,7 +23,7 @@ Support for extracting nested archives from RISC OS disk images and directly upl
 | &FCA | Squash | Compressor* | riscosarc | 3 |
 | &FC8 | DOSDisc | Disk Image | sfdisk+7z | 4 |
 | &FCD | FCFS | Disk Image | fcfs2raw (✓ installed) | 4 |
-| &B23 | X-Files | Archive | custom | 6 (future) |
+| &B23 | X-Files | Archive | python (built-in) | 6 ✓ |
 
 _†SparkFS filetypes ZIP archives as &DDC. If `riscosarc` extraction fails, the worker falls back to `unzip` and reclassifies the archive as `ZIP (RISC OS)` so that RISC OS `,xxx` filetype suffixes are still parsed from extracted filenames._
 
@@ -173,12 +173,13 @@ ARCHIVE_EXTRACT = "archive_extract"  # Extract specific archive
 - Support for uploaded DOS disk images
 - Support for extracted DOSDisc files
 
-### Phase 6: Long Filename Support (Future)
-**Status**: Deferred to later release
+### Phase 6: Long Filename Support
+**Status**: X-Files extraction implemented (pure-Python chunk-based parser).
+raFS and LongFiles remain deferred.
 
-- raFS detection and integration
-- LongFiles parser
-- X-Files format parser and extractor
+- raFS detection and integration _(deferred)_
+- LongFiles parser _(deferred)_
+- X-Files format parser and extractor ✓
 
 ## Centralized Archive Definitions
 
@@ -239,6 +240,7 @@ To implement:
 3. **Then Phases 3-4** (Extraction)
 4. **Finally Phase 5** (DOS Partition Table UI)
 
-**Phase 6** (Long Filename Support) can be deferred.
+**Phase 6** (Long Filename Support): X-Files extraction is implemented.
+raFS and LongFiles remain deferred.
 
 For detailed implementation examples including code snippets, Docker configurations, and API handlers, see the git history of this file.

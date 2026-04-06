@@ -17,7 +17,7 @@ from typing import Dict, Any
 from .base import run_tool_with_output
 from ..compression import stream_to_file
 from ..config import log, TOOL_TIMEOUT, MAX_DECOMPRESSED_BYTES
-from ..utils.text import normalize_extracted_filenames, fix_riscos_c1_filenames
+from ..utils.text import normalize_extracted_filenames, fix_riscos_c1_filenames, decode_riscos_latin1
 
 
 def _validate_entry_path(name: str, fmt: str) -> None:
@@ -730,5 +730,261 @@ def decompress_single_file(input_path: Path, output_file: Path, compressor: str)
             'error': f'{compressor} failed: {str(e)}',
             'tool': compressor,
         }
+
+
+# ---------------------------------------------------------------------------
+# X-Files archive extraction (pure-Python parser)
+# ---------------------------------------------------------------------------
+
+_XFILES_MAGIC = b'XFIL'
+_XFILES_DIR_SIG = b'Andy'
+_XFILES_FREE_MAGIC = 0x45455246   # "FREE" as a little-endian uint32
+_XFILES_ATTR_ISDIR = 0x100
+_XFILES_MAX_DEPTH = 200
+
+
+def _xfiles_read_chunk(fh, chunk_table: list, chunk_num: int) -> bytes:
+    """Return the payload bytes of chunk *chunk_num*.
+
+    Raises ValueError for out-of-range, free, or truncated chunks.
+    """
+    if chunk_num >= len(chunk_table):
+        raise ValueError(
+            f'X-Files: chunk {chunk_num} out of range '
+            f'(table has {len(chunk_table)} entries)'
+        )
+    offset, size, usage, _alloc = chunk_table[chunk_num]
+    if usage == _XFILES_FREE_MAGIC:
+        raise ValueError(f'X-Files: chunk {chunk_num} is marked free')
+    if size == 0:
+        return b''
+    fh.seek(offset)
+    data = fh.read(size)
+    if len(data) != size:
+        raise ValueError(
+            f'X-Files: chunk {chunk_num}: expected {size} bytes, '
+            f'got {len(data)}'
+        )
+    return data
+
+
+def _xfiles_safe_name(name: str) -> None:
+    """Raise ValueError if *name* is an unsafe path component."""
+    if not name or name in ('.', '..') or '/' in name or '\x00' in name:
+        raise ValueError(f'X-Files: unsafe filename: {name!r}')
+
+
+def _xfiles_extract_dir(
+    fh,
+    chunk_table: list,
+    chunk_num: int,
+    out_dir,
+    rel_parts: list,
+    inf_metadata: dict,
+    depth: int,
+) -> None:
+    """Recursively extract a directory chunk to *out_dir*.
+
+    Args:
+        fh:           open file handle (binary read)
+        chunk_table:  list of (offset, size, usage, allocSize) tuples
+        chunk_num:    chunk number of this directory
+        out_dir:      root output directory (Path)
+        rel_parts:    path components relative to *out_dir* for this directory
+        inf_metadata: dict populated with per-file RISC OS metadata
+        depth:        current recursion depth (guards against malformed images)
+    """
+    from .extraction import _get_riscos_filetype, _riscos_timestamp_to_datetime
+
+    if depth > _XFILES_MAX_DEPTH:
+        raise ValueError(
+            f'X-Files: directory depth limit ({_XFILES_MAX_DEPTH}) exceeded'
+        )
+
+    data = _xfiles_read_chunk(fh, chunk_table, chunk_num)
+
+    if len(data) < 16:
+        raise ValueError(
+            f'X-Files: directory chunk {chunk_num} too small ({len(data)} bytes)'
+        )
+
+    # Directory header: sig(4) + parent(4) + size(4) + used(4)
+    if data[:4] != _XFILES_DIR_SIG:
+        raise ValueError(
+            f'X-Files: directory chunk {chunk_num}: '
+            f'bad signature {data[:4]!r}'
+        )
+    _parent, hash_size, hash_used = struct.unpack_from('<III', data, 4)
+
+    if hash_used > hash_size:
+        raise ValueError(
+            f'X-Files: directory chunk {chunk_num}: '
+            f'used ({hash_used}) > capacity ({hash_size})'
+        )
+
+    hash_end = 16 + hash_size * 12
+    if hash_end > len(data):
+        raise ValueError(
+            f'X-Files: directory chunk {chunk_num}: '
+            f'hash table extends past chunk end'
+        )
+
+    for i in range(hash_used):
+        ho = 16 + i * 12
+        # xFiles_dirHash: nameStart[4] + entryPos(4) + node(4)
+        entry_pos, node = struct.unpack_from('<II', data, ho + 4)
+
+        # Parse the variable-length directory entry at entry_pos.
+        ep = entry_pos
+        if ep + 20 > len(data):
+            raise ValueError(
+                f'X-Files: directory chunk {chunk_num}: '
+                f'entry {i} entryPos {ep:#x} out of range'
+            )
+        # xFiles_dirEntry: load + exec + size + attr + nameLen
+        load, exec_, _fsize, attr, name_len = struct.unpack_from('<IIIII', data, ep)
+        ep += 20
+
+        if ep + name_len + 1 > len(data):
+            raise ValueError(
+                f'X-Files: directory chunk {chunk_num}: '
+                f'entry {i} filename extends past chunk end'
+            )
+        name = decode_riscos_latin1(data[ep:ep + name_len])
+        _xfiles_safe_name(name)
+
+        is_dir = bool(attr & _XFILES_ATTR_ISDIR)
+        item_parts = rel_parts + [name]
+
+        if is_dir:
+            item_path = out_dir.joinpath(*item_parts)
+            item_path.mkdir(parents=True, exist_ok=True)
+            _xfiles_extract_dir(
+                fh, chunk_table, node,
+                out_dir, item_parts, inf_metadata, depth + 1,
+            )
+        else:
+            item_path = out_dir.joinpath(*item_parts)
+            item_path.parent.mkdir(parents=True, exist_ok=True)
+            file_data = _xfiles_read_chunk(fh, chunk_table, node)
+            item_path.write_bytes(file_data)
+
+            # Build inf_metadata keyed by display path (matching what
+            # enumerate_extracted_files will compute from the on-disk path).
+            display_path = str(Path(*item_parts))
+            meta: dict = {
+                'load_address': f'{load:08x}',
+                'exec_address': f'{exec_:08x}',
+                'attributes': f'{attr & 0xFF:02x}',
+            }
+            filetype = _get_riscos_filetype(load)
+            if filetype:
+                meta['risc_os_filetype'] = filetype
+                ts = _riscos_timestamp_to_datetime(load, exec_)
+                if ts:
+                    meta['modified_time'] = ts.isoformat()
+            inf_metadata[display_path] = meta
+
+
+def extract_xfiles(input_path: Path, output_dir: Path) -> Dict[str, Any]:
+    """Extract an X-Files archive (RISC OS filetype &B23).
+
+    X-Files is a chunk-based archive format by Andy Armstrong that stores files
+    with long filenames and full RISC OS metadata (load/exec addresses,
+    attributes).  The format is a mini filesystem: a fixed header locates a
+    chunk table, which in turn locates directory and file data chunks.
+
+    Returns a result dict matching the standard archive extractor convention,
+    with an additional ``inf_metadata`` key populated with per-file RISC OS
+    metadata suitable for passing to :func:`.extraction.enumerate_extracted_files`.
+    """
+    TOOL = 'xfiles-python'
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with open(input_path, 'rb') as fh:
+            # ── Validate 52-byte file header ─────────────────────────────────
+            header = fh.read(52)
+            if len(header) < 52:
+                return _archive_error(
+                    TOOL, 'X-Files: file too small to contain a valid header'
+                )
+            if header[:4] != _XFILES_MAGIC:
+                return _archive_error(
+                    TOOL,
+                    f'X-Files: invalid magic {header[:4]!r} (expected b"XFIL")',
+                )
+            _hdr_size, struct_ver, _dir_ver = struct.unpack_from('<III', header, 4)
+            if struct_ver != 1:
+                return _archive_error(
+                    TOOL,
+                    f'X-Files: unsupported structure version {struct_ver} (expected 1)',
+                )
+
+            # Chunk table descriptor lives at header offset 0x10.
+            ct_offset, ct_size, _ct_usage, _ct_alloc = struct.unpack_from(
+                '<IIII', header, 0x10
+            )
+            root_chunk = struct.unpack_from('<I', header, 0x20)[0]
+
+            if ct_size % 16 != 0:
+                return _archive_error(
+                    TOOL,
+                    f'X-Files: chunk table size {ct_size} is not a multiple of 16',
+                )
+
+            # ── Read the chunk table ──────────────────────────────────────────
+            fh.seek(ct_offset)
+            ct_data = fh.read(ct_size)
+            if len(ct_data) != ct_size:
+                return _archive_error(
+                    TOOL,
+                    f'X-Files: chunk table truncated '
+                    f'(expected {ct_size}, got {len(ct_data)})',
+                )
+
+            num_chunks = ct_size // 16
+            chunk_table = [
+                struct.unpack_from('<IIII', ct_data, i * 16)
+                for i in range(num_chunks)
+            ]
+
+            if root_chunk >= num_chunks:
+                return _archive_error(
+                    TOOL,
+                    f'X-Files: rootChunk {root_chunk} out of range '
+                    f'(table has {num_chunks} entries)',
+                )
+
+            # ── Recursively extract from the root directory ───────────────────
+            inf_metadata: dict[str, dict] = {}
+            _xfiles_extract_dir(
+                fh, chunk_table, root_chunk,
+                output_dir, [], inf_metadata, 0,
+            )
+
+    except ValueError as exc:
+        return _archive_error(TOOL, str(exc))
+    except OSError as exc:
+        return _archive_error(TOOL, f'X-Files: I/O error: {exc}')
+
+    finalize_error = _finalize_extraction(
+        output_dir,
+        normalize_names=True,
+        assert_confined=True,
+    )
+    if finalize_error:
+        return _archive_error(TOOL, finalize_error)
+
+    file_count = _count_extracted_files(output_dir)
+    result = _archive_success(
+        TOOL,
+        f'Extracted {file_count} files from X-Files archive',
+        file_count,
+    )
+    result['inf_metadata'] = inf_metadata
+    return result
+
 
 # vim: ts=4 sw=4 et
