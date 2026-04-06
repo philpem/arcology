@@ -238,6 +238,7 @@ class AnalysisWorker:
             if not input_path.exists():
                 from botocore.exceptions import ClientError
                 try:
+                    log.info(f"Downloading input file from storage: {key}")
                     self.storage.get(key, input_path)
                 except ClientError as e:
                     if e.response['Error']['Code'] in ('404', 'NoSuchKey'):
@@ -521,7 +522,7 @@ class AnalysisWorker:
             local_path = dest_dir / Path(key).name
             try:
                 self.storage.get(key, local_path)
-                log.info(f"Downloaded single file from S3: {key}")
+                log.debug(f"Downloaded single file from S3: {key}")
                 return local_path
             except ClientError as e:
                 if e.response['Error']['Code'] in ('404', 'NoSuchKey'):
