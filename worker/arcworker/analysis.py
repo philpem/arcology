@@ -1717,7 +1717,7 @@ class AnalysisWorker:
             archive_info = get_archive_info(archive_type)
 
         # Dispatch to the correct extraction tool
-        from .tools import extract_riscosarc, extract_zip_riscos, extract_tbafs
+        from .tools import extract_riscosarc, extract_zip_riscos, extract_tbafs, extract_xfiles
 
         if archive_type in [ArchiveType.SPARK, ArchiveType.ARCFS,
                             ArchiveType.PACKDIR, ArchiveType.CFS, ArchiveType.SQUASH]:
@@ -1732,6 +1732,8 @@ class AnalysisWorker:
                     archive_info = get_archive_info(archive_type)
         elif archive_type == ArchiveType.TBAFS:
             result = extract_tbafs(input_path, extract_dir)
+        elif archive_type == ArchiveType.XFILES:
+            result = extract_xfiles(input_path, extract_dir)
         elif archive_type == ArchiveType.ZIP_RISCOS:
             result = extract_zip_riscos(input_path, extract_dir)
         elif archive_type == ArchiveType.ZIP:
@@ -1760,7 +1762,10 @@ class AnalysisWorker:
             )
             return
 
-        files = enumerate_extracted_files(extract_dir, acorn='auto')
+        files = enumerate_extracted_files(
+            extract_dir, acorn='auto',
+            inf_metadata=result.get('inf_metadata'),
+        )
 
         partition = self.api.register_file_listing(
             artefact['uuid'], files, 'archive',
