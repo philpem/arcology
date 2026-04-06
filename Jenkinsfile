@@ -57,18 +57,30 @@ pipeline {
                         // Wait for PostgreSQL to be ready
                         sh """
                             for i in \$(seq 1 30); do
-                                if docker exec ${pg.id} pg_isready -U ${POSTGRES_USER}; then
-                                    break
+                                if ! docker inspect --format='{{.State.Running}}' ${pg.id} 2>/dev/null | grep -q true; then
+                                    echo "ERROR: PostgreSQL container is not running"
+                                    docker logs ${pg.id} 2>&1 || true
+                                    exit 1
+                                fi
+                                if docker exec ${pg.id} pg_isready -U ${POSTGRES_USER} 2>/dev/null; then
+                                    exit 0
                                 fi
                                 sleep 1
                             done
+                            echo "ERROR: PostgreSQL failed to become ready in 30 seconds"
+                            docker logs ${pg.id} 2>&1 || true
+                            exit 1
                         """
 
                         // Discover the dynamically assigned host port
                         def pgPort = sh(
-                            script: "docker port ${pg.id} 5432 | head -1 | cut -d: -f2",
+                            script: "docker port ${pg.id} 5432 | head -1 | awk -F: '{print \$NF}'",
                             returnStdout: true
                         ).trim()
+
+                        if (!pgPort) {
+                            error "Failed to determine PostgreSQL port mapping"
+                        }
 
                         // Set up virtualenv and run migration tests
                         withEnv([
