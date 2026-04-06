@@ -1736,40 +1736,45 @@ class AnalysisWorker:
             archive_info = get_archive_info(archive_type)
 
         # Dispatch to the correct extraction tool
+        from functools import partial
         from .tools import extract_riscosarc, extract_zip_riscos, extract_tbafs, extract_xfiles
 
-        if archive_type in [ArchiveType.SPARK, ArchiveType.ARCFS,
-                            ArchiveType.PACKDIR, ArchiveType.CFS, ArchiveType.SQUASH]:
-            result = extract_riscosarc(input_path, extract_dir)
-            # Spark/ArcFS fallback: if riscosarc fails, the file might
-            # actually be a ZIP with RISC OS filetypes (SparkFS uses
-            # filetype &DDC for both Spark and ZIP).
-            if not result['success'] and archive_type == ArchiveType.SPARK:
-                result = extract_zip_riscos(input_path, extract_dir)
-                if result['success']:
-                    archive_type = ArchiveType.ZIP_RISCOS
-                    archive_info = get_archive_info(archive_type)
-        elif archive_type == ArchiveType.TBAFS:
-            result = extract_tbafs(input_path, extract_dir)
-        elif archive_type == ArchiveType.XFILES:
-            result = extract_xfiles(input_path, extract_dir)
-        elif archive_type == ArchiveType.ZIP_RISCOS:
-            result = extract_zip_riscos(input_path, extract_dir)
-        elif archive_type == ArchiveType.ZIP:
-            result = extract_zip(input_path, extract_dir)
-        elif archive_type in [ArchiveType.TAR, ArchiveType.TARGZ,
-                              ArchiveType.TARBZ2, ArchiveType.TARXZ]:
-            result = extract_tar(input_path, extract_dir, archive_type.value)
-        elif archive_type == ArchiveType.RAR:
-            result = extract_rar(input_path, extract_dir)
-        elif archive_type == ArchiveType.SEVENZ:
-            result = extract_7z(input_path, extract_dir)
-        else:
+        _dispatch = {
+            ArchiveType.SPARK:      extract_riscosarc,
+            ArchiveType.ARCFS:      extract_riscosarc,
+            ArchiveType.PACKDIR:    extract_riscosarc,
+            ArchiveType.CFS:        extract_riscosarc,
+            ArchiveType.SQUASH:     extract_riscosarc,
+            ArchiveType.TBAFS:      extract_tbafs,
+            ArchiveType.XFILES:     extract_xfiles,
+            ArchiveType.ZIP_RISCOS: extract_zip_riscos,
+            ArchiveType.ZIP:        extract_zip,
+            ArchiveType.TAR:        partial(extract_tar, archive_type=ArchiveType.TAR.value),
+            ArchiveType.TARGZ:      partial(extract_tar, archive_type=ArchiveType.TARGZ.value),
+            ArchiveType.TARBZ2:     partial(extract_tar, archive_type=ArchiveType.TARBZ2.value),
+            ArchiveType.TARXZ:      partial(extract_tar, archive_type=ArchiveType.TARXZ.value),
+            ArchiveType.RAR:        extract_rar,
+            ArchiveType.SEVENZ:     extract_7z,
+        }
+
+        extractor = _dispatch.get(archive_type)
+        if extractor is None:
             self.fail_analysis(
                 analysis_id,
                 f'Top-level extraction not supported for archive type: {archive_type.value}'
             )
             return
+
+        result = extractor(input_path, extract_dir)
+
+        # Spark/ArcFS fallback: if riscosarc fails, the file might
+        # actually be a ZIP with RISC OS filetypes (SparkFS uses
+        # filetype &DDC for both Spark and ZIP).
+        if not result['success'] and archive_type == ArchiveType.SPARK:
+            result = extract_zip_riscos(input_path, extract_dir)
+            if result['success']:
+                archive_type = ArchiveType.ZIP_RISCOS
+                archive_info = get_archive_info(archive_type)
 
         if not result['success']:
             shutil.rmtree(extract_dir, ignore_errors=True)
@@ -2033,10 +2038,50 @@ class AnalysisWorker:
             archive_type = ArchiveType.ZIP_RISCOS
             archive_info = get_archive_info(archive_type)
 
-        # Choose extraction method based on archive type
-        if archive_type in [ArchiveType.ARCFS, ArchiveType.PACKDIR,
-                            ArchiveType.SPARK, ArchiveType.CFS, ArchiveType.SQUASH]:
-            result = extract_riscosarc(archive_path, temp_output_dir)
+        # Choose extraction method based on archive type.
+        # FCFS requires a conversion step with a different source path,
+        # so handle it before the general dispatch table.
+        if archive_type == ArchiveType.FCFS:
+            raw_path = work_dir / 'converted.img'
+            conv_result = convert_fcfs_to_raw(archive_path, raw_path)
+            if not conv_result['success']:
+                result = conv_result
+            else:
+                # Extract the converted image
+                result = extract_acorn_disc_image_manager(raw_path, temp_output_dir)
+        else:
+            from functools import partial
+
+            _dispatch = {
+                ArchiveType.SPARK:      extract_riscosarc,
+                ArchiveType.ARCFS:      extract_riscosarc,
+                ArchiveType.PACKDIR:    extract_riscosarc,
+                ArchiveType.CFS:        extract_riscosarc,
+                ArchiveType.SQUASH:     extract_riscosarc,
+                ArchiveType.TBAFS:      extract_tbafs,
+                ArchiveType.XFILES:     extract_xfiles,
+                ArchiveType.DOSDISC:    extract_dos_7z,
+                ArchiveType.ZIP_RISCOS: extract_zip_riscos,
+                ArchiveType.ZIP:        extract_zip,
+                ArchiveType.TAR:        partial(extract_tar, archive_type=ArchiveType.TAR.value),
+                ArchiveType.TARGZ:      partial(extract_tar, archive_type=ArchiveType.TARGZ.value),
+                ArchiveType.TARBZ2:     partial(extract_tar, archive_type=ArchiveType.TARBZ2.value),
+                ArchiveType.TARXZ:      partial(extract_tar, archive_type=ArchiveType.TARXZ.value),
+                ArchiveType.RAR:        extract_rar,
+                ArchiveType.SEVENZ:     extract_7z,
+                # Single-file compressors: output file keeps the name minus the compression extension
+                ArchiveType.GZIP:       lambda ap, tod: decompress_single_file(ap, tod / ap.stem, ArchiveType.GZIP.value),
+                ArchiveType.BZIP2:      lambda ap, tod: decompress_single_file(ap, tod / ap.stem, ArchiveType.BZIP2.value),
+                ArchiveType.XZ:         lambda ap, tod: decompress_single_file(ap, tod / ap.stem, ArchiveType.XZ.value),
+                ArchiveType.ZSTD:       lambda ap, tod: decompress_single_file(ap, tod / ap.stem, ArchiveType.ZSTD.value),
+            }
+
+            extractor = _dispatch.get(archive_type)
+            if extractor is None:
+                self.fail_analysis(analysis_id, f'Unsupported archive type: {archive_type.value}')
+                return
+
+            result = extractor(archive_path, temp_output_dir)
 
             # SparkFS filetypes Zip files as &DDC (Archive), which is also
             # used for Spark. If riscosarc unpacking fails, try Zip.
@@ -2047,51 +2092,6 @@ class AnalysisWorker:
                 if result['success']:
                     archive_type = ArchiveType.ZIP_RISCOS
                     archive_info = get_archive_info(archive_type)
-
-        elif archive_type == ArchiveType.TBAFS:
-            result = extract_tbafs(archive_path, temp_output_dir)
-
-        elif archive_type == ArchiveType.XFILES:
-            result = extract_xfiles(archive_path, temp_output_dir)
-
-        elif archive_type == ArchiveType.FCFS:
-            # Convert FCFS to raw, then extract as ADFS
-            raw_path = work_dir / 'converted.img'
-            conv_result = convert_fcfs_to_raw(archive_path, raw_path)
-            if not conv_result['success']:
-                result = conv_result
-            else:
-                # Extract the converted image
-                result = extract_acorn_disc_image_manager(raw_path, temp_output_dir)
-
-        elif archive_type == ArchiveType.DOSDISC:
-            result = extract_dos_7z(archive_path, temp_output_dir)
-
-        elif archive_type == ArchiveType.ZIP_RISCOS:
-            result = extract_zip_riscos(archive_path, temp_output_dir)
-
-        elif archive_type == ArchiveType.ZIP:
-            result = extract_zip(archive_path, temp_output_dir)
-
-        elif archive_type in [ArchiveType.TAR, ArchiveType.TARGZ,
-                              ArchiveType.TARBZ2, ArchiveType.TARXZ]:
-            result = extract_tar(archive_path, temp_output_dir, archive_type.value)
-
-        elif archive_type == ArchiveType.RAR:
-            result = extract_rar(archive_path, temp_output_dir)
-
-        elif archive_type == ArchiveType.SEVENZ:
-            result = extract_7z(archive_path, temp_output_dir)
-
-        elif archive_type in [ArchiveType.GZIP, ArchiveType.BZIP2,
-                              ArchiveType.XZ, ArchiveType.ZSTD]:
-            # Single-file compressor - output with same name minus compression extension
-            output_file = temp_output_dir / archive_path.stem
-            result = decompress_single_file(archive_path, output_file, archive_type.value)
-
-        else:
-            self.fail_analysis(analysis_id, f'Unsupported archive type: {archive_type.value}')
-            return
 
         if not result['success']:
             self.fail_analysis(
