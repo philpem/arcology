@@ -1197,6 +1197,194 @@ class TestAPIDeleteEndpoints(unittest.TestCase):
                             f'DELETE deep artefact returned 500: {resp.data}')
 
 
+# =============================================================================
+# Bulk delete tests — verify bulk_delete_item covers the full hierarchy
+# =============================================================================
+
+class TestBulkDeleteItem(unittest.TestCase):
+    """bulk_delete_item() must remove all related records without FK violations."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app, cls.db = _create_app_and_db()
+
+    def test_bulk_delete_full_hierarchy(self):
+        """bulk_delete_item should remove Item + all descendants in one pass."""
+        with self.app.app_context():
+            from myapp.database import (
+                Item, Artefact, Analysis, Partition, ExtractedFile,
+                AnalysisStatus, Platform, FilesystemType, Tag,
+                ExternalSystem, ExternalReference,
+                ArtefactProtection, ArtefactMastering, RiscosModule,
+                ArtefactRestriction, ExtractedFileRestriction,
+                RecognisedProduct, HashDatabase, KnownProduct, KnownFile,
+                RestrictionType,
+            )
+            from shared.enums import ArtefactType, AnalysisType
+            from myapp.blueprints.artefacts import bulk_delete_item
+
+            platform = Platform(name='Bulk Del Platform')
+            self.db.session.add(platform)
+            self.db.session.flush()
+
+            item = Item(name='Bulk Del Item', platform_id=platform.id)
+            self.db.session.add(item)
+            self.db.session.flush()
+            item_id = item.id
+
+            # Tags
+            tag = Tag(name='bulk-del-tag')
+            self.db.session.add(tag)
+            self.db.session.flush()
+            tag_id = tag.id
+            item.tags.append(tag)
+
+            # External reference
+            system = ExternalSystem(name='Bulk Del System', base_url='https://example.com')
+            self.db.session.add(system)
+            self.db.session.flush()
+            ext_ref = ExternalReference(item_id=item.id, system_id=system.id, external_id='BD-001')
+            self.db.session.add(ext_ref)
+
+            # Root artefact
+            artefact = Artefact(
+                item_id=item.id, label='Root Art',
+                artefact_type=ArtefactType.RAW_SECTOR,
+                original_filename='root.img',
+                storage_path='uploads/root.img',
+            )
+            self.db.session.add(artefact)
+            self.db.session.flush()
+
+            art_tag = Tag(name='bulk-del-art-tag')
+            self.db.session.add(art_tag)
+            self.db.session.flush()
+            art_tag_id = art_tag.id
+            artefact.tags.append(art_tag)
+
+            analysis = Analysis(
+                artefact_id=artefact.id,
+                analysis_type=AnalysisType.METADATA_EXTRACT,
+                status=AnalysisStatus.COMPLETED,
+            )
+            self.db.session.add(analysis)
+            self.db.session.flush()
+
+            # Derived artefact
+            derived = Artefact(
+                item_id=item.id, label='Derived Art',
+                artefact_type=ArtefactType.RAW_SECTOR,
+                original_filename='derived.img',
+                storage_path='outputs/derived.img',
+                parent_artefact_id=artefact.id,
+                derived_from_analysis_id=analysis.id,
+            )
+            self.db.session.add(derived)
+            self.db.session.flush()
+
+            # Partition + files
+            partition = Partition(
+                artefact_id=derived.id,
+                partition_index=0,
+                filesystem=FilesystemType.FAT12,
+            )
+            self.db.session.add(partition)
+            self.db.session.flush()
+
+            ef = ExtractedFile(
+                partition_id=partition.id,
+                filename='BOOT.SYS',
+                path='/BOOT.SYS',
+                file_size=2048,
+            )
+            self.db.session.add(ef)
+            self.db.session.flush()
+
+            # ExtractedFileRestriction
+            efr = ExtractedFileRestriction(
+                extracted_file_id=ef.id,
+                restriction_type=RestrictionType.EXPLICIT,
+                reason='test restriction',
+            )
+            self.db.session.add(efr)
+
+            # RecognisedProduct
+            hdb = HashDatabase(name='Bulk Del HDB', version='1.0')
+            self.db.session.add(hdb)
+            self.db.session.flush()
+            kp = KnownProduct(database_id=hdb.id, title='Test Product')
+            self.db.session.add(kp)
+            self.db.session.flush()
+            rp = RecognisedProduct(
+                partition_id=partition.id,
+                product_id=kp.id,
+                folder_path='/',
+            )
+            self.db.session.add(rp)
+
+            # Protection/mastering/module indicators
+            prot = ArtefactProtection(artefact_id=artefact.id, protection_type='copylock')
+            mast = ArtefactMastering(artefact_id=artefact.id, mastering_type='formaster')
+            mod = RiscosModule(artefact_id=artefact.id, title_string='TestModule', version='1.0')
+            rest = ArtefactRestriction(
+                artefact_id=artefact.id,
+                restriction_type=RestrictionType.EXPLICIT,
+                reason='test',
+            )
+            self.db.session.add_all([prot, mast, mod, rest])
+            self.db.session.commit()
+
+            # Save IDs before bulk delete invalidates the ORM objects
+            artefact_id = artefact.id
+            derived_id = derived.id
+            partition_id = partition.id
+            ef_id = ef.id
+
+            # Verify records exist
+            self.assertEqual(Artefact.query.filter_by(item_id=item_id).count(), 2)
+            self.assertGreater(ExtractedFile.query.count(), 0)
+
+            # Run bulk delete
+            bulk_delete_item(item)
+
+            # Verify everything is gone
+            self.assertIsNone(Item.query.get(item_id))
+            self.assertEqual(Artefact.query.filter_by(item_id=item_id).count(), 0)
+            self.assertEqual(Analysis.query.filter_by(artefact_id=artefact_id).count(), 0)
+            self.assertEqual(Partition.query.filter_by(artefact_id=derived_id).count(), 0)
+            self.assertEqual(ExtractedFile.query.filter_by(partition_id=partition_id).count(), 0)
+            self.assertEqual(ExtractedFileRestriction.query.filter_by(extracted_file_id=ef_id).count(), 0)
+            self.assertEqual(RecognisedProduct.query.filter_by(partition_id=partition_id).count(), 0)
+            self.assertEqual(ArtefactProtection.query.filter_by(artefact_id=artefact_id).count(), 0)
+            self.assertEqual(ArtefactMastering.query.filter_by(artefact_id=artefact_id).count(), 0)
+            self.assertEqual(RiscosModule.query.filter_by(artefact_id=artefact_id).count(), 0)
+            self.assertEqual(ArtefactRestriction.query.filter_by(artefact_id=artefact_id).count(), 0)
+            self.assertEqual(ExternalReference.query.filter_by(item_id=item_id).count(), 0)
+            # Tags and external system should survive
+            self.assertIsNotNone(Tag.query.get(tag_id))
+            self.assertIsNotNone(Tag.query.get(art_tag_id))
+            self.assertIsNotNone(ExternalSystem.query.filter_by(name='Bulk Del System').first())
+
+    def test_bulk_delete_empty_item(self):
+        """bulk_delete_item should handle an item with no artefacts."""
+        with self.app.app_context():
+            from myapp.database import Item, Platform
+            from myapp.blueprints.artefacts import bulk_delete_item
+
+            platform = Platform(name='Empty Del Platform')
+            self.db.session.add(platform)
+            self.db.session.flush()
+
+            item = Item(name='Empty Del Item', platform_id=platform.id)
+            self.db.session.add(item)
+            self.db.session.commit()
+            item_id = item.id
+
+            bulk_delete_item(item)
+
+            self.assertIsNone(Item.query.get(item_id))
+
+
 if __name__ == '__main__':
     unittest.main()
 
