@@ -8,9 +8,15 @@ Modelled on worker/arcworker/api.py but adapted for CLI use:
 """
 
 import hashlib
+import math
+import os
 import sys
 
 import requests
+
+# Files larger than this threshold are uploaded in chunks
+CHUNKED_THRESHOLD = 100 * 1024 * 1024   # 100 MB
+CHUNK_SIZE        =  50 * 1024 * 1024   #  50 MB
 
 
 class ArcologyError(Exception):
@@ -115,7 +121,21 @@ class ArcologyClient:
 
 	def upload_artefact(self, item_uuid: str, filepath: str, label: str,
 	                    artefact_type: str = None, description: str = None,
-	                    auto_analyse: bool = True) -> dict:
+	                    auto_analyse: bool = True,
+	                    progress_cb=None) -> dict:
+		"""Upload a file as a new artefact.
+
+		Automatically uses chunked upload for files larger than CHUNKED_THRESHOLD.
+		progress_cb(chunks_done, total_chunks) is called after each chunk (chunked only).
+		"""
+		if os.path.getsize(filepath) > CHUNKED_THRESHOLD:
+			return self.upload_artefact_chunked(
+				item_uuid, filepath, label,
+				artefact_type=artefact_type,
+				description=description,
+				auto_analyse=auto_analyse,
+				progress_cb=progress_cb,
+			)
 		fields = {'label': label}
 		if artefact_type:
 			fields['artefact_type'] = artefact_type
@@ -124,6 +144,69 @@ class ArcologyClient:
 		if not auto_analyse:
 			fields['auto_analyse'] = 'false'
 		return self.post_file(f'items/{item_uuid}/artefacts/upload', filepath, fields)
+
+	def _upload_chunk(self, upload_uuid: str, chunk_index: int, data: bytes) -> dict:
+		"""POST a single raw binary chunk."""
+		resp = self.session.post(
+			self._url(f'uploads/chunked/{upload_uuid}/chunk/{chunk_index}'),
+			data=data,
+			headers={'Content-Type': 'application/octet-stream'},
+		)
+		return self._handle_response(resp)
+
+	def upload_artefact_chunked(self, item_uuid: str, filepath: str, label: str,
+	                             artefact_type: str = None, description: str = None,
+	                             auto_analyse: bool = True,
+	                             chunk_size: int = CHUNK_SIZE,
+	                             progress_cb=None) -> dict:
+		"""Upload a large file using the chunked upload protocol.
+
+		Splits the file into chunk_size pieces, uploads each with per-chunk retry,
+		then calls /complete to assemble and create the artefact.
+		progress_cb(chunks_done, total_chunks) is called after each successful chunk.
+		"""
+		file_size = os.path.getsize(filepath)
+		filename = os.path.basename(filepath)
+		total_chunks = max(1, math.ceil(file_size / chunk_size))
+
+		# Initialise upload session
+		init_payload = {
+			'filename': filename,
+			'total_chunks': total_chunks,
+			'total_size': file_size,
+			'item_uuid': item_uuid,
+			'label': label,
+			'auto_analyse': auto_analyse,
+		}
+		if artefact_type:
+			init_payload['artefact_type'] = artefact_type
+		if description:
+			init_payload['description'] = description
+
+		init_result = self.post_json('uploads/chunked/init', init_payload)
+		upload_uuid = init_result['upload_uuid']
+
+		# Upload chunks with per-chunk retry (up to 3 attempts)
+		with open(filepath, 'rb') as f:
+			for chunk_index in range(total_chunks):
+				data = f.read(chunk_size)
+				last_exc = None
+				for attempt in range(3):
+					try:
+						self._upload_chunk(upload_uuid, chunk_index, data)
+						break
+					except Exception as exc:
+						last_exc = exc
+				else:
+					raise ArcologyError(
+						f'Chunk {chunk_index} failed after 3 attempts: {last_exc}'
+					) from last_exc
+				if progress_cb:
+					progress_cb(chunk_index + 1, total_chunks)
+
+		# Assemble and create artefact
+		resp = self.session.post(self._url(f'uploads/chunked/{upload_uuid}/complete'))
+		return self._handle_response(resp)
 
 	def download_artefact(self, uuid: str, output_path: str):
 		self.download(f'artefacts/{uuid}/download', output_path)

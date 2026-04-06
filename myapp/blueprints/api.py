@@ -4,8 +4,14 @@ Arcology - API Blueprint
 RESTful API for external integrations.
 """
 
+import hashlib
 import hmac
+import json
 import os
+import re
+import shutil
+import tempfile
+import uuid
 from datetime import datetime, timezone, timedelta
 from functools import wraps
 from flask import Blueprint, jsonify, request, current_app, send_file, redirect
@@ -27,7 +33,7 @@ from ..database import (
 from .artefacts import (
     get_artefact_path, get_artefact_storage_key, _delete_artefact_files,
     bulk_delete_item,
-    detect_artefact_type, save_uploaded_file,
+    detect_artefact_type, save_uploaded_file, _get_storage_extension,
     compute_file_hashes, queue_analyses_for_artefact, move_artefact_to_item,
     _collect_all_file_restrictions, _collect_ancestor_file_restrictions,
 )
@@ -1501,6 +1507,304 @@ def upload_artefact(item_uuid):
 	# Optionally queue analyses
 	queued_analyses = []
 	auto_analyse = request.form.get('auto_analyse', 'true').lower() != 'false'
+	if auto_analyse:
+		from .artefacts import ANALYSIS_MAP
+		queue_analyses_for_artefact(artefact)
+		queued_analyses = [t.value for t in ANALYSIS_MAP.get(artefact_type, [])]
+
+	result = artefact_to_dict(artefact)
+	result['queued_analyses'] = queued_analyses
+	return jsonify(result), 201
+
+
+# =============================================================================
+# Chunked Upload
+# =============================================================================
+#
+# Protocol:
+#   POST /api/uploads/chunked/init                              → {upload_uuid}
+#   POST /api/uploads/chunked/<upload_uuid>/chunk/<chunk_index> → {received, chunk}
+#   GET  /api/uploads/chunked/<upload_uuid>/status              → {received_chunks, total_chunks}
+#   POST /api/uploads/chunked/<upload_uuid>/complete            → (same 201 JSON as /artefacts/upload)
+#
+# Chunks are stored locally under <instance_path>/.chunks/<upload_uuid>/ regardless
+# of the active storage backend (local or S3).  On /complete they are assembled
+# into a tempfile and pushed via storage.put(), mirroring save_uploaded_file().
+
+_UPLOAD_UUID_RE = re.compile(r'^[0-9a-f]{32}$')
+_CHUNK_STALE_SECONDS = 86400  # purge abandoned chunk dirs after 24 h
+
+
+def _chunks_base() -> str:
+	"""Return (and create) the base directory for in-progress chunk uploads."""
+	path = os.path.join(current_app.instance_path, '.chunks')
+	os.makedirs(path, exist_ok=True)
+	return path
+
+
+def _chunk_dir(upload_uuid: str) -> str:
+	return os.path.join(_chunks_base(), upload_uuid)
+
+
+def _purge_stale_chunks() -> None:
+	"""Remove chunk directories that have not been touched in > 24 h."""
+	base = _chunks_base()
+	cutoff = datetime.now(timezone.utc).timestamp() - _CHUNK_STALE_SECONDS
+	try:
+		for name in os.listdir(base):
+			if not _UPLOAD_UUID_RE.match(name):
+				continue
+			path = os.path.join(base, name)
+			try:
+				if os.stat(path).st_mtime < cutoff:
+					shutil.rmtree(path, ignore_errors=True)
+			except OSError:
+				pass
+	except OSError:
+		pass
+
+
+@blueprint.route('/uploads/chunked/init', methods=['POST'])
+@require_auth('read_upload')
+def chunked_upload_init():
+	"""
+	Initialise a chunked upload session.
+
+	Accepts JSON with:
+	  - filename: original filename (required)
+	  - total_chunks: number of chunks the client will send (required)
+	  - item_uuid: target item (required)
+	  - label: artefact display label (required)
+	  - total_size: total file size in bytes (optional)
+	  - artefact_type: override auto-detection (optional, default 'auto')
+	  - description: artefact description (optional)
+	  - auto_analyse: queue automatic analyses (optional, default true)
+
+	Returns {"upload_uuid": "<hex>"}.
+	"""
+	data = request.get_json(silent=True) or {}
+
+	filename = data.get('filename', '').strip()
+	if not filename:
+		return error_response('filename is required')
+
+	try:
+		total_chunks = int(data['total_chunks'])
+		if total_chunks < 1:
+			raise ValueError
+	except (KeyError, ValueError, TypeError):
+		return error_response('total_chunks must be a positive integer')
+
+	item_uuid = data.get('item_uuid', '')
+	if not item_uuid:
+		return error_response('item_uuid is required')
+	# Validate item exists
+	_get_item_or_404(item_uuid)
+
+	label = data.get('label', '').strip()
+	if not label:
+		return error_response('label is required')
+
+	upload_uuid = uuid.uuid4().hex
+	chunk_dir = _chunk_dir(upload_uuid)
+	os.makedirs(chunk_dir, exist_ok=True)
+
+	meta = {
+		'filename': filename,
+		'total_chunks': total_chunks,
+		'total_size': data.get('total_size'),
+		'item_uuid': item_uuid,
+		'label': label,
+		'artefact_type': data.get('artefact_type', 'auto'),
+		'description': data.get('description'),
+		'auto_analyse': data.get('auto_analyse', True),
+		'created_at': datetime.now(timezone.utc).isoformat(),
+	}
+	with open(os.path.join(chunk_dir, 'meta.json'), 'w') as f:
+		json.dump(meta, f)
+
+	return jsonify({'upload_uuid': upload_uuid}), 201
+
+
+@blueprint.route('/uploads/chunked/<string:upload_uuid>/chunk/<int:chunk_index>', methods=['POST'])
+@require_auth('read_upload')
+def chunked_upload_chunk(upload_uuid, chunk_index):
+	"""
+	Upload a single chunk.
+
+	The request body must be raw binary (application/octet-stream).
+	chunk_index is zero-based.
+
+	Returns {"received": true, "chunk": N}.
+	"""
+	if not _UPLOAD_UUID_RE.match(upload_uuid):
+		return error_response('Upload session not found', 404)
+
+	chunk_dir = _chunk_dir(upload_uuid)
+	if not os.path.isdir(chunk_dir):
+		return error_response('Upload session not found', 404)
+
+	if chunk_index < 0:
+		return error_response('chunk_index must be non-negative')
+
+	chunk_path = os.path.join(chunk_dir, f'{chunk_index:06d}')
+	with open(chunk_path, 'wb') as f:
+		f.write(request.data)
+
+	return jsonify({'received': True, 'chunk': chunk_index})
+
+
+@blueprint.route('/uploads/chunked/<string:upload_uuid>/status', methods=['GET'])
+@require_auth('read_upload')
+def chunked_upload_status(upload_uuid):
+	"""
+	Query which chunks have been received.
+
+	Returns {"upload_uuid": "...", "total_chunks": N, "received_chunks": [0, 1, ...]}.
+	Allows clients to resume after a partial failure.
+	"""
+	if not _UPLOAD_UUID_RE.match(upload_uuid):
+		return error_response('Upload session not found', 404)
+
+	chunk_dir = _chunk_dir(upload_uuid)
+	if not os.path.isdir(chunk_dir):
+		return error_response('Upload session not found', 404)
+
+	meta_path = os.path.join(chunk_dir, 'meta.json')
+	try:
+		with open(meta_path) as f:
+			meta = json.load(f)
+	except (OSError, json.JSONDecodeError):
+		return error_response('Upload session corrupt', 500)
+
+	received = sorted(
+		int(name) for name in os.listdir(chunk_dir)
+		if name != 'meta.json' and name.isdigit()
+	)
+
+	return jsonify({
+		'upload_uuid': upload_uuid,
+		'total_chunks': meta['total_chunks'],
+		'received_chunks': received,
+	})
+
+
+@blueprint.route('/uploads/chunked/<string:upload_uuid>/complete', methods=['POST'])
+@require_auth('read_upload')
+def chunked_upload_complete(upload_uuid):
+	"""
+	Assemble all chunks and create the artefact.
+
+	Verifies all chunks are present, assembles them into a temp file (computing
+	hashes inline), then pushes to the storage backend and creates an Artefact
+	record.  Returns the same 201 JSON as the regular upload endpoint.
+
+	Also purges abandoned chunk directories older than 24 h.
+	"""
+	if not _UPLOAD_UUID_RE.match(upload_uuid):
+		return error_response('Upload session not found', 404)
+
+	chunk_dir = _chunk_dir(upload_uuid)
+	if not os.path.isdir(chunk_dir):
+		return error_response('Upload session not found', 404)
+
+	meta_path = os.path.join(chunk_dir, 'meta.json')
+	try:
+		with open(meta_path) as f:
+			meta = json.load(f)
+	except (OSError, json.JSONDecodeError):
+		return error_response('Upload session corrupt', 500)
+
+	total_chunks = meta['total_chunks']
+	chunk_files = [os.path.join(chunk_dir, f'{i:06d}') for i in range(total_chunks)]
+	missing = [i for i, p in enumerate(chunk_files) if not os.path.exists(p)]
+	if missing:
+		return error_response(f'Missing chunks: {missing}', 400)
+
+	item = _get_item_or_404(meta['item_uuid'])
+
+	# Determine artefact type
+	from werkzeug.utils import secure_filename
+	original_filename = secure_filename(meta['filename']) or 'unnamed'
+	type_override = meta.get('artefact_type', 'auto')
+	type_overridden = False
+	if type_override and type_override != 'auto':
+		try:
+			artefact_type = ArtefactType(type_override)
+			type_overridden = True
+		except ValueError:
+			return error_response(f'Invalid artefact_type: {type_override}')
+	else:
+		artefact_type = detect_artefact_type(meta['filename'])
+
+	# Generate storage name (same pattern as save_uploaded_file)
+	ext = _get_storage_extension(original_filename)
+	storage_name = f'{uuid.uuid4().hex}{ext}'
+
+	# Assemble chunks into a temp file, computing hashes inline
+	md5_hash = hashlib.md5()
+	sha256_hash = hashlib.sha256()
+	file_size = 0
+
+	try:
+		with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+			tmp_path = tmp.name
+			for chunk_file in chunk_files:
+				with open(chunk_file, 'rb') as cf:
+					while True:
+						buf = cf.read(65536)
+						if not buf:
+							break
+						tmp.write(buf)
+						md5_hash.update(buf)
+						sha256_hash.update(buf)
+						file_size += len(buf)
+
+		# Push assembled file to storage backend
+		storage_key = current_app.storage.storage_key('uploads', storage_name)
+		try:
+			current_app.storage.put(storage_key, tmp_path)
+		except IOError as exc:
+			return error_response(f'Storage backend unavailable: {exc}', 503)
+	finally:
+		try:
+			os.unlink(tmp_path)
+		except OSError:
+			pass
+
+	# Clean up chunk directory and purge any stale sessions
+	shutil.rmtree(chunk_dir, ignore_errors=True)
+	_purge_stale_chunks()
+
+	md5 = md5_hash.hexdigest()
+	sha256 = sha256_hash.hexdigest()
+
+	# Create artefact record (identical logic to upload_artefact)
+	artefact = Artefact(
+		item_id=item.id,
+		label=meta['label'],
+		artefact_type=artefact_type,
+		type_overridden=type_overridden,
+		description=meta.get('description'),
+		original_filename=original_filename,
+		storage_path=storage_name,
+		storage_directory=StorageDirectory.UPLOADS,
+		file_size=file_size,
+		md5=md5,
+		sha256=sha256,
+	)
+	db.session.add(artefact)
+	db.session.commit()
+
+	artefact.slug = ensure_unique_slug(
+		generate_slug(artefact.label), Artefact, scope_filter={'item_id': item.id}
+	)
+	db.session.commit()
+
+	queued_analyses = []
+	auto_analyse = meta.get('auto_analyse', True)
+	if isinstance(auto_analyse, str):
+		auto_analyse = auto_analyse.lower() != 'false'
 	if auto_analyse:
 		from .artefacts import ANALYSIS_MAP
 		queue_analyses_for_artefact(artefact)

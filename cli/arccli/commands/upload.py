@@ -39,11 +39,19 @@ def _upload_one(client, item_uuid, filepath, label, artefact_type, auto_analyse,
 	"""Upload a single file and report results."""
 	filename = os.path.basename(filepath)
 	file_size = os.path.getsize(filepath)
+	prefix = f"Uploading {filename} ({format_size(file_size)})..."
 
-	print(f"Uploading {filename} ({format_size(file_size)})...", end=' ', flush=True)
+	print(prefix, end=' ', flush=True)
 
 	# Compute hashes client-side for integrity verification
 	local_md5, local_sha256 = compute_file_hashes(filepath)
+
+	# Track whether chunked progress was shown (so we know how to print "done.")
+	_chunked = [False]
+
+	def _progress(done, total):
+		_chunked[0] = True
+		print(f"\r{prefix}  [{done}/{total} chunks]", end='', flush=True)
 
 	result = client.upload_artefact(
 		item_uuid=item_uuid,
@@ -51,6 +59,7 @@ def _upload_one(client, item_uuid, filepath, label, artefact_type, auto_analyse,
 		label=label,
 		artefact_type=artefact_type,
 		auto_analyse=auto_analyse,
+		progress_cb=_progress,
 	)
 
 	# Verify integrity
@@ -66,7 +75,11 @@ def _upload_one(client, item_uuid, filepath, label, artefact_type, auto_analyse,
 		result['_hash_verified'] = hash_ok
 		print_json(result)
 	else:
-		print("done.")
+		if _chunked[0]:
+			# Overwrite the chunk-progress line then end with a newline
+			print(f"\r{prefix} done." + " " * 20)
+		else:
+			print("done.")
 		print(f"  Artefact: {result['uuid']}")
 		print(f"  Type:     {result['artefact_type']}")
 		if result.get('queued_analyses'):
