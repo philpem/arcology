@@ -81,12 +81,17 @@ Examples:
 
 import argparse
 import logging
+import math
 import os
 import sys
 import time
 from pathlib import Path
 
 import requests
+
+# Files larger than this are uploaded in chunks to avoid gunicorn timeout
+CHUNKED_THRESHOLD = 100 * 1024 * 1024   # 100 MB
+CHUNK_SIZE        =  50 * 1024 * 1024   #  50 MB
 
 log = logging.getLogger('bulk-import')
 
@@ -440,10 +445,82 @@ def get_existing_filenames(session, api_url: str, item_uuid: str) -> set[str]:
     }
 
 
+def _chunked_upload(session, api_url: str, item_uuid: str, filepath: str,
+                    label: str, auto_analyse: bool = True,
+                    chunk_size: int = CHUNK_SIZE) -> dict | None:
+    """Upload a large file using the chunked upload protocol.
+
+    Splits the file into chunks, uploads each with per-chunk retry, then
+    calls /complete to assemble and create the artefact.  Returns the artefact
+    JSON dict on success, or None on unrecoverable failure.
+    """
+    file_size = os.path.getsize(filepath)
+    filename = os.path.basename(filepath)
+    total_chunks = max(1, math.ceil(file_size / chunk_size))
+
+    log.debug('  Using chunked upload: %d chunk(s) of %d MB', total_chunks, chunk_size // (1024 * 1024))
+
+    # Initialise session
+    init_resp = _api_post(session, f'{api_url}/uploads/chunked/init', json={
+        'filename': filename,
+        'total_chunks': total_chunks,
+        'total_size': file_size,
+        'item_uuid': item_uuid,
+        'label': label,
+        'auto_analyse': auto_analyse,
+    })
+    if init_resp.status_code != 201:
+        log.warning('Chunked init failed (HTTP %d): %s', init_resp.status_code, _extract_error(init_resp))
+        return None
+    upload_uuid = init_resp.json()['upload_uuid']
+
+    # Upload chunks with per-chunk retry
+    with open(filepath, 'rb') as f:
+        for chunk_index in range(total_chunks):
+            data = f.read(chunk_size)
+            uploaded = False
+            for attempt in range(3):
+                try:
+                    resp = session.post(
+                        f'{api_url}/uploads/chunked/{upload_uuid}/chunk/{chunk_index}',
+                        data=data,
+                        headers={'Content-Type': 'application/octet-stream'},
+                    )
+                    if resp.status_code == 200:
+                        uploaded = True
+                        break
+                    log.warning('  Chunk %d failed (HTTP %d, attempt %d)',
+                                chunk_index, resp.status_code, attempt + 1)
+                except requests.ConnectionError as e:
+                    log.warning('  Chunk %d connection error (attempt %d): %s',
+                                chunk_index, attempt + 1, e)
+                if attempt < 2:
+                    time.sleep(2 ** (attempt + 1))
+            if not uploaded:
+                log.error('  Chunk %d failed after 3 attempts — aborting upload', chunk_index)
+                return None
+            log.debug('  Chunk %d/%d uploaded', chunk_index + 1, total_chunks)
+
+    # Complete
+    complete_resp = _api_post(session, f'{api_url}/uploads/chunked/{upload_uuid}/complete', json={})
+    if complete_resp.status_code == 201:
+        return complete_resp.json()
+    log.warning('Chunked complete failed (HTTP %d): %s',
+                complete_resp.status_code, _extract_error(complete_resp))
+    return None
+
+
 def upload_with_retry(session, api_url: str, item_uuid: str, filepath: str,
                       label: str, auto_analyse: bool = True,
                       max_retries: int = 3) -> dict | None:
-    """Upload a file with retry on failure."""
+    """Upload a file with retry on failure.
+
+    Automatically uses chunked upload for files larger than CHUNKED_THRESHOLD.
+    """
+    file_size = os.path.getsize(filepath)
+    if file_size > CHUNKED_THRESHOLD:
+        return _chunked_upload(session, api_url, item_uuid, filepath, label, auto_analyse)
+
     for attempt in range(max_retries):
         try:
             with open(filepath, 'rb') as f:
