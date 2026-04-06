@@ -25,6 +25,15 @@ try:
 except ImportError:
     BotoCoreError = BotoClientError = Exception  # type: ignore[misc,assignment]
 
+
+class _GarageHeaderParsingFilter(logging.Filter):
+    """Suppress urllib3 HeaderParsingError warnings from Garage and similar
+    S3-compatible backends whose HTTP responses trigger Python's email parser
+    defect detection.  The operations succeed correctly; the warning is purely
+    cosmetic but generates a full traceback per uploaded object."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        return 'Failed to parse headers' not in record.getMessage()
+
 log = logging.getLogger(__name__)
 
 
@@ -261,6 +270,15 @@ class S3Storage(StorageBackend):
         else:
             self._public_client = self._client
         log.info(f"S3 storage: endpoint={endpoint_url} bucket={bucket}")
+
+        # Garage (and some other S3-compatible backends) produce HTTP responses
+        # that trigger urllib3's HeaderParsingError warning on every PUT.  The
+        # uploads succeed; the warning is cosmetic but emits a full traceback
+        # per object, drowning real errors.  Install a one-time log filter.
+        _urllib3_pool_log = logging.getLogger('urllib3.connectionpool')
+        if not any(isinstance(f, _GarageHeaderParsingFilter)
+                   for f in _urllib3_pool_log.filters):
+            _urllib3_pool_log.addFilter(_GarageHeaderParsingFilter())
 
     def put(self, key: str, source_path: Path) -> None:
         try:
