@@ -169,10 +169,13 @@ file archives, and manage hash databases from your terminal.
 ### Installation
 
 ```bash
-# From a local checkout (editable / development mode)
+# Run directly from a checkout (no install required)
+python cli/arco --help
+
+# Or install for regular use (editable / development mode)
 pip install -e cli/
 
-# With pipx (isolated install, no virtualenv needed)
+# Or with pipx (isolated install, no virtualenv needed)
 pipx install git+https://github.com/philpem/arcology.git#subdirectory=cli
 ```
 
