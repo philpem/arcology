@@ -1064,7 +1064,25 @@ class AnalysisWorker:
             )
             return
 
-        # No format recognised yet.
+        # Archive magic detection: catch files uploaded without a recognised
+        # extension (e.g. a bare X-Files or TBAFS archive with no ".b23"/".b21"
+        # suffix).  Uses the same signature table as the extraction pipeline so
+        # every archive type that can be extracted is also detectable here.
+        sniffed = self._sniff_archive_magic(input_path)
+        if sniffed is not None:
+            self.api.queue_analysis(
+                artefact['uuid'],
+                AnalysisType.ARCHIVE_EXTRACT.value,
+                hints={'archive_type': sniffed.value},
+            )
+            self.complete_analysis(
+                analysis_id,
+                summary=f'Identified as {sniffed.value} archive by magic bytes; queued extraction',
+                details=json.dumps({'detected': sniffed.value}),
+            )
+            return
+
+        # No format recognised.
         self.complete_analysis(
             analysis_id,
             summary='Format not identified',
