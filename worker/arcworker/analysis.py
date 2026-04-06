@@ -2131,34 +2131,7 @@ class AnalysisWorker:
 
         # Register extracted files in the same partition with parent_file_id
         if files:
-            # Register files (they'll be added to the same partition)
-            for i in range(0, len(files), 100):
-                batch = files[i:i+100]
-                file_records = []
-                for f in batch:
-                    record = {
-                        'path': f['path'],
-                        'filename': Path(f['path']).name,
-                        'extension': Path(f['path']).suffix.lstrip('.').lower() or None,
-                        'file_size': f.get('size'),
-                        'parent_file_id': f.get('parent_file_id'),
-                        'extraction_depth': f.get('extraction_depth'),
-                        'md5': f.get('md5'),
-                        'sha1': f.get('sha1'),
-                        'sha256': f.get('sha256'),
-                    }
-                    if f.get('is_directory'):
-                        record['is_directory'] = True
-                    if f.get('risc_os_filetype'):
-                        record['risc_os_filetype'] = f['risc_os_filetype']
-                    if f.get('load_address'):
-                        record['load_address'] = f['load_address']
-                    if f.get('exec_address'):
-                        record['exec_address'] = f['exec_address']
-                    if f.get('attributes'):
-                        record['attributes'] = f['attributes']
-                    file_records.append(record)
-                self.api.post(f"/partitions/{partition_uuid}/files", {'files': file_records})
+            self.api.post_file_records(partition_uuid, files)
 
         # Queue ARCHIVE_DETECT for nested archives (if under depth limit).
         # Pass the archive's display path as path_prefix so that nested

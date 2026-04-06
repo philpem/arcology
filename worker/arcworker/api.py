@@ -251,10 +251,31 @@ class ArcologyAPI:
 
         partition_uuid = partition_resp.get('uuid')
 
-        # Add files in batches
-        batch_size = 100
+        self.post_file_records(partition_uuid, files)
+
+        return partition_resp
+
+    def post_file_records(
+        self,
+        partition_uuid: str,
+        files: list[dict],
+        batch_size: int = 100,
+    ) -> int:
+        """
+        Convert a file list from enumerate_extracted_files() into API records
+        and POST them to /partitions/{partition_uuid}/files in batches.
+
+        Args:
+            partition_uuid: UUID of the target partition (must already exist).
+            files: List of file dicts as returned by enumerate_extracted_files().
+            batch_size: Number of records per POST request (default 100).
+
+        Returns:
+            Total number of file records submitted.
+        """
+        total = 0
         for i in range(0, len(files), batch_size):
-            batch = files[i:i+batch_size]
+            batch = files[i:i + batch_size]
             file_records = []
             for f in batch:
                 path = f.get('path', '')
@@ -268,19 +289,17 @@ class ArcologyAPI:
                     'md5': f.get('md5'),
                     'sha1': f.get('sha1'),
                     'sha256': f.get('sha256'),
-                    # Archive support fields
+                    'is_directory': f.get('is_directory', False),
                     'risc_os_filetype': f.get('risc_os_filetype'),
                     'load_address': f.get('load_address'),
                     'exec_address': f.get('exec_address'),
                     'attributes': f.get('attributes'),
                     'parent_file_id': f.get('parent_file_id'),
                     'extraction_depth': f.get('extraction_depth', 0),
-                    'is_directory': f.get('is_directory', False),
                 })
-
             self.post(f"/partitions/{partition_uuid}/files", {'files': file_records})
-
-        return partition_resp
+            total += len(batch)
+        return total
 
     def queue_analysis(
         self,
