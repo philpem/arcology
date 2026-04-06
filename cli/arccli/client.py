@@ -5,18 +5,29 @@ Modelled on worker/arcworker/api.py but adapted for CLI use:
 - Uses requests.Session for connection reuse
 - Raises exceptions on errors instead of returning None
 - Supports multipart file upload and streaming download
+
+This is the canonical Python client for the Arcology API, used by the
+``arco`` CLI and available for third-party scripts::
+
+    from arccli.client import ArcologyClient
+    client = ArcologyClient("http://localhost:5000", "my-api-key")
+    items = client.list_items_all(tag="retro")
 """
 
 import hashlib
+import logging
 import math
 import os
 import sys
+import time
 
 import requests
 
 # Files larger than this threshold are uploaded in chunks
 CHUNKED_THRESHOLD = 100 * 1024 * 1024   # 100 MB
 CHUNK_SIZE        =  50 * 1024 * 1024   #  50 MB
+
+log = logging.getLogger(__name__)
 
 
 class ArcologyError(Exception):
@@ -243,6 +254,112 @@ class ArcologyClient:
 
 	def search_failures(self, **params) -> dict:
 		return self.get('analysis/failures', params={k: v for k, v in params.items() if v is not None})
+
+	# ---- Paginated helpers ----
+
+	def list_items_all(self, **params) -> list[dict]:
+		"""Fetch all items matching *params*, handling pagination automatically."""
+		items = []
+		params.setdefault('per_page', 100)
+		params['page'] = 1
+		while True:
+			data = self.list_items(**params)
+			items.extend(data.get('items', []))
+			if params['page'] >= data.get('pages', 1):
+				break
+			params['page'] += 1
+		return items
+
+	def get_partition_files_all(self, partition_uuid: str, **params) -> list[dict]:
+		"""Fetch all files in a partition, handling pagination automatically."""
+		files = []
+		params.setdefault('per_page', 500)
+		params['page'] = 1
+		while True:
+			data = self.get(f'partitions/{partition_uuid}/files',
+			                params={k: v for k, v in params.items() if v is not None})
+			files.extend(data.get('files', []))
+			if params['page'] >= data.get('pages', 1):
+				break
+			params['page'] += 1
+		return files
+
+	# ---- Lookup helpers ----
+
+	def lookup_platform(self, name: str) -> int | None:
+		"""Find a platform ID by name (case-insensitive). Returns None if not found."""
+		if not name:
+			return None
+		for p in self.list_platforms().get('platforms', []):
+			if p['name'].lower() == name.lower():
+				return p['id']
+		return None
+
+	def lookup_category(self, name: str) -> int | None:
+		"""Find a category ID by name (case-insensitive). Returns None if not found."""
+		if not name:
+			return None
+		for c in self.list_categories().get('categories', []):
+			if c['name'].lower() == name.lower():
+				return c['id']
+		return None
+
+	def find_item(self, name: str, tag: str) -> dict | None:
+		"""Find an existing item by exact *name* within items tagged *tag*."""
+		items = self.list_items_all(q=name, tag=tag)
+		for item in items:
+			if item['name'] == name:
+				return item
+		return None
+
+	def get_item_filenames(self, item_uuid: str) -> set[str]:
+		"""Return the set of ``original_filename`` values on an item's artefacts."""
+		item = self.get_item(item_uuid)
+		return {
+			art.get('original_filename', '')
+			for art in item.get('artefacts', [])
+		}
+
+	# ---- Upload with retry ----
+
+	def upload_artefact_retry(self, item_uuid: str, filepath: str, label: str,
+	                          artefact_type: str = None, description: str = None,
+	                          auto_analyse: bool = True,
+	                          max_retries: int = 3) -> dict | None:
+		"""Upload with exponential-backoff retry. Returns None on persistent failure."""
+		for attempt in range(max_retries):
+			try:
+				return self.upload_artefact(
+					item_uuid, filepath, label,
+					artefact_type=artefact_type,
+					description=description,
+					auto_analyse=auto_analyse,
+				)
+			except (ArcologyError, requests.ConnectionError) as exc:
+				log.warning('Upload attempt %d failed: %s', attempt + 1, exc)
+				if attempt < max_retries - 1:
+					wait = 2 ** (attempt + 1)
+					log.info('  Retrying in %ds...', wait)
+					time.sleep(wait)
+		return None
+
+	# ---- Hash database methods ----
+
+	def list_hash_databases(self) -> list[dict]:
+		return self.get('hash-databases')
+
+	def get_hash_database(self, db_id: int) -> dict:
+		return self.get(f'hash-databases/{db_id}')
+
+	def create_hash_database(self, **data) -> dict:
+		return self.post_json('hash-databases', {k: v for k, v in data.items() if v is not None})
+
+	def create_hash_database_product(self, db_id: int, **data) -> dict:
+		return self.post_json(f'hash-databases/{db_id}/products',
+		                      {k: v for k, v in data.items() if v is not None})
+
+	def add_product_files(self, db_id: int, product_id: int, files: list) -> dict:
+		return self.post_json(f'hash-databases/{db_id}/products/{product_id}/files', files)
 
 
 def compute_file_hashes(filepath: str) -> tuple[str, str]:

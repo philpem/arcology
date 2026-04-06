@@ -161,6 +161,49 @@ python -m myapp
 
 Visit http://localhost:5000
 
+## CLI Client (`arco`)
+
+The `arco` command-line tool lets you manage items, upload artefacts, bulk-import
+file archives, and manage hash databases from your terminal.
+
+### Installation
+
+```bash
+# From a local checkout (editable / development mode)
+pip install -e cli/
+
+# With pipx (isolated install, no virtualenv needed)
+pipx install git+https://github.com/philpem/arcology.git#subdirectory=cli
+```
+
+### Setup
+
+```bash
+arco configure            # Interactive setup (server URL + API key)
+arco health               # Verify connectivity
+```
+
+### Common commands
+
+```bash
+arco items list            # List items
+arco items create -n "…"   # Create item
+arco upload ITEM_UUID f.scp # Upload artefact
+arco download ART_UUID     # Download artefact
+arco platforms             # List platforms
+
+# Bulk import a directory tree
+arco bulk-import --archive-dir ~/discs --tag myimport --platform "BBC Micro"
+
+# Hash database management
+arco hashdb list
+arco hashdb export 1 riscos_apps.json
+arco hashdb import riscos_apps.json
+arco hashdb generate-arcarc --output arcarc-hashdb.json
+```
+
+Run `arco --help` or `arco <command> --help` for full usage details.
+
 ## Project Structure
 
 ```
