@@ -49,10 +49,10 @@ class TestExtensionMap(unittest.TestCase):
             f'EXTENSION_MAP values not in ArtefactType: {invalid}',
         )
 
-    def test_keys_start_with_dot(self):
-        """Extension keys should start with a dot (e.g. '.zip', not 'zip')."""
-        bad = [k for k in EXTENSION_MAP if not k.startswith('.')]
-        self.assertFalse(bad, f'EXTENSION_MAP keys without leading dot: {bad}')
+    def test_keys_start_with_dot_or_comma(self):
+        """Extension keys should start with '.' or ',' (RISC OS comma-suffix)."""
+        bad = [k for k in EXTENSION_MAP if not k.startswith(('.', ','))]
+        self.assertFalse(bad, f'EXTENSION_MAP keys without leading dot or comma: {bad}')
 
     def test_keys_are_lowercase(self):
         """Extension keys should be lowercase for case-insensitive matching."""
