@@ -111,7 +111,7 @@ def require_auth(permission: str = 'read_only'):
                 return error_response('Insufficient permissions', 403)
             # Throttle last_used_at updates to avoid a write transaction on
             # every single API call.  Only update if stale by >60 seconds.
-            now = datetime.now(timezone.utc)
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             if not key.last_used_at or (now - key.last_used_at).total_seconds() > 60:
                 key.last_used_at = now
                 db.session.commit()
@@ -335,9 +335,9 @@ def create_item():
         category_id=data.get('category_id'),
         parent_id=parent_id,
     )
-    assign_item_tags(item, data.get('tags'))
-
     db.session.add(item)
+    db.session.flush()  # assigns item.id so tag back-references work correctly
+    assign_item_tags(item, data.get('tags'))
     db.session.commit()
     item.slug = ensure_unique_slug(generate_slug(item.name), Item)
     db.session.commit()
@@ -774,7 +774,7 @@ def update_analysis(id):
             update(Analysis)
             .where(Analysis.id == id)
             .where(Analysis.status == AnalysisStatus.PENDING)
-            .values(status=AnalysisStatus.RUNNING, started_at=datetime.now(timezone.utc))
+            .values(status=AnalysisStatus.RUNNING, started_at=datetime.now(timezone.utc).replace(tzinfo=None))
         )
         db.session.commit()
 
@@ -801,9 +801,9 @@ def update_analysis(id):
             setattr(analysis, field, data[field])
 
     if data.get('status') == 'running' and not analysis.started_at:
-        analysis.started_at = datetime.now(timezone.utc)
+        analysis.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
     if data.get('status') in ('completed', 'failed'):
-        analysis.completed_at = datetime.now(timezone.utc)
+        analysis.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
     # On successful completion of specific analysis types, extract structured
     # data from the JSON details blob into indexed search tables.
@@ -1448,7 +1448,10 @@ def upload_artefact(item_uuid):
 		return error_response('Label is required')
 
 	# Save file with UUID-based name
-	storage_name, file_size = save_uploaded_file(file)
+	try:
+		storage_name, file_size = save_uploaded_file(file)
+	except IOError as exc:
+		return error_response(f'Storage backend unavailable: {exc}', 503)
 
 	# Determine artefact type: use override if provided, otherwise auto-detect
 	type_override = request.form.get('artefact_type', 'auto')
@@ -1464,7 +1467,10 @@ def upload_artefact(item_uuid):
 
 	# Compute hashes via storage backend
 	storage_key = current_app.storage.storage_key('uploads', storage_name)
-	md5, sha256 = compute_file_hashes(storage_key, use_storage=True)
+	try:
+		md5, sha256 = compute_file_hashes(storage_key, use_storage=True)
+	except IOError as exc:
+		return error_response(f'Storage backend unavailable (hash): {exc}', 503)
 
 	# Preserve original filename
 	from werkzeug.utils import secure_filename

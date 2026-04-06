@@ -354,11 +354,46 @@ def discover_files_flat(archive_dir: Path,
     return files
 
 
+def _api_get(session, url, **kwargs):
+    """GET with a friendly error on connection failure."""
+    try:
+        return session.get(url, **kwargs)
+    except requests.ConnectionError as exc:
+        log.error('')
+        log.error('ERROR: Cannot connect to Arcology at %s', url.split('/api')[0] + '/api')
+        log.error('  Check that the server is running and reachable.')
+        log.error('  Details: %s', exc)
+        sys.exit(1)
+
+
+def _api_post(session, url, **kwargs):
+    """POST with a friendly error on connection failure."""
+    try:
+        return session.post(url, **kwargs)
+    except requests.ConnectionError as exc:
+        log.error('')
+        log.error('ERROR: Cannot connect to Arcology at %s', url.split('/api')[0] + '/api')
+        log.error('  Check that the server is running and reachable.')
+        log.error('  Details: %s', exc)
+        sys.exit(1)
+
+
+def _extract_error(resp) -> str:
+    """Return a human-readable error from an API response (JSON or truncated HTML)."""
+    try:
+        return resp.json().get('error', resp.text[:200])
+    except Exception:
+        text = resp.text.strip()
+        if text.startswith('<'):
+            return f'(server returned HTML {resp.status_code} — check server logs)'
+        return text[:200]
+
+
 def lookup_platform(session, api_url: str, platform_name: str) -> int | None:
     """Look up a platform by name, return its ID or None."""
     if not platform_name:
         return None
-    resp = session.get(f'{api_url}/platforms')
+    resp = _api_get(session, f'{api_url}/platforms')
     resp.raise_for_status()
     for p in resp.json().get('platforms', []):
         if p['name'].lower() == platform_name.lower():
@@ -371,7 +406,7 @@ def lookup_category(session, api_url: str, category_name: str) -> int | None:
     """Look up a category by name, return its ID or None."""
     if not category_name:
         return None
-    resp = session.get(f'{api_url}/categories')
+    resp = _api_get(session, f'{api_url}/categories')
     resp.raise_for_status()
     for c in resp.json().get('categories', []):
         if c['name'].lower() == category_name.lower():
@@ -382,7 +417,7 @@ def lookup_category(session, api_url: str, category_name: str) -> int | None:
 
 def find_existing_item(session, api_url: str, name: str, tag: str) -> dict | None:
     """Find an existing item by name and tag."""
-    resp = session.get(f'{api_url}/items', params={
+    resp = _api_get(session, f'{api_url}/items', params={
         'q': name,
         'tag': tag,
         'per_page': 50,
@@ -396,7 +431,7 @@ def find_existing_item(session, api_url: str, name: str, tag: str) -> dict | Non
 
 def get_existing_filenames(session, api_url: str, item_uuid: str) -> set[str]:
     """Get the set of original_filename values already on an Item."""
-    resp = session.get(f'{api_url}/items/{item_uuid}')
+    resp = _api_get(session, f'{api_url}/items/{item_uuid}')
     resp.raise_for_status()
     item_data = resp.json()
     return {
@@ -423,7 +458,7 @@ def upload_with_retry(session, api_url: str, item_uuid: str, filepath: str,
                 )
             if resp.status_code == 201:
                 return resp.json()
-            log.warning('Upload failed (HTTP %d): %s', resp.status_code, resp.text[:200])
+            log.warning('Upload failed (HTTP %d): %s', resp.status_code, _extract_error(resp))
         except requests.ConnectionError as e:
             log.warning('Connection error on attempt %d: %s', attempt + 1, e)
 
@@ -626,13 +661,13 @@ def main():
             if category_id:
                 item_data['category_id'] = category_id
 
-            resp = session.post(f'{api_url}/items', json=item_data)
+            resp = _api_post(session, f'{api_url}/items', json=item_data)
             if resp.status_code == 201:
                 item_uuid = resp.json()['uuid']
                 created_items += 1
                 log.info('Created item: %s', item_uuid[:8])
             else:
-                log.error('Failed to create item "%s": %s', item_name, resp.text[:200])
+                log.error('Failed to create item "%s": %s', item_name, _extract_error(resp))
                 for f in files:
                     failed_uploads.append(f['relative_path'])
                 continue

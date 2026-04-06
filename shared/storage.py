@@ -18,6 +18,22 @@ import tempfile
 from pathlib import Path
 from typing import BinaryIO, Optional
 
+# botocore exception base classes — imported here so the module loads even
+# when boto3 is absent (LocalStorage users never import these).
+try:
+    from botocore.exceptions import BotoCoreError, ClientError as BotoClientError
+except ImportError:
+    BotoCoreError = BotoClientError = Exception  # type: ignore[misc,assignment]
+
+
+class _GarageHeaderParsingFilter(logging.Filter):
+    """Suppress urllib3 HeaderParsingError warnings from Garage and similar
+    S3-compatible backends whose HTTP responses trigger Python's email parser
+    defect detection.  The operations succeed correctly; the warning is purely
+    cosmetic but generates a full traceback per uploaded object."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        return 'Failed to parse headers' not in record.getMessage()
+
 log = logging.getLogger(__name__)
 
 
@@ -213,13 +229,29 @@ class S3Storage(StorageBackend):
         from botocore.config import Config as BotoConfig
 
         self.bucket = bucket
+        # request_checksum_calculation / response_checksum_validation:
+        # botocore ≥1.35 added default SHA256 checksums on all S3 requests.
+        # Many S3-compatible backends (Garage, MinIO older versions, etc.)
+        # don't handle these extra headers correctly and respond with
+        # FlexibleChecksumError.  Setting 'when_required' / 'when_supported'
+        # restores the pre-1.35 behaviour: only send/validate checksums when
+        # the operation explicitly requires them.
+        # Older botocore (<1.35) doesn't recognise these keys, so fall back.
+        try:
+            _cfg = BotoConfig(
+                signature_version='s3v4',
+                request_checksum_calculation='when_required',
+                response_checksum_validation='when_supported',
+            )
+        except TypeError:
+            _cfg = BotoConfig(signature_version='s3v4')
         self._client = boto3.client(
             's3',
             endpoint_url=endpoint_url,
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,
             region_name=region,
-            config=BotoConfig(signature_version='s3v4'),
+            config=_cfg,
         )
         # Presigned URLs must be signed against the hostname the browser
         # will use.  When S3 runs inside Docker (e.g. Garage at
@@ -233,33 +265,64 @@ class S3Storage(StorageBackend):
                 aws_access_key_id=access_key,
                 aws_secret_access_key=secret_key,
                 region_name=region,
-                config=BotoConfig(signature_version='s3v4'),
+                config=_cfg,
             )
         else:
             self._public_client = self._client
         log.info(f"S3 storage: endpoint={endpoint_url} bucket={bucket}")
 
+        # Garage (and some other S3-compatible backends) produce HTTP responses
+        # that trigger urllib3's HeaderParsingError warning on every PUT.  The
+        # uploads succeed; the warning is cosmetic but emits a full traceback
+        # per object, drowning real errors.  Install a one-time log filter.
+        _urllib3_pool_log = logging.getLogger('urllib3.connectionpool')
+        if not any(isinstance(f, _GarageHeaderParsingFilter)
+                   for f in _urllib3_pool_log.filters):
+            _urllib3_pool_log.addFilter(_GarageHeaderParsingFilter())
+
     def put(self, key: str, source_path: Path) -> None:
-        self._client.upload_file(str(source_path), self.bucket, key)
+        try:
+            self._client.upload_file(str(source_path), self.bucket, key)
+        except (BotoCoreError, BotoClientError) as exc:
+            raise IOError(f"S3 upload failed for '{key}': {exc}") from exc
 
     def get(self, key: str, dest_path: Path) -> None:
         dest = Path(dest_path)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        self._client.download_file(self.bucket, key, str(dest))
+        try:
+            self._client.download_file(self.bucket, key, str(dest))
+        except BotoClientError as exc:
+            code = exc.response.get('Error', {}).get('Code', '')
+            if code in ('404', 'NoSuchKey'):
+                raise FileNotFoundError(f"S3 object not found: '{key}'") from exc
+            raise IOError(f"S3 download failed for '{key}': {exc}") from exc
+        except BotoCoreError as exc:
+            raise IOError(f"S3 download failed for '{key}': {exc}") from exc
 
     def open_read(self, key: str) -> BinaryIO:
-        resp = self._client.get_object(Bucket=self.bucket, Key=key)
-        # Wrap the streaming body in a SpooledTemporaryFile so callers
-        # get a seekable file-like object.
-        spool = tempfile.SpooledTemporaryFile(max_size=64 * 1024 * 1024)
-        for chunk in resp['Body'].iter_chunks(8192):
-            spool.write(chunk)
-        spool.seek(0)
-        return spool
+        try:
+            resp = self._client.get_object(Bucket=self.bucket, Key=key)
+            # Wrap the streaming body in a SpooledTemporaryFile so callers
+            # get a seekable file-like object.
+            spool = tempfile.SpooledTemporaryFile(max_size=64 * 1024 * 1024)
+            for chunk in resp['Body'].iter_chunks(8192):
+                spool.write(chunk)
+            spool.seek(0)
+            return spool
+        except BotoClientError as exc:
+            code = exc.response.get('Error', {}).get('Code', '')
+            if code in ('404', 'NoSuchKey'):
+                raise FileNotFoundError(f"S3 object not found: '{key}'") from exc
+            raise IOError(f"S3 read failed for '{key}': {exc}") from exc
+        except BotoCoreError as exc:
+            raise IOError(f"S3 read failed for '{key}': {exc}") from exc
 
     def delete(self, key: str) -> None:
         # S3 delete is idempotent — no error if key doesn't exist
-        self._client.delete_object(Bucket=self.bucket, Key=key)
+        try:
+            self._client.delete_object(Bucket=self.bucket, Key=key)
+        except (BotoCoreError, BotoClientError) as exc:
+            raise IOError(f"S3 delete failed for '{key}': {exc}") from exc
 
     def delete_prefix(self, prefix: str) -> int:
         keys = self.list_prefix(prefix)
@@ -267,13 +330,16 @@ class S3Storage(StorageBackend):
             return 0
         # Delete in batches of 1000 (S3 limit)
         deleted = 0
-        for i in range(0, len(keys), 1000):
-            batch = keys[i:i + 1000]
-            self._client.delete_objects(
-                Bucket=self.bucket,
-                Delete={'Objects': [{'Key': k} for k in batch], 'Quiet': True}
-            )
-            deleted += len(batch)
+        try:
+            for i in range(0, len(keys), 1000):
+                batch = keys[i:i + 1000]
+                self._client.delete_objects(
+                    Bucket=self.bucket,
+                    Delete={'Objects': [{'Key': k} for k in batch], 'Quiet': True}
+                )
+                deleted += len(batch)
+        except (BotoCoreError, BotoClientError) as exc:
+            raise IOError(f"S3 delete_prefix failed for '{prefix}': {exc}") from exc
         return deleted
 
     def exists(self, key: str) -> bool:
@@ -308,12 +374,15 @@ class S3Storage(StorageBackend):
         local_dir = Path(local_dir)
         prefix = prefix.rstrip('/') + '/'
         count = 0
-        for path in local_dir.rglob('*'):
-            if path.is_file():
-                rel = path.relative_to(local_dir)
-                key = prefix + str(rel)
-                self._client.upload_file(str(path), self.bucket, key)
-                count += 1
+        try:
+            for path in local_dir.rglob('*'):
+                if path.is_file():
+                    rel = path.relative_to(local_dir)
+                    key = prefix + str(rel)
+                    self._client.upload_file(str(path), self.bucket, key)
+                    count += 1
+        except (BotoCoreError, BotoClientError) as exc:
+            raise IOError(f"S3 put_tree failed for prefix '{prefix}': {exc}") from exc
         return count
 
     def get_tree(self, prefix: str, dest_dir: Path) -> int:
@@ -321,14 +390,17 @@ class S3Storage(StorageBackend):
         prefix = prefix.rstrip('/') + '/'
         keys = self.list_prefix(prefix)
         count = 0
-        for key in keys:
-            rel = key[len(prefix):]
-            if not rel:
-                continue
-            dest = dest_dir / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            self._client.download_file(self.bucket, key, str(dest))
-            count += 1
+        try:
+            for key in keys:
+                rel = key[len(prefix):]
+                if not rel:
+                    continue
+                dest = dest_dir / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                self._client.download_file(self.bucket, key, str(dest))
+                count += 1
+        except (BotoCoreError, BotoClientError) as exc:
+            raise IOError(f"S3 get_tree failed for prefix '{prefix}': {exc}") from exc
         return count
 
 
