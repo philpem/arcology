@@ -1151,11 +1151,18 @@ def viewer_nested(item_id, root_id, artefact_id):
     return _render_viewer(artefact)
 
 
+_VALID_VIEWER_COLUMNS = [2, 3, 4, 6, 8]
+_COLUMN_CLASSES = {2: 'col-6', 3: 'col-4', 4: 'col-3', 6: 'col-2', 8: 'col-custom-8'}
+
+
 def _render_viewer(artefact):
     """Build and render the viewer page for an artefact's converted outputs."""
+    from collections import Counter, defaultdict
+    from ..database import RestrictionType
+    from ..utils.pagination import ListPagination, VALID_PER_PAGE, resolve_per_page
+
     _viewable_types = (ArtefactType.ACORN_SPRITE, ArtefactType.ACORN_DRAW, ArtefactType.ACORN_TEXT)
     output_groups = []
-    output_folder = get_output_folder()
 
     def _enrich_outputs(outputs):
         """For text outputs, read file content for inline rendering."""
@@ -1173,6 +1180,7 @@ def _render_viewer(artefact):
     viewer_status = None  # 'pending', 'failed', 'partial', or None (ready)
     file_filter = request.args.get('file')
     all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    use_pagination = False  # only paginate Mode 2 aggregate view without ?file=
 
     if artefact.artefact_type in _viewable_types:
         # Mode 1: Artefact is itself a viewable type — show its own FORMAT_CONVERT output
@@ -1199,8 +1207,6 @@ def _render_viewer(artefact):
     else:
         # Mode 2: Aggregate outputs from all FORMAT_CONVERT analyses on this artefact
         # and all derived artefacts (e.g. an ISO extracted from a ZIP).
-        # Multiple analyses are expected — one per FILE_EXTRACTION / ARCHIVE_EXTRACT
-        # partition queued via queue_partition_follow_ups().
         convs = (
             Analysis.query
             .filter(
@@ -1217,7 +1223,6 @@ def _render_viewer(artefact):
         )
 
         # Collect outputs grouped by source_file (filtered by ?file= if set)
-        from collections import defaultdict
         groups: dict[str, list] = defaultdict(list)
         for conv in convs:
             if not (conv.status == AnalysisStatus.COMPLETED and conv.success):
@@ -1233,21 +1238,120 @@ def _render_viewer(artefact):
                 groups[source].append(out)
 
         for source_file, outputs in groups.items():
-            _enrich_outputs(outputs)
-            # Use the full source_file path as the label so users can see
-            # which file in the archive produced these outputs.
+            # NOTE: do NOT call _enrich_outputs here — deferred to current page only
             label = source_file if source_file else (artefact.original_filename or artefact.label)
             output_groups.append({'label': label, 'source_file': source_file, 'outputs': outputs})
+
+        # Sort groups alphabetically by label for stable ordering across pages
+        output_groups.sort(key=lambda g: g['label'].lower())
 
         if not output_groups:
             viewer_status = 'pending' if pending_count > 0 else 'failed'
         elif pending_count > 0:
             viewer_status = 'partial'
 
-    # Look up RISC OS module detail when ?file= matches a module path
+        # Enable pagination for aggregate view without ?file= filter
+        if not file_filter:
+            use_pagination = True
+
+    # ── Filetype facet (Mode 2 only, when there are source_file paths) ───────
+    filetype_facet = {}
+    active_filetypes = set()
+    filetype_toggle_urls = {}
+    clear_filter_args = {}
+
+    source_paths = [g['source_file'] for g in output_groups if g.get('source_file')]
+    if source_paths:
+        partition_ids = [
+            p.id for p in Partition.query.filter(
+                Partition.artefact_id.in_(all_artefact_ids)
+            ).all()
+        ]
+        if partition_ids:
+            filetype_rows = (
+                ExtractedFile.query
+                .filter(
+                    ExtractedFile.partition_id.in_(partition_ids),
+                    ExtractedFile.path.in_(source_paths),
+                )
+                .with_entities(ExtractedFile.path, ExtractedFile.risc_os_filetype)
+                .all()
+            )
+            path_to_filetype = {r.path: r.risc_os_filetype for r in filetype_rows}
+
+            # Tag each group with its filetype
+            for group in output_groups:
+                group['filetype'] = path_to_filetype.get(group.get('source_file'))
+
+            # Build facet: {hex_code: count}
+            filetype_facet = dict(Counter(
+                g['filetype'] for g in output_groups if g.get('filetype')
+            ))
+
+            # Apply filetype filter from ?filetype=ff9,fff
+            filetype_param = request.args.get('filetype', '')
+            active_filetypes = set(filetype_param.split(',')) - {''}
+            if active_filetypes:
+                output_groups = [
+                    g for g in output_groups
+                    if g.get('filetype') in active_filetypes
+                ]
+
+            # Build toggle URLs for the template
+            base_args = {k: v for k, v in request.args.items()
+                         if k not in ('filetype', 'page')}
+            for ft in filetype_facet:
+                toggled = active_filetypes ^ {ft}
+                args = dict(base_args)
+                if toggled:
+                    args['filetype'] = ','.join(sorted(toggled))
+                filetype_toggle_urls[ft] = args
+            clear_filter_args = dict(base_args)
+
+    # ── Summary counts (post-filter, pre-pagination) ─────────────────────────
+    total_counts = Counter()
+    for g in output_groups:
+        for out in g['outputs']:
+            total_counts[out.get('type', 'unknown')] += 1
+    total_groups = len(output_groups)
+
+    # ── Pagination (Mode 2 aggregate only, without ?file=) ───────────────────
+    pagination = None
+    pagination_args = {}
+    view_all = False
+
+    if use_pagination and output_groups:
+        per_page, page, view_all = resolve_per_page('VIEWER_PER_PAGE', 25)
+        pagination = ListPagination(output_groups, page, per_page)
+        # Only enrich text content for the current page
+        for group in pagination.items:
+            _enrich_outputs(group['outputs'])
+        output_groups = pagination.items
+        pagination_args = {k: v for k, v in request.args.items() if k != 'page'}
+    else:
+        # Mode 1 or ?file= — enrich all (typically small set)
+        for group in output_groups:
+            _enrich_outputs(group['outputs'])
+
+    # ── Configurable columns ─────────────────────────────────────────────────
+    columns_param = request.args.get('columns', None, type=int)
+    if columns_param in _VALID_VIEWER_COLUMNS:
+        viewer_columns = columns_param
+        if (current_user.is_authenticated
+                and current_user.get_preference('viewer_columns') != columns_param):
+            current_user.set_preference('viewer_columns', columns_param)
+            db.session.commit()
+    else:
+        saved = None
+        if current_user.is_authenticated:
+            saved = current_user.get_preference('viewer_columns')
+        viewer_columns = saved if saved in _VALID_VIEWER_COLUMNS else 4
+
+    viewer_col_class = _COLUMN_CLASSES.get(viewer_columns, 'col-3')
+
+    # ── Look up RISC OS module detail when ?file= matches a module path ──────
     module_detail = None
     if file_filter:
-        # Try the RiscosModule table first for basic fields
         mod_row = RiscosModule.query.filter(
             RiscosModule.artefact_id.in_(all_artefact_ids),
             RiscosModule.file_path == file_filter,
@@ -1265,7 +1369,6 @@ def _render_viewer(artefact):
                 'module_flags': None,
                 'commands': [],
             }
-            # Enrich with swi_names and module_flags from the analysis JSON
             mod_analysis = Analysis.query.filter(
                 Analysis.artefact_id.in_(all_artefact_ids),
                 Analysis.analysis_type == AnalysisType.RISCOS_MODULE_PARSE,
@@ -1284,26 +1387,23 @@ def _render_viewer(artefact):
                         break
 
     # ── Explicit-content gate ────────────────────────────────────────────────
-    from ..database import RestrictionType
     explicit_type = RestrictionType.EXPLICIT
     user_can_bypass_explicit = current_user.can_bypass_restriction(explicit_type)
 
-    # Artefact-level EXPLICIT → all groups are gated
     artefact_is_explicit = any(
         r.restriction_type == explicit_type for r in artefact.restrictions
     )
 
-    # File-level EXPLICIT → find which source_file paths are gated
     explicit_file_paths: set[str] = set()
     if not artefact_is_explicit and artefact.partitions:
-        partition_ids = [p.id for p in artefact.partitions]
+        partition_ids_expl = [p.id for p in artefact.partitions]
         explicit_efs = (
             ExtractedFile.query
             .join(ExtractedFileRestriction,
                   ExtractedFileRestriction.extracted_file_id == ExtractedFile.id)
             .filter(
                 ExtractedFileRestriction.restriction_type == explicit_type,
-                ExtractedFile.partition_id.in_(partition_ids),
+                ExtractedFile.partition_id.in_(partition_ids_expl),
             )
             .with_entities(ExtractedFile.path)
             .all()
@@ -1322,6 +1422,19 @@ def _render_viewer(artefact):
         viewer_status=viewer_status,
         module_detail=module_detail,
         user_can_bypass_explicit=user_can_bypass_explicit,
+        pagination=pagination,
+        pagination_args=pagination_args,
+        view_all=view_all,
+        valid_per_page=VALID_PER_PAGE,
+        total_counts=total_counts,
+        total_groups=total_groups,
+        filetype_facet=filetype_facet,
+        active_filetypes=active_filetypes,
+        filetype_toggle_urls=filetype_toggle_urls,
+        clear_filter_args=clear_filter_args,
+        viewer_columns=viewer_columns,
+        viewer_col_class=viewer_col_class,
+        valid_viewer_columns=_VALID_VIEWER_COLUMNS,
     )
 
 
