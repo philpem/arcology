@@ -808,6 +808,54 @@ def edit_known_product(db_id, pid):
     return redirect(url_for(f'{ROUTENAME}.view_product', id=db_id, pid=pid))
 
 
+@blueprint.route('/<int:db_id>/products/<int:pid>/files/save-all', methods=['POST'])
+@login_required
+@require_permission('read_write')
+def save_all_files(db_id, pid):
+    """Save edits to all files in a product in one batched submission."""
+    product = KnownProduct.query.filter_by(id=pid, database_id=db_id).first_or_404()
+    is_active = product.database.is_active
+    enable_recognition = product.database.enable_product_recognition
+
+    changed_kf_ids = []
+    updated_kfs = {}
+
+    for kf in product.known_files:
+        filename = request.form.get(f'filename_{kf.id}', '').strip()
+        if not filename:
+            continue
+        kf.filename = filename
+        kf.md5 = normalize_hash(request.form.get(f'md5_{kf.id}'))
+        kf.sha1 = normalize_hash(request.form.get(f'sha1_{kf.id}'))
+        kf.sha256 = normalize_hash(request.form.get(f'sha256_{kf.id}'))
+        kf.crc32 = normalize_hash(request.form.get(f'crc32_{kf.id}'))
+        size_str = request.form.get(f'file_size_{kf.id}', '').strip()
+        kf.file_size = int(size_str) if size_str.isdigit() else None
+        kf.relative_path = request.form.get(f'relative_path_{kf.id}', '').strip() or None
+        kf.is_required = f'is_required_{kf.id}' in request.form
+        changed_kf_ids.append(kf.id)
+        updated_kfs[kf.id] = kf
+
+    db.session.commit()
+    flash('Files updated.', 'success')
+
+    if is_active and changed_kf_ids:
+        from ..utils.hash_rescan import (rescan_links_for_known_file_id,
+                                         rescan_hashes_for_known_file,
+                                         queue_product_recognition_for_partitions)
+        partition_ids = set()
+        for kf_id in changed_kf_ids:
+            rescan_links_for_known_file_id(kf_id)
+            kf = updated_kfs[kf_id]
+            rescan_hashes_for_known_file(kf)
+            if enable_recognition:
+                partition_ids |= _partition_ids_for_hashes(kf.md5, kf.sha1, kf.file_size)
+        if enable_recognition and partition_ids:
+            queue_product_recognition_for_partitions(partition_ids)
+
+    return redirect(url_for(f'{ROUTENAME}.view_product', id=db_id, pid=pid))
+
+
 @blueprint.route('/<int:db_id>/products/<int:pid>/delete', methods=['POST'])
 @login_required
 @require_permission('read_write')
