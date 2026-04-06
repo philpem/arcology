@@ -444,11 +444,13 @@ class AnalysisWorker:
             return
         rel = self._relative_output_path(extract_dir)
         prefix = self.storage.storage_key('outputs', rel)
-        count = self.storage.put_tree(prefix, extract_dir)
-        log.info(f"Uploaded {count} files to storage prefix: {prefix}")
-        # Remove local copy — the canonical version is now in S3
-        shutil.rmtree(extract_dir, ignore_errors=True)
-        log.info(f"Cleaned up local extraction directory: {extract_dir}")
+        try:
+            count = self.storage.put_tree(prefix, extract_dir)
+            log.info(f"Uploaded {count} files to storage prefix: {prefix}")
+        finally:
+            # Remove local copy — always clean up, even if upload failed
+            shutil.rmtree(extract_dir, ignore_errors=True)
+            log.info(f"Cleaned up local extraction directory: {extract_dir}")
 
     def _resolve_single_extraction_file(
         self,
