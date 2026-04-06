@@ -142,6 +142,67 @@ class TestAppSmoke(unittest.TestCase):
         )
 
 
+class TestApiKeyLastUsedAtTimezone(unittest.TestCase):
+    """Regression test for timezone-naive/aware datetime mismatch in API key auth.
+
+    When an ApiKey has a non-NULL last_used_at (stored as a timezone-naive
+    datetime by SQLAlchemy's DateTime column), the auth middleware must not
+    raise ``TypeError: can't subtract offset-naive and offset-aware datetimes``.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.app import create_app
+        from myapp.extensions import db
+        from myapp.database import User, UserPermission, ApiKey, ApiKeyPermission
+        from datetime import datetime, timedelta
+
+        cls.app = create_app()
+        cls.app.config['TESTING'] = True
+        cls.client = cls.app.test_client()
+
+        with cls.app.app_context():
+            db.create_all()
+
+            # Create a user that may use the API
+            user = User(
+                username='test-tz-user',
+                password_hash='x',   # never used for auth in this test
+                can_use_api=True,
+                permission=UserPermission.READ_WRITE,
+            )
+            db.session.add(user)
+            db.session.flush()
+
+            # Create an API key and record the raw value
+            key_obj, cls.raw_key = ApiKey.create(
+                user_id=user.id,
+                name='tz-regression-key',
+                permission=ApiKeyPermission.READ_ONLY,
+            )
+            # Simulate a key that was used before: set last_used_at to a
+            # timezone-naive datetime (as SQLAlchemy DateTime returns from the DB).
+            key_obj.last_used_at = datetime.utcnow() - timedelta(seconds=120)
+            db.session.add(key_obj)
+            db.session.commit()
+
+    def test_request_with_stale_last_used_at_does_not_500(self):
+        """GET /api/items with a key that has a naive last_used_at must not return 500."""
+        resp = self.client.get('/api/items', headers={'X-API-Key': self.raw_key})
+        self.assertNotEqual(
+            resp.status_code, 500,
+            f'Got 500 (likely timezone mismatch in auth middleware): {resp.data!r}',
+        )
+
+    def test_request_with_stale_last_used_at_returns_200(self):
+        """GET /api/items with a valid user key should return 200."""
+        resp = self.client.get('/api/items', headers={'X-API-Key': self.raw_key})
+        self.assertEqual(
+            resp.status_code, 200,
+            f'Expected 200 but got {resp.status_code}: {resp.data!r}',
+        )
+
+
 if __name__ == '__main__':
     unittest.main()
 
