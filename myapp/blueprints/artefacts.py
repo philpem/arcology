@@ -99,7 +99,6 @@ EXTENSION_MAP = {
     '.b21':   ArtefactType.TBAFS,
     '.tbafs': ArtefactType.TBAFS,
     '.b23':   ArtefactType.XFILES,
-    ',b23':   ArtefactType.XFILES,   # RISC OS comma-suffix convention (e.g. "MyArchive,B23")
 
     # Acorn/RISC OS native viewable formats
     '.spr':  ArtefactType.ACORN_SPRITE,
@@ -126,13 +125,7 @@ def detect_artefact_type(filename: str) -> ArtefactType:
     # Get extension
     _, ext = os.path.splitext(filename_lower)
 
-    result = EXTENSION_MAP.get(ext, ArtefactType.UNKNOWN)
-    if result == ArtefactType.UNKNOWN and ',' in filename_lower:
-        # RISC OS files often use a ",xxx" filetype suffix instead of ".xxx"
-        # (e.g. "MyArchive,B23").  Try the comma extension as a fallback.
-        comma_ext = ',' + filename_lower.rsplit(',', 1)[-1]
-        result = EXTENSION_MAP.get(comma_ext, ArtefactType.UNKNOWN)
-    return result
+    return EXTENSION_MAP.get(ext, ArtefactType.UNKNOWN)
 
 
 # Analysis types appropriate for each artefact type
