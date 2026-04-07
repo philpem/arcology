@@ -25,6 +25,13 @@ if _repo_root not in _sys.path:
     _sys.path.insert(0, _repo_root)
 del _os, _sys, _repo_root
 
+# Suppress spurious urllib3 header-parsing warnings from S3/Garage responses.
+# The underlying requests succeed; urllib3's assert_header_parsing() is
+# overly strict about HTTP responses that parse correctly in practice.
+import logging as _logging
+_logging.getLogger('urllib3.connection').setLevel(_logging.ERROR)
+del _logging
+
 from arcworker import AnalysisWorker, ARCOLOGY_API, UPLOAD_DIR, OUTPUT_DIR, WORKER_API_KEY
 
 
