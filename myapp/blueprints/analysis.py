@@ -250,21 +250,32 @@ def retry(uuid):
     return _view_redirect(analysis)
 
 
+QUEUE_DISPLAY_LIMIT = 100
+
+
 @blueprint.route('/queue')
 @login_required
 def queue():
     """View the analysis queue (pending and running)."""
+    pending_total = Analysis.query.filter(
+        Analysis.status == AnalysisStatus.PENDING
+    ).count()
+    running_total = Analysis.query.filter(
+        Analysis.status == AnalysisStatus.RUNNING
+    ).count()
+
     pending = Analysis.query.filter(
         Analysis.status == AnalysisStatus.PENDING
-    ).options(joinedload(Analysis.artefact)).order_by(Analysis.created_at).all()
+    ).options(joinedload(Analysis.artefact)).order_by(Analysis.created_at).limit(QUEUE_DISPLAY_LIMIT).all()
 
     running = Analysis.query.filter(
         Analysis.status == AnalysisStatus.RUNNING
-    ).options(joinedload(Analysis.artefact)).order_by(Analysis.started_at).all()
+    ).options(joinedload(Analysis.artefact)).order_by(Analysis.started_at).limit(QUEUE_DISPLAY_LIMIT).all()
 
     cutoff = _stale_cutoff()
     return render_template('analysis/queue.html', pending=pending, running=running,
-                           stale_cutoff=cutoff)
+                           pending_total=pending_total, running_total=running_total,
+                           queue_limit=QUEUE_DISPLAY_LIMIT, stale_cutoff=cutoff)
 
 
 # vim: ts=4 sw=4 et

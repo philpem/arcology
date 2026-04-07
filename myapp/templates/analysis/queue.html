@@ -18,7 +18,7 @@
 </div>
 
 <div class="card mb-4">
-    <div class="card-header text-bg-info"><i class="bi bi-play-circle"></i> Running ({{ running|length }})</div>
+    <div class="card-header text-bg-info"><i class="bi bi-play-circle"></i> Running ({{ running_total }})</div>
     {% if running %}
     <div class="list-group list-group-flush">
         {% for a in running %}
@@ -30,6 +30,11 @@
             </span>
         </div>
         {% endfor %}
+        {% if running_total > queue_limit %}
+        <div class="list-group-item text-muted fst-italic">
+            <i class="bi bi-three-dots"></i> and {{ running_total - queue_limit }} more running task{{ 's' if running_total - queue_limit != 1 else '' }} not shown
+        </div>
+        {% endif %}
     </div>
     {% else %}
     <div class="card-body text-muted">No analyses running</div>
@@ -37,7 +42,7 @@
 </div>
 
 <div class="card">
-    <div class="card-header text-bg-warning"><i class="bi bi-hourglass-split"></i> Pending ({{ pending|length }})</div>
+    <div class="card-header text-bg-warning"><i class="bi bi-hourglass-split"></i> Pending ({{ pending_total }})</div>
     {% if pending %}
     <div class="list-group list-group-flush">
         {% for a in pending %}
@@ -52,6 +57,11 @@
             </div>
         </div>
         {% endfor %}
+        {% if pending_total > queue_limit %}
+        <div class="list-group-item text-muted fst-italic">
+            <i class="bi bi-three-dots"></i> and {{ pending_total - queue_limit }} more pending task{{ 's' if pending_total - queue_limit != 1 else '' }} not shown
+        </div>
+        {% endif %}
     </div>
     {% else %}
     <div class="card-body text-muted">No analyses pending</div>
