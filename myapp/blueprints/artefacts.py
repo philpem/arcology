@@ -2075,10 +2075,27 @@ def upload(item_id):
         
         # Save file
         storage_path, file_size = save_uploaded_file(file)
-        
+
+        # Compute hashes and check for duplicates
+        storage_key = current_app.storage.storage_key('uploads', storage_path)
+        try:
+            md5, sha256 = compute_file_hashes(storage_key, use_storage=True)
+        except IOError:
+            md5, sha256 = None, None
+
+        if sha256:
+            existing = Artefact.query.filter_by(item_id=item.id, sha256=sha256).first()
+            if existing:
+                try:
+                    current_app.storage.delete(storage_key)
+                except Exception:
+                    pass
+                flash(f'Duplicate: a file with identical content already exists as "{existing.label}".', 'warning')
+                return redirect(url_for(f'{ROUTENAME}.upload', item_id=item.url_id))
+
         # Detect MIME type
         mime_type, _ = mimetypes.guess_type(original_filename)
-        
+
         # Create artefact record
         artefact = Artefact(
             item_id=item.id,
@@ -2089,7 +2106,9 @@ def upload(item_id):
             original_filename=original_filename,
             storage_path=storage_path,
             file_size=file_size,
-            mime_type=mime_type
+            mime_type=mime_type,
+            md5=md5,
+            sha256=sha256,
         )
         
         db.session.add(artefact)

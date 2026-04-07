@@ -393,7 +393,10 @@ def cmd_bulk_import(client: ArcologyClient, args):
                 item_uuid, str(filepath), label,
                 auto_analyse=not args.no_auto_analyse,
             )
-            if result:
+            if result and result.get('duplicate'):
+                log.debug('    -> skipped (duplicate of %s)', result.get('uuid', '?')[:8])
+                skipped_files += 1
+            elif result:
                 uploaded_files += 1
                 artefact_type = result.get('artefact_type', '?')
                 log.debug('    -> %s (type: %s)', result.get('uuid', '?')[:8], artefact_type)
