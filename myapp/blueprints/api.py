@@ -1484,6 +1484,18 @@ def upload_artefact(item_uuid):
 	from werkzeug.utils import secure_filename
 	original_filename = secure_filename(file.filename) or 'unnamed'
 
+	# Check for duplicate: same item + same SHA-256
+	existing = Artefact.query.filter_by(item_id=item.id, sha256=sha256).first()
+	if existing:
+		# Clean up the uploaded file — it's a duplicate
+		try:
+			current_app.storage.delete(storage_key)
+		except Exception:
+			pass
+		result = artefact_to_dict(existing)
+		result['duplicate'] = True
+		return jsonify(result), 409
+
 	description = request.form.get('description')
 
 	artefact = Artefact(
@@ -1780,6 +1792,18 @@ def chunked_upload_complete(upload_uuid):
 
 	md5 = md5_hash.hexdigest()
 	sha256 = sha256_hash.hexdigest()
+
+	# Check for duplicate: same item + same SHA-256
+	existing = Artefact.query.filter_by(item_id=item.id, sha256=sha256).first()
+	if existing:
+		# Clean up the uploaded file — it's a duplicate
+		try:
+			current_app.storage.delete(storage_key)
+		except Exception:
+			pass
+		result = artefact_to_dict(existing)
+		result['duplicate'] = True
+		return jsonify(result), 409
 
 	# Create artefact record (identical logic to upload_artefact)
 	artefact = Artefact(

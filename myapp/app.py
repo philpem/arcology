@@ -327,12 +327,14 @@ def _register_cli_commands(app):
     from .cli.rescan_hashes import rescan_hashes
     from .cli.reanalyse import reanalyse
     from .cli.cancel_analysis import cancel_analysis
+    from .cli.dedup_artefacts import dedup_artefacts
 
     app.cli.add_command(create_admin)
     app.cli.add_command(rebuild_search_index)
     app.cli.add_command(rescan_hashes)
     app.cli.add_command(reanalyse)
     app.cli.add_command(cancel_analysis)
+    app.cli.add_command(dedup_artefacts)
 
 
 # vim: ts=4 sw=4 et

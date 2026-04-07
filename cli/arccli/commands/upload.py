@@ -62,6 +62,17 @@ def _upload_one(client, item_uuid, filepath, label, artefact_type, auto_analyse,
 		progress_cb=_progress,
 	)
 
+	if result.get('duplicate'):
+		if json_mode:
+			print_json(result)
+		else:
+			if _chunked[0]:
+				print(f"\r{prefix} skipped (duplicate)." + " " * 20)
+			else:
+				print("skipped (duplicate).")
+			print(f"  Existing: {result['uuid']}")
+		return True
+
 	# Verify integrity
 	server_md5 = result.get('md5')
 	server_sha256 = result.get('sha256')
