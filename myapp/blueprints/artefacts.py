@@ -491,19 +491,21 @@ def _resolve_extracted_file_path(ef):
                         dest = os.path.join(tmp_dir, key.rsplit('/', 1)[-1])
                         storage.get(key, dest)
                         return dest
-                    except ClientError as e:
-                        if e.response['Error']['Code'] in ('404', 'NoSuchKey'):
-                            # Clean up empty temp dir
-                            try:
-                                os.unlink(dest)
-                            except OSError:
-                                pass
-                            try:
-                                os.rmdir(tmp_dir)
-                            except OSError:
-                                pass
-                            continue
-                        raise
+                    except (FileNotFoundError, ClientError) as e:
+                        # storage.get() raises FileNotFoundError for S3 404s;
+                        # catch ClientError too for direct botocore errors.
+                        if isinstance(e, ClientError) and e.response['Error']['Code'] not in ('404', 'NoSuchKey'):
+                            raise
+                        # Clean up empty temp dir
+                        try:
+                            os.unlink(dest)
+                        except OSError:
+                            pass
+                        try:
+                            os.rmdir(tmp_dir)
+                        except OSError:
+                            pass
+                        continue
 
                 continue
 
