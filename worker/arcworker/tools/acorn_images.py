@@ -5,6 +5,7 @@ Provides wrappers for converting Acorn Sprite and Draw files to portable formats
 """
 
 import re
+import traceback as _tb
 from pathlib import Path
 
 from ..config import log
@@ -47,6 +48,7 @@ def convert_sprite(input_path: Path, output_dir: Path, analysis_uuid: str) -> di
             sf = spritefile.spritefile(file=fh)
         sprite_list = list(sf.sprites.items())  # [(name, sprite_dict), ...]
     except Exception as e:
+        log.warning('Failed to open sprite file: %s\n%s', e, _tb.format_exc().rstrip())
         return {'success': False, 'sprites': [], 'error': f'Failed to open sprite file: {e}'}
 
     if not sprite_list:
