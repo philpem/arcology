@@ -12,11 +12,21 @@ The backend is selected via the STORAGE_BACKEND configuration variable.
 import abc
 import io
 import logging
+import mimetypes
 import os
 import shutil
 import tempfile
 from pathlib import Path
 from typing import BinaryIO, Optional
+
+# Ensure SVG is always mapped correctly — some Linux systems omit it.
+mimetypes.add_type('image/svg+xml', '.svg')
+
+
+def _mime_for_key(key: str) -> str:
+    """Return the MIME type for a storage key based on its file extension."""
+    mime, _ = mimetypes.guess_type(key)
+    return mime or 'application/octet-stream'
 
 # botocore exception base classes — imported here so the module loads even
 # when boto3 is absent (LocalStorage users never import these).
@@ -282,7 +292,10 @@ class S3Storage(StorageBackend):
 
     def put(self, key: str, source_path: Path) -> None:
         try:
-            self._client.upload_file(str(source_path), self.bucket, key)
+            self._client.upload_file(
+                str(source_path), self.bucket, key,
+                ExtraArgs={'ContentType': _mime_for_key(key)},
+            )
         except (BotoCoreError, BotoClientError) as exc:
             raise IOError(f"S3 upload failed for '{key}': {exc}") from exc
 
@@ -361,7 +374,11 @@ class S3Storage(StorageBackend):
         return keys
 
     def presigned_url(self, key: str, expires: int = 3600, filename: Optional[str] = None) -> Optional[str]:
-        params = {'Bucket': self.bucket, 'Key': key}
+        params = {
+            'Bucket': self.bucket,
+            'Key': key,
+            'ResponseContentType': _mime_for_key(key),
+        }
         if filename:
             params['ResponseContentDisposition'] = f'attachment; filename="{filename}"'
         return self._public_client.generate_presigned_url(
@@ -379,7 +396,10 @@ class S3Storage(StorageBackend):
                 if path.is_file():
                     rel = path.relative_to(local_dir)
                     key = prefix + str(rel)
-                    self._client.upload_file(str(path), self.bucket, key)
+                    self._client.upload_file(
+                        str(path), self.bucket, key,
+                        ExtraArgs={'ContentType': _mime_for_key(key)},
+                    )
                     count += 1
         except (BotoCoreError, BotoClientError) as exc:
             raise IOError(f"S3 put_tree failed for prefix '{prefix}': {exc}") from exc

@@ -2842,7 +2842,8 @@ def get_output_file(filename):
         abort(404)
     if not os.path.exists(file_path):
         abort(404)
-    return send_file(file_path)
+    mime, _ = mimetypes.guess_type(file_path)
+    return send_file(file_path, mimetype=mime or 'application/octet-stream')
 
 
 # vim: ts=4 sw=4 et
