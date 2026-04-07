@@ -7,6 +7,7 @@ RESTful API for external integrations.
 import hashlib
 import hmac
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -1005,7 +1006,8 @@ def get_output_file(filename):
             return error_response('File not found', 404)
         if not os.path.exists(real_path):
             return error_response('File not found', 404)
-        return send_file(real_path)
+        mime, _ = mimetypes.guess_type(real_path)
+        return send_file(real_path, mimetype=mime or 'application/octet-stream')
 
     return error_response('File not found', 404)
 
