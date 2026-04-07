@@ -2831,7 +2831,7 @@ def get_output_file(filename):
     key = storage.storage_key('outputs', filename)
 
     # S3 mode: redirect to pre-signed URL
-    url = storage.presigned_url(key, filename=os.path.basename(filename))
+    url = storage.presigned_url(key)
     if url:
         return redirect(url)
 
