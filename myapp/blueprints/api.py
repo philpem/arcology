@@ -17,7 +17,8 @@ from datetime import datetime, timezone, timedelta
 from functools import wraps
 from flask import Blueprint, jsonify, request, current_app, send_file, redirect
 from flask_wtf.csrf import CSRFProtect
-from sqlalchemy import func, update, or_
+from sqlalchemy import func, update, or_, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -1211,6 +1212,16 @@ def add_files(uuid):
     if not _is_worker_request():
         return error_response('Only the worker may register extracted files', 403)
     partition = _get_partition_or_404(uuid)
+
+    # Acquire an exclusive row lock on the parent artefact before any writes.
+    # This serialises concurrent add_files() calls for different partitions of
+    # the same artefact, preventing the deadlock that arises when two workers
+    # concurrently UPDATE partitions and both trigger a FK CHECK (FOR KEY SHARE)
+    # on the same artefacts row in a conflicting order.
+    db.session.execute(
+        select(Artefact).where(Artefact.id == partition.artefact_id).with_for_update()
+    )
+
     data, error = _json_object(required=True)
     if error:
         return error
@@ -1283,7 +1294,15 @@ def add_files(uuid):
 
     partition.total_files = ExtractedFile.query.filter_by(partition_id=partition.id).count()
     partition.unique_files = ExtractedFile.query.filter_by(partition_id=partition.id, is_known=False).count()
-    db.session.commit()
+    try:
+        db.session.commit()
+    except OperationalError as exc:
+        db.session.rollback()
+        # pgcode '40P01' is DeadlockDetected — return 503 so the worker can
+        # retry rather than waiting for the stale-job timeout to fire.
+        if getattr(exc.orig, 'pgcode', None) == '40P01':
+            return jsonify({'error': 'Deadlock detected, please retry'}), 503
+        raise
 
     # Auto-apply restrictions from flagged hash databases
     if added > 0:
