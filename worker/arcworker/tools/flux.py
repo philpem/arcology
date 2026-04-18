@@ -14,6 +14,44 @@ from shared.enums import ArtefactType
 from .base import run_tool_with_output
 
 
+# Map (filesystem, cylinders, heads, sectors_per_track, sector_size) → gw format name.
+# Format names verified against Greaseweazle diskdefs at commit 26690f89.
+# SPT values are authoritative (from boot structures), not from IMD headers.
+_GW_FORMAT_MAP: dict[tuple, str] = {
+    ('dfs',      40, 1, 10, 256):  'acorn.dfs.ss',
+    ('dfs',      40, 2, 10, 256):  'acorn.dfs.ds',
+    ('dfs',      80, 1, 10, 256):  'acorn.dfs.ss80',
+    ('dfs',      80, 2, 10, 256):  'acorn.dfs.ds80',
+    ('adfs_old', 40, 1, 16, 256):  'acorn.adfs.160',
+    ('adfs_old', 80, 1, 16, 256):  'acorn.adfs.320',
+    ('adfs_old', 80, 2, 16, 256):  'acorn.adfs.640',
+    ('adfs_d',   80, 2,  5, 1024): 'acorn.adfs.800',
+    ('adfs_e',   80, 2,  5, 1024): 'acorn.adfs.800',   # same physical format as D
+    ('adfs_f',   80, 2, 10, 1024): 'acorn.adfs.1600',
+    ('fat',      40, 1,  8, 512):  'ibm.160',
+    ('fat',      40, 1,  9, 512):  'ibm.180',
+    ('fat',      40, 2,  8, 512):  'ibm.320',
+    ('fat',      40, 2,  9, 512):  'ibm.360',
+    ('fat',      80, 2,  9, 512):  'ibm.720',
+    ('fat',      80, 2, 15, 512):  'ibm.1200',
+    ('fat',      80, 2, 18, 512):  'ibm.1440',
+    ('fat',      80, 2, 21, 512):  'ibm.1680',
+    ('fat',      80, 2, 36, 512):  'ibm.2880',
+}
+
+
+def _geometry_to_gw_format(
+    filesystem: str,
+    cylinders: int,
+    heads: int,
+    sectors_per_track: int,
+    sector_size: int,
+    encoding: str = '',
+) -> str | None:
+    """Return a Greaseweazle format name for the given geometry, or None."""
+    return _GW_FORMAT_MAP.get((filesystem, cylinders, heads, sectors_per_track, sector_size))
+
+
 def flux_visualisation_fluxfox(input_path: Path, output_path: Path) -> dict:
     """
     Generate flux visualisation using Fluxfox imgviz.
@@ -170,7 +208,11 @@ def flux_to_hfe_hxcfe(input_path: Path, output_path: Path) -> dict:
     }
 
 
-def sector_image_to_raw_greaseweazle(input_path: Path, output_path: Path) -> dict:
+def sector_image_to_raw_greaseweazle(
+    input_path: Path,
+    output_path: Path,
+    gw_format: str = 'ibm.scan',
+) -> dict:
     """
     Convert sector image (IMD, HFE, SCP) to raw sector image using Greaseweazle.
     Greaseweazle is preferred as it fills in bad sectors.
@@ -178,13 +220,14 @@ def sector_image_to_raw_greaseweazle(input_path: Path, output_path: Path) -> dic
     Args:
         input_path: Path to sector/flux image
         output_path: Path for output raw IMG file
+        gw_format: Greaseweazle format name (default 'ibm.scan')
 
     Returns:
-        Result dict with success status, output type, and process_output
+        Result dict with success status, output type, gw_format, and process_output
     """
     cmd = [
         'gw', 'convert',
-        '--format', 'ibm.scan',
+        '--format', gw_format,
         str(input_path),
         str(output_path)
     ]
@@ -196,6 +239,7 @@ def sector_image_to_raw_greaseweazle(input_path: Path, output_path: Path) -> dic
             'tool': 'greaseweazle',
             'output_path': str(output_path),
             'output_type': ArtefactType.RAW_SECTOR.value,
+            'gw_format': gw_format,
             'summary': 'Converted to raw sector image (bad sectors filled)',
             'process_output': process_output
         }
@@ -203,6 +247,7 @@ def sector_image_to_raw_greaseweazle(input_path: Path, output_path: Path) -> dic
     return {
         'success': False,
         'tool': 'greaseweazle',
+        'gw_format': gw_format,
         'error': result.stderr.decode()[:1000],
         'process_output': process_output
     }

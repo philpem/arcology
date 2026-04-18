@@ -40,6 +40,8 @@ from .tools import (
     convert_sprite,
     convert_draw,
 )
+from .tools.imd import parse_imd_track0, detect_geometry_from_boot_data
+from .tools.flux import _geometry_to_gw_format
 
 
 def _apply_pling_renames(extract_dir: Path, rename_map: dict[str, str]) -> None:
@@ -676,8 +678,33 @@ class AnalysisWorker:
         else:
             img_input = input_path
 
+        # Determine Greaseweazle format: user hint > boot-sector detection > ibm.scan
+        # A named format constrains gw to the expected sectors, preventing
+        # copy-protection sectors from being interleaved into the output image.
+        hints = json.loads(analysis.get('hints') or '{}')
+        gw_format = hints.get('gw_format')
+        gw_format_source = 'hint' if gw_format else None
+
+        if not gw_format and imd_result['success']:
+            track0 = parse_imd_track0(imd_path)
+            if track0:
+                geometry = detect_geometry_from_boot_data(track0)
+                if geometry:
+                    gw_format = _geometry_to_gw_format(**geometry)
+                    if gw_format:
+                        gw_format_source = 'detected'
+                        log.info(f"Detected disc format: {geometry['filesystem']} "
+                                 f"→ gw format: {gw_format}")
+                    else:
+                        log.info(f"Detected disc geometry {geometry} — "
+                                 f"no gw format match, using ibm.scan")
+
+        if not gw_format:
+            gw_format = 'ibm.scan'
+            gw_format_source = 'fallback'
+
         img_path = work_dir / f"{input_path.stem}.img"
-        img_result = sector_image_to_raw_greaseweazle(img_input, img_path)
+        img_result = sector_image_to_raw_greaseweazle(img_input, img_path, gw_format=gw_format)
         results.append(('IMG', img_result))
 
         if img_result['success']:
@@ -692,20 +719,23 @@ class AnalysisWorker:
         # Report results
         any_success = any(r[1]['success'] for r in results)
         summary_parts = [f"{name}: {'OK' if r['success'] else 'FAIL'}" for name, r in results]
+        details_dict = {name: r for name, r in results}
+        details_dict['gw_format_used'] = gw_format
+        details_dict['gw_format_source'] = gw_format_source
 
         if any_success:
             self.complete_analysis(
                 analysis_id,
                 tool_name='hxcfe,greaseweazle',
                 summary='; '.join(summary_parts),
-                details=json.dumps({name: r for name, r in results})
+                details=json.dumps(details_dict)
             )
         else:
             self.fail_analysis(
                 analysis_id,
                 '; '.join(summary_parts),
                 tool_name='hxcfe,greaseweazle',
-                details=json.dumps({name: r for name, r in results})
+                details=json.dumps(details_dict)
             )
 
     @analysis_handler("file extraction")
