@@ -40,8 +40,10 @@
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     background: rgba(0,0,0,0.55); z-index: 10; border-radius: 0.25rem;
 }
-/* 8-column grid class (Bootstrap has no col-1.5) */
-.col-custom-8 { flex: 0 0 12.5%; max-width: 12.5%; }
+/* 8-column grid at xl breakpoint (Bootstrap has no col-1.5) */
+@media (min-width: 1200px) {
+    .col-custom-8-xl { flex: 0 0 12.5%; width: 12.5%; max-width: 12.5%; }
+}
 </style>
 {% endblock %}
 
@@ -82,10 +84,10 @@
 {# ── Toolbar: filetype filters + columns selector ── #}
 {% if filetype_facet or total_groups > 0 %}
 <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
-    {# Filetype filter buttons #}
+    {# Filetype filter buttons — ordered by count desc from the view #}
     {% if filetype_facet %}
     <span class="text-muted small me-1">Filter:</span>
-    {% for ft, count in filetype_facet | dictsort %}
+    {% for ft, count in filetype_facet %}
     <a href="?{{ filetype_toggle_urls[ft] | urlencode }}"
        class="btn btn-sm {{ 'btn-secondary' if ft in active_filetypes else 'btn-outline-secondary' }}">
         {{ ft | filetype_name }} ({{ count }})
@@ -109,13 +111,20 @@
     <div class="ms-auto d-flex align-items-center gap-1">
         <span class="text-muted small me-1"><i class="bi bi-grid-3x3-gap"></i></span>
         {% for cols in valid_viewer_columns %}
-        {% set col_args = dict(pagination_args if pagination else {}, columns=cols) %}
-        <a href="?{{ col_args | urlencode }}"
+        <a href="?{{ dict(pagination_args, columns=cols) | urlencode }}"
            class="btn btn-sm {{ 'btn-secondary' if viewer_columns == cols else 'btn-outline-secondary' }}"
            title="{{ cols }} columns">{{ cols }}</a>
         {% endfor %}
     </div>
 </div>
+
+{# Empty-filter feedback #}
+{% if active_filetypes and not output_groups %}
+<div class="alert alert-info">
+    <i class="bi bi-funnel"></i> No outputs match the current filetype filter.
+    <a href="?{{ clear_filter_args | urlencode }}" class="alert-link">Clear filter</a>
+</div>
+{% endif %}
 {% endif %}
 
 {% if module_detail %}

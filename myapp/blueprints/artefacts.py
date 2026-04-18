@@ -1152,7 +1152,16 @@ def viewer_nested(item_id, root_id, artefact_id):
 
 
 _VALID_VIEWER_COLUMNS = [2, 3, 4, 6, 8]
-_COLUMN_CLASSES = {2: 'col-6', 3: 'col-4', 4: 'col-3', 6: 'col-2', 8: 'col-custom-8'}
+# Responsive grid classes: phones get 2 cols, tablets get an intermediate
+# count, desktops get the user's selection. Values must match the ones in
+# viewer.html's custom CSS (.col-custom-N for non-12-divisible counts).
+_COLUMN_CLASSES = {
+    2: 'col-6',
+    3: 'col-6 col-sm-4',
+    4: 'col-6 col-sm-4 col-md-3',
+    6: 'col-6 col-sm-4 col-md-3 col-lg-2',
+    8: 'col-6 col-sm-4 col-md-3 col-lg-2 col-custom-8-xl',
+}
 
 
 def _render_viewer(artefact):
@@ -1283,10 +1292,14 @@ def _render_viewer(artefact):
             for group in output_groups:
                 group['filetype'] = path_to_filetype.get(group.get('source_file'))
 
-            # Build facet: {hex_code: count}
-            filetype_facet = dict(Counter(
+            # Build facet as a list of (hex_code, count) sorted by count desc,
+            # then hex asc as tiebreaker. Template iterates this list directly.
+            counts = Counter(
                 g['filetype'] for g in output_groups if g.get('filetype')
-            ))
+            )
+            filetype_facet = sorted(
+                counts.items(), key=lambda kv: (-kv[1], kv[0])
+            )
 
             # Apply filetype filter from ?filetype=ff9,fff
             filetype_param = request.args.get('filetype', '')
@@ -1300,7 +1313,7 @@ def _render_viewer(artefact):
             # Build toggle URLs for the template
             base_args = {k: v for k, v in request.args.items()
                          if k not in ('filetype', 'page')}
-            for ft in filetype_facet:
+            for ft, _ in filetype_facet:
                 toggled = active_filetypes ^ {ft}
                 args = dict(base_args)
                 if toggled:
@@ -1316,8 +1329,10 @@ def _render_viewer(artefact):
     total_groups = len(output_groups)
 
     # ── Pagination (Mode 2 aggregate only, without ?file=) ───────────────────
+    # pagination_args is always populated so column/filter URLs preserve state
+    # in non-paginated views (Mode 1 or ?file=) too.
+    pagination_args = {k: v for k, v in request.args.items() if k != 'page'}
     pagination = None
-    pagination_args = {}
     view_all = False
 
     if use_pagination and output_groups:
@@ -1327,7 +1342,6 @@ def _render_viewer(artefact):
         for group in pagination.items:
             _enrich_outputs(group['outputs'])
         output_groups = pagination.items
-        pagination_args = {k: v for k, v in request.args.items() if k != 'page'}
     else:
         # Mode 1 or ?file= — enrich all (typically small set)
         for group in output_groups:
