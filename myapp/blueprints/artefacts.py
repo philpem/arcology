@@ -1264,7 +1264,7 @@ def _render_viewer(artefact):
             use_pagination = True
 
     # ── Filetype facet (Mode 2 only, when there are source_file paths) ───────
-    filetype_facet = {}
+    filetype_facet = []  # [(hex_code, count), ...] sorted by count desc
     active_filetypes = set()
     filetype_toggle_urls = {}
     clear_filter_args = {}
@@ -1361,7 +1361,7 @@ def _render_viewer(artefact):
             saved = current_user.get_preference('viewer_columns')
         viewer_columns = saved if saved in _VALID_VIEWER_COLUMNS else 4
 
-    viewer_col_class = _COLUMN_CLASSES.get(viewer_columns, 'col-3')
+    viewer_col_class = _COLUMN_CLASSES[viewer_columns]
 
     # ── Look up RISC OS module detail when ?file= matches a module path ──────
     module_detail = None
@@ -1428,6 +1428,13 @@ def _render_viewer(artefact):
         group['explicit'] = (
             artefact_is_explicit or group.get('source_file') in explicit_file_paths
         )
+        # Stable short ID for the explicit-gate sessionStorage key — must be
+        # unique per content so consent doesn't bleed between different files
+        # (especially across paginated pages, where loop.index collides).
+        key_source = group.get('source_file') or group.get('label') or ''
+        group['stable_id'] = hashlib.md5(
+            f"{artefact.url_id}:{key_source}".encode('utf-8')
+        ).hexdigest()[:12]
 
     return render_template(
         'artefacts/viewer.html',

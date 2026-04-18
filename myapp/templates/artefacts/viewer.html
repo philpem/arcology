@@ -89,7 +89,8 @@
     <span class="text-muted small me-1">Filter:</span>
     {% for ft, count in filetype_facet %}
     <a href="?{{ filetype_toggle_urls[ft] | urlencode }}"
-       class="btn btn-sm {{ 'btn-secondary' if ft in active_filetypes else 'btn-outline-secondary' }}">
+       class="btn btn-sm {{ 'btn-secondary' if ft in active_filetypes else 'btn-outline-secondary' }}"
+       aria-pressed="{{ 'true' if ft in active_filetypes else 'false' }}">
         {{ ft | filetype_name }} ({{ count }})
     </a>
     {% endfor %}
@@ -113,7 +114,9 @@
         {% for cols in valid_viewer_columns %}
         <a href="?{{ dict(pagination_args, columns=cols) | urlencode }}"
            class="btn btn-sm {{ 'btn-secondary' if viewer_columns == cols else 'btn-outline-secondary' }}"
-           title="{{ cols }} columns">{{ cols }}</a>
+           title="{{ cols }} columns"
+           aria-label="Show {{ cols }} columns"
+           aria-pressed="{{ 'true' if viewer_columns == cols else 'false' }}">{{ cols }}</a>
         {% endfor %}
     </div>
 </div>
@@ -206,13 +209,13 @@
   {# ── Explicit content gate ── #}
   {% if user_can_bypass_explicit %}
   {# Bypass permitted: blur content with a consent overlay #}
-  <div class="explicit-gate mb-4" id="explicit-gate-{{ loop.index }}">
-    <div class="explicit-gate-overlay" id="explicit-overlay-{{ loop.index }}">
+  <div class="explicit-gate mb-4" id="explicit-gate-{{ group.stable_id }}">
+    <div class="explicit-gate-overlay" id="explicit-overlay-{{ group.stable_id }}">
       <span class="badge bg-danger fs-6 mb-2"><i class="bi bi-exclamation-triangle-fill"></i> Explicit Content</span>
       <p class="text-white text-center small mb-3">This content is marked as explicit. Click to reveal.</p>
-      <button class="btn btn-outline-light btn-sm" onclick="revealExplicit({{ loop.index }})">I understand — show content</button>
+      <button class="btn btn-outline-light btn-sm" onclick="revealExplicit('{{ group.stable_id }}')">I understand — show content</button>
     </div>
-    <div id="explicit-content-{{ loop.index }}" class="explicit-content-blur">
+    <div id="explicit-content-{{ group.stable_id }}" class="explicit-content-blur">
 {% else %}
   {# No bypass: content is simply hidden #}
   <div class="alert alert-danger mb-4">
@@ -298,22 +301,22 @@
 
 {% if output_groups %}
 <script>
-function revealExplicit(idx) {
-    var overlay = document.getElementById('explicit-overlay-' + idx);
-    var content = document.getElementById('explicit-content-' + idx);
+function revealExplicit(gid) {
+    var overlay = document.getElementById('explicit-overlay-' + gid);
+    var content = document.getElementById('explicit-content-' + gid);
     if (overlay) overlay.style.display = 'none';
     if (content) {
         content.classList.remove('explicit-content-blur');
         content.style.pointerEvents = '';
     }
-    try { sessionStorage.setItem('explicit_consent_' + idx, '1'); } catch(e) {}
+    try { sessionStorage.setItem('explicit_consent_' + gid, '1'); } catch(e) {}
 }
 document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('[id^="explicit-content-"]').forEach(function(el) {
-        var idx = el.id.replace('explicit-content-', '');
+        var gid = el.id.replace('explicit-content-', '');
         try {
-            if (sessionStorage.getItem('explicit_consent_' + idx) === '1') {
-                revealExplicit(idx);
+            if (sessionStorage.getItem('explicit_consent_' + gid) === '1') {
+                revealExplicit(gid);
             }
         } catch(e) {}
     });
