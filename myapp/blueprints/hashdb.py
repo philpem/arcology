@@ -200,15 +200,45 @@ def new():
 @login_required
 def view(id):
     database = HashDatabase.query.get_or_404(id)
-    products = KnownProduct.query.filter_by(database_id=id).order_by(func.lower(KnownProduct.title)).all()
+    products = (
+        KnownProduct.query
+        .options(db.joinedload(KnownProduct.known_files))
+        .filter_by(database_id=id)
+        .order_by(func.lower(KnownProduct.title))
+        .all()
+    )
     platforms = Platform.query.order_by(func.lower(Platform.name)).all()
-    rescan_job = HashRescanJob.query.order_by(HashRescanJob.id.desc()).first()
+    rescan_job = (
+        HashRescanJob.query
+        .filter(or_(HashRescanJob.database_id == id, HashRescanJob.database_id.is_(None)))
+        .order_by(HashRescanJob.id.desc())
+        .first()
+    )
+
+    kf_ids = [kf.id for p in products for kf in p.known_files]
+    match_counts = {}
+    if kf_ids:
+        rows = (
+            db.session.query(ExtractedFile.known_file_id, func.count(ExtractedFile.id))
+            .filter(ExtractedFile.known_file_id.in_(kf_ids))
+            .group_by(ExtractedFile.known_file_id)
+            .all()
+        )
+        match_counts = {kf_id: cnt for kf_id, cnt in rows}
+
+    product_match_counts = {
+        p.id: sum(match_counts.get(kf.id, 0) for kf in p.known_files)
+        for p in products
+    }
+
     return render_template('hashdb/view.html',
                            database=database,
                            products=products,
                            platforms=platforms,
                            RestrictionType=RestrictionType,
-                           rescan_job=rescan_job)
+                           rescan_job=rescan_job,
+                           match_counts=match_counts,
+                           product_match_counts=product_match_counts)
 
 
 SEARCH_LIMIT = 200
@@ -285,9 +315,22 @@ def search(id):
 def view_product(id, pid):
     database = HashDatabase.query.get_or_404(id)
     product = KnownProduct.query.filter_by(id=pid, database_id=id).first_or_404()
+
+    kf_ids = [kf.id for kf in product.known_files]
+    match_counts = {}
+    if kf_ids:
+        rows = (
+            db.session.query(ExtractedFile.known_file_id, func.count(ExtractedFile.id))
+            .filter(ExtractedFile.known_file_id.in_(kf_ids))
+            .group_by(ExtractedFile.known_file_id)
+            .all()
+        )
+        match_counts = {kf_id: cnt for kf_id, cnt in rows}
+
     return render_template('hashdb/edit_product.html',
                            database=database,
-                           product=product)
+                           product=product,
+                           match_counts=match_counts)
 
 
 @blueprint.route('/<int:id>/edit', methods=['POST'])
@@ -812,41 +855,68 @@ def edit_known_product(db_id, pid):
 @login_required
 @require_permission('read_write')
 def save_all_files(db_id, pid):
-    """Save edits to all files in a product in one batched submission."""
+    """Save edits to all files in a product in one batched submission.
+
+    Only files whose hash/size/metadata actually changed are rescanned.
+    Rejects the whole submission if any file would end up with no hashes.
+    """
+    from ..utils.hash_rescan import (rescan_links_for_known_file_id,
+                                     rescan_hashes_for_known_file,
+                                     queue_product_recognition_for_partitions)
+
     product = KnownProduct.query.filter_by(id=pid, database_id=db_id).first_or_404()
     is_active = product.database.is_active
     enable_recognition = product.database.enable_product_recognition
 
-    changed_kf_ids = []
-    updated_kfs = {}
-
+    # Collect the proposed new values for each file, validate up front so we
+    # don't commit a partially-applied batch.
+    proposed = {}
     for kf in product.known_files:
         filename = request.form.get(f'filename_{kf.id}', '').strip()
         if not filename:
-            continue
-        kf.filename = filename
-        kf.md5 = normalize_hash(request.form.get(f'md5_{kf.id}'))
-        kf.sha1 = normalize_hash(request.form.get(f'sha1_{kf.id}'))
-        kf.sha256 = normalize_hash(request.form.get(f'sha256_{kf.id}'))
-        kf.crc32 = normalize_hash(request.form.get(f'crc32_{kf.id}'))
+            flash(f'Filename for file #{kf.id} cannot be empty.', 'danger')
+            return redirect(url_for(f'{ROUTENAME}.view_product', id=db_id, pid=pid))
+        md5 = normalize_hash(request.form.get(f'md5_{kf.id}'))
+        sha1 = normalize_hash(request.form.get(f'sha1_{kf.id}'))
+        sha256 = normalize_hash(request.form.get(f'sha256_{kf.id}'))
+        crc32 = normalize_hash(request.form.get(f'crc32_{kf.id}'))
+        if not any([md5, sha1, sha256, crc32]):
+            flash(f'File "{filename}" must have at least one hash.', 'danger')
+            return redirect(url_for(f'{ROUTENAME}.view_product', id=db_id, pid=pid))
         size_str = request.form.get(f'file_size_{kf.id}', '').strip()
-        kf.file_size = int(size_str) if size_str.isdigit() else None
-        kf.relative_path = request.form.get(f'relative_path_{kf.id}', '').strip() or None
-        kf.is_required = f'is_required_{kf.id}' in request.form
-        changed_kf_ids.append(kf.id)
-        updated_kfs[kf.id] = kf
+        proposed[kf.id] = {
+            'filename': filename,
+            'md5': md5, 'sha1': sha1, 'sha256': sha256, 'crc32': crc32,
+            'file_size': int(size_str) if size_str.isdigit() else None,
+            'relative_path': request.form.get(f'relative_path_{kf.id}', '').strip() or None,
+            'is_required': f'is_required_{kf.id}' in request.form,
+        }
+
+    # Apply changes, tracking which files actually changed so we only rescan
+    # those.  Changes to hash/size are what affect rescan outcomes; other
+    # fields are metadata-only.
+    RESCAN_FIELDS = ('md5', 'sha1', 'sha256', 'crc32', 'file_size')
+    changed_for_rescan = []
+    any_changed = False
+    for kf in product.known_files:
+        new = proposed[kf.id]
+        if any(getattr(kf, f) != new[f] for f in RESCAN_FIELDS):
+            changed_for_rescan.append(kf)
+        if any(getattr(kf, f) != new[f] for f in new):
+            any_changed = True
+        for field, value in new.items():
+            setattr(kf, field, value)
 
     db.session.commit()
-    flash('Files updated.', 'success')
+    if any_changed:
+        flash('Files updated.', 'success')
+    else:
+        flash('No changes.', 'info')
 
-    if is_active and changed_kf_ids:
-        from ..utils.hash_rescan import (rescan_links_for_known_file_id,
-                                         rescan_hashes_for_known_file,
-                                         queue_product_recognition_for_partitions)
+    if is_active and changed_for_rescan:
         partition_ids = set()
-        for kf_id in changed_kf_ids:
-            rescan_links_for_known_file_id(kf_id)
-            kf = updated_kfs[kf_id]
+        for kf in changed_for_rescan:
+            rescan_links_for_known_file_id(kf.id)
             rescan_hashes_for_known_file(kf)
             if enable_recognition:
                 partition_ids |= _partition_ids_for_hashes(kf.md5, kf.sha1, kf.file_size)

@@ -287,7 +287,15 @@
                 {% if product.path_match_enabled %}<span class="badge bg-info ms-1">path matching</span>{% endif %}
             </td>
             <td class="text-muted small">{{ product.description or '' }}</td>
-            <td><span class="badge bg-secondary">{{ product.known_files|length }}</span></td>
+            <td>
+                <span class="badge bg-secondary" title="Known files in this product">{{ product.known_files|length }}</span>
+                {% set pmc = product_match_counts.get(product.id, 0) %}
+                {% if pmc %}
+                <span class="badge bg-success ms-1" title="Extracted files matching any known file in this product">
+                    <i class="bi bi-check2"></i> {{ pmc }}
+                </span>
+                {% endif %}
+            </td>
             <td class="product-actions text-end text-nowrap">
                 <a href="{{ url_for('myapp_blueprints_hashdb.search', id=database.id, product_id=product.id) }}"
                    class="btn btn-outline-primary btn-sm py-0" title="Find this product in the collection">
@@ -312,6 +320,9 @@
                             <th>Size</th>
                             <th>MD5</th>
                             <th>SHA1</th>
+                            <th>SHA256</th>
+                            <th>CRC32</th>
+                            <th title="Extracted files matching this known file">Matches</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -329,6 +340,16 @@
                         <td class="text-muted">{{ kf.file_size if kf.file_size is not none else '—' }}</td>
                         <td><code class="text-break">{{ kf.md5 or '—' }}</code></td>
                         <td><code class="text-break">{{ kf.sha1 or '—' }}</code></td>
+                        <td><code class="text-break">{{ kf.sha256 or '—' }}</code></td>
+                        <td><code>{{ kf.crc32 or '—' }}</code></td>
+                        <td>
+                            {% set c = match_counts.get(kf.id, 0) %}
+                            {% if c %}
+                            <span class="badge bg-success">{{ c }}</span>
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
                     </tr>
                     {% endfor %}
                     </tbody>
@@ -362,12 +383,13 @@
     }
 
     document.addEventListener('DOMContentLoaded', function () {
-        // Restore previously open products
+        // Restore previously open products via the Bootstrap API so its
+        // internal state stays in sync with the DOM.
         var open = getOpen();
         open.forEach(function (pid) {
             var el = document.getElementById('pf-' + pid);
             if (el) {
-                el.classList.add('show');
+                bootstrap.Collapse.getOrCreateInstance(el, { toggle: false }).show();
                 var row = document.querySelector('[data-product-id="' + pid + '"]');
                 if (row) row.classList.add('open');
             }

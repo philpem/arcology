@@ -90,17 +90,21 @@
                     <label class="form-label form-label-sm mb-0">Size</label>
                     <input type="number" name="file_size" class="form-control form-control-sm">
                 </div>
-                <div class="col-md-2">
+                <div class="col-md-1">
                     <label class="form-label form-label-sm mb-0">MD5</label>
                     <input type="text" name="md5" class="form-control form-control-sm font-monospace" maxlength="32">
                 </div>
-                <div class="col-md-2">
+                <div class="col-md-1">
                     <label class="form-label form-label-sm mb-0">SHA1</label>
                     <input type="text" name="sha1" class="form-control form-control-sm font-monospace" maxlength="40">
                 </div>
                 <div class="col-md-1">
                     <label class="form-label form-label-sm mb-0">SHA256</label>
                     <input type="text" name="sha256" class="form-control form-control-sm font-monospace" maxlength="64">
+                </div>
+                <div class="col-md-1">
+                    <label class="form-label form-label-sm mb-0">CRC32</label>
+                    <input type="text" name="crc32" class="form-control form-control-sm font-monospace" maxlength="8">
                 </div>
                 <div class="col-auto">
                     <div class="form-check mt-3">
@@ -112,6 +116,7 @@
                     <button type="submit" class="btn btn-primary btn-sm mt-3">Add</button>
                 </div>
             </div>
+            <div class="form-text mt-1"><i class="bi bi-info-circle"></i> At least one hash (MD5, SHA1, SHA256, or CRC32) is required.</div>
         </form>
     </div>
 </div>
@@ -135,6 +140,7 @@
                     <th style="min-width:80px">SHA256</th>
                     <th style="min-width:70px">CRC32</th>
                     <th class="text-center" style="min-width:60px">Req.</th>
+                    <th class="text-center" style="min-width:60px" title="Extracted files matching this known file">Matches</th>
                     {% if user_can_write %}<th></th>{% endif %}
                 </tr>
             </thead>
@@ -206,6 +212,15 @@
                     {% if kf.is_required %}<span class="badge bg-danger">Req</span>{% else %}<span class="badge bg-secondary">Opt</span>{% endif %}
                     {% endif %}
                 </td>
+                <td class="text-center">
+                    {% set c = match_counts.get(kf.id, 0) %}
+                    {% if c %}
+                    <a href="{{ url_for('myapp_blueprints_hashdb.search', id=database.id, product_id=product.id) }}"
+                       class="badge bg-success text-decoration-none" title="Find matches in collection">{{ c }}</a>
+                    {% else %}
+                    <span class="text-muted">—</span>
+                    {% endif %}
+                </td>
                 {% if user_can_write %}
                 <td class="text-nowrap">
                     <form action="{{ url_for('myapp_blueprints_hashdb.delete_known_file', db_id=database.id, pid=product.id, fid=kf.id) }}" method="post" class="d-inline">
@@ -231,6 +246,29 @@
 </form>
 {% else %}
 <div class="alert alert-info">No files in this product yet. Use <strong>Add File</strong> above to add one.</div>
+{% endif %}
+
+{% if user_can_write and product.known_files %}
+<script>
+(function () {
+    var form = document.getElementById('save-all-form');
+    if (!form) return;
+    var dirty = false;
+
+    // Flag dirty on any input change within the batched edit form
+    form.addEventListener('input', function () { dirty = true; });
+    form.addEventListener('change', function () { dirty = true; });
+
+    // Clear the flag when the form is submitted so we don't warn on its own redirect
+    form.addEventListener('submit', function () { dirty = false; });
+
+    window.addEventListener('beforeunload', function (e) {
+        if (!dirty) return;
+        e.preventDefault();
+        e.returnValue = '';
+    });
+})();
+</script>
 {% endif %}
 
 {% endblock %}
