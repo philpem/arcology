@@ -685,15 +685,26 @@ class AnalysisWorker:
         gw_format = hints.get('gw_format')
         gw_format_source = 'hint' if gw_format else None
 
+        imd_track0_summary = None
+        detected_geometry  = None
         if not gw_format and imd_result['success']:
             track0 = parse_imd_track0(imd_path)
             if track0:
+                imd_track0_summary = {
+                    'encoding':    track0['encoding'],
+                    'sector_size': track0['sector_size'],
+                    'cylinders':   track0['cylinders'],
+                    'heads':       track0['heads'],
+                    'sector_ids':  sorted(track0['sectors'].keys()),
+                }
                 geometry = detect_geometry_from_boot_data(track0)
                 if geometry:
+                    detected_geometry = {k: v for k, v in geometry.items()}
                     gw_format = _geometry_to_gw_format(**geometry)
                     if gw_format:
                         gw_format_source = 'detected'
                         log.info(f"Detected disc format: {geometry['filesystem']} "
+                                 f"(probe {geometry.get('probe', '?')}) "
                                  f"→ gw format: {gw_format}")
                     else:
                         log.info(f"Detected disc geometry {geometry} — "
@@ -722,6 +733,10 @@ class AnalysisWorker:
         details_dict = {name: r for name, r in results}
         details_dict['gw_format_used'] = gw_format
         details_dict['gw_format_source'] = gw_format_source
+        if imd_track0_summary:
+            details_dict['gw_track0'] = imd_track0_summary
+        if detected_geometry:
+            details_dict['gw_geometry'] = detected_geometry
 
         if any_success:
             self.complete_analysis(

@@ -127,14 +127,14 @@ def parse_imd_track0(imd_path: Path) -> dict | None:
                 # Odd type (1, 3, 5, 7): raw sector data follows
                 if pos + sector_size > len(data):
                     break
-                if is_track0 and i < len(sector_ids):
+                if is_track0 and i < len(sector_ids) and sector_ids[i] not in track0_sectors:
                     track0_sectors[sector_ids[i]] = bytes(data[pos:pos + sector_size])
                 pos += sector_size
             else:
                 # Even type (2, 4, 6, 8): compressed — 1 fill byte follows
                 if pos >= len(data):
                     break
-                if is_track0 and i < len(sector_ids):
+                if is_track0 and i < len(sector_ids) and sector_ids[i] not in track0_sectors:
                     fill = data[pos]
                     track0_sectors[sector_ids[i]] = bytes([fill] * sector_size)
                 pos += 1
@@ -155,15 +155,16 @@ def detect_geometry_from_boot_data(track0: dict) -> dict | None:
     """
     Probe track 0 sector data for known filesystem boot structures.
 
-    Returns a geometry dict suitable for unpacking into _geometry_to_gw_format(),
-    or None if no supported filesystem is identified.
+    Returns a geometry dict or None if no supported filesystem is identified.
 
     Return dict keys: filesystem, encoding, cylinders, heads,
-                      sectors_per_track, sector_size.
+                      sectors_per_track, sector_size, probe.
+    The 'probe' key is a single letter identifying which probe matched.
+    Callers should not pass 'probe' to _geometry_to_gw_format().
 
     Probe order:
       A — FM encoding → DFS (invariant: SPT=10, sector_size=256)
-      D — MFM 1024B, sector 0: ADFS floppy new-map (D/E/E+)
+      D — MFM 1024B, sector 0: ADFS floppy new-map (D/E/F)
       E — MFM 1024B, sector 3: ADFS hard-disc new-map (F/F+)
       B — MFM 256B, Hugo magic: old-map ADFS (S/M/L)  [SPT=16 invariant]
       C — MFM any, FAT BPB in sorted-sector buffer
@@ -185,12 +186,28 @@ def detect_geometry_from_boot_data(track0: dict) -> dict | None:
     # DFS always uses FM (single-density), 256B sectors, 10 SPT.
     # No boot-structure check needed: FM encoding is a sufficient discriminator.
     if encoding == 'FM':
-        return {**base, 'filesystem': 'dfs', 'sectors_per_track': 10, 'sector_size': 256}
+        return {**base, 'filesystem': 'dfs', 'sectors_per_track': 10,
+                'sector_size': 256, 'probe': 'A'}
 
-    # ── Probe D: ADFS floppy new-map (D/E/E+) ─────────────────────────────
+    # ── Probe D: ADFS floppy new-map (D/E/F) ──────────────────────────────
     # Zone-0 boot block is sector 0 (1024B).  The disc record starts at byte 4.
     # The first 512 bytes of the sector form the Filecore floppy boot block;
     # their mod-256 sum must be zero.
+    #
+    # This probe covers ADFS-D (800K, Hugo dirs), ADFS-E (800K, new-format
+    # dirs), and ADFS-F (1600K floppy).  All three use the floppy boot block
+    # convention (disc record at sector 0 byte 4), unlike ADFS hard-disc
+    # formats (Probe E, boot block at disc address 0xC00).
+    #
+    # Disambiguation by SPT from disc record:
+    #   spt == 5  → ADFS-D or ADFS-E (800K): use Hugo/SBPr to distinguish.
+    #               SBPr is a RISC OS 4+ header marker; pre-RO4 ADFS-E lacks
+    #               it and the 'Nick' directory tail is not accessible within
+    #               sector 0 (2048-byte directory, only first 512 bytes here).
+    #               Both adfs_d and adfs_e map to acorn.adfs.800, so the
+    #               distinction affects only the filesystem label, not gw format.
+    #   spt == 10 → ADFS-F (1600K): sector count is the unambiguous identifier;
+    #               Hugo/SBPr checks do not apply.
     if sector_size == 1024 and 0 in sectors:
         sec0 = sectors[0]
         if len(sec0) >= 512 and sum(sec0[0:512]) & 0xFF == 0:
@@ -200,19 +217,24 @@ def detect_geometry_from_boot_data(track0: dict) -> dict | None:
                 spt       = disc_record[1]
                 dr_heads  = disc_record[2]
                 if spt > 0 and dr_heads > 0:
-                    # Distinguish ADFS-D (Hugo directories) from ADFS-E (SBPr)
-                    if len(sec0) >= 0x205 and sec0[0x201:0x205] == b'Hugo':
+                    if spt == 10:
+                        filesystem = 'adfs_f'
+                    elif len(sec0) >= 0x205 and sec0[0x201:0x205] == b'Hugo':
                         filesystem = 'adfs_d'
                     elif len(sec0) >= 0x204 and sec0[0x200:0x204] == b'SBPr':
+                        # RISC OS 4+ new-format directories
                         filesystem = 'adfs_e'
                     else:
+                        # Pre-RO4 ADFS-E: no SBPr/Hugo; Nick tail not in sector 0.
+                        # adfs_d and adfs_e share the same gw format (acorn.adfs.800).
                         filesystem = 'adfs_d'
                     log.debug(f"IMD probe D: ADFS floppy new-map ({filesystem}), "
                               f"spt={spt} heads={dr_heads} log2ss={log2ss}")
                     return {**base, 'filesystem': filesystem,
                             'sectors_per_track': spt,
                             'sector_size': 1 << log2ss,
-                            'heads': dr_heads}
+                            'heads': dr_heads,
+                            'probe': 'D'}
 
     # ── Probe E: ADFS hard-disc new-map (F/F+) ────────────────────────────
     # Filecore hard-disc boot block is at disc address 0xC00.
@@ -232,7 +254,8 @@ def detect_geometry_from_boot_data(track0: dict) -> dict | None:
                     return {**base, 'filesystem': 'adfs_f',
                             'sectors_per_track': spt,
                             'sector_size': 1 << log2ss,
-                            'heads': dr_heads}
+                            'heads': dr_heads,
+                            'probe': 'E'}
 
     # ── Probe B: Old-map ADFS (S/M/L) ─────────────────────────────────────
     # Old-map ADFS uses MFM, 256B sectors, 16 SPT (invariant).
@@ -245,7 +268,8 @@ def detect_geometry_from_boot_data(track0: dict) -> dict | None:
         for sec_data in sectors.values():
             if len(sec_data) >= 5 and sec_data[1:5] == b'Hugo':
                 log.debug("IMD probe B: old-map ADFS (Hugo signature)")
-                return {**base, 'filesystem': 'adfs_old', 'sectors_per_track': 16}
+                return {**base, 'filesystem': 'adfs_old', 'sectors_per_track': 16,
+                        'probe': 'B'}
 
     # ── Probe C: FAT BPB ──────────────────────────────────────────────────
     # Sort sectors by ID and concatenate.  For IBM-format discs the smallest
@@ -271,7 +295,8 @@ def detect_geometry_from_boot_data(track0: dict) -> dict | None:
                         'sectors_per_track': bpb_spt,
                         'heads': bpb_heads,
                         'cylinders': cyl,
-                        'sector_size': bpb_bps}
+                        'sector_size': bpb_bps,
+                        'probe': 'C'}
 
     return None
 

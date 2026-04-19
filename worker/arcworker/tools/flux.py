@@ -47,6 +47,7 @@ def _geometry_to_gw_format(
     sectors_per_track: int,
     sector_size: int,
     encoding: str = '',
+    **_ignored,
 ) -> str | None:
     """Return a Greaseweazle format name for the given geometry, or None."""
     return _GW_FORMAT_MAP.get((filesystem, cylinders, heads, sectors_per_track, sector_size))

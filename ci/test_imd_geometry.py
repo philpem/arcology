@@ -115,7 +115,7 @@ def _make_adfs_floppy_sector0(
 
     The first 512 bytes form the Filecore floppy boot block (mod-256 sum = 0).
     The disc record begins at byte 4.  Bytes 0x200-0x204 hold the optional
-    directory magic for ADFS-D/E disambiguation.
+    directory magic for ADFS-D/E disambiguation (only relevant when spt==5).
     """
     buf = bytearray(1024)
     # Disc record at byte 4
@@ -216,6 +216,31 @@ class TestParseImdTrack0(unittest.TestCase):
         self.assertIn(1, result['sectors'])
         self.assertEqual(result['sectors'][1], b'\xAA' * 512)
 
+    def test_duplicate_sector_id_first_wins(self):
+        # When two sectors on track 0 share the same ID (copy-protection trick),
+        # the FIRST occurrence must be stored — subsequent ones must not overwrite.
+        real_data = b'\xAA' * 512
+        fake_data = b'\xBB' * 512
+        header  = b'IMD test\x1A'
+        # Two sectors both claiming ID=1: real first, fake second
+        track_hdr = bytes([3, 0, 0, 2, 2])      # mode=3, cyl=0, head=0, nsec=2, size=512B
+        sector_id_map = bytes([1, 1])            # both claim ID 1
+        sector_rec1 = b'\x01' + real_data        # type=1 (raw), real data
+        sector_rec2 = b'\x01' + fake_data        # type=1 (raw), fake (protection) data
+        imd = header + track_hdr + sector_id_map + sector_rec1 + sector_rec2
+
+        fd, path = tempfile.mkstemp(suffix='.imd')
+        os.write(fd, imd)
+        os.close(fd)
+        try:
+            result = parse_imd_track0(Path(path))
+            self.assertIsNotNone(result)
+            self.assertIn(1, result['sectors'])
+            self.assertEqual(result['sectors'][1], real_data,
+                             "First sector with duplicate ID should be kept, not overwritten")
+        finally:
+            Path(path).unlink(missing_ok=True)
+
     def test_compressed_sector_expanded(self):
         # Build IMD manually with a compressed sector (type 2, fill byte 0xCC)
         header  = b'IMD test\x1A'
@@ -309,6 +334,62 @@ class TestDetectGeometry(unittest.TestCase):
         geo = self._detect(tracks)
         self.assertIsNotNone(geo)
         self.assertEqual(geo['filesystem'], 'adfs_e')
+
+    def test_probe_d_adfs_f_1600k(self):
+        # ADFS-F: 80 cyl × 2 heads × 10 SPT × 1024B → 1600K
+        # Disc record says spt=10 → must be identified as adfs_f, not adfs_d
+        sec0 = _make_adfs_floppy_sector0(
+            log2ss=10, spt=10, heads=2,
+            disc_size=1600*1024, directory_magic=b'Hugo'  # Hugo present but irrelevant for F
+        )
+        tracks = [{'mode': 3, 'cylinder': 0, 'head': 0,
+                   'sectors': {i: (sec0 if i == 0 else bytes(1024)) for i in range(10)}}]
+        for cyl in range(1, 80):
+            for head in range(2):
+                tracks.append({'mode': 3, 'cylinder': cyl, 'head': head,
+                               'sectors': {i: bytes(1024) for i in range(10)}})
+        geo = self._detect(tracks)
+        self.assertIsNotNone(geo)
+        self.assertEqual(geo['filesystem'],        'adfs_f')
+        self.assertEqual(geo['sectors_per_track'],  10)
+        self.assertEqual(geo['sector_size'],        1024)
+        self.assertEqual(geo['heads'],              2)
+        self.assertEqual(geo['probe'],              'D')
+
+    def test_probe_d_adfs_f_maps_to_acorn_adfs_1600(self):
+        sec0 = _make_adfs_floppy_sector0(
+            log2ss=10, spt=10, heads=2, disc_size=1600*1024
+        )
+        tracks = [{'mode': 3, 'cylinder': 0, 'head': 0,
+                   'sectors': {i: (sec0 if i == 0 else bytes(1024)) for i in range(10)}}]
+        for cyl in range(1, 80):
+            for head in range(2):
+                tracks.append({'mode': 3, 'cylinder': cyl, 'head': head,
+                               'sectors': {i: bytes(1024) for i in range(10)}})
+        path = _write_imd(tracks)
+        try:
+            track0 = parse_imd_track0(path)
+            geo    = detect_geometry_from_boot_data(track0)
+            fmt    = _geometry_to_gw_format(
+                filesystem=geo['filesystem'], cylinders=geo['cylinders'],
+                heads=geo['heads'], sectors_per_track=geo['sectors_per_track'],
+                sector_size=geo['sector_size'],
+            )
+        finally:
+            path.unlink(missing_ok=True)
+        self.assertEqual(fmt, 'acorn.adfs.1600')
+
+    def test_probe_d_adfs_f_spt10_ignores_directory_magic(self):
+        # spt=10 must yield adfs_f even when SBPr is present (SBPr check should not apply)
+        sec0 = _make_adfs_floppy_sector0(
+            log2ss=10, spt=10, heads=2,
+            disc_size=1600*1024, directory_magic=b'SBPr'
+        )
+        tracks = [{'mode': 3, 'cylinder': 0, 'head': 0,
+                   'sectors': {i: (sec0 if i == 0 else bytes(1024)) for i in range(10)}}]
+        geo = self._detect(tracks)
+        self.assertIsNotNone(geo)
+        self.assertEqual(geo['filesystem'], 'adfs_f')
 
     # ── Probe B: Old-map ADFS (Hugo) ──────────────────────────────────────
 
