@@ -6,7 +6,7 @@
     <div class="col-md-9 col-lg-8">
         <h1><i class="bi bi-info-circle"></i> About Arcology</h1>
 
-        <p class="lead">Arcology is a digital artefact catalogue for retrocomputing collections.</p>
+        <p class="lead">Digital artefact management for retrocomputing collections.</p>
 
         <hr>
 
@@ -45,56 +45,96 @@
         <h5>Web application</h5>
         <table class="table table-sm table-bordered">
             <thead class="table-light">
-                <tr><th>Component</th><th>Licence</th><th>Notes</th></tr>
+                <tr><th>Component</th><th>Author</th><th>Licence</th><th>Notes</th></tr>
             </thead>
             <tbody>
                 <tr>
                     <td><a href="https://flask.palletsprojects.com/" target="_blank" rel="noopener">Flask</a></td>
+                    <td>Pallets</td>
                     <td>BSD-3-Clause</td>
                     <td>Web framework</td>
                 </tr>
                 <tr>
                     <td><a href="https://flask-sqlalchemy.palletsprojects.com/" target="_blank" rel="noopener">Flask-SQLAlchemy</a></td>
+                    <td>Pallets</td>
                     <td>BSD-3-Clause</td>
                     <td>SQLAlchemy integration for Flask</td>
                 </tr>
                 <tr>
                     <td><a href="https://flask-migrate.readthedocs.io/" target="_blank" rel="noopener">Flask-Migrate</a></td>
+                    <td>Miguel Grinberg</td>
                     <td>MIT</td>
                     <td>Database schema migrations (Alembic)</td>
                 </tr>
                 <tr>
                     <td><a href="https://flask-login.readthedocs.io/" target="_blank" rel="noopener">Flask-Login</a></td>
+                    <td>Max Countryman</td>
                     <td>MIT</td>
                     <td>User session management</td>
                 </tr>
                 <tr>
                     <td><a href="https://flask-wtf.readthedocs.io/" target="_blank" rel="noopener">Flask-WTF</a></td>
+                    <td>Pallets</td>
                     <td>BSD-3-Clause</td>
                     <td>Form handling and CSRF protection</td>
                 </tr>
                 <tr>
                     <td><a href="https://bootstrap-flask.readthedocs.io/" target="_blank" rel="noopener">Bootstrap-Flask</a></td>
+                    <td>Grey Li</td>
                     <td>MIT</td>
                     <td>Bootstrap 5 helpers for Jinja2 templates</td>
                 </tr>
                 <tr>
                     <td><a href="https://www.sqlalchemy.org/" target="_blank" rel="noopener">SQLAlchemy</a></td>
+                    <td>SQLAlchemy Authors</td>
                     <td>MIT</td>
                     <td>Database ORM</td>
                 </tr>
                 <tr>
                     <td><a href="https://pypi.org/project/bcrypt/" target="_blank" rel="noopener">bcrypt</a></td>
+                    <td>PyCA</td>
                     <td>Apache-2.0</td>
                     <td>Password hashing</td>
                 </tr>
                 <tr>
+                    <td><a href="https://www.psycopg.org/" target="_blank" rel="noopener">psycopg2</a></td>
+                    <td>Daniele Varrazzo</td>
+                    <td>LGPL-3.0</td>
+                    <td>PostgreSQL database adapter</td>
+                </tr>
+                <tr>
+                    <td><a href="https://pypi.org/project/python-dotenv/" target="_blank" rel="noopener">python-dotenv</a></td>
+                    <td>Saurabh Kumar</td>
+                    <td>BSD-3-Clause</td>
+                    <td>Environment variable loading from <code>.env</code> files</td>
+                </tr>
+                <tr>
+                    <td><a href="https://pypi.org/project/natsort/" target="_blank" rel="noopener">natsort</a></td>
+                    <td>Seth Morton</td>
+                    <td>MIT</td>
+                    <td>Natural sort order for file listings</td>
+                </tr>
+                <tr>
+                    <td><a href="https://pypi.org/project/PyYAML/" target="_blank" rel="noopener">PyYAML</a></td>
+                    <td>PyYAML Authors</td>
+                    <td>MIT</td>
+                    <td>YAML parsing for OpenAPI spec</td>
+                </tr>
+                <tr>
+                    <td><a href="https://pypi.org/project/boto3/" target="_blank" rel="noopener">boto3</a></td>
+                    <td>Amazon Web Services</td>
+                    <td>Apache-2.0</td>
+                    <td>S3-compatible object storage (optional)</td>
+                </tr>
+                <tr>
                     <td><a href="https://getbootstrap.com/" target="_blank" rel="noopener">Bootstrap 5</a></td>
+                    <td>The Bootstrap Authors</td>
                     <td>MIT</td>
                     <td>Frontend CSS/JS framework</td>
                 </tr>
                 <tr>
                     <td><a href="https://icons.getbootstrap.com/" target="_blank" rel="noopener">Bootstrap Icons</a></td>
+                    <td>The Bootstrap Authors</td>
                     <td>MIT</td>
                     <td>Icon set</td>
                 </tr>
@@ -104,62 +144,73 @@
         <h5>Analysis worker</h5>
         <table class="table table-sm table-bordered">
             <thead class="table-light">
-                <tr><th>Component</th><th>Author</th><th>Notes</th></tr>
+                <tr><th>Component</th><th>Author</th><th>Licence</th><th>Notes</th></tr>
             </thead>
             <tbody>
                 <tr>
                     <td><a href="https://github.com/jfdelnero/HxCFloppyEmulator" target="_blank" rel="noopener">HxCFloppyEmulator</a></td>
                     <td>Jean-François DEL NERO</td>
+                    <td>GPL-2.0</td>
                     <td>Floppy disk image conversion and analysis</td>
                 </tr>
                 <tr>
                     <td><a href="https://github.com/dbalsom/fluxfox" target="_blank" rel="noopener">Fluxfox</a></td>
                     <td>Daniel Balsom</td>
+                    <td>MIT</td>
                     <td>Flux-level disk image analysis</td>
                 </tr>
                 <tr>
                     <td><a href="https://github.com/geraldholdsworth/DiscImageManager" target="_blank" rel="noopener">DiscImageManager</a></td>
                     <td>Gerald Holdsworth</td>
+                    <td>GPL-3.0</td>
                     <td>Acorn / RISC OS disc image management</td>
                 </tr>
                 <tr>
                     <td><a href="https://github.com/keirf/greaseweazle" target="_blank" rel="noopener">Greaseweazle</a></td>
                     <td>Keir Fraser</td>
+                    <td>Unlicense</td>
                     <td>Disk image format conversion</td>
                 </tr>
                 <tr>
                     <td><a href="https://github.com/mjwoodcock/riscosarc" target="_blank" rel="noopener">riscosarc</a></td>
                     <td>Martin Woodcock</td>
-                    <td>RISC OS ARC archive extraction</td>
+                    <td>MIT</td>
+                    <td>RISC OS archive extraction</td>
                 </tr>
                 <tr>
                     <td><a href="https://github.com/mattgodbolt/tbafs" target="_blank" rel="noopener">tbafs</a></td>
                     <td>Matt Godbolt</td>
-                    <td>BBC Micro tape/disc filesystem extraction</td>
+                    <td>MIT</td>
+                    <td>TBAFS archive extraction</td>
                 </tr>
                 <tr>
                     <td><a href="https://www.7-zip.org/" target="_blank" rel="noopener">7-Zip</a></td>
                     <td>Igor Pavlov</td>
+                    <td>LGPL-2.1</td>
                     <td>Archive extraction (ZIP, 7z, and others)</td>
                 </tr>
                 <tr>
                     <td><a href="https://github.com/dcf21/drawfile-render" target="_blank" rel="noopener">drawfile-render</a></td>
                     <td>Dominic Ford</td>
-                    <td>Acorn Draw file rendering (GPL-3.0)</td>
+                    <td>GPL-3.0</td>
+                    <td>Acorn Draw file rendering</td>
                 </tr>
                 <tr>
                     <td><a href="https://gitlab.com/dboddie/spritefile" target="_blank" rel="noopener">spritefile</a></td>
                     <td>David Boddie</td>
-                    <td>RISC OS sprite file decoding, bundled with drawfile-render (GPL-2.0+)</td>
+                    <td>GPL-2.0+</td>
+                    <td>RISC OS sprite file decoding, bundled with drawfile-render</td>
                 </tr>
                 <tr>
                     <td><a href="https://github.com/marutan/riscos-free-fonts" target="_blank" rel="noopener">riscos-free-fonts</a></td>
                     <td>Peter Howkins (conversion); &copy; RISC OS Developments Ltd (originals)</td>
-                    <td>OTF versions of original RISC OS typefaces for metric-accurate Draw file rendering (Apache-2.0)</td>
+                    <td>Apache-2.0</td>
+                    <td>OTF versions of original RISC OS typefaces for metric-accurate Draw file rendering</td>
                 </tr>
                 <tr>
                     <td>RISC OS module parser</td>
                     <td>Peter Howkins</td>
+                    <td>&mdash;</td>
                     <td>RISC OS relocatable module metadata extraction (title, version, date, SWIs, commands)</td>
                 </tr>
             </tbody>
