@@ -27,6 +27,7 @@ from .partition import (
     detect_acorn_partitions,
     detect_format_file_cmd,
     detect_fat_filesystem,
+    read_fat_volume_label,
 )
 from .archives import (
     extract_riscosarc,
@@ -66,6 +67,7 @@ __all__ = [
     'detect_acorn_partitions',
     'detect_format_file_cmd',
     'detect_fat_filesystem',
+    'read_fat_volume_label',
     'extract_riscosarc',
     'extract_tbafs',
     'extract_xfiles',

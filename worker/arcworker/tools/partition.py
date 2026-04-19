@@ -1257,4 +1257,130 @@ def detect_fat_filesystem(source: bytes | Path) -> str | None:
         return 'fat16'
     return 'fat32'  # fat_sz16 non-zero but cluster count says FAT32: unusual
 
+
+# FAT directory entry constants (spec §6)
+_FAT_ATTR_READ_ONLY = 0x01
+_FAT_ATTR_HIDDEN    = 0x02
+_FAT_ATTR_SYSTEM    = 0x04
+_FAT_ATTR_VOLUME_ID = 0x08
+_FAT_ATTR_DIRECTORY = 0x10
+_FAT_ATTR_ARCHIVE   = 0x20
+_FAT_ATTR_LONG_NAME = (
+    _FAT_ATTR_READ_ONLY | _FAT_ATTR_HIDDEN
+    | _FAT_ATTR_SYSTEM | _FAT_ATTR_VOLUME_ID
+)  # 0x0F
+
+
+def _decode_fat_label(raw: bytes) -> str | None:
+    """Decode an 11-byte FAT volume label field.
+
+    Labels are stored space-padded in the OEM codepage (typically CP437 or
+    CP850).  "NO NAME    " is the sentinel for "no label set".  Returns the
+    stripped Unicode string, or ``None`` if the label is empty or the
+    "NO NAME" sentinel.
+    """
+    stripped = raw.rstrip(b' \x00')
+    if not stripped:
+        return None
+    # DIR_Name byte 0 of 0x05 represents a legitimate 0xE5 first character
+    # (Japanese Kanji), which would otherwise collide with the deleted-entry
+    # marker.  Restore the original byte before decoding.
+    if stripped[0] == 0x05:
+        stripped = b'\xE5' + stripped[1:]
+    try:
+        label = stripped.decode('cp850').rstrip()
+    except UnicodeDecodeError:
+        label = stripped.decode('cp850', errors='replace').rstrip()
+    if not label or label.upper() == 'NO NAME':
+        return None
+    return label
+
+
+def read_fat_volume_label(path: Path) -> str | None:
+    """Return the volume label of a FAT12/16/32 disc image, or ``None``.
+
+    Prefers the authoritative root-directory ``ATTR_VOLUME_ID`` entry (which
+    tools like DOS ``LABEL`` or Windows Explorer update).  Falls back to the
+    BPB ``BS_VolLab`` field written at format time.
+
+    Only valid FAT images are accepted: the caller should gate this function
+    with :func:`detect_fat_filesystem` if the image type is uncertain.  The
+    function tolerates truncated or unreadable images by returning ``None``
+    rather than raising.
+
+    Reference: Microsoft "FAT: General Overview of On-Disk Format" v1.03
+    (Dec 2000), §3 (BPB), §6 (directory entries).
+    """
+    try:
+        with open(path, 'rb') as f:
+            sector = f.read(512)
+            if len(sector) < 512 or sector[510] != 0x55 or sector[511] != 0xAA:
+                return None
+
+            bps          = int.from_bytes(sector[11:13], 'little')
+            spc          = sector[13]
+            rsvd         = int.from_bytes(sector[14:16], 'little')
+            num_fats     = sector[16]
+            root_ent_cnt = int.from_bytes(sector[17:19], 'little')
+            fat_sz16     = int.from_bytes(sector[22:24], 'little')
+
+            if bps not in _FAT_VALID_BPS or spc == 0 or num_fats not in (1, 2):
+                return None
+
+            if fat_sz16 == 0:
+                # FAT32: root directory lives in a cluster chain starting at
+                # BPB_RootClus (offset 44).  BS_VolLab is at offset 71.
+                fat_sz32  = int.from_bytes(sector[36:40], 'little')
+                root_clus = int.from_bytes(sector[44:48], 'little')
+                bpb_label = sector[71:82]
+
+                if fat_sz32 == 0 or root_clus < 2:
+                    root_data = b''
+                else:
+                    first_data_sector = rsvd + (num_fats * fat_sz32)
+                    root_dir_offset   = (
+                        first_data_sector + (root_clus - 2) * spc
+                    ) * bps
+                    # Scan only the first cluster of the root directory.  The
+                    # volume label, if present, is conventionally the first
+                    # (or near-first) entry, and walking the full FAT32
+                    # cluster chain requires parsing the FAT itself.
+                    f.seek(root_dir_offset)
+                    root_data = f.read(spc * bps)
+            else:
+                # FAT12/16: fixed-size root directory immediately after the
+                # FATs.  BS_VolLab is at offset 43.
+                bpb_label         = sector[43:54]
+                first_root_sector = rsvd + (num_fats * fat_sz16)
+                root_dir_offset   = first_root_sector * bps
+                root_dir_size     = root_ent_cnt * 32
+                if root_dir_size == 0:
+                    root_data = b''
+                else:
+                    f.seek(root_dir_offset)
+                    root_data = f.read(root_dir_size)
+
+            for i in range(0, len(root_data), 32):
+                entry = root_data[i:i + 32]
+                if len(entry) < 32:
+                    break
+                first = entry[0]
+                if first == 0x00:
+                    break            # end-of-directory marker
+                if first == 0xE5:
+                    continue         # deleted entry
+                attr = entry[11]
+                if attr == _FAT_ATTR_LONG_NAME:
+                    continue         # long filename fragment
+                if (attr & (_FAT_ATTR_DIRECTORY | _FAT_ATTR_VOLUME_ID)
+                        == _FAT_ATTR_VOLUME_ID):
+                    label = _decode_fat_label(entry[0:11])
+                    if label is not None:
+                        return label
+
+            return _decode_fat_label(bpb_label)
+    except OSError:
+        return None
+
+
 # vim: ts=4 sw=4 et
