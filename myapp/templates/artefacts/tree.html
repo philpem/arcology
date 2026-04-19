@@ -80,23 +80,28 @@
 <div class="pt-node mb-2">
 
     {# --- Node header (collapsible toggle) --- #}
-    <button class="btn btn-outline-secondary pt-toggle-btn d-flex align-items-center gap-2 py-2 px-3"
-            type="button"
-            data-bs-toggle="collapse"
-            data-bs-target="#{{ collapse_id }}"
-            aria-expanded="true"
-            aria-controls="{{ collapse_id }}">
+    {#
+      Drive the collapse programmatically. Bootstrap's `data-bs-toggle="collapse"`
+      uses a document-delegated click listener, so `stopPropagation()` on a
+      nested link is unreliable — see CLAUDE.md ("Bootstrap 5 collapse +
+      stopPropagation does not work reliably").
+    #}
+    <div class="btn btn-outline-secondary pt-toggle-btn pt-toggle d-flex align-items-center gap-2 py-2 px-3"
+         role="button" tabindex="0"
+         aria-expanded="true"
+         data-target="#{{ collapse_id }}">
         <i class="bi bi-chevron-right pt-chevron"></i>
         <span class="badge bg-secondary">{{ art.artefact_type.value.upper().replace('_', ' ') }}</span>
         <strong class="me-1">{{ art.label }}</strong>
         {% if art.derived_from_analysis %}
         <small class="text-muted fw-normal">via {{ art.derived_from_analysis.analysis_type|format_analysis_type }}</small>
         {% endif %}
-        <a href="{{ artefact_url(art) }}"
-           class="btn btn-sm btn-link p-0 ms-auto text-decoration-none"
-           onclick="event.stopPropagation();"
-           title="View artefact"><i class="bi bi-box-arrow-up-right"></i></a>
-    </button>
+        <span class="pt-actions ms-auto">
+            <a href="{{ artefact_url(art) }}"
+               class="btn btn-sm btn-link p-0 text-decoration-none"
+               title="View artefact"><i class="bi bi-box-arrow-up-right"></i></a>
+        </span>
+    </div>
 
     {# --- Collapsible body --- #}
     <div class="collapse show" id="{{ collapse_id }}">
@@ -217,13 +222,27 @@
 {% block scripts %}
 {{ super() }}
 <script>
-// Keep chevron in sync with Bootstrap collapse state
-document.querySelectorAll('[data-bs-toggle="collapse"]').forEach(function(btn) {
-    var targetId = btn.getAttribute('data-bs-target');
-    var target = document.querySelector(targetId);
-    if (!target) return;
-    target.addEventListener('show.bs.collapse', function() { btn.setAttribute('aria-expanded', 'true'); });
-    target.addEventListener('hide.bs.collapse', function() { btn.setAttribute('aria-expanded', 'false'); });
+document.querySelectorAll('.pt-toggle').forEach(function (header) {
+    var collapseEl = document.querySelector(header.dataset.target);
+    if (!collapseEl) return;
+
+    function toggle() {
+        bootstrap.Collapse.getOrCreateInstance(collapseEl, { toggle: false }).toggle();
+    }
+
+    header.addEventListener('click', function (event) {
+        if (event.target.closest('.pt-actions')) return;
+        toggle();
+    });
+    header.addEventListener('keydown', function (event) {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        if (event.target.closest('.pt-actions')) return;
+        event.preventDefault();
+        toggle();
+    });
+
+    collapseEl.addEventListener('show.bs.collapse', function () { header.setAttribute('aria-expanded', 'true'); });
+    collapseEl.addEventListener('hide.bs.collapse', function () { header.setAttribute('aria-expanded', 'false'); });
 });
 </script>
 {% endblock %}
