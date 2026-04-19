@@ -35,6 +35,7 @@ from .tools import (
     detect_acorn_partitions,
     detect_format_file_cmd,
     detect_fat_filesystem,
+    read_fat_volume_label,
     detect_armlock,
     remove_armlock,
     convert_sprite,
@@ -878,6 +879,16 @@ class AnalysisWorker:
             metadata = _parse_dim_report(result['process_output'].get('stdout', ''))
             disc_name = metadata.get('disc_name')
             container_format = metadata.get('container_format')
+
+        # For DOS/FAT images, read the volume label straight from the boot
+        # sector / root directory.  7z does not surface this information, so
+        # the label would otherwise be lost.
+        if disc_name is None and not is_acorn:
+            try:
+                disc_name = read_fat_volume_label(input_path)
+            except Exception as exc:  # pragma: no cover - defensive
+                log.warning(f"FAT volume label read failed: {exc}")
+                disc_name = None
 
         # Determine filesystem type
         if filesystem:
