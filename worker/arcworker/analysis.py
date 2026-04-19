@@ -2133,6 +2133,13 @@ class AnalysisWorker:
         if files:
             self.api.post_file_records(partition_uuid, files)
 
+        # Upload extraction tree to storage (no-op in local mode) BEFORE
+        # queueing follow-up analyses.  Otherwise workers can claim the
+        # queued jobs and fail to fetch files from S3 that have not been
+        # uploaded yet.
+        self._upload_extraction_tree(persistent_output)
+        rel_output_path = self._relative_output_path(persistent_output)
+
         # Queue ARCHIVE_DETECT for nested archives (if under depth limit).
         # Pass the archive's display path as path_prefix so that nested
         # ARCHIVE_EXTRACT jobs can strip it to locate files on disk.
@@ -2142,7 +2149,7 @@ class AnalysisWorker:
                 AnalysisType.ARCHIVE_DETECT.value,
                 hints={
                     'partition_uuid': partition_uuid,
-                    'extraction_path': self._relative_output_path(persistent_output),
+                    'extraction_path': rel_output_path,
                     'path_prefix': archive_display_path,
                 }
             )
@@ -2165,7 +2172,7 @@ class AnalysisWorker:
             artefact['uuid'],
             AnalysisType.FORMAT_CONVERT.value,
             hints={
-                'extraction_path': self._relative_output_path(persistent_output),
+                'extraction_path': rel_output_path,
                 'path_prefix': archive_display_path,
                 'partition_uuid': partition_uuid,
             },
@@ -2182,7 +2189,7 @@ class AnalysisWorker:
             AnalysisType.RISCOS_MODULE_PARSE.value,
             hints={
                 'partition_uuid': partition_uuid,
-                'extraction_path': self._relative_output_path(persistent_output),
+                'extraction_path': rel_output_path,
                 'path_prefix': archive_display_path,
             },
         )
@@ -2196,10 +2203,6 @@ class AnalysisWorker:
         }
         if po:
             details[tool_key] = {'process_output': po}
-
-        # Upload extraction tree to storage (no-op in local mode)
-        self._upload_extraction_tree(persistent_output)
-        rel_output_path = self._relative_output_path(persistent_output)
 
         self.complete_analysis(
             analysis_id,
