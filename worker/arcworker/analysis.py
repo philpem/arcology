@@ -639,10 +639,14 @@ class AnalysisWorker:
 
         Sibling container artefacts registered alongside the RAW_SECTOR:
           - SCP source: both IMD and HFE are produced via HxCFE.
-          - HFE source: IMD is produced via HxCFE (one-way only — the
-            derived IMD re-runs FLUX_DECODE, but the IMD branch emits
-            no HFE sibling, so the chain terminates).
+          - HFE source: IMD is produced via HxCFE (HxCFE auto-detects
+            HFE input).
           - IMD source: no cooked-sector sibling (would ping-pong).
+
+        All derived IMD/HFE siblings are registered with FLUX_DECODE
+        suppressed in skip_analyses — Greaseweazle is already producing
+        the RAW_SECTOR directly from the source in this same analysis,
+        so re-running FLUX_DECODE on a sibling would duplicate it.
         """
         analysis_id = analysis['id']
         results = []
@@ -670,13 +674,13 @@ class AnalysisWorker:
         #   HFE  source → produce IMD sibling only (HxCFE auto-detects HFE)
         #   IMD  source → produce no sibling; use the source file itself
         #
-        # Producing the opposite cooked-sector sibling (HFE→IMD or IMD→HFE)
-        # is safe in one direction (HFE→IMD) but not the other: the derived
-        # IMD re-queues FLUX_DECODE via ANALYSIS_MAP[IMD], but the IMD branch
-        # here emits only a RAW_SECTOR (no HFE sibling), so the chain
-        # terminates after one extra hop.  Going the other way (IMD→HFE)
-        # would ping-pong — HFE source again produces IMD, and so on — so
-        # it is not allowed.  (See bug #120 follow-ups.)
+        # An IMD source does not produce an HFE sibling because that would
+        # ping-pong FLUX_DECODE via ANALYSIS_MAP[HFE] (HFE → IMD → HFE → …).
+        # Every derived IMD/HFE we DO register from here has FLUX_DECODE
+        # suppressed via skip_analyses, because Greaseweazle is producing
+        # the authoritative RAW_SECTOR from the source in this same
+        # analysis — a re-run on the sibling would only duplicate it.
+        # (See bug #120 follow-ups.)
         #
         # Contract: imd_result is always a dict (never None) so downstream
         # steps can do `imd_result['success']` without a None guard, and
@@ -695,21 +699,17 @@ class AnalysisWorker:
             results.append(('IMD', imd_result))
 
             if imd_result['success']:
-                # When the source is HFE, suppress FLUX_DECODE on the derived
-                # IMD — Greaseweazle is about to run on the source HFE directly,
-                # so letting the IMD re-trigger FLUX_DECODE would produce a
-                # duplicate RAW_SECTOR artefact.
-                imd_skip = (
-                    [AnalysisType.FLUX_DECODE]
-                    if source_type is ArtefactType.HFE
-                    else None
-                )
+                # Suppress FLUX_DECODE on the derived IMD — Greaseweazle is
+                # about to run directly on the source (SCP or HFE) in this
+                # same analysis to produce the RAW_SECTOR.  Letting the
+                # derived IMD auto-queue its own FLUX_DECODE would duplicate
+                # that RAW_SECTOR (and all its downstream file extraction).
                 derived = self.api.register_derived_artefact(
                     analysis_id,
                     f"{artefact_label} (IMD)",
                     imd_path,
                     ArtefactType.IMD,
-                    skip_analyses=imd_skip,
+                    skip_analyses=[AnalysisType.FLUX_DECODE],
                 )
                 log.info(f"Created derived IMD artefact: {derived}")
         elif source_type is ArtefactType.IMD:
@@ -726,6 +726,10 @@ class AnalysisWorker:
 
         # HFE sibling: only from flux sources.  (An HFE source already IS
         # an HFE; an IMD source producing HFE would ping-pong FLUX_DECODE.)
+        # As with the derived IMD above, suppress FLUX_DECODE on the derived
+        # HFE — Greaseweazle is producing the RAW_SECTOR directly from the
+        # source SCP in this same analysis, so re-running FLUX_DECODE on the
+        # HFE sibling would duplicate that RAW_SECTOR.
         if source_type is ArtefactType.SCP:
             hfe_path = work_dir / f"{input_path.stem}.hfe"
             hfe_result = flux_to_hfe_hxcfe(input_path, hfe_path)
@@ -736,7 +740,8 @@ class AnalysisWorker:
                     analysis_id,
                     f"{artefact_label} (HFE)",
                     hfe_path,
-                    ArtefactType.HFE
+                    ArtefactType.HFE,
+                    skip_analyses=[AnalysisType.FLUX_DECODE],
                 )
                 log.info(f"Created derived HFE artefact: {derived}")
 

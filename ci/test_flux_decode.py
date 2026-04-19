@@ -127,6 +127,29 @@ class TestFluxDecodeSCPSource(FluxDecodeTestBase):
         self.worker.complete_analysis.assert_called_once()
         self.worker.fail_analysis.assert_not_called()
 
+    def test_scp_derived_siblings_suppress_flux_decode(self):
+        """Both the IMD and HFE siblings registered from an SCP source must
+        carry skip_analyses=[FLUX_DECODE].  Greaseweazle is already producing
+        the authoritative RAW_SECTOR from the SCP in this same analysis, so
+        letting either sibling re-run FLUX_DECODE would duplicate that
+        RAW_SECTOR (and all its downstream file extraction)."""
+        self._run(ArtefactType.SCP)
+        sibling_calls = {
+            c.args[3]: c
+            for c in self.worker.api.register_derived_artefact.call_args_list
+            if c.args[3] in (ArtefactType.IMD, ArtefactType.HFE)
+        }
+        self.assertIn(ArtefactType.IMD, sibling_calls)
+        self.assertIn(ArtefactType.HFE, sibling_calls)
+        for sibling_type, call in sibling_calls.items():
+            with self.subTest(sibling=sibling_type):
+                skip = call.kwargs.get('skip_analyses', []) or []
+                self.assertIn(
+                    AnalysisType.FLUX_DECODE, skip,
+                    f'{sibling_type.name} sibling from SCP source must '
+                    'suppress FLUX_DECODE to avoid a duplicate RAW_SECTOR.',
+                )
+
 
 class TestFluxDecodeHFESource(FluxDecodeTestBase):
 
