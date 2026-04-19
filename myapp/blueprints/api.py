@@ -1151,8 +1151,10 @@ def produce_artefact(id):
             import json
             hints = json.loads(analysis.hints)
 
-        queue_analyses_for_artefact(artefact, hints)
-        queued_analyses = [t.value for t in ANALYSIS_MAP.get(artefact_type, [])]
+        skip_analyses = data.get('skip_analyses') or []
+        queue_analyses_for_artefact(artefact, hints, skip_analyses=skip_analyses)
+        skip_set = set(skip_analyses)
+        queued_analyses = [t.value for t in ANALYSIS_MAP.get(artefact_type, []) if t.name not in skip_set]
 
     return jsonify({
         'artefact': artefact_to_dict(artefact),
