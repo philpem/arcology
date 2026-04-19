@@ -1,0 +1,62 @@
+{#
+  Shared path-navigation macros for the File Viewer and the Viewer.
+
+  Both views use ``?path=<dir>/`` query params to drill into a subtree.  These
+  macros render the breadcrumb chain and the "Subdirectories at this level"
+  button bar identically in both contexts.
+
+  current_path is expected to either be an empty string (root) or end with '/'.
+#}
+
+{% macro render_path_breadcrumb(current_path, pagination_args,
+                                root_label='Extracted Files',
+                                root_icon='bi-folder2-open') -%}
+<i class="bi {{ root_icon }}"></i>
+{%- if current_path %}
+    <a href="?{{ dict(pagination_args, path='')|urlencode }}" class="text-primary text-decoration-none">{{ root_label }}</a>
+    {%- set _parts = current_path.rstrip('/').split('/') %}
+    {%- for i in range(_parts|length) %}
+        <i class="bi bi-chevron-right text-muted small mx-1"></i>
+        {%- if i < _parts|length - 1 %}
+            {%- set _seg = _parts[:i+1]|join('/') + '/' %}
+            <a href="?{{ dict(pagination_args, path=_seg)|urlencode }}" class="text-primary text-decoration-none"><code>{{ _parts[i] }}</code></a>
+        {%- else %}
+            <code class="text-muted">{{ _parts[i] }}</code>
+        {%- endif %}
+    {%- endfor %}
+    <a href="?{{ dict(pagination_args, path='')|urlencode }}" class="btn btn-sm btn-outline-secondary ms-2" title="Clear path filter">
+        <i class="bi bi-x"></i> Clear
+    </a>
+{%- else %}
+    {{ root_label }}
+{%- endif %}
+{%- endmacro %}
+
+
+{% macro render_subdirectory_bar(subdirectories, current_path, pagination_args,
+                                 archive_paths=None,
+                                 recognised_folder_paths=None) -%}
+{%- if subdirectories %}
+{%- set _archives = archive_paths if archive_paths is not none else [] %}
+{%- set _recognised = recognised_folder_paths if recognised_folder_paths is not none else {} %}
+<div class="card-body border-bottom bg-light">
+    <div class="small text-muted mb-2"><i class="bi bi-folder"></i> Subdirectories at this level:</div>
+    <div class="d-flex flex-wrap gap-2">
+        {%- for subdir in subdirectories %}
+        {%- set subdir_full_path = current_path + subdir %}
+        {%- set subdir_rp = _recognised.get(subdir_full_path) %}
+        <a href="?{{ dict(pagination_args, path=subdir_full_path + '/') | urlencode }}"
+           class="btn btn-sm {{ 'btn-info' if subdir_rp else 'btn-outline-primary' }}"
+           {%- if subdir_rp %} title="Recognised: {{ subdir_rp.product.title }} ({{ subdir_rp.required_matched }}/{{ subdir_rp.required_total }} required matched)"{%- endif %}>
+            {%- if subdir_full_path in _archives %}
+            <i class="bi bi-file-zip-fill"></i>
+            {%- else %}
+            <i class="bi bi-folder-fill"></i>
+            {%- endif %}
+            {{ subdir }}{% if subdir_rp %} <i class="bi bi-check2-square"></i>{% endif %}
+        </a>
+        {%- endfor %}
+    </div>
+</div>
+{%- endif %}
+{%- endmacro %}

@@ -1,5 +1,6 @@
 {% extends "_base.html" %}
 {% from "_pagination.html" import render_pagination_compact %}
+{% from "_path_nav.html" import render_path_breadcrumb, render_subdirectory_bar %}
 {% block page_title %}View — {{ artefact.label }}{% endblock %}
 
 {% block styles %}
@@ -62,10 +63,20 @@
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h1>{{ artefact.label }} <small class="text-muted fs-5">— viewer</small></h1>
-    <a href="{{ artefact_url(artefact) }}" class="btn btn-outline-secondary">
+    <a href="{{ artefact_url(artefact) }}{% if current_path %}?path={{ current_path | urlencode }}{% endif %}" class="btn btn-outline-secondary">
         <i class="bi bi-arrow-left"></i> Back
     </a>
 </div>
+
+{# ── Subdirectory navigation: breadcrumb + direct children, same primitives as File Viewer ── #}
+{% if current_path or subdirectories %}
+<div class="card mb-3">
+    <div class="card-header">
+        {{ render_path_breadcrumb(current_path, pagination_args) }}
+    </div>
+    {{ render_subdirectory_bar(subdirectories, current_path, pagination_args, archive_paths=archive_paths) }}
+</div>
+{% endif %}
 
 {% if viewer_status == 'pending' %}
 <div class="alert alert-info">
