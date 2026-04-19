@@ -429,7 +429,7 @@ def extract_riscosarc(input_path: Path, output_dir: Path) -> dict[str, Any]:
     list_result, list_output = run_tool_with_output(
         ['riscosarc', '-l', '-v', str(input_path)],
     )
-    inf_metadata = _parse_riscosarc_listing(list_output) if list_result.returncode == 0 else {}
+    inf_metadata = _parse_riscosarc_listing(list_output['stdout']) if list_result.returncode == 0 else {}
 
     # input_path is guaranteed to be a clean Unicode path: the disc image
     # extraction pipeline calls normalize_extracted_filenames() before any
