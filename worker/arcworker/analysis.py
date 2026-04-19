@@ -2949,10 +2949,11 @@ class AnalysisWorker:
     def process_analysis(self, analysis: dict):
         """Process a single analysis job."""
         analysis_id = analysis['id']
+        analysis_uuid = analysis.get('uuid', '?')
         analysis_type = analysis['analysis_type']
         artefact = analysis.get('artefact', {})
 
-        log.info(f"Processing analysis {analysis_id}: {analysis_type} for {artefact.get('label', 'unknown')}")
+        log.info(f"Processing analysis {analysis_id} ({analysis_uuid}): {analysis_type} for {artefact.get('label', 'unknown')}")
 
         # Status is already RUNNING from the atomic claim in claim_and_process().
 
@@ -2988,12 +2989,12 @@ class AnalysisWorker:
                     self.fail_analysis(analysis_id, f'Unknown analysis type: {analysis_type}')
 
             except Exception as e:
-                log.exception(f"Analysis {analysis_id} failed with exception")
+                log.exception(f"Analysis {analysis_id} ({analysis_uuid}) failed with exception")
                 try:
                     self.fail_analysis(analysis_id, str(e)[:1000])
                 except Exception:
                     log.exception(
-                        f"Analysis {analysis_id}: failed to report failure to API "
+                        f"Analysis {analysis_id} ({analysis_uuid}): failed to report failure to API "
                         f"— job may remain in 'running' state"
                     )
             finally:
@@ -3023,15 +3024,16 @@ class AnalysisWorker:
         # Try to claim the first available job
         for analysis in analyses:
             analysis_id = analysis['id']
+            analysis_uuid = analysis.get('uuid', '?')
 
             if self.api.claim_analysis(analysis_id):
                 # Successfully claimed - process it
-                log.info(f"Claimed analysis {analysis_id}")
+                log.info(f"Claimed analysis {analysis_id} ({analysis_uuid})")
                 self.process_analysis(analysis)
                 return 1
             else:
                 # Already claimed by another worker, try next
-                log.debug(f"Analysis {analysis_id} already claimed, trying next")
+                log.debug(f"Analysis {analysis_id} ({analysis_uuid}) already claimed, trying next")
                 continue
 
         return 0
