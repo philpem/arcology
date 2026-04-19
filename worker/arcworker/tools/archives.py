@@ -307,6 +307,106 @@ def _run_extraction_command(
     )
 
 
+# Matches filenames with two ,xxx hex suffixes (e.g. File,FCA,BBC).
+# Used to strip the outer (container) filetype added by riscosarc for
+# Squash members, leaving only the original filetype suffix.
+_DOUBLE_EXT_RE = re.compile(r'(.*),([0-9A-Fa-f]+),([0-9A-Fa-f]+)')
+
+
+def _parse_riscosarc_listing(output: str) -> dict[str, dict]:
+    """Parse riscosarc -l -v output into a per-file RISC OS metadata dict.
+
+    The verbose listing produces one block per archive entry::
+
+        Comptype = <int>
+        Name <risc-os-name>
+        Local name <disk-path>
+        Origlen <int>
+        Load <signed-decimal>
+        Exec <signed-decimal>
+        ...
+        isDir <bool>
+
+    Load and Exec are 32-bit values printed by Java as signed decimals; we
+    mask them to unsigned before storing.  Only non-directory entries with a
+    valid "Local name" are included in the returned dict.
+
+    The returned keys match the display paths produced by
+    :func:`.extraction.enumerate_extracted_files`: the ,xxx filetype suffix
+    is stripped from the filename component, and double ,xxx,yyy suffixes
+    (Squash members) are reduced to ,yyy first (the same transformation that
+    :func:`extract_riscosarc` applies to the extracted files).
+
+    Returns:
+        Dict mapping display path → RISC OS metadata dict with
+        ``load_address``, ``exec_address``, and optionally
+        ``risc_os_filetype`` and ``modified_time``.
+    """
+    from .extraction import _get_riscos_filetype, _riscos_timestamp_to_datetime, parse_acorn_filename
+
+    metadata: dict[str, dict] = {}
+
+    def _flush(block: dict[str, str]) -> None:
+        if block.get('isDir', 'false').lower() == 'true':
+            return
+        local_name = block.get('local_name')
+        if not local_name:
+            return
+        try:
+            load_int = int(block.get('Load', '0')) & 0xFFFFFFFF
+            exec_int = int(block.get('Exec', '0')) & 0xFFFFFFFF
+        except ValueError:
+            return
+
+        # Normalise path separators and split into directory + filename.
+        parts = local_name.replace('\\', '/').split('/')
+        filename = parts[-1]
+        dir_parts = parts[:-1]
+
+        # Strip Squash double extension: File,FCA,BBC → File,BBC.
+        m = _DOUBLE_EXT_RE.match(filename)
+        if m:
+            filename = f'{m.group(1)},{m.group(3)}'
+
+        # Strip the ,xxx filetype suffix to get the display name.
+        display_name, _ = parse_acorn_filename(filename)
+
+        # Reconstruct the display path (matches enumerate_extracted_files).
+        display_path = '/'.join(dir_parts + [display_name]) if dir_parts else display_name
+
+        meta: dict[str, str] = {
+            'load_address': f'{load_int:08x}',
+            'exec_address': f'{exec_int:08x}',
+        }
+        ft = _get_riscos_filetype(load_int)
+        if ft:
+            meta['risc_os_filetype'] = ft
+        ts = _riscos_timestamp_to_datetime(load_int, exec_int)
+        if ts is not None:
+            meta['modified_time'] = ts.isoformat()
+
+        metadata[display_path] = meta
+
+    current: dict[str, str] = {}
+    for line in output.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith('Comptype = '):
+            if current:
+                _flush(current)
+            current = {'Comptype': stripped[len('Comptype = '):]}
+        elif stripped.startswith('Local name '):
+            current['local_name'] = stripped[len('Local name '):]
+        elif ' ' in stripped:
+            key, _, value = stripped.partition(' ')
+            current[key] = value
+    if current:
+        _flush(current)
+
+    return metadata
+
+
 def extract_riscosarc(input_path: Path, output_dir: Path) -> dict[str, Any]:
     """
     Extract archive using riscosarc.
@@ -322,10 +422,23 @@ def extract_riscosarc(input_path: Path, output_dir: Path) -> dict[str, Any]:
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Run verbose listing first to capture per-file RISC OS load/exec metadata.
+    # This populates inf_metadata so that load_address, exec_address,
+    # risc_os_filetype, and modified_time (for date-stamped files) are stored
+    # in the database.  If listing fails, extraction still proceeds.
+    list_result, list_output = run_tool_with_output(
+        ['riscosarc', '-l', '-v', str(input_path)],
+    )
+    inf_metadata = _parse_riscosarc_listing(list_output) if list_result.returncode == 0 else {}
+
     # input_path is guaranteed to be a clean Unicode path: the disc image
     # extraction pipeline calls normalize_extracted_filenames() before any
     # archive job is queued, so the .arc file on disk already has a UTF-8 name.
-    cmd = ['riscosarc', '-x', '-F', str(input_path)]
+    # -D suppresses riscosarc's own timestamp setting, which produces wrong dates
+    # for non-date-stamped files (it applies the RISC OS epoch formula to zeroed
+    # load/exec, yielding timestamps around year 2036).  Correct timestamps for
+    # date-stamped files are provided via inf_metadata instead.
+    cmd = ['riscosarc', '-x', '-F', '-D', str(input_path)]
     result, output = run_tool_with_output(cmd, cwd=str(output_dir))
 
     if result.returncode != 0:
@@ -340,10 +453,9 @@ def extract_riscosarc(input_path: Path, output_dir: Path) -> dict[str, Any]:
     # like "MyFile,FCA,BBC" (input filetype + original filetype).
     # We strip the input filetype, leaving "MyFile,BBC".
     # IMPORTANT: use f.parent to keep the file in output_dir, not CWD.
-    de_re = re.compile(r'(.*),([0-9A-Fa-f]+),([0-9A-Fa-f]+)')
     for f in output_dir.rglob('*'):
         if f.is_file():
-            m = de_re.match(f.name)
+            m = _DOUBLE_EXT_RE.match(f.name)
             if m is not None:
                 f.rename(f.parent / f'{m.group(1)},{m.group(3)}')
 
@@ -357,12 +469,15 @@ def extract_riscosarc(input_path: Path, output_dir: Path) -> dict[str, Any]:
         return _archive_error('riscosarc', finalize_error)
 
     file_count = _count_extracted_files(output_dir)
-    return _archive_success(
+    result_dict = _archive_success(
         'riscosarc',
         f'Extracted {file_count} files using riscosarc',
         file_count,
         output,
     )
+    if inf_metadata:
+        result_dict['inf_metadata'] = inf_metadata
+    return result_dict
 
 
 def extract_tbafs(input_path: Path, output_dir: Path) -> dict[str, Any]:
