@@ -101,6 +101,21 @@ class TestAnalysisMap(unittest.TestCase):
             'Add an entry to ANALYSIS_MAP in myapp/blueprints/artefacts.py.',
         )
 
+    def test_sector_image_types_queue_flux_decode(self):
+        """HFE and IMD must queue FLUX_DECODE so they get decoded to a
+        RAW_SECTOR derived artefact.  Without this, uploading an HFE or IMD
+        as a root artefact never triggers PARTITION_DETECT / FILE_EXTRACTION
+        (see bug #120)."""
+        for artefact_type in (ArtefactType.HFE, ArtefactType.IMD):
+            with self.subTest(artefact_type=artefact_type):
+                self.assertIn(
+                    AnalysisType.FLUX_DECODE,
+                    ANALYSIS_MAP.get(artefact_type, []),
+                    f'{artefact_type.name} must include FLUX_DECODE so it is '
+                    'decoded to a RAW_SECTOR derived artefact for downstream '
+                    'file extraction.',
+                )
+
 
 if __name__ == '__main__':
     unittest.main()

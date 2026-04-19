@@ -135,11 +135,17 @@ ANALYSIS_MAP = {
     #ArtefactType.KF: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
     #ArtefactType.FLUX_RAW: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE],
     
-    # Sector-level floppy - file extraction only works on raw sector images
-    # IMD is track-based format with metadata, HFE is an emulator container format
-    # These need conversion to IMG (raw sectors) before file extraction can work
-    ArtefactType.IMD: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY],
-    ArtefactType.HFE: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.DISC_MASTERING_DETECT, AnalysisType.DISC_PROTECTION_DETECT],
+    # Sector-level floppy - file extraction only works on raw sector images.
+    # IMD is a track-based format with metadata, HFE is an emulator container
+    # format.  FLUX_DECODE is queued here so that when an HFE or IMD is uploaded
+    # as a root artefact it is decoded to a RAW_SECTOR derived artefact (as if
+    # it had been a flux image), which in turn triggers PARTITION_DETECT and
+    # FILE_EXTRACTION down the pipeline.  The worker's FLUX_DECODE handler
+    # only emits the opposite cooked-sector sibling (HFE↔IMD) from a flux
+    # source; otherwise the derived sibling would re-queue FLUX_DECODE and
+    # ping-pong between HFE and IMD (see worker/arcworker/analysis.py).
+    ArtefactType.IMD: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY, AnalysisType.FLUX_DECODE],
+    ArtefactType.HFE: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.DISC_MASTERING_DETECT, AnalysisType.DISC_PROTECTION_DETECT, AnalysisType.FLUX_DECODE],
     #ArtefactType.TD0: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY],
     #ArtefactType.D64: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_EXTRACTION],
     #ArtefactType.ADF: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_EXTRACTION],

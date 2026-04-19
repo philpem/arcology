@@ -633,7 +633,16 @@ class AnalysisWorker:
     def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
         """
         Process FLUX_DECODE analysis.
-        Attempts to decode flux to sector image, producing derived artefacts.
+        Decodes a flux-level (SCP) or cooked sector-level (HFE, IMD) disc
+        image into a RAW_SECTOR derived artefact so that downstream
+        PARTITION_DETECT / FILE_EXTRACTION can run.
+
+        Sibling container artefacts registered alongside the RAW_SECTOR:
+          - SCP source: both IMD and HFE are produced via HxCFE.
+          - HFE source: IMD is produced via HxCFE (one-way only — the
+            derived IMD re-runs FLUX_DECODE, but the IMD branch emits
+            no HFE sibling, so the chain terminates).
+          - IMD source: no cooked-sector sibling (would ping-pong).
         """
         analysis_id = analysis['id']
         results = []
@@ -641,40 +650,93 @@ class AnalysisWorker:
         input_path = self.get_input_path(artefact, work_dir)
         artefact_label = artefact['label']
 
-        # 1. Convert to IMD (preserves track metadata)
-        imd_path = work_dir / f"{input_path.stem}.imd"
-        imd_result = flux_to_imd_hxcfe(input_path, imd_path)
-        results.append(('IMD', imd_result))
+        source_type_str = artefact.get('artefact_type')
+        try:
+            source_type = ArtefactType(source_type_str)
+        except ValueError:
+            source_type = None
 
-        if imd_result['success']:
-            derived = self.api.register_derived_artefact(
+        supported_sources = (ArtefactType.SCP, ArtefactType.HFE, ArtefactType.IMD)
+        if source_type not in supported_sources:
+            self.fail_analysis(
                 analysis_id,
-                f"{artefact_label} (IMD)",
-                imd_path,
-                ArtefactType.IMD
+                f"flux decode: unsupported input artefact type {source_type_str!r}",
+                tool_name='hxcfe,greaseweazle',
             )
-            log.info(f"Created derived IMD artefact: {derived}")
+            return
 
-        # 2. Convert to HFE (for emulators)
-        hfe_path = work_dir / f"{input_path.stem}.hfe"
-        hfe_result = flux_to_hfe_hxcfe(input_path, hfe_path)
-        results.append(('HFE', hfe_result))
+        # Sibling cooked-sector containers:
+        #   SCP  source → produce both IMD and HFE siblings (flux decode)
+        #   HFE  source → produce IMD sibling only (HxCFE auto-detects HFE)
+        #   IMD  source → produce no sibling; use the source file itself
+        #
+        # Producing the opposite cooked-sector sibling (HFE→IMD or IMD→HFE)
+        # is safe in one direction (HFE→IMD) but not the other: the derived
+        # IMD re-queues FLUX_DECODE via ANALYSIS_MAP[IMD], but the IMD branch
+        # here emits only a RAW_SECTOR (no HFE sibling), so the chain
+        # terminates after one extra hop.  Going the other way (IMD→HFE)
+        # would ping-pong — HFE source again produces IMD, and so on — so
+        # it is not allowed.  (See bug #120 follow-ups.)
+        #
+        # Contract: imd_result is always a dict (never None) so downstream
+        # steps can do `imd_result['success']` without a None guard, and
+        # imd_path points at a readable IMD whenever imd_result['success']
+        # is True (freshly produced for SCP / HFE, or the source artefact
+        # itself when the source IS an IMD).
+        imd_path = None
+        imd_result = {
+            'success': False,
+            'tool': 'n/a',
+            'summary': 'IMD conversion skipped',
+        }
+        if source_type in (ArtefactType.SCP, ArtefactType.HFE):
+            imd_path = work_dir / f"{input_path.stem}.imd"
+            imd_result = flux_to_imd_hxcfe(input_path, imd_path)
+            results.append(('IMD', imd_result))
 
-        if hfe_result['success']:
-            derived = self.api.register_derived_artefact(
-                analysis_id,
-                f"{artefact_label} (HFE)",
-                hfe_path,
-                ArtefactType.HFE
-            )
-            log.info(f"Created derived HFE artefact: {derived}")
+            if imd_result['success']:
+                derived = self.api.register_derived_artefact(
+                    analysis_id,
+                    f"{artefact_label} (IMD)",
+                    imd_path,
+                    ArtefactType.IMD
+                )
+                log.info(f"Created derived IMD artefact: {derived}")
+        elif source_type is ArtefactType.IMD:
+            # The source file IS an IMD — expose it to downstream steps
+            # so they can probe track 0 / geometry without a conversion.
+            imd_path = input_path
+            imd_result = {
+                'success': True,
+                'tool': 'n/a (source is IMD)',
+                'output_path': str(input_path),
+                'output_type': ArtefactType.IMD.value,
+                'summary': 'Source artefact is already IMD',
+            }
 
-        # 3. Convert to raw IMG via Greaseweazle (best for file extraction)
-        # Use the IMD as input if available, otherwise try direct
-        if imd_result['success']:
-            img_input = imd_path
-        else:
-            img_input = input_path
+        # HFE sibling: only from flux sources.  (An HFE source already IS
+        # an HFE; an IMD source producing HFE would ping-pong FLUX_DECODE.)
+        if source_type is ArtefactType.SCP:
+            hfe_path = work_dir / f"{input_path.stem}.hfe"
+            hfe_result = flux_to_hfe_hxcfe(input_path, hfe_path)
+            results.append(('HFE', hfe_result))
+
+            if hfe_result['success']:
+                derived = self.api.register_derived_artefact(
+                    analysis_id,
+                    f"{artefact_label} (HFE)",
+                    hfe_path,
+                    ArtefactType.HFE
+                )
+                log.info(f"Created derived HFE artefact: {derived}")
+
+        # Convert to raw IMG via Greaseweazle (the RAW_SECTOR that unblocks
+        # file extraction).  Always feed Greaseweazle the source artefact
+        # directly — it reads SCP, HFE, and IMD natively, and routing
+        # through an HxCFE-decoded IMD sibling just cooks the data twice.
+        # The IMD sibling registered above is a user-facing artefact, not
+        # an intermediate for RAW_SECTOR production.
+        img_input = input_path
 
         img_path = work_dir / f"{input_path.stem}.img"
         img_result = sector_image_to_raw_greaseweazle(img_input, img_path)

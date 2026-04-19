@@ -98,10 +98,15 @@ def flux_visualisation_hxcfe(input_path: Path, output_path: Path) -> dict:
 
 def flux_to_imd_hxcfe(input_path: Path, output_path: Path) -> dict:
     """
-    Convert flux image (SCP) to ImageDisk format using HxCFE.
+    Convert a disc image to ImageDisk format using HxCFE.
+
+    HxCFE auto-detects its input format from the file contents, so this
+    accepts any disc image HxCFE understands (typically SCP flux, HFE,
+    or IMD).  Used as a best-effort sibling conversion when the source
+    artefact is already sector-level.
 
     Args:
-        input_path: Path to flux image
+        input_path: Path to source disc image
         output_path: Path for output IMD file
 
     Returns:
@@ -135,10 +140,15 @@ def flux_to_imd_hxcfe(input_path: Path, output_path: Path) -> dict:
 
 def flux_to_hfe_hxcfe(input_path: Path, output_path: Path) -> dict:
     """
-    Convert flux image (SCP) to HFE format using HxCFE.
+    Convert a disc image to HFE format using HxCFE.
+
+    HxCFE auto-detects its input format from the file contents, so this
+    accepts any disc image HxCFE understands (typically SCP flux, HFE,
+    or IMD).  Used as a best-effort sibling conversion when the source
+    artefact is already sector-level.
 
     Args:
-        input_path: Path to flux image
+        input_path: Path to source disc image
         output_path: Path for output HFE file
 
     Returns:
