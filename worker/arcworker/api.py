@@ -165,7 +165,8 @@ class ArcologyAPI:
         label: str,
         source_path: Path,
         artefact_type: ArtefactType,
-        auto_analyse: bool = True
+        auto_analyse: bool = True,
+        skip_analyses: list = None,
     ) -> Optional[dict]:
         """
         Register a derived artefact produced by an analysis.
@@ -197,7 +198,7 @@ class ArcologyAPI:
             md5, sha256, file_size = compute_file_hash(storage_path)
 
         # Register via API - derived artefacts use 'outputs' storage directory
-        return self.post(f"/analysis/{analysis_id}/produce-artefact", {
+        payload = {
             'label': label,
             'original_filename': source_path.name,
             'storage_path': storage_name,
@@ -206,8 +207,11 @@ class ArcologyAPI:
             'file_size': file_size,
             'md5': md5,
             'sha256': sha256,
-            'auto_analyse': auto_analyse
-        })
+            'auto_analyse': auto_analyse,
+        }
+        if skip_analyses:
+            payload['skip_analyses'] = [t.value for t in skip_analyses]
+        return self.post(f"/analysis/{analysis_id}/produce-artefact", payload)
 
     def register_file_listing(
         self,

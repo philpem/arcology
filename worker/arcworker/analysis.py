@@ -695,11 +695,21 @@ class AnalysisWorker:
             results.append(('IMD', imd_result))
 
             if imd_result['success']:
+                # When the source is HFE, suppress FLUX_DECODE on the derived
+                # IMD — Greaseweazle is about to run on the source HFE directly,
+                # so letting the IMD re-trigger FLUX_DECODE would produce a
+                # duplicate RAW_SECTOR artefact.
+                imd_skip = (
+                    [AnalysisType.FLUX_DECODE]
+                    if source_type is ArtefactType.HFE
+                    else None
+                )
                 derived = self.api.register_derived_artefact(
                     analysis_id,
                     f"{artefact_label} (IMD)",
                     imd_path,
-                    ArtefactType.IMD
+                    ArtefactType.IMD,
+                    skip_analyses=imd_skip,
                 )
                 log.info(f"Created derived IMD artefact: {derived}")
         elif source_type is ArtefactType.IMD:

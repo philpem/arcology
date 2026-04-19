@@ -36,7 +36,7 @@ if _REPO_ROOT not in sys.path:
 
 os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 
-from shared.enums import ArtefactType
+from shared.enums import ArtefactType, AnalysisType
 from worker.arcworker import analysis as analysis_module
 from worker.arcworker.analysis import AnalysisWorker
 
@@ -136,9 +136,9 @@ class TestFluxDecodeHFESource(FluxDecodeTestBase):
         self.assertIn(
             ArtefactType.IMD, derived_types,
             'HFE source should produce an IMD derived artefact (HxCFE '
-            'auto-detects HFE input).  The derived IMD will re-run '
-            'FLUX_DECODE, but the IMD branch emits no HFE sibling, so '
-            'the chain terminates.',
+            'auto-detects HFE input).  FLUX_DECODE is suppressed on the '
+            'derived IMD so that Greaseweazle running directly on the '
+            'source HFE does not produce a duplicate RAW_SECTOR.',
         )
         self.assertIn(
             ArtefactType.RAW_SECTOR, derived_types,
@@ -158,6 +158,25 @@ class TestFluxDecodeHFESource(FluxDecodeTestBase):
         self.imd_tool.assert_called_once()
         self.hfe_tool.assert_not_called()
         self.gw_tool.assert_called_once()
+
+    def test_hfe_derived_imd_suppresses_flux_decode(self):
+        """When registering the derived IMD from an HFE source, skip_analyses
+        must include FLUX_DECODE so that the IMD does not auto-queue another
+        Greaseweazle run and produce a duplicate RAW_SECTOR artefact."""
+        self._run(ArtefactType.HFE)
+        # Find the register_derived_artefact call that registered the IMD.
+        imd_calls = [
+            c for c in self.worker.api.register_derived_artefact.call_args_list
+            if c.args[3] is ArtefactType.IMD
+        ]
+        self.assertEqual(len(imd_calls), 1, 'Expected exactly one IMD registration')
+        skip = imd_calls[0].kwargs.get('skip_analyses', [])
+        self.assertIn(
+            AnalysisType.FLUX_DECODE, skip,
+            'FLUX_DECODE must be in skip_analyses for the derived IMD so '
+            'that it does not re-queue Greaseweazle and produce a second '
+            'RAW_SECTOR artefact (bug #120 follow-up).',
+        )
 
 
 class TestFluxDecodeIMDSource(FluxDecodeTestBase):

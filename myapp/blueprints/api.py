@@ -1144,6 +1144,7 @@ def produce_artefact(id):
     queued_analyses = []
     if data.get('auto_analyse', True):
         from .artefacts import queue_analyses_for_artefact, ANALYSIS_MAP
+        from shared.enums import AnalysisType as _AnalysisType
 
         # Pass through any hints from parent analysis
         hints = None
@@ -1151,8 +1152,20 @@ def produce_artefact(id):
             import json
             hints = json.loads(analysis.hints)
 
-        queue_analyses_for_artefact(artefact, hints)
-        queued_analyses = [t.value for t in ANALYSIS_MAP.get(artefact_type, [])]
+        # Caller may request specific analyses be excluded (e.g. suppress
+        # FLUX_DECODE on a derived IMD to prevent a double RAW_SECTOR).
+        skip_analyses = []
+        for s in data.get('skip_analyses', []):
+            try:
+                skip_analyses.append(_AnalysisType(s))
+            except ValueError:
+                pass
+
+        queue_analyses_for_artefact(artefact, hints, skip_analyses=skip_analyses)
+        queued_analyses = [
+            t.value for t in ANALYSIS_MAP.get(artefact_type, [])
+            if t not in set(skip_analyses)
+        ]
 
     return jsonify({
         'artefact': artefact_to_dict(artefact),

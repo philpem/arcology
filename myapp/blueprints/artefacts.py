@@ -193,7 +193,8 @@ ANALYSIS_MAP = {
 def queue_analyses_for_artefact(artefact: Artefact, hints: dict = None,
                                 checksum_only: bool = False,
                                 skip_duplicate_check: bool = False,
-                                commit: bool = True):
+                                commit: bool = True,
+                                skip_analyses: list = None):
     """Queue appropriate analyses for an artefact based on its type.
 
     CHECKSUM_COMPUTE is always prepended as the first job regardless of artefact
@@ -204,10 +205,17 @@ def queue_analyses_for_artefact(artefact: Artefact, hints: dict = None,
     to avoid redundant SELECT queries (the reset already deleted all analyses).
 
     Pass commit=False to defer the commit to the caller (useful for batch operations).
+
+    Pass skip_analyses as a list of AnalysisType members to exclude specific
+    analyses from the auto-queued set (e.g. to prevent a derived artefact from
+    re-triggering the analysis that produced it).
     """
     analysis_types = [AnalysisType.CHECKSUM_COMPUTE]
     if not checksum_only:
         analysis_types += ANALYSIS_MAP.get(artefact.artefact_type, [AnalysisType.FORMAT_IDENTIFY])
+    if skip_analyses:
+        skip_set = set(skip_analyses)
+        analysis_types = [t for t in analysis_types if t not in skip_set]
     hints_json = json.dumps(hints) if hints else None
 
     for analysis_type in analysis_types:
