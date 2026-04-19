@@ -1,4 +1,5 @@
 {% extends "_base.html" %}
+{% from "_pagination.html" import render_pagination_compact %}
 {% block page_title %}View — {{ artefact.label }}{% endblock %}
 
 {% block styles %}
@@ -39,6 +40,10 @@
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     background: rgba(0,0,0,0.55); z-index: 10; border-radius: 0.25rem;
 }
+/* 8-column grid at xl breakpoint (Bootstrap has no col-1.5) */
+@media (min-width: 1200px) {
+    .col-custom-8-xl { flex: 0 0 12.5%; width: 12.5%; max-width: 12.5%; }
+}
 </style>
 {% endblock %}
 
@@ -74,6 +79,55 @@
 <div class="alert alert-info">
     <i class="bi bi-hourglass-split"></i> Some conversions are still in progress — refresh to see more.
 </div>
+{% endif %}
+
+{# ── Toolbar: filetype filters + columns selector ── #}
+{% if filetype_facet or total_groups > 0 %}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+    {# Filetype filter buttons — ordered by count desc from the view #}
+    {% if filetype_facet %}
+    <span class="text-muted small me-1">Filter:</span>
+    {% for ft, count in filetype_facet %}
+    <a href="?{{ filetype_toggle_urls[ft] | urlencode }}"
+       class="btn btn-sm {{ 'btn-secondary' if ft in active_filetypes else 'btn-outline-secondary' }}"
+       aria-pressed="{{ 'true' if ft in active_filetypes else 'false' }}">
+        {{ ft | filetype_name }} ({{ count }})
+    </a>
+    {% endfor %}
+    {% if active_filetypes %}
+    <a href="?{{ clear_filter_args | urlencode }}" class="btn btn-sm btn-outline-danger">Clear</a>
+    {% endif %}
+    <span class="border-start mx-1">&nbsp;</span>
+    {% endif %}
+
+    {# Summary counts #}
+    <span class="text-muted small">
+        <strong>{{ total_groups }}</strong> file{{ 's' if total_groups != 1 else '' }}
+        {% if total_counts.get('image') %}<span class="ms-2"><i class="bi bi-image"></i> {{ total_counts['image'] }}</span>{% endif %}
+        {% if total_counts.get('text') %}<span class="ms-2"><i class="bi bi-file-text"></i> {{ total_counts['text'] }}</span>{% endif %}
+        {% if total_counts.get('svg') %}<span class="ms-2"><i class="bi bi-filetype-svg"></i> {{ total_counts['svg'] }}</span>{% endif %}
+    </span>
+
+    {# Columns selector (right-aligned) #}
+    <div class="ms-auto d-flex align-items-center gap-1">
+        <span class="text-muted small me-1"><i class="bi bi-grid-3x3-gap"></i></span>
+        {% for cols in valid_viewer_columns %}
+        <a href="?{{ dict(pagination_args, columns=cols) | urlencode }}"
+           class="btn btn-sm {{ 'btn-secondary' if viewer_columns == cols else 'btn-outline-secondary' }}"
+           title="{{ cols }} columns"
+           aria-label="Show {{ cols }} columns"
+           aria-pressed="{{ 'true' if viewer_columns == cols else 'false' }}">{{ cols }}</a>
+        {% endfor %}
+    </div>
+</div>
+
+{# Empty-filter feedback #}
+{% if active_filetypes and not output_groups %}
+<div class="alert alert-info">
+    <i class="bi bi-funnel"></i> No outputs match the current filetype filter.
+    <a href="?{{ clear_filter_args | urlencode }}" class="alert-link">Clear filter</a>
+</div>
+{% endif %}
 {% endif %}
 
 {% if module_detail %}
@@ -155,13 +209,13 @@
   {# ── Explicit content gate ── #}
   {% if user_can_bypass_explicit %}
   {# Bypass permitted: blur content with a consent overlay #}
-  <div class="explicit-gate mb-4" id="explicit-gate-{{ loop.index }}">
-    <div class="explicit-gate-overlay" id="explicit-overlay-{{ loop.index }}">
+  <div class="explicit-gate mb-4" id="explicit-gate-{{ group.stable_id }}">
+    <div class="explicit-gate-overlay" id="explicit-overlay-{{ group.stable_id }}">
       <span class="badge bg-danger fs-6 mb-2"><i class="bi bi-exclamation-triangle-fill"></i> Explicit Content</span>
       <p class="text-white text-center small mb-3">This content is marked as explicit. Click to reveal.</p>
-      <button class="btn btn-outline-light btn-sm" onclick="revealExplicit({{ loop.index }})">I understand — show content</button>
+      <button class="btn btn-outline-light btn-sm" onclick="revealExplicit('{{ group.stable_id }}')">I understand — show content</button>
     </div>
-    <div id="explicit-content-{{ loop.index }}" class="explicit-content-blur">
+    <div id="explicit-content-{{ group.stable_id }}" class="explicit-content-blur">
 {% else %}
   {# No bypass: content is simply hidden #}
   <div class="alert alert-danger mb-4">
@@ -176,14 +230,14 @@
 {% if ns.image_outputs %}
     <div class="row g-3 mb-4">
         {% for out in ns.image_outputs %}
-        <div class="col-6 col-sm-4 col-md-3">
+        <div class="{{ viewer_col_class }}">
             <div class="card viewer-img-card h-100">
                 {# Prefer svg_filename for old results where PNG was stored as filename; new results store SVG directly as filename. #}
                 {% set preview_file = out.svg_filename if out.svg_filename else out.filename %}
                 <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
                    target="_blank" rel="noopener">
                     <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
-                         class="viewer-img card-img-top" alt="{{ out.name }}">
+                         class="viewer-img card-img-top" alt="{{ out.name }}" loading="lazy">
                 </a>
                 <div class="card-footer p-1 text-center">
                     <span class="viewer-name font-monospace">{{ out.name }}</span>
@@ -238,24 +292,31 @@
 {% endif %}
 {% endfor %}
 
+{# ── Pagination controls ── #}
+{% if pagination %}
+<div class="card mt-4">
+    {{ render_pagination_compact(pagination, pagination_args, valid_per_page=valid_per_page, view_all=view_all) }}
+</div>
+{% endif %}
+
 {% if output_groups %}
 <script>
-function revealExplicit(idx) {
-    var overlay = document.getElementById('explicit-overlay-' + idx);
-    var content = document.getElementById('explicit-content-' + idx);
+function revealExplicit(gid) {
+    var overlay = document.getElementById('explicit-overlay-' + gid);
+    var content = document.getElementById('explicit-content-' + gid);
     if (overlay) overlay.style.display = 'none';
     if (content) {
         content.classList.remove('explicit-content-blur');
         content.style.pointerEvents = '';
     }
-    try { sessionStorage.setItem('explicit_consent_' + idx, '1'); } catch(e) {}
+    try { sessionStorage.setItem('explicit_consent_' + gid, '1'); } catch(e) {}
 }
 document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('[id^="explicit-content-"]').forEach(function(el) {
-        var idx = el.id.replace('explicit-content-', '');
+        var gid = el.id.replace('explicit-content-', '');
         try {
-            if (sessionStorage.getItem('explicit_consent_' + idx) === '1') {
-                revealExplicit(idx);
+            if (sessionStorage.getItem('explicit_consent_' + gid) === '1') {
+                revealExplicit(gid);
             }
         } catch(e) {}
     });

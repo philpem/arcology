@@ -167,4 +167,36 @@ def resolve_sort(param_name, valid_options, preference_key, default):
     return default
 
 
+class ListPagination:
+    """Pagination wrapper for in-memory lists.
+
+    Provides the same interface as Flask-SQLAlchemy's ``Pagination`` object
+    so it can be used with the ``render_pagination_compact`` Jinja macro.
+    """
+
+    def __init__(self, items, page, per_page):
+        self.total = len(items)
+        self.per_page = per_page
+        self.pages = max(1, -(-self.total // per_page))  # ceil division
+        self.page = max(1, min(page, self.pages))  # clamp to valid range
+        start = (self.page - 1) * per_page
+        self.items = items[start:start + per_page]
+        self.has_prev = self.page > 1
+        self.has_next = self.page < self.pages
+        self.prev_num = self.page - 1 if self.has_prev else None
+        self.next_num = self.page + 1 if self.has_next else None
+
+    def iter_pages(self, left_edge=2, left_current=2, right_current=3, right_edge=2):
+        """Yield page numbers with ``None`` gaps, matching Flask-SQLAlchemy."""
+        last = 0
+        for num in range(1, self.pages + 1):
+            if (num <= left_edge
+                    or (self.page - left_current <= num <= self.page + right_current)
+                    or num > self.pages - right_edge):
+                if last + 1 != num:
+                    yield None
+                yield num
+                last = num
+
+
 # vim: ts=4 sw=4 et
