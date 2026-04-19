@@ -1188,6 +1188,11 @@ def _render_viewer(artefact):
 
     viewer_status = None  # 'pending', 'failed', 'partial', or None (ready)
     file_filter = request.args.get('file')
+    # Subdirectory browse filter — matches the File Viewer's ?path=<dir>/ scheme
+    # so selecting a subdirectory there carries through to the Viewer.
+    current_path = request.args.get('path', '').strip()
+    if current_path and not current_path.endswith('/'):
+        current_path += '/'
     all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
     use_pagination = False  # only paginate Mode 2 aggregate view without ?file=
 
@@ -1254,6 +1259,14 @@ def _render_viewer(artefact):
         # Sort groups alphabetically by label for stable ordering across pages
         output_groups.sort(key=lambda g: g['label'].lower())
 
+        # Apply subdirectory filter (Mode 2 only).  Matches File Viewer ?path=
+        # semantics: include everything under the prefix (current level + deeper).
+        if current_path:
+            output_groups = [
+                g for g in output_groups
+                if (g.get('source_file') or '').startswith(current_path)
+            ]
+
         if not output_groups:
             viewer_status = 'pending' if pending_count > 0 else 'failed'
         elif pending_count > 0:
@@ -1262,6 +1275,36 @@ def _render_viewer(artefact):
         # Enable pagination for aggregate view without ?file= filter
         if not file_filter:
             use_pagination = True
+
+    # ── Subdirectory navigation (Mode 2) ─────────────────────────────────────
+    # Compute before the filetype filter so subdirectories stay visible even
+    # when the current filetype filter empties the grid.
+    subdirectories: list = []
+    archive_paths: set = set()
+    if not file_filter and artefact.artefact_type not in _viewable_types:
+        from ..utils.path_nav import compute_subdirectories
+        source_files_in_scope = [
+            g.get('source_file') for g in output_groups if g.get('source_file')
+        ]
+        subdirectories = compute_subdirectories(source_files_in_scope, current_path)
+        if subdirectories:
+            partition_ids_arc = [
+                p.id for p in Partition.query.filter(
+                    Partition.artefact_id.in_(all_artefact_ids)
+                ).all()
+            ]
+            if partition_ids_arc:
+                archive_paths = {
+                    row.path for row in (
+                        ExtractedFile.query
+                        .filter(
+                            ExtractedFile.partition_id.in_(partition_ids_arc),
+                            ExtractedFile.is_archive == True,
+                        )
+                        .with_entities(ExtractedFile.path)
+                        .all()
+                    )
+                }
 
     # ── Filetype facet (Mode 2 only, when there are source_file paths) ───────
     filetype_facet = []  # [(hex_code, count), ...] sorted by count desc
@@ -1456,6 +1499,9 @@ def _render_viewer(artefact):
         viewer_columns=viewer_columns,
         viewer_col_class=viewer_col_class,
         valid_viewer_columns=_VALID_VIEWER_COLUMNS,
+        current_path=current_path,
+        subdirectories=subdirectories,
+        archive_paths=archive_paths,
     )
 
 
@@ -1662,30 +1708,18 @@ def _render_artefact_view(artefact):
 
     # Extract subdirectories at the current path level for directory browsing
     current_path = file_form.path.data.strip() if file_form.path.data else ''
-    subdirectories = set()
+    subdirectories: list = []
 
     if all_partitions:
+        from ..utils.path_nav import compute_subdirectories
+
         # Infer subdirectories from file paths (covers non-empty directories).
-        all_files = files_query.with_entities(ExtractedFile.path).all()
-
-        for (file_path,) in all_files:
-            # Remove the current path prefix
-            if current_path:
-                if not file_path.startswith(current_path):
-                    continue
-                relative_path = file_path[len(current_path):]
-            else:
-                relative_path = file_path
-
-            # Extract the first directory component
-            if '/' in relative_path:
-                first_dir = relative_path.split('/')[0]
-                if first_dir:  # Ignore empty strings
-                    subdirectories.add(first_dir)
+        all_file_paths = [p for (p,) in files_query.with_entities(ExtractedFile.path).all()]
+        subdir_set = set(compute_subdirectories(all_file_paths, current_path))
 
         # Also surface explicit is_directory=True entries (covers empty directories
-        # recorded by the worker). These are excluded from files_query when the
-        # "Dirs" checkbox is off, so query them separately.
+        # recorded by the worker). These are excluded from files_query when
+        # filters suppress directory rows, so query them separately.
         dir_entries_query = (
             ExtractedFile.query.join(Partition)
             .filter(
@@ -1707,10 +1741,10 @@ def _render_artefact_view(artefact):
                 relative_path = dir_path
             # Only add direct children (no slash = not a deeper descendant)
             if relative_path and '/' not in relative_path:
-                subdirectories.add(relative_path)
+                subdir_set.add(relative_path)
 
-    from natsort import natsorted, ns
-    subdirectories = natsorted(subdirectories, alg=ns.IGNORECASE)
+        from natsort import natsorted, ns
+        subdirectories = natsorted(subdir_set, alg=ns.IGNORECASE)
 
     # Build a set of archive file paths so the template can show archive
     # icons for "directories" that are actually archives.

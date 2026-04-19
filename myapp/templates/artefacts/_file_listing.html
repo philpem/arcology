@@ -1,28 +1,10 @@
 {% from '_pagination.html' import render_pagination_compact, render_letter_bar_compact %}
+{% from '_path_nav.html' import render_path_breadcrumb, render_subdirectory_bar %}
         <div class="card" id="files">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span>
-                    <i class="bi bi-folder2-open"></i>
-                    {% if file_form.path.data %}
-                        <a href="?{{ dict(pagination_args, path='')|urlencode }}" class="text-primary text-decoration-none">Extracted Files</a>
-                        {% if hashdb_mode %}<span class="badge bg-warning text-dark ms-2"><i class="bi bi-database-add"></i> Hash DB Mode</span>{% endif %}
-                        {% set path_parts = file_form.path.data.rstrip('/').split('/') %}
-                        {% for i in range(path_parts|length) %}
-                            <i class="bi bi-chevron-right text-muted small mx-1"></i>
-                            {% if i < path_parts|length - 1 %}
-                                {% set segment_path = path_parts[:i+1]|join('/') + '/' %}
-                                <a href="?{{ dict(pagination_args, path=segment_path)|urlencode }}" class="text-primary text-decoration-none"><code>{{ path_parts[i] }}</code></a>
-                            {% else %}
-                                <code class="text-muted">{{ path_parts[i] }}</code>
-                            {% endif %}
-                        {% endfor %}
-                        <a href="?{{ dict(pagination_args, path='')|urlencode }}" class="btn btn-sm btn-outline-secondary ms-2" title="Clear path filter">
-                            <i class="bi bi-x"></i> Clear
-                        </a>
-                    {% else %}
-                        Extracted Files
-                        {% if hashdb_mode %}<span class="badge bg-warning text-dark ms-2"><i class="bi bi-database-add"></i> Hash DB Mode</span>{% endif %}
-                    {% endif %}
+                    {{ render_path_breadcrumb(file_form.path.data or '', pagination_args) }}
+                    {% if hashdb_mode %}<span class="badge bg-warning text-dark ms-2"><i class="bi bi-database-add"></i> Hash DB Mode</span>{% endif %}
                 </span>
                 {% if all_partitions %}
                 <a href="?{% if not hashdb_mode %}mode=hashdb&{% endif %}{{ hashdb_toggle_args | urlencode }}"
@@ -54,27 +36,7 @@
                     <a href="?{% if hashdb_mode %}mode=hashdb{% endif %}" class="btn btn-sm btn-outline-secondary" title="Clear all filters">Clear</a>
                 </form>
             </div>
-            {% if subdirectories %}
-            <div class="card-body border-bottom bg-light">
-                <div class="small text-muted mb-2"><i class="bi bi-folder"></i> Subdirectories at this level:</div>
-                <div class="d-flex flex-wrap gap-2">
-                    {% for subdir in subdirectories %}
-                    {% set subdir_full_path = current_path + subdir %}
-                    {% set subdir_rp = recognised_folder_paths.get(subdir_full_path) %}
-                    <a href="?{{ dict(pagination_args, path=subdir_full_path + '/') | urlencode }}"
-                       class="btn btn-sm {{ 'btn-info' if subdir_rp else 'btn-outline-primary' }}"
-                       {% if subdir_rp %}title="Recognised: {{ subdir_rp.product.title }} ({{ subdir_rp.required_matched }}/{{ subdir_rp.required_total }} required matched)"{% endif %}>
-                        {% if subdir_full_path in archive_paths %}
-                        <i class="bi bi-file-zip-fill"></i>
-                        {% else %}
-                        <i class="bi bi-folder-fill"></i>
-                        {% endif %}
-                        {{ subdir }}{% if subdir_rp %} <i class="bi bi-check2-square"></i>{% endif %}
-                    </a>
-                    {% endfor %}
-                </div>
-            </div>
-            {% endif %}
+            {{ render_subdirectory_bar(subdirectories, current_path, pagination_args, archive_paths=archive_paths, recognised_folder_paths=recognised_folder_paths) }}
             {{ render_letter_bar_compact(letter_pages, current_letter, pagination_args) }}
             {% if hashdb_mode %}
             <form id="hashdb-form" action="{{ url_for('myapp_blueprints_artefacts.add_to_hashdb', uuid=artefact.uuid) }}" method="post">

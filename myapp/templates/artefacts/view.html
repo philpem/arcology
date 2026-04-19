@@ -125,7 +125,7 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
         <a href="{{ artefact_url(artefact, 'download') }}" class="btn btn-success"><i class="bi bi-download"></i> Download</a>
         {% endif %}
         {% if has_converted_outputs %}
-        <a href="{{ artefact_url(artefact, 'viewer') }}" class="btn btn-outline-info"><i class="bi bi-eye"></i> View</a>
+        <a href="{{ artefact_url(artefact, 'viewer') }}{% if file_form.path.data %}?path={{ file_form.path.data | urlencode }}{% endif %}" class="btn btn-outline-info"><i class="bi bi-eye"></i> View</a>
         {% endif %}
         {% if user_can_write %}
         <a href="{{ artefact_url(artefact, 'analyse') }}" class="btn btn-primary"><i class="bi bi-gear"></i> Re-analyse</a>
