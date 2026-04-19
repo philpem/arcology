@@ -38,6 +38,7 @@ Garage is recommended for self-hosting due to its simplicity and zero cost.
 mkdir -p data/garage
 openssl rand -hex 32 > data/garage/rpc_secret
 openssl rand -hex 32 > data/garage/admin_token
+chmod 600 data/garage/rpc_secret data/garage/admin_token
 ```
 
 ### 2. Start Garage
