@@ -1433,7 +1433,7 @@ def _render_viewer(artefact):
         # (especially across paginated pages, where loop.index collides).
         key_source = group.get('source_file') or group.get('label') or ''
         group['stable_id'] = hashlib.md5(
-            f"{artefact.url_id}:{key_source}".encode('utf-8')
+            f"{artefact.uuid}:{key_source}".encode('utf-8')
         ).hexdigest()[:12]
 
     return render_template(
