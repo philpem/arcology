@@ -114,8 +114,9 @@ def _make_adfs_floppy_sector0(
     Return a 1024-byte sector 0 for an ADFS floppy new-map disc.
 
     The first 512 bytes form the Filecore floppy boot block (mod-256 sum = 0).
-    The disc record begins at byte 4.  Bytes 0x200-0x204 hold the optional
-    directory magic for ADFS-D/E disambiguation (only relevant when spt==5).
+    The disc record begins at byte 4.  Bytes 0x200-0x204 hold optional
+    directory magic (Hugo/SBPr) which is ignored by the probes but kept for
+    test completeness.
     """
     buf = bytearray(1024)
     # Disc record at byte 4
@@ -165,7 +166,7 @@ class TestParseImdTrack0(unittest.TestCase):
         self.assertEqual(result['heads'],       2)
         self.assertEqual(len(result['sectors']), 16)
 
-    def test_mfm_80_2_5_1024_adfs_d(self):
+    def test_mfm_80_2_5_1024_adfs(self):
         # MFM, 80 cylinders, 2 heads, 5 sectors/track, 1024B — ADFS-D geometry
         tracks = []
         for cyl in range(80):
@@ -305,7 +306,7 @@ class TestDetectGeometry(unittest.TestCase):
 
     # ── Probe D: ADFS floppy new-map ──────────────────────────────────────
 
-    def test_probe_d_adfs_d_floppy(self):
+    def test_probe_d_adfs_800k_floppy(self):
         sec0 = _make_adfs_floppy_sector0(
             log2ss=10, spt=5, heads=2,
             disc_size=800*1024, directory_magic=b'Hugo'
@@ -319,12 +320,14 @@ class TestDetectGeometry(unittest.TestCase):
                            'sectors': {i: bytes(1024) for i in range(5)}})
         geo = self._detect(tracks)
         self.assertIsNotNone(geo)
-        self.assertEqual(geo['filesystem'],        'adfs_d')
+        self.assertEqual(geo['filesystem'],        'adfs')
         self.assertEqual(geo['sectors_per_track'],  5)
         self.assertEqual(geo['sector_size'],        1024)
         self.assertEqual(geo['heads'],              2)
 
-    def test_probe_d_adfs_e_floppy(self):
+    def test_probe_d_adfs_800k_sbpr_gives_adfs(self):
+        # SBPr is no longer examined; geometry alone selects the format.
+        # A disc with SBPr in the boot sector still yields filesystem='adfs'.
         sec0 = _make_adfs_floppy_sector0(
             log2ss=10, spt=5, heads=2,
             disc_size=800*1024, directory_magic=b'SBPr'
@@ -333,11 +336,12 @@ class TestDetectGeometry(unittest.TestCase):
                    'sectors': {i: (sec0 if i == 0 else bytes(1024)) for i in range(5)}}]
         geo = self._detect(tracks)
         self.assertIsNotNone(geo)
-        self.assertEqual(geo['filesystem'], 'adfs_e')
+        self.assertEqual(geo['filesystem'], 'adfs')
+        self.assertEqual(geo['sectors_per_track'], 5)
 
-    def test_probe_d_adfs_f_1600k(self):
+    def test_probe_d_adfs_1600k(self):
         # ADFS-F: 80 cyl × 2 heads × 10 SPT × 1024B → 1600K
-        # Disc record says spt=10 → must be identified as adfs_f, not adfs_d
+        # Disc record says spt=10 → must be identified as adfs (not fall back)
         sec0 = _make_adfs_floppy_sector0(
             log2ss=10, spt=10, heads=2,
             disc_size=1600*1024, directory_magic=b'Hugo'  # Hugo present but irrelevant for F
@@ -350,13 +354,13 @@ class TestDetectGeometry(unittest.TestCase):
                                'sectors': {i: bytes(1024) for i in range(10)}})
         geo = self._detect(tracks)
         self.assertIsNotNone(geo)
-        self.assertEqual(geo['filesystem'],        'adfs_f')
+        self.assertEqual(geo['filesystem'],        'adfs')
         self.assertEqual(geo['sectors_per_track'],  10)
         self.assertEqual(geo['sector_size'],        1024)
         self.assertEqual(geo['heads'],              2)
         self.assertEqual(geo['probe'],              'D')
 
-    def test_probe_d_adfs_f_maps_to_acorn_adfs_1600(self):
+    def test_probe_d_adfs_1600k_maps_to_acorn_adfs_1600(self):
         sec0 = _make_adfs_floppy_sector0(
             log2ss=10, spt=10, heads=2, disc_size=1600*1024
         )
@@ -379,8 +383,8 @@ class TestDetectGeometry(unittest.TestCase):
             path.unlink(missing_ok=True)
         self.assertEqual(fmt, 'acorn.adfs.1600')
 
-    def test_probe_d_adfs_f_spt10_ignores_directory_magic(self):
-        # spt=10 must yield adfs_f even when SBPr is present (SBPr check should not apply)
+    def test_probe_d_adfs_1600k_sbpr_still_gives_adfs(self):
+        # No directory magic is checked; a disc with SBPr and spt=10 still gives adfs
         sec0 = _make_adfs_floppy_sector0(
             log2ss=10, spt=10, heads=2,
             disc_size=1600*1024, directory_magic=b'SBPr'
@@ -389,7 +393,7 @@ class TestDetectGeometry(unittest.TestCase):
                    'sectors': {i: (sec0 if i == 0 else bytes(1024)) for i in range(10)}}]
         geo = self._detect(tracks)
         self.assertIsNotNone(geo)
-        self.assertEqual(geo['filesystem'], 'adfs_f')
+        self.assertEqual(geo['filesystem'], 'adfs')
 
     # ── Probe B: Old-map ADFS (Hugo) ──────────────────────────────────────
 
@@ -412,7 +416,7 @@ class TestDetectGeometry(unittest.TestCase):
                                'sectors': {i: bytes(256) for i in range(16)}})
         geo = self._detect(tracks)
         self.assertIsNotNone(geo)
-        self.assertEqual(geo['filesystem'],        'adfs_old')
+        self.assertEqual(geo['filesystem'],        'adfs')
         self.assertEqual(geo['sectors_per_track'],  16)
         self.assertEqual(geo['sector_size'],        256)
 

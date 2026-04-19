@@ -17,26 +17,27 @@ from .base import run_tool_with_output
 # Map (filesystem, cylinders, heads, sectors_per_track, sector_size) → gw format name.
 # Format names verified against Greaseweazle diskdefs at commit 26690f89.
 # SPT values are authoritative (from boot structures), not from IMD headers.
+# All ADFS variants use filesystem='adfs'; the geometry alone is sufficient to
+# select the correct format — no sub-type (adfs_d/e/f/old) is needed.
 _GW_FORMAT_MAP: dict[tuple, str] = {
-    ('dfs',      40, 1, 10, 256):  'acorn.dfs.ss',
-    ('dfs',      40, 2, 10, 256):  'acorn.dfs.ds',
-    ('dfs',      80, 1, 10, 256):  'acorn.dfs.ss80',
-    ('dfs',      80, 2, 10, 256):  'acorn.dfs.ds80',
-    ('adfs_old', 40, 1, 16, 256):  'acorn.adfs.160',
-    ('adfs_old', 80, 1, 16, 256):  'acorn.adfs.320',
-    ('adfs_old', 80, 2, 16, 256):  'acorn.adfs.640',
-    ('adfs_d',   80, 2,  5, 1024): 'acorn.adfs.800',
-    ('adfs_e',   80, 2,  5, 1024): 'acorn.adfs.800',   # same physical format as D
-    ('adfs_f',   80, 2, 10, 1024): 'acorn.adfs.1600',
-    ('fat',      40, 1,  8, 512):  'ibm.160',
-    ('fat',      40, 1,  9, 512):  'ibm.180',
-    ('fat',      40, 2,  8, 512):  'ibm.320',
-    ('fat',      40, 2,  9, 512):  'ibm.360',
-    ('fat',      80, 2,  9, 512):  'ibm.720',
-    ('fat',      80, 2, 15, 512):  'ibm.1200',
-    ('fat',      80, 2, 18, 512):  'ibm.1440',
-    ('fat',      80, 2, 21, 512):  'ibm.1680',
-    ('fat',      80, 2, 36, 512):  'ibm.2880',
+    ('dfs',  40, 1, 10, 256):  'acorn.dfs.ss',
+    ('dfs',  40, 2, 10, 256):  'acorn.dfs.ds',
+    ('dfs',  80, 1, 10, 256):  'acorn.dfs.ss80',
+    ('dfs',  80, 2, 10, 256):  'acorn.dfs.ds80',
+    ('adfs', 40, 1, 16, 256):  'acorn.adfs.160',
+    ('adfs', 80, 1, 16, 256):  'acorn.adfs.320',
+    ('adfs', 80, 2, 16, 256):  'acorn.adfs.640',
+    ('adfs', 80, 2,  5, 1024): 'acorn.adfs.800',
+    ('adfs', 80, 2, 10, 1024): 'acorn.adfs.1600',
+    ('fat',  40, 1,  8, 512):  'ibm.160',
+    ('fat',  40, 1,  9, 512):  'ibm.180',
+    ('fat',  40, 2,  8, 512):  'ibm.320',
+    ('fat',  40, 2,  9, 512):  'ibm.360',
+    ('fat',  80, 2,  9, 512):  'ibm.720',
+    ('fat',  80, 2, 15, 512):  'ibm.1200',
+    ('fat',  80, 2, 18, 512):  'ibm.1440',
+    ('fat',  80, 2, 21, 512):  'ibm.1680',
+    ('fat',  80, 2, 36, 512):  'ibm.2880',
 }
 
 
