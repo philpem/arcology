@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .base import run_tool_with_output
+from .partition import read_fat_volume_label
 from ..utils.text import normalize_extracted_filenames
 
 
@@ -184,6 +185,14 @@ def extract_dos_7z(input_path: Path, output_dir: Path) -> dict:
             str(input_path)
         ]
         result, process_output = run_tool_with_output(cmd)
+
+        # Remove the zero-byte phantom file that 7z creates from the FAT
+        # ATTR_VOLUME_ID root-directory entry (the volume label).
+        volume_label = read_fat_volume_label(input_path)
+        if volume_label:
+            phantom = output_dir / volume_label
+            if phantom.is_file() and phantom.stat().st_size == 0:
+                phantom.unlink()
 
         # Count extracted files
         extracted_files = list(output_dir.rglob('*'))
