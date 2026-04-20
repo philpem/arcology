@@ -302,10 +302,13 @@ class TestSkipAnalyses(unittest.TestCase):
         os.environ.setdefault('SQLALCHEMY_DATABASE_URI', 'sqlite:///:memory:')
         os.environ.setdefault('SECRET_KEY', 'test')
         from myapp.app import create_app
-        app = create_app({'TESTING': True,
-                          'SQLALCHEMY_DATABASE_URI': 'sqlite:///:memory:',
-                          'SECRET_KEY': 'test',
-                          'WTF_CSRF_ENABLED': False})
+        app = create_app()
+        app.config.update({
+            'TESTING': True,
+            'SQLALCHEMY_DATABASE_URI': 'sqlite:///:memory:',
+            'SECRET_KEY': 'test',
+            'WTF_CSRF_ENABLED': False,
+        })
         return app
 
     def test_skip_analyses_excludes_type(self):
@@ -315,10 +318,14 @@ class TestSkipAnalyses(unittest.TestCase):
             from myapp.extensions import db
             db.create_all()
             from myapp.blueprints.artefacts import queue_analyses_for_artefact
-            from myapp.database import Artefact, ArtefactType as DBArtefactType, StorageDirectory
+            from myapp.database import Artefact, ArtefactType as DBArtefactType, Item, StorageDirectory
+            item = Item(name='test item')
+            db.session.add(item)
+            db.session.flush()
             artefact = Artefact(
-                item_id=None,
+                item_id=item.id,
                 label='test',
+                original_filename='x.hfe',
                 artefact_type=ArtefactType.HFE,
                 storage_path='x.hfe',
                 storage_directory=StorageDirectory.OUTPUTS,
@@ -344,10 +351,14 @@ class TestSkipAnalyses(unittest.TestCase):
             from myapp.extensions import db
             db.create_all()
             from myapp.blueprints.artefacts import queue_analyses_for_artefact
-            from myapp.database import Artefact, StorageDirectory, Analysis
+            from myapp.database import Artefact, Item, StorageDirectory, Analysis
+            item = Item(name='test item 2')
+            db.session.add(item)
+            db.session.flush()
             artefact = Artefact(
-                item_id=None,
+                item_id=item.id,
                 label='test2',
+                original_filename='y.hfe',
                 artefact_type=ArtefactType.HFE,
                 storage_path='y.hfe',
                 storage_directory=StorageDirectory.OUTPUTS,

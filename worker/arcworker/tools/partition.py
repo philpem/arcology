@@ -964,6 +964,60 @@ def detect_partitions_sfdisk(input_path: Path) -> dict:
 # ADFS filesystem signature detection
 # =========================================================================
 
+def _determine_adfs_subformat(
+    adfs_variant: str | None,
+    boot_block_at: str | None,
+    disc_size: int,
+    header: bytes,
+    sbpr_offset: int | None,
+) -> str | None:
+    """
+    Determine the specific ADFS subformat (S, M, L, D, E, E+, F, F+).
+
+    Old-format (Hugo directories) variants are distinguished by disc size:
+      S: 40 tracks × 16 sectors × 256 B × 1 side = 163,840 B
+      M: 80 tracks × 16 sectors × 256 B × 1 side = 327,680 B
+      L: 80 tracks × 16 sectors × 256 B × 2 sides = 655,360 B
+      D: 80 tracks × 5 sectors × 1024 B × 2 sides = 819,200 B
+
+    New-format (SBPr directories) variants are distinguished by boot block
+    location (floppy vs hard disc) and the "big directory" flag:
+      E / E+: boot block at sector 0 (floppy)
+      F / F+: boot block at disc address &C00 (hard disc)
+
+    E+ and F+ use 4 KB "big directories".  They are identified by byte 5 of
+    the SBPr directory header being 0xFF (IsNewBigDir flag).
+
+    Returns one of 'S', 'M', 'L', 'D', 'E', 'E+', 'F', 'F+', or None.
+    """
+    if adfs_variant == 'old_map':
+        # Old-format ADFS: S, M, L, D — identified by disc size
+        if disc_size <= 163840:
+            return 'S'
+        elif disc_size <= 327680:
+            return 'M'
+        elif disc_size <= 655360:
+            return 'L'
+        else:
+            return 'D'
+
+    elif adfs_variant == 'new_map':
+        # New-format ADFS: E, E+, F, F+
+        # Check for big directories (E+ / F+): byte 5 of the SBPr header == 0xFF
+        is_plus = (
+            sbpr_offset is not None
+            and sbpr_offset + 6 <= len(header)
+            and header[sbpr_offset + 5] == 0xFF
+        )
+        if boot_block_at == 'C00':
+            return 'F+' if is_plus else 'F'
+        else:
+            # boot_block_at == 'sector0' or None (directory-only detection)
+            return 'E+' if is_plus else 'E'
+
+    return None
+
+
 def detect_acorn_adfs(input_path: Path) -> dict:
     """
     Detect Acorn ADFS filesystem by checking for known signatures.
@@ -986,7 +1040,8 @@ def detect_acorn_adfs(input_path: Path) -> dict:
         input_path: Path to raw disc image
 
     Returns:
-        Result dict with detection info
+        Result dict with detection info including ``adfs_subformat`` ('S', 'M',
+        'L', 'D', 'E', 'E+', 'F', 'F+') when determinable.
     """
     try:
         file_size = input_path.stat().st_size
@@ -998,6 +1053,13 @@ def detect_acorn_adfs(input_path: Path) -> dict:
 
         signatures = []
         adfs_variant = None
+        # Track boot block locations independently; &C00 takes priority over
+        # sector 0 when determining floppy vs hard-disc subformat because the
+        # sector-0 checksum has a 1-in-256 false-positive rate whereas the
+        # disc-record validation at &C00 is much stronger.
+        boot_block_sector0 = False
+        boot_block_C00 = False
+        sbpr_offset = None  # offset of first SBPr directory header found
 
         # Check ADFS boot block checksum at sector 0 (floppy new-map formats:
         # D, E, E+).  Sector 0 on a floppy holds the zone-0 map block; the
@@ -1012,6 +1074,7 @@ def detect_acorn_adfs(input_path: Path) -> dict:
                 if _is_valid_filecore_disc_record(header[4:]):
                     signatures.append('Valid ADFS boot block checksum (sector 0)')
                     adfs_variant = 'new_map'
+                    boot_block_sector0 = True
 
         # Check ADFS boot block checksum at disc address 0xC00 (hard-disc
         # new-map formats: F, F+).  The disc record lives at +0x1C0 within
@@ -1028,6 +1091,7 @@ def detect_acorn_adfs(input_path: Path) -> dict:
                 if _is_valid_filecore_disc_record(boot_block[FILECORE_BB_DISC_RECORD_OFFSET:]):
                     signatures.append('Valid ADFS boot block checksum (disc address &C00)')
                     adfs_variant = 'new_map'
+                    boot_block_C00 = True
             elif _is_valid_filecore_disc_record_strict(boot_block):
                 # Checksum failed but the disc record fields are
                 # individually valid.  Some ADFS formatters or disc
@@ -1035,6 +1099,7 @@ def detect_acorn_adfs(input_path: Path) -> dict:
                 # accept them via stricter disc record validation.
                 signatures.append('Valid ADFS disc record without checksum (disc address &C00)')
                 adfs_variant = 'new_map'
+                boot_block_C00 = True
 
         # Check for old-format directory signature "Hugo".
         # "Hugo" appears at byte 1 of the directory header (after the master
@@ -1064,6 +1129,8 @@ def detect_acorn_adfs(input_path: Path) -> dict:
                 signatures.append(f'"SBPr" at 0x{offset:X} (new-format directory)')
                 if not adfs_variant:
                     adfs_variant = 'new_map'
+                if sbpr_offset is None:
+                    sbpr_offset = offset
                 break
 
         # Check for new-format directory tail "Nick".
@@ -1075,9 +1142,19 @@ def detect_acorn_adfs(input_path: Path) -> dict:
                 if not adfs_variant:
                     adfs_variant = 'new_map'
 
+        # &C00 boot block takes priority over sector-0 boot block for
+        # floppy/hard-disc subformat classification.
+        boot_block_at = 'C00' if boot_block_C00 else ('sector0' if boot_block_sector0 else None)
+
+        adfs_subformat = _determine_adfs_subformat(
+            adfs_variant, boot_block_at, file_size, header, sbpr_offset,
+        ) if adfs_variant else None
+
         return {
             'adfs_detected': len(signatures) > 0,
             'adfs_variant': adfs_variant,
+            'adfs_subformat': adfs_subformat,
+            'boot_block_at': boot_block_at,
             'disc_size': file_size,
             'signatures': signatures,
         }

@@ -366,6 +366,7 @@ class AnalysisWorker:
         partition_index: int,
         *,
         partition_image_path: str | None = None,
+        container_format: str | None = None,
     ):
         """Queue FILE_EXTRACTION with the standard hint structure."""
         hints = {
@@ -374,6 +375,8 @@ class AnalysisWorker:
         }
         if partition_image_path:
             hints['partition_image_path'] = partition_image_path
+        if container_format:
+            hints['container_format'] = container_format
         self.api.queue_analysis(
             artefact_uuid,
             AnalysisType.FILE_EXTRACTION.value,
@@ -826,6 +829,7 @@ class AnalysisWorker:
         hints = json.loads(analysis.get('hints') or '{}')
         filesystem = hints.get('filesystem', '').lower()
         partition_index = hints.get('partition_index', 0)
+        hint_container_format = hints.get('container_format', '')
 
         # Use cached partition image from PARTITION_DETECT when available,
         # avoiding redundant decompression of the original artefact.
@@ -965,8 +969,21 @@ class AnalysisWorker:
                 log.warning(f"FAT volume label read failed: {exc}")
                 disc_name = None
 
-        # Determine filesystem type
-        if filesystem:
+        # When DIM reports a generic format ("Acorn ADFS Hard Disc") but
+        # PARTITION_DETECT already identified a specific subformat (e.g.
+        # "Acorn ADFS F"), prefer the more specific hint.  Also use the hint
+        # when DIM produced no container_format at all.
+        if hint_container_format and (
+            not container_format
+            or 'hard disc' in container_format.lower()
+        ):
+            container_format = hint_container_format
+
+        # Determine filesystem type.
+        # Treat 'unknown' the same as an absent hint so that a successful DIM
+        # run can upgrade the filesystem type (fixes the case where
+        # PARTITION_DETECT couldn't identify the format but DIM can).
+        if filesystem and filesystem != 'unknown':
             fs_type = filesystem
         elif artefact_type == ArtefactType.ISO.value:
             fs_type = 'iso9660'
@@ -1252,11 +1269,16 @@ class AnalysisWorker:
         results['adfs'] = adfs_result
 
         if not detected_partitions and adfs_result.get('adfs_detected'):
+            _adfs_subformat = adfs_result.get('adfs_subformat')
+            _adfs_label = (
+                f'Acorn ADFS {_adfs_subformat}' if _adfs_subformat else 'Acorn ADFS'
+            )
             detected_partitions = [{
                 'index': 0,
                 'start_byte': 0,
                 'filesystem': 'adfs',
-                'description': f'Acorn ADFS ({adfs_result.get("adfs_variant", "unknown variant")})',
+                'description': _adfs_label,
+                'container_format': _adfs_label,
                 'size_bytes': input_path.stat().st_size,
                 'signatures': adfs_result.get('signatures', []),
             }]
@@ -1345,6 +1367,7 @@ class AnalysisWorker:
                 )
                 if derived:
                     derived_uuid = derived['artefact']['uuid']
+                    part_cf = partition.get('container_format')
                     # Nexus printer partitions are not Filecore formatted; skip
                     # FILE_EXTRACTION so they are only registered as downloadable
                     # raw artefacts (see issue #89).
@@ -1358,15 +1381,20 @@ class AnalysisWorker:
                             # proceed directly to FILE_EXTRACTION as for any other fs.
                             armlock = detect_armlock(partition_path)
                             if armlock.get('detected'):
+                                _armlock_hints: dict = {'filesystem': fs, 'partition_index': idx}
+                                if part_cf:
+                                    _armlock_hints['container_format'] = part_cf
                                 self.api.queue_analysis(
                                     derived_uuid,
                                     AnalysisType.ARMLOCK_REMOVE.value,
-                                    hints={'filesystem': fs, 'partition_index': idx}
+                                    hints=_armlock_hints,
                                 )
                             else:
-                                self.queue_file_extraction(derived_uuid, fs, idx)
+                                self.queue_file_extraction(
+                                    derived_uuid, fs, idx, container_format=part_cf)
                         else:
-                            self.queue_file_extraction(derived_uuid, fs, idx)
+                            self.queue_file_extraction(
+                                derived_uuid, fs, idx, container_format=part_cf)
                 else:
                     log.error(f"Failed to register partition {idx} as derived artefact")
 
@@ -1447,9 +1475,12 @@ class AnalysisWorker:
             for partition in detected_partitions:
                 idx = partition['index']
                 fs = partition.get('filesystem', 'unknown')
+                part_cf = partition.get('container_format')
                 next_hints: dict = {'filesystem': fs, 'partition_index': idx}
                 if idx in partition_image_paths:
                     next_hints['partition_image_path'] = partition_image_paths[idx]
+                if part_cf:
+                    next_hints['container_format'] = part_cf
                 if fs == 'adfs':
                     check_path = (
                         Path(partition_image_paths[idx])
@@ -1469,6 +1500,7 @@ class AnalysisWorker:
                             fs,
                             idx,
                             partition_image_path=next_hints.get('partition_image_path'),
+                            container_format=part_cf,
                         )
                 else:
                     self.queue_file_extraction(
@@ -1476,6 +1508,7 @@ class AnalysisWorker:
                         fs,
                         idx,
                         partition_image_path=next_hints.get('partition_image_path'),
+                        container_format=part_cf,
                     )
 
         # -----------------------------------------------------------------
