@@ -209,6 +209,13 @@ def detect_geometry_from_boot_data(track0: dict) -> dict | None:
         sec0 = sectors[0]
         if len(sec0) >= 512:
             disc_record = sec0[4:]
+            log.debug(
+                f"IMD probe D: sec0[0:24]={sec0[0:24].hex()} "
+                f"chk512=0x{sum(sec0[0:512])&0xFF:02X} "
+                f"chk1024=0x{sum(sec0)&0xFF:02X} "
+                f"log2ss={sec0[4]} spt={sec0[5]} heads={sec0[6]} "
+                f"disc_size=0x{struct.unpack_from('<I', sec0, 0x14)[0]:08X}"
+            )
             if _is_valid_filecore_disc_record(disc_record):
                 log2ss          = disc_record[0]
                 spt             = disc_record[1]
