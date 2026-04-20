@@ -191,10 +191,14 @@ def detect_geometry_from_boot_data(track0: dict) -> dict | None:
 
     # ── Probe D: ADFS floppy new-map (D/E/F) ──────────────────────────────
     # Zone-0 boot block is at sector 0 (1024B); disc record starts at byte 4.
-    # The Filecore zone checksum covers the entire zone.  For newly-formatted
-    # discs the zone is exactly one 1024-byte sector; for many Acorn tools the
-    # checksum covers only the first 512 bytes (the "floppy boot block").
-    # Accept either scope to be robust against both variants.
+    # The Filecore zone checksum covers the entire zone.  For many Acorn tools
+    # the checksum covers only the first 512 bytes (the "floppy boot block").
+    # Accept either scope.  If neither checksum passes (non-standard formatting
+    # tools or flux→HFE→IMD conversion artefacts), fall back to disc_size field
+    # alignment: disc_size must be a whole number of sectors.  Together with the
+    # disc record validity check (log2ss ∈ {8,9,10,12}, disc_size > 0, spt > 0,
+    # heads > 0) the false-positive rate without a checksum is ≈ 4/256 × 1/256
+    # ≈ 0.006 %.
     # Covers ADFS-D (800K, Hugo dirs), ADFS-E (800K, new-format dirs), and
     # ADFS-F (1600K floppy).  All use the floppy boot block convention.
     #
@@ -203,19 +207,19 @@ def detect_geometry_from_boot_data(track0: dict) -> dict | None:
     # extra empty padding tracks beyond the actual disc capacity.
     if sector_size == 1024 and 0 in sectors:
         sec0 = sectors[0]
-        if len(sec0) >= 512 and (sum(sec0[0:512]) & 0xFF == 0 or sum(sec0) & 0xFF == 0):
+        if len(sec0) >= 512:
             disc_record = sec0[4:]
             if _is_valid_filecore_disc_record(disc_record):
-                log2ss   = disc_record[0]
-                spt      = disc_record[1]
-                dr_heads = disc_record[2]
-                if spt > 0 and dr_heads > 0:
-                    sector_size_dr = 1 << log2ss
-                    disc_size_bytes = struct.unpack_from('<I', disc_record, 0x10)[0]
-                    if disc_size_bytes > 0 and sector_size_dr > 0:
-                        auth_cylinders = disc_size_bytes // (spt * sector_size_dr * dr_heads)
-                    else:
-                        auth_cylinders = cylinders
+                log2ss          = disc_record[0]
+                spt             = disc_record[1]
+                dr_heads        = disc_record[2]
+                sector_size_dr  = 1 << log2ss
+                disc_size_bytes = struct.unpack_from('<I', disc_record, 0x10)[0]
+                checksum_ok  = (sum(sec0[0:512]) & 0xFF == 0 or sum(sec0) & 0xFF == 0)
+                size_aligned = disc_size_bytes > 0 and disc_size_bytes % sector_size_dr == 0
+                if spt > 0 and dr_heads > 0 and (checksum_ok or size_aligned):
+                    auth_cylinders = (disc_size_bytes // (spt * sector_size_dr * dr_heads)
+                                      if disc_size_bytes > 0 else cylinders)
                     log.debug(f"IMD probe D: ADFS floppy new-map, "
                               f"spt={spt} heads={dr_heads} log2ss={log2ss} "
                               f"disc_size={disc_size_bytes} → cylinders={auth_cylinders}")

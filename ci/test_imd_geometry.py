@@ -447,6 +447,35 @@ class TestDetectGeometry(unittest.TestCase):
             path.unlink(missing_ok=True)
         self.assertEqual(fmt, 'acorn.adfs.800')
 
+    def test_probe_d_no_checksum_detects_adfs_via_disc_size_alignment(self):
+        # Regression: real ADFS-D discs converted via flux→HFE→IMD by hxcfe
+        # sometimes produce sector 0 data where neither the 512B nor the 1024B
+        # mod-256 sum equals zero.  Probe D must still fire via the disc_size
+        # field alignment fallback (disc_size % sector_size == 0).
+        buf = bytearray(1024)
+        buf[4] = 10                                 # log2ss = 10 → 1024B sectors
+        buf[5] = 5                                  # spt
+        buf[6] = 2                                  # heads
+        struct.pack_into('<I', buf, 0x14, 800 * 1024)  # disc_size = 800K
+        # buf[3] stays 0 → sum(buf[0:512]) == 157 ≠ 0 → both checksums fail
+        sec0 = bytes(buf)
+        # Guard: confirm neither checksum variant passes
+        self.assertNotEqual(sum(sec0[0:512]) & 0xFF, 0)
+        self.assertNotEqual(sum(sec0) & 0xFF, 0)
+
+        tracks = [{'mode': 3, 'cylinder': 0, 'head': 0,
+                   'sectors': {i: (sec0 if i == 0 else bytes(1024)) for i in range(5)}}]
+        for cyl in range(1, 80):
+            for head in range(2):
+                tracks.append({'mode': 3, 'cylinder': cyl, 'head': head,
+                               'sectors': {i: bytes(1024) for i in range(5)}})
+        geo = self._detect(tracks)
+        self.assertIsNotNone(geo)
+        self.assertEqual(geo['filesystem'],        'adfs')
+        self.assertEqual(geo['sectors_per_track'],  5)
+        self.assertEqual(geo['cylinders'],          80)   # from disc_size
+        self.assertEqual(geo['probe'],              'D')
+
     # ── Probe B: Old-map ADFS (Hugo) ──────────────────────────────────────
 
     def test_probe_b_adfs_old_hugo(self):
