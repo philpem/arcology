@@ -1,7 +1,7 @@
 """Add IMAGE artefact type
 
 Revision ID: 000069e60a13
-Revises: 000069d43024
+Revises: 000069e74e9c
 Create Date: 2026-04-20
 
 """
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = '000069e60a13'
-down_revision = '000069d43024'
+down_revision = '000069e74e9c'
 branch_labels = None
 depends_on = None
 
