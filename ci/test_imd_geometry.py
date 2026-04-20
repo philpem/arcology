@@ -395,6 +395,58 @@ class TestDetectGeometry(unittest.TestCase):
         self.assertIsNotNone(geo)
         self.assertEqual(geo['filesystem'], 'adfs')
 
+    def test_probe_d_cylinders_from_disc_size_not_imd_count(self):
+        # Probe D must derive cylinder count from the disc record's disc_size
+        # field, NOT from the number of tracks in the IMD.  hxcfe often writes
+        # extra empty padding tracks beyond the actual disc capacity.
+        sec0 = _make_adfs_floppy_sector0(
+            log2ss=10, spt=5, heads=2, disc_size=800*1024
+        )
+        # Build a 3-track IMD (far fewer than 80) — cylinders should still be 80
+        tracks = [{'mode': 3, 'cylinder': 0, 'head': 0,
+                   'sectors': {i: (sec0 if i == 0 else bytes(1024)) for i in range(5)}}]
+        for cyl in range(1, 3):
+            for head in range(2):
+                tracks.append({'mode': 3, 'cylinder': cyl, 'head': head,
+                               'sectors': {i: bytes(1024) for i in range(5)}})
+        geo = self._detect(tracks)
+        self.assertIsNotNone(geo)
+        self.assertEqual(geo['filesystem'], 'adfs')
+        self.assertEqual(geo['cylinders'],  80)   # from disc_size, not IMD track count
+
+    def test_probe_d_extra_imd_cylinders_maps_to_800k(self):
+        # Regression: hxcfe writes 82 cylinders in the IMD for an 80-cylinder
+        # ADFS-D disc.  Format detection must still return 'acorn.adfs.800'.
+        sec0 = _make_adfs_floppy_sector0(
+            log2ss=10, spt=5, heads=2, disc_size=800*1024
+        )
+        tracks = [{'mode': 3, 'cylinder': 0, 'head': 0,
+                   'sectors': {i: (sec0 if i == 0 else bytes(1024)) for i in range(5)}}]
+        for cyl in range(1, 80):
+            for head in range(2):
+                tracks.append({'mode': 3, 'cylinder': cyl, 'head': head,
+                               'sectors': {i: bytes(1024) for i in range(5)}})
+        # Two extra empty padding cylinders (as hxcfe writes)
+        for cyl in range(80, 82):
+            for head in range(2):
+                tracks.append({'mode': 3, 'cylinder': cyl, 'head': head,
+                               'sectors': {i: bytes(1024) for i in range(5)}})
+        path = _write_imd(tracks)
+        try:
+            track0 = parse_imd_track0(path)
+            self.assertEqual(track0['cylinders'], 82)   # raw IMD count
+            geo = detect_geometry_from_boot_data(track0)
+            self.assertIsNotNone(geo)
+            self.assertEqual(geo['cylinders'], 80)       # from disc record
+            fmt = _geometry_to_gw_format(
+                filesystem=geo['filesystem'], cylinders=geo['cylinders'],
+                heads=geo['heads'], sectors_per_track=geo['sectors_per_track'],
+                sector_size=geo['sector_size'],
+            )
+        finally:
+            path.unlink(missing_ok=True)
+        self.assertEqual(fmt, 'acorn.adfs.800')
+
     # ── Probe B: Old-map ADFS (Hugo) ──────────────────────────────────────
 
     def test_probe_b_adfs_old_hugo(self):

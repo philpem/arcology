@@ -191,35 +191,39 @@ def detect_geometry_from_boot_data(track0: dict) -> dict | None:
 
     # ── Probe D: ADFS floppy new-map (D/E/F) ──────────────────────────────
     # Zone-0 boot block is at sector 0 (1024B); disc record starts at byte 4.
-    # The first 512 bytes are the Filecore floppy boot block (mod-256 sum = 0).
+    # The Filecore zone checksum covers the entire zone.  For newly-formatted
+    # discs the zone is exactly one 1024-byte sector; for many Acorn tools the
+    # checksum covers only the first 512 bytes (the "floppy boot block").
+    # Accept either scope to be robust against both variants.
     # Covers ADFS-D (800K, Hugo dirs), ADFS-E (800K, new-format dirs), and
     # ADFS-F (1600K floppy).  All use the floppy boot block convention.
     #
-    # No directory-type probes (Hugo/SBPr/Nick) are needed here:
-    #   • The geometry (SPT × sector_size) alone distinguishes every ADFS
-    #     variant — (5 × 1024) = 800K, (10 × 1024) = 1600K, (16 × 256) = S/M/L
-    #     — so the D/E/F/old sub-type label carries no information for gw format
-    #     selection and is omitted.
-    #   • SBPr is a RISC OS 4+ directory marker; pre-RO4 ADFS-E discs lack it.
-    #   • 'Nick' (directory tail magic for new-format dirs) sits at offset 0x7FC
-    #     within a 2048-byte directory block.  Sector 0 holds only the 512-byte
-    #     boot block and 512 bytes of zone-0 map — the root directory is not in
-    #     sector 0, so Nick is never accessible from track-0 data alone.
+    # Cylinder count is derived from the disc record's disc_size field rather
+    # than from the IMD track count, which can be inflated by hxcfe writing
+    # extra empty padding tracks beyond the actual disc capacity.
     if sector_size == 1024 and 0 in sectors:
         sec0 = sectors[0]
-        if len(sec0) >= 512 and sum(sec0[0:512]) & 0xFF == 0:
+        if len(sec0) >= 512 and (sum(sec0[0:512]) & 0xFF == 0 or sum(sec0) & 0xFF == 0):
             disc_record = sec0[4:]
             if _is_valid_filecore_disc_record(disc_record):
                 log2ss   = disc_record[0]
                 spt      = disc_record[1]
                 dr_heads = disc_record[2]
                 if spt > 0 and dr_heads > 0:
+                    sector_size_dr = 1 << log2ss
+                    disc_size_bytes = struct.unpack_from('<I', disc_record, 0x10)[0]
+                    if disc_size_bytes > 0 and sector_size_dr > 0:
+                        auth_cylinders = disc_size_bytes // (spt * sector_size_dr * dr_heads)
+                    else:
+                        auth_cylinders = cylinders
                     log.debug(f"IMD probe D: ADFS floppy new-map, "
-                              f"spt={spt} heads={dr_heads} log2ss={log2ss}")
+                              f"spt={spt} heads={dr_heads} log2ss={log2ss} "
+                              f"disc_size={disc_size_bytes} → cylinders={auth_cylinders}")
                     return {**base, 'filesystem': 'adfs',
+                            'cylinders':        auth_cylinders,
                             'sectors_per_track': spt,
-                            'sector_size': 1 << log2ss,
-                            'heads': dr_heads,
+                            'sector_size':       sector_size_dr,
+                            'heads':             dr_heads,
                             'probe': 'D'}
 
     # ── Probe E: ADFS hard-disc new-map (F/F+) ────────────────────────────
@@ -235,12 +239,20 @@ def detect_geometry_from_boot_data(track0: dict) -> dict | None:
                 spt      = disc_record[1]
                 dr_heads = disc_record[2]
                 if spt > 0 and dr_heads > 0:
+                    sector_size_dr = 1 << log2ss
+                    disc_size_bytes = struct.unpack_from('<I', disc_record, 0x10)[0]
+                    if disc_size_bytes > 0 and sector_size_dr > 0:
+                        auth_cylinders = disc_size_bytes // (spt * sector_size_dr * dr_heads)
+                    else:
+                        auth_cylinders = cylinders
                     log.debug(f"IMD probe E: ADFS hard-disc new-map, "
-                              f"spt={spt} heads={dr_heads} log2ss={log2ss}")
+                              f"spt={spt} heads={dr_heads} log2ss={log2ss} "
+                              f"disc_size={disc_size_bytes} → cylinders={auth_cylinders}")
                     return {**base, 'filesystem': 'adfs',
+                            'cylinders':         auth_cylinders,
                             'sectors_per_track': spt,
-                            'sector_size': 1 << log2ss,
-                            'heads': dr_heads,
+                            'sector_size':       sector_size_dr,
+                            'heads':             dr_heads,
                             'probe': 'E'}
 
     # ── Probe B: Old-map ADFS (S/M/L) ─────────────────────────────────────
