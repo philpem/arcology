@@ -18,7 +18,7 @@ from functools import wraps
 from flask import Blueprint, jsonify, request, current_app, send_file, redirect
 from flask_wtf.csrf import CSRFProtect
 from sqlalchemy import func, update, or_, select
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -577,12 +577,23 @@ def request_analysis(uuid):
     if nul_error:
         return nul_error
 
+    hints_json = data.get('hints')
+
+    # Acquire an exclusive row lock on the artefact before the idempotency
+    # check + insert.  Without this, two workers finishing sibling analyses
+    # simultaneously can both pass the "no existing PENDING/RUNNING" check
+    # and both insert duplicate jobs for the same follow-on analysis type.
+    # The lock serialises concurrent request_analysis calls for the same
+    # artefact, ensuring only one insert succeeds per (type, hints) pair.
+    db.session.execute(
+        select(Artefact).where(Artefact.id == artefact.id).with_for_update()
+    )
+
     # Idempotency: return existing PENDING/RUNNING analysis instead of creating a
     # duplicate.  COMPLETED/FAILED analyses may be intentionally re-run, so only
     # active ones are considered.  This mirrors the logic in queue_analyses_for_artefact().
     # Include hints in the check so that multiple ARCHIVE_EXTRACT jobs for
     # different files within the same artefact are not collapsed into one.
-    hints_json = data.get('hints')
     existing = Analysis.query.filter_by(
         artefact_id=artefact.id,
         analysis_type=analysis_type,
@@ -852,6 +863,15 @@ def _populate_search_index(analysis):
         return
 
     try:
+        # Serialise concurrent completions of the same analysis type for the
+        # same artefact (e.g. two workers completing re-analysis jobs at the
+        # same time).  Without this lock, both workers delete each other's
+        # freshly-inserted search-index rows in the delete-then-insert pattern
+        # below.  The lock is released when the outer transaction commits.
+        db.session.execute(
+            select(Artefact).where(Artefact.id == analysis.artefact_id).with_for_update()
+        )
+
         if analysis.analysis_type == AnalysisType.DISC_PROTECTION_DETECT:
             # Delete any previous rows for this artefact so re-runs stay clean.
             ArtefactProtection.query.filter_by(artefact_id=analysis.artefact_id).delete()
@@ -959,26 +979,34 @@ def reset_stale_analyses():
     timeout_seconds = current_app.config.get('STALE_JOB_TIMEOUT_SECONDS', 3600)
     # started_at is stored as naive UTC
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=timeout_seconds)
-    stale = Analysis.query.filter(
-        Analysis.status == AnalysisStatus.RUNNING,
-        Analysis.started_at < cutoff,
-    ).all()
-    for analysis in stale:
-        analysis.status = AnalysisStatus.PENDING
-        analysis.error_message = None
-        analysis.started_at = None
-        analysis.completed_at = None
-        analysis.tool_name = None
-        analysis.tool_version = None
-        analysis.output_url = None
-        analysis.output_path = None
-        analysis.success = None
-        analysis.summary = None
-        analysis.details = None
+    # Use a single atomic UPDATE rather than a read-modify-write loop.  A
+    # non-atomic approach (query.all() then modify in memory then commit) has a
+    # race window where a worker can complete and commit status='completed'
+    # between the read and the commit, causing the reset to overwrite the
+    # completion and re-queue an already-finished job.
+    result = db.session.execute(
+        update(Analysis)
+        .where(Analysis.status == AnalysisStatus.RUNNING)
+        .where(Analysis.started_at < cutoff)
+        .values(
+            status=AnalysisStatus.PENDING,
+            error_message=None,
+            started_at=None,
+            completed_at=None,
+            tool_name=None,
+            tool_version=None,
+            output_url=None,
+            output_path=None,
+            success=None,
+            summary=None,
+            details=None,
+        )
+    )
     db.session.commit()
-    if stale:
-        current_app.logger.info(f'Reset {len(stale)} stale analysis job(s) to PENDING')
-    return jsonify({'reset': len(stale)})
+    count = result.rowcount
+    if count:
+        current_app.logger.info(f'Reset {count} stale analysis job(s) to PENDING')
+    return jsonify({'reset': count})
 
 
 # =============================================================================
@@ -1533,7 +1561,23 @@ def upload_artefact(item_uuid):
 		sha256=sha256,
 	)
 	db.session.add(artefact)
-	db.session.commit()
+	try:
+		db.session.commit()
+	except IntegrityError:
+		# Two concurrent uploads of the same file (same item + sha256) raced
+		# past the application-level duplicate check.  The DB constraint fired;
+		# roll back, clean up the orphaned file, and return the existing record.
+		db.session.rollback()
+		try:
+			current_app.storage.delete(storage_key)
+		except Exception:
+			pass
+		existing = Artefact.query.filter_by(item_id=item.id, sha256=sha256).first()
+		if existing:
+			result = artefact_to_dict(existing)
+			result['duplicate'] = True
+			return jsonify(result), 409
+		raise  # unexpected — sha256 is None or constraint is on a different column
 
 	# Generate slug (unique within this item)
 	artefact.slug = ensure_unique_slug(generate_slug(artefact.label), Artefact, scope_filter={'item_id': item.id})
@@ -1841,7 +1885,23 @@ def chunked_upload_complete(upload_uuid):
 		sha256=sha256,
 	)
 	db.session.add(artefact)
-	db.session.commit()
+	try:
+		db.session.commit()
+	except IntegrityError:
+		# Race: two concurrent chunked uploads of the same file reached the
+		# commit simultaneously.  Roll back, delete the orphaned file, and
+		# return the record that the other request created.
+		db.session.rollback()
+		try:
+			current_app.storage.delete(storage_key)
+		except Exception:
+			pass
+		existing = Artefact.query.filter_by(item_id=item.id, sha256=sha256).first()
+		if existing:
+			result = artefact_to_dict(existing)
+			result['duplicate'] = True
+			return jsonify(result), 409
+		raise
 
 	artefact.slug = ensure_unique_slug(
 		generate_slug(artefact.label), Artefact, scope_filter={'item_id': item.id}

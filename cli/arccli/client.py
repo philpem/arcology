@@ -88,7 +88,7 @@ class ArcologyClient:
 	def post_file(self, endpoint: str, filepath: str, fields: dict) -> dict:
 		"""POST multipart file upload to API endpoint."""
 		with open(filepath, 'rb') as f:
-			files = {'file': (filepath.split('/')[-1], f)}
+			files = {'file': (os.path.basename(filepath), f)}
 			resp = self.session.post(self._url(endpoint), files=files, data=fields)
 		return self._handle_response(resp)
 

@@ -5,6 +5,7 @@ Handles all HTTP requests to the REST API including job claiming,
 status updates, and artefact registration.
 """
 
+import hashlib
 import shutil
 import uuid
 from pathlib import Path
@@ -187,7 +188,14 @@ class ArcologyAPI:
         Returns:
             API response dict, or None on error
         """
-        storage_name = f"{uuid.uuid4().hex}{source_path.suffix}"
+        # Build a deterministic storage name so that retries after an API
+        # failure reuse the same key rather than uploading a second copy and
+        # leaving the first orphaned in S3.  The combination of analysis_id
+        # and source filename is unique within the system.
+        name_hash = hashlib.sha256(
+            f"{analysis_id}:{source_path.stem}".encode()
+        ).hexdigest()[:24]
+        storage_name = f"{name_hash}{source_path.suffix}"
 
         # Store file via storage backend
         if self.storage:

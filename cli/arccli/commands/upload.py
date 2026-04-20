@@ -143,7 +143,7 @@ def cmd_upload(client, args):
 			if ok:
 				successes += 1
 			else:
-				successes += 1  # upload succeeded, hash mismatch is a warning
+				failures += 1  # hash mismatch — upload may be corrupted
 		except Exception as e:
 			print(f"FAILED: {e}", file=sys.stderr)
 			failures += 1
