@@ -38,6 +38,11 @@ FILETYPE_MAP = {
     'aff': 'DrawFile',
     'd94': 'ArtWorks',
     'ae7': 'ARMovie',
+    '695': 'GIF',
+    '69c': 'BMP',
+    'b60': 'PNG',
+    'c85': 'JPEG',
+    'ff0': 'TIFF',
 
     # Generic RISC OS data formats
     'fe1': 'Makefile',

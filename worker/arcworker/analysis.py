@@ -2446,6 +2446,11 @@ class AnalysisWorker:
         ',fff': ArtefactType.ACORN_TEXT,    # Text
         ',feb': ArtefactType.ACORN_TEXT,    # Obey
         ',ffe': ArtefactType.ACORN_TEXT,    # Command
+        ',c85': ArtefactType.IMAGE,         # JPEG
+        ',695': ArtefactType.IMAGE,         # GIF
+        ',b60': ArtefactType.IMAGE,         # PNG
+        ',69c': ArtefactType.IMAGE,         # BMP
+        ',ff0': ArtefactType.IMAGE,         # TIFF
     }
     # Extension-based detection (used for DOS discs without RISC OS metadata)
     _EXT_VIEWABLE: dict[str, 'ArtefactType'] = {
@@ -2453,16 +2458,35 @@ class AnalysisWorker:
         '.aff':  ArtefactType.ACORN_DRAW,
         '.draw': ArtefactType.ACORN_DRAW,
         '.txt':  ArtefactType.ACORN_TEXT,
+        '.jpg':  ArtefactType.IMAGE,
+        '.jpeg': ArtefactType.IMAGE,
+        '.png':  ArtefactType.IMAGE,
+        '.gif':  ArtefactType.IMAGE,
+        '.webp': ArtefactType.IMAGE,
+        '.bmp':  ArtefactType.IMAGE,
+        '.tif':  ArtefactType.IMAGE,
+        '.tiff': ArtefactType.IMAGE,
+        '.pcx':  ArtefactType.IMAGE,
+        '.tga':  ArtefactType.IMAGE,
+        '.wmf':  ArtefactType.IMAGE,
+        '.emf':  ArtefactType.IMAGE,
     }
     # RISC OS filetype hex → viewable type, for ISO files where no ',xxx'
     # suffix is present on the extracted filename but risc_os_filetype is
     # available from the ARCHIMEDES extension metadata sidecar.
+    # Note: &D94 (ArtWorks), &D87/&D88 (Impression), &D01 (TechWriter) are
+    # intentionally omitted — they require bespoke rendering tools.
     _RISCOS_HEX_VIEWABLE: dict[str, 'ArtefactType'] = {
         'ff9': ArtefactType.ACORN_SPRITE,
         'aff': ArtefactType.ACORN_DRAW,
         'fff': ArtefactType.ACORN_TEXT,
         'feb': ArtefactType.ACORN_TEXT,
         'ffe': ArtefactType.ACORN_TEXT,
+        'c85': ArtefactType.IMAGE,  # JPEG
+        '695': ArtefactType.IMAGE,  # GIF
+        'b60': ArtefactType.IMAGE,  # PNG
+        '69c': ArtefactType.IMAGE,  # BMP
+        'ff0': ArtefactType.IMAGE,  # TIFF
     }
 
     def _convert_file_to_outputs(
@@ -2559,6 +2583,29 @@ class AnalysisWorker:
                 log.warning(f"Text conversion failed for {input_path}: {e}")
                 return None, str(e)
 
+        elif artefact_type == ArtefactType.IMAGE:
+            from .tools.common_images import convert_image
+            from .tools.extraction import parse_acorn_filename as _parse_acorn
+            true_name, _ = _parse_acorn(input_path.name)
+            tmp_out = work_dir / f'image_{file_index}'
+            result = convert_image(input_path, tmp_out, analysis_uuid)
+            if not result['success']:
+                log.warning(f"Image conversion failed for {input_path}: {result.get('error')}")
+                return None, result.get('error') or 'Conversion failed'
+            ext = Path(result['output_path']).suffix
+            saved = self.save_output_file(
+                Path(result['output_path']),
+                f'{analysis_uuid}_{file_index}_image{ext}',
+                subdir=output_subdir,
+            )
+            outputs.append({
+                'type': 'image',
+                'filename': saved,
+                'name': true_name,
+                'description': true_name,
+                'tool': result['tool'],
+            })
+
         return outputs, None
 
     def _detect_viewable_type(self, path: Path) -> 'ArtefactType | None':
@@ -2574,7 +2621,7 @@ class AnalysisWorker:
         """
         Process FORMAT_CONVERT analysis.  Supports two modes:
 
-        Mode 1 — Direct artefact (artefact_type is ACORN_SPRITE/DRAW/TEXT):
+        Mode 1 — Direct artefact (artefact_type is ACORN_SPRITE/DRAW/TEXT/IMAGE):
           Convert the artefact's own file.  Used for directly-uploaded Acorn
           files; triggered via ANALYSIS_MAP.
 
@@ -2603,6 +2650,7 @@ class AnalysisWorker:
             ArtefactType.ACORN_SPRITE.value,
             ArtefactType.ACORN_DRAW.value,
             ArtefactType.ACORN_TEXT.value,
+            ArtefactType.IMAGE.value,
         )
 
         # --- Mode 1: Direct artefact conversion ---

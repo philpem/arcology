@@ -281,7 +281,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 		file fdisk \
 		default-jre \
 		libcairo2 libfontconfig1 python3-cairo python3-cairocffi python3-pillow \
-		fonts-freefont-ttf
+		fonts-freefont-ttf \
+		libwmf-bin emf2svg
 
 # Install Greaseweazle for disk image conversion.
 # Pinned to a specific commit SHA; update when upgrading (was: @latest).
