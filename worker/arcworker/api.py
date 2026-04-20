@@ -165,7 +165,8 @@ class ArcologyAPI:
         label: str,
         source_path: Path,
         artefact_type: ArtefactType,
-        auto_analyse: bool = True
+        auto_analyse: bool = True,
+        skip_analyses: list[str] | None = None,
     ) -> Optional[dict]:
         """
         Register a derived artefact produced by an analysis.
@@ -178,6 +179,10 @@ class ArcologyAPI:
             artefact_type: Type of the artefact
             auto_analyse: Whether to auto-queue follow-on analyses (default True).
                 Set to False when the caller will explicitly queue specific analyses.
+            skip_analyses: List of AnalysisType values (strings) to suppress when
+                auto-queuing follow-on analyses.  Used to prevent ping-pong: e.g.
+                HFE/IMD siblings produced by FLUX_DECODE carry skip_analyses=['FLUX_DECODE']
+                so they don't re-trigger the decode.
 
         Returns:
             API response dict, or None on error
@@ -196,8 +201,7 @@ class ArcologyAPI:
             shutil.copy(source_path, storage_path)
             md5, sha256, file_size = compute_file_hash(storage_path)
 
-        # Register via API - derived artefacts use 'outputs' storage directory
-        return self.post(f"/analysis/{analysis_id}/produce-artefact", {
+        payload = {
             'label': label,
             'original_filename': source_path.name,
             'storage_path': storage_name,
@@ -206,8 +210,13 @@ class ArcologyAPI:
             'file_size': file_size,
             'md5': md5,
             'sha256': sha256,
-            'auto_analyse': auto_analyse
-        })
+            'auto_analyse': auto_analyse,
+        }
+        if skip_analyses:
+            payload['skip_analyses'] = skip_analyses
+
+        # Register via API - derived artefacts use 'outputs' storage directory
+        return self.post(f"/analysis/{analysis_id}/produce-artefact", payload)
 
     def register_file_listing(
         self,

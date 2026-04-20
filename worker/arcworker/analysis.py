@@ -41,6 +41,8 @@ from .tools import (
     convert_sprite,
     convert_draw,
 )
+from .tools.imd import parse_imd_track0, detect_geometry_from_boot_data
+from .tools.flux import _geometry_to_gw_format
 
 
 def _apply_pling_renames(extract_dir: Path, rename_map: dict[str, str]) -> None:
@@ -635,50 +637,116 @@ class AnalysisWorker:
         """
         Process FLUX_DECODE analysis.
         Attempts to decode flux to sector image, producing derived artefacts.
+
+        Pipeline depends on source type:
+          SCP  → register HFE sibling + IMD sibling (both skip_analyses=[FLUX_DECODE]),
+                 then gw(SCP, detected_format) → RAW_SECTOR
+          HFE  → register IMD sibling (skip_analyses=[FLUX_DECODE]),
+                 then gw(HFE, detected_format) → RAW_SECTOR
+          IMD  → no siblings; gw(IMD, detected_format) → RAW_SECTOR
         """
         analysis_id = analysis['id']
         results = []
 
         input_path = self.get_input_path(artefact, work_dir)
         artefact_label = artefact['label']
+        source_type = ArtefactType(artefact['artefact_type'])
 
-        # 1. Convert to IMD (preserves track metadata)
+        # ── Step 1: produce format-conversion siblings ──────────────────────
+
         imd_path = work_dir / f"{input_path.stem}.imd"
-        imd_result = flux_to_imd_hxcfe(input_path, imd_path)
-        results.append(('IMD', imd_result))
 
-        if imd_result['success']:
-            derived = self.api.register_derived_artefact(
-                analysis_id,
-                f"{artefact_label} (IMD)",
-                imd_path,
-                ArtefactType.IMD
-            )
-            log.info(f"Created derived IMD artefact: {derived}")
+        if source_type == ArtefactType.SCP:
+            # IMD sibling
+            imd_result = flux_to_imd_hxcfe(input_path, imd_path)
+            results.append(('IMD', imd_result))
+            if imd_result['success']:
+                derived = self.api.register_derived_artefact(
+                    analysis_id,
+                    f"{artefact_label} (IMD)",
+                    imd_path,
+                    ArtefactType.IMD,
+                    skip_analyses=[AnalysisType.FLUX_DECODE.name],
+                )
+                log.info(f"Created derived IMD artefact: {derived}")
 
-        # 2. Convert to HFE (for emulators)
-        hfe_path = work_dir / f"{input_path.stem}.hfe"
-        hfe_result = flux_to_hfe_hxcfe(input_path, hfe_path)
-        results.append(('HFE', hfe_result))
+            # HFE sibling
+            hfe_path = work_dir / f"{input_path.stem}.hfe"
+            hfe_result = flux_to_hfe_hxcfe(input_path, hfe_path)
+            results.append(('HFE', hfe_result))
+            if hfe_result['success']:
+                derived = self.api.register_derived_artefact(
+                    analysis_id,
+                    f"{artefact_label} (HFE)",
+                    hfe_path,
+                    ArtefactType.HFE,
+                    skip_analyses=[AnalysisType.FLUX_DECODE.name],
+                )
+                log.info(f"Created derived HFE artefact: {derived}")
 
-        if hfe_result['success']:
-            derived = self.api.register_derived_artefact(
-                analysis_id,
-                f"{artefact_label} (HFE)",
-                hfe_path,
-                ArtefactType.HFE
-            )
-            log.info(f"Created derived HFE artefact: {derived}")
+        elif source_type == ArtefactType.HFE:
+            # IMD sibling only (source is already HFE)
+            imd_result = flux_to_imd_hxcfe(input_path, imd_path)
+            results.append(('IMD', imd_result))
+            if imd_result['success']:
+                derived = self.api.register_derived_artefact(
+                    analysis_id,
+                    f"{artefact_label} (IMD)",
+                    imd_path,
+                    ArtefactType.IMD,
+                    skip_analyses=[AnalysisType.FLUX_DECODE.name],
+                )
+                log.info(f"Created derived IMD artefact: {derived}")
 
-        # 3. Convert to raw IMG via Greaseweazle (best for file extraction)
-        # Use the IMD as input if available, otherwise try direct
-        if imd_result['success']:
-            img_input = imd_path
         else:
-            img_input = input_path
+            # IMD source — no conversion siblings; source is already sector-decoded
+            imd_result = {'success': True}
+
+        # ── Step 2: format detection ─────────────────────────────────────────
+        # For SCP/HFE: read the IMD sibling we just produced.
+        # For IMD: read the source directly.
+
+        hints = json.loads(analysis.get('hints') or '{}')
+        gw_format = hints.get('gw_format')
+        gw_format_source = 'hint' if gw_format else None
+
+        imd_track0_summary = None
+        detected_geometry  = None
+
+        imd_for_detection = imd_path if source_type != ArtefactType.IMD else input_path
+
+        if not gw_format and imd_result['success']:
+            track0 = parse_imd_track0(imd_for_detection)
+            if track0:
+                imd_track0_summary = {
+                    'encoding':    track0['encoding'],
+                    'sector_size': track0['sector_size'],
+                    'cylinders':   track0['cylinders'],
+                    'heads':       track0['heads'],
+                    'sector_ids':  sorted(track0['sectors'].keys()),
+                }
+                geometry = detect_geometry_from_boot_data(track0)
+                if geometry:
+                    detected_geometry = {k: v for k, v in geometry.items()}
+                    gw_format = _geometry_to_gw_format(**geometry)
+                    if gw_format:
+                        gw_format_source = 'detected'
+                        log.info(f"Detected disc format: {geometry['filesystem']} "
+                                 f"(probe {geometry.get('probe', '?')}) "
+                                 f"→ gw format: {gw_format}")
+                    else:
+                        log.info(f"Detected disc geometry {geometry} — "
+                                 f"no gw format match, using ibm.scan")
+
+        if not gw_format:
+            gw_format = 'ibm.scan'
+            gw_format_source = 'fallback'
+
+        # ── Step 3: gw convert source → RAW_SECTOR ──────────────────────────
+        # Always feed gw the original source artefact (closest-to-original rule).
 
         img_path = work_dir / f"{input_path.stem}.img"
-        img_result = sector_image_to_raw_greaseweazle(img_input, img_path)
+        img_result = sector_image_to_raw_greaseweazle(input_path, img_path, gw_format=gw_format)
         results.append(('IMG', img_result))
 
         if img_result['success']:
@@ -690,23 +758,30 @@ class AnalysisWorker:
             )
             log.info(f"Created derived IMG artefact: {derived}")
 
-        # Report results
+        # ── Report ───────────────────────────────────────────────────────────
         any_success = any(r[1]['success'] for r in results)
         summary_parts = [f"{name}: {'OK' if r['success'] else 'FAIL'}" for name, r in results]
+        details_dict = {name: r for name, r in results}
+        details_dict['gw_format_used'] = gw_format
+        details_dict['gw_format_source'] = gw_format_source
+        if imd_track0_summary:
+            details_dict['gw_track0'] = imd_track0_summary
+        if detected_geometry:
+            details_dict['gw_geometry'] = detected_geometry
 
         if any_success:
             self.complete_analysis(
                 analysis_id,
                 tool_name='hxcfe,greaseweazle',
                 summary='; '.join(summary_parts),
-                details=json.dumps({name: r for name, r in results})
+                details=json.dumps(details_dict)
             )
         else:
             self.fail_analysis(
                 analysis_id,
                 '; '.join(summary_parts),
                 tool_name='hxcfe,greaseweazle',
-                details=json.dumps({name: r for name, r in results})
+                details=json.dumps(details_dict)
             )
 
     @analysis_handler("file extraction")

@@ -137,9 +137,11 @@ ANALYSIS_MAP = {
     
     # Sector-level floppy - file extraction only works on raw sector images
     # IMD is track-based format with metadata, HFE is an emulator container format
-    # These need conversion to IMG (raw sectors) before file extraction can work
-    ArtefactType.IMD: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY],
-    ArtefactType.HFE: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.DISC_MASTERING_DETECT, AnalysisType.DISC_PROTECTION_DETECT],
+    # These need conversion to IMG (raw sectors) before file extraction can work.
+    # FLUX_DECODE is included so that standalone HFE/IMD uploads trigger extraction
+    # (same pipeline as SCP, starting from wherever in the chain the source sits).
+    ArtefactType.IMD: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY, AnalysisType.FLUX_DECODE],
+    ArtefactType.HFE: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.DISC_MASTERING_DETECT, AnalysisType.DISC_PROTECTION_DETECT, AnalysisType.FLUX_DECODE],
     #ArtefactType.TD0: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY],
     #ArtefactType.D64: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_EXTRACTION],
     #ArtefactType.ADF: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_EXTRACTION],
@@ -187,7 +189,8 @@ ANALYSIS_MAP = {
 def queue_analyses_for_artefact(artefact: Artefact, hints: dict = None,
                                 checksum_only: bool = False,
                                 skip_duplicate_check: bool = False,
-                                commit: bool = True):
+                                commit: bool = True,
+                                skip_analyses: list[str] | None = None):
     """Queue appropriate analyses for an artefact based on its type.
 
     CHECKSUM_COMPUTE is always prepended as the first job regardless of artefact
@@ -198,10 +201,16 @@ def queue_analyses_for_artefact(artefact: Artefact, hints: dict = None,
     to avoid redundant SELECT queries (the reset already deleted all analyses).
 
     Pass commit=False to defer the commit to the caller (useful for batch operations).
+
+    skip_analyses: list of AnalysisType *names* (uppercase strings, e.g. 'FLUX_DECODE')
+    to suppress.  Used when registering siblings that must not re-trigger the
+    parent analysis (ping-pong prevention).
     """
+    skip_set = set(skip_analyses or [])
     analysis_types = [AnalysisType.CHECKSUM_COMPUTE]
     if not checksum_only:
         analysis_types += ANALYSIS_MAP.get(artefact.artefact_type, [AnalysisType.FORMAT_IDENTIFY])
+    analysis_types = [t for t in analysis_types if t.name not in skip_set]
     hints_json = json.dumps(hints) if hints else None
 
     for analysis_type in analysis_types:
