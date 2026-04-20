@@ -450,13 +450,14 @@ class AnalysisWorker:
             return
         rel = self._relative_output_path(extract_dir)
         prefix = self.storage.storage_key('outputs', rel)
-        try:
-            count = self.storage.put_tree(prefix, extract_dir)
-            log.info(f"Uploaded {count} files to storage prefix: {prefix}")
-        finally:
-            # Remove local copy — always clean up, even if upload failed
-            shutil.rmtree(extract_dir, ignore_errors=True)
-            log.info(f"Cleaned up local extraction directory: {extract_dir}")
+        # Upload first; only remove the local copy on success.  If put_tree()
+        # raises, the exception propagates (the analysis handler marks the job
+        # failed), and the local directory is left in place so a retry can
+        # re-upload without orphaning partially-uploaded S3 objects.
+        count = self.storage.put_tree(prefix, extract_dir)
+        log.info(f"Uploaded {count} files to storage prefix: {prefix}")
+        shutil.rmtree(extract_dir, ignore_errors=True)
+        log.info(f"Cleaned up local extraction directory: {extract_dir}")
 
     def _resolve_single_extraction_file(
         self,

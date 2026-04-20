@@ -461,6 +461,15 @@ class Artefact(db.Model):
             'derived_from_analysis_id', 'storage_path',
             name='uq_artefact_analysis_storage_path',
         ),
+        # Prevent two concurrent uploads of the same file (by SHA-256) to the
+        # same item.  The application-level duplicate check is non-atomic, so
+        # without this constraint two simultaneous uploads can both pass the
+        # check and insert duplicate records.  NULL sha256 values (not yet
+        # computed) are never considered equal in SQL.
+        db.UniqueConstraint(
+            'item_id', 'sha256',
+            name='uq_artefact_item_sha256',
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
