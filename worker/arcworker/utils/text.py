@@ -144,6 +144,11 @@ def sanitize_filename(filename: str) -> str:
     Returns:
         A valid UTF-8 string safe for database storage.
     """
+    # PostgreSQL forbids NUL characters in string columns.
+    filename = filename.replace('\x00', '')
+    if not filename:
+        return filename
+
     # Fast path: already valid UTF-8, nothing to do.
     try:
         filename.encode('utf-8')
