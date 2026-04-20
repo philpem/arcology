@@ -318,10 +318,14 @@ class TestSkipAnalyses(unittest.TestCase):
             from myapp.extensions import db
             db.create_all()
             from myapp.blueprints.artefacts import queue_analyses_for_artefact
-            from myapp.database import Artefact, ArtefactType as DBArtefactType, StorageDirectory
+            from myapp.database import Artefact, ArtefactType as DBArtefactType, Item, StorageDirectory
+            item = Item(name='test item')
+            db.session.add(item)
+            db.session.flush()
             artefact = Artefact(
-                item_id=None,
+                item_id=item.id,
                 label='test',
+                original_filename='x.hfe',
                 artefact_type=ArtefactType.HFE,
                 storage_path='x.hfe',
                 storage_directory=StorageDirectory.OUTPUTS,
@@ -347,10 +351,14 @@ class TestSkipAnalyses(unittest.TestCase):
             from myapp.extensions import db
             db.create_all()
             from myapp.blueprints.artefacts import queue_analyses_for_artefact
-            from myapp.database import Artefact, StorageDirectory, Analysis
+            from myapp.database import Artefact, Item, StorageDirectory, Analysis
+            item = Item(name='test item 2')
+            db.session.add(item)
+            db.session.flush()
             artefact = Artefact(
-                item_id=None,
+                item_id=item.id,
                 label='test2',
+                original_filename='y.hfe',
                 artefact_type=ArtefactType.HFE,
                 storage_path='y.hfe',
                 storage_directory=StorageDirectory.OUTPUTS,
