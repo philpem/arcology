@@ -1356,7 +1356,10 @@ def _decode_fat_label(raw: bytes) -> str | None:
     stripped Unicode string, or ``None`` if the label is empty or the
     "NO NAME" sentinel.
     """
-    stripped = raw.rstrip(b' \x00')
+    # Truncate at the first NUL byte (C-string semantics; NUL is not a valid
+    # FAT label character and Linux NUL-terminates POSIX filenames).
+    nul_pos = raw.find(b'\x00')
+    stripped = raw[:nul_pos].rstrip(b' ') if nul_pos >= 0 else raw.rstrip(b' ')
     if not stripped:
         return None
     # DIR_Name byte 0 of 0x05 represents a legitimate 0xE5 first character

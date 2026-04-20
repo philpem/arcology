@@ -56,6 +56,18 @@ class TestDecodeFatLabel(unittest.TestCase):
     def test_short_label(self):
         self.assertEqual(_decode_fat_label(b'A          '), 'A')
 
+    def test_nul_padded_label(self):
+        # Some formatters NUL-pad instead of space-pad; trailing NULs must be stripped.
+        self.assertEqual(_decode_fat_label(b'MYDISK\x00\x00\x00\x00\x00'), 'MYDISK')
+
+    def test_embedded_nul_truncates(self):
+        # NUL is not a valid FAT label character; C-string truncation at first NUL.
+        self.assertEqual(_decode_fat_label(b'LAB\x00EL      '), 'LAB')
+
+    def test_leading_nul_returns_none(self):
+        # NUL in position 0: C-string truncation leaves empty → None.
+        self.assertIsNone(_decode_fat_label(b'\x00LABEL     '))
+
 
 # =============================================================================
 # read_fat_volume_label (synthetic images)
