@@ -302,10 +302,13 @@ class TestSkipAnalyses(unittest.TestCase):
         os.environ.setdefault('SQLALCHEMY_DATABASE_URI', 'sqlite:///:memory:')
         os.environ.setdefault('SECRET_KEY', 'test')
         from myapp.app import create_app
-        app = create_app({'TESTING': True,
-                          'SQLALCHEMY_DATABASE_URI': 'sqlite:///:memory:',
-                          'SECRET_KEY': 'test',
-                          'WTF_CSRF_ENABLED': False})
+        app = create_app()
+        app.config.update({
+            'TESTING': True,
+            'SQLALCHEMY_DATABASE_URI': 'sqlite:///:memory:',
+            'SECRET_KEY': 'test',
+            'WTF_CSRF_ENABLED': False,
+        })
         return app
 
     def test_skip_analyses_excludes_type(self):
