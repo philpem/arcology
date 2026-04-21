@@ -178,6 +178,7 @@ See `doc/ADMIN_COMMANDS.md` for the full reference including all flags.
 ### Debug tools
 
 - `devtools/run_debug.py` - Flask debug mode with auto-reload
+- `devtools/db_branch_switch.py` - Downgrade DB to match a target branch before switching (see `doc/BRANCH_DB_SWITCHING.md`)
 - `DEBUG_DB_LOG = True` in `myapp.cfg` - Log all SQL queries
 - `DEBUG_DB_PROFILING = True` in `myapp.cfg` - SQL profiling reports (requires `sqltap`)
 
@@ -447,6 +448,7 @@ Worker external tools (compiled in worker Dockerfile): Fluxfox (Rust), HxCFE (C)
 
 ## Common Gotchas
 
+- **Switching branches with migrations**: The database schema is independent of your git branch. Before checking out a branch that has different migrations, run `python devtools/db_branch_switch.py [target-branch]` to downgrade the DB first. See `doc/BRANCH_DB_SWITCHING.md`.
 - `ArtefactType` and `AnalysisType` live in `shared/enums.py` — edit there only; web app, worker, and CLI all import from it
 - `ArchiveType` and `ARCHIVE_FORMATS` live in `shared/archive_formats.py` — edit there only
 - When running the worker **outside Docker** locally, run from the repo root: `python worker/worker.py`. The entry point adds the repo root to `sys.path` automatically so `shared/` is importable
