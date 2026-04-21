@@ -2553,10 +2553,16 @@ class AnalysisWorker:
             )
             all_files = files_resp.get('files', []) if files_resp else []
 
-            # Filter to files in our extraction context
+            # Filter to files in our extraction context.
+            # Mirror the ARCHIVE_DETECT guard: when no path_prefix, only
+            # process files directly from the disc image (depth 0), not from
+            # nested archives which get their own scoped FORMAT_CONVERT job.
             if path_prefix:
                 all_files = [f for f in all_files
                              if f.get('path', '').startswith(path_prefix + '/')]
+            else:
+                all_files = [f for f in all_files
+                             if f.get('extraction_depth', 0) == 0]
 
             for file_data in all_files:
                 if file_data.get('is_directory', False):
@@ -2996,6 +3002,11 @@ class AnalysisWorker:
         if path_prefix:
             all_files = [f for f in all_files
                          if f.get('path', '').startswith(path_prefix + '/')]
+        else:
+            # Top-level scan: exclude nested-archive files, which have their
+            # own scoped RISCOS_MODULE_PARSE queued by ARCHIVE_EXTRACT.
+            all_files = [f for f in all_files
+                         if f.get('extraction_depth', 0) == 0]
 
         module_files = [
             f for f in all_files
