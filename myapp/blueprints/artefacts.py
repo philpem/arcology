@@ -68,7 +68,8 @@ EXTENSION_MAP = {
     # Flux-level
     '.scp': ArtefactType.SCP,
     '.dfi': ArtefactType.DFI,
-    
+    '.a2r': ArtefactType.A2R,
+
     # Cooked sector-level floppy or hard disc
     '.imd': ArtefactType.IMD,   # needs conversion to sectors
     '.hfe': ArtefactType.HFE,   # needs conversion to sectors
@@ -139,6 +140,7 @@ ANALYSIS_MAP = {
     # Flux images - visualisation and decode attempt
     ArtefactType.SCP: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
     ArtefactType.DFI: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
+    ArtefactType.A2R: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
     #ArtefactType.KF: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
     #ArtefactType.FLUX_RAW: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE],
     

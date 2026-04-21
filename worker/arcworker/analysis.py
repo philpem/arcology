@@ -26,6 +26,7 @@ from .tools import (
     flux_to_imd_hxcfe,
     flux_to_hfe_hxcfe,
     dfi_to_scp_hxcfe,
+    a2r_to_scp_gw,
     sector_image_to_raw_greaseweazle,
     extract_acorn_disc_image_manager,
     extract_dos_7z,
@@ -176,7 +177,7 @@ _COMPRESS_SUFFIXES = frozenset({'.gz', '.bz2', '.zst'})
 # that calls the appropriate conversion tool.
 _SCP_VIA_CONVERSION_TYPES = frozenset({
     ArtefactType.DFI,   # hxcfe: dfi_to_scp_hxcfe()
-    # ArtefactType.A2R, # greaseweazle: a2r_to_scp_gw() (not yet implemented)
+    ArtefactType.A2R,   # greaseweazle: a2r_to_scp_gw()
 })
 
 
@@ -637,18 +638,21 @@ class AnalysisWorker:
         source_type = ArtefactType(artefact['artefact_type'])
 
         # Both fluxfox and hxcfe run against the SCP stream.
-        # For DFI sources, convert to SCP first (fluxfox does not support DFI
-        # natively and hxcfe results are consistent when both tools use the same
-        # source).  For SCP sources, use the file directly.
+        # For formats that cannot be visualised directly (DFI, A2R), convert to
+        # SCP first so both tools operate on the same source.  For SCP sources,
+        # use the file directly.
         vis_input_path = input_path
-        dfi_to_scp_result = None
+        to_scp_result = None
         if source_type in _SCP_VIA_CONVERSION_TYPES:
             hints = json.loads(analysis.get('hints') or '{}')
-            clock_mhz = hints.get('dfi_clock_mhz')
             scp_path = work_dir / f"{input_path.stem}_vis.scp"
-            dfi_to_scp_result = dfi_to_scp_hxcfe(input_path, scp_path, clock_mhz=clock_mhz)
-            if not dfi_to_scp_result['success']:
-                self.fail_analysis(analysis_id, f"DFI→SCP conversion failed: {dfi_to_scp_result.get('error', '')}")
+            if source_type == ArtefactType.DFI:
+                clock_mhz = hints.get('dfi_clock_mhz')
+                to_scp_result = dfi_to_scp_hxcfe(input_path, scp_path, clock_mhz=clock_mhz)
+            elif source_type == ArtefactType.A2R:
+                to_scp_result = a2r_to_scp_gw(input_path, scp_path)
+            if not to_scp_result['success']:
+                self.fail_analysis(analysis_id, f"→SCP conversion failed: {to_scp_result.get('error', '')}")
                 return
             vis_input_path = scp_path
 
@@ -680,8 +684,8 @@ class AnalysisWorker:
 
         if outputs:
             details = {'outputs': outputs, 'fluxfox': result_fluxfox, 'hxcfe': result_hxcfe}
-            if dfi_to_scp_result is not None:
-                details['dfi_to_scp'] = dfi_to_scp_result
+            if to_scp_result is not None:
+                details['to_scp'] = to_scp_result
             self.complete_analysis(
                 analysis_id,
                 tool_name='fluxfox,hxcfe',
@@ -708,6 +712,7 @@ class AnalysisWorker:
           IMD  → no siblings; gw(IMD, detected_format) → RAW_SECTOR
           DFI  → register SCP sibling (no skip_analyses); the SCP's own
                  FLUX_DECODE runs the HFE/IMD/RAW_SECTOR pipeline.
+          A2R  → same as DFI but uses greaseweazle (gw convert) instead of hxcfe.
         """
         analysis_id = analysis['id']
         results = []
@@ -771,6 +776,21 @@ class AnalysisWorker:
             clock_mhz = hints.get('dfi_clock_mhz')
             scp_path = work_dir / f"{input_path.stem}.scp"
             scp_result = dfi_to_scp_hxcfe(input_path, scp_path, clock_mhz=clock_mhz)
+            results.append(('SCP', scp_result))
+            if scp_result['success']:
+                derived = self.api.register_derived_artefact(
+                    analysis_id,
+                    f"{artefact_label} (SCP)",
+                    scp_path,
+                    ArtefactType.SCP,
+                )
+                log.info(f"Created derived SCP artefact: {derived}")
+
+        elif source_type == ArtefactType.A2R:
+            # A2R → SCP conversion; SCP sibling's own FLUX_DECODE handles the rest.
+            # Greaseweazle handles A2R natively and auto-detects the clock frequency.
+            scp_path = work_dir / f"{input_path.stem}.scp"
+            scp_result = a2r_to_scp_gw(input_path, scp_path)
             results.append(('SCP', scp_result))
             if scp_result['success']:
                 derived = self.api.register_derived_artefact(
@@ -1848,6 +1868,7 @@ class AnalysisWorker:
     _PROMOTABLE_EXTENSIONS = {
         '.scp': ArtefactType.SCP,
         '.dfi': ArtefactType.DFI,
+        '.a2r': ArtefactType.A2R,
         '.imd': ArtefactType.IMD,
         '.hfe': ArtefactType.HFE,
         '.adf': ArtefactType.RAW_SECTOR,

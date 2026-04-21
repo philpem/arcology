@@ -273,6 +273,45 @@ def dfi_to_scp_hxcfe(input_path: Path, output_path: Path, clock_mhz: int | None 
     }
 
 
+def a2r_to_scp_gw(input_path: Path, output_path: Path) -> dict:
+    """
+    Convert an Applesauce A2R flux image to SuperCard Pro SCP format using Greaseweazle.
+
+    Greaseweazle handles A2R natively and auto-detects the clock frequency,
+    so no frequency override or script is needed.
+
+    Args:
+        input_path: Path to A2R file
+        output_path: Path for output SCP file
+
+    Returns:
+        Result dict with success status, output type, and process_output
+    """
+    cmd = [
+        'gw', 'convert',
+        str(input_path),
+        str(output_path),
+    ]
+    result, process_output = run_tool_with_output(cmd)
+
+    if result.returncode == 0 and output_path.exists():
+        return {
+            'success': True,
+            'tool': 'greaseweazle',
+            'output_path': str(output_path),
+            'output_type': ArtefactType.SCP.value,
+            'summary': 'Converted A2R to SCP flux stream',
+            'process_output': process_output
+        }
+
+    return {
+        'success': False,
+        'tool': 'greaseweazle',
+        'error': result.stderr.decode()[:1000],
+        'process_output': process_output
+    }
+
+
 def sector_image_to_raw_greaseweazle(
     input_path: Path,
     output_path: Path,
