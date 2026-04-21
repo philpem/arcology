@@ -84,18 +84,25 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
             {% endfor %}
         </p>
         {% endif %}
-        {% if artefact_file_restrictions and not artefact.restrictions %}
+        {% if artefact_file_restrictions %}
+        {% set _artefact_rtypes = artefact.restrictions | map(attribute='restriction_type') | list %}
+        {% set _seen = namespace(types=[]) %}
+        {% for r in artefact_file_restrictions %}
+          {% if r.restriction_type not in _seen.types and r.restriction_type not in _artefact_rtypes %}{% set _seen.types = _seen.types + [r.restriction_type] %}{% endif %}
+        {% endfor %}
+        {% if _seen.types %}
         <p class="mb-1">
-            {% set _seen = namespace(types=[]) %}
+            {% set _seen2 = namespace(types=[]) %}
             {% for r in artefact_file_restrictions %}
-              {% if r.restriction_type not in _seen.types %}
-                {% set _seen.types = _seen.types + [r.restriction_type] %}
+              {% if r.restriction_type not in _seen2.types and r.restriction_type not in _artefact_rtypes %}
+                {% set _seen2.types = _seen2.types + [r.restriction_type] %}
                 <span class="badge bg-warning text-dark me-1" title="Restriction on individual file(s) within this artefact">
                     <i class="bi bi-exclamation-triangle-fill"></i> {{ r.restriction_type.label }} (file)
                 </span>
               {% endif %}
             {% endfor %}
         </p>
+        {% endif %}
         {% endif %}
     </div>
     <div>

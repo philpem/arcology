@@ -2835,6 +2835,10 @@ def manage_file_restrictions(uuid):
     """Add or remove a restriction on an individual extracted file."""
     ef = ExtractedFile.query.filter_by(uuid=uuid).first_or_404()
     artefact = ef.partition.artefact
+    # Always redirect to the root artefact so the user lands on the page that
+    # shows the global restriction, even when the file belongs to a derived
+    # artefact whose partition is displayed inline on the root's view.
+    root_artefact = artefact.root_artefact
 
     action   = request.form.get('action', '')
     category = request.form.get('category', '')
@@ -2845,7 +2849,7 @@ def manage_file_restrictions(uuid):
         rtype = RestrictionType(category)
     except (ValueError, KeyError):
         flash(f'Invalid restriction type: {category}', 'danger')
-        return _redirect_to_artefact_view(artefact)
+        return _redirect_to_artefact_view(root_artefact)
 
     if action == 'add':
         existing = ExtractedFileRestriction.query.filter_by(
@@ -2878,7 +2882,7 @@ def manage_file_restrictions(uuid):
     else:
         flash(f'Invalid action: {action}', 'danger')
 
-    return _redirect_to_artefact_view(artefact)
+    return _redirect_to_artefact_view(root_artefact)
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/analyse', methods=['GET', 'POST'])
