@@ -97,8 +97,11 @@
                             <td><span class="badge bg-danger">{{ r.restriction_type.label }}</span></td>
                             <td>{{ r.reason or '-' }}</td>
                             <td>{{ r.added_by.username if r.added_by else 'System' }}</td>
-                            <td>
+                            <td class="text-end">
                                 {% if current_user.is_admin or r.added_by_id == current_user.id %}
+                                <button type="button" class="btn btn-sm btn-outline-secondary me-1"
+                                        onclick="toggleRestrEdit('restr-edit-{{ r.restriction_type.value }}')"
+                                        title="Edit restriction"><i class="bi bi-pencil"></i></button>
                                 <form action="{{ artefact_url(artefact, 'manage_restrictions') }}" method="post" class="d-inline">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <input type="hidden" name="action" value="remove">
@@ -111,9 +114,43 @@
                                 {% endif %}
                             </td>
                         </tr>
+                        {% if current_user.is_admin or r.added_by_id == current_user.id %}
+                        <tr id="restr-edit-{{ r.restriction_type.value }}" style="display:none">
+                            <td colspan="4" class="bg-light p-2">
+                                <form action="{{ artefact_url(artefact, 'manage_restrictions') }}" method="post" class="row g-2 align-items-end m-0">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="action" value="update">
+                                    <input type="hidden" name="category" value="{{ r.restriction_type.value }}">
+                                    <div class="col-auto">
+                                        <label class="form-label small mb-0">Type</label>
+                                        <select name="new_category" class="form-select form-select-sm">
+                                            {% for rtype in RestrictionType %}
+                                            <option value="{{ rtype.value }}" {% if rtype == r.restriction_type %}selected{% endif %}>{{ rtype.label }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                    <div class="col">
+                                        <label class="form-label small mb-0">Reason</label>
+                                        <input type="text" name="reason" class="form-control form-control-sm" value="{{ r.reason or '' }}" placeholder="Reason (optional)">
+                                    </div>
+                                    <div class="col-auto">
+                                        <button type="submit" class="btn btn-sm btn-primary">Save</button>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary ms-1"
+                                                onclick="toggleRestrEdit('restr-edit-{{ r.restriction_type.value }}')">Cancel</button>
+                                    </div>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endif %}
                         {% endfor %}
                         </tbody>
                     </table>
+                    <script>
+                    function toggleRestrEdit(id) {
+                        var row = document.getElementById(id);
+                        if (row) row.style.display = row.style.display === 'table-row' ? 'none' : 'table-row';
+                    }
+                    </script>
                     {% else %}
                     <p class="text-muted small mb-2">No restrictions applied.</p>
                     {% endif %}

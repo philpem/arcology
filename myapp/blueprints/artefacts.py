@@ -2822,6 +2822,29 @@ def manage_restrictions(item_id=None, artefact_id=None, root_id=None):
                 flash(f'Restriction removed: {rtype.label}', 'success')
         else:
             flash(f'Restriction not found: {rtype.label}', 'warning')
+    elif action == 'update':
+        new_category = request.form.get('new_category', '').strip()
+        try:
+            new_rtype = RestrictionType(new_category) if new_category else rtype
+        except (ValueError, KeyError):
+            flash(f'Invalid restriction type: {new_category}', 'danger')
+            return _redirect_to_artefact_view(artefact)
+        existing = ArtefactRestriction.query.filter_by(
+            artefact_id=artefact.id, restriction_type=rtype
+        ).first()
+        if not existing:
+            flash(f'Restriction not found: {rtype.label}', 'warning')
+        elif not current_user.is_admin and existing.added_by_id != current_user.id:
+            flash('Only administrators can edit restrictions added by other users.', 'danger')
+        elif new_rtype != rtype and ArtefactRestriction.query.filter_by(
+            artefact_id=artefact.id, restriction_type=new_rtype
+        ).first():
+            flash(f'A {new_rtype.label} restriction already exists.', 'danger')
+        else:
+            existing.restriction_type = new_rtype
+            existing.reason = reason
+            db.session.commit()
+            flash('Restriction updated.', 'success')
     else:
         flash(f'Invalid action: {action}', 'danger')
 
@@ -2875,6 +2898,29 @@ def manage_file_restrictions(uuid):
                 flash(f'File restriction removed: {rtype.label}', 'success')
         else:
             flash(f'File restriction not found: {rtype.label}', 'warning')
+    elif action == 'update':
+        new_category = request.form.get('new_category', '').strip()
+        try:
+            new_rtype = RestrictionType(new_category) if new_category else rtype
+        except (ValueError, KeyError):
+            flash(f'Invalid restriction type: {new_category}', 'danger')
+            return _redirect_to_artefact_view(artefact)
+        existing = ExtractedFileRestriction.query.filter_by(
+            extracted_file_id=ef.id, restriction_type=rtype
+        ).first()
+        if not existing:
+            flash(f'File restriction not found: {rtype.label}', 'warning')
+        elif not current_user.is_admin and existing.added_by_id != current_user.id:
+            flash('Only administrators can edit restrictions added by other users.', 'danger')
+        elif new_rtype != rtype and ExtractedFileRestriction.query.filter_by(
+            extracted_file_id=ef.id, restriction_type=new_rtype
+        ).first():
+            flash(f'A {new_rtype.label} restriction already exists.', 'danger')
+        else:
+            existing.restriction_type = new_rtype
+            existing.reason = reason
+            db.session.commit()
+            flash('File restriction updated.', 'success')
     else:
         flash(f'Invalid action: {action}', 'danger')
 
