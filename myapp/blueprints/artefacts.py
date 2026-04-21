@@ -1196,6 +1196,7 @@ def _render_viewer(artefact):
         return outputs
 
     viewer_status = None  # 'pending', 'failed', 'partial', or None (ready)
+    failed_conversion_list = []  # [{source_file, error, analysis_uuid}, ...]
     file_filter = request.args.get('file')
     # Subdirectory browse filter — matches the File Viewer's ?path=<dir>/ scheme
     # so selecting a subdirectory there carries through to the Viewer.
@@ -1227,6 +1228,12 @@ def _render_viewer(artefact):
             viewer_status = 'pending'
         else:
             viewer_status = 'failed'
+            if conv and conv.status == AnalysisStatus.FAILED:
+                failed_conversion_list = [{
+                    'source_file': artefact.original_filename or artefact.label,
+                    'error': conv.error_message or 'Conversion failed',
+                    'analysis_uuid': conv.uuid,
+                }]
     else:
         # Mode 2: Aggregate outputs from all FORMAT_CONVERT analyses on this artefact
         # and all derived artefacts (e.g. an ISO extracted from a ZIP).
@@ -1246,14 +1253,27 @@ def _render_viewer(artefact):
         )
 
         # Collect outputs grouped by source_file (filtered by ?file= if set)
+        # and gather any per-file conversion failures recorded in details JSON.
         groups: dict[str, list] = defaultdict(list)
         for conv in convs:
+            if conv.status == AnalysisStatus.FAILED:
+                if not file_filter:
+                    failed_conversion_list.append({
+                        'source_file': None,
+                        'error': conv.error_message or 'Conversion failed',
+                        'analysis_uuid': conv.uuid,
+                    })
+                continue
             if not (conv.status == AnalysisStatus.COMPLETED and conv.success):
                 continue
             try:
                 details = json.loads(conv.details or '{}')
             except (json.JSONDecodeError, TypeError):
                 continue
+            for fc in details.get('failed_conversions', []):
+                if file_filter and fc.get('source_file') != file_filter:
+                    continue
+                failed_conversion_list.append({**fc, 'analysis_uuid': conv.uuid})
             for out in details.get('outputs', []):
                 source = out.get('source_file', '')
                 if file_filter and source != file_filter:
@@ -1498,6 +1518,7 @@ def _render_viewer(artefact):
         artefact=artefact,
         output_groups=output_groups,
         viewer_status=viewer_status,
+        failed_conversion_list=failed_conversion_list,
         module_detail=module_detail,
         user_can_bypass_explicit=user_can_bypass_explicit,
         pagination=pagination,
@@ -1826,23 +1847,27 @@ def _render_artefact_view(artefact):
 
     hashdb_mode = request.args.get('mode') == 'hashdb'
 
-    # Build viewable_filenames: set of ExtractedFile.path values that have
-    # completed FORMAT_CONVERT outputs.  Used to show the eye icon in the file
-    # listing only after conversion has finished.
+    # Build viewable_filenames and failed_conversion_info by scanning all
+    # FORMAT_CONVERT analyses for this artefact tree.
+    #   viewable_filenames    — set of file.path strings with completed outputs
+    #   failed_conversion_info — dict file.path → {error, analysis_uuid, kind}
+    #     kind='conversion'  for per-file FORMAT_CONVERT failures
+    #     kind='extraction'  for ARCHIVE_EXTRACT failures (see below)
     _viewable_types = (ArtefactType.ACORN_SPRITE, ArtefactType.ACORN_DRAW, ArtefactType.ACORN_TEXT)
-    viewable_filenames = set()  # set of file.path strings with completed outputs
+    viewable_filenames = set()
+    failed_conversion_info = {}
     if artefact.artefact_type not in _viewable_types:
         convs = (
             Analysis.query
             .filter(
                 Analysis.artefact_id.in_(all_artefact_ids),
                 Analysis.analysis_type == AnalysisType.FORMAT_CONVERT,
-                Analysis.success == True,
-                Analysis.status == AnalysisStatus.COMPLETED,
             )
             .all()
         )
         for conv in convs:
+            if not (conv.status == AnalysisStatus.COMPLETED and conv.success):
+                continue
             try:
                 details = json.loads(conv.details or '{}')
             except (json.JSONDecodeError, TypeError):
@@ -1851,6 +1876,46 @@ def _render_artefact_view(artefact):
                 sf = out.get('source_file')
                 if sf:
                     viewable_filenames.add(sf)
+            for fc in details.get('failed_conversions', []):
+                sf = fc.get('source_file')
+                if sf and sf not in failed_conversion_info:
+                    failed_conversion_info[sf] = {
+                        'error': fc.get('error', 'Conversion failed'),
+                        'analysis_uuid': conv.uuid,
+                        'kind': 'conversion',
+                    }
+
+        # Collect ARCHIVE_EXTRACT failures and map back to the archive file's
+        # path via the file_id stored in hints.
+        failed_extractions = (
+            Analysis.query
+            .filter(
+                Analysis.artefact_id.in_(all_artefact_ids),
+                Analysis.analysis_type == AnalysisType.ARCHIVE_EXTRACT,
+                Analysis.status == AnalysisStatus.FAILED,
+            )
+            .all()
+        )
+        if failed_extractions:
+            failed_file_ids = {}
+            for ae in failed_extractions:
+                try:
+                    hints = json.loads(ae.hints or '{}')
+                except (json.JSONDecodeError, TypeError):
+                    hints = {}
+                file_id = hints.get('file_id')
+                if file_id:
+                    failed_file_ids[int(file_id)] = {
+                        'error': ae.error_message or 'Extraction failed',
+                        'analysis_uuid': ae.uuid,
+                        'kind': 'extraction',
+                    }
+            if failed_file_ids:
+                efs = ExtractedFile.query.filter(
+                    ExtractedFile.id.in_(failed_file_ids.keys())
+                ).all()
+                for ef in efs:
+                    failed_conversion_info[ef.path] = failed_file_ids[ef.id]
 
     # Build module_info: dict mapping ExtractedFile.path → module metadata for
     # files with filetype ffa.  Used by the file listing template to show a
@@ -2029,6 +2094,7 @@ def _render_artefact_view(artefact):
                            letter_pages=letter_pages,
                            current_letter=current_letter,
                            viewable_filenames=viewable_filenames,
+                           failed_conversion_info=failed_conversion_info,
                            has_converted_outputs=has_converted_outputs,
                            module_info=module_info,
                            artefact_file_restrictions=artefact_file_restrictions,

@@ -87,11 +87,34 @@
 </div>
 {% elif viewer_status == 'failed' and not module_detail %}
 <div class="alert alert-warning">
-    <i class="bi bi-exclamation-triangle"></i> Conversion failed or has not been run yet. Try re-analysing the artefact.
+    <i class="bi bi-exclamation-triangle"></i>
+    Conversion failed or has not been run yet.
+    {% if failed_conversion_list %}
+     — {{ failed_conversion_list[0].error }}
+    <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=failed_conversion_list[0].analysis_uuid) }}">[view analysis]</a>
+    {% endif %}
+    Try re-analysing the artefact.
 </div>
 {% elif viewer_status == 'partial' %}
 <div class="alert alert-info">
     <i class="bi bi-hourglass-split"></i> Some conversions are still in progress — refresh to see more.
+</div>
+{% endif %}
+
+{% if failed_conversion_list and viewer_status != 'failed' %}
+<div class="alert alert-warning">
+    <i class="bi bi-exclamation-triangle-fill"></i>
+    <strong>{{ failed_conversion_list | length }} file(s) could not be converted:</strong>
+    <ul class="mb-0 mt-1">
+        {% for fc in failed_conversion_list %}
+        <li>
+            {% if fc.source_file %}<code>{{ fc.source_file }}</code>{% else %}<em>(unknown file)</em>{% endif %}
+            {% if fc.error %} — {{ fc.error }}{% endif %}
+            <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=fc.analysis_uuid) }}"
+               class="ms-1 small">[analysis #{{ fc.analysis_uuid[:8] }}]</a>
+        </li>
+        {% endfor %}
+    </ul>
 </div>
 {% endif %}
 

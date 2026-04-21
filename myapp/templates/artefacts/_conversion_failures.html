@@ -1,0 +1,40 @@
+{% if failed_conversion_info %}
+<div class="card mb-4 border-danger">
+    <div class="card-header d-flex align-items-center bg-danger bg-opacity-25" style="padding: 0;">
+        <a class="flex-grow-1 d-flex align-items-center text-decoration-none text-reset px-3 py-2 rollup-header"
+           style="cursor: pointer;" data-bs-toggle="collapse" href="#conversionFailuresCollapse"
+           role="button" aria-expanded="false" aria-controls="conversionFailuresCollapse">
+            <span>
+                <i class="bi bi-exclamation-circle-fill text-danger"></i>
+                <strong>Conversion errors</strong>
+                <span class="badge bg-danger ms-2">{{ failed_conversion_info | length }}</span>
+            </span>
+        </a>
+        <a class="text-reset px-3 py-2 rollup-chevron-toggle"
+           style="cursor: pointer;" data-bs-toggle="collapse" href="#conversionFailuresCollapse"
+           role="button" aria-expanded="false" aria-controls="conversionFailuresCollapse">
+            <i class="bi bi-chevron-right rollup-chevron"></i>
+        </a>
+    </div>
+    <div class="collapse" id="conversionFailuresCollapse">
+        <ul class="list-group list-group-flush">
+        {% for path, fc in failed_conversion_info.items() | sort(attribute='0') %}
+        <li class="list-group-item d-flex justify-content-between align-items-start py-2">
+            <div class="me-2 text-break">
+                <i class="bi bi-{{ 'archive' if fc.kind == 'extraction' else 'image' }} text-secondary me-1"></i>
+                <code class="small">{{ path }}</code>
+                {% if fc.error %}
+                <div class="text-muted small mt-1">{{ fc.error }}</div>
+                {% endif %}
+            </div>
+            <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=fc.analysis_uuid) }}"
+               class="btn btn-sm btn-outline-danger text-nowrap flex-shrink-0">
+                <i class="bi bi-search"></i> Analysis
+            </a>
+        </li>
+        {% endfor %}
+        </ul>
+    </div>
+</div>
+{% endif %}
+{# vim: ts=4 sw=4 et #}

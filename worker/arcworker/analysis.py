@@ -2367,10 +2367,13 @@ class AnalysisWorker:
         output_subdir: str | None,
         analysis_uuid: str,
         file_index: int = 0,
-    ) -> list[dict] | None:
+    ) -> tuple[list[dict] | None, str | None]:
         """
-        Convert a single viewable file and return a list of output dicts, or
-        None if conversion failed (caller should call fail_analysis).
+        Convert a single viewable file and return ``(outputs, error)``.
+
+        On success: ``(list_of_output_dicts, None)``.
+        On failure: ``(None, error_message)`` — caller should call
+        ``fail_analysis`` (Mode 1) or record the failure and continue (Mode 2).
 
         ``file_index`` is used to make temporary subdirectory names unique when
         converting multiple files within one analysis run.
@@ -2382,7 +2385,7 @@ class AnalysisWorker:
             result = convert_sprite(input_path, tmp_out, analysis_uuid)
             if not result['success']:
                 log.warning(f"Sprite conversion failed for {input_path}: {result.get('error')}")
-                return None
+                return None, result.get('error') or 'Conversion failed'
             for sprite in result['sprites']:
                 # Include file_index in the saved name so that sprites from
                 # different source files within the same analysis run don't
@@ -2411,7 +2414,7 @@ class AnalysisWorker:
             tmp_out = work_dir / f'draw_{file_index}'
             result = convert_draw(input_path, tmp_out, analysis_uuid)
             if not result['success']:
-                return None  # convert_draw already logged the full error
+                return None, result.get('error') or 'Conversion failed'
             # Include file_index so multiple Draw files in the same archive
             # each get a unique output filename rather than overwriting each other.
             saved_svg = self.save_output_file(
@@ -2448,9 +2451,9 @@ class AnalysisWorker:
                 })
             except Exception as e:
                 log.warning(f"Text conversion failed for {input_path}: {e}")
-                return None
+                return None, str(e)
 
-        return outputs
+        return outputs, None
 
     def _detect_viewable_type(self, path: Path) -> 'ArtefactType | None':
         """Return the ArtefactType for a viewable file, or None if not viewable."""
@@ -2500,7 +2503,7 @@ class AnalysisWorker:
         if artefact_type_str in _direct_types:
             input_path = self.get_input_path(artefact, work_dir)
             artefact_type = ArtefactType(artefact_type_str)
-            outputs = self._convert_file_to_outputs(
+            outputs, _ = self._convert_file_to_outputs(
                 input_path, artefact_type, work_dir, output_subdir, analysis_uuid,
             )
             if outputs is None:
@@ -2563,6 +2566,7 @@ class AnalysisWorker:
                     viewable_files.append((file_data, vt))
 
         all_outputs = []
+        failed_conversions = []
         file_index = 0
         for file_data, viewable_type in viewable_files:
             db_path = file_data['path']
@@ -2584,23 +2588,29 @@ class AnalysisWorker:
             # display_path is the DB path (already matches ExtractedFile.path)
             display_path = db_path
 
-            file_outputs = self._convert_file_to_outputs(
+            file_outputs, file_error = self._convert_file_to_outputs(
                 file_path, viewable_type, work_dir, output_subdir, analysis_uuid, file_index,
             )
             file_index += 1
             if file_outputs is None:
-                log.warning(f"Skipping {file_path} — conversion failed")
+                log.warning(f"Skipping {file_path} — conversion failed: {file_error}")
+                failed_conversions.append({
+                    'source_file': display_path,
+                    'error': file_error or 'Conversion failed',
+                })
                 continue
             for out in file_outputs:
                 out['source_file'] = display_path
             all_outputs.extend(file_outputs)
 
+        failed_suffix = f' ({len(failed_conversions)} failed)' if failed_conversions else ''
         self.complete_analysis(
             analysis_id,
-            summary=f'Converted {len(all_outputs)} output(s) from {file_index} viewable file(s)',
+            summary=f'Converted {len(all_outputs)} output(s) from {file_index} viewable file(s){failed_suffix}',
             details=json.dumps({
                 'mode': 'extraction_scan',
                 'outputs': all_outputs,
+                'failed_conversions': failed_conversions,
             }),
         )
 
