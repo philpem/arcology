@@ -197,11 +197,15 @@
                                 {% endif %}
                                 {# ── Manage file restrictions button (write users only) ── #}
                                 {% if user_can_write %}
+                                {%- set _rd = namespace(items=[]) %}
+                                {%- for _r in file.restrictions %}
+                                {%- set _rd.items = _rd.items + [{'v': _r.restriction_type.value, 'l': _r.restriction_type.label, 'r': _r.reason or '', 'e': current_user.is_admin or _r.added_by_id == current_user.id}] %}
+                                {%- endfor %}
                                 <button type="button" class="btn btn-link btn-sm p-0 ms-1 {% if file.restrictions %}text-danger{% else %}text-muted{% endif %}"
                                         data-bs-toggle="modal" data-bs-target="#fileRestrictModal"
                                         data-file-uuid="{{ file.uuid }}"
                                         data-file-name="{{ file.filename }}"
-                                        data-restrictions="{{ file.restrictions | map(attribute='restriction_type') | map(attribute='value') | list | tojson | forceescape }}"
+                                        data-restrictions="{{ _rd.items | tojson | forceescape }}"
                                         title="Manage file restrictions"><i class="bi bi-shield{% if file.restrictions %}-fill{% endif %}"></i></button>
                                 {% endif %}
                                 {% if file.path in viewable_filenames %}
@@ -429,6 +433,31 @@
       </div>
       <div class="modal-body">
         <div id="frm-current-list" class="mb-3"></div>
+        <div id="frm-edit-section" style="display:none">
+          <hr>
+          <p class="text-muted small mb-2">Edit restriction: <strong id="frm-edit-label"></strong></p>
+          <form id="frm-edit-form" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="update">
+            <input type="hidden" id="frm-edit-old-category" name="category" value="">
+            <div class="row g-2">
+              <div class="col-auto">
+                <select id="frm-edit-new-category" name="new_category" class="form-select form-select-sm">
+                  {% for rt in RestrictionType %}
+                  <option value="{{ rt.value }}">{{ rt.label }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col">
+                <input type="text" id="frm-edit-reason" name="reason" class="form-control form-control-sm" placeholder="Reason (optional)">
+              </div>
+              <div class="col-auto">
+                <button type="submit" class="btn btn-sm btn-primary">Save</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="frm-edit-cancel">Cancel</button>
+              </div>
+            </div>
+          </form>
+        </div>
         <hr>
         <p class="text-muted small mb-2">Add restriction</p>
         <form id="frm-add-form" method="POST">
@@ -457,8 +486,24 @@
 
 <script>
 (function() {
+    function htmlEsc(s) {
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
     var modal = document.getElementById('fileRestrictModal');
     if (!modal) return;
+
+    var editSection = document.getElementById('frm-edit-section');
+    var editForm    = document.getElementById('frm-edit-form');
+    var editLabel   = document.getElementById('frm-edit-label');
+    var editOldCat  = document.getElementById('frm-edit-old-category');
+    var editNewCat  = document.getElementById('frm-edit-new-category');
+    var editReason  = document.getElementById('frm-edit-reason');
+
+    document.getElementById('frm-edit-cancel').addEventListener('click', function() {
+        editSection.style.display = 'none';
+    });
+
     modal.addEventListener('show.bs.modal', function(event) {
         var btn = event.relatedTarget;
         var uuid = btn.getAttribute('data-file-uuid');
@@ -467,23 +512,48 @@
 
         document.getElementById('frm-filename').textContent = name;
         document.getElementById('frm-add-form').action = '/files/' + uuid + '/restrictions';
+        editForm.action = '/files/' + uuid + '/restrictions';
+        editSection.style.display = 'none';
 
         var listEl = document.getElementById('frm-current-list');
         if (restrictions.length === 0) {
             listEl.innerHTML = '<p class="text-muted small mb-0">No restrictions set on this file.</p>';
         } else {
-            var html = '<p class="text-muted small mb-1">Current restrictions:</p><div class="d-flex flex-wrap gap-1">';
-            restrictions.forEach(function(rval) {
-                html += '<form method="POST" action="/files/' + uuid + '/restrictions" class="d-inline">'
+            var html = '<p class="text-muted small mb-1">Current restrictions:</p>';
+            restrictions.forEach(function(r) {
+                var rval = r.v, rlabel = r.l, rreason = r.r, rcanEdit = r.e;
+                var reasonAttr = rreason ? ' title="' + htmlEsc(rreason) + '"' : '';
+                html += '<div class="d-flex align-items-center gap-1 mb-1">'
+                      + '<form method="POST" action="/files/' + uuid + '/restrictions" class="d-inline">'
                       + '<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">'
                       + '<input type="hidden" name="action" value="remove">'
-                      + '<input type="hidden" name="category" value="' + rval + '">'
-                      + '<button type="submit" class="btn btn-sm btn-outline-danger">'
-                      + '<i class="bi bi-x-circle"></i> ' + rval
+                      + '<input type="hidden" name="category" value="' + htmlEsc(rval) + '">'
+                      + '<button type="submit" class="btn btn-sm btn-outline-danger" title="Remove">'
+                      + '<i class="bi bi-x-circle"></i> ' + htmlEsc(rlabel)
                       + '</button></form>';
+                if (rreason) {
+                    html += '<span class="text-muted small"' + reasonAttr + ' style="cursor:help">'
+                          + '<i class="bi bi-info-circle"></i></span>';
+                }
+                if (rcanEdit) {
+                    html += '<button type="button" class="btn btn-link btn-sm p-0 text-secondary frm-edit-btn"'
+                          + ' data-val="' + htmlEsc(rval) + '" data-label="' + htmlEsc(rlabel) + '" data-reason="' + htmlEsc(rreason) + '"'
+                          + ' title="Edit restriction"><i class="bi bi-pencil"></i></button>';
+                }
+                html += '</div>';
             });
-            html += '</div>';
             listEl.innerHTML = html;
+
+            listEl.querySelectorAll('.frm-edit-btn').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    editOldCat.value = this.dataset.val;
+                    editNewCat.value = this.dataset.val;
+                    editReason.value = this.dataset.reason;
+                    editLabel.textContent = this.dataset.label;
+                    editSection.style.display = '';
+                    editSection.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+                });
+            });
         }
     });
 })();
