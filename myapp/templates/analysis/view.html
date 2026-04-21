@@ -156,6 +156,13 @@
                             <pre class="mb-1 p-2 bg-light rounded" style="font-size: 0.8rem; white-space: pre-wrap; word-break: break-all;"><code>{{ item.output.command }}</code></pre>
                         </div>
 
+                        {% if item.output.script %}
+                        <div class="mb-2">
+                            <small class="text-muted">Script:</small>
+                            <pre class="mb-1 p-2 bg-light rounded" style="font-size: 0.8rem; white-space: pre-wrap;"><code>{{ item.output.script }}</code></pre>
+                        </div>
+                        {% endif %}
+
                         <div class="mb-2">
                             <small class="text-muted">Exit code: <code>{{ item.output.returncode }}</code></small>
                         </div>

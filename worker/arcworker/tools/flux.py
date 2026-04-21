@@ -244,6 +244,7 @@ def dfi_to_scp_hxcfe(input_path: Path, output_path: Path, clock_mhz: int | None 
                 f'-foutput:{output_path}',
             ]
             result, process_output = run_tool_with_output(cmd)
+            process_output['script'] = script
         finally:
             Path(script_path).unlink(missing_ok=True)
     else:
