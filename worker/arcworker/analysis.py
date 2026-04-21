@@ -2577,6 +2577,15 @@ class AnalysisWorker:
                 extraction_path, disk_path, work_dir,
                 risc_os_filetype=file_data.get('risc_os_filetype') or None,
             )
+            if file_path is None and disk_path != db_path:
+                # Fallback: the archive may contain a top-level directory
+                # whose name matches the archive filename (common in RISC OS).
+                # In that case the on-disk path retains the prefix, so try
+                # the full DB path without stripping.
+                file_path = self._resolve_single_extraction_file(
+                    extraction_path, db_path, work_dir,
+                    risc_os_filetype=file_data.get('risc_os_filetype') or None,
+                )
             if file_path is None:
                 log.warning(f"Viewable file not found: {db_path}")
                 continue
@@ -3026,6 +3035,12 @@ class AnalysisWorker:
                 extraction_path, disk_path, work_dir,
                 risc_os_filetype=risc_os_filetype or None,
             )
+            if file_path is None and disk_path != db_path:
+                # Fallback: archive contains top-level dir matching archive name
+                file_path = self._resolve_single_extraction_file(
+                    extraction_path, db_path, work_dir,
+                    risc_os_filetype=risc_os_filetype or None,
+                )
 
             if file_path is None:
                 log.warning(f"Module file not found on disk: {db_path}")
