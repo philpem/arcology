@@ -169,6 +169,16 @@ def analysis_handler(description: str):
 
 _COMPRESS_SUFFIXES = frozenset({'.gz', '.bz2', '.zst'})
 
+# Flux formats that cannot be visualised or decoded directly — they must be
+# converted to SCP first and their SCP sibling's own FLUX_DECODE handles the
+# rest of the pipeline.  Add new "SCP-via-conversion" types here; update
+# process_flux_visualisation() and process_flux_decode() with an elif branch
+# that calls the appropriate conversion tool.
+_SCP_VIA_CONVERSION_TYPES = frozenset({
+    ArtefactType.DFI,   # hxcfe: dfi_to_scp_hxcfe()
+    # ArtefactType.A2R, # greaseweazle: a2r_to_scp_gw() (not yet implemented)
+})
+
 
 def _inner_format_extension(filename: str) -> str:
     """Return the inner (non-compression) extension of filename, or ''.
@@ -632,7 +642,7 @@ class AnalysisWorker:
         # source).  For SCP sources, use the file directly.
         vis_input_path = input_path
         dfi_to_scp_result = None
-        if source_type == ArtefactType.DFI:
+        if source_type in _SCP_VIA_CONVERSION_TYPES:
             hints = json.loads(analysis.get('hints') or '{}')
             clock_mhz = hints.get('dfi_clock_mhz')
             scp_path = work_dir / f"{input_path.stem}_vis.scp"
@@ -780,7 +790,7 @@ class AnalysisWorker:
         # For SCP/HFE: read the IMD sibling we just produced.
         # For IMD: read the source directly.
 
-        if source_type != ArtefactType.DFI:
+        if source_type not in _SCP_VIA_CONVERSION_TYPES:
             gw_format = hints.get('gw_format')
             gw_format_source = 'hint' if gw_format else None
 
@@ -837,7 +847,7 @@ class AnalysisWorker:
         summary_parts = [f"{name}: {'OK' if r['success'] else 'FAIL'}" for name, r in results]
         details_dict = {name: r for name, r in results}
 
-        if source_type != ArtefactType.DFI:
+        if source_type not in _SCP_VIA_CONVERSION_TYPES:
             details_dict['gw_format_used'] = gw_format
             details_dict['gw_format_source'] = gw_format_source
             if imd_track0_summary:
