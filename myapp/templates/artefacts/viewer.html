@@ -244,11 +244,13 @@
     {% set out = ns.image_outputs[0] %}
     {% set preview_file = out.svg_filename if out.svg_filename else out.filename %}
     <div class="card viewer-img-card mb-4">
-        <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
-           target="_blank" rel="noopener">
-            <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
-                 class="viewer-img viewer-img-fullwidth card-img-top" alt="{{ out.name }}" loading="lazy">
-        </a>
+        <div class="p-2 text-center">
+            <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
+               target="_blank" rel="noopener">
+                <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
+                     class="viewer-img viewer-img-fullwidth" alt="{{ out.name }}" loading="lazy">
+            </a>
+        </div>
         <div class="card-footer p-1 text-center">
             <span class="viewer-name font-monospace">{{ out.name }}</span>
         </div>
