@@ -115,7 +115,7 @@ The worker is a standalone Python process that polls the web app's REST API for 
 | `PARTITION_DETECT` | sfdisk, ADFS signature detection, `file` | Detects partitions and filesystem types |
 | `DISC_PROTECTION_DETECT` | HxCFE / hfe_parser | Scans for copy protection indicators (bad CRC, weak bits, DDAM, ID mismatches) |
 | `DISC_MASTERING_DETECT` | HxCFE / hfe_parser | Scans trailing tracks for mastering/duplicator fingerprints (traceback, formaster) |
-| `FORMAT_IDENTIFY` | (placeholder) | Identifies exact format/variant |
+| `FORMAT_IDENTIFY` | (built-in) | Identifies file format by magic bytes (FCFS images, misidentified archives); displayed as "File Format Identify" |
 | `CHECKSUM_COMPUTE` | (built-in) | Computes MD5/SHA-1/SHA-256 hashes for an artefact |
 | `PRODUCT_RECOGNITION` | (built-in) | Matches extracted file hashes against known-file databases |
 | `SECTOR_DUMP` | (built-in) | Extracts a raw sector dump from a flux image |
