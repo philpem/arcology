@@ -954,16 +954,39 @@ class AnalysisWorker:
         # Track every tool attempted so all process_output ends up in details.
         all_results: dict[str, dict] = {}
 
+        # Determine filesystem type.
+        # Treat 'unknown' the same as an absent hint so that a successful DIM
+        # run can upgrade the filesystem type (fixes the case where
+        # PARTITION_DETECT couldn't identify the format but DIM can).
+        if filesystem and filesystem != 'unknown':
+            fs_type = filesystem
+        elif artefact_type == ArtefactType.ISO.value:
+            fs_type = 'iso9660'
+        elif container_format:
+            container_lower = container_format.lower()
+            if 'adfs' in container_lower:
+                fs_type = 'adfs'
+            elif 'dfs' in container_lower:
+                fs_type = 'dfs'
+            elif 'acorn' in container_lower:
+                fs_type = 'acorn'
+            else:
+                fs_type = 'unknown'
+        else:
+            fs_type = 'unknown'
+
         # Choose extraction method based on filesystem hint
         is_acorn = False
-        if filesystem in ('dfs', 'adfs', 'acorn'):
+        log.info(f"file_extraction: FS is '{fs_type}' on a {artefact_type} artefact")
+        if fs_type in ('dfs', 'adfs', 'acorn'):
             result = extract_acorn_disc_image_manager(input_path, extract_dir)
             all_results['dim'] = result
             is_acorn = True
-        elif filesystem in ('fat', 'fat12', 'fat16', 'fat32', 'dos', 'msdos'):
+        elif fs_type in ('fat', 'fat12', 'fat16', 'fat32', 'dos', 'msdos', 'iso9660'):
             result = extract_dos_7z(input_path, extract_dir)
             all_results['7z'] = result
         else:
+            log.info(f"CHECKPOINT: FS is '{fs_type}', I dunno, falling back!")
             # No filesystem hint — read the boot-sector BPB first.  If the
             # image is FAT12/16/32, skip DIM entirely and go straight to 7z:
             # DIM can read DOS FAT images but produces double-extension names.
@@ -1081,27 +1104,6 @@ class AnalysisWorker:
             or 'hard disc' in container_format.lower()
         ):
             container_format = hint_container_format
-
-        # Determine filesystem type.
-        # Treat 'unknown' the same as an absent hint so that a successful DIM
-        # run can upgrade the filesystem type (fixes the case where
-        # PARTITION_DETECT couldn't identify the format but DIM can).
-        if filesystem and filesystem != 'unknown':
-            fs_type = filesystem
-        elif artefact_type == ArtefactType.ISO.value:
-            fs_type = 'iso9660'
-        elif container_format:
-            container_lower = container_format.lower()
-            if 'adfs' in container_lower:
-                fs_type = 'adfs'
-            elif 'dfs' in container_lower:
-                fs_type = 'dfs'
-            elif 'acorn' in container_lower:
-                fs_type = 'acorn'
-            else:
-                fs_type = 'unknown'
-        else:
-            fs_type = 'unknown'
 
         # For DOS/FAT filesystems processed by 7z, construct a human-readable
         # container_format so the UI hover tooltip is populated.  DIM sets this
