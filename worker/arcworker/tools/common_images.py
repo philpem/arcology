@@ -7,6 +7,7 @@ and Windows vector metafiles (WMF, EMF) via external tools (wmf2svg, emf2svg-con
 
 import shutil
 import subprocess
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from ..config import log
@@ -25,6 +26,26 @@ _VECTOR_EXTS: dict[str, tuple[str, object]] = {
     '.wmf': ('wmf2svg',      _wmf_cmd),
     '.emf': ('emf2svg-conv', _emf_cmd),
 }
+
+def _ensure_svg_namespace(svg_path: Path) -> None:
+    """
+    Ensure the attached SVG file has a valid namespace
+    """
+    SVG_NS = "http://www.w3.org/2000/svg"
+
+    try:
+        tree = ET.parse(svg_path)
+        root = tree.getroot()
+
+        # ElementTree represents tags as {namespace}tag if namespaced
+        if not root.tag.startswith("{"):
+            # no default SVG namespace, add it
+            root.set("xmlns", SVG_NS)
+            tree.write(svg_path, encoding="utf-8", xml_declaration=True)
+    except ET.ParseError:
+        # if it's not well-formed XML, rethrow
+        # TODO, need to raise a better error
+        raise
 
 
 def convert_image(input_path: Path, output_dir: Path, analysis_uuid: str) -> dict:
@@ -72,6 +93,11 @@ def convert_image(input_path: Path, output_dir: Path, analysis_uuid: str) -> dic
                 'format': ext.lstrip('.').upper(), 'tool': tool_name,
                 'error': f'{tool_name} failed (rc={proc.returncode}): {out}',
             }
+
+        # Bodge for wmf2svg: make sure the output SVG has a valid default
+        # XML namespace
+        _ensure_svg_namespace(out_svg)
+
         return {
             'success': True, 'output_path': str(out_svg),
             'format': ext.lstrip('.').upper(), 'tool': tool_name,
