@@ -207,10 +207,11 @@ def _validate_storage_path(path: str) -> bool:
 
 from ..utils.db_helpers import get_by_uuid_or_404 as _get_by_uuid_or_404
 from ..utils.db_helpers import get_by_id_or_404 as _get_by_id_or_404
+from ..utils.slugs import lookup_by_identifier as _lookup_by_identifier
 
 
 def _get_item_or_404(uuid):
-    return _get_by_uuid_or_404(Item, uuid)
+    return _lookup_by_identifier(Item, uuid)
 
 
 def _get_artefact_or_404(uuid, *load_options):
