@@ -76,6 +76,7 @@ exit
             '-s', script_path
         ]
         result, process_output = run_tool_with_output(cmd)
+        process_output['script'] = script_content
 
         # DIM can read DOS FAT12/16/32 images but produces double-extension
         # filenames (e.g. E002.ZIP → E002.ZIP.ZIP).  Detect this via the
