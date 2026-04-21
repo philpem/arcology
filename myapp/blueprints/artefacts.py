@@ -1196,6 +1196,7 @@ def _render_viewer(artefact):
         return outputs
 
     viewer_status = None  # 'pending', 'failed', 'partial', or None (ready)
+    failed_conversion_list = []  # [{source_file, error, analysis_uuid}, ...]
     file_filter = request.args.get('file')
     # Subdirectory browse filter — matches the File Viewer's ?path=<dir>/ scheme
     # so selecting a subdirectory there carries through to the Viewer.
@@ -1227,6 +1228,12 @@ def _render_viewer(artefact):
             viewer_status = 'pending'
         else:
             viewer_status = 'failed'
+            if conv and conv.status == AnalysisStatus.FAILED:
+                failed_conversion_list = [{
+                    'source_file': artefact.original_filename or artefact.label,
+                    'error': conv.error_message or 'Conversion failed',
+                    'analysis_uuid': conv.uuid,
+                }]
     else:
         # Mode 2: Aggregate outputs from all FORMAT_CONVERT analyses on this artefact
         # and all derived artefacts (e.g. an ISO extracted from a ZIP).
@@ -1246,14 +1253,24 @@ def _render_viewer(artefact):
         )
 
         # Collect outputs grouped by source_file (filtered by ?file= if set)
+        # and gather any per-file conversion failures recorded in details JSON.
         groups: dict[str, list] = defaultdict(list)
         for conv in convs:
+            if conv.status == AnalysisStatus.FAILED:
+                failed_conversion_list.append({
+                    'source_file': None,
+                    'error': conv.error_message or 'Conversion failed',
+                    'analysis_uuid': conv.uuid,
+                })
+                continue
             if not (conv.status == AnalysisStatus.COMPLETED and conv.success):
                 continue
             try:
                 details = json.loads(conv.details or '{}')
             except (json.JSONDecodeError, TypeError):
                 continue
+            for fc in details.get('failed_conversions', []):
+                failed_conversion_list.append({**fc, 'analysis_uuid': conv.uuid})
             for out in details.get('outputs', []):
                 source = out.get('source_file', '')
                 if file_filter and source != file_filter:
@@ -1493,6 +1510,7 @@ def _render_viewer(artefact):
         artefact=artefact,
         output_groups=output_groups,
         viewer_status=viewer_status,
+        failed_conversion_list=failed_conversion_list,
         module_detail=module_detail,
         user_can_bypass_explicit=user_can_bypass_explicit,
         pagination=pagination,
