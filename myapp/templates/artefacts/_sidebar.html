@@ -183,11 +183,16 @@
         <div class="card mb-4">
             <div class="card-header"><i class="bi bi-diagram-3"></i> Derived Artefacts</div>
             <ul class="list-group list-group-flush">
-                {% for derived in artefact.derived_artefacts %}
-                <li class="list-group-item d-flex justify-content-between">
-                    <a href="{{ artefact_url(derived) }}">{{ derived.label }}</a>
-                    <span class="badge bg-secondary">{{ derived.artefact_type.value.upper() }}</span>
+                {% for derived in artefact.derived_artefacts recursive %}
+                <li class="list-group-item d-flex justify-content-between align-items-center"
+                    style="padding-left: {{ 0.75 + loop.depth0 * 1.25 }}rem;">
+                    <a href="{{ artefact_url(derived) }}" class="text-truncate me-2">
+                        {% if loop.depth0 > 0 %}<i class="bi bi-arrow-return-right text-muted me-1 small"></i>{% endif %}
+                        {{ derived.label }}
+                    </a>
+                    <span class="badge bg-secondary flex-shrink-0">{{ derived.artefact_type.value.upper() }}</span>
                 </li>
+                {% if derived.derived_artefacts %}{{ loop(derived.derived_artefacts) }}{% endif %}
                 {% endfor %}
             </ul>
         </div>
