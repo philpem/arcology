@@ -58,14 +58,15 @@ flask db upgrade
 ## Switching branches when your branch has migrations
 
 The database schema is independent of your git branch. Before switching away
-from a branch that added migrations, downgrade the DB first:
+from a branch that added migrations, downgrade the DB first.  Run the script
+to get the exact command (local and Docker variants are both printed):
 
 ```bash
-python devtools/db_branch_switch.py          # downgrade to master
-python devtools/db_branch_switch.py --dry-run  # preview without changes
+python devtools/db_branch_switch.py          # compare against master
+python devtools/db_branch_switch.py <branch> # compare against another branch
 ```
 
-Then switch branches and run `flask db upgrade` on the target branch if needed.
+Then run the printed command, switch branches, and `flask db upgrade` if needed.
 See `doc/BRANCH_DB_SWITCHING.md` for the full workflow and edge cases.
 
 ## Database profiling and debugging

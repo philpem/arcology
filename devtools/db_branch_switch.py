@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Switch the database schema to match a target git branch.
+Print the flask db downgrade command needed before switching to a target branch.
 
-Finds migration files added on the current branch (vs the target branch),
-determines the downgrade target revision, then runs `flask db downgrade`.
+Finds migration files added on the current branch (vs the target branch) and
+prints the exact command to run -- both for a local venv and for Docker.  It
+does NOT run the command itself, so you can copy it to whichever environment
+the database lives in.
 
-Run from the repo root with the virtual environment active:
+Run from the repo root:
 
-    python devtools/db_branch_switch.py              # downgrade to master
-    python devtools/db_branch_switch.py main         # downgrade to main
-    python devtools/db_branch_switch.py --dry-run    # preview only, no changes
-    python devtools/db_branch_switch.py -y           # skip confirmation prompt
+    python devtools/db_branch_switch.py              # compare against master
+    python devtools/db_branch_switch.py other-branch # compare against a different branch
 """
 
 import argparse
@@ -87,10 +87,6 @@ def main():
         'target_branch', nargs='?', default='master',
         help='Branch to match DB schema to (default: master)',
     )
-    parser.add_argument('--dry-run', action='store_true',
-                        help='Show what would be done without making changes')
-    parser.add_argument('-y', '--yes', action='store_true',
-                        help='Skip confirmation prompt')
     args = parser.parse_args()
 
     if not os.path.isdir(MIGRATIONS_DIR):
@@ -120,25 +116,13 @@ def main():
 
     target_rev = _find_downgrade_target(new_migrations)
     target_arg = target_rev if target_rev else 'base'
-    print(f"\nDowngrade target : {target_arg}")
-    print(f"Command          : flask db downgrade {target_arg}")
 
-    if args.dry_run:
-        print("\n[dry-run] No changes made.")
-        sys.exit(0)
-
-    if not args.yes:
-        try:
-            answer = input("\nProceed? [y/N] ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            print("\nAborted.")
-            sys.exit(1)
-        if answer != 'y':
-            print("Aborted.")
-            sys.exit(1)
-
-    result = subprocess.run(['flask', 'db', 'downgrade', target_arg])
-    sys.exit(result.returncode)
+    print(f"\nDowngrade target: {target_arg}")
+    print(f"\nRun ONE of the following before switching branches:")
+    print(f"\n  Local venv:")
+    print(f"    flask db downgrade {target_arg}")
+    print(f"\n  Docker:")
+    print(f"    docker compose exec -it web flask db downgrade {target_arg}")
 
 
 if __name__ == '__main__':

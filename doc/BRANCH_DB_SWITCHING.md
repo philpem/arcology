@@ -9,17 +9,19 @@ The fix is to downgrade the database before switching, then upgrade on the new b
 ## Quick Reference
 
 ```
-python devtools/db_branch_switch.py              # downgrade to master, then switch manually
-python devtools/db_branch_switch.py other-branch # downgrade to a different target branch
-python devtools/db_branch_switch.py --dry-run    # preview what would happen
-python devtools/db_branch_switch.py -y           # skip the confirmation prompt
+python devtools/db_branch_switch.py              # print downgrade command for master
+python devtools/db_branch_switch.py other-branch # print downgrade command for another branch
 ```
+
+The script prints the exact `flask db downgrade` command to run — both the
+local venv form and the Docker form — but does not run it, so you can copy it
+to whichever environment the database lives in.
 
 ## Full Workflow
 
-### 1. Downgrade the database
+### 1. Find the downgrade command
 
-From the repo root with the virtual environment active:
+From the repo root:
 
 ```bash
 python devtools/db_branch_switch.py [target-branch]
@@ -28,21 +30,36 @@ python devtools/db_branch_switch.py [target-branch]
 The script:
 1. Finds migration files that exist on your current branch but not on the target branch
 2. Traces the chain to find the revision that the target branch is at
-3. Shows you the plan and asks for confirmation
-4. Runs `flask db downgrade <revision>`
+3. Prints the command to run (local and Docker variants)
 
-### 2. Switch branches
+### 2. Run the downgrade command
+
+Copy the printed command and run it in the right environment:
+
+```bash
+# Local venv
+flask db downgrade <revision>
+
+# Docker
+docker compose exec -it web flask db downgrade <revision>
+```
+
+### 3. Switch branches
 
 ```bash
 git checkout master       # or target branch
 ```
 
-### 3. Upgrade if needed
+### 4. Upgrade if needed
 
 If the target branch also has migrations ahead of the common ancestor (uncommon when switching to master, typical when switching between two feature branches):
 
 ```bash
+# Local
 flask db upgrade
+
+# Docker
+docker compose exec -it web flask db upgrade
 ```
 
 ## Manual Approach (without the script)
