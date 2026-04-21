@@ -65,8 +65,13 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
             <i class="bi bi-fingerprint"></i> Mastering Data
         </span>
         {% endif %}
+        {% if density_detect_analysis %}
+        <span class="badge bg-info text-dark me-1" title="Track density mismatch — 40-track disc imaged in 80-track drive">
+            <i class="bi bi-exclamation-diamond-fill"></i> Density Mismatch
+        </span>
+        {% endif %}
         {% if protection_analysis and protection_analysis.get('indicators') %}
-        <span class="badge bg-warning text-dark me-1" title="Copy protection indicators found — click Analysis for details">
+        <span class="badge bg-warning text-dark me-1" title="Copy protection indicators found — click Analysis cautions for details">
             <i class="bi bi-shield-lock-fill"></i> Copy Protected
         </span>
         {% endif %}

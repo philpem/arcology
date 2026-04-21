@@ -1267,11 +1267,11 @@ def analyse_hfe_protection(path: Path) -> dict:
                     # Cylinder mismatch — sector ID claims a different track
                     if cyl is not None and cyl != t_idx:
                         indicators.append({
-                            'type':       'id_mismatch',
-                            'track':      t_idx,
-                            'side':       side,
-                            'sector_cyl': cyl,
-                            'sect':       sect,
+                            'type':         'id_mismatch',
+                            'track':        t_idx,
+                            'side':         side,
+                            'reported_cyl': cyl,
+                            'sect':         sect,
                         })
 
                     # Collect IDs for duplicate detection
@@ -1292,9 +1292,25 @@ def analyse_hfe_protection(path: Path) -> dict:
                             'count':     count,
                         })
 
+    # Deduplicate id_mismatch entries: collapse per-sector rows into one row
+    # per (track, side, reported_cyl) with a count of affected sectors.
+    # Without this a 9-sector track produces 9 identical-looking rows.
+    seen_mismatches: dict[tuple, int] = {}
+    deduped: list[dict] = []
+    for ind in indicators:
+        if ind['type'] == 'id_mismatch':
+            key = (ind['track'], ind['side'], ind['reported_cyl'])
+            if key in seen_mismatches:
+                deduped[seen_mismatches[key]]['count'] += 1
+            else:
+                seen_mismatches[key] = len(deduped)
+                deduped.append({**ind, 'count': 1})
+        else:
+            deduped.append(ind)
+
     return {
         'hfe_version': header['hfe_version_str'],
-        'indicators':  indicators,
+        'indicators':  deduped,
     }
 
 # vim: ts=4 sw=4 et

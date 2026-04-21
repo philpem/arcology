@@ -43,8 +43,9 @@ from .tools import (
     convert_sprite,
     convert_draw,
 )
-from .tools.imd import parse_imd_track0, detect_geometry_from_boot_data
-from .tools.flux import _geometry_to_gw_format
+from .tools.imd import (parse_imd_track0, detect_geometry_from_boot_data,
+                        parse_imd_tracks, detect_track_density_mismatch)
+from .tools.flux import _geometry_to_gw_format, scp_fix_track_density
 
 
 def _apply_pling_renames(extract_dir: Path, rename_map: dict[str, str]) -> None:
@@ -697,6 +698,81 @@ class AnalysisWorker:
                 analysis_id,
                 f"Fluxfox: {result_fluxfox.get('error', 'unknown')}; HxCFE: {result_hxcfe.get('error', 'unknown')}"
             )
+
+    @analysis_handler("track density detection")
+    def process_detect_track_density(self, analysis: dict, artefact: dict, work_dir: Path):
+        """
+        Detect 40-track disc captured in 80-track drive and produce corrected SCP.
+
+        Pipeline:
+          1. Convert SCP → IMD via hxcfe (temp, for track metadata only)
+          2. Parse all IMD tracks with parse_imd_tracks()
+          3. Run detect_track_density_mismatch() on the track list
+          4. If detected: use gw convert to strip odd tracks → derived 40-track SCP
+        """
+        analysis_id    = analysis['id']
+        input_path     = self.get_input_path(artefact, work_dir)
+        artefact_label = artefact['label']
+
+        # Step 1: SCP → IMD (temporary; used only for track metadata)
+        imd_path   = work_dir / f"{input_path.stem}_tddetect.imd"
+        imd_result = flux_to_imd_hxcfe(input_path, imd_path)
+        if not imd_result['success']:
+            self.fail_analysis(
+                analysis_id,
+                f"hxcfe conversion failed: {imd_result.get('error', '')}",
+            )
+            return
+
+        # Step 2: parse all tracks
+        tracks = parse_imd_tracks(imd_path)
+        if not tracks:
+            self.fail_analysis(analysis_id, "IMD parse failed")
+            return
+
+        # Step 3: detect mismatch
+        detection = detect_track_density_mismatch(tracks)
+
+        if not detection['detected']:
+            self.complete_analysis(
+                analysis_id,
+                tool_name='hxcfe',
+                summary='No track density mismatch detected',
+                details=json.dumps({'detection': detection}),
+            )
+            return
+
+        # Step 4: extract even tracks → density-corrected SCP
+        fixed_path = work_dir / f"{input_path.stem}_40track.scp"
+        fix_result = scp_fix_track_density(input_path, fixed_path)
+
+        if fix_result['success']:
+            derived = self.api.register_derived_artefact(
+                analysis_id,
+                f"{artefact_label} (40-track, density corrected)",
+                fixed_path,
+                ArtefactType.SCP,
+                skip_analyses=[AnalysisType.DETECT_TRACK_DENSITY.name],
+            )
+            log.info(f"Created density-corrected SCP: {derived}")
+
+        conf_pct   = f"{detection['confidence']:.0%}"
+        odd_varied = detection['odd_tracks_with_varied_data']
+        odd_suffix = (
+            f"; WARNING: {odd_varied} odd track(s) contain non-uniform data "
+            f"from a prior 80-track format — disc was reformatted, not re-imaged"
+            if odd_varied else ''
+        )
+        self.complete_analysis(
+            analysis_id,
+            tool_name='hxcfe,greaseweazle',
+            summary=(
+                f"Track density mismatch detected (confidence {conf_pct}); "
+                + ('derived SCP registered' if fix_result['success'] else 'correction failed')
+                + odd_suffix
+            ),
+            details=json.dumps({'detection': detection, 'fix': fix_result}),
+        )
 
     @analysis_handler("flux decode")
     def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
@@ -3278,6 +3354,7 @@ class AnalysisWorker:
                 # Dispatch to appropriate handler
                 handlers = {
                     AnalysisType.CHECKSUM_COMPUTE.value: self.process_checksum_compute,
+                    AnalysisType.DETECT_TRACK_DENSITY.value: self.process_detect_track_density,
                     AnalysisType.FLUX_VISUALISATION.value: self.process_flux_visualisation,
                     AnalysisType.FLUX_DECODE.value: self.process_flux_decode,
                     AnalysisType.FILE_EXTRACTION.value: self.process_file_extraction,

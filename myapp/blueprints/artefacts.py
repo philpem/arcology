@@ -154,7 +154,7 @@ def detect_artefact_type(filename: str) -> ArtefactType:
 # Analysis types appropriate for each artefact type
 ANALYSIS_MAP = {
     # Flux images - visualisation and decode attempt
-    ArtefactType.SCP: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
+    ArtefactType.SCP: [AnalysisType.DETECT_TRACK_DENSITY, AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
     ArtefactType.DFI: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
     ArtefactType.A2R: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
     #ArtefactType.KF: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
@@ -1850,6 +1850,7 @@ def _render_artefact_view(artefact):
     partition_detect_details = None
     armlock_analysis = None
     flux_visualisation_analysis = None
+    density_detect_analysis = None
     for a in all_related_analyses:
         if a.status == AnalysisStatus.COMPLETED and a.details:
             if mastering_analysis is None and a.analysis_type == AnalysisType.DISC_MASTERING_DETECT:
@@ -1882,6 +1883,14 @@ def _render_artefact_view(artefact):
                     flux_visualisation_analysis['_analysis_uuid'] = a.uuid
                 except (json.JSONDecodeError, TypeError) as e:
                     current_app.logger.warning(f"Failed to parse flux visualisation analysis details for {a.uuid}: {e}")
+            elif density_detect_analysis is None and a.analysis_type == AnalysisType.DETECT_TRACK_DENSITY:
+                try:
+                    det_details = json.loads(a.details)
+                    detection = det_details.get('detection', {})
+                    if detection.get('detected'):
+                        density_detect_analysis = {**detection, '_analysis_uuid': a.uuid}
+                except (json.JSONDecodeError, TypeError) as e:
+                    current_app.logger.warning(f"Failed to parse density detection details for {a.uuid}: {e}")
         if (mastering_analysis is not None and protection_analysis is not None
                 and partition_detect_details is not None
                 and flux_visualisation_analysis is not None):
@@ -2135,6 +2144,7 @@ def _render_artefact_view(artefact):
                            current_sort=current_sort,
                            mastering_analysis=mastering_analysis,
                            protection_analysis=protection_analysis,
+                           density_detect_analysis=density_detect_analysis,
                            armlock_analysis=armlock_analysis,
                            flux_visualisation_analysis=flux_visualisation_analysis,
                            partition_detect_details=partition_detect_details,
