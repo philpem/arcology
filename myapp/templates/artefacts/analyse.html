@@ -40,19 +40,33 @@
                 <form method="post">
                     {{ form.hidden_tag() }}
 
-                    <h5>Optional Hints</h5>
-                    <p class="text-muted">These help the analysis tools identify the format more accurately.</p>
-
-                    <div class="mb-3">
-                        {{ form.platform_id.label(class="form-label") }}
-                        {{ form.platform_id(class="form-select") }}
-                        <div class="form-text">{{ form.platform_id.description }}</div>
+                    <div class="mb-2">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="hints-toggle">
+                            <i class="bi bi-sliders"></i> Analysis hints
+                            <i class="bi bi-chevron-down ms-1" id="hints-chevron"></i>
+                        </button>
                     </div>
-
-                    <div class="mb-3">
-                        {{ form.filesystem_hint.label(class="form-label") }}
-                        {{ form.filesystem_hint(class="form-control") }}
-                        <div class="form-text">{{ form.filesystem_hint.description }}</div>
+                    <div class="collapse mb-3" id="hints-section">
+                        <div class="card card-body bg-light">
+                            <p class="text-muted small mb-3">Rarely needed. Help the analysis tools identify the format more accurately.</p>
+                            <div class="mb-3">
+                                {{ form.platform_id.label(class="form-label") }}
+                                {{ form.platform_id(class="form-select") }}
+                                <div class="form-text">{{ form.platform_id.description }}</div>
+                            </div>
+                            <div class="mb-3">
+                                {{ form.filesystem_hint.label(class="form-label") }}
+                                {{ form.filesystem_hint(class="form-control") }}
+                                <div class="form-text">{{ form.filesystem_hint.description }}</div>
+                            </div>
+                            {% if artefact.artefact_type.name == 'DFI' %}
+                            <div class="mb-0">
+                                {{ form.dfi_clock_mhz.label(class="form-label") }}
+                                {{ form.dfi_clock_mhz(class="form-control", type="number", min="1") }}
+                                <div class="form-text">{{ form.dfi_clock_mhz.description }}</div>
+                            </div>
+                            {% endif %}
+                        </div>
                     </div>
 
                     <div class="mb-3">
@@ -69,4 +83,40 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+(function () {
+    'use strict';
+    var hintsEl      = document.getElementById('hints-section');
+    var hintsToggle  = document.getElementById('hints-toggle');
+    var hintsChevron = document.getElementById('hints-chevron');
+    var hintsCollapse = bootstrap.Collapse.getOrCreateInstance(hintsEl, { toggle: false });
+
+    // Auto-expand if any hint field is pre-populated (e.g. from previous analysis hints).
+    var platform  = document.getElementById('platform_id');
+    var fsHint    = document.getElementById('filesystem_hint');
+    var dfiClock  = document.getElementById('dfi_clock_mhz');
+    var hasValue  = (platform && platform.value && platform.value !== '0') ||
+                    (fsHint && fsHint.value.trim()) ||
+                    (dfiClock && dfiClock.value.trim());
+    if (hasValue) {
+        hintsCollapse.show();
+        hintsChevron.classList.replace('bi-chevron-down', 'bi-chevron-up');
+    }
+
+    hintsEl.addEventListener('show.bs.collapse', function () {
+        hintsChevron.classList.replace('bi-chevron-down', 'bi-chevron-up');
+    });
+    hintsEl.addEventListener('hide.bs.collapse', function () {
+        hintsChevron.classList.replace('bi-chevron-up', 'bi-chevron-down');
+    });
+
+    hintsToggle.addEventListener('click', function () {
+        hintsCollapse.toggle();
+    });
+}());
+</script>
 {% endblock %}

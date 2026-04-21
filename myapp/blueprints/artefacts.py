@@ -18,7 +18,7 @@ from flask import Blueprint, render_template, redirect, url_for, flash, request,
 from flask_login import login_required, current_user
 from flask_wtf import FlaskForm
 from flask_wtf.file import FileField, FileRequired
-from wtforms import StringField, TextAreaField, SelectField, BooleanField
+from wtforms import StringField, TextAreaField, SelectField, BooleanField, IntegerField
 from wtforms.validators import DataRequired, Optional
 from werkzeug.utils import secure_filename
 
@@ -67,6 +67,7 @@ blueprint = Blueprint(ROUTENAME, __name__, url_prefix='', template_folder='templ
 EXTENSION_MAP = {
     # Flux-level
     '.scp': ArtefactType.SCP,
+    '.dfi': ArtefactType.DFI,
     
     # Cooked sector-level floppy or hard disc
     '.imd': ArtefactType.IMD,   # needs conversion to sectors
@@ -111,7 +112,7 @@ EXTENSION_MAP = {
 def detect_artefact_type(filename: str) -> ArtefactType:
     """Detect artefact type from filename extension."""
     filename_lower = filename.lower()
-    
+
     # Check compound extensions first (order matters)
     if filename_lower.endswith('.dd.zst'):
         return ArtefactType.DD_ZST
@@ -121,10 +122,15 @@ def detect_artefact_type(filename: str) -> ArtefactType:
         return ArtefactType.DD_BZ2
     if filename_lower.endswith('.tar.gz'):
         return ArtefactType.TARGZ
-    
-    # Get extension
-    _, ext = os.path.splitext(filename_lower)
 
+    # Strip a trailing compression suffix and re-check, so e.g. .dfi.bz2 → .dfi
+    stem = filename_lower
+    for suffix in ('.gz', '.bz2', '.zst'):
+        if stem.endswith(suffix):
+            stem = stem[:-len(suffix)]
+            break
+
+    _, ext = os.path.splitext(stem)
     return EXTENSION_MAP.get(ext, ArtefactType.UNKNOWN)
 
 
@@ -132,6 +138,7 @@ def detect_artefact_type(filename: str) -> ArtefactType:
 ANALYSIS_MAP = {
     # Flux images - visualisation and decode attempt
     ArtefactType.SCP: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
+    ArtefactType.DFI: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
     #ArtefactType.KF: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
     #ArtefactType.FLUX_RAW: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE],
     
@@ -246,6 +253,8 @@ class ArtefactUploadForm(FlaskForm):
                         description='e.g., "Disc 1", "Program Disc", "Manual"')
     platform_id = SelectField('Platform hint', coerce=int, validators=[Optional()],
                                description='Helps analysis tools identify format')
+    dfi_clock_mhz = IntegerField('DFI clock frequency (MHz)', validators=[Optional()],
+                                  description='Override sample frequency for DFI files recorded at non-standard rates (e.g. 100)')
     artefact_type = SelectField('Type (auto-detected)', coerce=str, validators=[Optional()],
                                  description='Leave as "Auto-detect" unless incorrect')
     description = TextAreaField('Description', validators=[Optional()])
@@ -268,6 +277,8 @@ class AnalyseForm(FlaskForm):
                                description='Helps analysis tools identify format')
     filesystem_hint = StringField('Filesystem hint', validators=[Optional()],
                                    description='e.g., adfs, fat12, hfs')
+    dfi_clock_mhz = IntegerField('DFI clock frequency (MHz)', validators=[Optional()],
+                                  description='Override sample frequency for DFI files recorded at non-standard rates (e.g. 100)')
     notes = TextAreaField('Additional notes', validators=[Optional()])
 
 
@@ -2303,6 +2314,8 @@ def upload(item_id):
             platform = Platform.query.get(form.platform_id.data)
             if platform:
                 hints['platform'] = platform.name
+        if form.dfi_clock_mhz.data:
+            hints['dfi_clock_mhz'] = form.dfi_clock_mhz.data
         queue_analyses_for_artefact(artefact, hints if hints else None, checksum_only=not form.auto_analyse.data)
         if form.auto_analyse.data:
             flash(f'Artefact "{artefact.label}" uploaded. Analysis queued.', 'success')
@@ -2905,6 +2918,8 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
                 hints['platform'] = platform.name
         if form.filesystem_hint.data:
             hints['filesystem'] = form.filesystem_hint.data
+        if form.dfi_clock_mhz.data:
+            hints['dfi_clock_mhz'] = form.dfi_clock_mhz.data
         if form.notes.data:
             hints['notes'] = form.notes.data
 
@@ -2944,6 +2959,8 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
                         form.platform_id.data = platform.id
                 if 'filesystem' in last_hints:
                     form.filesystem_hint.data = last_hints['filesystem']
+                if 'dfi_clock_mhz' in last_hints:
+                    form.dfi_clock_mhz.data = last_hints['dfi_clock_mhz']
                 if 'notes' in last_hints:
                     form.notes.data = last_hints['notes']
             except (json.JSONDecodeError, KeyError, TypeError):

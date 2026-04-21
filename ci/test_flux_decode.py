@@ -1,10 +1,11 @@
 """
 Unit tests for process_flux_decode branching behaviour.
 
-Verifies the three-source-type pipeline:
+Verifies the four-source-type pipeline:
   SCP  → HFE sibling + IMD sibling (both skip_analyses=[FLUX_DECODE]) + RAW_SECTOR
   HFE  → IMD sibling (skip_analyses=[FLUX_DECODE]) + RAW_SECTOR; no HFE sibling
   IMD  → RAW_SECTOR only; no siblings
+  DFI  → SCP sibling (no skip_analyses); SCP's own FLUX_DECODE handles the rest
 
 External tool calls (hxcfe, greaseweazle) are fully mocked — no real images needed.
 
@@ -45,7 +46,8 @@ def _make_artefact(artefact_type: ArtefactType, filename: str = 'disc') -> dict:
     }
 
 def _ext(t: ArtefactType) -> str:
-    return {ArtefactType.SCP: '.scp', ArtefactType.HFE: '.hfe', ArtefactType.IMD: '.imd'}.get(t, '')
+    return {ArtefactType.SCP: '.scp', ArtefactType.HFE: '.hfe', ArtefactType.IMD: '.imd',
+            ArtefactType.DFI: '.dfi'}.get(t, '')
 
 def _analysis() -> dict:
     return {'id': _ANALYSIS_ID, 'hints': None}
@@ -268,6 +270,97 @@ class TestIMDSource(unittest.TestCase):
     def test_no_hfe_conversion_called(self):
         worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.IMD, self.work_dir)
         self.assertFalse(mock_hfe.called)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DFI source
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _run_flux_decode_dfi(work_dir: Path, hints: dict | None = None, mock_scp_result=None):
+    """
+    Run process_flux_decode for a DFI source with all external tools mocked.
+    Returns (worker_mock, mock_dfi_to_scp, mock_imd, mock_hfe, mock_gw).
+    """
+    artefact = _make_artefact(ArtefactType.DFI)
+    source_path = work_dir / artefact['storage_path']
+    source_path.touch()
+
+    scp_result = mock_scp_result or {'success': True}
+    analysis = {'id': _ANALYSIS_ID, 'hints': __import__('json').dumps(hints) if hints else None}
+
+    worker = MagicMock(spec=AnalysisWorker)
+    worker.get_input_path.return_value = source_path
+    worker.api = MagicMock()
+    worker.api.register_derived_artefact.return_value = {'artefact': {'uuid': 'mock-uuid'}}
+
+    with patch('worker.arcworker.analysis.dfi_to_scp_hxcfe', return_value=scp_result) as mock_dfi, \
+         patch('worker.arcworker.analysis.flux_to_imd_hxcfe', return_value={'success': True}) as mock_imd, \
+         patch('worker.arcworker.analysis.flux_to_hfe_hxcfe', return_value={'success': True}) as mock_hfe, \
+         patch('worker.arcworker.analysis.sector_image_to_raw_greaseweazle', return_value={'success': True}) as mock_gw:
+
+        AnalysisWorker.process_flux_decode(worker, analysis, artefact, work_dir)
+
+    return worker, mock_dfi, mock_imd, mock_hfe, mock_gw
+
+
+class TestDFISource(unittest.TestCase):
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.work_dir = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_calls_dfi_to_scp(self):
+        """dfi_to_scp_hxcfe must be called with the DFI source path."""
+        worker, mock_dfi, mock_imd, mock_hfe, mock_gw = _run_flux_decode_dfi(self.work_dir)
+        self.assertTrue(mock_dfi.called)
+        self.assertEqual(mock_dfi.call_args.args[0].suffix, '.dfi')
+
+    def test_produces_scp_sibling(self):
+        """SCP sibling must be registered so its own FLUX_DECODE runs."""
+        worker, mock_dfi, mock_imd, mock_hfe, mock_gw = _run_flux_decode_dfi(self.work_dir)
+        types_registered = [c.args[3] for c in worker.api.register_derived_artefact.call_args_list]
+        self.assertIn(ArtefactType.SCP, types_registered)
+
+    def test_scp_sibling_has_no_skip_analyses(self):
+        """SCP sibling must not suppress FLUX_DECODE — it needs to run the full pipeline."""
+        worker, mock_dfi, mock_imd, mock_hfe, mock_gw = _run_flux_decode_dfi(self.work_dir)
+        scp_calls = [c for c in worker.api.register_derived_artefact.call_args_list
+                     if c.args[3] == ArtefactType.SCP]
+        self.assertEqual(len(scp_calls), 1)
+        self.assertNotIn('skip_analyses', scp_calls[0].kwargs)
+
+    def test_no_imd_hfe_gw_called(self):
+        """hxcfe IMD/HFE conversion and gw must not run during DFI FLUX_DECODE."""
+        worker, mock_dfi, mock_imd, mock_hfe, mock_gw = _run_flux_decode_dfi(self.work_dir)
+        self.assertFalse(mock_imd.called)
+        self.assertFalse(mock_hfe.called)
+        self.assertFalse(mock_gw.called)
+
+    def test_only_scp_registered(self):
+        """Only the SCP sibling should be registered — no IMD, HFE, or RAW_SECTOR."""
+        worker, mock_dfi, mock_imd, mock_hfe, mock_gw = _run_flux_decode_dfi(self.work_dir)
+        self.assertEqual(worker.api.register_derived_artefact.call_count, 1)
+
+    def test_clock_mhz_hint_passed_to_tool(self):
+        """When dfi_clock_mhz hint is set, dfi_to_scp_hxcfe receives it."""
+        worker, mock_dfi, mock_imd, mock_hfe, mock_gw = _run_flux_decode_dfi(
+            self.work_dir, hints={'dfi_clock_mhz': 100})
+        self.assertEqual(mock_dfi.call_args.kwargs.get('clock_mhz'), 100)
+
+    def test_no_clock_mhz_hint_passes_none(self):
+        """Without a dfi_clock_mhz hint, clock_mhz must be None."""
+        worker, mock_dfi, mock_imd, mock_hfe, mock_gw = _run_flux_decode_dfi(self.work_dir)
+        self.assertIsNone(mock_dfi.call_args.kwargs.get('clock_mhz'))
+
+    def test_failure_propagated(self):
+        """If dfi_to_scp_hxcfe fails, no sibling is registered."""
+        worker, mock_dfi, mock_imd, mock_hfe, mock_gw = _run_flux_decode_dfi(
+            self.work_dir, mock_scp_result={'success': False, 'error': 'hxcfe failed'})
+        worker.api.register_derived_artefact.assert_not_called()
+        worker.fail_analysis.assert_called_once()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

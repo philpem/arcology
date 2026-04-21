@@ -28,7 +28,7 @@ from shared.enums import ArtefactType, AnalysisType
 # myapp.blueprints.artefacts imports Flask/SQLAlchemy at module level.
 # Those packages are available in the app-tests CI job (pip install is done
 # before these tests run).
-from myapp.blueprints.artefacts import EXTENSION_MAP, ANALYSIS_MAP
+from myapp.blueprints.artefacts import EXTENSION_MAP, ANALYSIS_MAP, detect_artefact_type
 
 _ALL_ARTEFACT_TYPES = set(ArtefactType)
 _ALL_ANALYSIS_TYPES = set(AnalysisType)
@@ -58,6 +58,51 @@ class TestExtensionMap(unittest.TestCase):
         """Extension keys should be lowercase for case-insensitive matching."""
         bad = [k for k in EXTENSION_MAP if k != k.lower()]
         self.assertFalse(bad, f'EXTENSION_MAP keys not lowercase: {bad}')
+
+
+class TestDetectArtefactType(unittest.TestCase):
+    """detect_artefact_type() handles plain and compressed extensions."""
+
+    def _check(self, filename, expected):
+        result = detect_artefact_type(filename)
+        self.assertEqual(result, expected,
+                         f'{filename!r} → {result} (expected {expected})')
+
+    def test_plain_scp(self):
+        self._check('disc.scp', ArtefactType.SCP)
+
+    def test_plain_dfi(self):
+        self._check('disc.dfi', ArtefactType.DFI)
+
+    def test_dfi_gz(self):
+        self._check('disc.dfi.gz', ArtefactType.DFI)
+
+    def test_dfi_bz2(self):
+        self._check('diamondmm_stealth64-video-2001_win95_v1.02_100MHz.dfi.bz2', ArtefactType.DFI)
+
+    def test_dfi_zst(self):
+        self._check('disc.dfi.zst', ArtefactType.DFI)
+
+    def test_scp_gz(self):
+        self._check('disc.scp.gz', ArtefactType.SCP)
+
+    def test_scp_bz2(self):
+        self._check('disc.scp.bz2', ArtefactType.SCP)
+
+    def test_unknown_extension(self):
+        self._check('file.xyz', ArtefactType.UNKNOWN)
+
+    def test_compressed_unknown(self):
+        self._check('file.xyz.gz', ArtefactType.UNKNOWN)
+
+    def test_dd_bz2_explicit(self):
+        self._check('drive.dd.bz2', ArtefactType.DD_BZ2)
+
+    def test_tar_gz_explicit(self):
+        self._check('archive.tar.gz', ArtefactType.TARGZ)
+
+    def test_case_insensitive(self):
+        self._check('DISC.DFI.GZ', ArtefactType.DFI)
 
 
 class TestAnalysisMap(unittest.TestCase):

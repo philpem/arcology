@@ -10,6 +10,7 @@ from .flux import (
     flux_visualisation_hxcfe,
     flux_to_imd_hxcfe,
     flux_to_hfe_hxcfe,
+    dfi_to_scp_hxcfe,
     sector_image_to_raw_greaseweazle,
 )
 from .extraction import (
@@ -54,6 +55,7 @@ __all__ = [
     'flux_visualisation_hxcfe',
     'flux_to_imd_hxcfe',
     'flux_to_hfe_hxcfe',
+    'dfi_to_scp_hxcfe',
     'sector_image_to_raw_greaseweazle',
     'extract_acorn_disc_image_manager',
     'extract_dos_7z',

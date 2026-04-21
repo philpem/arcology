@@ -31,18 +31,6 @@
                     </div>
 
                     <div class="mb-3">
-                        {{ form.platform_id.label(class="form-label") }}
-                        {{ form.platform_id(class="form-select") }}
-                        <div class="form-text">{{ form.platform_id.description }}</div>
-                    </div>
-
-                    <div class="mb-3">
-                        {{ form.artefact_type.label(class="form-label") }}
-                        {{ form.artefact_type(class="form-select") }}
-                        <div class="form-text">{{ form.artefact_type.description }}</div>
-                    </div>
-
-                    <div class="mb-3">
                         {{ form.description.label(class="form-label") }}
                         {{ form.description(class="form-control", rows=3) }}
                     </div>
@@ -57,6 +45,33 @@
                         {{ form.upload_more(class="form-check-input") }}
                         {{ form.upload_more.label(class="form-check-label") }}
                         <div class="form-text">Return to this form after uploading to add another file</div>
+                    </div>
+
+                    <div class="mb-2">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="hints-toggle">
+                            <i class="bi bi-sliders"></i> Analysis hints
+                            <i class="bi bi-chevron-down ms-1" id="hints-chevron"></i>
+                        </button>
+                    </div>
+                    <div class="collapse mb-3" id="hints-section">
+                        <div class="card card-body bg-light">
+                            <p class="text-muted small mb-3">Rarely needed. Help the analysis tools identify the format more accurately.</p>
+                            <div class="mb-3">
+                                {{ form.artefact_type.label(class="form-label") }}
+                                {{ form.artefact_type(class="form-select") }}
+                                <div class="form-text">{{ form.artefact_type.description }}</div>
+                            </div>
+                            <div class="mb-3">
+                                {{ form.platform_id.label(class="form-label") }}
+                                {{ form.platform_id(class="form-select") }}
+                                <div class="form-text">{{ form.platform_id.description }}</div>
+                            </div>
+                            <div class="mb-0 d-none" id="dfi-clock-group">
+                                {{ form.dfi_clock_mhz.label(class="form-label") }}
+                                {{ form.dfi_clock_mhz(class="form-control", type="number", min="1") }}
+                                <div class="form-text">{{ form.dfi_clock_mhz.description }}</div>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="d-flex gap-2">
@@ -75,6 +90,8 @@
 <script>
 (function () {
     'use strict';
+
+    var HINTS_STORAGE_KEY = 'arcology_upload_hints_open';
 
     // Platform codes → human-readable name (case-insensitive lookup).
     // Used to pre-select the Platform hint dropdown from the filename.
@@ -254,6 +271,51 @@
         return { label: label, platformName: platformName };
     }
 
+    /** Return true if filename has a .dfi or .dfi.* (compressed) extension. */
+    function isDfi(filename) {
+        var lower = filename.toLowerCase();
+        return lower.endsWith('.dfi') ||
+               lower.endsWith('.dfi.gz') ||
+               lower.endsWith('.dfi.zst') ||
+               lower.endsWith('.dfi.bz2');
+    }
+
+    // --- Hints section collapse ---
+
+    var hintsEl      = document.getElementById('hints-section');
+    var hintsToggle  = document.getElementById('hints-toggle');
+    var hintsChevron = document.getElementById('hints-chevron');
+    var hintsCollapse = bootstrap.Collapse.getOrCreateInstance(hintsEl, { toggle: false });
+
+    function setChevron(open) {
+        if (open) {
+            hintsChevron.classList.remove('bi-chevron-down');
+            hintsChevron.classList.add('bi-chevron-up');
+        } else {
+            hintsChevron.classList.remove('bi-chevron-up');
+            hintsChevron.classList.add('bi-chevron-down');
+        }
+    }
+
+    // Restore state from previous submit (Upload More flow).
+    if (sessionStorage.getItem(HINTS_STORAGE_KEY) === '1') {
+        hintsCollapse.show();
+        setChevron(true);
+    }
+
+    hintsEl.addEventListener('show.bs.collapse', function () {
+        sessionStorage.setItem(HINTS_STORAGE_KEY, '1');
+        setChevron(true);
+    });
+    hintsEl.addEventListener('hide.bs.collapse', function () {
+        sessionStorage.setItem(HINTS_STORAGE_KEY, '0');
+        setChevron(false);
+    });
+
+    hintsToggle.addEventListener('click', function () {
+        hintsCollapse.toggle();
+    });
+
     // Wire up the file input.
     document.getElementById('file').addEventListener('change', function (e) {
         var file = e.target.files[0];
@@ -277,6 +339,16 @@
                     break;
                 }
             }
+        }
+
+        // Show DFI clock override field only for DFI files; expand hints section.
+        var dfiGroup = document.getElementById('dfi-clock-group');
+        if (isDfi(file.name)) {
+            dfiGroup.classList.remove('d-none');
+            hintsCollapse.show();
+        } else {
+            dfiGroup.classList.add('d-none');
+            document.getElementById('dfi_clock_mhz').value = '';
         }
     });
 }());

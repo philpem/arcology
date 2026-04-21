@@ -89,6 +89,11 @@ def main():
 	upload_parser.add_argument('--label', '-l', help='Artefact label (auto-generated from filename for multi-file)')
 	upload_parser.add_argument('--type', '-t', help='Override artefact type (e.g. RAW_SECTOR, SCP, HFE)')
 	upload_parser.add_argument('--no-analyse', action='store_true', help='Skip automatic analysis')
+	upload_parser.add_argument('--hint', action='append', metavar='KEY=VALUE', dest='hints',
+	                           help='Analysis hint as KEY=VALUE (repeatable). '
+	                                'Example: --hint dfi_clock_mhz=100. '
+	                                'Supported keys: dfi_clock_mhz (int, MHz for DFI clock override), '
+	                                'platform (str), filesystem (str).')
 
 	# ---- download ----
 	download_parser = subparsers.add_parser('download', help='Download an artefact')
