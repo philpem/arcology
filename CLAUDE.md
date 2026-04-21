@@ -227,6 +227,74 @@ backed by a Python `enum.Enum` class in this project.
 2. Add extension mapping in `EXTENSION_MAP` in `myapp/blueprints/artefacts.py`
 3. Add entries to `ANALYSIS_MAP` for auto-queued analyses
 
+### Adding a new flux format that converts to SCP
+
+Some flux formats (DFI, A2R, …) cannot be decoded directly by fluxfox or
+greaseweazle — they must first be converted to SCP, after which the existing
+SCP pipeline (HFE + IMD + RAW_SECTOR) runs unchanged on the SCP sibling.
+
+**Checklist** (use DFI as the reference implementation):
+
+1. **`shared/enums.py`** — add `NEWTYPE = "newtype"` to `ArtefactType` in the
+   "Flux-level floppy images" group.
+
+2. **`myapp/blueprints/artefacts.py`**
+   - `EXTENSION_MAP`: `'.newtype': ArtefactType.NEWTYPE`
+   - `ANALYSIS_MAP`: `ArtefactType.NEWTYPE: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT]`
+   - If the format needs a user-supplied hint (e.g. clock frequency): add an
+     `IntegerField`/`StringField` to both `ArtefactUploadForm` and `AnalyseForm`,
+     populate hints in the upload and analyse view POST handlers, and expose the
+     field in the upload/analyse templates (conditionally on artefact type).
+
+3. **`worker/arcworker/tools/flux.py`** — implement `newtype_to_scp_<tool>()`
+   returning the standard result dict (`success`, `tool`, `output_path`,
+   `output_type=ArtefactType.SCP.value`, `summary`, `process_output`).
+   Use `dfi_to_scp_hxcfe()` (hxcfe) or an analogous greaseweazle call as
+   the model.  For A2R: `gw convert input.a2r output.scp`.
+
+4. **`worker/arcworker/tools/__init__.py`** — add the new function to the
+   `from .flux import …` block and to `__all__`.
+
+5. **`worker/arcworker/analysis.py`**
+   - Import the new conversion function at the top.
+   - Add `ArtefactType.NEWTYPE` to `_SCP_VIA_CONVERSION_TYPES` (the frozenset
+     near the top of the file).  This automatically gates the gw steps (format
+     detection, greaseweazle conversion) out of FLUX_DECODE for the new type.
+   - **`process_flux_visualisation()`**: inside the
+     `if source_type in _SCP_VIA_CONVERSION_TYPES:` block, add an `elif`
+     branch that calls the new conversion function.  (DFI is the first branch;
+     subsequent formats are `elif source_type == ArtefactType.NEWTYPE:`.)
+   - **`process_flux_decode()`**: add `elif source_type == ArtefactType.NEWTYPE:`
+     before the `else: (IMD)` fallback.  Call the conversion function, append
+     the result to `results`, and register the SCP sibling via
+     `self.api.register_derived_artefact()` with **no** `skip_analyses` argument
+     so the SCP's own FLUX_DECODE runs the full downstream pipeline.
+   - **`_PROMOTABLE_EXTENSIONS`**: add `'.newtype': ArtefactType.NEWTYPE`.
+
+6. **Migration** — write a hand-crafted migration (filename
+   `YYYYMMDD_HHMM_add_newtype_artefact_type.py`, revision ID from
+   `python3 -c "import time; print(hex(int(time.time()))[2:].zfill(12))"`):
+   ```python
+   autocommit = True
+   def upgrade():
+       bind = op.get_bind()
+       if bind.dialect.name == 'postgresql':
+           op.execute(sa.text("ALTER TYPE artefacttype ADD VALUE IF NOT EXISTS 'NEWTYPE'"))
+   ```
+   `down_revision` should point at the current head.
+
+7. **Tests** — add a `TestNEWTYPESource` class in `ci/test_flux_decode.py`
+   mirroring `TestDFISource`:  verify the conversion tool is called, the SCP
+   sibling is registered without `skip_analyses`, and gw/IMD/HFE tools are
+   **not** called during the format's own FLUX_DECODE run.
+
+**A2R specifically** (when implemented):
+- Conversion: `gw convert input.a2r output.scp` — greaseweazle handles A2R
+  natively, no script or clock-override mechanism needed.
+- No hint parameters required (greaseweazle auto-detects the clock).
+- CLI `arco upload` already supports generic `--hint KEY=VALUE`; no new fields
+  needed for A2R.
+
 ### Adding a new archive format
 
 1. Add the new type to `ArchiveType` enum in `shared/archive_formats.py`
