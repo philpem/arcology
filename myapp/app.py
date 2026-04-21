@@ -111,6 +111,7 @@ def create_app(config_name=None):
     # Analysis type display names — handles cases where the default
     # value.replace('_', ' ').title() produces wrong capitalisation.
     _ANALYSIS_TYPE_DISPLAY = {
+        'format_identify':    'File Format Identify',
         'riscos_module_parse': 'RISC OS Module parse',
     }
     def _format_analysis_type(value):

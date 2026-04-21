@@ -70,7 +70,7 @@ class AnalysisType(enum.Enum):
 
     # Verification
     CHECKSUM_COMPUTE       = "checksum_compute"       # Compute hashes
-    FORMAT_IDENTIFY        = "format_identify"        # Identify exact format/variant
+    FORMAT_IDENTIFY        = "format_identify"         # Identify file format
 
     # Disc image analysis
     DISC_MASTERING_DETECT  = "disc_mastering_detect"  # Mastering/duplicator fingerprint data

@@ -1088,7 +1088,7 @@ class AnalysisWorker:
             details=json.dumps(metadata)
         )
 
-    @analysis_handler("format identification")
+    @analysis_handler("file format identification")
     def process_format_identify(self, analysis: dict, artefact: dict, work_dir: Path):
         """
         Process FORMAT_IDENTIFY analysis.
