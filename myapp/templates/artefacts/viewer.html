@@ -39,11 +39,11 @@
 }
 /* Explicit-content gate */
 .explicit-gate { position: relative; }
-.explicit-content-blur { filter: blur(20px); transition: filter 0.3s; pointer-events: none; user-select: none; }
+.explicit-content-blur { filter: blur(60px) brightness(0.2); transition: filter 0.3s; pointer-events: none; user-select: none; }
 .explicit-gate-overlay {
     position: absolute; inset: 0;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    background: rgba(0,0,0,0.55); z-index: 10; border-radius: 0.25rem;
+    background: rgba(0,0,0,0.75); z-index: 10; border-radius: 0.25rem;
 }
 /* 8-column grid at xl breakpoint (Bootstrap has no col-1.5) */
 @media (min-width: 1200px) {
@@ -352,18 +352,7 @@ function revealExplicit(gid) {
         content.classList.remove('explicit-content-blur');
         content.style.pointerEvents = '';
     }
-    try { sessionStorage.setItem('explicit_consent_' + gid, '1'); } catch(e) {}
 }
-document.addEventListener('DOMContentLoaded', function() {
-    document.querySelectorAll('[id^="explicit-content-"]').forEach(function(el) {
-        var gid = el.id.replace('explicit-content-', '');
-        try {
-            if (sessionStorage.getItem('explicit_consent_' + gid) === '1') {
-                revealExplicit(gid);
-            }
-        } catch(e) {}
-    });
-});
 </script>
 {% endif %}
 {% endblock %}
