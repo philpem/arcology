@@ -1990,8 +1990,10 @@ def _render_artefact_view(artefact):
     # File-level restrictions on any extracted file within this artefact tree.
     # Used to adjust the download button state when the artefact itself is
     # unrestricted but contains restricted extracted files.
+    from sqlalchemy.orm import joinedload as _jl_efr
     artefact_file_restrictions = (
         ExtractedFileRestriction.query
+        .options(_jl_efr(ExtractedFileRestriction.extracted_file))
         .join(ExtractedFile, ExtractedFileRestriction.extracted_file_id == ExtractedFile.id)
         .join(Partition, ExtractedFile.partition_id == Partition.id)
         .filter(Partition.artefact_id.in_(all_artefact_ids))
