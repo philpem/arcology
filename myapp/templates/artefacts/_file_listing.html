@@ -208,6 +208,12 @@
                                 <a href="{{ artefact_url(artefact, 'viewer') }}?file={{ file.path | urlencode }}"
                                    class="text-muted ms-1" title="View"><i class="bi bi-search"></i></a>
                                 {% endif %}
+                                {% if failed_conversion_info is defined and file.path in failed_conversion_info %}
+                                {% set _fc = failed_conversion_info[file.path] %}
+                                <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=_fc.analysis_uuid) }}"
+                                   class="text-danger ms-1"
+                                   title="{{ 'Extraction failed' if _fc.kind == 'extraction' else 'Conversion failed' }}: {{ _fc.error }}"><i class="bi bi-exclamation-circle-fill"></i></a>
+                                {% endif %}
                                 {% if module_info is defined and file.path in module_info %}
                                 {% set mod = module_info[file.path] %}
                                 <a href="{{ artefact_url(artefact, 'viewer') }}?file={{ file.path | urlencode }}"
