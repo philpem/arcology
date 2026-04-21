@@ -16,7 +16,7 @@ _PASSTHROUGH_EXTS = frozenset({'.jpg', '.jpeg', '.png', '.gif', '.webp'})
 
 # Extensions converted to SVG via external tools: ext → (tool_name, build_cmd_fn)
 def _wmf_cmd(src: Path, dst: Path) -> list[str]:
-    return ['wmf2svg', str(src), '-o', str(dst)]
+    return ['wmf2svg', '-o', str(dst), str(src)]
 
 def _emf_cmd(src: Path, dst: Path) -> list[str]:
     return ['emf2svg-conv', '-i', str(src), '-o', str(dst)]
@@ -66,11 +66,11 @@ def convert_image(input_path: Path, output_dir: Path, analysis_uuid: str) -> dic
                 'error': f'{tool_name} timed out',
             }
         if proc.returncode != 0 or not out_svg.exists():
-            stderr = proc.stderr.decode('utf-8', errors='replace').strip()
+            out = (proc.stdout + proc.stderr).decode('utf-8', errors='replace').strip()
             return {
                 'success': False, 'output_path': None,
                 'format': ext.lstrip('.').upper(), 'tool': tool_name,
-                'error': f'{tool_name} failed (rc={proc.returncode}): {stderr}',
+                'error': f'{tool_name} failed (rc={proc.returncode}): {out}',
             }
         return {
             'success': True, 'output_path': str(out_svg),
