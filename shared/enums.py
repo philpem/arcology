@@ -14,6 +14,7 @@ class ArtefactType(enum.Enum):
     """Types of digital artefacts - auto-detected or manually specified."""
     # Flux-level floppy images
     SCP        = "scp"               # SuperCard Pro
+    DFI        = "dfi"               # DiscFerret
 
     # Sector-level floppy images
     IMD        = "imd"               # ImageDisk

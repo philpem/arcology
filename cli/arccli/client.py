@@ -15,6 +15,7 @@ This is the canonical Python client for the Arcology API, used by the
 """
 
 import hashlib
+import json
 import logging
 import math
 import os
@@ -138,11 +139,20 @@ class ArcologyClient:
 	def upload_artefact(self, item_uuid: str, filepath: str, label: str,
 	                    artefact_type: str = None, description: str = None,
 	                    auto_analyse: bool = True,
+	                    hints: dict = None,
 	                    progress_cb=None) -> dict:
 		"""Upload a file as a new artefact.
 
 		Automatically uses chunked upload for files larger than CHUNKED_THRESHOLD.
 		progress_cb(chunks_done, total_chunks) is called after each chunk (chunked only).
+
+		hints: optional dict of analysis hints (e.g. {'dfi_clock_mhz': 100}).
+		  Passed as a JSON string in the 'hints' form field.  The server forwards
+		  these to queue_analyses_for_artefact() so they apply to every queued job.
+		  Supported keys:
+		    dfi_clock_mhz  (int)  — override DiscFerret sample frequency in MHz
+		    platform       (str)  — platform hint (e.g. 'BBC Micro')
+		    filesystem     (str)  — filesystem hint (e.g. 'adfs', 'fat12')
 		"""
 		if os.path.getsize(filepath) > CHUNKED_THRESHOLD:
 			return self.upload_artefact_chunked(
@@ -150,6 +160,7 @@ class ArcologyClient:
 				artefact_type=artefact_type,
 				description=description,
 				auto_analyse=auto_analyse,
+				hints=hints,
 				progress_cb=progress_cb,
 			)
 		fields = {'label': label}
@@ -159,6 +170,8 @@ class ArcologyClient:
 			fields['description'] = description
 		if not auto_analyse:
 			fields['auto_analyse'] = 'false'
+		if hints:
+			fields['hints'] = json.dumps(hints)
 		return self.post_file(f'items/{item_uuid}/artefacts/upload', filepath, fields)
 
 	def _upload_chunk(self, upload_uuid: str, chunk_index: int, data: bytes) -> dict:
@@ -173,6 +186,7 @@ class ArcologyClient:
 	def upload_artefact_chunked(self, item_uuid: str, filepath: str, label: str,
 	                             artefact_type: str = None, description: str = None,
 	                             auto_analyse: bool = True,
+	                             hints: dict = None,
 	                             chunk_size: int = CHUNK_SIZE,
 	                             progress_cb=None) -> dict:
 		"""Upload a large file using the chunked upload protocol.
@@ -198,6 +212,8 @@ class ArcologyClient:
 			init_payload['artefact_type'] = artefact_type
 		if description:
 			init_payload['description'] = description
+		if hints:
+			init_payload['hints'] = hints
 
 		init_result = self.post_json('uploads/chunked/init', init_payload)
 		upload_uuid = init_result['upload_uuid']
@@ -330,6 +346,7 @@ class ArcologyClient:
 	def upload_artefact_retry(self, item_uuid: str, filepath: str, label: str,
 	                          artefact_type: str = None, description: str = None,
 	                          auto_analyse: bool = True,
+	                          hints: dict = None,
 	                          max_retries: int = 3) -> dict | None:
 		"""Upload with exponential-backoff retry. Returns None on persistent failure."""
 		for attempt in range(max_retries):
@@ -339,6 +356,7 @@ class ArcologyClient:
 					artefact_type=artefact_type,
 					description=description,
 					auto_analyse=auto_analyse,
+					hints=hints,
 				)
 			except (ArcologyError, requests.ConnectionError) as exc:
 				log.warning('Upload attempt %d failed: %s', attempt + 1, exc)

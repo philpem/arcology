@@ -25,6 +25,7 @@ from .tools import (
     flux_visualisation_hxcfe,
     flux_to_imd_hxcfe,
     flux_to_hfe_hxcfe,
+    dfi_to_scp_hxcfe,
     sector_image_to_raw_greaseweazle,
     extract_acorn_disc_image_manager,
     extract_dos_7z,
@@ -166,6 +167,24 @@ def analysis_handler(description: str):
     return decorator
 
 
+_COMPRESS_SUFFIXES = frozenset({'.gz', '.bz2', '.zst'})
+
+
+def _inner_format_extension(filename: str) -> str:
+    """Return the inner (non-compression) extension of filename, or ''.
+
+    'file.dfi.bz2' -> '.dfi', 'file.scp.gz' -> '.scp', 'file.bz2' -> ''
+    """
+    lower = filename.lower()
+    for suffix in _COMPRESS_SUFFIXES:
+        if lower.endswith(suffix):
+            lower = lower[:-len(suffix)]
+            break
+    ext = Path(lower).suffix
+    # Don't return another compression suffix as the "inner" extension.
+    return ext if ext not in _COMPRESS_SUFFIXES else ''
+
+
 class AnalysisWorker:
     """Main worker class that processes analysis jobs."""
 
@@ -253,6 +272,20 @@ class AnalysisWorker:
         compression_format = input_path.suffix.lower()
 
         result = decompress_if_needed(input_path, work_dir)
+
+        # Restore the inner format extension so tools that use extension-based
+        # format detection (e.g. hxcfe detecting DFI vs SCP) work correctly.
+        # The storage key carries only the compression suffix (e.g. hash.bz2),
+        # so after decompression the file has no inner extension (e.g. just
+        # "hash").  Derive the correct extension from original_filename.
+        original_filename = artefact.get('original_filename', '')
+        if original_filename:
+            inner_ext = _inner_format_extension(original_filename)
+            if inner_ext and result.suffix.lower() != inner_ext:
+                linked = result.with_suffix(inner_ext)
+                if not linked.exists():
+                    linked.symlink_to(result.name)  # relative symlink, same dir
+                result = linked
 
         # Track decompression metadata for handlers that need it
         if result != input_path:
@@ -591,11 +624,27 @@ class AnalysisWorker:
         output_subdir = f"{item_part}/{artefact_part}" if (item_part and artefact_part) else None
 
         outputs = []
+        source_type = ArtefactType(artefact['artefact_type'])
 
-        # Try Fluxfox first (more detailed)
-        # Use analysis UUID to prevent overwrites when re-running analysis
+        # Both fluxfox and hxcfe run against the SCP stream.
+        # For DFI sources, convert to SCP first (fluxfox does not support DFI
+        # natively and hxcfe results are consistent when both tools use the same
+        # source).  For SCP sources, use the file directly.
+        vis_input_path = input_path
+        dfi_to_scp_result = None
+        if source_type == ArtefactType.DFI:
+            hints = json.loads(analysis.get('hints') or '{}')
+            clock_mhz = hints.get('dfi_clock_mhz')
+            scp_path = work_dir / f"{input_path.stem}_vis.scp"
+            dfi_to_scp_result = dfi_to_scp_hxcfe(input_path, scp_path, clock_mhz=clock_mhz)
+            if not dfi_to_scp_result['success']:
+                self.fail_analysis(analysis_id, f"DFI→SCP conversion failed: {dfi_to_scp_result.get('error', '')}")
+                return
+            vis_input_path = scp_path
+
+        # Run Fluxfox (more detailed visualisation)
         output_fluxfox = work_dir / f"{analysis_uuid}_fluxfox.png"
-        result_fluxfox = flux_visualisation_fluxfox(input_path, output_fluxfox)
+        result_fluxfox = flux_visualisation_fluxfox(vis_input_path, output_fluxfox)
 
         if result_fluxfox['success']:
             saved_name = self.save_output_file(output_fluxfox, f"{analysis_uuid}_fluxfox.png", subdir=output_subdir)
@@ -606,9 +655,9 @@ class AnalysisWorker:
                 'description': 'Fluxfox visualisation'
             })
 
-        # Also generate HxCFE visualisation (different style)
+        # Also run HxCFE (different visualisation style)
         output_hxcfe = work_dir / f"{analysis_uuid}_hxcfe.png"
-        result_hxcfe = flux_visualisation_hxcfe(input_path, output_hxcfe)
+        result_hxcfe = flux_visualisation_hxcfe(vis_input_path, output_hxcfe)
 
         if result_hxcfe['success']:
             saved_name = self.save_output_file(output_hxcfe, f"{analysis_uuid}_hxcfe.png", subdir=output_subdir)
@@ -620,15 +669,14 @@ class AnalysisWorker:
             })
 
         if outputs:
+            details = {'outputs': outputs, 'fluxfox': result_fluxfox, 'hxcfe': result_hxcfe}
+            if dfi_to_scp_result is not None:
+                details['dfi_to_scp'] = dfi_to_scp_result
             self.complete_analysis(
                 analysis_id,
                 tool_name='fluxfox,hxcfe',
                 summary=f'Generated {len(outputs)} flux visualisation(s)',
-                details=json.dumps({
-                    'outputs': outputs,
-                    'fluxfox': result_fluxfox,
-                    'hxcfe': result_hxcfe
-                })
+                details=json.dumps(details)
             )
         else:
             self.fail_analysis(
@@ -648,6 +696,8 @@ class AnalysisWorker:
           HFE  → register IMD sibling (skip_analyses=[FLUX_DECODE]),
                  then gw(HFE, detected_format) → RAW_SECTOR
           IMD  → no siblings; gw(IMD, detected_format) → RAW_SECTOR
+          DFI  → register SCP sibling (no skip_analyses); the SCP's own
+                 FLUX_DECODE runs the HFE/IMD/RAW_SECTOR pipeline.
         """
         analysis_id = analysis['id']
         results = []
@@ -659,6 +709,8 @@ class AnalysisWorker:
         # ── Step 1: produce format-conversion siblings ──────────────────────
 
         imd_path = work_dir / f"{input_path.stem}.imd"
+
+        hints = json.loads(analysis.get('hints') or '{}')
 
         if source_type == ArtefactType.SCP:
             # IMD sibling
@@ -702,76 +754,96 @@ class AnalysisWorker:
                 )
                 log.info(f"Created derived IMD artefact: {derived}")
 
+        elif source_type == ArtefactType.DFI:
+            # DFI → SCP conversion; SCP sibling's own FLUX_DECODE handles the rest.
+            # The clock frequency may be overridden via the dfi_clock_mhz hint, which
+            # is passed through an hxcfe script (the only way to set DFILOADER_SAMPLE_FREQUENCY_MHZ).
+            clock_mhz = hints.get('dfi_clock_mhz')
+            scp_path = work_dir / f"{input_path.stem}.scp"
+            scp_result = dfi_to_scp_hxcfe(input_path, scp_path, clock_mhz=clock_mhz)
+            results.append(('SCP', scp_result))
+            if scp_result['success']:
+                derived = self.api.register_derived_artefact(
+                    analysis_id,
+                    f"{artefact_label} (SCP)",
+                    scp_path,
+                    ArtefactType.SCP,
+                )
+                log.info(f"Created derived SCP artefact: {derived}")
+
         else:
             # IMD source — no conversion siblings; source is already sector-decoded
             imd_result = {'success': True}
 
-        # ── Step 2: format detection ─────────────────────────────────────────
+        # ── Step 2 & 3: format detection and gw conversion ───────────────────
+        # Skipped for DFI: the SCP sibling's own FLUX_DECODE will handle these.
         # For SCP/HFE: read the IMD sibling we just produced.
         # For IMD: read the source directly.
 
-        hints = json.loads(analysis.get('hints') or '{}')
-        gw_format = hints.get('gw_format')
-        gw_format_source = 'hint' if gw_format else None
+        if source_type != ArtefactType.DFI:
+            gw_format = hints.get('gw_format')
+            gw_format_source = 'hint' if gw_format else None
 
-        imd_track0_summary = None
-        detected_geometry  = None
+            imd_track0_summary = None
+            detected_geometry  = None
 
-        imd_for_detection = imd_path if source_type != ArtefactType.IMD else input_path
+            imd_for_detection = imd_path if source_type != ArtefactType.IMD else input_path
 
-        if not gw_format and imd_result['success']:
-            track0 = parse_imd_track0(imd_for_detection)
-            if track0:
-                imd_track0_summary = {
-                    'encoding':    track0['encoding'],
-                    'sector_size': track0['sector_size'],
-                    'cylinders':   track0['cylinders'],
-                    'heads':       track0['heads'],
-                    'sector_ids':  sorted(track0['sectors'].keys()),
-                }
-                geometry = detect_geometry_from_boot_data(track0)
-                if geometry:
-                    detected_geometry = {k: v for k, v in geometry.items()}
-                    gw_format = _geometry_to_gw_format(**geometry)
-                    if gw_format:
-                        gw_format_source = 'detected'
-                        log.info(f"Detected disc format: {geometry['filesystem']} "
-                                 f"(probe {geometry.get('probe', '?')}) "
-                                 f"→ gw format: {gw_format}")
-                    else:
-                        log.info(f"Detected disc geometry {geometry} — "
-                                 f"no gw format match, using ibm.scan")
+            if not gw_format and imd_result['success']:
+                track0 = parse_imd_track0(imd_for_detection)
+                if track0:
+                    imd_track0_summary = {
+                        'encoding':    track0['encoding'],
+                        'sector_size': track0['sector_size'],
+                        'cylinders':   track0['cylinders'],
+                        'heads':       track0['heads'],
+                        'sector_ids':  sorted(track0['sectors'].keys()),
+                    }
+                    geometry = detect_geometry_from_boot_data(track0)
+                    if geometry:
+                        detected_geometry = {k: v for k, v in geometry.items()}
+                        gw_format = _geometry_to_gw_format(**geometry)
+                        if gw_format:
+                            gw_format_source = 'detected'
+                            log.info(f"Detected disc format: {geometry['filesystem']} "
+                                     f"(probe {geometry.get('probe', '?')}) "
+                                     f"→ gw format: {gw_format}")
+                        else:
+                            log.info(f"Detected disc geometry {geometry} — "
+                                     f"no gw format match, using ibm.scan")
 
-        if not gw_format:
-            gw_format = 'ibm.scan'
-            gw_format_source = 'fallback'
+            if not gw_format:
+                gw_format = 'ibm.scan'
+                gw_format_source = 'fallback'
 
-        # ── Step 3: gw convert source → RAW_SECTOR ──────────────────────────
-        # Always feed gw the original source artefact (closest-to-original rule).
+            # ── Step 3: gw convert source → RAW_SECTOR ──────────────────────
+            # Always feed gw the original source artefact (closest-to-original rule).
 
-        img_path = work_dir / f"{input_path.stem}.img"
-        img_result = sector_image_to_raw_greaseweazle(input_path, img_path, gw_format=gw_format)
-        results.append(('IMG', img_result))
+            img_path = work_dir / f"{input_path.stem}.img"
+            img_result = sector_image_to_raw_greaseweazle(input_path, img_path, gw_format=gw_format)
+            results.append(('IMG', img_result))
 
-        if img_result['success']:
-            derived = self.api.register_derived_artefact(
-                analysis_id,
-                f"{artefact_label} (raw sectors)",
-                img_path,
-                ArtefactType.RAW_SECTOR
-            )
-            log.info(f"Created derived IMG artefact: {derived}")
+            if img_result['success']:
+                derived = self.api.register_derived_artefact(
+                    analysis_id,
+                    f"{artefact_label} (raw sectors)",
+                    img_path,
+                    ArtefactType.RAW_SECTOR
+                )
+                log.info(f"Created derived IMG artefact: {derived}")
 
         # ── Report ───────────────────────────────────────────────────────────
         any_success = any(r[1]['success'] for r in results)
         summary_parts = [f"{name}: {'OK' if r['success'] else 'FAIL'}" for name, r in results]
         details_dict = {name: r for name, r in results}
-        details_dict['gw_format_used'] = gw_format
-        details_dict['gw_format_source'] = gw_format_source
-        if imd_track0_summary:
-            details_dict['gw_track0'] = imd_track0_summary
-        if detected_geometry:
-            details_dict['gw_geometry'] = detected_geometry
+
+        if source_type != ArtefactType.DFI:
+            details_dict['gw_format_used'] = gw_format
+            details_dict['gw_format_source'] = gw_format_source
+            if imd_track0_summary:
+                details_dict['gw_track0'] = imd_track0_summary
+            if detected_geometry:
+                details_dict['gw_geometry'] = detected_geometry
 
         if any_success:
             self.complete_analysis(
@@ -1765,6 +1837,7 @@ class AnalysisWorker:
     # in myapp/blueprints/artefacts.py.
     _PROMOTABLE_EXTENSIONS = {
         '.scp': ArtefactType.SCP,
+        '.dfi': ArtefactType.DFI,
         '.imd': ArtefactType.IMD,
         '.hfe': ArtefactType.HFE,
         '.adf': ArtefactType.RAW_SECTOR,

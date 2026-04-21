@@ -8,6 +8,7 @@ Supports:
 - Greaseweazle - Sector image conversion
 """
 
+import tempfile
 from pathlib import Path
 
 from shared.enums import ArtefactType
@@ -199,6 +200,68 @@ def flux_to_hfe_hxcfe(input_path: Path, output_path: Path) -> dict:
             'output_path': str(output_path),
             'output_type': ArtefactType.HFE.value,
             'summary': 'Converted to HFE format',
+            'process_output': process_output
+        }
+
+    return {
+        'success': False,
+        'tool': 'hxcfe',
+        'error': result.stderr.decode()[:1000],
+        'process_output': process_output
+    }
+
+
+def dfi_to_scp_hxcfe(input_path: Path, output_path: Path, clock_mhz: int | None = None) -> dict:
+    """
+    Convert a DiscFerret DFI flux image to SuperCard Pro SCP format using HxCFE.
+
+    When clock_mhz is provided, a small hxcfe script containing
+    'set DFILOADER_SAMPLE_FREQUENCY_MHZ N' is written to a temp file and
+    passed via -script:, which hxcfe executes before processing -finput:.
+    The parameter cannot be set via a command-line flag directly.
+
+    Args:
+        input_path: Path to DFI file
+        output_path: Path for output SCP file
+        clock_mhz: Optional sample frequency override in MHz
+
+    Returns:
+        Result dict with success status, output type, and process_output
+    """
+    if clock_mhz is not None:
+        # hxcfe processes -script: before -finput:, so 'set' in the script takes
+        # effect before the DFI loader reads the file.
+        script = f'set DFILOADER_SAMPLE_FREQUENCY_MHZ {int(clock_mhz)}\n'
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.hxcfe', delete=False) as tf:
+            tf.write(script)
+            script_path = tf.name
+        try:
+            cmd = [
+                'hxcfe',
+                f'-script:{script_path}',
+                f'-finput:{input_path}',
+                '-conv:SCP_FLUX_STREAM',
+                f'-foutput:{output_path}',
+            ]
+            result, process_output = run_tool_with_output(cmd)
+        finally:
+            Path(script_path).unlink(missing_ok=True)
+    else:
+        cmd = [
+            'hxcfe',
+            f'-finput:{input_path}',
+            '-conv:SCP_FLUX_STREAM',
+            f'-foutput:{output_path}',
+        ]
+        result, process_output = run_tool_with_output(cmd)
+
+    if result.returncode == 0 and output_path.exists():
+        return {
+            'success': True,
+            'tool': 'hxcfe',
+            'output_path': str(output_path),
+            'output_type': ArtefactType.SCP.value,
+            'summary': 'Converted DFI to SCP flux stream',
             'process_output': process_output
         }
 

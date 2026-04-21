@@ -1584,12 +1584,23 @@ def upload_artefact(item_uuid):
 	artefact.slug = ensure_unique_slug(generate_slug(artefact.label), Artefact, scope_filter={'item_id': item.id})
 	db.session.commit()
 
+	# Parse optional hints (JSON string from form field)
+	hints = None
+	hints_raw = request.form.get('hints')
+	if hints_raw:
+		try:
+			hints = json.loads(hints_raw)
+			if not isinstance(hints, dict):
+				return error_response('hints must be a JSON object')
+		except json.JSONDecodeError:
+			return error_response('hints must be valid JSON')
+
 	# Optionally queue analyses
 	queued_analyses = []
 	auto_analyse = request.form.get('auto_analyse', 'true').lower() != 'false'
 	if auto_analyse:
 		from .artefacts import ANALYSIS_MAP
-		queue_analyses_for_artefact(artefact)
+		queue_analyses_for_artefact(artefact, hints)
 		queued_analyses = [t.value for t in ANALYSIS_MAP.get(artefact_type, [])]
 
 	result = artefact_to_dict(artefact)
@@ -1689,6 +1700,10 @@ def chunked_upload_init():
 	chunk_dir = _chunk_dir(upload_uuid)
 	os.makedirs(chunk_dir, exist_ok=True)
 
+	hints = data.get('hints')
+	if hints is not None and not isinstance(hints, dict):
+		return error_response('hints must be a JSON object')
+
 	meta = {
 		'filename': filename,
 		'total_chunks': total_chunks,
@@ -1698,6 +1713,7 @@ def chunked_upload_init():
 		'artefact_type': data.get('artefact_type', 'auto'),
 		'description': data.get('description'),
 		'auto_analyse': data.get('auto_analyse', True),
+		'hints': hints,
 		'created_at': datetime.now(timezone.utc).isoformat(),
 	}
 	with open(os.path.join(chunk_dir, 'meta.json'), 'w') as f:
@@ -1915,7 +1931,8 @@ def chunked_upload_complete(upload_uuid):
 		auto_analyse = auto_analyse.lower() != 'false'
 	if auto_analyse:
 		from .artefacts import ANALYSIS_MAP
-		queue_analyses_for_artefact(artefact)
+		hints = meta.get('hints') or None
+		queue_analyses_for_artefact(artefact, hints)
 		queued_analyses = [t.value for t in ANALYSIS_MAP.get(artefact_type, [])]
 
 	result = artefact_to_dict(artefact)

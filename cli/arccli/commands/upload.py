@@ -35,7 +35,34 @@ def _collect_files(path: str) -> list[str]:
 	return files
 
 
-def _upload_one(client, item_uuid, filepath, label, artefact_type, auto_analyse, json_mode):
+def _parse_hints(hint_list: list[str] | None) -> dict | None:
+	"""Parse a list of 'KEY=VALUE' strings into a hints dict.
+
+	Integer-valued keys (e.g. dfi_clock_mhz) are coerced automatically.
+	Returns None if hint_list is empty or None.
+	"""
+	if not hint_list:
+		return None
+	hints = {}
+	_INT_KEYS = {'dfi_clock_mhz'}
+	for item in hint_list:
+		if '=' not in item:
+			print(f"Warning: ignoring malformed hint '{item}' (expected KEY=VALUE)", file=sys.stderr)
+			continue
+		key, _, value = item.partition('=')
+		key = key.strip()
+		value = value.strip()
+		if key in _INT_KEYS:
+			try:
+				value = int(value)
+			except ValueError:
+				print(f"Warning: hint '{key}' expects an integer, got '{value}'", file=sys.stderr)
+				continue
+		hints[key] = value
+	return hints or None
+
+
+def _upload_one(client, item_uuid, filepath, label, artefact_type, auto_analyse, hints, json_mode):
 	"""Upload a single file and report results."""
 	filename = os.path.basename(filepath)
 	file_size = os.path.getsize(filepath)
@@ -59,6 +86,7 @@ def _upload_one(client, item_uuid, filepath, label, artefact_type, auto_analyse,
 		label=label,
 		artefact_type=artefact_type,
 		auto_analyse=auto_analyse,
+		hints=hints,
 		progress_cb=_progress,
 	)
 
@@ -106,6 +134,7 @@ def cmd_upload(client, args):
 	item_uuid = args.item_uuid
 	auto_analyse = not args.no_analyse
 	artefact_type = args.type
+	hints = _parse_hints(getattr(args, 'hints', None))
 
 	# Collect files to upload
 	if args.dir:
@@ -139,7 +168,7 @@ def cmd_upload(client, args):
 			label = os.path.splitext(os.path.basename(filepath))[0]
 
 		try:
-			ok = _upload_one(client, item_uuid, filepath, label, artefact_type, auto_analyse, args.json)
+			ok = _upload_one(client, item_uuid, filepath, label, artefact_type, auto_analyse, hints, args.json)
 			if ok:
 				successes += 1
 			else:
