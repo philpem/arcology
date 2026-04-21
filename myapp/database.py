@@ -502,7 +502,7 @@ class Artefact(db.Model):
         ForeignKey("artefacts.id"), index=True, nullable=True
     )
     derived_from_analysis_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("analyses.id"), index=True, nullable=True
+        ForeignKey("analyses.id", ondelete="SET NULL"), index=True, nullable=True
     )
     
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -534,7 +534,8 @@ class Artefact(db.Model):
         cascade="all, delete-orphan"
     )
     derived_from_analysis: Mapped[Optional["Analysis"]] = relationship(
-        foreign_keys=[derived_from_analysis_id]
+        foreign_keys=[derived_from_analysis_id],
+        passive_deletes=True,
     )
     tags: Mapped[list["Tag"]] = relationship(secondary=artefact_tags, back_populates="artefacts")
     restrictions: Mapped[list["ArtefactRestriction"]] = relationship(
