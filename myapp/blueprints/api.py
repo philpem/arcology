@@ -1244,14 +1244,8 @@ def produce_artefact(id):
     # Queue follow-on analyses unless the caller will handle that explicitly
     queued_analyses = []
     if data.get('auto_analyse', True):
-        from .artefacts import queue_analyses_for_artefact, ANALYSIS_MAP
-
-        # Pass through any hints from parent analysis
-        hints = None
-        if analysis.hints:
-            import json
-            hints = json.loads(analysis.hints)
-
+        from .artefacts import ANALYSIS_MAP
+        hints = json.loads(analysis.hints) if analysis.hints else None
         skip_analyses = data.get('skip_analyses') or []
         queue_analyses_for_artefact(artefact, hints, skip_analyses=skip_analyses)
         skip_set = set(skip_analyses)
