@@ -60,6 +60,7 @@ class AnalysisType(enum.Enum):
     # Flux-level analyses
     FLUX_VISUALISATION     = "flux_visualisation"    # Generate flux graphs
     FLUX_DECODE            = "flux_decode"            # Attempt to decode to sectors
+    DETECT_TRACK_DENSITY   = "detect_track_density"  # 40-track disc read in 80-track drive
 
     # Sector/filesystem analyses
     SECTOR_DUMP            = "sector_dump"            # Raw sector extraction

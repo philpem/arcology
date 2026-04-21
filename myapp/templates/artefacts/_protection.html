@@ -1,23 +1,45 @@
-        {% if protection_analysis and protection_analysis.get('indicators') %}
-        {% set p_indicators = protection_analysis.get('indicators', []) %}
-        {# Group indicators by type for a concise summary #}
+        {% set p_indicators = protection_analysis.get('indicators', []) if protection_analysis else [] %}
+        {% if p_indicators or density_detect_analysis %}
+        {# Collect protection indicator types for header badges #}
         {% set p_types = [] %}
         {% for ind in p_indicators %}{% if ind.type not in p_types %}{% set _ = p_types.append(ind.type) %}{% endif %}{% endfor %}
         {% set ptype_labels = {'weak_bits': 'Weak Bits', 'bad_crc': 'Bad CRC', 'ddam': 'DDAM', 'id_mismatch': 'ID Mismatch', 'duplicate_id': 'Duplicate ID'} %}
+        {# Prefer the protection analysis UUID for the "Raw Analysis" link; fall back to the density detection UUID #}
+        {% set notices_uuid = protection_analysis['_analysis_uuid'] if protection_analysis else (density_detect_analysis['_analysis_uuid'] if density_detect_analysis else none) %}
         {% call(body_slot) rollup.card(
             collapse_id    = "protectionCollapse",
-            title          = "Copy Protection",
-            icon           = "shield-lock-fill",
-            analysis_uuid  = protection_analysis['_analysis_uuid'],
+            title          = "Analysis cautions",
+            icon           = "exclamation-diamond-fill",
+            analysis_uuid  = notices_uuid,
             border_class   = "border-warning",
             header_classes = "bg-warning bg-opacity-25",
         ) %}
             {% if not body_slot %}
+                {% if density_detect_analysis %}
+                <span class="badge bg-info text-dark ms-1">Density Mismatch</span>
+                {% endif %}
                 {% for t in p_types | sort %}
                 <span class="badge bg-warning text-dark ms-1">{{ ptype_labels.get(t, t.replace('_', ' ').title()) }}</span>
                 {% endfor %}
             {% else %}
                 <div class="card-body p-0">
+                    {% if density_detect_analysis %}
+                    <div class="px-3 py-2 border-bottom small">
+                        <i class="bi bi-info-circle-fill text-info me-1"></i>
+                        <strong>Track density mismatch</strong>
+                        <span class="text-muted ms-1">({{ "%.0f"|format(density_detect_analysis.confidence * 100) }}% confidence,
+                        {{ density_detect_analysis.matching }}/{{ density_detect_analysis.checked }} even tracks)</span>
+                        — 40-track disc imaged in an 80-track drive; even tracks report half the expected cylinder.
+                        A density-corrected copy has been produced as a derived artefact.
+                        {% if density_detect_analysis.odd_tracks_with_varied_data > 0 %}
+                        <div class="mt-1">
+                            <i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>
+                            {{ density_detect_analysis.odd_tracks_with_varied_data }} odd track(s) retain non-uniform data from a prior 80-track format.
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                    {% if p_indicators %}
                     <div class="accordion accordion-flush" id="protectionAccordion">
                     {% for ptype in p_types | sort %}
                     {% set type_indicators = p_indicators | selectattr('type', 'equalto', ptype) | list %}
@@ -41,7 +63,7 @@
                                 <table class="table table-sm mb-0 small">
                                     <thead><tr><th>Track</th><th>Side</th>
                                     {% if ptype == 'weak_bits' %}<th>Count</th>
-                                    {% elif ptype == 'id_mismatch' %}<th>Reported Cyl</th><th>Expected</th>
+                                    {% elif ptype == 'id_mismatch' %}<th>Reported Cyl</th><th>Expected</th><th>Sectors</th>
                                     {% elif ptype == 'duplicate_id' %}<th>Sector ID</th><th>Occurrences</th>
                                     {% elif ptype == 'bad_crc' %}<th>Sector</th>
                                     {% elif ptype == 'ddam' %}<th>Sector</th>
@@ -53,7 +75,7 @@
                                         <td>{{ ind.track }}</td>
                                         <td>{{ ind.side }}</td>
                                         {% if ptype == 'weak_bits' %}<td>{{ ind.count }}</td>
-                                        {% elif ptype == 'id_mismatch' %}<td><code>{{ ind.get('reported_cyl', '?') }}</code></td><td><code>{{ ind.track }}</code></td>
+                                        {% elif ptype == 'id_mismatch' %}<td><code>{{ ind.get('reported_cyl', '?') }}</code></td><td><code>{{ ind.track }}</code></td><td>{{ ind.get('count', 1) }}</td>
                                         {% elif ptype == 'duplicate_id' %}<td><code>C{{ ind.get('cyl','?') }}/H{{ ind.get('head','?') }}/R{{ ind.get('sect','?') }}/N{{ ind.get('size_code','?') }}</code></td><td>{{ ind.get('count', '?') }}</td>
                                         {% elif ptype == 'bad_crc' %}<td>R{{ ind.get('sect', '?') }}</td>
                                         {% elif ptype == 'ddam' %}<td>R{{ ind.get('sect', '?') }}</td>
@@ -67,6 +89,7 @@
                     </div>
                     {% endfor %}
                     </div>
+                    {% endif %}
                 </div>
             {% endif %}
         {% endcall %}

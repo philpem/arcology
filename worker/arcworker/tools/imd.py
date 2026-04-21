@@ -151,6 +151,211 @@ def parse_imd_track0(imd_path: Path) -> dict | None:
     }
 
 
+def parse_imd_tracks(imd_path: Path) -> list[dict] | None:
+    """
+    Parse every track header in an IMD file and return track metadata.
+
+    Unlike parse_imd_track0(), this reads the optional cylinder map for each
+    track so that per-sector IDAM cylinder numbers are available.  Sector data
+    bytes are read to determine is_uniform_fill but are not stored.
+
+    Returns a list of track dicts (in file order), each containing:
+        physical_index  int        0-based position in file (= physical track number)
+        cylinder        int        cylinder byte from track header
+        head            int        head number (0 or 1)
+        encoding        str        'FM' or 'MFM'
+        sector_size     int        bytes per sector
+        sector_ids      list[int]  sector ID map
+        sector_cyls     list[int]  per-sector IDAM cylinder — from cylinder map
+                                   if present, otherwise [cylinder] * nsec
+        has_data        bool       True if any sector type != 0
+        is_uniform_fill bool       True if every present sector consists of a
+                                   single repeated byte value (all compressed, or
+                                   all raw bytes equal).  Empty tracks are True.
+                                   False as soon as any sector has varied content
+                                   or two sectors have different fill bytes.
+
+    Returns None on parse error.
+    """
+    try:
+        with open(imd_path, 'rb') as f:
+            data = f.read()
+    except OSError:
+        return None
+
+    if not data.startswith(b'IMD '):
+        return None
+
+    sentinel = data.find(b'\x1A')
+    if sentinel < 0:
+        return None
+
+    pos = sentinel + 1
+    tracks = []
+    physical_index = 0
+
+    while pos < len(data):
+        if pos + 5 > len(data):
+            break
+
+        mode      = data[pos]
+        cylinder  = data[pos + 1]
+        head_raw  = data[pos + 2]
+        nsec      = data[pos + 3]
+        size_code = data[pos + 4]
+        pos += 5
+
+        head             = head_raw & 0x01
+        cyl_map_present  = bool(head_raw & 0x80)
+        head_map_present = bool(head_raw & 0x40)
+
+        sector_size = _IMD_SECTOR_SIZES.get(size_code, 0)
+        encoding    = 'FM' if mode <= 2 else 'MFM'
+
+        # Sector ID map
+        if pos + nsec > len(data):
+            break
+        sector_ids = list(data[pos:pos + nsec])
+        pos += nsec
+
+        # Optional cylinder map → per-sector IDAM cylinders
+        if cyl_map_present:
+            if pos + nsec > len(data):
+                break
+            sector_cyls = list(data[pos:pos + nsec])
+            pos += nsec
+        else:
+            sector_cyls = [cylinder] * nsec
+
+        # Optional head map (skip)
+        if head_map_present:
+            if pos + nsec > len(data):
+                break
+            pos += nsec
+
+        # Read sector data: determine has_data and is_uniform_fill.
+        # is_uniform_fill tracks whether every present sector consists of a
+        # single repeated byte value (same fill byte across all sectors).
+        has_data        = False
+        is_uniform_fill = True          # set False on first varied or mismatched byte
+        track_fill: int | None = None   # fill byte established by first sector with data
+
+        for _ in range(nsec):
+            if pos >= len(data):
+                break
+            stype = data[pos]
+            pos += 1
+            if stype == 0:
+                pass                        # not present — no data follows
+            elif stype % 2 == 1:
+                # Raw sector data — read and check uniformity
+                if pos + sector_size > len(data):
+                    break
+                sec = data[pos:pos + sector_size]
+                pos += sector_size
+                has_data = True
+                if is_uniform_fill and sec:
+                    fill = sec[0]
+                    if all(b == fill for b in sec):
+                        if track_fill is None:
+                            track_fill = fill
+                        elif track_fill != fill:
+                            is_uniform_fill = False
+                    else:
+                        is_uniform_fill = False
+            else:
+                # Compressed — 1 fill byte (always uniform by definition)
+                if pos >= len(data):
+                    break
+                fill = data[pos]
+                pos += 1
+                has_data = True
+                if is_uniform_fill:
+                    if track_fill is None:
+                        track_fill = fill
+                    elif track_fill != fill:
+                        is_uniform_fill = False
+
+        tracks.append({
+            'physical_index':  physical_index,
+            'cylinder':        cylinder,
+            'head':            head,
+            'encoding':        encoding,
+            'sector_size':     sector_size,
+            'sector_ids':      sector_ids,
+            'sector_cyls':     sector_cyls,
+            'has_data':        has_data,
+            'is_uniform_fill': is_uniform_fill,
+        })
+        physical_index += 1
+
+    return tracks if tracks else None
+
+
+def detect_track_density_mismatch(tracks: list[dict]) -> dict:
+    """
+    Detect a 40-track disc captured in an 80-track drive (track density mismatch).
+
+    The tell-tale pattern on even physical tracks: sector IDAM cylinders equal
+    half the physical index (e.g. physical track 4 reports cylinder 2).
+
+    Two variants are distinguished by what the odd tracks contain:
+
+    1. Simple double-step read: the 40-track disc was imaged directly.
+       Odd tracks have no decodeable sectors (between-track reads).
+       → odd_tracks_with_varied_data == 0, odd_tracks_with_uniform_data == 0
+
+    2. Reformat case: an 80-track disc was reformatted as 40-track, leaving
+       the old 80-track data on the unwritten odd physical tracks.
+       Odd tracks contain real sectors where IDAM cylinder == physical_index.
+       → odd_tracks_with_varied_data > 0 (real leftover data)
+         or odd_tracks_with_uniform_data > 0 (formatted-empty leftover tracks)
+
+    The detection criterion (confidence on even tracks) is the same for both.
+    The caller uses odd_tracks_with_varied_data to decide whether to warn.
+
+    Returns:
+        detected                    bool
+        confidence                  float  matching / checked (0.0 if checked == 0)
+        matching                    int    even tracks where all sector_cyls == physical_index // 2
+        checked                     int    even tracks with has_data tested
+        odd_tracks_with_varied_data int    odd tracks with non-uniform sector data
+        odd_tracks_with_uniform_data int   odd tracks with uniform-fill sector data
+    """
+    matching = 0
+    checked  = 0
+    odd_varied  = 0
+    odd_uniform = 0
+
+    for t in tracks:
+        if t['physical_index'] % 2 == 0:
+            if not t['has_data']:
+                continue
+            checked += 1
+            expected = t['physical_index'] // 2
+            if t['sector_cyls'] and all(c == expected for c in t['sector_cyls']):
+                matching += 1
+        else:
+            if not t['has_data']:
+                continue
+            if t['is_uniform_fill']:
+                odd_uniform += 1
+            else:
+                odd_varied += 1
+
+    confidence = matching / checked if checked > 0 else 0.0
+    detected   = checked >= 6 and confidence >= 0.70
+
+    return {
+        'detected':                   detected,
+        'confidence':                 confidence,
+        'matching':                   matching,
+        'checked':                    checked,
+        'odd_tracks_with_varied_data':   odd_varied,
+        'odd_tracks_with_uniform_data':  odd_uniform,
+    }
+
+
 def detect_geometry_from_boot_data(track0: dict) -> dict | None:
     """
     Probe track 0 sector data for known filesystem boot structures.

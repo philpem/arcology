@@ -357,4 +357,35 @@ def sector_image_to_raw_greaseweazle(
         'process_output': process_output
     }
 
+def scp_fix_track_density(input_path: Path, output_path: Path) -> dict:
+    """
+    Extract only even-indexed physical tracks from a double-stepped SCP,
+    producing a corrected 40-track SCP using Greaseweazle.
+
+    c=0-79:step=2 selects physical cylinders 0, 2, 4, ..., 78.
+    Greaseweazle renumbers them 0-39 in the output file.
+    """
+    cmd = [
+        'gw', 'convert',
+        '--tracks', 'c=0-79:step=2,h=0-1',
+        str(input_path),
+        str(output_path),
+    ]
+    result, process_output = run_tool_with_output(cmd)
+
+    if result.returncode == 0 and output_path.exists():
+        return {
+            'success': True,
+            'tool': 'greaseweazle',
+            'output_path': str(output_path),
+            'process_output': process_output,
+        }
+
+    return {
+        'success': False,
+        'tool': 'greaseweazle',
+        'error': result.stderr.decode()[:1000],
+        'process_output': process_output,
+    }
+
 # vim: ts=4 sw=4 et
