@@ -19,6 +19,7 @@
     background: none;
 }
 .viewer-img-fullwidth {
+    width: 100%;
     max-height: 75vh;
 }
 .viewer-name {
@@ -242,7 +243,7 @@
 
 {# ── Image outputs ── #}
 {% if ns.image_outputs %}
-    {% if ns.image_outputs | length == 1 and output_groups | length == 1 %}
+    {% if ns.image_outputs | length == 1 %}
     {# Single image for a single-component file — show full width like text #}
     {% set out = ns.image_outputs[0] %}
     {% set preview_file = out.svg_filename if out.svg_filename else out.filename %}
@@ -334,13 +335,13 @@
 {% if output_groups %}
 <script>
 (function() {
-    var img = document.querySelector('.viewer-img-fullwidth');
-    if (!img) return;
-    function apply() {
-        if (img.naturalWidth > 0)
-            img.style.maxWidth = (img.naturalWidth * 4) + 'px';
-    }
-    if (img.complete) apply(); else img.addEventListener('load', apply);
+    document.querySelectorAll('.viewer-img-fullwidth').forEach(function(img) {
+        function apply() {
+            if (img.naturalWidth > 0)
+                img.style.maxWidth = (img.naturalWidth * 4) + 'px';
+        }
+        if (img.complete) apply(); else img.addEventListener('load', apply);
+    });
 })();
 
 function revealExplicit(gid) {
