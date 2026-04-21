@@ -142,13 +142,14 @@
                                 <code>{{ artefact.original_filename }}</code>
                             </p>
                             {% if artefact.derived_artefacts %}
-                            <div class="ms-3 mt-2 small">
-                                <i class="bi bi-arrow-return-right text-muted"></i>
-                                {% for derived in artefact.derived_artefacts %}
-                                <a href="{{ artefact_url(derived) }}" class="me-2">
-                                    {{ derived.label }} <span class="badge bg-info">{{ derived.artefact_type.value.upper() }}</span>
-                                </a>
-                                {% endfor %}
+                            {% set ns = namespace(types=[]) %}
+                            {% for d in artefact.derived_artefacts recursive %}
+                            {% if d.artefact_type.value not in ns.types %}{% set ns.types = ns.types + [d.artefact_type.value] %}{% endif %}
+                            {% if d.derived_artefacts %}{{ loop(d.derived_artefacts) }}{% endif %}
+                            {% endfor %}
+                            <div class="ms-3 mt-1 small">
+                                <i class="bi bi-arrow-return-right text-muted me-1"></i>
+                                {% for t in ns.types %}<span class="badge bg-info text-dark">{{ t.upper().replace('_', ' ') }}</span>{% endfor %}
                             </div>
                             {% endif %}
                         </div>
