@@ -15,6 +15,7 @@ class ArtefactType(enum.Enum):
     # Flux-level floppy images
     SCP        = "scp"               # SuperCard Pro
     DFI        = "dfi"               # DiscFerret
+    A2R        = "a2r"               # Applesauce A2R
 
     # Sector-level floppy images
     IMD        = "imd"               # ImageDisk

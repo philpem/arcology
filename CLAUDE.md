@@ -234,7 +234,11 @@ Some flux formats (DFI, A2R, …) cannot be decoded directly by fluxfox or
 greaseweazle — they must first be converted to SCP, after which the existing
 SCP pipeline (HFE + IMD + RAW_SECTOR) runs unchanged on the SCP sibling.
 
-**Checklist** (use DFI as the reference implementation):
+**Worked example**: the commit titled *"Add A2R flux image support via SCP conversion
+path"* (branch `claude/add-a2r-scp-conversion-MmKBo`) adds A2R support and is a
+minimal, self-contained example of every step below.
+
+**Checklist** (use DFI or A2R as the reference implementation):
 
 1. **`shared/enums.py`** — add `NEWTYPE = "newtype"` to `ArtefactType` in the
    "Flux-level floppy images" group.
@@ -289,7 +293,7 @@ SCP pipeline (HFE + IMD + RAW_SECTOR) runs unchanged on the SCP sibling.
    sibling is registered without `skip_analyses`, and gw/IMD/HFE tools are
    **not** called during the format's own FLUX_DECODE run.
 
-**A2R specifically** (when implemented):
+**A2R notes** (implemented — see the worked example commit above):
 - Conversion: `gw convert input.a2r output.scp` — greaseweazle handles A2R
   natively, no script or clock-override mechanism needed.
 - No hint parameters required (greaseweazle auto-detects the clock).

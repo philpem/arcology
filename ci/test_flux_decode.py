@@ -47,7 +47,7 @@ def _make_artefact(artefact_type: ArtefactType, filename: str = 'disc') -> dict:
 
 def _ext(t: ArtefactType) -> str:
     return {ArtefactType.SCP: '.scp', ArtefactType.HFE: '.hfe', ArtefactType.IMD: '.imd',
-            ArtefactType.DFI: '.dfi'}.get(t, '')
+            ArtefactType.DFI: '.dfi', ArtefactType.A2R: '.a2r'}.get(t, '')
 
 def _analysis() -> dict:
     return {'id': _ANALYSIS_ID, 'hints': None}
@@ -276,12 +276,21 @@ class TestIMDSource(unittest.TestCase):
 # DFI source
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _run_flux_decode_dfi(work_dir: Path, hints: dict | None = None, mock_scp_result=None):
+def _run_flux_decode_via_scp(
+    artefact_type: ArtefactType,
+    work_dir: Path,
+    conversion_patch: str,
+    hints: dict | None = None,
+    mock_scp_result=None,
+):
     """
-    Run process_flux_decode for a DFI source with all external tools mocked.
-    Returns (worker_mock, mock_dfi_to_scp, mock_imd, mock_hfe, mock_gw).
+    Generic helper for flux-to-SCP-via-conversion source types (DFI, A2R, …).
+
+    conversion_patch is the fully-qualified name to patch for the →SCP call,
+    e.g. 'worker.arcworker.analysis.dfi_to_scp_hxcfe'.
     """
-    artefact = _make_artefact(ArtefactType.DFI)
+    ext = _ext(artefact_type)
+    artefact = _make_artefact(artefact_type, f'disc{ext[1:]}')
     source_path = work_dir / artefact['storage_path']
     source_path.touch()
 
@@ -293,14 +302,32 @@ def _run_flux_decode_dfi(work_dir: Path, hints: dict | None = None, mock_scp_res
     worker.api = MagicMock()
     worker.api.register_derived_artefact.return_value = {'artefact': {'uuid': 'mock-uuid'}}
 
-    with patch('worker.arcworker.analysis.dfi_to_scp_hxcfe', return_value=scp_result) as mock_dfi, \
+    with patch(conversion_patch, return_value=scp_result) as mock_conv, \
          patch('worker.arcworker.analysis.flux_to_imd_hxcfe', return_value={'success': True}) as mock_imd, \
          patch('worker.arcworker.analysis.flux_to_hfe_hxcfe', return_value={'success': True}) as mock_hfe, \
          patch('worker.arcworker.analysis.sector_image_to_raw_greaseweazle', return_value={'success': True}) as mock_gw:
 
         AnalysisWorker.process_flux_decode(worker, analysis, artefact, work_dir)
 
-    return worker, mock_dfi, mock_imd, mock_hfe, mock_gw
+    return worker, mock_conv, mock_imd, mock_hfe, mock_gw
+
+
+def _run_flux_decode_dfi(work_dir: Path, hints: dict | None = None, mock_scp_result=None):
+    """Run process_flux_decode for a DFI source with all external tools mocked."""
+    return _run_flux_decode_via_scp(
+        ArtefactType.DFI, work_dir,
+        'worker.arcworker.analysis.dfi_to_scp_hxcfe',
+        hints=hints, mock_scp_result=mock_scp_result,
+    )
+
+
+def _run_flux_decode_a2r(work_dir: Path, mock_scp_result=None):
+    """Run process_flux_decode for an A2R source with all external tools mocked."""
+    return _run_flux_decode_via_scp(
+        ArtefactType.A2R, work_dir,
+        'worker.arcworker.analysis.a2r_to_scp_gw',
+        mock_scp_result=mock_scp_result,
+    )
 
 
 class TestDFISource(unittest.TestCase):
@@ -359,6 +386,59 @@ class TestDFISource(unittest.TestCase):
         """If dfi_to_scp_hxcfe fails, no sibling is registered."""
         worker, mock_dfi, mock_imd, mock_hfe, mock_gw = _run_flux_decode_dfi(
             self.work_dir, mock_scp_result={'success': False, 'error': 'hxcfe failed'})
+        worker.api.register_derived_artefact.assert_not_called()
+        worker.fail_analysis.assert_called_once()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# A2R source
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestA2RSource(unittest.TestCase):
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.work_dir = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_calls_a2r_to_scp(self):
+        """a2r_to_scp_gw must be called with the A2R source path."""
+        worker, mock_conv, mock_imd, mock_hfe, mock_gw = _run_flux_decode_a2r(self.work_dir)
+        self.assertTrue(mock_conv.called)
+        self.assertEqual(mock_conv.call_args.args[0].suffix, '.a2r')
+
+    def test_produces_scp_sibling(self):
+        """SCP sibling must be registered so its own FLUX_DECODE runs."""
+        worker, mock_conv, mock_imd, mock_hfe, mock_gw = _run_flux_decode_a2r(self.work_dir)
+        types_registered = [c.args[3] for c in worker.api.register_derived_artefact.call_args_list]
+        self.assertIn(ArtefactType.SCP, types_registered)
+
+    def test_scp_sibling_has_no_skip_analyses(self):
+        """SCP sibling must not suppress FLUX_DECODE — it needs to run the full pipeline."""
+        worker, mock_conv, mock_imd, mock_hfe, mock_gw = _run_flux_decode_a2r(self.work_dir)
+        scp_calls = [c for c in worker.api.register_derived_artefact.call_args_list
+                     if c.args[3] == ArtefactType.SCP]
+        self.assertEqual(len(scp_calls), 1)
+        self.assertNotIn('skip_analyses', scp_calls[0].kwargs)
+
+    def test_no_imd_hfe_gw_called(self):
+        """hxcfe IMD/HFE conversion and gw sector conversion must not run during A2R FLUX_DECODE."""
+        worker, mock_conv, mock_imd, mock_hfe, mock_gw = _run_flux_decode_a2r(self.work_dir)
+        self.assertFalse(mock_imd.called)
+        self.assertFalse(mock_hfe.called)
+        self.assertFalse(mock_gw.called)
+
+    def test_only_scp_registered(self):
+        """Only the SCP sibling should be registered — no IMD, HFE, or RAW_SECTOR."""
+        worker, mock_conv, mock_imd, mock_hfe, mock_gw = _run_flux_decode_a2r(self.work_dir)
+        self.assertEqual(worker.api.register_derived_artefact.call_count, 1)
+
+    def test_failure_propagated(self):
+        """If a2r_to_scp_gw fails, no sibling is registered."""
+        worker, mock_conv, mock_imd, mock_hfe, mock_gw = _run_flux_decode_a2r(
+            self.work_dir, mock_scp_result={'success': False, 'error': 'gw failed'})
         worker.api.register_derived_artefact.assert_not_called()
         worker.fail_analysis.assert_called_once()
 

@@ -11,6 +11,7 @@ from .flux import (
     flux_to_imd_hxcfe,
     flux_to_hfe_hxcfe,
     dfi_to_scp_hxcfe,
+    a2r_to_scp_gw,
     sector_image_to_raw_greaseweazle,
 )
 from .extraction import (
@@ -56,6 +57,7 @@ __all__ = [
     'flux_to_imd_hxcfe',
     'flux_to_hfe_hxcfe',
     'dfi_to_scp_hxcfe',
+    'a2r_to_scp_gw',
     'sector_image_to_raw_greaseweazle',
     'extract_acorn_disc_image_manager',
     'extract_dos_7z',
