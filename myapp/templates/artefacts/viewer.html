@@ -358,6 +358,16 @@ function revealExplicit(gid) {
         content.style.pointerEvents = '';
     }
 }
+function reapplyAllBlurs() {
+    document.querySelectorAll('[id^="explicit-content-"]').forEach(function(el) {
+        el.classList.add('explicit-content-blur');
+        el.style.pointerEvents = 'none';
+    });
+    document.querySelectorAll('[id^="explicit-overlay-"]').forEach(function(el) {
+        el.style.display = '';
+    });
+}
+window.addEventListener('pageshow', function(e) { if (e.persisted) reapplyAllBlurs(); });
 </script>
 {% endif %}
 {% endblock %}
