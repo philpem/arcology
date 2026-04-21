@@ -239,6 +239,21 @@
 
 {# ── Image outputs ── #}
 {% if ns.image_outputs %}
+    {% if ns.image_outputs | length == 1 and output_groups | length == 1 %}
+    {# Single image for a single-component file — show full width like text #}
+    {% set out = ns.image_outputs[0] %}
+    {% set preview_file = out.svg_filename if out.svg_filename else out.filename %}
+    <div class="card viewer-img-card mb-4">
+        <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
+           target="_blank" rel="noopener">
+            <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
+                 class="viewer-img card-img-top" alt="{{ out.name }}" loading="lazy">
+        </a>
+        <div class="card-footer p-1 text-center">
+            <span class="viewer-name font-monospace">{{ out.name }}</span>
+        </div>
+    </div>
+    {% else %}
     <div class="row g-3 mb-4">
         {% for out in ns.image_outputs %}
         <div class="{{ viewer_col_class }}">
@@ -257,6 +272,7 @@
         </div>
         {% endfor %}
     </div>
+    {% endif %}
 {% endif %}
 
 {# ── SVG outputs (other tools that produce standalone SVG without a paired PNG) ── #}
