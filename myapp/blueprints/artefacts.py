@@ -1257,11 +1257,12 @@ def _render_viewer(artefact):
         groups: dict[str, list] = defaultdict(list)
         for conv in convs:
             if conv.status == AnalysisStatus.FAILED:
-                failed_conversion_list.append({
-                    'source_file': None,
-                    'error': conv.error_message or 'Conversion failed',
-                    'analysis_uuid': conv.uuid,
-                })
+                if not file_filter:
+                    failed_conversion_list.append({
+                        'source_file': None,
+                        'error': conv.error_message or 'Conversion failed',
+                        'analysis_uuid': conv.uuid,
+                    })
                 continue
             if not (conv.status == AnalysisStatus.COMPLETED and conv.success):
                 continue
@@ -1270,6 +1271,8 @@ def _render_viewer(artefact):
             except (json.JSONDecodeError, TypeError):
                 continue
             for fc in details.get('failed_conversions', []):
+                if file_filter and fc.get('source_file') != file_filter:
+                    continue
                 failed_conversion_list.append({**fc, 'analysis_uuid': conv.uuid})
             for out in details.get('outputs', []):
                 source = out.get('source_file', '')
