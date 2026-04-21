@@ -1162,7 +1162,80 @@ def produce_artefact(id):
     )
     
     db.session.add(artefact)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        # SHA-256 collision: another artefact in this item already has this content.
+        # This can happen when a directly-uploaded SCP and a DFI-derived SCP both
+        # produce the same HFE/RAW_SECTOR output (same bytes, different lineage), or
+        # when re-analysis leaves orphaned grandchildren whose cascade delete failed.
+        #
+        # Strategy: re-home the existing artefact under the current analysis so the
+        # UI shows it in the correct place.  We update parent_artefact_id,
+        # derived_from_analysis_id, label, and original_filename to match the current
+        # request.  The file in storage is kept as-is (same content); the new
+        # (orphaned) file the worker uploaded is deleted from storage.
+        sha256 = data.get('sha256')
+        existing = (
+            Artefact.query
+            .filter_by(item_id=analysis.artefact.item_id, sha256=sha256)
+            .first()
+        ) if sha256 else None
+        if not existing:
+            return error_response('Failed to create derived artefact (integrity error)', 500)
+
+        current_app.logger.info(
+            f"produce_artefact: SHA-256 collision — re-homing artefact {existing.uuid} "
+            f"(was analysis {existing.derived_from_analysis_id}) under analysis {analysis.id}"
+        )
+
+        # Delete the orphaned new file the worker uploaded (if different from existing)
+        if data.get('storage_path') and data['storage_path'] != existing.storage_path:
+            try:
+                orphan_key = current_app.storage.storage_key(
+                    storage_directory.value, data['storage_path']
+                )
+                current_app.storage.delete(orphan_key)
+            except Exception as e:
+                current_app.logger.warning(
+                    f"produce_artefact: failed to delete orphaned file "
+                    f"{data['storage_path']}: {e}"
+                )
+
+        existing.parent_artefact_id = analysis.artefact_id
+        existing.derived_from_analysis_id = analysis.id
+        existing.label = data['label']
+        existing.original_filename = data['original_filename']
+        try:
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            current_app.logger.error(f"produce_artefact: re-home commit failed: {e}")
+            return error_response('Failed to re-home existing artefact', 500)
+
+        # Queue follow-on analyses on the re-homed artefact just like a freshly-
+        # created derived artefact.  Without this, the re-homed artefact retains
+        # only whatever analyses/partitions/files it had under the old lineage,
+        # which may be missing (e.g. orphaned after a failed cascade) or stale.
+        # queue_analyses_for_artefact skips PENDING/RUNNING duplicates, so this
+        # is safe to call even if some analyses are already active.
+        queued_analyses = []
+        if data.get('auto_analyse', True):
+            from .artefacts import ANALYSIS_MAP
+            hints = json.loads(analysis.hints) if analysis.hints else None
+            skip_analyses = data.get('skip_analyses') or []
+            queue_analyses_for_artefact(existing, hints, skip_analyses=skip_analyses)
+            skip_set = set(skip_analyses)
+            queued_analyses = [
+                t.value for t in ANALYSIS_MAP.get(artefact_type, [])
+                if t.name not in skip_set
+            ]
+
+        return jsonify({
+            'artefact': artefact_to_dict(existing),
+            'queued_analyses': queued_analyses,
+        }), 200
 
     # Generate slug (unique within this item)
     artefact.slug = ensure_unique_slug(generate_slug(artefact.label), Artefact, scope_filter={'item_id': analysis.artefact.item_id})
