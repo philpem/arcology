@@ -442,13 +442,29 @@ def _resolve_extracted_file_path(ef):
     # parent archive's display path prepended (e.g. "Archives/Emulators.zip/
     # Docs/file.txt").  The actual files are in the ARCHIVE_EXTRACT output
     # for that inner zip, so we strip the prefix to get the real disk path.
+    #
+    # However, RISC OS archives often contain a single top-level directory
+    # whose name matches the archive filename (e.g. archive "QRT" contains
+    # "QRT/Documents/!ReadMe" internally).  In that case the extractor
+    # preserves the "QRT/" subdirectory, so the on-disk path relative to the
+    # ARCHIVE_EXTRACT output is still "QRT/Documents/!ReadMe" — stripping
+    # "QRT/" produces the wrong path.  We therefore try both the stripped
+    # and the original (unstripped) DB path so both layouts are handled.
+    original_disk_path = ef.path
     disk_path = ef.path
     if ef.parent_file_id:
         parent = ef.parent_file
         if parent and parent.is_archive:
-            prefix = parent.path + '/'
-            if disk_path.startswith(prefix):
-                disk_path = disk_path[len(prefix):]
+            strip_prefix = parent.path + '/'
+            if disk_path.startswith(strip_prefix):
+                disk_path = disk_path[len(strip_prefix):]
+
+    # Stripped form first (handles extractors that put files directly in
+    # output_dir); unstripped fallback for archives with a matching top-level
+    # directory (the coincidence case described above).
+    disk_paths_to_try = [disk_path]
+    if disk_path != original_disk_path:
+        disk_paths_to_try.append(original_disk_path)
 
     for analysis_type in (AnalysisType.FILE_EXTRACTION, AnalysisType.ARCHIVE_EXTRACT):
         # Use .all() so we try every extraction output for this artefact.
@@ -481,18 +497,21 @@ def _resolve_extracted_file_path(ef):
                         # No 'outputs' segment, use the last 3 parts as best guess
                         base = '/'.join(parts[-3:]) if len(parts) >= 3 else parts[-1]
 
-                prefix = f"outputs/{base.strip('/')}"
-                file_key = f"{prefix}/{disk_path.lstrip('/')}"
+                s3_prefix = f"outputs/{base.strip('/')}"
 
                 # Build candidate keys.  If the file has a known RISC OS
                 # filetype, try ,xxx suffix variants (both cases) before
                 # the plain key.  This avoids an expensive list_prefix()
                 # call — each HEAD/GET is ~12x cheaper than a LIST on AWS.
+                # Try each disk_path variant in order (stripped first, then
+                # unstripped fallback for archives with matching top-level dir).
                 s3_candidates = []
-                if ef.risc_os_filetype:
-                    s3_candidates.append(file_key + ',' + ef.risc_os_filetype.lower())
-                    s3_candidates.append(file_key + ',' + ef.risc_os_filetype.upper())
-                s3_candidates.append(file_key)
+                for dp in disk_paths_to_try:
+                    file_key = f"{s3_prefix}/{dp.lstrip('/')}"
+                    if ef.risc_os_filetype:
+                        s3_candidates.append(file_key + ',' + ef.risc_os_filetype.lower())
+                        s3_candidates.append(file_key + ',' + ef.risc_os_filetype.upper())
+                    s3_candidates.append(file_key)
 
                 for key in s3_candidates:
                     try:
@@ -547,25 +566,26 @@ def _resolve_extracted_file_path(ef):
                 # pass the inner confinement test and expose arbitrary host files.
                 if not real_base.startswith(real_output + os.sep):
                     continue
-                raw_path = os.path.join(resolved_base, disk_path.lstrip('/'))
-                file_path = os.path.realpath(raw_path)
-                if not file_path.startswith(real_base + os.sep):
-                    continue
-                if os.path.isfile(file_path):
-                    return file_path
-                # RISC OS filetype suffix fallback — re-check confinement on
-                # each candidate so a glob match cannot escape real_base.
-                # Restrict to files whose comma-suffix is 1–3 hex digits so
-                # that DIM sidecar files (e.g. filename,INF) are never served
-                # in place of the actual data file.
-                candidates = [
-                    f for f in glob.glob(raw_path + ',*')
-                    if os.path.isfile(f)
-                    and os.path.realpath(f).startswith(real_base + os.sep)
-                    and re.search(r',[0-9a-fA-F]{1,3}$', os.path.basename(f))
-                ]
-                if candidates:
-                    return candidates[0]
+                for dp in disk_paths_to_try:
+                    raw_path = os.path.join(resolved_base, dp.lstrip('/'))
+                    file_path = os.path.realpath(raw_path)
+                    if not file_path.startswith(real_base + os.sep):
+                        continue
+                    if os.path.isfile(file_path):
+                        return file_path
+                    # RISC OS filetype suffix fallback — re-check confinement on
+                    # each candidate so a glob match cannot escape real_base.
+                    # Restrict to files whose comma-suffix is 1–3 hex digits so
+                    # that DIM sidecar files (e.g. filename,INF) are never served
+                    # in place of the actual data file.
+                    candidates = [
+                        f for f in glob.glob(raw_path + ',*')
+                        if os.path.isfile(f)
+                        and os.path.realpath(f).startswith(real_base + os.sep)
+                        and re.search(r',[0-9a-fA-F]{1,3}$', os.path.basename(f))
+                    ]
+                    if candidates:
+                        return candidates[0]
 
     return None
 
