@@ -1461,20 +1461,25 @@ def _render_viewer(artefact):
     )
 
     explicit_file_paths: set[str] = set()
-    if not artefact_is_explicit and artefact.partitions:
-        partition_ids_expl = [p.id for p in artefact.partitions]
-        explicit_efs = (
-            ExtractedFile.query
-            .join(ExtractedFileRestriction,
-                  ExtractedFileRestriction.extracted_file_id == ExtractedFile.id)
-            .filter(
-                ExtractedFileRestriction.restriction_type == explicit_type,
-                ExtractedFile.partition_id.in_(partition_ids_expl),
+    if not artefact_is_explicit:
+        partition_ids_expl = [
+            p.id for p in Partition.query.filter(
+                Partition.artefact_id.in_(all_artefact_ids)
+            ).all()
+        ]
+        if partition_ids_expl:
+            explicit_efs = (
+                ExtractedFile.query
+                .join(ExtractedFileRestriction,
+                      ExtractedFileRestriction.extracted_file_id == ExtractedFile.id)
+                .filter(
+                    ExtractedFileRestriction.restriction_type == explicit_type,
+                    ExtractedFile.partition_id.in_(partition_ids_expl),
+                )
+                .with_entities(ExtractedFile.path)
+                .all()
             )
-            .with_entities(ExtractedFile.path)
-            .all()
-        )
-        explicit_file_paths = {row.path for row in explicit_efs}
+            explicit_file_paths = {row.path for row in explicit_efs}
 
     for group in output_groups:
         group['explicit'] = (
