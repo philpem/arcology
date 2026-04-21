@@ -247,7 +247,7 @@
         <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
            target="_blank" rel="noopener">
             <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
-                 class="viewer-img card-img-top" alt="{{ out.name }}" loading="lazy">
+                 class="viewer-img viewer-img-fullwidth card-img-top" alt="{{ out.name }}" loading="lazy">
         </a>
         <div class="card-footer p-1 text-center">
             <span class="viewer-name font-monospace">{{ out.name }}</span>
@@ -328,6 +328,16 @@
 
 {% if output_groups %}
 <script>
+(function() {
+    var img = document.querySelector('.viewer-img-fullwidth');
+    if (!img) return;
+    function apply() {
+        if (img.naturalWidth > 0)
+            img.style.maxWidth = (img.naturalWidth * 4) + 'px';
+    }
+    if (img.complete) apply(); else img.addEventListener('load', apply);
+})();
+
 function revealExplicit(gid) {
     var overlay = document.getElementById('explicit-overlay-' + gid);
     var content = document.getElementById('explicit-content-' + gid);
