@@ -10,6 +10,8 @@ import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from .svg_utils import postprocess_svg
+
 from ..config import log
 
 # Extensions passed through unchanged (browser-native formats)
@@ -20,11 +22,13 @@ def _wmf_cmd(src: Path, dst: Path) -> list[str]:
     return ['wmf2svg', '-o', str(dst), str(src)]
 
 def _emf_cmd(src: Path, dst: Path) -> list[str]:
-    return ['emf2svg-conv', '-i', str(src), '-o', str(dst)]
+    return ['/opt/dexvert/emf2svg.py', str(src), str(dst)]
 
 _VECTOR_EXTS: dict[str, tuple[str, object]] = {
-    '.wmf': ('wmf2svg',      _wmf_cmd),
-    '.emf': ('emf2svg-conv', _emf_cmd),
+    # WMF files are sometimes renamed EMF files
+    '.wmf': (_wmf_cmd, _emf_cmd),
+    # EMF files are sometimes renamed WMF files
+    '.emf': (_emf_cmd, _wmf_cmd),
 }
 
 def _ensure_svg_namespace(svg_path: Path) -> None:
@@ -68,41 +72,64 @@ def convert_image(input_path: Path, output_dir: Path, analysis_uuid: str) -> dic
     ext = input_path.suffix.lower()
 
     # --- Vector metafiles ---
+    err = None
     if ext in _VECTOR_EXTS:
-        tool_name, build_cmd = _VECTOR_EXTS[ext]
-        out_svg = output_dir / f'{analysis_uuid}_image.svg'
-        cmd = build_cmd(input_path, out_svg)
-        try:
-            proc = subprocess.run(cmd, capture_output=True, timeout=60)
-        except FileNotFoundError:
+        # Get the list of possible converters for this type
+        build_cmd_l = _VECTOR_EXTS[ext]
+        if type(build_cmd_l) not in (list,tuple):
+            build_cmd_l = (build_cmd_l)
+        
+        # Try all the converters in order until we hit one that works
+        for build_cmd in build_cmd_l:
+            out_svg = output_dir / f'{analysis_uuid}_image.svg'
+            cmd = build_cmd(input_path, out_svg)
+            tool_name = cmd[0]
+            try:
+                proc = subprocess.run(cmd, capture_output=True, timeout=60)
+            except FileNotFoundError:
+                err = {
+                    'success': False, 'output_path': None,
+                    'format': ext.lstrip('.').upper(), 'tool': tool_name,
+                    'error': f'{tool_name!r} not found — install {tool_name} in the worker',
+                }
+                continue
+            except subprocess.TimeoutExpired:
+                err = {
+                    'success': False, 'output_path': None,
+                    'format': ext.lstrip('.').upper(), 'tool': tool_name,
+                    'error': f'{tool_name} timed out',
+                }
+                continue
+            if proc.returncode != 0 or not out_svg.exists():
+                out = (proc.stdout + proc.stderr).decode('utf-8', errors='replace').strip()
+                err = {
+                    'success': False, 'output_path': None,
+                    'format': ext.lstrip('.').upper(), 'tool': tool_name,
+                    'error': f'{tool_name} failed (rc={proc.returncode}): {out}',
+                }
+                log.info(f'Conversion of "{input_path}" via "{cmd}" failed, falling back to next decoder')
+                continue
+
+            # For wmf2svg: tidy up the SVG output so it's relatively standards-compliant.
+            # For everything else: tidy up the SVG output with Scour.
+            try:
+                postprocess_svg(out_svg)
+                exception_trace = None
+            except:
+                import traceback
+                exception_trace = traceback.format_exc()
+                log.warning(f'Error cleaning up SVG "{input_path}", bypassing: {exception_trace}')
+
             return {
-                'success': False, 'output_path': None,
+                'success': True, 'output_path': str(out_svg),
                 'format': ext.lstrip('.').upper(), 'tool': tool_name,
-                'error': f'{tool_name!r} not found — install {tool_name} in the worker',
-            }
-        except subprocess.TimeoutExpired:
-            return {
-                'success': False, 'output_path': None,
-                'format': ext.lstrip('.').upper(), 'tool': tool_name,
-                'error': f'{tool_name} timed out',
-            }
-        if proc.returncode != 0 or not out_svg.exists():
-            out = (proc.stdout + proc.stderr).decode('utf-8', errors='replace').strip()
-            return {
-                'success': False, 'output_path': None,
-                'format': ext.lstrip('.').upper(), 'tool': tool_name,
-                'error': f'{tool_name} failed (rc={proc.returncode}): {out}',
+                'error': None,
+                'exception_trace': exception_trace,
             }
 
-        # Bodge for wmf2svg: make sure the output SVG has a valid default
-        # XML namespace
-        _ensure_svg_namespace(out_svg)
-
-        return {
-            'success': True, 'output_path': str(out_svg),
-            'format': ext.lstrip('.').upper(), 'tool': tool_name,
-            'error': None,
-        }
+        if err is not None:
+            # Some kind of error, return it
+            return err
 
     # --- Pass-through raster ---
     if ext in _PASSTHROUGH_EXTS:
