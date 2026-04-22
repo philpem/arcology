@@ -34,8 +34,8 @@ try:
 except ImportError:
     _HAS_PILLOW = False
 
-_HAS_WMF2SVG   = shutil.which('wmf2svg')   is not None
-_HAS_EMF2SVG   = shutil.which('emf2svg-conv') is not None
+_HAS_WMF2SVG = shutil.which('wmf2svg') is not None
+_HAS_EMF2SVG = Path('/opt/dexvert/emf2svg.py').exists()
 
 
 def _make_png(path: Path, size=(10, 10)) -> None:
@@ -150,13 +150,13 @@ class TestCommonImageConversion(unittest.TestCase):
         self.assertFalse(result['success'])
         self.assertIn('wmf2svg', result.get('error', ''))
 
-    @unittest.skipIf(_HAS_EMF2SVG, 'emf2svg-conv is installed — skipping missing-tool test')
+    @unittest.skipIf(_HAS_EMF2SVG, 'emf2svg is installed — skipping missing-tool test')
     def test_emf_missing_tool_returns_failure(self):
         src = self.tmpdir / 'test.emf'
         src.write_bytes(b'\x01\x00\x00\x00')  # EMF magic bytes
         result = self._convert(src)
         self.assertFalse(result['success'])
-        self.assertIn('emf2svg-conv', result.get('error', ''))
+        self.assertIn('emf2svg', result.get('error', ''))
 
 
 if __name__ == '__main__':
