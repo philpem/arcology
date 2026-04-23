@@ -317,8 +317,10 @@ RUN python3 -m pip install --break-system-packages \
 # we expose it to the worker by setting PYTHONPATH.
 # riscos-free-fonts is a submodule; --recurse-submodules fetches it, then
 # submodule update pins it to the SHA recorded in the checked-out commit.
-ARG DRAWFILE_RENDER_SHA=0f6dc646482847fcc7235ed97d7d2226c094ea0e
-RUN git clone --recurse-submodules https://github.com/philpem/drawfile-render /opt/drawfile_render && \
+ARG DRAWFILE_RENDER_SHA=7834d3bb626e68a51f49da145978d296599bc24d
+ARG DRAWFILE_RENDER_REPO=https://github.com/dcf21/drawfile-render.git
+#ARG DRAWFILE_RENDER_REPO=https://github.com/philpem/drawfile-render
+RUN git clone --recurse-submodules "${DRAWFILE_RENDER_REPO}" /opt/drawfile_render && \
     git -C /opt/drawfile_render checkout "${DRAWFILE_RENDER_SHA}" && \
     git -C /opt/drawfile_render submodule update --init --recursive
 
