@@ -77,6 +77,11 @@ def parse_migration(filepath):
     return info
 
 
+def format_migration(migration):
+    """Return a compact label for a migration."""
+    return f"{migration['filename']} (revision={migration['revision']})"
+
+
 def check_autocommit(migrations):
     """Check that migrations using ALTER TYPE have autocommit = True."""
     errors = []
@@ -132,19 +137,23 @@ def check_chain_integrity(migrations):
         if down is None:
             roots.append(m)
         else:
-            if down in by_down_revision:
-                errors.append(
-                    f"  Branch detected: both {m['filename']} and "
-                    f"{by_down_revision[down]['filename']} have "
-                    f"down_revision='{down}'. Migration chain must be linear."
-                )
-            by_down_revision[down] = m
+            by_down_revision.setdefault(down, []).append(m)
 
     if len(roots) == 0:
         errors.append("  No root migration found (no migration with down_revision=None).")
     elif len(roots) > 1:
-        names = ', '.join(m['filename'] for m in roots)
+        names = ', '.join(format_migration(m) for m in roots)
         errors.append(f"  Multiple root migrations found: {names}")
+
+    branch_points = {
+        down: children for down, children in by_down_revision.items()
+        if len(children) > 1
+    }
+    if branch_points:
+        errors.append("  Multiple children detected for the same down_revision:")
+        for down, children in sorted(branch_points.items()):
+            child_list = ', '.join(format_migration(m) for m in children)
+            errors.append(f"    {down} -> {child_list}")
 
     # Walk the chain from root to head
     if len(roots) == 1 and not errors:
@@ -152,15 +161,30 @@ def check_chain_integrity(migrations):
         current = roots[0]
         while current:
             visited.add(current['revision'])
-            next_migration = by_down_revision.get(current['revision'])
-            current = next_migration
+            next_migrations = by_down_revision.get(current['revision'], [])
+            current = next_migrations[0] if next_migrations else None
 
         unvisited = set(by_revision.keys()) - visited
         if unvisited:
             names = ', '.join(
-                by_revision[rev]['filename'] for rev in unvisited
+                format_migration(by_revision[rev]) for rev in sorted(unvisited)
             )
             errors.append(f"  Orphaned migrations not reachable from root: {names}")
+
+    all_children = {
+        child['revision']
+        for children in by_down_revision.values()
+        for child in children
+    }
+    heads = [
+        m for rev, m in sorted(by_revision.items())
+        if rev not in all_children
+    ]
+    if len(heads) == 0:
+        errors.append("  No head migration found.")
+    elif len(heads) > 1:
+        head_list = ', '.join(format_migration(m) for m in heads)
+        errors.append(f"  Multiple heads found: {head_list}")
 
     return errors
 
