@@ -357,17 +357,22 @@ def sector_image_to_raw_greaseweazle(
         'process_output': process_output
     }
 
-def scp_fix_track_density(input_path: Path, output_path: Path) -> dict:
+def scp_fix_track_density(input_path: Path, output_path: Path, heads: list[int] | None = None) -> dict:
     """
     Extract only even-indexed physical tracks from a double-stepped SCP,
     producing a corrected 40-track SCP using Greaseweazle.
 
-    c=0-79:step=2 selects physical cylinders 0, 2, 4, ..., 78.
+    c=0-79:h=0-1:step=2 selects physical cylinders 0, 2, 4, ..., 78.
     Greaseweazle renumbers them 0-39 in the output file.
     """
+    if heads:
+        head_spec = str(heads[0]) if len(heads) == 1 else f"{min(heads)}-{max(heads)}"
+    else:
+        head_spec = "0-1"
+
     cmd = [
         'gw', 'convert',
-        '--tracks', 'c=0-79:step=2,h=0-1',
+        '--tracks', f'c=0-79:h={head_spec}:step=2',
         str(input_path),
         str(output_path),
     ]
@@ -378,12 +383,14 @@ def scp_fix_track_density(input_path: Path, output_path: Path) -> dict:
             'success': True,
             'tool': 'greaseweazle',
             'output_path': str(output_path),
+            'heads': heads if heads is not None else [0, 1],
             'process_output': process_output,
         }
 
     return {
         'success': False,
         'tool': 'greaseweazle',
+        'heads': heads if heads is not None else [0, 1],
         'error': result.stderr.decode()[:1000],
         'process_output': process_output,
     }

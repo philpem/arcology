@@ -296,18 +296,22 @@ def detect_track_density_mismatch(tracks: list[dict]) -> dict:
     """
     Detect a 40-track disc captured in an 80-track drive (track density mismatch).
 
-    The tell-tale pattern on even physical tracks: sector IDAM cylinders equal
-    half the physical index (e.g. physical track 4 reports cylinder 2).
+    The tell-tale pattern: on even tracks with data, sector IDAM cylinders equal
+    half the track number (e.g. track 4 reports cylinder 2).
 
-    Two variants are distinguished by what the odd tracks contain:
+    Variants are distinguished by what the odd tracks contain:
 
     1. Simple double-step read: the 40-track disc was imaged directly.
        Odd tracks have no decodeable sectors (between-track reads).
        → odd_tracks_with_varied_data == 0, odd_tracks_with_uniform_data == 0
 
-    2. Reformat case: an 80-track disc was reformatted as 40-track, leaving
-       the old 80-track data on the unwritten odd physical tracks.
-       Odd tracks contain real sectors where IDAM cylinder == physical_index.
+    2. Alignment / wide-head case: the same 40-track data is decoded on both
+       half-steps, so odd tracks also report half the track number.
+       → odd_tracks_with_duplicate_data > 0
+
+    3. Reformat case: an 80-track disc was reformatted as 40-track, leaving
+       the old 80-track data on the unwritten odd tracks.
+       Odd tracks contain real sectors where IDAM cylinder == track number.
        → odd_tracks_with_varied_data > 0 (real leftover data)
          or odd_tracks_with_uniform_data > 0 (formatted-empty leftover tracks)
 
@@ -317,42 +321,57 @@ def detect_track_density_mismatch(tracks: list[dict]) -> dict:
     Returns:
         detected                    bool
         confidence                  float  matching / checked (0.0 if checked == 0)
-        matching                    int    even tracks where all sector_cyls == physical_index // 2
+        matching                    int    even tracks where all sector_cyls == cylinder // 2
         checked                     int    even tracks with has_data tested
+        odd_tracks_with_duplicate_data int odd tracks where all sector_cyls == cylinder // 2
         odd_tracks_with_varied_data int    odd tracks with non-uniform sector data
         odd_tracks_with_uniform_data int   odd tracks with uniform-fill sector data
+        data_heads                  list[int] heads with any decoded sectors
+        blank_heads                 list[int] heads with no decoded sectors
     """
     matching = 0
     checked  = 0
+    odd_duplicate = 0
     odd_varied  = 0
     odd_uniform = 0
+    all_heads: set[int] = set()
+    data_heads: set[int] = set()
 
     for t in tracks:
-        if t['physical_index'] % 2 == 0:
-            if not t['has_data']:
-                continue
+        all_heads.add(t['head'])
+        if not t['has_data']:
+            continue
+        data_heads.add(t['head'])
+
+        if t['cylinder'] % 2 == 0:
             checked += 1
-            expected = t['physical_index'] // 2
+            expected = t['cylinder'] // 2
             if t['sector_cyls'] and all(c == expected for c in t['sector_cyls']):
                 matching += 1
         else:
-            if not t['has_data']:
-                continue
-            if t['is_uniform_fill']:
+            expected = t['cylinder'] // 2
+            if t['sector_cyls'] and all(c == expected for c in t['sector_cyls']):
+                odd_duplicate += 1
+            elif t['is_uniform_fill']:
                 odd_uniform += 1
             else:
                 odd_varied += 1
 
     confidence = matching / checked if checked > 0 else 0.0
     detected   = checked >= 6 and confidence >= 0.70
+    data_head_list = sorted(data_heads)
+    blank_head_list = sorted(all_heads - data_heads)
 
     return {
         'detected':                   detected,
         'confidence':                 confidence,
         'matching':                   matching,
         'checked':                    checked,
+        'odd_tracks_with_duplicate_data': odd_duplicate,
         'odd_tracks_with_varied_data':   odd_varied,
         'odd_tracks_with_uniform_data':  odd_uniform,
+        'data_heads':                 data_head_list,
+        'blank_heads':                blank_head_list,
     }
 
 

@@ -743,8 +743,9 @@ class AnalysisWorker:
             return
 
         # Step 4: extract even tracks → density-corrected SCP
+        fix_heads = detection['data_heads'] if detection['data_heads'] else None
         fixed_path = work_dir / f"{input_path.stem}_40track.scp"
-        fix_result = scp_fix_track_density(input_path, fixed_path)
+        fix_result = scp_fix_track_density(input_path, fixed_path, heads=fix_heads)
 
         if fix_result['success']:
             derived = self.api.register_derived_artefact(
@@ -757,11 +758,21 @@ class AnalysisWorker:
             log.info(f"Created density-corrected SCP: {derived}")
 
         conf_pct   = f"{detection['confidence']:.0%}"
+        odd_duplicate = detection['odd_tracks_with_duplicate_data']
         odd_varied = detection['odd_tracks_with_varied_data']
+        blank_heads = detection['blank_heads']
+        duplicate_suffix = (
+            f"; NOTE: {odd_duplicate} odd track(s) also decode as track/2, consistent with a head-alignment or wide-head duplicate read"
+            if odd_duplicate else ''
+        )
         odd_suffix = (
             f"; WARNING: {odd_varied} odd track(s) contain non-uniform data "
             f"from a prior 80-track format — disc was reformatted, not re-imaged"
             if odd_varied else ''
+        )
+        side_suffix = (
+            f"; blank side(s) {', '.join(str(h) for h in blank_heads)} omitted from corrected copy"
+            if blank_heads and len(detection['data_heads']) == 1 else ''
         )
         self.complete_analysis(
             analysis_id,
@@ -769,7 +780,9 @@ class AnalysisWorker:
             summary=(
                 f"Track density mismatch detected (confidence {conf_pct}); "
                 + ('derived SCP registered' if fix_result['success'] else 'correction failed')
+                + duplicate_suffix
                 + odd_suffix
+                + side_suffix
             ),
             details=json.dumps({'detection': detection, 'fix': fix_result}),
         )
