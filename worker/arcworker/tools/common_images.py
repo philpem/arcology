@@ -18,7 +18,7 @@ _PASSTHROUGH_EXTS = frozenset({'.jpg', '.jpeg', '.png', '.gif', '.webp'})
 
 # Extensions converted to SVG via external tools.
 def _wmf_cmd(src: Path, dst: Path) -> list[str]:
-    return ['wmf2svg', '-o', str(dst), str(src)]
+    return ['wmf-cli', '--input', str(src), '--output', str(dst)]
 
 
 def _emf_cmd(src: Path, dst: Path) -> list[str]:

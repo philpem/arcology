@@ -54,9 +54,25 @@ RUN \
 
 
 #################
+# Build common Rust build image
+#################
+FROM ubuntu:24.04 AS rustbuild
+
+# Disable prompt during package installation
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Update apt repository and install needed packages
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt -y update && apt -y upgrade && \
+	apt -y install git rustup gcc && \
+	rustup default stable
+
+
+#################
 # Build Fluxfox
 #################
-FROM ubuntu:24.04 AS build-fluxfox
+FROM rustbuild AS build-fluxfox
 
 # Pinned commit SHA — update this when upgrading fluxfox.
 # Current as of 2026-03-26; branch: main
@@ -68,18 +84,34 @@ ARG DEBIAN_FRONTEND=noninteractive
 # Set number of parallel compiler instances
 ARG MINUSJ=-j3
 
-# Update apt repository and install needed packages
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt -y update && apt -y upgrade && \
-	apt -y install git rustup gcc && \
-	rustup default stable && \
-	git clone https://github.com/dbalsom/fluxfox && \
+RUN	git clone https://github.com/dbalsom/fluxfox && \
 	cd fluxfox && \
 	git checkout "${FLUXFOX_TAG}" && \
 	cargo build -r ${MINUSJ} -p imgviz -p fluxfox_cli && \
 	cp target/release/imgviz /usr/local/bin && \
 	cp target/release/fluxfox_cli /usr/local/bin
+
+
+#################
+# Build wmf-rs
+#################
+FROM rustbuild AS build-wmfrs
+
+# Pinned commit SHA — update this when upgrading fluxfox.
+# Current as of 2026-03-26; branch: main
+ARG WMFRS_TAG=9ba3e0e5c36b9ce427c19a9c534ab5b12c3886d0
+
+# Disable prompt during package installation
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Set number of parallel compiler instances
+ARG MINUSJ=-j3
+
+RUN git clone https://github.com/mythrnr/wmf-rs.git && \
+	cd wmf-rs && \
+	git checkout "${WMFRS_TAG}" && \
+	cargo build ${MINUSJ} -r -p wmf-cli && \
+	cp target/release/wmf-cli /usr/local/bin
 
 
 #################
@@ -269,6 +301,9 @@ COPY --from=build-riscosarc /usr/local/bin/riscosarc.jar /usr/local/bin/
 COPY --from=build-riscosarc /usr/local/bin/riscosarc /usr/local/bin/
 COPY --from=build-tbafs /usr/local/bin/tbafs-extractor /usr/local/bin/
 
+# Copy image conversion tools
+COPY --from=build-wmfrs /usr/local/bin/wmf-cli /usr/local/bin
+
 # Copy Dexvert tools
 COPY --from=get-external /opt/dexvert/emf2svg.py /opt/dexvert/
 
@@ -300,7 +335,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 		default-jre \
 		libcairo2 libfontconfig1 python3-cairo python3-cairocffi python3-pillow \
 		fonts-freefont-ttf \
-		libwmf-bin scour
+		scour
 
 # Install Greaseweazle for disk image conversion.
 # Pinned to a specific commit SHA; update when upgrading (was: @latest).
