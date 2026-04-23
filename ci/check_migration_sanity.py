@@ -32,6 +32,37 @@ NEEDS_AUTOCOMMIT_PATTERNS = [
     re.compile(r'ALTER\s+TYPE\s+\w+\s+RENAME\s+VALUE', re.IGNORECASE),
 ]
 
+HEADER_REVISION_RE = re.compile(
+    r'^[ \t]*Revision ID:[ \t]*([^\r\n]*)[ \t]*$', re.MULTILINE
+)
+HEADER_DOWN_REVISION_RE = re.compile(
+    r'^[ \t]*Revises:[ \t]*([^\r\n]*)[ \t]*$', re.MULTILINE
+)
+
+
+def _normalise_header_revision(value):
+    """Normalise header values so blank/none-like strings compare cleanly."""
+    if value is None:
+        return None
+    value = value.strip()
+    if value.lower() in {'', 'none', 'null'}:
+        return None
+    return value
+
+
+def parse_header_metadata(source):
+    """Extract Revision ID / Revises values from the migration header comments."""
+    revision_match = HEADER_REVISION_RE.search(source)
+    down_revision_match = HEADER_DOWN_REVISION_RE.search(source)
+    return {
+        'header_revision': _normalise_header_revision(
+            revision_match.group(1) if revision_match else None
+        ),
+        'header_down_revision': _normalise_header_revision(
+            down_revision_match.group(1) if down_revision_match else None
+        ),
+    }
+
 
 def parse_migration(filepath):
     """Parse a migration file and extract key attributes."""
@@ -45,10 +76,13 @@ def parse_migration(filepath):
         'source': source,
         'revision': None,
         'down_revision': None,
+        'header_revision': None,
+        'header_down_revision': None,
         'has_autocommit': False,
         'autocommit_value': None,
         'has_empty_downgrade': False,
     }
+    info.update(parse_header_metadata(source))
 
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, ast.Assign):
@@ -201,6 +235,29 @@ def check_downgrade_bodies(migrations):
     return warnings
 
 
+def check_header_consistency(migrations):
+    """Warn when header comments disagree with module revision identifiers."""
+    warnings = []
+    for m in migrations:
+        if (
+            m['header_revision'] is not None
+            and m['header_revision'] != m['revision']
+        ):
+            warnings.append(
+                f"  {m['filename']}: Header 'Revision ID: {m['header_revision']}' "
+                f"does not match revision={m['revision']!r}."
+            )
+        if (
+            m['header_down_revision'] is not None
+            and m['header_down_revision'] != m['down_revision']
+        ):
+            warnings.append(
+                f"  {m['filename']}: Header 'Revises: {m['header_down_revision']}' "
+                f"does not match down_revision={m['down_revision']!r}."
+            )
+    return warnings
+
+
 def main():
     if not os.path.isdir(MIGRATIONS_DIR):
         print(f"SKIP: Migrations directory not found: {MIGRATIONS_DIR}")
@@ -246,6 +303,11 @@ def main():
     if downgrade_warnings:
         all_warnings.append("Downgrade warnings:")
         all_warnings.extend(downgrade_warnings)
+
+    header_warnings = check_header_consistency(migrations)
+    if header_warnings:
+        all_warnings.append("Header consistency warnings:")
+        all_warnings.extend(header_warnings)
 
     # Report results
     if all_warnings:

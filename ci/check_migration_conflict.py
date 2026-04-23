@@ -101,6 +101,53 @@ def get_local_migrations():
     return migrations
 
 
+def get_new_migrations(local_migrations, target_migrations):
+    """Return migrations introduced locally that do not already exist on target.
+
+    We key this by Alembic revision, not filename, so pure renames or file moves
+    of an existing migration on the target branch are not treated as new work.
+    """
+    target_filenames = {m['filename'] for m in target_migrations}
+    target_revisions = {m['revision'] for m in target_migrations if m['revision']}
+    return [
+        m for m in local_migrations
+        if m['filename'] not in target_filenames
+        and m['revision'] not in target_revisions
+    ]
+
+
+def find_conflicts(new_migrations, target_migrations, target_ref):
+    """Return conflict messages for new migrations that would create heads."""
+    target_children = {}  # down_revision -> migration that depends on it
+    for m in target_migrations:
+        if m['down_revision'] is not None:
+            target_children[m['down_revision']] = m
+
+    new_revisions = {m['revision'] for m in new_migrations if m['revision']}
+
+    errors = []
+    for m in new_migrations:
+        down = m['down_revision']
+        if down is None:
+            continue
+
+        if down in new_revisions:
+            continue
+
+        if down in target_children:
+            existing = target_children[down]
+            errors.append(
+                f"  CONFLICT: {m['filename']} has down_revision='{down}',\n"
+                f"    but {existing['filename']} on {target_ref} also "
+                f"extends revision '{down}'.\n"
+                f"    This will create multiple Alembic heads after merge.\n"
+                f"    Fix: rebase onto {target_ref} and update your "
+                f"migration's down_revision to point to the current chain head."
+            )
+
+    return errors
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Detect cross-branch migration conflicts.')
@@ -123,8 +170,7 @@ def main():
         return 0
 
     # Find files that are new in this branch (not on target)
-    target_filenames = {m['filename'] for m in target_migrations}
-    new_migrations = [m for m in local_migrations if m['filename'] not in target_filenames]
+    new_migrations = get_new_migrations(local_migrations, target_migrations)
 
     if not new_migrations:
         print("OK: No new migrations in this branch.")
@@ -133,40 +179,7 @@ def main():
     print(f"Checking {len(new_migrations)} new migration(s) against "
           f"{args.target_ref}...\n")
 
-    # Build target branch's down_revision -> migration map
-    # This tells us which revisions already have children on target
-    target_children = {}  # down_revision -> migration that depends on it
-    for m in target_migrations:
-        if m['down_revision'] is not None:
-            target_children[m['down_revision']] = m
-
-    # Collect revisions introduced by new migrations (for chain handling)
-    new_revisions = {m['revision'] for m in new_migrations if m['revision']}
-
-    # Check each new migration
-    errors = []
-    for m in new_migrations:
-        down = m['down_revision']
-        if down is None:
-            continue  # New root migration -- unusual but not a conflict
-
-        # Skip if this migration's down_revision points to another new
-        # migration in the same PR (it's part of a chain within the PR)
-        if down in new_revisions:
-            continue
-
-        # Check if the target branch already has a migration extending this
-        # same down_revision
-        if down in target_children:
-            existing = target_children[down]
-            errors.append(
-                f"  CONFLICT: {m['filename']} has down_revision='{down}',\n"
-                f"    but {existing['filename']} on {args.target_ref} also "
-                f"extends revision '{down}'.\n"
-                f"    This will create multiple Alembic heads after merge.\n"
-                f"    Fix: rebase onto {args.target_ref} and update your "
-                f"migration's down_revision to point to the current chain head."
-            )
+    errors = find_conflicts(new_migrations, target_migrations, args.target_ref)
 
     if errors:
         print("ERRORS:")
