@@ -1,9 +1,45 @@
 import unittest
 
-from ci.check_migration_sanity import check_header_consistency, parse_header_metadata
+from ci.check_migration_sanity import (
+    check_filename_order_matches_chain,
+    check_header_consistency,
+    parse_header_metadata,
+)
 
 
 class MigrationSanityTests(unittest.TestCase):
+    def test_check_filename_order_matches_chain_accepts_matching_order(self):
+        migrations = [
+            {'filename': '20260101_root.py', 'revision': 'root', 'down_revision': None},
+            {'filename': '20260102_second.py', 'revision': 'rev2', 'down_revision': 'root'},
+            {'filename': '20260103_third.py', 'revision': 'rev3', 'down_revision': 'rev2'},
+        ]
+
+        self.assertEqual(check_filename_order_matches_chain(migrations), [])
+
+    def test_check_filename_order_matches_chain_reports_mismatch(self):
+        migrations = [
+            {'filename': '20260101_root.py', 'revision': 'root', 'down_revision': None},
+            {'filename': '20260103_second.py', 'revision': 'rev2', 'down_revision': 'root'},
+            {'filename': '20260102_third.py', 'revision': 'rev3', 'down_revision': 'rev2'},
+        ]
+
+        errors = check_filename_order_matches_chain(migrations)
+
+        self.assertEqual(len(errors), 3)
+        self.assertIn('Lexicographic migration filename order does not match', errors[0])
+        self.assertIn('20260101_root.py -> 20260102_third.py -> 20260103_second.py', errors[1])
+        self.assertIn('20260101_root.py -> 20260103_second.py -> 20260102_third.py', errors[2])
+
+    def test_check_filename_order_matches_chain_skips_non_linear_graph(self):
+        migrations = [
+            {'filename': '20260101_root.py', 'revision': 'root', 'down_revision': None},
+            {'filename': '20260102_a.py', 'revision': 'rev2a', 'down_revision': 'root'},
+            {'filename': '20260102_b.py', 'revision': 'rev2b', 'down_revision': 'root'},
+        ]
+
+        self.assertEqual(check_filename_order_matches_chain(migrations), [])
+
     def test_parse_header_metadata_extracts_revision_fields(self):
         source = '''"""Example migration
 

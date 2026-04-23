@@ -223,6 +223,69 @@ def check_chain_integrity(migrations):
     return errors
 
 
+def check_filename_order_matches_chain(migrations):
+    """Verify lexicographic filename order matches the linear migration chain."""
+    errors = []
+
+    if not migrations:
+        return errors
+
+    by_revision = {}
+    by_down_revision = {}
+    roots = []
+
+    for m in migrations:
+        rev = m['revision']
+        down = m['down_revision']
+
+        if rev is None:
+            return errors
+
+        if rev in by_revision:
+            return errors
+
+        by_revision[rev] = m
+
+        if down is None:
+            roots.append(m)
+        else:
+            by_down_revision.setdefault(down, []).append(m)
+
+    if len(roots) != 1:
+        return errors
+
+    branch_points = [
+        down for down, children in by_down_revision.items()
+        if len(children) > 1
+    ]
+    if branch_points:
+        return errors
+
+    chain = []
+    current = roots[0]
+    seen = set()
+    while current and current['revision'] not in seen:
+        chain.append(current)
+        seen.add(current['revision'])
+        next_migrations = by_down_revision.get(current['revision'], [])
+        current = next_migrations[0] if next_migrations else None
+
+    if len(chain) != len(by_revision):
+        return errors
+
+    filename_order = [m['filename'] for m in sorted(migrations, key=lambda m: m['filename'])]
+    chain_order = [m['filename'] for m in chain]
+
+    if filename_order != chain_order:
+        errors.append(
+            "  Lexicographic migration filename order does not match the down_revision chain."
+        )
+        errors.append(f"    File listing order: {' -> '.join(filename_order)}")
+        errors.append(f"    Chain order:        {' -> '.join(chain_order)}")
+
+    return errors
+
+
 def check_downgrade_bodies(migrations):
     """Warn about empty downgrade functions."""
     warnings = []
@@ -298,6 +361,11 @@ def main():
     if chain_errors:
         all_errors.append("Chain integrity check failed:")
         all_errors.extend(chain_errors)
+
+    order_warnings = check_filename_order_matches_chain(migrations)
+    if order_warnings:
+        all_warnings.append("Filename ordering warnings:")
+        all_warnings.extend(order_warnings)
 
     downgrade_warnings = check_downgrade_bodies(migrations)
     if downgrade_warnings:
