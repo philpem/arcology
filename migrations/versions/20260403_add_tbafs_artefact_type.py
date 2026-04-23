@@ -1,7 +1,7 @@
 """Add TBAFS artefact type
 
 Revision ID: 000069d03ed7
-Revises: 000069cbce32
+Revises: 000069cbcb4f
 Create Date: 2026-04-03
 """
 import sqlalchemy as sa

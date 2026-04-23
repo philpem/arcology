@@ -1,7 +1,7 @@
 """Add RISC OS load/exec address columns to extracted_files
 
 Revision ID: 000069d058ae
-Revises: 000069cbcb4f
+Revises: 000069d03ed7
 Create Date: 2026-04-04
 
 """

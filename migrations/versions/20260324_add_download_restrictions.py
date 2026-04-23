@@ -1,7 +1,7 @@
 """Add download restriction system: artefact restrictions, user bypass permissions, hash database restriction flag
 
 Revision ID: 000069c2d776
-Revises: 000069ae3f4d
+Revises: 000069c2f0db
 Create Date: 2026-03-24
 """
 from alembic import op

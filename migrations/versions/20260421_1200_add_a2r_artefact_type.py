@@ -1,7 +1,7 @@
 """Add A2R artefact type
 
 Revision ID: 000069e74e9c
-Revises: 000069e66a3f
+Revises: 000069e72f63
 Create Date: 2026-04-21
 """
 import sqlalchemy as sa
