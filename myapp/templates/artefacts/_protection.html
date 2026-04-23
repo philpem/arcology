@@ -24,6 +24,10 @@
             {% else %}
                 <div class="card-body p-0">
                     {% if density_detect_analysis %}
+                    {% set density_blank_heads = density_detect_analysis.get('blank_heads', []) %}
+                    {% set density_data_heads = density_detect_analysis.get('data_heads', []) %}
+                    {% set density_odd_duplicate = density_detect_analysis.get('odd_tracks_with_duplicate_data', 0) %}
+                    {% set density_odd_varied = density_detect_analysis.get('odd_tracks_with_varied_data', 0) %}
                     <div class="px-3 py-2 border-bottom small">
                         <i class="bi bi-info-circle-fill text-info me-1"></i>
                         <strong>Track density mismatch</strong>
@@ -31,24 +35,24 @@
                         {{ density_detect_analysis.matching }}/{{ density_detect_analysis.checked }} even tracks)</span>
                         — 40-track disc imaged in an 80-track drive; even tracks report half the expected cylinder.
                         A density-corrected copy has been produced as a derived artefact.
-                        {% if density_detect_analysis.blank_heads and density_detect_analysis.data_heads and density_detect_analysis.data_heads|length == 1 %}
+                        {% if density_blank_heads and density_data_heads and density_data_heads|length == 1 %}
                         <div class="mt-1">
                             <i class="bi bi-disc-fill text-info me-1"></i>
-                            Side {{ density_detect_analysis.data_heads[0] }} carries decoded data;
-                            blank side(s) {{ density_detect_analysis.blank_heads | join(', ') }} were omitted from the corrected copy.
+                            Side {{ density_data_heads[0] }} carries decoded data;
+                            blank side(s) {{ density_blank_heads | join(', ') }} were omitted from the corrected copy.
                         </div>
                         {% endif %}
-                        {% if density_detect_analysis.odd_tracks_with_duplicate_data > 0 %}
+                        {% if density_odd_duplicate > 0 %}
                         <div class="mt-1">
                             <i class="bi bi-info-circle-fill text-info me-1"></i>
-                            {{ density_detect_analysis.odd_tracks_with_duplicate_data }} odd track(s) also decode as track/2,
+                            {{ density_odd_duplicate }} odd track(s) also decode as track/2,
                             consistent with a head-alignment or wide-head duplicate read.
                         </div>
                         {% endif %}
-                        {% if density_detect_analysis.odd_tracks_with_varied_data > 0 %}
+                        {% if density_odd_varied > 0 %}
                         <div class="mt-1">
                             <i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>
-                            {{ density_detect_analysis.odd_tracks_with_varied_data }} odd track(s) retain non-uniform data from a prior 80-track format.
+                            {{ density_odd_varied }} odd track(s) retain non-uniform data from a prior 80-track format.
                         </div>
                         {% endif %}
                     </div>
