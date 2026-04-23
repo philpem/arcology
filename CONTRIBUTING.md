@@ -329,6 +329,22 @@ op.execute(sa.text("ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'my_new_type
 This applies to every `SQLEnum(SomePythonEnum)` column in the project: `analysistype`,
 `artefacttype`, `analysisstatus`, `filesystemtype`, etc.
 
+#### Rollback pitfall: stale enum-backed rows
+
+Adding a PostgreSQL enum value is effectively one-way here. Reverting the code
+can remove an `AnalysisType` member from `shared/enums.py`, but any existing
+rows in `analyses` that still use that enum name will remain in the database.
+Once that happens, ORM queries can fail at row-materialisation time with errors
+like:
+
+```text
+LookupError: 'DETECT_TRACK_DENSITY' is not among the defined enum values
+```
+
+Before reverting code that removes an analysis enum, first clean up or rewrite
+any rows that reference it. For a fully removed analysis type, that usually
+means deleting stale rows from `analyses` before switching the code back.
+
 **Protection and mastering indicator types** (`ArtefactProtection.protection_type` and `ArtefactMastering.mastering_type`) are free-text strings stored by the worker — they are not enums. Known values are documented in comments in `myapp/database.py`. If you introduce new indicator types in a worker tool, use short lowercase snake_case names (e.g. `bad_crc`, `formaster`); the search UI will surface them automatically once they appear in the database.
 
 ### Adding a New Artefact Type

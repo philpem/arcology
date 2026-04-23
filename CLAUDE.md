@@ -218,6 +218,14 @@ See `doc/ADMIN_COMMANDS.md` for the full reference including all flags.
 > `ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'MY_NEW_TYPE'`
 > (uppercase). Using the lowercase `.value` will break at runtime with
 > `invalid input value for enum analysistype: "MY_NEW_TYPE"`.
+>
+> **Rollback pitfall:** adding a PostgreSQL enum value is effectively one-way
+> here. If a branch adds an `AnalysisType` and creates rows using it, then you
+> later revert the code without first cleaning up those rows, SQLAlchemy can
+> crash when materialising `Analysis.analysis_type` with errors like
+> `LookupError: 'DETECT_TRACK_DENSITY' is not among the defined enum values`.
+> Before reverting code that removes an analysis enum, delete or rewrite any
+> `analyses` rows that still reference that enum name.
 
 The same applies to `ArtefactType` and any other SQLAlchemy `Enum` column
 backed by a Python `enum.Enum` class in this project.
