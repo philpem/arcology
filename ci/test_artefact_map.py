@@ -146,6 +146,16 @@ class TestAnalysisMap(unittest.TestCase):
             'Add an entry to ANALYSIS_MAP in myapp/blueprints/artefacts.py.',
         )
 
+    def test_image_extensions_present(self):
+        """Common image extensions must all map to ArtefactType.IMAGE."""
+        from shared.enums import ArtefactType
+        for ext in ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tif', '.tiff',
+                    '.wmf', '.emf'):
+            self.assertEqual(
+                EXTENSION_MAP.get(ext), ArtefactType.IMAGE,
+                f'Expected EXTENSION_MAP[{ext!r}] == ArtefactType.IMAGE',
+            )
+
 
 if __name__ == '__main__':
     unittest.main()

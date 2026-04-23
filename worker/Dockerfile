@@ -225,6 +225,22 @@ RUN git clone https://github.com/mattgodbolt/tbafs.git /src/tbafs && \
 
 
 #################
+# Download unpackaged external tools
+#################
+FROM ubuntu:24.04 AS get-external
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt -y update && apt -y upgrade && \
+    apt -y install wget
+
+# Install the vibe2svg converters from Dexvert
+ARG DEXVERT_SHA=64225a11efdc76c3be1c61d6a89504655749fc94
+RUN mkdir -p /opt/dexvert && \
+	wget https://raw.githubusercontent.com/Sembiance/dexvert/${DEXVERT_SHA}/bin/vibe2svg/emf/emf.py -O /opt/dexvert/emf2svg.py && \
+	chmod +x /opt/dexvert/*.py
+
+
+#################
 # Assemble final image with tools + worker
 #################
 
@@ -253,6 +269,8 @@ COPY --from=build-riscosarc /usr/local/bin/riscosarc.jar /usr/local/bin/
 COPY --from=build-riscosarc /usr/local/bin/riscosarc /usr/local/bin/
 COPY --from=build-tbafs /usr/local/bin/tbafs-extractor /usr/local/bin/
 
+# Copy Dexvert tools
+COPY --from=get-external /opt/dexvert/emf2svg.py /opt/dexvert/
 
 # Rebuild shared library cache (needed by hxcfe)
 RUN ldconfig
@@ -281,7 +299,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 		file fdisk \
 		default-jre \
 		libcairo2 libfontconfig1 python3-cairo python3-cairocffi python3-pillow \
-		fonts-freefont-ttf
+		fonts-freefont-ttf \
+		libwmf-bin scour
 
 # Install Greaseweazle for disk image conversion.
 # Pinned to a specific commit SHA; update when upgrading (was: @latest).
@@ -302,6 +321,7 @@ ARG DRAWFILE_RENDER_SHA=0f6dc646482847fcc7235ed97d7d2226c094ea0e
 RUN git clone --recurse-submodules https://github.com/philpem/drawfile-render /opt/drawfile_render && \
     git -C /opt/drawfile_render checkout "${DRAWFILE_RENDER_SHA}" && \
     git -C /opt/drawfile_render submodule update --init --recursive
+
 # Make spritefile (bundled in drawfile_render repo) importable by the worker
 ENV PYTHONPATH="/opt/drawfile_render"
 

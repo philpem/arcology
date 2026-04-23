@@ -107,6 +107,22 @@ EXTENSION_MAP = {
     '.aff':  ArtefactType.ACORN_DRAW,
     '.draw': ArtefactType.ACORN_DRAW,
     '.txt':  ArtefactType.ACORN_TEXT,
+
+    # Common raster images (browser-native pass-through or Pillow-converted)
+    '.jpg':  ArtefactType.IMAGE,
+    '.jpeg': ArtefactType.IMAGE,
+    '.png':  ArtefactType.IMAGE,
+    '.gif':  ArtefactType.IMAGE,
+    '.webp': ArtefactType.IMAGE,
+    '.bmp':  ArtefactType.IMAGE,
+    '.tif':  ArtefactType.IMAGE,
+    '.tiff': ArtefactType.IMAGE,
+    '.pcx':  ArtefactType.IMAGE,
+    '.tga':  ArtefactType.IMAGE,
+
+    # Windows vector metafiles (converted to SVG)
+    '.wmf':  ArtefactType.IMAGE,
+    '.emf':  ArtefactType.IMAGE,
 }
 
 
@@ -189,6 +205,9 @@ ANALYSIS_MAP = {
     ArtefactType.ACORN_SPRITE: [AnalysisType.FORMAT_CONVERT],
     ArtefactType.ACORN_DRAW:   [AnalysisType.FORMAT_CONVERT],
     ArtefactType.ACORN_TEXT:   [AnalysisType.FORMAT_CONVERT],
+
+    # Common image formats — pass through or convert to PNG/SVG
+    ArtefactType.IMAGE: [AnalysisType.FORMAT_CONVERT],
 
     # Unknown - try to identify
     ArtefactType.UNKNOWN: [AnalysisType.FORMAT_IDENTIFY],

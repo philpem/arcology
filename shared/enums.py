@@ -48,6 +48,9 @@ class ArtefactType(enum.Enum):
     ACORN_DRAW   = "acorn_draw"      # Acorn Draw file (vector drawing)
     ACORN_TEXT   = "acorn_text"      # Acorn text/script file (Text, Obey, Command)
 
+    # Common image formats (raster and vector metafiles)
+    IMAGE        = "image"           # JPEG, PNG, GIF, BMP, TIFF, WebP, PCX, TGA, WMF, EMF
+
     # Unknown - needs manual identification
     UNKNOWN    = "unknown"
 
