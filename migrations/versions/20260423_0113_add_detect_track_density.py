@@ -1,14 +1,14 @@
 """Add DETECT_TRACK_DENSITY to analysistype enum
 
-Revision ID: 000069e6eb77
-Revises: 000069e72f63
+Revision ID: 000069e9644a
+Revises: 000069e60a13
 Create Date: 2026-04-21
 """
 import sqlalchemy as sa
 from alembic import op
 
-revision = '000069e6eb77'
-down_revision = '000069e72f63'
+revision = '000069e9644a'
+down_revision = '000069e60a13'
 branch_labels = None
 depends_on = None
 
