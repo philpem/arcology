@@ -371,16 +371,30 @@ Or from the shell:
 python3 -c "import time; print(hex(int(time.time()))[2:].zfill(12))"
 ```
 
-Alembic-generated migrations (`flask db migrate`) produce their own random IDs
-automatically — this only applies to hand-written migrations.
+For Alembic-generated migrations (`flask db migrate`), keep the generated
+`revision` unchanged. The guidance above only applies to migrations written by
+hand.
 
 #### Migration filename convention
 
-Migration files must be named `YYYYMMDD_HHMM_description.py` using the
-current UTC time (e.g. `20260404_0142_add_riscos_load_exec_address.py`).
-The `_HHMM` suffix avoids conflicts when multiple tasks create migrations
-on the same date.  Do **not** use the hex revision ID as the filename
-prefix.
+Migration files must be named `YYYYMMDD_HHMMSS_description.py` (UTC), e.g.
+`20260404_001750_add_riscos_load_exec_address.py`.
+
+The timestamp prefix is an **ordering key**, not a filesystem metadata dump.
+Directory listing order must match the Alembic `down_revision` chain so the
+last listed file is the current head. CI checks this in
+`ci/check_migration_sanity.py`.
+
+Rules:
+
+- For a new migration, use the current UTC timestamp.
+- If a migration is rebased or renamed to resolve merge-head ordering, rename
+  the file so lexicographic filename order matches migration-chain order.
+- Do **not** use filesystem `mtime` or the header `Create Date` as the
+  ordering source.
+- Keep the filename timestamp aligned with the hex `revision` timestamp where
+  practical.
+- Do **not** use the raw hex revision ID as the filename prefix.
 
 ### RISC OS INF sidecar file processing
 
