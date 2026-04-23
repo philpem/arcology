@@ -80,6 +80,13 @@ WEAK_BITS_MIN_COUNT = 8
 # output so n_weak can exceed len(track_bytes) on heavily-weak tracks.
 WEAK_BITS_WHOLE_TRACK_RATIO = 0.75
 
+# Protection scan — blank-track sector check
+# After walk_track() runs, if no sectors were found the track is assumed to
+# be unformatted / blank and any pending weak_bits indicator is suppressed,
+# regardless of count.  Real copy-protection schemes encode weak bits inside
+# readable sectors; a blank track has no sector headers at all.
+WEAK_BITS_REQUIRE_SECTORS = True
+
 # Mastering scan — backwards optimisation
 # When True the scan iterates from the last track backwards, stopping as
 # soon as a track whose sector-data fill ratio exceeds MASTERING_SCAN_STOP_FILL
@@ -1202,6 +1209,9 @@ def analyse_hfe_protection(path: Path) -> dict:
                 # Weak / fuzzy bits (RAND opcodes in v2/v3 only)
                 # Filter out noise (too few positions) and fully-erased tracks
                 # (almost all positions weak) before emitting an indicator.
+                # Emission is deferred until after walk_track() so that the
+                # sector-presence check (blank-track guard) can be applied.
+                _pending_weak = None
                 if weak_offsets:
                     n_weak    = len(weak_offsets)
                     track_len = len(track_bytes)
@@ -1224,15 +1234,28 @@ def analyse_hfe_protection(path: Path) -> dict:
                             t_idx, side, weak_ratio * 100,
                             n_weak, track_len, WEAK_BITS_WHOLE_TRACK_RATIO * 100)
                     else:
-                        indicators.append({
+                        _pending_weak = {
                             'type':    'weak_bits',
                             'track':   t_idx,
                             'side':    side,
                             'count':   n_weak,
                             'offsets': weak_offsets[:16],  # cap for report size
-                        })
+                        }
 
                 sectors = walk_track(track_bytes, encoding)
+
+                # Emit the deferred weak-bits indicator, suppressing it when no
+                # sectors were decoded (blank / unformatted track): a large
+                # n_weak count with no sector headers is surface noise, not
+                # intentional copy protection.
+                if _pending_weak is not None:
+                    if WEAK_BITS_REQUIRE_SECTORS and not sectors:
+                        log.debug(
+                            "protection: track %d side %d: %d weak-bit positions "
+                            "but no sectors found — treating as blank track, skipping",
+                            t_idx, side, _pending_weak['count'])
+                    else:
+                        indicators.append(_pending_weak)
 
                 seen_ids: dict[tuple, int] = {}
 
