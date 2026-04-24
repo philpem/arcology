@@ -11,6 +11,7 @@ from .base import (
     compute_file_hash,
     tool_result,
     run_and_build_result,
+    exception_result,
 )
 from .flux import (
     flux_visualisation_fluxfox,
@@ -62,6 +63,7 @@ __all__ = [
     'compute_file_hash',
     'tool_result',
     'run_and_build_result',
+    'exception_result',
     'flux_visualisation_fluxfox',
     'flux_visualisation_hxcfe',
     'flux_to_imd_hxcfe',
