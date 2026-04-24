@@ -32,21 +32,37 @@ from .tools import (
     extract_dos_7z,
     enumerate_extracted_files,
     parse_acorn_filename,
+    parse_iso_riscos_filetypes,
     detect_partitions_sfdisk,
     detect_acorn_adfs,
     detect_acorn_partitions,
     detect_format_file_cmd,
     detect_fat_filesystem,
     read_fat_volume_label,
+    has_riscos_zip_metadata,
+    extract_riscosarc,
+    extract_tbafs,
+    extract_xfiles,
+    extract_zip,
+    extract_zip_riscos,
+    extract_tar,
+    extract_rar,
+    extract_7z,
+    decompress_single_file,
     detect_armlock,
     remove_armlock,
     convert_sprite,
     convert_draw,
+    decode_module,
+    ModuleParseError,
 )
 from .tools.imd import (parse_imd_track0, detect_geometry_from_boot_data,
                         parse_imd_tracks, detect_track_density_mismatch)
 from .tools.iso9660 import parse_iso9660_pvd
 from .tools.flux import _geometry_to_gw_format, scp_fix_track_density
+from .tools.extraction import _parse_dim_report, convert_fcfs_to_raw
+# common_images and hfe are imported lazily below — they depend on numpy/scour
+# which are worker-only packages absent from the CI test environment.
 
 
 def _apply_pling_renames(extract_dir: Path, rename_map: dict[str, str]) -> None:
@@ -1010,7 +1026,6 @@ class AnalysisWorker:
         When a 'partition_image_path' hint is provided (set by PARTITION_DETECT),
         uses that file directly instead of re-decompressing the original artefact.
         """
-        from .tools.extraction import _parse_dim_report
         from .utils.paths import get_output_path
         from .config import OUTPUT_DIR
 
@@ -1141,7 +1156,6 @@ class AnalysisWorker:
         # by the existing suffix-parsing logic.
         iso_filetype_map: dict[str, str] = {}
         if artefact_type == ArtefactType.ISO.value:
-            from .tools.fs_iso_riscos import parse_iso_riscos_filetypes
             iso_filetype_map, iso_rename_map = parse_iso_riscos_filetypes(input_path)
             log.info(
                 f"ISO ARCHIMEDES parser found {len(iso_filetype_map)} filetype entries, "
@@ -1353,8 +1367,6 @@ class AnalysisWorker:
           result as a derived RAW_SECTOR artefact so that PARTITION_DETECT
           and FILE_EXTRACTION run automatically.
         """
-        from .tools.extraction import convert_fcfs_to_raw
-
         analysis_id = analysis['id']
         input_path = self.get_input_path(artefact, work_dir)
         artefact_label = artefact.get('label', 'image')
@@ -2008,7 +2020,6 @@ class AnalysisWorker:
         (0x4341).  Used to upgrade ``ArchiveType.ZIP`` to ``ZIP_RISCOS``
         for plain ``.zip`` uploads that have no RISC OS filetype metadata.
         """
-        from .tools.archives import has_riscos_zip_metadata
         return has_riscos_zip_metadata(file_path)
 
     # Extracted files with these extensions are promoted to derived artefacts
@@ -2042,7 +2053,6 @@ class AnalysisWorker:
         """
         import json
         from shared.archive_formats import ArchiveType, get_archive_info
-        from .tools.extraction import enumerate_extracted_files
         from .config import OUTPUT_DIR
         from .utils.paths import get_output_path
 
@@ -2101,7 +2111,6 @@ class AnalysisWorker:
 
         # Dispatch to the correct extraction tool
         from functools import partial
-        from .tools import extract_riscosarc, extract_zip_riscos, extract_tbafs, extract_xfiles
 
         _dispatch = {
             ArchiveType.SPARK:      extract_riscosarc,
@@ -2222,20 +2231,6 @@ class AnalysisWorker:
             is_compressor_format,
             is_disk_image_format,
         )
-        from .tools import (
-            extract_riscosarc,
-            extract_tbafs,
-            extract_xfiles,
-            extract_zip,
-            extract_zip_riscos,
-            extract_tar,
-            extract_rar,
-            extract_7z,
-            decompress_single_file,
-            extract_acorn_disc_image_manager,
-            extract_dos_7z,
-        )
-        from .tools.extraction import convert_fcfs_to_raw
         from .config import OUTPUT_DIR, MAX_ARCHIVE_DEPTH
         from .utils.paths import get_output_path
 
@@ -2687,8 +2682,7 @@ class AnalysisWorker:
                 })
 
         elif artefact_type == ArtefactType.ACORN_DRAW:
-            from .tools.extraction import parse_acorn_filename as _parse_acorn
-            true_name, _ = _parse_acorn(input_path.name)
+            true_name, _ = parse_acorn_filename(input_path.name)
             tmp_out = work_dir / f'draw_{file_index}'
             result = convert_draw(input_path, tmp_out, analysis_uuid)
             if not result['success']:
@@ -2709,8 +2703,7 @@ class AnalysisWorker:
             })
 
         elif artefact_type == ArtefactType.ACORN_TEXT:
-            from .tools.extraction import parse_acorn_filename as _parse_acorn
-            true_name, _ = _parse_acorn(input_path.name)
+            true_name, _ = parse_acorn_filename(input_path.name)
             try:
                 raw = input_path.read_bytes()
                 # Decode as Latin-1 (covers all Acorn/DOS byte values);
@@ -2732,9 +2725,8 @@ class AnalysisWorker:
                 return None, str(e)
 
         elif artefact_type == ArtefactType.IMAGE:
-            from .tools.images_common import convert_image
-            from .tools.extraction import parse_acorn_filename as _parse_acorn
-            true_name, _ = _parse_acorn(input_path.name)
+            from .tools.images_common import convert_image  # numpy/scour: worker-only
+            true_name, _ = parse_acorn_filename(input_path.name)
             tmp_out = work_dir / f'image_{file_index}'
             result = convert_image(input_path, tmp_out, analysis_uuid)
             if not result['success']:
@@ -3117,8 +3109,7 @@ class AnalysisWorker:
         Scans the trailing tracks of an HFE image for mastering/duplicator
         fingerprint data (TRACEBACK format and Formaster record).
         """
-        from .tools.hfe import analyse_hfe_mastering
-
+        from .tools.hfe import analyse_hfe_mastering  # numpy: worker-only
         analysis_id = analysis['id']
         input_path = self.get_input_path(artefact, work_dir)
         result = analyse_hfe_mastering(input_path, scan_count=MASTERING_TRACK_SCAN_COUNT)
@@ -3143,8 +3134,7 @@ class AnalysisWorker:
         weak/fuzzy bits, intentional bad CRCs, cylinder ID mismatches,
         deleted data address marks, and duplicate sector IDs.
         """
-        from .tools.hfe import analyse_hfe_protection
-
+        from .tools.hfe import analyse_hfe_protection  # numpy: worker-only
         analysis_id = analysis['id']
         input_path = self.get_input_path(artefact, work_dir)
         result = analyse_hfe_protection(input_path)
@@ -3275,8 +3265,6 @@ class AnalysisWorker:
         and extracts metadata (title, version, date, SWIs, star commands).
         Only queued for Acorn filesystem extractions.
         """
-        from .tools.riscos_module import decode_module, ModuleParseError
-
         analysis_id = analysis['id']
         hints = json.loads(analysis.get('hints') or '{}')
         partition_uuid = hints.get('partition_uuid')
