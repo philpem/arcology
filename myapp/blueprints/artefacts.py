@@ -1535,6 +1535,7 @@ def _render_viewer(artefact):
                 viewer_thumbnail_mode = bool(saved_thumb)
 
     if viewer_thumbnail_mode and is_aggregate_mode and not file_filter:
+        from posixpath import dirname as _posix_dirname
         single_img_groups, other_groups = [], []
         for g in output_groups:
             img_count = sum(1 for o in g['outputs'] if o.get('type') == 'image')
@@ -1543,17 +1544,45 @@ def _render_viewer(artefact):
             else:
                 other_groups.append(g)
         if single_img_groups:
-            bundle = {
-                'label': '',
-                'source_file': None,
-                'is_thumbnail_bundle': True,
-                'bundle_items': single_img_groups,
-                'outputs': [],
-                'explicit': False,
-                'stable_id': 'thumb_bundle',
-                'filetype': None,
-            }
-            output_groups = [bundle] + other_groups
+            # Build per-directory bundles so singles stay grouped with their
+            # directory's multi-image files rather than all floating to the top.
+            dir_singles: dict[str, list] = {}
+            for g in single_img_groups:
+                d = _posix_dirname(g.get('source_file') or '')
+                if d not in dir_singles:
+                    dir_singles[d] = []
+                dir_singles[d].append(g)
+
+            # Derive directory order from the current page's sorted group list
+            dir_order: list[str] = []
+            seen_dirs: set = set()
+            for g in output_groups:
+                d = _posix_dirname(g.get('source_file') or '')
+                if d not in seen_dirs:
+                    seen_dirs.add(d)
+                    dir_order.append(d)
+
+            new_groups: list = []
+            for d in dir_order:
+                singles = dir_singles.get(d, [])
+                if singles:
+                    bundle_id = hashlib.md5(
+                        f"{artefact.uuid}:thumb:{d}".encode('utf-8')
+                    ).hexdigest()[:12]
+                    new_groups.append({
+                        'label': d or '',
+                        'source_file': None,
+                        'is_thumbnail_bundle': True,
+                        'bundle_items': singles,
+                        'outputs': [],
+                        'explicit': False,
+                        'stable_id': bundle_id,
+                        'filetype': None,
+                    })
+                for g in other_groups:
+                    if _posix_dirname(g.get('source_file') or '') == d:
+                        new_groups.append(g)
+            output_groups = new_groups
 
     # ── Look up RISC OS module detail when ?file= matches a module path ──────
     module_detail = None
