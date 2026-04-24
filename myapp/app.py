@@ -108,6 +108,11 @@ def create_app(config_name=None):
     app.jinja_env.filters['format_filetype'] = format_filetype
     app.jinja_env.filters['filetype_name'] = get_filetype_name
 
+    # Extension-based filetype labels (non-RISC OS files)
+    from .extension_labels import extension_label, unified_type_label
+    app.jinja_env.filters['extension_label'] = extension_label
+    app.jinja_env.filters['unified_type_label'] = unified_type_label
+
     # Analysis type display names — handles cases where the default
     # value.replace('_', ' ').title() produces wrong capitalisation.
     _ANALYSIS_TYPE_DISPLAY = {

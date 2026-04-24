@@ -28,7 +28,7 @@
                         </select>
                     </div>
                     <div style="width: 180px;">{{ file_form.filename(class="form-control form-control-sm", placeholder="Filename (glob: *.txt)", title="Filter by filename. Supports glob wildcards: * matches any characters, ? matches a single character. Example: *.txt, README*") }}</div>
-                    <div style="width: 100px;">{{ file_form.filetype(class="form-control form-control-sm", placeholder="Filetype", title="Filter by RISC OS filetype code (hex). Leading # or & is stripped automatically. Example: fff, Text") }}</div>
+                    <div style="width: 110px;">{{ file_form.filetype(class="form-control form-control-sm", placeholder="Filetype/ext", title="Filter by RISC OS filetype (e.g. fff, Text, Drawfile) or file extension (e.g. wmf, bmp, png). Leading # or & is stripped automatically.") }}</div>
                     <div>{{ file_form.hide_known(class="form-select form-select-sm", title="Filter files by hash database match status. 'Hide' removes files matching known hashes; 'Only' shows only files matching known hashes.") }}</div>
                     <div>{{ file_form.filter_products(class="form-select form-select-sm", title="Filter files by product match status. 'Hide' removes files matched to a known product; 'Only' shows only files matched to a known product.") }}</div>
                     <div class="flex-grow-1"></div>
@@ -209,7 +209,7 @@
                                         title="Manage file restrictions"><i class="bi bi-shield{% if file.restrictions %}-fill{% endif %}"></i></button>
                                 {% endif %}
                                 {% if file.path in viewable_filenames %}
-                                <a href="{{ artefact_url(artefact, 'viewer') }}?file={{ file.path | urlencode }}"
+                                <a href="{{ artefact_url(artefact, 'viewer') }}?file={{ file.path | urlencode }}{% if file_form.filename.data %}&amp;filename={{ file_form.filename.data | urlencode }}{% endif %}"
                                    class="text-muted ms-1" title="View"><i class="bi bi-search"></i></a>
                                 {% endif %}
                                 {% if failed_conversion_info is defined and file.path in failed_conversion_info %}
@@ -229,9 +229,17 @@
                             <td class="text-nowrap">{% set _fdate = file.modified_time or file.created_time %}{% if _fdate %}<span class="text-muted small" title="{{ 'modified' if file.modified_time else 'created' }}: {{ _fdate.isoformat() }}">{{ _fdate.strftime('%Y-%m-%d %H:%M') }}</span>{% else %}-{% endif %}</td>
                             <td>
                                 {% if file.risc_os_filetype %}
-                                    <span class="text-muted" title="{{ file.risc_os_filetype | format_filetype }}">
-                                        <small>{{ (file.risc_os_filetype | filetype_name) or ('&' ~ file.risc_os_filetype | upper) }}</small>
-                                    </span>
+                                    <a href="?{{ dict(pagination_args, filetype=file.risc_os_filetype, page=1) | urlencode }}"
+                                       class="text-muted text-decoration-none"
+                                       title="{{ file.risc_os_filetype | format_filetype }} — click to filter">
+                                        <small>{{ (file.risc_os_filetype | filetype_name) or ('&amp;' ~ file.risc_os_filetype | upper) }}</small>
+                                    </a>
+                                {% elif file.extension %}
+                                    <a href="?{{ dict(pagination_args, filetype=file.extension, page=1) | urlencode }}"
+                                       class="text-muted text-decoration-none"
+                                       title="{{ file.extension | extension_label }} (.{{ file.extension }}) — click to filter">
+                                        <small>{{ file.extension | extension_label }}</small>
+                                    </a>
                                 {% else %}-{% endif %}
                             </td>
                             <td>{% if file.is_known %}{% set _db_colors = ['info', 'success', 'primary', 'danger', 'warning', 'dark'] %}{% set all_matches = file_known_matches.get(file.id, []) %}{% if all_matches %}{% for kf in all_matches %}<span class="badge bg-{{ _db_colors[kf.database_id % (_db_colors | length)] }} me-1" title="{{ kf.database.name }}">{{ kf.product.title if kf.product else kf.database.name }}</span>{% endfor %}{% else %}<span class="badge bg-{{ _db_colors[file.known_file.database_id % (_db_colors | length)] }}" title="{{ file.known_file.database.name }}">{{ file.known_file.product.title if file.known_file.product else file.known_file.database.name }}</span>{% endif %}{% endif %}</td>

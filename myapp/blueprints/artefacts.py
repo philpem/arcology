@@ -1256,6 +1256,8 @@ def _render_viewer(artefact):
     current_path = request.args.get('path', '').strip()
     if current_path and not current_path.endswith('/'):
         current_path += '/'
+    # Filename glob filter — applied to the source file's basename in Mode 2.
+    filename_filter = request.args.get('filename', '').strip()
     all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
     use_pagination = False  # only paginate Mode 2 aggregate view without ?file=
 
@@ -1388,8 +1390,23 @@ def _render_viewer(artefact):
                     )
                 }
 
+    # ── Filename glob filter (Mode 2 only, applied before facet build) ──────
+    if filename_filter and not file_filter:
+        import fnmatch as _fnmatch
+        from posixpath import basename as _basename
+        pat = filename_filter.lower()
+        if '*' not in pat and '?' not in pat:
+            pat = f'*{pat}*'
+        output_groups = [
+            g for g in output_groups
+            if not g.get('source_file') or
+               _fnmatch.fnmatch(_basename(g['source_file']).lower(), pat)
+        ]
+
     # ── Filetype facet (Mode 2 only, when there are source_file paths) ───────
-    filetype_facet = []  # [(hex_code, count), ...] sorted by count desc
+    # Type keys: RISC OS hex codes (e.g. 'fff') or '.ext' for extension-based
+    # types (e.g. '.wmf'). The dot prefix distinguishes them in URLs/filters.
+    filetype_facet = []  # [(type_key, count), ...] sorted by count desc
     active_filetypes = set()
     filetype_toggle_urls = {}
     clear_filter_args = {}
@@ -1408,17 +1425,24 @@ def _render_viewer(artefact):
                     ExtractedFile.partition_id.in_(partition_ids),
                     ExtractedFile.path.in_(source_paths),
                 )
-                .with_entities(ExtractedFile.path, ExtractedFile.risc_os_filetype)
+                .with_entities(ExtractedFile.path, ExtractedFile.risc_os_filetype,
+                                ExtractedFile.extension)
                 .all()
             )
-            path_to_filetype = {r.path: r.risc_os_filetype for r in filetype_rows}
+            # Prefer risc_os_filetype; fall back to '.ext' for non-RISC OS files.
+            path_to_filetype = {}
+            for r in filetype_rows:
+                if r.risc_os_filetype:
+                    path_to_filetype[r.path] = r.risc_os_filetype
+                elif r.extension:
+                    path_to_filetype[r.path] = f'.{r.extension}'
 
-            # Tag each group with its filetype
+            # Tag each group with its effective type key
             for group in output_groups:
                 group['filetype'] = path_to_filetype.get(group.get('source_file'))
 
-            # Build facet as a list of (hex_code, count) sorted by count desc,
-            # then hex asc as tiebreaker. Template iterates this list directly.
+            # Build facet as a list of (type_key, count) sorted by count desc,
+            # then key asc as tiebreaker. Template iterates this list directly.
             counts = Counter(
                 g['filetype'] for g in output_groups if g.get('filetype')
             )
@@ -1426,7 +1450,7 @@ def _render_viewer(artefact):
                 counts.items(), key=lambda kv: (-kv[1], kv[0])
             )
 
-            # Apply filetype filter from ?filetype=ff9,fff
+            # Apply filetype filter from ?filetype=ff9,fff,.wmf
             filetype_param = request.args.get('filetype', '')
             active_filetypes = set(filetype_param.split(',')) - {''}
             if active_filetypes:
@@ -1636,6 +1660,13 @@ def _render_viewer(artefact):
         current_path=current_path,
         subdirectories=subdirectories,
         archive_paths=archive_paths,
+        filename_filter=filename_filter,
+        file_list_args={k: v for k, v in [
+            ('path', current_path or None),
+            ('filename', filename_filter or None),
+        ] if v},
+        clear_filename_args={k: v for k, v in request.args.items()
+                              if k not in ('filename', 'page')},
     )
 
 
@@ -1644,7 +1675,7 @@ def _render_artefact_view(artefact):
     # Only bind to request.args when the user has actively submitted a filter,
     # so that BooleanField defaults (e.g. recursive=True) apply on first load.
     # Without this, WTForms treats missing checkbox keys as False.
-    _file_filter_keys = {'partition_uuid', 'filename', 'extension', 'path', 'md5', 'sha1',
+    _file_filter_keys = {'partition_uuid', 'filename', 'filetype', 'extension', 'path', 'md5', 'sha1',
                          'hide_known', 'filter_products', 'show_directories'}
     if _file_filter_keys & set(request.args.keys()):
         file_form = FileSearchForm(request.args)
@@ -1730,12 +1761,16 @@ def _render_artefact_view(artefact):
         # then resolve either a hex code or a name (e.g. "Drawfile") to a hex code.
         ft_raw = file_form.filetype.data.strip().lstrip('#&')
         ft = lookup_filetype_hex(ft_raw)
-        if ft is None:
-            # Not a known name or valid hex — no files can match
-            from sqlalchemy import false as _false
-            files_query = files_query.filter(_false())
-        else:
+        if ft is not None:
             files_query = files_query.filter(ExtractedFile.risc_os_filetype == ft)
+        else:
+            # Not a RISC OS type — treat as a file extension (e.g. "wmf", ".bmp")
+            ext_raw = ft_raw.lstrip('.').lower()
+            if ext_raw:
+                files_query = files_query.filter(ExtractedFile.extension == ext_raw)
+            else:
+                from sqlalchemy import false as _false
+                files_query = files_query.filter(_false())
 
     if file_form.path.data:
         path_filter = file_form.path.data.strip()
