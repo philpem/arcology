@@ -531,7 +531,7 @@ class Artefact(db.Model):
     )
     derived_artefacts: Mapped[list["Artefact"]] = relationship(
         back_populates="parent_artefact", foreign_keys=[parent_artefact_id],
-        cascade="all, delete-orphan"
+        cascade="all, delete-orphan", order_by="Artefact.label"
     )
     derived_from_analysis: Mapped[Optional["Analysis"]] = relationship(
         foreign_keys=[derived_from_analysis_id],
