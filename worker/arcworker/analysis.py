@@ -1051,8 +1051,8 @@ class AnalysisWorker:
             fs_type = filesystem
         elif artefact_type == ArtefactType.ISO.value:
             fs_type = 'iso9660'
-        elif container_format:
-            container_lower = container_format.lower()
+        elif hint_container_format:
+            container_lower = hint_container_format.lower()
             if 'adfs' in container_lower:
                 fs_type = 'adfs'
             elif 'dfs' in container_lower:
