@@ -1178,12 +1178,17 @@ class AnalysisWorker:
         # For DOS/FAT images, read the volume label straight from the boot
         # sector / root directory.  7z does not surface this information, so
         # the label would otherwise be lost.
-        if disc_name is None and not is_acorn:
+        if disc_name is None and not is_acorn and fs_type != 'iso9660':
             try:
                 disc_name = read_fat_volume_label(input_path)
             except Exception as exc:  # pragma: no cover - defensive
                 log.warning(f"FAT volume label read failed: {exc}")
                 disc_name = None
+
+        # For ISO 9660 images, use the volume identifier from the Primary
+        # Volume Descriptor as the partition label.
+        if disc_name is None and fs_type == 'iso9660':
+            disc_name = parse_iso9660_pvd(input_path).get('volume_identifier')
 
         # When DIM reports a generic format ("Acorn ADFS Hard Disc") but
         # PARTITION_DETECT already identified a specific subformat (e.g.
