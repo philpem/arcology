@@ -4,7 +4,9 @@ Base utilities for running external tools.
 
 import hashlib
 import subprocess
+import sys
 import time
+import traceback
 from pathlib import Path
 
 from ..config import log, TOOL_TIMEOUT
@@ -189,6 +191,42 @@ def run_and_build_result(
         error=result.stderr.decode(errors='replace')[:stderr_truncate],
         process_output=process_output,
         **extras,
+    )
+
+
+def exception_result(
+    tool: str,
+    error_prefix: str,
+    *,
+    process_output: dict | None = None,
+    trace_truncate: int = 2000,
+    **extra,
+) -> dict:
+    """
+    Build a failure result dict from inside an ``except`` clause.
+
+    Captures the current exception and its traceback, producing the same
+    shape as :func:`tool_result` plus an ``exception_trace`` key. Use this
+    for the catch-all ``except Exception`` blocks in tool wrappers where
+    the error message is "{prefix}: {exception}" and the traceback should
+    be preserved for later diagnosis.
+
+    Args:
+        tool: Tool name for the result dict.
+        error_prefix: Human-readable prefix for the error message.
+        process_output: Subprocess output captured before the exception
+            (may be ``None`` if the exception fired before the subprocess ran).
+        trace_truncate: Maximum characters of traceback to retain.
+        **extra: Additional keys to include in the result dict.
+    """
+    exc = sys.exc_info()[1]
+    return tool_result(
+        False,
+        tool=tool,
+        error=f'{error_prefix}: {exc}',
+        process_output=process_output,
+        exception_trace=traceback.format_exc()[:trace_truncate],
+        **extra,
     )
 
 

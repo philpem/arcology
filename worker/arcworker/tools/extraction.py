@@ -15,7 +15,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .base import run_tool_with_output, tool_result
+from .base import run_tool_with_output, tool_result, exception_result
 from .partition import read_fat_volume_label
 from ..utils.text import normalize_extracted_filenames
 
@@ -142,14 +142,11 @@ exit
             process_output=process_output,
         )
 
-    except Exception as e:
+    except Exception:
         # Ensure process output is logged even when extraction fails
-        import traceback
-        return tool_result(
-            False, tool='DiscImageManager',
-            error=f'Error extracting from disc image: {str(e)}',
+        return exception_result(
+            'DiscImageManager', 'Error extracting from disc image',
             process_output=process_output,
-            exception_trace=traceback.format_exc()[:2000],
         )
 
     finally:
@@ -212,14 +209,11 @@ def extract_dos_7z(input_path: Path, output_dir: Path) -> dict:
             process_output=process_output,
         )
 
-    except Exception as e:
+    except Exception:
         # Ensure process output is logged even when extraction fails
-        import traceback
-        return tool_result(
-            False, tool='7z',
-            error=f'Error extracting from DOS image: {str(e)}',
+        return exception_result(
+            '7z', 'Error extracting from DOS image',
             process_output=process_output if 'process_output' in locals() else None,
-            exception_trace=traceback.format_exc()[:2000],
         )
 
 
@@ -743,14 +737,11 @@ def convert_fcfs_to_raw(input_path: Path, output_path: Path) -> dict:
             summary='FCFS image converted to raw sector format',
         )
 
-    except Exception as e:
+    except Exception:
         # Ensure process output is logged even when conversion fails
-        import traceback
-        return tool_result(
-            False, tool='fcfs2raw',
-            error=f'Error converting FCFS image: {str(e)}',
+        return exception_result(
+            'fcfs2raw', 'Error converting FCFS image',
             process_output=process_output if 'process_output' in locals() else None,
-            exception_trace=traceback.format_exc()[:2000],
         )
 
 # vim: ts=4 sw=4 et
