@@ -1059,7 +1059,7 @@ class AnalysisWorker:
             elif 'dfs' in container_lower:
                 fs_type = 'dfs'
             elif 'acorn' in container_lower:
-                fs_type = 'acorn'
+                fs_type = 'adfs'
             else:
                 fs_type = 'unknown'
         else:
@@ -1200,6 +1200,17 @@ class AnalysisWorker:
             or 'hard disc' in container_format.lower()
         ):
             container_format = hint_container_format
+
+        # If fs_type is still 'unknown' but DIM identified the format via
+        # container_format, upgrade fs_type now.  This handles the case where
+        # PARTITION_DETECT could not identify the disc (fell back to 'unknown')
+        # but DIM succeeded and reported e.g. "Acorn ADFS E".
+        if fs_type == 'unknown' and container_format:
+            _cf_lower = container_format.lower()
+            if 'adfs' in _cf_lower:
+                fs_type = 'adfs'
+            elif 'dfs' in _cf_lower:
+                fs_type = 'dfs'
 
         # For DOS/FAT filesystems processed by 7z, construct a human-readable
         # container_format so the UI hover tooltip is populated.  DIM sets this
