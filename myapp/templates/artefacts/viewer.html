@@ -260,7 +260,8 @@
 {% for group in output_groups %}
 
 {% if group.is_thumbnail_bundle %}
-{# ── Thumbnail bundle: all single-image non-explicit files in one grid ── #}
+{# ── Thumbnail bundle: single-image files grouped by directory ── #}
+{% if group.label %}<h6 class="font-monospace border-bottom pb-1 mb-2 mt-3">{{ group.label }}</h6>{% endif %}
 <div class="row g-3 mb-4">
     {% for item in group.bundle_items %}
     {% set img_out = item.outputs | selectattr('type', 'equalto', 'image') | first %}
