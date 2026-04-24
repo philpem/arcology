@@ -1,4 +1,18 @@
 # Arcology Analysis Worker Dependencies
+#
+# In Docker, most packages are installed via apt (python3-numpy, python3-boto3,
+# python3-pillow, python3-requests) or from git (greaseweazle, drawfile-render).
+# This file is used for local development outside Docker.
+#
+# Non-pip dependencies (see Dockerfile for install instructions):
+#   greaseweazle    -- pip install from pinned git commit (see Dockerfile ARG GREASEWEAZLE_VERSION)
+#   spritefile      -- bundled in drawfile-render git clone (PYTHONPATH=/opt/drawfile_render)
+#   render_drawfile -- git clone dcf21/drawfile-render (PYTHONPATH=/opt/drawfile_render)
+#   python3-cairo   -- system package (apt: libcairo2, python3-cairo)
+
 requests>=2.31
 scour
 Pillow
+numpy
+boto3
+cairocffi
