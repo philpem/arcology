@@ -1224,6 +1224,12 @@ _COLUMN_CLASSES = {
     8: 'col-6 col-sm-4 col-md-3 col-lg-2 col-custom-8-xl',
 }
 
+_VALID_VIEWER_SIZES = ['small', 'medium', 'big']
+# Max pixel scale and max-height (vh) for the single-image full-width display.
+# 'big' matches the previous hardcoded behaviour (4× scale, 75 vh).
+_SIZE_MAX_SCALE = {'small': 2, 'medium': 3, 'big': 4}
+_SIZE_MAX_HEIGHT_VH = {'small': 25, 'medium': 50, 'big': 75}
+
 
 def _render_viewer(artefact):
     """Build and render the viewer page for an artefact's converted outputs."""
@@ -1487,6 +1493,65 @@ def _render_viewer(artefact):
 
     viewer_col_class = _COLUMN_CLASSES[viewer_columns]
 
+    # ── Configurable preview size ─────────────────────────────────────────────
+    size_param = request.args.get('size')
+    if size_param in _VALID_VIEWER_SIZES:
+        viewer_size = size_param
+        if (current_user.is_authenticated
+                and current_user.get_preference('viewer_size') != size_param):
+            current_user.set_preference('viewer_size', size_param)
+            db.session.commit()
+    else:
+        saved_size = None
+        if current_user.is_authenticated:
+            saved_size = current_user.get_preference('viewer_size')
+        viewer_size = saved_size if saved_size in _VALID_VIEWER_SIZES else 'big'
+
+    viewer_size_max_scale = _SIZE_MAX_SCALE[viewer_size]
+    viewer_size_max_height_vh = _SIZE_MAX_HEIGHT_VH[viewer_size]
+
+    # ── Thumbnail mode (Mode 2 aggregate only) ────────────────────────────────
+    # Collects all single-image, non-explicit groups from the current page into
+    # one unified grid; sprite/multi-image groups and explicit groups remain as
+    # separate labelled sections below.
+    is_aggregate_mode = artefact.artefact_type not in _viewable_types
+
+    thumb_param = request.args.get('thumb')
+    if thumb_param in ('0', '1'):
+        viewer_thumbnail_mode = thumb_param == '1'
+        if current_user.is_authenticated:
+            saved_thumb = current_user.get_preference('viewer_thumb')
+            if saved_thumb != viewer_thumbnail_mode:
+                current_user.set_preference('viewer_thumb', viewer_thumbnail_mode)
+                db.session.commit()
+    else:
+        viewer_thumbnail_mode = False
+        if current_user.is_authenticated:
+            saved_thumb = current_user.get_preference('viewer_thumb')
+            if saved_thumb is not None:
+                viewer_thumbnail_mode = bool(saved_thumb)
+
+    if viewer_thumbnail_mode and is_aggregate_mode and not file_filter:
+        single_img_groups, other_groups = [], []
+        for g in output_groups:
+            img_count = sum(1 for o in g['outputs'] if o.get('type') == 'image')
+            if img_count == 1 and not g.get('explicit'):
+                single_img_groups.append(g)
+            else:
+                other_groups.append(g)
+        if single_img_groups:
+            bundle = {
+                'label': '',
+                'source_file': None,
+                'is_thumbnail_bundle': True,
+                'bundle_items': single_img_groups,
+                'outputs': [],
+                'explicit': False,
+                'stable_id': 'thumb_bundle',
+                'filetype': None,
+            }
+            output_groups = [bundle] + other_groups
+
     # ── Look up RISC OS module detail when ?file= matches a module path ──────
     module_detail = None
     if file_filter:
@@ -1586,6 +1651,12 @@ def _render_viewer(artefact):
         viewer_columns=viewer_columns,
         viewer_col_class=viewer_col_class,
         valid_viewer_columns=_VALID_VIEWER_COLUMNS,
+        valid_viewer_sizes=_VALID_VIEWER_SIZES,
+        viewer_size=viewer_size,
+        viewer_size_max_scale=viewer_size_max_scale,
+        viewer_size_max_height_vh=viewer_size_max_height_vh,
+        viewer_thumbnail_mode=viewer_thumbnail_mode,
+        is_aggregate_mode=is_aggregate_mode,
         current_path=current_path,
         subdirectories=subdirectories,
         archive_paths=archive_paths,

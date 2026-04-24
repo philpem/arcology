@@ -19,8 +19,10 @@
     background: none;
 }
 .viewer-img-fullwidth {
-    max-height: 75vh; /* fallback for SVGs without intrinsic dimensions */
+    max-height: 75vh; /* fallback / big size — overridden by size classes below */
 }
+.viewer-img-size-small.viewer-img-fullwidth  { max-height: 25vh; }
+.viewer-img-size-medium.viewer-img-fullwidth { max-height: 50vh; }
 .viewer-name {
     font-size: 0.8rem;
     word-break: break-all;
@@ -145,6 +147,27 @@
         {% if total_counts.get('svg') %}<span class="ms-2"><i class="bi bi-filetype-svg"></i> {{ total_counts['svg'] }}</span>{% endif %}
     </span>
 
+    {# Size selector #}
+    <div class="d-flex align-items-center gap-1">
+        <span class="text-muted small me-1" title="Preview size"><i class="bi bi-arrows-angle-expand"></i></span>
+        {% for sz in valid_viewer_sizes %}
+        <a href="?{{ dict(pagination_args, size=sz) | urlencode }}"
+           class="btn btn-sm {{ 'btn-secondary' if viewer_size == sz else 'btn-outline-secondary' }}"
+           title="{{ sz | title }} preview"
+           aria-pressed="{{ 'true' if viewer_size == sz else 'false' }}">{{ sz[0] | upper }}</a>
+        {% endfor %}
+    </div>
+
+    {# Thumbnail toggle (aggregate / Mode 2 only) #}
+    {% if is_aggregate_mode %}
+    <a href="?{{ dict(pagination_args, thumb='0' if viewer_thumbnail_mode else '1') | urlencode }}"
+       class="btn btn-sm {{ 'btn-secondary' if viewer_thumbnail_mode else 'btn-outline-secondary' }}"
+       title="Thumbnail view — show single-image files together in one grid"
+       aria-pressed="{{ 'true' if viewer_thumbnail_mode else 'false' }}">
+        <i class="bi bi-grid-3x2-gap"></i>
+    </a>
+    {% endif %}
+
     {# Columns selector (right-aligned) #}
     <div class="ms-auto d-flex align-items-center gap-1">
         <span class="text-muted small me-1"><i class="bi bi-grid-3x3-gap"></i></span>
@@ -229,6 +252,31 @@
 {% endif %}
 
 {% for group in output_groups %}
+
+{% if group.is_thumbnail_bundle %}
+{# ── Thumbnail bundle: all single-image non-explicit files in one grid ── #}
+<div class="row g-3 mb-4">
+    {% for item in group.bundle_items %}
+    {% set img_out = item.outputs | selectattr('type', 'equalto', 'image') | first %}
+    {% if img_out %}
+    {% set preview_file = img_out.svg_filename if img_out.svg_filename else img_out.filename %}
+    <div class="{{ viewer_col_class }}">
+        <div class="card viewer-img-card h-100">
+            <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
+               target="_blank" rel="noopener">
+                <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
+                     class="viewer-img card-img-top" alt="{{ img_out.name }}" loading="lazy">
+            </a>
+            <div class="card-footer p-1 text-center">
+                <span class="viewer-name font-monospace">{{ item.label }}</span>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    {% endfor %}
+</div>
+
+{% else %}
 {% set ns = namespace(image_outputs=[], svg_outputs=[], text_outputs=[]) %}
 {% for out in group.outputs %}
     {% if out.type == 'image' %}{% set ns.image_outputs = ns.image_outputs + [out] %}
@@ -274,7 +322,10 @@
             <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
                target="_blank" rel="noopener">
                 <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
-                     class="viewer-img viewer-img-fullwidth" alt="{{ out.name }}" loading="lazy">
+                     class="viewer-img viewer-img-fullwidth viewer-img-size-{{ viewer_size }}"
+                     data-max-scale="{{ viewer_size_max_scale }}"
+                     data-max-height-vh="{{ viewer_size_max_height_vh }}"
+                     alt="{{ out.name }}" loading="lazy">
             </a>
         </div>
         <div class="card-footer p-1 text-center">
@@ -345,6 +396,8 @@
 {% if output_groups | length > 1 or group.source_file %}
 </section>
 {% endif %}
+
+{% endif %}{# end is_thumbnail_bundle else #}
 {% endfor %}
 
 {# ── Pagination controls ── #}
@@ -362,8 +415,8 @@
             var nw = img.naturalWidth, nh = img.naturalHeight;
             if (!nw || !nh) { img.style.width = '100%'; return; }
             var maxW = (img.closest('.card') || document.body).clientWidth;
-            var maxH = window.innerHeight * 0.75;
-            var scale = Math.min(4, maxW / nw, maxH / nh);
+            var maxH = window.innerHeight * (parseFloat(img.dataset.maxHeightVh || 75) / 100);
+            var scale = Math.min(parseFloat(img.dataset.maxScale || 4), maxW / nw, maxH / nh);
             img.style.width = Math.round(nw * scale) + 'px';
         }
         if (img.complete && img.naturalWidth > 0) apply();
