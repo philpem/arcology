@@ -18,11 +18,6 @@
 .viewer-img-card {
     background: none;
 }
-.viewer-img-fullwidth {
-    max-height: 75vh; /* fallback / big size — overridden by size classes below */
-}
-.viewer-img-size-small.viewer-img-fullwidth  { max-height: 25vh; }
-.viewer-img-size-medium.viewer-img-fullwidth { max-height: 50vh; }
 .viewer-name {
     font-size: 0.8rem;
     word-break: break-all;
@@ -305,45 +300,24 @@
 
 {# ── Image outputs ── #}
 {% if ns.image_outputs %}
-    {% if ns.image_outputs | length == 1 %}
-    {# Single image for a single-component file — show full width like text #}
-    {% set out = ns.image_outputs[0] %}
-    {% set preview_file = out.svg_filename if out.svg_filename else out.filename %}
-    <div class="card viewer-img-card mb-4">
-        <div class="p-2 text-center">
+<div class="row g-3 mb-4">
+    {% for out in ns.image_outputs %}
+    <div class="{{ viewer_col_class }}">
+        <div class="card viewer-img-card h-100">
+            {# Prefer svg_filename for old results where PNG was stored as filename; new results store SVG directly as filename. #}
+            {% set preview_file = out.svg_filename if out.svg_filename else out.filename %}
             <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
                target="_blank" rel="noopener">
                 <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
-                     class="viewer-img viewer-img-fullwidth viewer-img-size-{{ viewer_size }}"
-                     data-max-scale="{{ viewer_size_max_scale }}"
-                     data-max-height-vh="{{ viewer_size_max_height_vh }}"
-                     alt="{{ out.name }}" loading="lazy">
+                     class="viewer-img card-img-top" alt="{{ out.name }}" loading="lazy">
             </a>
-        </div>
-        <div class="card-footer p-1 text-center">
-            <span class="viewer-name font-monospace">{{ out.name }}</span>
-        </div>
-    </div>
-    {% else %}
-    <div class="row g-3 mb-4">
-        {% for out in ns.image_outputs %}
-        <div class="{{ viewer_col_class }}">
-            <div class="card viewer-img-card h-100">
-                {# Prefer svg_filename for old results where PNG was stored as filename; new results store SVG directly as filename. #}
-                {% set preview_file = out.svg_filename if out.svg_filename else out.filename %}
-                <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
-                   target="_blank" rel="noopener">
-                    <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
-                         class="viewer-img card-img-top" alt="{{ out.name }}" loading="lazy">
-                </a>
-                <div class="card-footer p-1 text-center">
-                    <span class="viewer-name font-monospace">{{ out.name }}</span>
-                </div>
+            <div class="card-footer p-1 text-center">
+                <span class="viewer-name font-monospace">{{ out.name }}</span>
             </div>
         </div>
-        {% endfor %}
     </div>
-    {% endif %}
+    {% endfor %}
+</div>
 {% endif %}
 
 {# ── SVG outputs (other tools that produce standalone SVG without a paired PNG) ── #}
@@ -401,22 +375,6 @@
 
 {% if output_groups %}
 <script>
-(function() {
-    document.querySelectorAll('.viewer-img-fullwidth').forEach(function(img) {
-        function apply() {
-            var nw = img.naturalWidth, nh = img.naturalHeight;
-            if (!nw || !nh) { img.style.width = '100%'; return; }
-            var maxW = (img.closest('.card') || document.body).clientWidth;
-            var maxH = window.innerHeight * (parseFloat(img.dataset.maxHeightVh || 75) / 100);
-            var scale = Math.min(parseFloat(img.dataset.maxScale || 4), maxW / nw, maxH / nh);
-            img.style.width = Math.round(nw * scale) + 'px';
-        }
-        if (img.complete && img.naturalWidth > 0) apply();
-        else img.addEventListener('load', apply);
-        window.addEventListener('resize', apply, { passive: true });
-    });
-})();
-
 function revealExplicit(gid) {
     var overlay = document.getElementById('explicit-overlay-' + gid);
     var content = document.getElementById('explicit-content-' + gid);

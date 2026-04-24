@@ -1224,10 +1224,6 @@ _COLUMN_CLASSES = {
     8: 'col-6 col-sm-4 col-md-3 col-lg-2 col-custom-8-xl',
 }
 
-# Single-image preview size is derived from column count — fewer columns = bigger preview.
-_COLUMNS_TO_SIZE = {2: 'big', 3: 'big', 4: 'medium', 6: 'small', 8: 'small'}
-_SIZE_MAX_SCALE = {'small': 2, 'medium': 3, 'big': 4}
-_SIZE_MAX_HEIGHT_VH = {'small': 25, 'medium': 50, 'big': 75}
 
 
 def _render_viewer(artefact):
@@ -1492,10 +1488,6 @@ def _render_viewer(artefact):
 
     viewer_col_class = _COLUMN_CLASSES[viewer_columns]
 
-    # Preview size is derived from column count — no separate preference needed.
-    viewer_size = _COLUMNS_TO_SIZE[viewer_columns]
-    viewer_size_max_scale = _SIZE_MAX_SCALE[viewer_size]
-    viewer_size_max_height_vh = _SIZE_MAX_HEIGHT_VH[viewer_size]
 
     # ── Thumbnail mode (Mode 2 aggregate only) ────────────────────────────────
     # Collects all single-image, non-explicit groups from the current page into
@@ -1638,9 +1630,7 @@ def _render_viewer(artefact):
         viewer_columns=viewer_columns,
         viewer_col_class=viewer_col_class,
         valid_viewer_columns=_VALID_VIEWER_COLUMNS,
-        viewer_size=viewer_size,
-        viewer_size_max_scale=viewer_size_max_scale,
-        viewer_size_max_height_vh=viewer_size_max_height_vh,
+
         viewer_thumbnail_mode=viewer_thumbnail_mode,
         is_aggregate_mode=is_aggregate_mode,
         current_path=current_path,
