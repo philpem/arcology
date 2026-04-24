@@ -15,7 +15,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .base import run_tool_with_output
+from .base import run_tool_with_output, tool_result
 from .partition import read_fat_volume_label
 from ..utils.text import normalize_extracted_filenames
 
@@ -87,12 +87,11 @@ exit
         if any(line.strip().startswith('Container format: DOS')
                for line in stdout_text.splitlines()):
             shutil.rmtree(output_dir, ignore_errors=True)
-            return {
-                'success': False,
-                'tool': 'DiscImageManager',
-                'error': 'DOS FAT filesystem — not an Acorn image',
-                'process_output': process_output,
-            }
+            return tool_result(
+                False, tool='DiscImageManager',
+                error='DOS FAT filesystem — not an Acorn image',
+                process_output=process_output,
+            )
 
         # Pre-process extracted files before counting:
         # 1. Normalise RISC OS Latin-1 byte sequences in filenames to Unicode.
@@ -111,15 +110,14 @@ exit
         file_count = sum(1 for f in output_dir.rglob('*') if f.is_file())
 
         if file_count > 0:
-            return {
-                'success': True,
-                'tool': 'DiscImageManager',
-                'output_dir': str(output_dir),
-                'file_count': file_count,
-                'inf_metadata': inf_metadata,
-                'summary': f'Extracted {file_count} files from Acorn disc image',
-                'process_output': process_output
-            }
+            return tool_result(
+                True, tool='DiscImageManager',
+                process_output=process_output,
+                output_dir=str(output_dir),
+                file_count=file_count,
+                inf_metadata=inf_metadata,
+                summary=f'Extracted {file_count} files from Acorn disc image',
+            )
 
         # No files extracted.  Distinguish a valid-but-empty disc (DIM read
         # the image successfully) from a genuine failure (unrecognised format).
@@ -130,34 +128,29 @@ exit
         dim_read_ok = result.returncode == 0 and 'read OK' in stdout
 
         if dim_read_ok:
-            return {
-                'success': True,
-                'tool': 'DiscImageManager',
-                'output_dir': str(output_dir),
-                'file_count': 0,
-                'summary': 'Acorn disc image is valid but contains no files',
-                'process_output': process_output
-            }
+            return tool_result(
+                True, tool='DiscImageManager',
+                process_output=process_output,
+                output_dir=str(output_dir),
+                file_count=0,
+                summary='Acorn disc image is valid but contains no files',
+            )
 
-        return {
-            'success': False,
-            'tool': 'DiscImageManager',
-            'error': 'No files extracted - may not be Acorn format',
-            'process_output': process_output
-        }
+        return tool_result(
+            False, tool='DiscImageManager',
+            error='No files extracted - may not be Acorn format',
+            process_output=process_output,
+        )
 
     except Exception as e:
         # Ensure process output is logged even when extraction fails
         import traceback
-        error_details = {
-            'success': False,
-            'tool': 'DiscImageManager',
-            'error': f'Error extracting from disc image: {str(e)}',
-            'exception_trace': traceback.format_exc()[:2000],
-        }
-        if process_output is not None:
-            error_details['process_output'] = process_output
-        return error_details
+        return tool_result(
+            False, tool='DiscImageManager',
+            error=f'Error extracting from disc image: {str(e)}',
+            process_output=process_output,
+            exception_trace=traceback.format_exc()[:2000],
+        )
 
     finally:
         if not _DEBUG_KEEP_OUTFILES:
@@ -204,34 +197,30 @@ def extract_dos_7z(input_path: Path, output_dir: Path) -> dict:
             # CP850 (Western European DOS) is used as the default; see
             # _decode_dos_cp850() for rationale and limitations.
             normalize_extracted_filenames(output_dir, decoder=_decode_dos_cp850)
-            return {
-                'success': True,
-                'tool': '7z',
-                'output_dir': str(output_dir),
-                'file_count': file_count,
-                'summary': f'Extracted {file_count} files from DOS image',
-                'process_output': process_output
-            }
+            return tool_result(
+                True, tool='7z',
+                process_output=process_output,
+                output_dir=str(output_dir),
+                file_count=file_count,
+                summary=f'Extracted {file_count} files from DOS image',
+            )
 
-        return {
-            'success': False,
-            'tool': '7z',
-            'error': result.stderr.decode()[:1000] if result.returncode != 0 else 'No files extracted',
-            'process_output': process_output
-        }
+        return tool_result(
+            False, tool='7z',
+            error=(result.stderr.decode(errors='replace')[:1000]
+                   if result.returncode != 0 else 'No files extracted'),
+            process_output=process_output,
+        )
 
     except Exception as e:
         # Ensure process output is logged even when extraction fails
         import traceback
-        error_details = {
-            'success': False,
-            'tool': '7z',
-            'error': f'Error extracting from DOS image: {str(e)}',
-            'exception_trace': traceback.format_exc()[:2000],
-        }
-        if 'process_output' in locals():
-            error_details['process_output'] = process_output
-        return error_details
+        return tool_result(
+            False, tool='7z',
+            error=f'Error extracting from DOS image: {str(e)}',
+            process_output=process_output if 'process_output' in locals() else None,
+            exception_trace=traceback.format_exc()[:2000],
+        )
 
 
 def extract_iso_7z(input_path: Path, output_dir: Path) -> dict:
@@ -741,32 +730,27 @@ def convert_fcfs_to_raw(input_path: Path, output_path: Path) -> dict:
         result, process_output = run_tool_with_output(cmd)
 
         if result.returncode != 0:
-            return {
-                'success': False,
-                'error': f'fcfs2raw failed with exit code {result.returncode}',
-                'tool': 'fcfs2raw',
-                'process_output': process_output
-            }
+            return tool_result(
+                False, tool='fcfs2raw',
+                error=f'fcfs2raw failed with exit code {result.returncode}',
+                process_output=process_output,
+            )
 
-        return {
-            'success': True,
-            'tool': 'fcfs2raw',
-            'output_path': str(output_path),
-            'summary': 'FCFS image converted to raw sector format',
-            'process_output': process_output
-        }
+        return tool_result(
+            True, tool='fcfs2raw',
+            process_output=process_output,
+            output_path=str(output_path),
+            summary='FCFS image converted to raw sector format',
+        )
 
     except Exception as e:
         # Ensure process output is logged even when conversion fails
         import traceback
-        error_details = {
-            'success': False,
-            'tool': 'fcfs2raw',
-            'error': f'Error converting FCFS image: {str(e)}',
-            'exception_trace': traceback.format_exc()[:2000],
-        }
-        if 'process_output' in locals():
-            error_details['process_output'] = process_output
-        return error_details
+        return tool_result(
+            False, tool='fcfs2raw',
+            error=f'Error converting FCFS image: {str(e)}',
+            process_output=process_output if 'process_output' in locals() else None,
+            exception_trace=traceback.format_exc()[:2000],
+        )
 
 # vim: ts=4 sw=4 et

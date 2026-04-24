@@ -14,7 +14,7 @@ import zipfile
 from pathlib import Path
 from typing import Dict, Any
 
-from .base import run_tool_with_output
+from .base import run_tool_with_output, tool_result
 from ..compression import stream_to_file
 from ..config import log, TOOL_TIMEOUT, MAX_DECOMPRESSED_BYTES
 from ..utils.text import normalize_extracted_filenames, fix_riscos_c1_filenames, decode_riscos_latin1
@@ -215,34 +215,25 @@ def sanitize_extracted_tree(output_dir: Path) -> int:
     return removed
 
 
-def _archive_error(tool: str, message: str, process_output: str | None = None) -> Dict[str, Any]:
+def _archive_error(tool: str, message: str, process_output: dict | None = None) -> Dict[str, Any]:
     """Build a standard failed archive-result payload."""
-    result = {
-        'success': False,
-        'error': message,
-        'tool': tool,
-    }
-    if process_output is not None:
-        result['process_output'] = process_output
-    return result
+    return tool_result(False, tool=tool, error=message, process_output=process_output)
 
 
 def _archive_success(
     tool: str,
     summary: str,
     file_count: int,
-    process_output: str | None = None,
+    process_output: dict | None = None,
 ) -> Dict[str, Any]:
     """Build a standard successful archive-result payload."""
-    result = {
-        'success': True,
-        'tool': tool,
-        'file_count': file_count,
-        'summary': summary,
-    }
-    if process_output is not None:
-        result['process_output'] = process_output
-    return result
+    return tool_result(
+        True,
+        tool=tool,
+        process_output=process_output,
+        file_count=file_count,
+        summary=summary,
+    )
 
 
 def _count_extracted_files(output_dir: Path) -> int:
@@ -674,11 +665,7 @@ def decompress_single_file(input_path: Path, output_file: Path, compressor: str)
 
     cmd = commands.get(compressor)
     if not cmd:
-        return {
-            'success': False,
-            'error': f'Unknown compressor: {compressor}',
-            'tool': compressor
-        }
+        return tool_result(False, tool=compressor, error=f'Unknown compressor: {compressor}')
 
     # stream_to_file() uses select() so the timeout is enforced mid-read,
     # not only after the loop exits.
@@ -691,45 +678,37 @@ def decompress_single_file(input_path: Path, output_file: Path, compressor: str)
 
         if outcome == 'timeout':
             output_file.unlink(missing_ok=True)
-            return {
-                'success': False,
-                'error': f'{compressor} timed out after {TOOL_TIMEOUT}s',
-                'tool': compressor,
-            }
+            return tool_result(
+                False, tool=compressor,
+                error=f'{compressor} timed out after {TOOL_TIMEOUT}s',
+            )
 
         if outcome == 'size_exceeded':
             output_file.unlink(missing_ok=True)
-            return {
-                'success': False,
-                'error': (
+            return tool_result(
+                False, tool=compressor,
+                error=(
                     f'{compressor}: decompressed size exceeds '
                     f'{MAX_DECOMPRESSED_BYTES:,} byte limit'
                 ),
-                'tool': compressor,
-            }
+            )
 
         stderr_text = stderr_bytes.decode('utf-8', errors='replace')
         if proc.returncode != 0:
-            return {
-                'success': False,
-                'error': f'{compressor} failed: {stderr_text}',
-                'tool': compressor,
-                'process_output': stderr_text,
-            }
+            return tool_result(
+                False, tool=compressor,
+                error=f'{compressor} failed: {stderr_text}',
+                process_output=stderr_text,
+            )
 
-        return {
-            'success': True,
-            'tool': compressor,
-            'file_count': 1,
-            'summary': f'Decompressed file using {compressor}',
-            'output_path': str(output_file),
-        }
+        return tool_result(
+            True, tool=compressor,
+            file_count=1,
+            summary=f'Decompressed file using {compressor}',
+            output_path=str(output_file),
+        )
     except Exception as e:
-        return {
-            'success': False,
-            'error': f'{compressor} failed: {str(e)}',
-            'tool': compressor,
-        }
+        return tool_result(False, tool=compressor, error=f'{compressor} failed: {str(e)}')
 
 
 # ---------------------------------------------------------------------------

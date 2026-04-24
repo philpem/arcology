@@ -9,6 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from .base import run_tool_with_output, tool_result
 from .svg_utils import postprocess_svg
 
 from ..config import log
@@ -35,6 +36,12 @@ _VECTOR_EXTS: dict[str, tuple[tuple[str, object], ...]] = {
 
 def _result(success: bool, *, output_path: str | None, fmt: str | None,
             tool: str, error: str | None, **extra) -> dict:
+    """Build an image-conversion result dict.
+
+    Always emits the ``output_path``, ``format`` and ``error`` keys
+    (including when they are ``None``) so downstream consumers can rely
+    on their presence.
+    """
     return {
         'success': success,
         'output_path': output_path,
@@ -72,7 +79,7 @@ def convert_image(input_path: Path, output_dir: Path, analysis_uuid: str) -> dic
             out_svg = output_dir / f'{analysis_uuid}_image.svg'
             cmd = build_cmd(input_path, out_svg)
             try:
-                proc = subprocess.run(cmd, capture_output=True, timeout=60)
+                proc, _ = run_tool_with_output(cmd, timeout=60)
             except FileNotFoundError:
                 errors.append(f'{tool_name} not found')
                 continue

@@ -1141,7 +1141,7 @@ class AnalysisWorker:
         # by the existing suffix-parsing logic.
         iso_filetype_map: dict[str, str] = {}
         if artefact_type == ArtefactType.ISO.value:
-            from .tools.iso_riscos import parse_iso_riscos_filetypes
+            from .tools.fs_iso_riscos import parse_iso_riscos_filetypes
             iso_filetype_map, iso_rename_map = parse_iso_riscos_filetypes(input_path)
             log.info(
                 f"ISO ARCHIMEDES parser found {len(iso_filetype_map)} filetype entries, "
@@ -2732,7 +2732,7 @@ class AnalysisWorker:
                 return None, str(e)
 
         elif artefact_type == ArtefactType.IMAGE:
-            from .tools.common_images import convert_image
+            from .tools.images_common import convert_image
             from .tools.extraction import parse_acorn_filename as _parse_acorn
             true_name, _ = _parse_acorn(input_path.name)
             tmp_out = work_dir / f'image_{file_index}'

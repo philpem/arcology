@@ -4,7 +4,14 @@ Analysis tools package.
 Contains wrappers for external analysis tools.
 """
 
-from .base import run_tool, run_tool_with_output, get_process_output, compute_file_hash
+from .base import (
+    run_tool,
+    run_tool_with_output,
+    get_process_output,
+    compute_file_hash,
+    tool_result,
+    run_and_build_result,
+)
 from .flux import (
     flux_visualisation_fluxfox,
     flux_visualisation_hxcfe,
@@ -22,7 +29,7 @@ from .extraction import (
     process_inf_sidecars,
     parse_acorn_filename,
 )
-from .iso_riscos import parse_iso_riscos_filetypes
+from .fs_iso_riscos import parse_iso_riscos_filetypes
 from .iso9660 import parse_iso9660_pvd
 from .partition import (
     detect_partitions_sfdisk,
@@ -44,8 +51,8 @@ from .archives import (
     extract_7z,
     decompress_single_file,
 )
-from .armlock import detect_armlock, remove_armlock
-from .acorn_images import convert_sprite, convert_draw
+from .fs_riscos_armlock import detect_armlock, remove_armlock
+from .images_acorn import convert_sprite, convert_draw
 from .riscos_module import decode_module, HelpParseError, ModuleParseError
 
 __all__ = [
@@ -53,6 +60,8 @@ __all__ = [
     'run_tool_with_output',
     'get_process_output',
     'compute_file_hash',
+    'tool_result',
+    'run_and_build_result',
     'flux_visualisation_fluxfox',
     'flux_visualisation_hxcfe',
     'flux_to_imd_hxcfe',

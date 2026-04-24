@@ -1,7 +1,7 @@
 """
 Tests for ISO 9660 RISC OS filetype extraction (ARCHIMEDES extension).
 
-Tests the internal helpers in worker/arcworker/tools/iso_riscos.py using
+Tests the internal helpers in worker/arcworker/tools/fs_iso_riscos.py using
 synthetic data only — no ISO image file required.
 """
 
@@ -13,7 +13,7 @@ import unittest
 # Add the repo root to sys.path so imports work without installation
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from worker.arcworker.tools.iso_riscos import (
+from worker.arcworker.tools.fs_iso_riscos import (
     _get_riscos_filetype,
     _parse_archimedes_block,
     _get_nm_name,

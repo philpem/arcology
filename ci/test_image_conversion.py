@@ -1,5 +1,5 @@
 """
-Unit tests for common image format conversion (common_images.py).
+Unit tests for common image format conversion (images_common.py).
 
 Tests pass-through of browser-native formats, Pillow-based raster conversion,
 and graceful failure when input is corrupt or external tools are absent.
@@ -76,7 +76,7 @@ class TestCommonImageConversion(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _convert(self, src: Path) -> dict:
-        from worker.arcworker.tools.common_images import convert_image
+        from worker.arcworker.tools.images_common import convert_image
         return convert_image(src, self.outdir, self.uuid)
 
     # --- Pass-through tests ---

@@ -105,6 +105,93 @@ def run_tool_with_output(cmd: list[str], timeout: int = None, cwd: str = None) -
     return result, output
 
 
+def tool_result(
+    success: bool,
+    *,
+    tool: str,
+    error: str | None = None,
+    process_output: dict | str | None = None,
+    **extra,
+) -> dict:
+    """
+    Build a standard tool-wrapper result dict.
+
+    Every tool wrapper in the worker returns a dict with at least ``success``
+    and ``tool`` keys. Optional fields (``error`` on failure, ``process_output``
+    from :func:`run_tool_with_output`, and any tool-specific extras such as
+    ``output_path``, ``output_type``, ``summary``, ``file_count``) are included
+    when provided.
+
+    Args:
+        success: True on success, False on failure.
+        tool: Name of the tool that produced this result.
+        error: Error message (only relevant when success=False).
+        process_output: Structured subprocess output dict from
+            :func:`get_process_output`, or a plain string.
+        **extra: Any additional caller-specific keys.
+    """
+    result: dict = {'success': success, 'tool': tool}
+    if error is not None:
+        result['error'] = error
+    if process_output is not None:
+        result['process_output'] = process_output
+    result.update(extra)
+    return result
+
+
+def run_and_build_result(
+    cmd: list[str],
+    *,
+    tool: str,
+    output_path: Path,
+    summary: str,
+    timeout: int | None = None,
+    cwd: str | None = None,
+    stderr_truncate: int = 1000,
+    **extras,
+) -> dict:
+    """
+    Run a subprocess and build a standard success/failure result dict.
+
+    Captures the "returncode == 0 AND output file exists" idiom used across
+    flux.py, extraction.py and partition.py. On success, returns a result dict
+    with ``output_path``, ``summary``, ``process_output`` and any additional
+    ``**extras`` (e.g. ``output_type``, ``gw_format``). On failure, returns a
+    result dict with ``error`` (truncated stderr) and the same extras.
+
+    Args:
+        cmd: Command list to execute.
+        tool: Tool name for the result dict.
+        output_path: Required output file; its existence is part of the
+            success check.
+        summary: Human-readable summary (included on success only).
+        timeout: Subprocess timeout in seconds.
+        cwd: Working directory.
+        stderr_truncate: Characters of stderr to include in the error message.
+        **extras: Additional keys included in both success and failure result
+            dicts (e.g. ``output_type``, ``gw_format``, ``heads``).
+    """
+    result, process_output = run_tool_with_output(cmd, timeout=timeout, cwd=cwd)
+
+    if result.returncode == 0 and output_path.exists():
+        return tool_result(
+            True,
+            tool=tool,
+            output_path=str(output_path),
+            summary=summary,
+            process_output=process_output,
+            **extras,
+        )
+
+    return tool_result(
+        False,
+        tool=tool,
+        error=result.stderr.decode(errors='replace')[:stderr_truncate],
+        process_output=process_output,
+        **extras,
+    )
+
+
 def compute_file_hash(filepath: Path) -> tuple[str, str, int]:
     """
     Compute MD5, SHA256 and file size.

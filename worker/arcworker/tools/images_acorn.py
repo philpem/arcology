@@ -8,6 +8,7 @@ import re
 import traceback as _tb
 from pathlib import Path
 
+from .base import tool_result
 from ..config import log
 
 def _safe_sprite_name(name: str, index: int) -> str:
@@ -37,7 +38,9 @@ def convert_sprite(input_path: Path, output_dir: Path, analysis_uuid: str) -> di
         import spritefile
         from PIL import Image
     except ImportError as e:
-        return {'success': False, 'sprites': [], 'error': f'Missing dependency: {e}'}
+        return tool_result(
+            False, tool='spritefile', error=f'Missing dependency: {e}', sprites=[],
+        )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     sprites = []
@@ -49,10 +52,15 @@ def convert_sprite(input_path: Path, output_dir: Path, analysis_uuid: str) -> di
         sprite_list = list(sf.sprites.items())  # [(name, sprite_dict), ...]
     except Exception as e:
         log.warning('Failed to open sprite file: %s\n%s', e, _tb.format_exc().rstrip())
-        return {'success': False, 'sprites': [], 'error': f'Failed to open sprite file: {e}'}
+        return tool_result(
+            False, tool='spritefile',
+            error=f'Failed to open sprite file: {e}', sprites=[],
+        )
 
     if not sprite_list:
-        return {'success': False, 'sprites': [], 'error': 'No sprites found in file'}
+        return tool_result(
+            False, tool='spritefile', error='No sprites found in file', sprites=[],
+        )
 
     for idx, (name, sprite) in enumerate(sprite_list):
         try:
@@ -93,7 +101,12 @@ def convert_sprite(input_path: Path, output_dir: Path, analysis_uuid: str) -> di
             error = str(e)
 
     success = len(sprites) > 0
-    return {'success': success, 'sprites': sprites, 'error': error if not success else None}
+    return tool_result(
+        success,
+        tool='spritefile',
+        error=(error if not success else None),
+        sprites=sprites,
+    )
 
 
 def convert_draw(input_path: Path, output_dir: Path, analysis_uuid: str) -> dict:
@@ -114,14 +127,14 @@ def convert_draw(input_path: Path, output_dir: Path, analysis_uuid: str) -> dict
             success (bool)
             svg_path (Path | None)
             error (str | None)
-            tool_output (dict)
+            process_output (dict)
     """
     _DRAWFILE_RENDER_DIR = '/opt/drawfile_render'
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_base = str(output_dir / f'{analysis_uuid}_draw')
     svg_candidate = Path(output_base + '.svg')
-    tool_output = {}
+    process_output: dict = {}
 
     try:
         import sys as _sys
@@ -132,27 +145,22 @@ def convert_draw(input_path: Path, output_dir: Path, analysis_uuid: str) -> dict
         df.render_to_context(filename=output_base, img_format='svg')
     except Exception as e:
         log.warning(f'SVG generation failed for {input_path}: {e}')
-        return {
-            'success': False,
-            'svg_path': None,
-            'error': str(e),
-            'tool_output': tool_output,
-        }
+        return tool_result(
+            False, tool='drawfile_render', error=str(e),
+            process_output=process_output, svg_path=None,
+        )
 
     if not svg_candidate.exists():
         log.warning(f'drawfile_render produced no SVG output for {input_path}')
-        return {
-            'success': False,
-            'svg_path': None,
-            'error': 'drawfile_render produced no output',
-            'tool_output': tool_output,
-        }
+        return tool_result(
+            False, tool='drawfile_render',
+            error='drawfile_render produced no output',
+            process_output=process_output, svg_path=None,
+        )
 
-    return {
-        'success': True,
-        'svg_path': svg_candidate,
-        'error': None,
-        'tool_output': tool_output,
-    }
+    return tool_result(
+        True, tool='drawfile_render',
+        process_output=process_output, svg_path=svg_candidate,
+    )
 
 # vim: ts=4 sw=4 et
