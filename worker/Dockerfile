@@ -99,7 +99,11 @@ FROM rustbuild AS build-wmfrs
 
 # Pinned commit SHA — update this when upgrading fluxfox.
 # Current as of 2026-03-26; branch: main
-ARG WMFRS_TAG=9ba3e0e5c36b9ce427c19a9c534ab5b12c3886d0
+ARG WMFRS_TAG=bad045de42e9b4142010cfc62d6995a03b3c65ab
+
+# Above sha is a local fix (for POLYPOLYGON elems) awaiting merge upstream
+#ARG WFMRS_REPO=https://github.com/mythrnr/wmf-rs.git
+ARG WFMRS_REPO=https://github.com/philpem/wmf-rs.git
 
 # Disable prompt during package installation
 ARG DEBIAN_FRONTEND=noninteractive
@@ -107,7 +111,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 # Set number of parallel compiler instances
 ARG MINUSJ=-j3
 
-RUN git clone https://github.com/mythrnr/wmf-rs.git && \
+RUN git clone "${WFMRS_REPO}" && \
 	cd wmf-rs && \
 	git checkout "${WMFRS_TAG}" && \
 	cargo build ${MINUSJ} -r -p wmf-cli && \
