@@ -755,6 +755,27 @@ def _detect_simtec_signature(input_path: Path) -> dict:
 # Top-level Acorn partition scheme dispatcher
 # =========================================================================
 
+# Priority-ordered registry of Acorn partition scheme probes.
+# Each entry is (scheme_name, probe_fn).  To add a new scheme, write a
+# _detect_<scheme> function and append (or insert) it here.
+#
+# Priority rationale:
+#  1. nexus  — 'Net1' magic at 0x20000 (unambiguous, fast; checked first so
+#              HCCS doesn't waste time on Nexus discs whose 0xC00 area holds
+#              sharer firmware rather than the 'Andy' Filecore boot block)
+#  2. ics    — strong "Part" checksum at sector 0 gives unambiguous ID
+#              without touching the 0xC00 area, so checked before HCCS
+#  3. hccs   — most common Acorn hard-disc partitioning
+#  4. simtec — signature only; documentation incomplete
+_ACORN_SCHEMES = [
+    ('nexus',  _detect_nexus_partitions),   # SJ Research Nexus Disc Sharer
+    ('ics',    _detect_ics_partitions),     # ICS / Baildon Electronics IDEFS
+    ('hccs',   _detect_hccs_partitions),    # HCCS
+    ('simtec', _detect_simtec_signature),   # Simtec IDEFS
+    # (Future: RISC iX, etc.)
+]
+
+
 def detect_acorn_partitions(input_path: Path) -> dict:
     """
     Try all known Acorn partitioning schemes in priority order.
@@ -764,7 +785,7 @@ def detect_acorn_partitions(input_path: Path) -> dict:
     directly for image carving and gap detection.
 
     To add a new scheme, write a ``_detect_<scheme>`` function and
-    call it here in the appropriate priority order.
+    add it to ``_ACORN_SCHEMES`` in the appropriate priority position.
 
     Returns:
         A dict with at least ``detected`` (bool).  When a scheme is
@@ -772,34 +793,10 @@ def detect_acorn_partitions(input_path: Path) -> dict:
         Schemes that are detected but cannot be decoded (e.g. Simtec)
         return ``partitions: []`` with a ``description``.
     """
-    # SJ Research Nexus Disc Sharer (checked first: the 'Net1' magic is at
-    # a fixed location 0x20000 bytes in, well away from the Filecore boot
-    # block at 0xC00.  On a Nexus disc the 0xC00 area holds the disc
-    # sharer firmware, so HCCS detection (which looks for 'Andy' there)
-    # will naturally fail — but checking Nexus first is faster.)
-    result = _detect_nexus_partitions(input_path)
-    if result['detected']:
-        return result
-
-    # ICS / Baildon Electronics IDEFS (partition table at sector 0 with
-    # "Part" checksum — checked before HCCS because the strong checksum
-    # gives unambiguous identification without touching the 0xC00 area)
-    result = _detect_ics_partitions(input_path)
-    if result['detected']:
-        return result
-
-    # HCCS (most common Acorn hard-disc partitioning)
-    result = _detect_hccs_partitions(input_path)
-    if result['detected']:
-        return result
-
-    # Simtec IDEFS (signature only — documentation incomplete)
-    result = _detect_simtec_signature(input_path)
-    if result['detected']:
-        return result
-
-    # (Future: RISC iX, etc.)
-
+    for _name, probe in _ACORN_SCHEMES:
+        result = probe(input_path)
+        if result.get('detected'):
+            return result
     return {'detected': False}
 
 
