@@ -1224,9 +1224,8 @@ _COLUMN_CLASSES = {
     8: 'col-6 col-sm-4 col-md-3 col-lg-2 col-custom-8-xl',
 }
 
-_VALID_VIEWER_SIZES = ['small', 'medium', 'big']
-# Max pixel scale and max-height (vh) for the single-image full-width display.
-# 'big' matches the previous hardcoded behaviour (4× scale, 75 vh).
+# Single-image preview size is derived from column count — fewer columns = bigger preview.
+_COLUMNS_TO_SIZE = {2: 'big', 3: 'big', 4: 'medium', 6: 'small', 8: 'small'}
 _SIZE_MAX_SCALE = {'small': 2, 'medium': 3, 'big': 4}
 _SIZE_MAX_HEIGHT_VH = {'small': 25, 'medium': 50, 'big': 75}
 
@@ -1493,20 +1492,8 @@ def _render_viewer(artefact):
 
     viewer_col_class = _COLUMN_CLASSES[viewer_columns]
 
-    # ── Configurable preview size ─────────────────────────────────────────────
-    size_param = request.args.get('size')
-    if size_param in _VALID_VIEWER_SIZES:
-        viewer_size = size_param
-        if (current_user.is_authenticated
-                and current_user.get_preference('viewer_size') != size_param):
-            current_user.set_preference('viewer_size', size_param)
-            db.session.commit()
-    else:
-        saved_size = None
-        if current_user.is_authenticated:
-            saved_size = current_user.get_preference('viewer_size')
-        viewer_size = saved_size if saved_size in _VALID_VIEWER_SIZES else 'big'
-
+    # Preview size is derived from column count — no separate preference needed.
+    viewer_size = _COLUMNS_TO_SIZE[viewer_columns]
     viewer_size_max_scale = _SIZE_MAX_SCALE[viewer_size]
     viewer_size_max_height_vh = _SIZE_MAX_HEIGHT_VH[viewer_size]
 
@@ -1651,7 +1638,6 @@ def _render_viewer(artefact):
         viewer_columns=viewer_columns,
         viewer_col_class=viewer_col_class,
         valid_viewer_columns=_VALID_VIEWER_COLUMNS,
-        valid_viewer_sizes=_VALID_VIEWER_SIZES,
         viewer_size=viewer_size,
         viewer_size_max_scale=viewer_size_max_scale,
         viewer_size_max_height_vh=viewer_size_max_height_vh,

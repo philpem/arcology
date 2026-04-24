@@ -152,20 +152,8 @@
 
     {# Right-aligned controls #}
     <div class="ms-auto d-flex align-items-center gap-1">
-        {# Size selector — greyed out in thumbnail mode (doesn't affect that view) #}
-        <span class="text-muted small me-1" title="Preview size"><i class="bi bi-arrows-angle-expand"></i></span>
-        <div class="d-flex gap-1 {{ 'opacity-50 pe-none' if viewer_thumbnail_mode else '' }}">
-            {% for sz in valid_viewer_sizes %}
-            <a href="?{{ dict(pagination_args, size=sz) | urlencode }}"
-               class="btn btn-sm {{ 'btn-secondary' if viewer_size == sz else 'btn-outline-secondary' }}"
-               title="{{ sz | title }} preview"
-               aria-pressed="{{ 'true' if viewer_size == sz else 'false' }}">{{ sz[0] | upper }}</a>
-            {% endfor %}
-        </div>
-
-        {# Thumbnail toggle + column selector #}
+        {# Thumbnail toggle (aggregate / Mode 2 only) #}
         {% if is_aggregate_mode %}
-        <span class="border-start mx-1">&nbsp;</span>
         <a href="?{{ dict(pagination_args, thumb='0' if viewer_thumbnail_mode else '1') | urlencode }}"
            class="btn btn-sm {{ 'btn-secondary' if viewer_thumbnail_mode else 'btn-outline-secondary' }}"
            title="Thumbnail view — show single-image files together in one grid"
@@ -173,6 +161,7 @@
             <i class="bi bi-grid-3x2-gap"></i>
         </a>
         {% endif %}
+        {# Column selector — also controls single-image preview size (fewer cols = bigger) #}
         <span class="text-muted small mx-1"><i class="bi bi-grid-3x3-gap"></i></span>
         {% for cols in valid_viewer_columns %}
         <a href="?{{ dict(pagination_args, columns=cols) | urlencode }}"
