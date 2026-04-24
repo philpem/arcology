@@ -23,6 +23,7 @@ from .extraction import (
     parse_acorn_filename,
 )
 from .iso_riscos import parse_iso_riscos_filetypes
+from .iso9660 import parse_iso9660_pvd
 from .partition import (
     detect_partitions_sfdisk,
     detect_acorn_adfs,
@@ -66,6 +67,7 @@ __all__ = [
     'process_inf_sidecars',
     'parse_acorn_filename',
     'parse_iso_riscos_filetypes',
+    'parse_iso9660_pvd',
     'detect_partitions_sfdisk',
     'detect_acorn_adfs',
     'detect_acorn_partitions',

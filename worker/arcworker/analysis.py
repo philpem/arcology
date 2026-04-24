@@ -45,6 +45,7 @@ from .tools import (
 )
 from .tools.imd import (parse_imd_track0, detect_geometry_from_boot_data,
                         parse_imd_tracks, detect_track_density_mismatch)
+from .tools.iso9660 import parse_iso9660_pvd
 from .tools.flux import _geometry_to_gw_format, scp_fix_track_density
 
 
@@ -1259,6 +1260,13 @@ class AnalysisWorker:
         """
         Process METADATA_EXTRACT analysis.
         Extracts format-specific metadata.
+
+        For ISO 9660 images, parses the Primary Volume Descriptor to pull
+        out volume/publisher/preparer strings and the creation/modification
+        timestamps.  The PVD fields are both attached to the analysis
+        details (for history) and written back to the artefact's
+        ``media_metadata`` JSON column (for fast display on the artefact
+        page).
         """
         analysis_id = analysis['id']
 
@@ -1275,9 +1283,24 @@ class AnalysisWorker:
             'sha256': sha256
         }
 
+        summary = f'Extracted metadata for {artefact_type}'
+
+        if artefact_type == ArtefactType.ISO.value:
+            iso9660 = parse_iso9660_pvd(input_path)
+            if iso9660:
+                metadata['iso9660'] = iso9660
+                self.api.update_artefact_media_metadata(
+                    artefact['uuid'], {'iso9660': iso9660}
+                )
+                vol = iso9660.get('volume_identifier')
+                if vol:
+                    summary = f'ISO 9660 volume: {vol}'
+                else:
+                    summary = 'Parsed ISO 9660 Primary Volume Descriptor'
+
         self.complete_analysis(
             analysis_id,
-            summary=f'Extracted metadata for {artefact_type}',
+            summary=summary,
             details=json.dumps(metadata)
         )
 

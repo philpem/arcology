@@ -1896,6 +1896,23 @@ def _render_artefact_view(artefact):
                 and flux_visualisation_analysis is not None):
             break
 
+    # Parse format-specific metadata (populated by METADATA_EXTRACT for ISO
+    # images and potentially other formats).  Only the ``iso9660`` section is
+    # surfaced today; the template hides its card when the section is absent.
+    iso9660_metadata = None
+    if artefact.media_metadata:
+        try:
+            _mm = json.loads(artefact.media_metadata)
+        except (json.JSONDecodeError, TypeError) as e:
+            current_app.logger.warning(
+                f"Failed to parse media_metadata for artefact {artefact.uuid}: {e}"
+            )
+            _mm = None
+        if isinstance(_mm, dict):
+            iso9660 = _mm.get('iso9660')
+            if isinstance(iso9660, dict) and iso9660:
+                iso9660_metadata = iso9660
+
     # Build a lookup of per-partition metadata from PARTITION_DETECT, keyed by
     # partition index, so the template can display disc names, passwords,
     # protection levels, and flags inline in the Partitions table.
@@ -2149,6 +2166,7 @@ def _render_artefact_view(artefact):
                            flux_visualisation_analysis=flux_visualisation_analysis,
                            partition_detect_details=partition_detect_details,
                            partition_metadata=partition_metadata,
+                           iso9660_metadata=iso9660_metadata,
                            hashdb_mode=hashdb_mode,
                            recognised_products=recognised_products,
                            recognised_folder_paths=recognised_folder_paths,
