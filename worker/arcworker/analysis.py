@@ -1178,7 +1178,8 @@ class AnalysisWorker:
         # For DOS/FAT images, read the volume label straight from the boot
         # sector / root directory.  7z does not surface this information, so
         # the label would otherwise be lost.
-        if disc_name is None and not is_acorn and fs_type != 'iso9660':
+        _FAT_FS_TYPES = {'fat', 'fat12', 'fat16', 'fat32', 'dos', 'msdos'}
+        if disc_name is None and fs_type in _FAT_FS_TYPES:
             try:
                 disc_name = read_fat_volume_label(input_path)
             except Exception as exc:  # pragma: no cover - defensive
