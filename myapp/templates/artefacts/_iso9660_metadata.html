@@ -1,0 +1,79 @@
+        {% if iso9660_metadata %}
+        {#
+          ISO 9660 Primary Volume Descriptor metadata, populated by the
+          worker's METADATA_EXTRACT analysis for ISO artefacts.  The card is
+          hidden unless at least one PVD field is present and is collapsed
+          by default — click the header to expand.
+
+          Date fields are stored as ISO 8601 strings (e.g.
+          "2001-05-17T14:23:45+01:00") — rendered verbatim here.
+        #}
+        {% call(body_slot) rollup.card(
+            collapse_id    = "iso9660MetadataCollapse",
+            title          = "ISO 9660 Volume Information",
+            icon           = "disc",
+        ) %}
+            {% if not body_slot %}
+                {% if iso9660_metadata.volume_identifier %}
+                <span class="badge bg-secondary ms-1">{{ iso9660_metadata.volume_identifier }}</span>
+                {% endif %}
+            {% else %}
+                <div class="card-body p-0">
+                    <dl class="row mb-0 p-3 small">
+                        {% if iso9660_metadata.volume_identifier %}
+                        <dt class="col-sm-4">Volume</dt>
+                        <dd class="col-sm-8"><code>{{ iso9660_metadata.volume_identifier }}</code></dd>
+                        {% endif %}
+                        {% if iso9660_metadata.volume_set_identifier %}
+                        <dt class="col-sm-4">Volume Set</dt>
+                        <dd class="col-sm-8"><code>{{ iso9660_metadata.volume_set_identifier }}</code></dd>
+                        {% endif %}
+                        {% if iso9660_metadata.system_identifier %}
+                        <dt class="col-sm-4">System</dt>
+                        <dd class="col-sm-8"><code>{{ iso9660_metadata.system_identifier }}</code></dd>
+                        {% endif %}
+                        {% if iso9660_metadata.publisher_identifier %}
+                        <dt class="col-sm-4">Publisher</dt>
+                        <dd class="col-sm-8">{{ iso9660_metadata.publisher_identifier }}</dd>
+                        {% endif %}
+                        {% if iso9660_metadata.data_preparer_identifier %}
+                        <dt class="col-sm-4">Preparer</dt>
+                        <dd class="col-sm-8">{{ iso9660_metadata.data_preparer_identifier }}</dd>
+                        {% endif %}
+                        {% if iso9660_metadata.application_identifier %}
+                        <dt class="col-sm-4">Application</dt>
+                        <dd class="col-sm-8">{{ iso9660_metadata.application_identifier }}</dd>
+                        {% endif %}
+                        {% if iso9660_metadata.volume_creation_date %}
+                        <dt class="col-sm-4">Created</dt>
+                        <dd class="col-sm-8"><code>{{ iso9660_metadata.volume_creation_date }}</code></dd>
+                        {% endif %}
+                        {% if iso9660_metadata.volume_modification_date %}
+                        <dt class="col-sm-4">Modified</dt>
+                        <dd class="col-sm-8"><code>{{ iso9660_metadata.volume_modification_date }}</code></dd>
+                        {% endif %}
+                        {% if iso9660_metadata.volume_expiration_date %}
+                        <dt class="col-sm-4">Expires</dt>
+                        <dd class="col-sm-8"><code>{{ iso9660_metadata.volume_expiration_date }}</code></dd>
+                        {% endif %}
+                        {% if iso9660_metadata.volume_effective_date %}
+                        <dt class="col-sm-4">Effective</dt>
+                        <dd class="col-sm-8"><code>{{ iso9660_metadata.volume_effective_date }}</code></dd>
+                        {% endif %}
+                        {% if iso9660_metadata.copyright_file %}
+                        <dt class="col-sm-4">Copyright File</dt>
+                        <dd class="col-sm-8"><code>{{ iso9660_metadata.copyright_file }}</code></dd>
+                        {% endif %}
+                        {% if iso9660_metadata.abstract_file %}
+                        <dt class="col-sm-4">Abstract File</dt>
+                        <dd class="col-sm-8"><code>{{ iso9660_metadata.abstract_file }}</code></dd>
+                        {% endif %}
+                        {% if iso9660_metadata.bibliographic_file %}
+                        <dt class="col-sm-4">Bibliographic File</dt>
+                        <dd class="col-sm-8"><code>{{ iso9660_metadata.bibliographic_file }}</code></dd>
+                        {% endif %}
+                    </dl>
+                </div>
+            {% endif %}
+        {% endcall %}
+        {% endif %}

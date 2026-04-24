@@ -483,7 +483,16 @@ def move_artefact(uuid):
 @blueprint.route('/artefacts/<string:uuid>', methods=['PATCH'])
 @require_auth('read_upload')
 def update_artefact(uuid):
-    """Update mutable fields on an artefact (md5 and sha256)."""
+    """
+    Update mutable fields on an artefact.
+
+    Accepted fields:
+      - ``md5`` / ``sha256`` — replace the stored hash strings.
+      - ``media_metadata`` — JSON object that is **merged** (shallow, at the
+        top-level key) into the existing ``media_metadata`` JSON, so different
+        sections (e.g. ``iso9660``) can be written independently without
+        clobbering one another.  Pass ``null`` to clear the field.
+    """
     artefact = _get_artefact_or_404(uuid)
     data, error = _json_object()
     if error:
@@ -492,6 +501,23 @@ def update_artefact(uuid):
         artefact.md5 = data['md5']
     if 'sha256' in data:
         artefact.sha256 = data['sha256']
+    if 'media_metadata' in data:
+        incoming = data['media_metadata']
+        if incoming is None:
+            artefact.media_metadata = None
+        elif isinstance(incoming, dict):
+            existing = {}
+            if artefact.media_metadata:
+                try:
+                    parsed = json.loads(artefact.media_metadata)
+                    if isinstance(parsed, dict):
+                        existing = parsed
+                except (json.JSONDecodeError, TypeError):
+                    existing = {}
+            existing.update(incoming)
+            artefact.media_metadata = json.dumps(existing)
+        else:
+            return error_response('media_metadata must be an object or null', 400)
     db.session.commit()
     return jsonify(artefact_to_dict(artefact))
 

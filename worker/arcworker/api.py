@@ -125,6 +125,16 @@ class ArcologyAPI:
         """Write computed MD5 and SHA256 hashes back to the artefact record."""
         self.patch(f"/artefacts/{artefact_uuid}", {'md5': md5, 'sha256': sha256})
 
+    def update_artefact_media_metadata(self, artefact_uuid: str, metadata: dict):
+        """
+        Write format-specific metadata back to the artefact record.
+
+        The server merges the supplied dict into any existing media_metadata
+        JSON so callers can populate one section at a time (e.g. just
+        ``iso9660``) without clobbering others.
+        """
+        self.patch(f"/artefacts/{artefact_uuid}", {'media_metadata': metadata})
+
     def update_analysis(self, analysis_id: int, **kwargs):
         """
         Update analysis record in API.
