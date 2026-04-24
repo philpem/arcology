@@ -63,7 +63,7 @@
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h1>{{ artefact.label }} <small class="text-muted fs-5">— viewer</small></h1>
-    <a href="{{ artefact_url(artefact) }}{% if current_path %}?path={{ current_path | urlencode }}{% endif %}" class="btn btn-outline-secondary">
+    <a href="{{ artefact_url(artefact) }}{% if file_list_args %}?{{ file_list_args | urlencode }}{% endif %}" class="btn btn-outline-secondary">
         <i class="bi bi-arrow-left"></i> Back
     </a>
 </div>
@@ -128,7 +128,7 @@
     <a href="?{{ filetype_toggle_urls[ft] | urlencode }}"
        class="btn btn-sm {{ 'btn-secondary' if ft in active_filetypes else 'btn-outline-secondary' }}"
        aria-pressed="{{ 'true' if ft in active_filetypes else 'false' }}">
-        {{ ft | filetype_name }} ({{ count }})
+        {{ ft | unified_type_label }} ({{ count }})
     </a>
     {% endfor %}
     {% if active_filetypes %}
@@ -136,6 +136,24 @@
     {% endif %}
     <span class="border-start mx-1">&nbsp;</span>
     {% endif %}
+
+    {# Filename glob filter #}
+    <form method="get" class="d-flex align-items-center gap-1">
+    {% for k, v in pagination_args.items() %}
+    {% if k != 'filename' %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endif %}
+    {% endfor %}
+    <input type="text" name="filename" value="{{ filename_filter }}"
+           class="form-control form-control-sm" placeholder="Filename (*.wmf)" style="width:150px"
+           title="Filter outputs by filename glob. * matches any characters, ? matches one character.">
+    <button type="submit" class="btn btn-sm btn-outline-secondary" title="Apply filename filter">
+        <i class="bi bi-funnel"></i>
+    </button>
+    {% if filename_filter %}
+    <a href="?{{ clear_filename_args | urlencode }}" class="btn btn-sm btn-outline-danger" title="Clear filename filter">
+        <i class="bi bi-x"></i>
+    </a>
+    {% endif %}
+    </form>
 
     {# Summary counts #}
     <span class="text-muted small">
@@ -169,10 +187,11 @@
 </div>
 
 {# Empty-filter feedback #}
-{% if active_filetypes and not output_groups %}
+{% if (active_filetypes or filename_filter) and not output_groups %}
 <div class="alert alert-info">
-    <i class="bi bi-funnel"></i> No outputs match the current filetype filter.
-    <a href="?{{ clear_filter_args | urlencode }}" class="alert-link">Clear filter</a>
+    <i class="bi bi-funnel"></i> No outputs match the current filter.
+    {% if active_filetypes %}<a href="?{{ clear_filter_args | urlencode }}" class="alert-link">Clear filetype filter</a>{% endif %}
+    {% if filename_filter %}<a href="?{{ clear_filename_args | urlencode }}" class="alert-link">Clear filename filter</a>{% endif %}
 </div>
 {% endif %}
 {% endif %}
