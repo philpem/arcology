@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 
 from shared.enums import ArtefactType
-from .base import run_tool_with_output
+from .base import run_tool_with_output, run_and_build_result, tool_result
 
 
 # Map (filesystem, cylinders, heads, sectors_per_track, sector_size) → gw format name.
@@ -81,23 +81,12 @@ def flux_visualisation_fluxfox(input_path: Path, output_path: Path) -> dict:
         '--ss=4',
         '--rasterize_data'
     ]
-    result, process_output = run_tool_with_output(cmd)
-
-    if result.returncode == 0 and output_path.exists():
-        return {
-            'success': True,
-            'tool': 'fluxfox/imgviz',
-            'output_path': str(output_path),
-            'summary': 'Flux visualisation generated with Fluxfox',
-            'process_output': process_output
-        }
-
-    return {
-        'success': False,
-        'tool': 'fluxfox/imgviz',
-        'error': result.stderr.decode()[:1000],
-        'process_output': process_output
-    }
+    return run_and_build_result(
+        cmd,
+        tool='fluxfox/imgviz',
+        output_path=output_path,
+        summary='Flux visualisation generated with Fluxfox',
+    )
 
 
 def flux_visualisation_hxcfe(input_path: Path, output_path: Path) -> dict:
@@ -118,23 +107,12 @@ def flux_visualisation_hxcfe(input_path: Path, output_path: Path) -> dict:
         '-conv:PNG_DISK_IMAGE',
         f'-foutput:{output_path}'
     ]
-    result, process_output = run_tool_with_output(cmd)
-
-    if result.returncode == 0 and output_path.exists():
-        return {
-            'success': True,
-            'tool': 'hxcfe',
-            'output_path': str(output_path),
-            'summary': 'Flux visualisation generated with HxCFE',
-            'process_output': process_output
-        }
-
-    return {
-        'success': False,
-        'tool': 'hxcfe',
-        'error': result.stderr.decode()[:1000],
-        'process_output': process_output
-    }
+    return run_and_build_result(
+        cmd,
+        tool='hxcfe',
+        output_path=output_path,
+        summary='Flux visualisation generated with HxCFE',
+    )
 
 
 def flux_to_imd_hxcfe(input_path: Path, output_path: Path) -> dict:
@@ -154,24 +132,13 @@ def flux_to_imd_hxcfe(input_path: Path, output_path: Path) -> dict:
         '-conv:IMD_IMG',
         f'-foutput:{output_path}'
     ]
-    result, process_output = run_tool_with_output(cmd)
-
-    if result.returncode == 0 and output_path.exists():
-        return {
-            'success': True,
-            'tool': 'hxcfe',
-            'output_path': str(output_path),
-            'output_type': ArtefactType.IMD.value,
-            'summary': 'Converted to ImageDisk format',
-            'process_output': process_output
-        }
-
-    return {
-        'success': False,
-        'tool': 'hxcfe',
-        'error': result.stderr.decode()[:1000],
-        'process_output': process_output
-    }
+    return run_and_build_result(
+        cmd,
+        tool='hxcfe',
+        output_path=output_path,
+        summary='Converted to ImageDisk format',
+        output_type=ArtefactType.IMD.value,
+    )
 
 
 def flux_to_hfe_hxcfe(input_path: Path, output_path: Path) -> dict:
@@ -191,24 +158,13 @@ def flux_to_hfe_hxcfe(input_path: Path, output_path: Path) -> dict:
         '-conv:HXC_HFEV3',
         f'-foutput:{output_path}'
     ]
-    result, process_output = run_tool_with_output(cmd)
-
-    if result.returncode == 0 and output_path.exists():
-        return {
-            'success': True,
-            'tool': 'hxcfe',
-            'output_path': str(output_path),
-            'output_type': ArtefactType.HFE.value,
-            'summary': 'Converted to HFE format',
-            'process_output': process_output
-        }
-
-    return {
-        'success': False,
-        'tool': 'hxcfe',
-        'error': result.stderr.decode()[:1000],
-        'process_output': process_output
-    }
+    return run_and_build_result(
+        cmd,
+        tool='hxcfe',
+        output_path=output_path,
+        summary='Converted to HFE format',
+        output_type=ArtefactType.HFE.value,
+    )
 
 
 def dfi_to_scp_hxcfe(input_path: Path, output_path: Path, clock_mhz: int | None = None) -> dict:
@@ -257,21 +213,19 @@ def dfi_to_scp_hxcfe(input_path: Path, output_path: Path, clock_mhz: int | None 
         result, process_output = run_tool_with_output(cmd)
 
     if result.returncode == 0 and output_path.exists():
-        return {
-            'success': True,
-            'tool': 'hxcfe',
-            'output_path': str(output_path),
-            'output_type': ArtefactType.SCP.value,
-            'summary': 'Converted DFI to SCP flux stream',
-            'process_output': process_output
-        }
+        return tool_result(
+            True, tool='hxcfe',
+            output_path=str(output_path),
+            output_type=ArtefactType.SCP.value,
+            summary='Converted DFI to SCP flux stream',
+            process_output=process_output,
+        )
 
-    return {
-        'success': False,
-        'tool': 'hxcfe',
-        'error': result.stderr.decode()[:1000],
-        'process_output': process_output
-    }
+    return tool_result(
+        False, tool='hxcfe',
+        error=result.stderr.decode(errors='replace')[:1000],
+        process_output=process_output,
+    )
 
 
 def a2r_to_scp_gw(input_path: Path, output_path: Path) -> dict:
@@ -293,24 +247,13 @@ def a2r_to_scp_gw(input_path: Path, output_path: Path) -> dict:
         str(input_path),
         str(output_path),
     ]
-    result, process_output = run_tool_with_output(cmd)
-
-    if result.returncode == 0 and output_path.exists():
-        return {
-            'success': True,
-            'tool': 'greaseweazle',
-            'output_path': str(output_path),
-            'output_type': ArtefactType.SCP.value,
-            'summary': 'Converted A2R to SCP flux stream',
-            'process_output': process_output
-        }
-
-    return {
-        'success': False,
-        'tool': 'greaseweazle',
-        'error': result.stderr.decode()[:1000],
-        'process_output': process_output
-    }
+    return run_and_build_result(
+        cmd,
+        tool='greaseweazle',
+        output_path=output_path,
+        summary='Converted A2R to SCP flux stream',
+        output_type=ArtefactType.SCP.value,
+    )
 
 
 def sector_image_to_raw_greaseweazle(
@@ -336,26 +279,14 @@ def sector_image_to_raw_greaseweazle(
         str(input_path),
         str(output_path)
     ]
-    result, process_output = run_tool_with_output(cmd)
-
-    if result.returncode == 0 and output_path.exists():
-        return {
-            'success': True,
-            'tool': 'greaseweazle',
-            'output_path': str(output_path),
-            'output_type': ArtefactType.RAW_SECTOR.value,
-            'gw_format': gw_format,
-            'summary': 'Converted to raw sector image (bad sectors filled)',
-            'process_output': process_output
-        }
-
-    return {
-        'success': False,
-        'tool': 'greaseweazle',
-        'gw_format': gw_format,
-        'error': result.stderr.decode()[:1000],
-        'process_output': process_output
-    }
+    return run_and_build_result(
+        cmd,
+        tool='greaseweazle',
+        output_path=output_path,
+        summary='Converted to raw sector image (bad sectors filled)',
+        output_type=ArtefactType.RAW_SECTOR.value,
+        gw_format=gw_format,
+    )
 
 def scp_fix_track_density(input_path: Path, output_path: Path, heads: list[int] | None = None) -> dict:
     """
@@ -376,23 +307,12 @@ def scp_fix_track_density(input_path: Path, output_path: Path, heads: list[int] 
         str(input_path),
         str(output_path),
     ]
-    result, process_output = run_tool_with_output(cmd)
-
-    if result.returncode == 0 and output_path.exists():
-        return {
-            'success': True,
-            'tool': 'greaseweazle',
-            'output_path': str(output_path),
-            'heads': heads if heads is not None else [0, 1],
-            'process_output': process_output,
-        }
-
-    return {
-        'success': False,
-        'tool': 'greaseweazle',
-        'heads': heads if heads is not None else [0, 1],
-        'error': result.stderr.decode()[:1000],
-        'process_output': process_output,
-    }
+    return run_and_build_result(
+        cmd,
+        tool='greaseweazle',
+        output_path=output_path,
+        summary='Extracted even-indexed tracks from double-stepped SCP',
+        heads=heads if heads is not None else [0, 1],
+    )
 
 # vim: ts=4 sw=4 et

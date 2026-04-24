@@ -26,7 +26,7 @@ import json
 import struct
 from pathlib import Path
 
-from .base import run_tool_with_output
+from .base import run_tool_with_output, tool_result
 from ..config import log
 
 
@@ -822,21 +822,17 @@ def detect_partitions_sfdisk(input_path: Path) -> dict:
         cmd = ['sfdisk', '--json', str(input_path)]
         result, process_output = run_tool_with_output(cmd, timeout=30)
     except FileNotFoundError:
-        return {
-            'success': False,
-            'tool': 'sfdisk',
-            'partitions': [],
-            'error': 'sfdisk not installed',
-        }
+        return tool_result(
+            False, tool='sfdisk', error='sfdisk not installed', partitions=[],
+        )
 
     if result.returncode != 0:
-        return {
-            'success': False,
-            'tool': 'sfdisk',
-            'partitions': [],
-            'error': f'sfdisk failed (exit {result.returncode})',
-            'process_output': process_output
-        }
+        return tool_result(
+            False, tool='sfdisk',
+            error=f'sfdisk failed (exit {result.returncode})',
+            process_output=process_output,
+            partitions=[],
+        )
 
     try:
         data = json.loads(result.stdout)
@@ -951,13 +947,12 @@ def detect_partitions_sfdisk(input_path: Path) -> dict:
             result_dict['dropped_partitions'] = dropped_partitions
         return result_dict
     except (json.JSONDecodeError, KeyError) as e:
-        return {
-            'success': False,
-            'tool': 'sfdisk',
-            'partitions': [],
-            'error': f'Failed to parse sfdisk output: {e}',
-            'process_output': process_output
-        }
+        return tool_result(
+            False, tool='sfdisk',
+            error=f'Failed to parse sfdisk output: {e}',
+            process_output=process_output,
+            partitions=[],
+        )
 
 
 # =========================================================================
@@ -1184,21 +1179,18 @@ def detect_format_file_cmd(input_path: Path) -> dict:
         cmd = ['file', '-b', str(input_path)]
         result, process_output = run_tool_with_output(cmd, timeout=10)
     except FileNotFoundError:
-        return {
-            'success': False,
-            'tool': 'file',
-            'file_type': '',
-            'error': 'file command not installed',
-        }
+        return tool_result(
+            False, tool='file', error='file command not installed', file_type='',
+        )
 
     file_type = result.stdout.decode(errors='replace').strip() if result.returncode == 0 else ''
 
-    return {
-        'success': result.returncode == 0,
-        'tool': 'file',
-        'file_type': file_type,
-        'process_output': process_output
-    }
+    return tool_result(
+        result.returncode == 0,
+        tool='file',
+        process_output=process_output,
+        file_type=file_type,
+    )
 
 
 
