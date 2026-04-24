@@ -458,9 +458,16 @@ class TestAnalysisMapFluxDecode(unittest.TestCase):
         from myapp.blueprints.artefacts import ANALYSIS_MAP
         self.assertIn(AnalysisType.FLUX_DECODE, ANALYSIS_MAP[ArtefactType.IMD])
 
-    def test_scp_has_flux_decode(self):
+    def test_scp_flux_decode_not_in_analysis_map(self):
+        # FLUX_DECODE is intentionally absent from the SCP ANALYSIS_MAP entry.
+        # DETECT_TRACK_DENSITY queues it explicitly on the correct target image
+        # (original or density-corrected SCP) to prevent duplicate processing.
         from myapp.blueprints.artefacts import ANALYSIS_MAP
-        self.assertIn(AnalysisType.FLUX_DECODE, ANALYSIS_MAP[ArtefactType.SCP])
+        self.assertNotIn(AnalysisType.FLUX_DECODE, ANALYSIS_MAP[ArtefactType.SCP])
+
+    def test_scp_has_detect_track_density(self):
+        from myapp.blueprints.artefacts import ANALYSIS_MAP
+        self.assertIn(AnalysisType.DETECT_TRACK_DENSITY, ANALYSIS_MAP[ArtefactType.SCP])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -543,6 +550,133 @@ class TestSkipAnalyses(unittest.TestCase):
             db.session.flush()
             queued = {a.analysis_type for a in Analysis.query.filter_by(artefact_id=artefact.id).all()}
             self.assertIn(AnalysisType.FLUX_DECODE, queued)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# process_detect_track_density downstream queueing
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _run_detect_track_density(work_dir: Path, *, mismatch_detected: bool,
+                               fix_success: bool = True,
+                               imd_success: bool = True):
+    """
+    Run process_detect_track_density with all external tools mocked.
+
+    Returns the worker mock so callers can inspect api.queue_analysis calls.
+    """
+    artefact = {
+        'id': 1,
+        'uuid': 'original-uuid',
+        'label': 'Test SCP',
+        'artefact_type': ArtefactType.SCP.value,
+        'storage_path': 'disc.scp',
+        'storage_directory': 'uploads',
+    }
+    analysis = {'id': 42, 'hints': None}
+
+    source_path = work_dir / 'disc.scp'
+    source_path.touch()
+
+    worker = MagicMock(spec=AnalysisWorker)
+    worker.get_input_path.return_value = source_path
+    worker.api = MagicMock()
+    worker.api.register_derived_artefact.return_value = {
+        'artefact': {'uuid': 'corrected-uuid'}
+    }
+
+    detection_result = {
+        'detected': mismatch_detected,
+        'confidence': 0.95 if mismatch_detected else 0.0,
+        'checked': 40 if mismatch_detected else 0,
+        'matching': 40 if mismatch_detected else 0,
+        'data_heads': [0] if mismatch_detected else [],
+        'blank_heads': [1] if mismatch_detected else [],
+        'odd_tracks_with_duplicate_data': 0,
+        'odd_tracks_with_varied_data': 0,
+        'odd_tracks_with_uniform_data': 0,
+    }
+
+    imd_result = {'success': imd_success}
+    fix_result = {'success': fix_success}
+
+    with patch('worker.arcworker.analysis.flux_to_imd_hxcfe', return_value=imd_result), \
+         patch('worker.arcworker.analysis.parse_imd_tracks',
+               return_value=[{'physical_index': 0}] if imd_success else None), \
+         patch('worker.arcworker.analysis.detect_track_density_mismatch',
+               return_value=detection_result), \
+         patch('worker.arcworker.analysis.scp_fix_track_density', return_value=fix_result):
+        AnalysisWorker.process_detect_track_density(worker, analysis, artefact, work_dir)
+
+    return worker
+
+
+class TestDetectTrackDensityDownstreamQueueing(unittest.TestCase):
+    """
+    process_detect_track_density must queue FLUX_VISUALISATION and FLUX_DECODE on
+    the correct SCP target — original when no mismatch, corrected when 40-in-80
+    detected — to prevent duplicate HFE/IMD/RAW_SECTOR artefacts.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.work_dir = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_no_mismatch_queues_flux_visualisation_on_original(self):
+        worker = _run_detect_track_density(self.work_dir, mismatch_detected=False)
+        calls = [c.args for c in worker.api.queue_analysis.call_args_list]
+        uuids = [c[0] for c in calls]
+        types = [c[1] for c in calls]
+        self.assertIn('original-uuid', uuids)
+        self.assertIn(AnalysisType.FLUX_VISUALISATION.value, types)
+
+    def test_no_mismatch_queues_flux_decode_on_original(self):
+        worker = _run_detect_track_density(self.work_dir, mismatch_detected=False)
+        calls = [c.args for c in worker.api.queue_analysis.call_args_list]
+        uuids = [c[0] for c in calls]
+        types = [c[1] for c in calls]
+        self.assertIn('original-uuid', uuids)
+        self.assertIn(AnalysisType.FLUX_DECODE.value, types)
+
+    def test_no_mismatch_does_not_queue_on_corrected_uuid(self):
+        worker = _run_detect_track_density(self.work_dir, mismatch_detected=False)
+        calls = [c.args for c in worker.api.queue_analysis.call_args_list]
+        uuids = [c[0] for c in calls]
+        self.assertNotIn('corrected-uuid', uuids)
+
+    def test_mismatch_queues_flux_visualisation_on_corrected(self):
+        worker = _run_detect_track_density(self.work_dir, mismatch_detected=True)
+        calls = [c.args for c in worker.api.queue_analysis.call_args_list]
+        uuids = [c[0] for c in calls]
+        types = [c[1] for c in calls]
+        self.assertIn('corrected-uuid', uuids)
+        self.assertIn(AnalysisType.FLUX_VISUALISATION.value, types)
+
+    def test_mismatch_queues_flux_decode_on_corrected(self):
+        worker = _run_detect_track_density(self.work_dir, mismatch_detected=True)
+        calls = [c.args for c in worker.api.queue_analysis.call_args_list]
+        uuids = [c[0] for c in calls]
+        types = [c[1] for c in calls]
+        self.assertIn('corrected-uuid', uuids)
+        self.assertIn(AnalysisType.FLUX_DECODE.value, types)
+
+    def test_mismatch_does_not_queue_on_original(self):
+        """When a corrected SCP is created, the original must not enter the decode pipeline."""
+        worker = _run_detect_track_density(self.work_dir, mismatch_detected=True)
+        calls = [c.args for c in worker.api.queue_analysis.call_args_list]
+        uuids = [c[0] for c in calls]
+        self.assertNotIn('original-uuid', uuids)
+
+    def test_mismatch_corrected_scp_skips_detect_track_density(self):
+        """The corrected SCP must skip DETECT_TRACK_DENSITY to avoid re-detection."""
+        worker = _run_detect_track_density(self.work_dir, mismatch_detected=True)
+        register_calls = worker.api.register_derived_artefact.call_args_list
+        self.assertEqual(len(register_calls), 1)
+        kwargs = register_calls[0].kwargs
+        skip = kwargs.get('skip_analyses', [])
+        self.assertIn(AnalysisType.DETECT_TRACK_DENSITY.name, skip)
 
 
 if __name__ == '__main__':

@@ -153,8 +153,12 @@ def detect_artefact_type(filename: str) -> ArtefactType:
 
 # Analysis types appropriate for each artefact type
 ANALYSIS_MAP = {
-    # Flux images - visualisation and decode attempt
-    ArtefactType.SCP: [AnalysisType.DETECT_TRACK_DENSITY, AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
+    # Flux images - visualisation and decode attempt.
+    # SCP: only DETECT_TRACK_DENSITY and METADATA_EXTRACT are queued at upload time.
+    # DETECT_TRACK_DENSITY queues FLUX_VISUALISATION and FLUX_DECODE on the correct
+    # target (original SCP if no mismatch; density-corrected SCP if 40-in-80 detected),
+    # preventing duplicate HFE/IMD/RAW_SECTOR artefacts from both images.
+    ArtefactType.SCP: [AnalysisType.DETECT_TRACK_DENSITY, AnalysisType.METADATA_EXTRACT],
     ArtefactType.DFI: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
     ArtefactType.A2R: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
     #ArtefactType.KF: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],

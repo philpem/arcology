@@ -710,10 +710,18 @@ class AnalysisWorker:
           2. Parse all IMD tracks with parse_imd_tracks()
           3. Run detect_track_density_mismatch() on the track list
           4. If detected: use gw convert to strip odd tracks → derived 40-track SCP
+             and queue FLUX_VISUALISATION + FLUX_DECODE on the corrected SCP only.
+          5. If not detected: queue FLUX_VISUALISATION + FLUX_DECODE on the original SCP.
+
+        FLUX_VISUALISATION and FLUX_DECODE are not queued at upload time for SCP
+        artefacts (see ANALYSIS_MAP).  This handler gates them so only the correct
+        image (original or density-corrected) enters the HFE/IMD/RAW_SECTOR pipeline,
+        preventing duplicate derived artefacts from both the 80-track and 40-track images.
         """
         analysis_id    = analysis['id']
         input_path     = self.get_input_path(artefact, work_dir)
         artefact_label = artefact['label']
+        artefact_uuid  = artefact.get('uuid')
 
         # Step 1: SCP → IMD (temporary; used only for track metadata)
         imd_path   = work_dir / f"{input_path.stem}_tddetect.imd"
@@ -741,6 +749,10 @@ class AnalysisWorker:
                 summary='No track density mismatch detected',
                 details=json.dumps({'detection': detection}),
             )
+            # No density mismatch: queue downstream analyses on the original SCP.
+            if artefact_uuid:
+                self.api.queue_analysis(artefact_uuid, AnalysisType.FLUX_VISUALISATION.value)
+                self.api.queue_analysis(artefact_uuid, AnalysisType.FLUX_DECODE.value)
             return
 
         # Step 4: extract even tracks → density-corrected SCP
@@ -757,6 +769,13 @@ class AnalysisWorker:
                 skip_analyses=[AnalysisType.DETECT_TRACK_DENSITY.name],
             )
             log.info(f"Created density-corrected SCP: {derived}")
+            # Density mismatch detected: queue downstream analyses on the corrected
+            # SCP only — not on the original 80-track image — to prevent duplicate
+            # HFE/IMD/RAW_SECTOR artefacts from both images.
+            if derived and 'artefact' in derived:
+                corrected_uuid = derived['artefact']['uuid']
+                self.api.queue_analysis(corrected_uuid, AnalysisType.FLUX_VISUALISATION.value)
+                self.api.queue_analysis(corrected_uuid, AnalysisType.FLUX_DECODE.value)
 
         conf_pct   = f"{detection['confidence']:.0%}"
         odd_duplicate = detection['odd_tracks_with_duplicate_data']
