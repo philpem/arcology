@@ -18,9 +18,6 @@
 .viewer-img-card {
     background: none;
 }
-.viewer-img-fullwidth {
-    max-height: 75vh; /* fallback for SVGs without intrinsic dimensions */
-}
 .viewer-name {
     font-size: 0.8rem;
     word-break: break-all;
@@ -102,10 +99,13 @@
 {% endif %}
 
 {% if failed_conversion_list and viewer_status != 'failed' %}
-<div class="alert alert-warning">
-    <i class="bi bi-exclamation-triangle-fill"></i>
-    <strong>{{ failed_conversion_list | length }} file(s) could not be converted:</strong>
-    <ul class="mb-0 mt-1">
+<details class="alert alert-warning mb-3">
+    <summary class="d-flex align-items-center gap-2" style="cursor: pointer; list-style: none; -webkit-appearance: none;">
+        <i class="bi bi-exclamation-triangle-fill flex-shrink-0"></i>
+        <strong>{{ failed_conversion_list | length }} file(s) could not be converted</strong>
+        <span class="ms-auto small text-muted">click to expand</span>
+    </summary>
+    <ul class="mb-0 mt-2">
         {% for fc in failed_conversion_list %}
         <li>
             {% if fc.source_file %}<code>{{ fc.source_file }}</code>{% else %}<em>(unknown file)</em>{% endif %}
@@ -115,7 +115,7 @@
         </li>
         {% endfor %}
     </ul>
-</div>
+</details>
 {% endif %}
 
 {# ── Toolbar: filetype filters + columns selector ── #}
@@ -145,9 +145,19 @@
         {% if total_counts.get('svg') %}<span class="ms-2"><i class="bi bi-filetype-svg"></i> {{ total_counts['svg'] }}</span>{% endif %}
     </span>
 
-    {# Columns selector (right-aligned) #}
+    {# Right-aligned controls #}
     <div class="ms-auto d-flex align-items-center gap-1">
-        <span class="text-muted small me-1"><i class="bi bi-grid-3x3-gap"></i></span>
+        {# Thumbnail toggle (aggregate / Mode 2 only) #}
+        {% if is_aggregate_mode %}
+        <a href="?{{ dict(pagination_args, thumb='0' if viewer_thumbnail_mode else '1') | urlencode }}"
+           class="btn btn-sm {{ 'btn-secondary' if viewer_thumbnail_mode else 'btn-outline-secondary' }}"
+           title="Thumbnail view — show single-image files together in one grid"
+           aria-pressed="{{ 'true' if viewer_thumbnail_mode else 'false' }}">
+            <i class="bi bi-grid-3x2-gap"></i>
+        </a>
+        {% endif %}
+        {# Column selector — also controls single-image preview size (fewer cols = bigger) #}
+        <span class="text-muted small mx-1"><i class="bi bi-grid-3x3-gap"></i></span>
         {% for cols in valid_viewer_columns %}
         <a href="?{{ dict(pagination_args, columns=cols) | urlencode }}"
            class="btn btn-sm {{ 'btn-secondary' if viewer_columns == cols else 'btn-outline-secondary' }}"
@@ -229,6 +239,31 @@
 {% endif %}
 
 {% for group in output_groups %}
+
+{% if group.is_thumbnail_bundle %}
+{# ── Thumbnail bundle: all single-image non-explicit files in one grid ── #}
+<div class="row g-3 mb-4">
+    {% for item in group.bundle_items %}
+    {% set img_out = item.outputs | selectattr('type', 'equalto', 'image') | first %}
+    {% if img_out %}
+    {% set preview_file = img_out.svg_filename if img_out.svg_filename else img_out.filename %}
+    <div class="{{ viewer_col_class }}">
+        <div class="card viewer-img-card h-100">
+            <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
+               target="_blank" rel="noopener">
+                <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
+                     class="viewer-img card-img-top" alt="{{ img_out.name }}" loading="lazy">
+            </a>
+            <div class="card-footer p-1 text-center">
+                <span class="viewer-name font-monospace">{{ item.label }}</span>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    {% endfor %}
+</div>
+
+{% else %}
 {% set ns = namespace(image_outputs=[], svg_outputs=[], text_outputs=[]) %}
 {% for out in group.outputs %}
     {% if out.type == 'image' %}{% set ns.image_outputs = ns.image_outputs + [out] %}
@@ -265,42 +300,24 @@
 
 {# ── Image outputs ── #}
 {% if ns.image_outputs %}
-    {% if ns.image_outputs | length == 1 %}
-    {# Single image for a single-component file — show full width like text #}
-    {% set out = ns.image_outputs[0] %}
-    {% set preview_file = out.svg_filename if out.svg_filename else out.filename %}
-    <div class="card viewer-img-card mb-4">
-        <div class="p-2 text-center">
+<div class="row g-3 mb-4">
+    {% for out in ns.image_outputs %}
+    <div class="{{ viewer_col_class }}">
+        <div class="card viewer-img-card h-100">
+            {# Prefer svg_filename for old results where PNG was stored as filename; new results store SVG directly as filename. #}
+            {% set preview_file = out.svg_filename if out.svg_filename else out.filename %}
             <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
                target="_blank" rel="noopener">
                 <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
-                     class="viewer-img viewer-img-fullwidth" alt="{{ out.name }}" loading="lazy">
+                     class="viewer-img card-img-top" alt="{{ out.name }}" loading="lazy">
             </a>
-        </div>
-        <div class="card-footer p-1 text-center">
-            <span class="viewer-name font-monospace">{{ out.name }}</span>
-        </div>
-    </div>
-    {% else %}
-    <div class="row g-3 mb-4">
-        {% for out in ns.image_outputs %}
-        <div class="{{ viewer_col_class }}">
-            <div class="card viewer-img-card h-100">
-                {# Prefer svg_filename for old results where PNG was stored as filename; new results store SVG directly as filename. #}
-                {% set preview_file = out.svg_filename if out.svg_filename else out.filename %}
-                <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
-                   target="_blank" rel="noopener">
-                    <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
-                         class="viewer-img card-img-top" alt="{{ out.name }}" loading="lazy">
-                </a>
-                <div class="card-footer p-1 text-center">
-                    <span class="viewer-name font-monospace">{{ out.name }}</span>
-                </div>
+            <div class="card-footer p-1 text-center">
+                <span class="viewer-name font-monospace">{{ out.name }}</span>
             </div>
         </div>
-        {% endfor %}
     </div>
-    {% endif %}
+    {% endfor %}
+</div>
 {% endif %}
 
 {# ── SVG outputs (other tools that produce standalone SVG without a paired PNG) ── #}
@@ -345,6 +362,8 @@
 {% if output_groups | length > 1 or group.source_file %}
 </section>
 {% endif %}
+
+{% endif %}{# end is_thumbnail_bundle else #}
 {% endfor %}
 
 {# ── Pagination controls ── #}
@@ -356,22 +375,6 @@
 
 {% if output_groups %}
 <script>
-(function() {
-    document.querySelectorAll('.viewer-img-fullwidth').forEach(function(img) {
-        function apply() {
-            var nw = img.naturalWidth, nh = img.naturalHeight;
-            if (!nw || !nh) { img.style.width = '100%'; return; }
-            var maxW = (img.closest('.card') || document.body).clientWidth;
-            var maxH = window.innerHeight * 0.75;
-            var scale = Math.min(4, maxW / nw, maxH / nh);
-            img.style.width = Math.round(nw * scale) + 'px';
-        }
-        if (img.complete && img.naturalWidth > 0) apply();
-        else img.addEventListener('load', apply);
-        window.addEventListener('resize', apply, { passive: true });
-    });
-})();
-
 function revealExplicit(gid) {
     var overlay = document.getElementById('explicit-overlay-' + gid);
     var content = document.getElementById('explicit-content-' + gid);
