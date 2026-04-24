@@ -104,10 +104,13 @@
 {% endif %}
 
 {% if failed_conversion_list and viewer_status != 'failed' %}
-<div class="alert alert-warning">
-    <i class="bi bi-exclamation-triangle-fill"></i>
-    <strong>{{ failed_conversion_list | length }} file(s) could not be converted:</strong>
-    <ul class="mb-0 mt-1">
+<details class="alert alert-warning mb-3">
+    <summary class="d-flex align-items-center gap-2" style="cursor: pointer; list-style: none; -webkit-appearance: none;">
+        <i class="bi bi-exclamation-triangle-fill flex-shrink-0"></i>
+        <strong>{{ failed_conversion_list | length }} file(s) could not be converted</strong>
+        <span class="ms-auto small text-muted">click to expand</span>
+    </summary>
+    <ul class="mb-0 mt-2">
         {% for fc in failed_conversion_list %}
         <li>
             {% if fc.source_file %}<code>{{ fc.source_file }}</code>{% else %}<em>(unknown file)</em>{% endif %}
@@ -117,7 +120,7 @@
         </li>
         {% endfor %}
     </ul>
-</div>
+</details>
 {% endif %}
 
 {# ── Toolbar: filetype filters + columns selector ── #}
