@@ -6,14 +6,24 @@
 {% block styles %}
 {{ super() }}
 <style>
-.viewer-img {
-    image-rendering: pixelated;
-    max-width: 100%;
-    height: auto;
-    cursor: pointer;
+.viewer-img-card > a {
+    display: block;
+    position: relative;
+    width: 100%;
+    padding-bottom: 100%;
+    overflow: hidden;
+    background: repeating-conic-gradient(#e0e0e0 0% 25%, #ffffff 0% 50%) 0 0 / 16px 16px;
     border: 1px solid #dee2e6;
-    background: repeating-conic-gradient(#e0e0e0 0% 25%, #ffffff 0% 50%)
-                0 0 / 16px 16px;
+}
+.viewer-img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    image-rendering: pixelated;
+    cursor: pointer;
 }
 .viewer-img-card {
     background: none;
