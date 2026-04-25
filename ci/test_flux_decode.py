@@ -73,11 +73,11 @@ def _run_flux_decode(artefact_type: ArtefactType, work_dir: Path,
     worker.api = MagicMock()
     worker.api.register_derived_artefact.return_value = {'artefact': {'uuid': 'mock-uuid'}}
 
-    with patch('worker.arcworker.analysis.flux_to_imd_hxcfe', return_value=imd_result) as mock_imd, \
-         patch('worker.arcworker.analysis.flux_to_hfe_hxcfe', return_value=hfe_result) as mock_hfe, \
-         patch('worker.arcworker.analysis.sector_image_to_raw_greaseweazle', return_value=img_result) as mock_gw, \
-         patch('worker.arcworker.analysis.parse_imd_track0', return_value=None), \
-         patch('worker.arcworker.analysis.detect_geometry_from_boot_data', return_value=None):
+    with patch('worker.arcworker.analyses.flux.flux_to_imd_hxcfe', return_value=imd_result) as mock_imd, \
+         patch('worker.arcworker.analyses.flux.flux_to_hfe_hxcfe', return_value=hfe_result) as mock_hfe, \
+         patch('worker.arcworker.analyses.flux.sector_image_to_raw_greaseweazle', return_value=img_result) as mock_gw, \
+         patch('worker.arcworker.analyses.flux.parse_imd_track0', return_value=None), \
+         patch('worker.arcworker.analyses.flux.detect_geometry_from_boot_data', return_value=None):
 
         AnalysisWorker.process_flux_decode(worker, _analysis(), artefact, work_dir)
 
@@ -287,7 +287,7 @@ def _run_flux_decode_via_scp(
     Generic helper for flux-to-SCP-via-conversion source types (DFI, A2R, …).
 
     conversion_patch is the fully-qualified name to patch for the →SCP call,
-    e.g. 'worker.arcworker.analysis.dfi_to_scp_hxcfe'.
+    e.g. 'worker.arcworker.analyses.flux.dfi_to_scp_hxcfe'.
     """
     ext = _ext(artefact_type)
     artefact = _make_artefact(artefact_type, f'disc{ext[1:]}')
@@ -303,9 +303,9 @@ def _run_flux_decode_via_scp(
     worker.api.register_derived_artefact.return_value = {'artefact': {'uuid': 'mock-uuid'}}
 
     with patch(conversion_patch, return_value=scp_result) as mock_conv, \
-         patch('worker.arcworker.analysis.flux_to_imd_hxcfe', return_value={'success': True}) as mock_imd, \
-         patch('worker.arcworker.analysis.flux_to_hfe_hxcfe', return_value={'success': True}) as mock_hfe, \
-         patch('worker.arcworker.analysis.sector_image_to_raw_greaseweazle', return_value={'success': True}) as mock_gw:
+         patch('worker.arcworker.analyses.flux.flux_to_imd_hxcfe', return_value={'success': True}) as mock_imd, \
+         patch('worker.arcworker.analyses.flux.flux_to_hfe_hxcfe', return_value={'success': True}) as mock_hfe, \
+         patch('worker.arcworker.analyses.flux.sector_image_to_raw_greaseweazle', return_value={'success': True}) as mock_gw:
 
         AnalysisWorker.process_flux_decode(worker, analysis, artefact, work_dir)
 
@@ -316,7 +316,7 @@ def _run_flux_decode_dfi(work_dir: Path, hints: dict | None = None, mock_scp_res
     """Run process_flux_decode for a DFI source with all external tools mocked."""
     return _run_flux_decode_via_scp(
         ArtefactType.DFI, work_dir,
-        'worker.arcworker.analysis.dfi_to_scp_hxcfe',
+        'worker.arcworker.analyses.flux.dfi_to_scp_hxcfe',
         hints=hints, mock_scp_result=mock_scp_result,
     )
 
@@ -325,7 +325,7 @@ def _run_flux_decode_a2r(work_dir: Path, mock_scp_result=None):
     """Run process_flux_decode for an A2R source with all external tools mocked."""
     return _run_flux_decode_via_scp(
         ArtefactType.A2R, work_dir,
-        'worker.arcworker.analysis.a2r_to_scp_gw',
+        'worker.arcworker.analyses.flux.a2r_to_scp_gw',
         mock_scp_result=mock_scp_result,
     )
 
@@ -599,12 +599,12 @@ def _run_detect_track_density(work_dir: Path, *, mismatch_detected: bool,
     imd_result = {'success': imd_success}
     fix_result = {'success': fix_success}
 
-    with patch('worker.arcworker.analysis.flux_to_imd_hxcfe', return_value=imd_result), \
-         patch('worker.arcworker.analysis.parse_imd_tracks',
+    with patch('worker.arcworker.analyses.flux.flux_to_imd_hxcfe', return_value=imd_result), \
+         patch('worker.arcworker.analyses.flux.parse_imd_tracks',
                return_value=[{'physical_index': 0}] if imd_success else None), \
-         patch('worker.arcworker.analysis.detect_track_density_mismatch',
+         patch('worker.arcworker.analyses.flux.detect_track_density_mismatch',
                return_value=detection_result), \
-         patch('worker.arcworker.analysis.scp_fix_track_density', return_value=fix_result):
+         patch('worker.arcworker.analyses.flux.scp_fix_track_density', return_value=fix_result):
         AnalysisWorker.process_detect_track_density(worker, analysis, artefact, work_dir)
 
     return worker
