@@ -804,6 +804,16 @@ def detect_acorn_partitions(input_path: Path) -> dict:
 # Standard (PC) partition detection — sfdisk
 # =========================================================================
 
+# Common MBR partition type codes -> filesystem hints.  Used by
+# detect_partitions_sfdisk to populate each partition's 'filesystem'
+# field so callers don't need to translate type codes themselves.
+_MBR_TYPE_TO_FS = {
+    '1': 'fat12', '4': 'fat16', '6': 'fat16',
+    'b': 'fat32', 'c': 'fat32', 'e': 'fat16',
+    '7': 'ntfs',
+    '11': 'fat32', '14': 'fat16',
+}
+
 
 def detect_partitions_sfdisk(input_path: Path) -> dict:
     """
@@ -813,7 +823,9 @@ def detect_partitions_sfdisk(input_path: Path) -> dict:
         input_path: Path to raw disc image
 
     Returns:
-        Result dict with success status, partitions list, and process_output
+        Result dict with success status, partitions list, and process_output.
+        Each partition record carries a ``filesystem`` field derived from
+        its MBR type code via _MBR_TYPE_TO_FS (falling back to 'unknown').
     """
     try:
         cmd = ['sfdisk', '--json', str(input_path)]
@@ -841,6 +853,7 @@ def detect_partitions_sfdisk(input_path: Path) -> dict:
         for i, part in enumerate(table.get('partitions', [])):
             start_sector = part.get('start', 0)
             size_sectors = part.get('size', 0)
+            ptype = part.get('type', 'unknown')
             partitions.append({
                 'index': i,
                 'start_sector': start_sector,
@@ -848,7 +861,8 @@ def detect_partitions_sfdisk(input_path: Path) -> dict:
                 # Normalise to byte offsets for uniform downstream handling
                 'start_byte': start_sector * sector_size,
                 'size_bytes': size_sectors * sector_size,
-                'type': part.get('type', 'unknown'),
+                'type': ptype,
+                'filesystem': _MBR_TYPE_TO_FS.get(ptype.lower(), 'unknown'),
                 'node': part.get('node', ''),
             })
 
