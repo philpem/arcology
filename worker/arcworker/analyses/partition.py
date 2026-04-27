@@ -64,14 +64,6 @@ def process_partition_detect(self, analysis: dict, artefact: dict, work_dir: Pat
     original file was compressed, a decompressed copy is cached so
     that FILE_EXTRACTION doesn't have to decompress again.
     """
-    # Common MBR partition type codes -> filesystem hints
-    _MBR_TYPE_TO_FS = {
-        '1': 'fat12', '4': 'fat16', '6': 'fat16',
-        'b': 'fat32', 'c': 'fat32', 'e': 'fat16',
-        '7': 'ntfs',
-        '11': 'fat32', '14': 'fat16',
-    }
-
     analysis_id = analysis['id']
 
     input_path = self.get_input_path(artefact, work_dir)
@@ -134,10 +126,6 @@ def process_partition_detect(self, analysis: dict, artefact: dict, work_dir: Pat
 
         if sfdisk_result['success']:
             detected_partitions = sfdisk_result['partitions']
-            # Enrich sfdisk partitions with filesystem hints from type codes
-            for p in detected_partitions:
-                ptype = p.get('type', '').lower()
-                p['filesystem'] = _MBR_TYPE_TO_FS.get(ptype, 'unknown')
 
     # 4. Use file command for additional format info
     file_result = detect_format_file_cmd(input_path)
