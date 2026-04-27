@@ -11,7 +11,7 @@ import json
 import shutil
 from pathlib import Path
 
-from shared.enums import ArtefactType, AnalysisType
+from shared.enums import ArtefactType
 
 from ..config import log
 from ..compression import extract_partition_range, is_region_uniform
@@ -21,10 +21,10 @@ from ..tools import (
     detect_acorn_partitions,
     detect_format_file_cmd,
     detect_fat_filesystem,
-    detect_armlock,
 )
 
 from ._common import analysis_handler
+from ._protections import queue_extraction_or_protection_remove
 
 
 @analysis_handler("partition detection")
@@ -217,28 +217,10 @@ def process_partition_detect(self, analysis: dict, artefact: dict, work_dir: Pat
                 # raw artefacts (see issue #89).
                 is_nexus_printer = partition.get('nexus_flags', {}).get('printer', False)
                 if not is_nexus_printer:
-                    if fs == 'adfs':
-                        # Check for ARMlock protection on the extracted partition
-                        # image before deciding what to queue next.  Detection is
-                        # pure-Python and fast (no subprocess).  Only queue the
-                        # removal step when protection is actually present; otherwise
-                        # proceed directly to FILE_EXTRACTION as for any other fs.
-                        armlock = detect_armlock(partition_path)
-                        if armlock.get('detected'):
-                            _armlock_hints: dict = {'filesystem': fs, 'partition_index': idx}
-                            if part_cf:
-                                _armlock_hints['container_format'] = part_cf
-                            self.api.queue_analysis(
-                                derived_uuid,
-                                AnalysisType.ARMLOCK_REMOVE.value,
-                                hints=_armlock_hints,
-                            )
-                        else:
-                            self.queue_file_extraction(
-                                derived_uuid, fs, idx, container_format=part_cf)
-                    else:
-                        self.queue_file_extraction(
-                            derived_uuid, fs, idx, container_format=part_cf)
+                    queue_extraction_or_protection_remove(
+                        self, derived_uuid, partition_path, fs, idx,
+                        container_format=part_cf,
+                    )
             else:
                 log.error(f"Failed to register partition {idx} as derived artefact")
 
@@ -314,46 +296,18 @@ def process_partition_detect(self, analysis: dict, artefact: dict, work_dir: Pat
                 log.info(f"Cached decompressed image as {partition_path}")
 
         # Queue FILE_EXTRACTION (or ARMLOCK_REMOVE if protected) against
-        # the original artefact.  For ADFS, run a quick inline Armlock check so
-        # we only add the removal step when protection is actually present.
+        # the original artefact.
         for partition in detected_partitions:
             idx = partition['index']
             fs = partition.get('filesystem', 'unknown')
             part_cf = partition.get('container_format')
-            next_hints: dict = {'filesystem': fs, 'partition_index': idx}
-            if idx in partition_image_paths:
-                next_hints['partition_image_path'] = partition_image_paths[idx]
-            if part_cf:
-                next_hints['container_format'] = part_cf
-            if fs == 'adfs':
-                check_path = (
-                    Path(partition_image_paths[idx])
-                    if idx in partition_image_paths
-                    else input_path
-                )
-                armlock = detect_armlock(check_path)
-                if armlock.get('detected'):
-                    self.api.queue_analysis(
-                        artefact['uuid'],
-                        AnalysisType.ARMLOCK_REMOVE.value,
-                        hints=next_hints,
-                    )
-                else:
-                    self.queue_file_extraction(
-                        artefact['uuid'],
-                        fs,
-                        idx,
-                        partition_image_path=next_hints.get('partition_image_path'),
-                        container_format=part_cf,
-                    )
-            else:
-                self.queue_file_extraction(
-                    artefact['uuid'],
-                    fs,
-                    idx,
-                    partition_image_path=next_hints.get('partition_image_path'),
-                    container_format=part_cf,
-                )
+            cached = partition_image_paths.get(idx)
+            image_path = Path(cached) if cached else input_path
+            queue_extraction_or_protection_remove(
+                self, artefact['uuid'], image_path, fs, idx,
+                container_format=part_cf,
+                partition_image_path=cached,
+            )
 
     # -----------------------------------------------------------------
     # Build summary and details
