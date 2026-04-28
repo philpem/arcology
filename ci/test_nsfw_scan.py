@@ -374,10 +374,31 @@ class TestClassifyBatchBasic(unittest.TestCase):
             sess2, 'pixel_values', _META2,
             [self.path], high_threshold=0.90, low_threshold=0.20,
         )
-        self.assertIn('path',    results[0])
-        self.assertIn('score',   results[0])
-        self.assertIn('verdict', results[0])
-        self.assertIn('stage',   results[0])
+        self.assertIn('path',         results[0])
+        self.assertIn('score',        results[0])
+        self.assertIn('verdict',      results[0])
+        self.assertIn('stage',        results[0])
+        self.assertIn('winning_crop', results[0])
+        self.assertIn('crops',        results[0])
+        self.assertIsInstance(results[0]['crops'], list)
+        self.assertTrue(len(results[0]['crops']) > 0)
+        self.assertIn('crop',  results[0]['crops'][0])
+        self.assertIn('score', results[0]['crops'][0])
+
+    def test_stage2_result_contains_s1_crop_fields(self):
+        sess1 = _make_session([0.0,   0.0])   # borderline
+        sess2 = _make_session([-5.0,  5.0])   # explicit
+        results = classify_batch(
+            sess1, 'pixel_values', _META1,
+            sess2, 'pixel_values', _META2,
+            [self.path], high_threshold=0.90, low_threshold=0.20,
+        )
+        r = results[0]
+        self.assertEqual(r['stage'], 2)
+        self.assertIn('s1_winning_crop', r)
+        self.assertIn('s1_crops',        r)
+        self.assertIsInstance(r['s1_crops'], list)
+        self.assertTrue(len(r['s1_crops']) > 0)
 
 
 class TestClassifyBatchNsfwClassIndex(unittest.TestCase):
@@ -617,8 +638,33 @@ class TestMultiCrop(unittest.TestCase):
         finally:
             os.unlink(path)
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]['verdict'], 'explicit')
-        self.assertGreater(results[0]['score'], 0.90)
+        self.assertEqual(results[0]['verdict'],      'explicit')
+        self.assertGreater(results[0]['score'],      0.90)
+        self.assertEqual(results[0]['winning_crop'], 'top-left')
+        # Five crop entries should be present
+        self.assertEqual(len(results[0]['crops']), 5)
+        crop_names = [c['crop'] for c in results[0]['crops']]
+        self.assertIn('centre',       crop_names)
+        self.assertIn('top-left',     crop_names)
+        self.assertIn('top-right',    crop_names)
+        self.assertIn('bottom-left',  crop_names)
+        self.assertIn('bottom-right', crop_names)
+
+    def test_small_image_crops_list_has_one_entry(self):
+        """Single-crop result includes a one-element crops list named 'centre'."""
+        sess1 = _make_session([5.0, -5.0])
+        path  = _make_image_file(300, 300)
+        try:
+            results = classify_batch(
+                sess1, 'pixel_values', _META1,
+                _make_session([0.0, 0.0]), 'pixel_values', _META2,
+                [path], high_threshold=0.90, low_threshold=0.20,
+            )
+        finally:
+            os.unlink(path)
+        self.assertEqual(len(results[0]['crops']), 1)
+        self.assertEqual(results[0]['crops'][0]['crop'],  'centre')
+        self.assertEqual(results[0]['winning_crop'],      'centre')
 
     def test_all_safe_crops_not_explicit(self):
         """An image where every crop is safe is correctly classified as not explicit."""

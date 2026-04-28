@@ -94,37 +94,48 @@ def preprocess(
 
 
 def _score_image(img, sess, input_name: str, nsfw_idx: int,
-                 size: int, mean, std, resample: str, crop_pct: float) -> float:
-    """Return the highest explicit-content score across all crops of *img*.
+                 size: int, mean, std, resample: str, crop_pct: float) -> tuple:
+    """Score *img* across centre + optional quadrant crops.
+
+    Returns ``(best_score, winning_crop_name, crop_scores)`` where:
+      - ``best_score``       is the highest NSFW probability seen across all crops
+      - ``winning_crop_name`` is the name of the crop that produced it
+      - ``crop_scores``      is a list of ``{'crop': name, 'score': float}`` for every
+                             crop that was scored (always includes 'centre'; includes
+                             the four quadrant names when the image is large enough)
 
     For images whose width or height is >= 2× *size*, five crops are scored:
-    the centre crop (produced by ``preprocess()``) plus the four quadrant tiles
-    (top-left, top-right, bottom-left, bottom-right).  The quadrant tiles are
-    also independently preprocessed via ``preprocess()``, so each gets its own
-    aspect-preserving resize + centre-crop.
-
-    For smaller images only the centre crop is scored (identical to the
-    pre-multi-crop behaviour).
+    the centre crop plus the four quadrant tiles (top-left, top-right,
+    bottom-left, bottom-right).  For smaller images only the centre crop is
+    scored.
     """
     w, h = img.size
-    tiles = [img]
+    tile_names = ['centre']
+    tiles      = [img]
 
     if w >= 2 * size or h >= 2 * size:
+        half_w, half_h = w // 2, h // 2
+        tile_names += ['top-left', 'top-right', 'bottom-left', 'bottom-right']
         tiles += [
-            img.crop((0,    0,    w // 2, h // 2)),  # top-left
-            img.crop((w // 2, 0,  w,      h // 2)),  # top-right
-            img.crop((0,    h // 2, w // 2, h)),      # bottom-left
-            img.crop((w // 2, h // 2, w,    h)),      # bottom-right
+            img.crop((0,      0,      half_w, half_h)),
+            img.crop((half_w, 0,      w,      half_h)),
+            img.crop((0,      half_h, half_w, h)),
+            img.crop((half_w, half_h, w,      h)),
         ]
 
-    best = 0.0
-    for tile in tiles:
+    best         = 0.0
+    winning_crop = 'centre'
+    crop_scores  = []
+    for name, tile in zip(tile_names, tiles, strict=True):
         arr   = preprocess(tile, size, mean, std, resample, crop_pct)
         out   = sess.run(None, {input_name: arr})[0]
         score = float(softmax(out)[0, nsfw_idx])
+        crop_scores.append({'crop': name, 'score': score})
         if score > best:
-            best = score
-    return best
+            best         = score
+            winning_crop = name
+
+    return best, winning_crop, crop_scores
 
 
 def classify_batch(
@@ -165,12 +176,17 @@ def classify_batch(
         List of dicts, one per input path — classified or skipped::
 
             {
-                "path":         str,
-                "stage":        1 or 2,          # classified only
-                "score":        float,            # classified only; explicit probability (0–1)
-                "stage1_score": float,            # stage-2 results only; the stage-1 score
-                "verdict":      "explicit" | "not explicit" | "skipped"
-                "reason":       "too_small" | "unreadable"  # skipped only
+                "path":            str,
+                "stage":           1 or 2,          # classified only
+                "score":           float,            # classified only; explicit probability (0–1)
+                "winning_crop":    str,              # crop name that produced the best score
+                "crops":           list[dict],       # [{"crop": name, "score": float}, ...]
+                "stage1_score":    float,            # stage-2 results only; stage-1 best score
+                "s1_winning_crop": str,              # stage-2 results only; stage-1 best crop
+                "s1_crops":        list[dict],       # stage-2 results only; all stage-1 crop scores
+                "s2_error":        bool,             # true when stage-2 failed and stage-1 was used as fallback
+                "verdict":         "explicit" | "not explicit" | "skipped"
+                "reason":          "too_small" | "unreadable"  # skipped only
             }
     """
     from PIL import Image
@@ -200,7 +216,7 @@ def classify_batch(
                 img.close()
                 results.append({'path': path_str, 'verdict': 'skipped', 'reason': 'too_small'})
                 continue
-            score1 = _score_image(
+            score1, winning_crop1, crops1 = _score_image(
                 img, sess1, input_name1, nsfw_idx1, size1, mean1, std1, resample1, crop_pct1,
             )
         except Exception:
@@ -208,26 +224,39 @@ def classify_batch(
             continue
 
         if score1 >= high_threshold:
-            results.append({'path': path_str, 'stage': 1, 'score': score1, 'verdict': 'explicit'})
+            results.append({
+                'path': path_str, 'stage': 1, 'score': score1, 'verdict': 'explicit',
+                'winning_crop': winning_crop1, 'crops': crops1,
+            })
             continue
 
         if score1 <= low_threshold:
-            results.append({'path': path_str, 'stage': 1, 'score': score1, 'verdict': 'not explicit'})
+            results.append({
+                'path': path_str, 'stage': 1, 'score': score1, 'verdict': 'not explicit',
+                'winning_crop': winning_crop1, 'crops': crops1,
+            })
             continue
 
         # Borderline: run stage 2
         try:
-            score2 = _score_image(
+            score2, winning_crop2, crops2 = _score_image(
                 img, sess2, input_name2, nsfw_idx2, size2, mean2, std2, resample2, crop_pct2,
             )
         except Exception:
             verdict2 = 'explicit' if score1 >= 0.5 else 'not explicit'
-            results.append({'path': path_str, 'stage': 1, 'score': score1, 'verdict': verdict2})
+            results.append({
+                'path': path_str, 'stage': 1, 'score': score1, 'verdict': verdict2,
+                'winning_crop': winning_crop1, 'crops': crops1, 's2_error': True,
+            })
             continue
 
         explicit2 = score2 >= s2_threshold and score1 >= s1_min_explicit
         verdict2 = 'explicit' if explicit2 else 'not explicit'
-        results.append({'path': path_str, 'stage': 2, 'score': score2, 'stage1_score': score1, 'verdict': verdict2})
+        results.append({
+            'path': path_str, 'stage': 2, 'score': score2, 'verdict': verdict2,
+            'winning_crop': winning_crop2, 'crops': crops2,
+            'stage1_score': score1, 's1_winning_crop': winning_crop1, 's1_crops': crops1,
+        })
 
     return results
 
