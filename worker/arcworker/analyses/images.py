@@ -4,11 +4,10 @@ Format-conversion handler.
 Renders RISC OS Sprite, DrawFile and Text artefacts (and bitmap images)
 into web-viewable outputs.  Two operating modes:
 
-  Mode 1 — Direct artefact (artefact_type ∈ {ACORN_SPRITE, ACORN_DRAW,
-           ACORN_TEXT, IMAGE}): convert the artefact's own file.
-  Mode 2 — Extraction scan (hints contain ``extraction_path``): walk the
-           extraction output directory and convert every viewable file
-           found.
+  direct         — artefact_type ∈ {ACORN_SPRITE, ACORN_DRAW, ACORN_TEXT,
+                   IMAGE}: convert the artefact's own file.
+  extraction_scan — hints contain ``extraction_path``: walk the extraction
+                   output directory and convert every viewable file found.
 """
 
 import json
@@ -73,6 +72,93 @@ _RISCOS_HEX_VIEWABLE: dict[str, 'ArtefactType'] = {
     'ff0': ArtefactType.IMAGE,  # TIFF
 }
 
+# Raster image extensions that the NSFW classifier can read via Pillow.
+# WMF/EMF are intentionally excluded — they are vector formats requiring
+# wmf-cli pre-conversion before Pillow can open them.
+_RASTER_EXTENSIONS: frozenset[str] = frozenset({
+    '.jpg', '.jpeg', '.png', '.gif', '.webp',
+    '.bmp', '.tif', '.tiff', '.pcx', '.tga',
+})
+# RISC OS filetypes for raster images (hex string, lower-case)
+_RISC_OS_IMAGE_FILETYPES: frozenset[str] = frozenset({'c85', '695', 'b60', '69c', 'ff0'})
+
+# Hard-coded model metadata — used when a sidecar JSON is missing.
+# These are the correct values for the shipped models; update if the
+# models are replaced.  Export scripts emit the JSON sidecars so manual
+# installs can also fall back here.
+_NSFW_META1_DEFAULT: dict = {
+    'nsfw_class_index': 0,         # Marqo label_names[0] == 'NSFW'
+    'input_size':       384,
+    'mean':             [0.5, 0.5, 0.5],
+    'std':              [0.5, 0.5, 0.5],
+    'interpolation':    'bicubic',
+    'crop_pct':         1.0,
+}
+_NSFW_META2_DEFAULT: dict = {
+    'nsfw_class_index': 1,         # Prithiv id2label[1] == 'NSFW'
+    'input_size':       224,
+    'mean':             [0.48145466, 0.4578275,  0.40821073],  # CLIP/MetaCLIP
+    'std':              [0.26862954, 0.26130258, 0.27577711],
+    'interpolation':    'bicubic',
+    'crop_pct':         0.875,
+}
+
+
+def _load_nsfw_sessions(self) -> bool:
+    """Load ONNX sessions and per-model sidecar metadata.  Returns True when ready.
+
+    Idempotent: if sessions are already loaded this is a no-op.  Stores results
+    on ``self`` as ``_nsfw_sess1/2``, ``_nsfw_input1/2``, ``_nsfw_meta1/2``.
+    """
+    if self._nsfw_sess1 is not None:
+        return True
+
+    import json
+    from ..config import NSFW_MODEL_DIR, NSFW_QUANTIZE
+
+    try:
+        import onnxruntime as ort
+    except ImportError:
+        log.error('onnxruntime not installed — NSFW scanning unavailable')
+        return False
+
+    model_dir = NSFW_MODEL_DIR
+    if NSFW_QUANTIZE:
+        m1_path = model_dir / 'marqo.onnx'
+        m2_path = model_dir / 'clip.onnx'
+    else:
+        m1_path = model_dir / 'marqo' / 'model.onnx'
+        m2_path = model_dir / 'clip'  / 'model.onnx'
+
+    try:
+        self._nsfw_sess1  = ort.InferenceSession(str(m1_path))
+        self._nsfw_input1 = self._nsfw_sess1.get_inputs()[0].name
+        self._nsfw_sess2  = ort.InferenceSession(str(m2_path))
+        self._nsfw_input2 = self._nsfw_sess2.get_inputs()[0].name
+    except Exception as exc:
+        log.error(f'Failed to load NSFW ONNX sessions: {exc}')
+        return False
+
+    meta1_path = model_dir / 'marqo_meta.json'
+    if meta1_path.exists():
+        self._nsfw_meta1 = json.loads(meta1_path.read_text())
+        log.info(f'Loaded marqo_meta.json: nsfw_idx={self._nsfw_meta1["nsfw_class_index"]} '
+                 f'mean={self._nsfw_meta1["mean"]}')
+    else:
+        log.warning('marqo_meta.json not found — using hard-coded defaults')
+        self._nsfw_meta1 = _NSFW_META1_DEFAULT.copy()
+
+    meta2_path = model_dir / 'clip_meta.json'
+    if meta2_path.exists():
+        self._nsfw_meta2 = json.loads(meta2_path.read_text())
+        log.info(f'Loaded clip_meta.json: nsfw_idx={self._nsfw_meta2["nsfw_class_index"]} '
+                 f'mean={self._nsfw_meta2["mean"]}')
+    else:
+        log.warning('clip_meta.json not found — using hard-coded defaults')
+        self._nsfw_meta2 = _NSFW_META2_DEFAULT.copy()
+
+    return True
+
 
 def _convert_file_to_outputs(
     self,
@@ -88,7 +174,7 @@ def _convert_file_to_outputs(
 
     On success: ``(list_of_output_dicts, None)``.
     On failure: ``(None, error_message)`` — caller should call
-    ``fail_analysis`` (Mode 1) or record the failure and continue (Mode 2).
+    ``fail_analysis`` (direct mode) or record the failure and continue (extraction_scan).
 
     ``file_index`` is used to make temporary subdirectory names unique when
     converting multiple files within one analysis run.
@@ -205,16 +291,16 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
     """
     Process FORMAT_CONVERT analysis.  Supports two modes:
 
-    Mode 1 — Direct artefact (artefact_type is ACORN_SPRITE/DRAW/TEXT/IMAGE):
-      Convert the artefact's own file.  Used for directly-uploaded Acorn
-      files; triggered via ANALYSIS_MAP.
+    direct — artefact_type is ACORN_SPRITE/DRAW/TEXT/IMAGE: convert the
+      artefact's own file.  Used for directly-uploaded Acorn files;
+      triggered via ANALYSIS_MAP.
 
-    Mode 2 — Extraction scan (hints contain 'extraction_path'):
-      Scan the extraction output directory for every viewable file, convert
-      each one, and store outputs with a 'source_file' field matching
-      ExtractedFile.path (display path, Acorn filetype suffix stripped).
-      Queued automatically by queue_partition_follow_ups() after every
-      FILE_EXTRACTION and ARCHIVE_EXTRACT.
+    extraction_scan — hints contain 'extraction_path': scan the extraction
+      output directory for every viewable file, convert each one, and store
+      outputs with a 'source_file' field matching ExtractedFile.path
+      (display path, Acorn filetype suffix stripped).  Queued automatically
+      by queue_partition_follow_ups() after every FILE_EXTRACTION and
+      ARCHIVE_EXTRACT.
     """
     analysis_id = analysis['id']
     analysis_uuid = analysis['uuid']
@@ -237,7 +323,7 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
         ArtefactType.IMAGE.value,
     )
 
-    # --- Mode 1: Direct artefact conversion ---
+    # --- direct: convert the artefact's own file ---
     if artefact_type_str in _direct_types:
         input_path = self.get_input_path(artefact, work_dir)
         artefact_type = ArtefactType(artefact_type_str)
@@ -255,9 +341,14 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
                 'outputs': outputs,
             }),
         )
+        if artefact_type == ArtefactType.IMAGE:
+            from shared.enums import AnalysisType
+            from ..config import NSFW_ENABLED
+            if NSFW_ENABLED:
+                self.api.queue_analysis(artefact_uuid, AnalysisType.NSFW_SCAN.value)
         return
 
-    # --- Mode 2: Extraction scan ---
+    # --- extraction_scan: walk extraction output and convert viewable files ---
     extraction_path = hints.get('extraction_path')
     partition_uuid = hints.get('partition_uuid')
     path_prefix = hints.get('path_prefix', '')  # e.g. 'Archives/Emulators.zip'
@@ -366,4 +457,214 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
             'failed_conversions': failed_conversions,
         }),
     )
+
+    # Queue NSFW_SCAN to classify the converted PNG outputs.  Must be queued
+    # here (after FORMAT_CONVERT completes) rather than alongside it, because
+    # the PNGs don't exist until the conversion finishes.
+    # SVG outputs (Draw files) are excluded — Pillow cannot read SVG.
+    from ..config import NSFW_ENABLED
+    if NSFW_ENABLED:
+        from shared.enums import AnalysisType as _AT
+        nsfw_fc_outputs = [
+            {'path': o['filename'], 'source_file': o['source_file']}
+            for o in all_outputs
+            if o.get('type') == 'image' and not o.get('filename', '').endswith('.svg')
+        ]
+        if nsfw_fc_outputs:
+            fc_nsfw_hints: dict = {'format_convert_outputs': nsfw_fc_outputs}
+            if partition_uuid:
+                fc_nsfw_hints['partition_uuid'] = partition_uuid
+            if path_prefix:
+                fc_nsfw_hints['path_prefix'] = path_prefix
+            self.api.queue_analysis(artefact_uuid, _AT.NSFW_SCAN.value, hints=fc_nsfw_hints)
+@analysis_handler("NSFW scan")
+def process_nsfw_scan(self, analysis: dict, artefact: dict, work_dir: Path):
+    """
+    Process NSFW_SCAN analysis.  Supports three modes:
+
+    direct — IMAGE artefact: classify the artefact's own file.
+      Queued by process_format_convert() after converting a directly-uploaded image.
+
+    extraction_scan — hints contain 'extraction_path': walk the extraction output
+      and classify every raster image found.  Queued by queue_partition_follow_ups()
+      after FILE_EXTRACTION / ARCHIVE_EXTRACT.  Handles direct JPEG/PNG/GIF files
+      stored in the partition.
+
+    format_convert_scan — hints contain 'format_convert_outputs': classify PNG
+      outputs produced by FORMAT_CONVERT (converted from Sprite/Draw files).
+      Queued by process_format_convert() after it finishes all conversions, so the
+      PNGs are guaranteed to exist.  Avoids the race condition that occurs when
+      extraction_scan runs before FORMAT_CONVERT has produced its outputs.
+    """
+    import json
+    from ..config import NSFW_ENABLED, NSFW_HIGH, NSFW_LOW, NSFW_MIN_PIXELS
+    from ..tools.nsfw import classify_batch
+
+    analysis_id = analysis['id']
+    hints = json.loads(analysis.get('hints') or '{}')
+
+    if not NSFW_ENABLED:
+        self.complete_analysis(analysis_id, summary='NSFW scanning disabled')
+        return
+
+    if not self._load_nsfw_sessions():
+        self.fail_analysis(analysis_id, 'NSFW model sessions could not be loaded')
+        return
+
+    format_convert_outputs = hints.get('format_convert_outputs')
+    extraction_path = hints.get('extraction_path')
+    partition_uuid  = hints.get('partition_uuid')
+    path_prefix     = hints.get('path_prefix', '')
+
+    if format_convert_outputs:
+        # format_convert_scan: classify PNG outputs produced by FORMAT_CONVERT.
+        # Each entry is {'path': relative_storage_path, 'source_file': db_path}.
+        from shared.storage import LocalStorage
+        image_paths: list[str] = []
+        db_path_map: dict[str, str] = {}
+
+        for item in format_convert_outputs:
+            rel_path = item.get('path', '')
+            source_file = item.get('source_file', rel_path)
+            if not rel_path:
+                continue
+
+            if isinstance(self.storage, LocalStorage):
+                local = self.outputs / rel_path
+                if not local.exists():
+                    log.warning(f'NSFW scan: format_convert output not found: {rel_path}')
+                    continue
+            else:
+                key = self.storage.storage_key('outputs', rel_path)
+                local = work_dir / Path(rel_path).name
+                try:
+                    self.storage.get(key, local)
+                except FileNotFoundError:
+                    log.warning(f'NSFW scan: format_convert output not found in storage: {key}')
+                    continue
+
+            local_str = str(local)
+            image_paths.append(local_str)
+            db_path_map[local_str] = source_file
+
+        raw_results = classify_batch(
+            self._nsfw_sess1, self._nsfw_input1, self._nsfw_meta1,
+            self._nsfw_sess2, self._nsfw_input2, self._nsfw_meta2,
+            image_paths, NSFW_HIGH, NSFW_LOW, NSFW_MIN_PIXELS,
+        )
+        results = [
+            {**r, 'source_file': db_path_map.get(r['path'], r['path'])}
+            for r in raw_results
+        ]
+        explicit_count = sum(1 for r in results if r['verdict'] == 'explicit')
+        self.complete_analysis(
+            analysis_id,
+            summary=(
+                f'Scanned {len(results)} of {len(image_paths)} converted image(s): '
+                f'{explicit_count} explicit'
+            ),
+            details=json.dumps({
+                'mode':           'format_convert_scan',
+                'found':          len(image_paths),
+                'scanned':        len(results),
+                'explicit_count': explicit_count,
+                'results':        results,
+            }),
+        )
+
+    elif extraction_path:
+        # extraction_scan: classify raster images in the extraction output.
+        # Handles JPEG/PNG/GIF/etc. files stored directly in the partition
+        # (as opposed to Sprite/Draw files which need FORMAT_CONVERT first).
+        image_paths = []
+        db_path_map = {}
+
+        if partition_uuid:
+            files_resp = self.api.get(
+                f'/partitions/{partition_uuid}/files?per_page=10000&show_known=true'
+            )
+            all_files = files_resp.get('files', []) if files_resp else []
+
+            if path_prefix:
+                all_files = [f for f in all_files
+                             if f.get('path', '').startswith(path_prefix + '/')]
+            else:
+                all_files = [f for f in all_files
+                             if f.get('extraction_depth', 0) == 0]
+
+            for file_data in all_files:
+                if file_data.get('is_directory', False):
+                    continue
+                fname = file_data.get('filename') or file_data.get('path', '')
+                ext   = Path(fname).suffix.lower()
+                ft    = (file_data.get('risc_os_filetype') or '').lower()
+                if ext not in _RASTER_EXTENSIONS and ft not in _RISC_OS_IMAGE_FILETYPES:
+                    continue
+
+                db_path   = file_data['path']
+                disk_path = (db_path[len(path_prefix) + 1:]
+                             if path_prefix and db_path.startswith(path_prefix + '/')
+                             else db_path)
+
+                local = self._resolve_single_extraction_file(
+                    extraction_path, disk_path, work_dir,
+                    risc_os_filetype=file_data.get('risc_os_filetype') or None,
+                )
+                if local is None and disk_path != db_path:
+                    local = self._resolve_single_extraction_file(
+                        extraction_path, db_path, work_dir,
+                        risc_os_filetype=file_data.get('risc_os_filetype') or None,
+                    )
+                if local is None:
+                    log.warning(f'NSFW scan: image not found on disk: {db_path}')
+                    continue
+                local_str = str(local)
+                image_paths.append(local_str)
+                db_path_map[local_str] = db_path
+
+        raw_results = classify_batch(
+            self._nsfw_sess1, self._nsfw_input1, self._nsfw_meta1,
+            self._nsfw_sess2, self._nsfw_input2, self._nsfw_meta2,
+            image_paths, NSFW_HIGH, NSFW_LOW, NSFW_MIN_PIXELS,
+        )
+        results = [
+            {**r, 'source_file': db_path_map.get(r['path'], r['path'])}
+            for r in raw_results
+        ]
+        explicit_count = sum(1 for r in results if r['verdict'] == 'explicit')
+        self.complete_analysis(
+            analysis_id,
+            summary=(
+                f'Scanned {len(results)} of {len(image_paths)} image(s): '
+                f'{explicit_count} explicit'
+            ),
+            details=json.dumps({
+                'mode':           'extraction_scan',
+                'found':          len(image_paths),
+                'scanned':        len(results),
+                'explicit_count': explicit_count,
+                'results':        results,
+            }),
+        )
+
+    else:
+        # direct: classify the artefact file directly.
+        input_path = self.get_input_path(artefact, work_dir)
+        raw_results = classify_batch(
+            self._nsfw_sess1, self._nsfw_input1, self._nsfw_meta1,
+            self._nsfw_sess2, self._nsfw_input2, self._nsfw_meta2,
+            [str(input_path)], NSFW_HIGH, NSFW_LOW, NSFW_MIN_PIXELS,
+        )
+        if raw_results:
+            r       = raw_results[0]
+            summary = f'Stage {r["stage"]}: {r["verdict"]} (score={r["score"]:.3f})'
+        else:
+            summary = 'Image skipped (too small or unreadable)'
+        self.complete_analysis(
+            analysis_id,
+            summary=summary,
+            details=json.dumps({'mode': 'direct', 'results': raw_results}),
+        )
+
+
 # vim: ts=4 sw=4 et

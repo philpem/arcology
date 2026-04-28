@@ -1,0 +1,195 @@
+"""
+Two-stage ONNX explicit-content image classifier.
+
+Stage 1: Marqo/nsfw-image-detection-384 (ViT, input 384×384)
+  - Fast pre-filter.  Scores above high_threshold → explicit immediately.
+    Scores below low_threshold → not explicit immediately.  Scores in
+    between are passed to stage 2.
+
+Stage 2: prithivMLmods/Nsfw_Image_Detection_OSS (CLIP, input 224×224)
+  - Verification stage.  Only invoked for borderline stage-1 scores.
+
+Each model is accompanied by a metadata dict describing its class layout
+and preprocessing pipeline:
+
+    {
+        "nsfw_class_index": int,   # which output index is the explicit-content class
+        "input_size":       int,   # square input size (e.g. 384 or 224)
+        "mean":             list,  # per-channel normalisation mean (3 floats)
+        "std":              list,  # per-channel normalisation std  (3 floats)
+        "interpolation":    str,   # Pillow resample name: 'bicubic', 'lanczos', …
+        "crop_pct":         float, # fraction of shorter side used (1.0 = no over-resize)
+    }
+
+These dicts are emitted by the export scripts as JSON sidecars alongside the
+ONNX files so that runtime inference always uses the training-matched pipeline.
+
+Sessions are intentionally NOT managed here — callers should create them
+once and pass them in so models remain loaded across multiple jobs.
+"""
+
+from pathlib import Path
+import numpy as np
+
+
+def softmax(x: np.ndarray) -> np.ndarray:
+    """Numerically stable row-wise softmax."""
+    e = np.exp(x - x.max(axis=-1, keepdims=True))
+    return e / e.sum(axis=-1, keepdims=True)
+
+
+def _get_resample_filter(name: str):
+    from PIL import Image
+    return {
+        'lanczos':  Image.LANCZOS,
+        'bicubic':  Image.BICUBIC,
+        'bilinear': Image.BILINEAR,
+        'nearest':  Image.NEAREST,
+    }.get(name, Image.BICUBIC)
+
+
+def preprocess(
+    img_or_path,
+    size: int,
+    mean,
+    std,
+    resample: str = 'bicubic',
+    crop_pct: float = 1.0,
+) -> np.ndarray:
+    """
+    Resize and normalise a PIL Image (or path) to a ``size×size`` float32 array.
+
+    Preserves aspect ratio: the shorter side is scaled to
+    ``round(size / crop_pct)`` then the centre ``size×size`` tile is cropped.
+    When ``crop_pct == 1.0`` this is simply a shorter-side-to-size resize
+    followed by a centre crop with no border.
+
+    Returns a ``(1, 3, H, W)`` array ready for ONNX inference.
+    """
+    from PIL import Image
+    if isinstance(img_or_path, (str, Path)):
+        img = Image.open(img_or_path).convert('RGB')
+    else:
+        img = img_or_path.convert('RGB')
+
+    # Aspect-preserving resize so the shorter side reaches scale_size
+    scale_size = max(size, round(size / crop_pct))
+    w, h = img.size
+    if w <= h:
+        new_w, new_h = scale_size, round(h * scale_size / w)
+    else:
+        new_w, new_h = round(w * scale_size / h), scale_size
+    img = img.resize((new_w, new_h), _get_resample_filter(resample))
+
+    # Centre crop to size × size
+    left = (new_w - size) // 2
+    top  = (new_h - size) // 2
+    img  = img.crop((left, top, left + size, top + size))
+
+    arr = np.array(img, dtype=np.float32) / 255.0
+    arr = (arr - np.array(mean, dtype=np.float32)) / np.array(std, dtype=np.float32)
+
+    # HWC → CHW → NCHW
+    return arr.transpose(2, 0, 1)[np.newaxis]
+
+
+def classify_batch(
+    sess1,
+    input_name1: str,
+    meta1: dict,
+    sess2,
+    input_name2: str,
+    meta2: dict,
+    paths: list[str],
+    high_threshold: float,
+    low_threshold: float,
+    min_pixels: int = 0,
+) -> list[dict]:
+    """
+    Classify a list of image paths with the two-stage cascade.
+
+    Args:
+        sess1: ONNX InferenceSession for stage-1 model
+        input_name1: Input tensor name for sess1
+        meta1: Preprocessing/label metadata for sess1 (see module docstring)
+        sess2: ONNX InferenceSession for stage-2 model
+        input_name2: Input tensor name for sess2
+        meta2: Preprocessing/label metadata for sess2
+        paths: List of file paths to classify
+        high_threshold: Stage-1 score above which result is explicit (no stage 2)
+        low_threshold: Stage-1 score below which result is not explicit (no stage 2)
+        min_pixels: Skip images whose total pixel area (w×h) is below this (0 = no limit)
+
+    Returns:
+        List of dicts, one per classified path::
+
+            {
+                "path":    str,
+                "stage":   1 or 2,
+                "score":   float,   # explicit-content probability (0–1)
+                "verdict": "explicit" or "not explicit"
+            }
+
+        Paths that cannot be loaded (missing, corrupt, or too small) are
+        skipped silently and do not appear in the output.
+    """
+    from PIL import Image
+
+    nsfw_idx1  = meta1['nsfw_class_index']
+    size1      = meta1.get('input_size', 384)
+    mean1      = meta1['mean']
+    std1       = meta1['std']
+    resample1  = meta1.get('interpolation', 'bicubic')
+    crop_pct1  = float(meta1.get('crop_pct', 1.0))
+
+    nsfw_idx2  = meta2['nsfw_class_index']
+    size2      = meta2.get('input_size', 224)
+    mean2      = meta2['mean']
+    std2       = meta2['std']
+    resample2  = meta2.get('interpolation', 'bicubic')
+    crop_pct2  = float(meta2.get('crop_pct', 1.0))
+
+    results = []
+
+    for path in paths:
+        path_str = str(path)
+        try:
+            img = Image.open(path_str)
+            w, h = img.size
+            if min_pixels > 0 and w * h < min_pixels:
+                img.close()
+                continue  # too small for a meaningful result
+            arr1 = preprocess(img, size1, mean1, std1, resample1, crop_pct1)
+        except Exception:
+            continue
+
+        # Stage 1
+        out1   = sess1.run(None, {input_name1: arr1})[0]
+        probs1 = softmax(out1)[0]
+        score1 = float(probs1[nsfw_idx1])
+
+        if score1 >= high_threshold:
+            results.append({'path': path_str, 'stage': 1, 'score': score1, 'verdict': 'explicit'})
+            continue
+
+        if score1 <= low_threshold:
+            results.append({'path': path_str, 'stage': 1, 'score': score1, 'verdict': 'not explicit'})
+            continue
+
+        # Borderline: run stage 2
+        try:
+            arr2 = preprocess(img, size2, mean2, std2, resample2, crop_pct2)
+        except Exception:
+            verdict2 = 'explicit' if score1 >= 0.5 else 'not explicit'
+            results.append({'path': path_str, 'stage': 1, 'score': score1, 'verdict': verdict2})
+            continue
+
+        out2   = sess2.run(None, {input_name2: arr2})[0]
+        probs2 = softmax(out2)[0]
+        score2 = float(probs2[nsfw_idx2])
+        verdict2 = 'explicit' if score2 >= 0.5 else 'not explicit'
+        results.append({'path': path_str, 'stage': 2, 'score': score2, 'verdict': verdict2})
+
+    return results
+
+# vim: ts=4 sw=4 et

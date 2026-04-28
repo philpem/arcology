@@ -94,4 +94,7 @@ class AnalysisType(enum.Enum):
     # RISC OS / Acorn specific
     RISCOS_MODULE_PARSE    = "riscos_module_parse"    # Parse RISC OS relocatable module metadata (title, version, date, SWIs, commands)
 
+    # Explicit-content moderation
+    NSFW_SCAN              = "nsfw_scan"              # Two-stage ONNX explicit-content image classification
+
 # vim: ts=4 sw=4 et
