@@ -501,7 +501,7 @@ def process_nsfw_scan(self, analysis: dict, artefact: dict, work_dir: Path):
       extraction_scan runs before FORMAT_CONVERT has produced its outputs.
     """
     import json
-    from ..config import NSFW_ENABLED, NSFW_HIGH, NSFW_LOW, NSFW_MIN_PIXELS
+    from ..config import NSFW_ENABLED, NSFW_HIGH, NSFW_LOW, NSFW_MIN_PIXELS, NSFW_S1_MIN_EXPLICIT, NSFW_S2_THRESHOLD
     from ..tools.nsfw import classify_batch
 
     analysis_id = analysis['id']
@@ -558,6 +558,7 @@ def process_nsfw_scan(self, analysis: dict, artefact: dict, work_dir: Path):
             self._nsfw_sess1, self._nsfw_input1, self._nsfw_meta1,
             self._nsfw_sess2, self._nsfw_input2, self._nsfw_meta2,
             image_paths, NSFW_HIGH, NSFW_LOW, NSFW_MIN_PIXELS,
+            s2_threshold=NSFW_S2_THRESHOLD, s1_min_explicit=NSFW_S1_MIN_EXPLICIT,
         )
         results = [
             {
@@ -658,6 +659,7 @@ def process_nsfw_scan(self, analysis: dict, artefact: dict, work_dir: Path):
             self._nsfw_sess1, self._nsfw_input1, self._nsfw_meta1,
             self._nsfw_sess2, self._nsfw_input2, self._nsfw_meta2,
             image_paths, NSFW_HIGH, NSFW_LOW, NSFW_MIN_PIXELS,
+            s2_threshold=NSFW_S2_THRESHOLD, s1_min_explicit=NSFW_S1_MIN_EXPLICIT,
         )
         results = [
             {**r, 'source_file': db_path_map.get(r['path'], r['path'])}
@@ -707,6 +709,7 @@ def process_nsfw_scan(self, analysis: dict, artefact: dict, work_dir: Path):
             self._nsfw_sess1, self._nsfw_input1, self._nsfw_meta1,
             self._nsfw_sess2, self._nsfw_input2, self._nsfw_meta2,
             [str(input_path)], NSFW_HIGH, NSFW_LOW, NSFW_MIN_PIXELS,
+            s2_threshold=NSFW_S2_THRESHOLD, s1_min_explicit=NSFW_S1_MIN_EXPLICIT,
         )
         if raw_results:
             r = raw_results[0]

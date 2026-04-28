@@ -138,6 +138,8 @@ def classify_batch(
     high_threshold: float,
     low_threshold: float,
     min_pixels: int = 0,
+    s2_threshold: float = 0.5,
+    s1_min_explicit: float = 0.0,
 ) -> list[dict]:
     """
     Classify a list of image paths with the two-stage cascade.
@@ -153,16 +155,22 @@ def classify_batch(
         high_threshold: Stage-1 score above which result is explicit (no stage 2)
         low_threshold: Stage-1 score below which result is not explicit (no stage 2)
         min_pixels: Skip images whose total pixel area (w×h) is below this (0 = no limit)
+        s2_threshold: Stage-2 score that must be reached for an explicit verdict (default 0.5).
+            Raising this (e.g. to 0.70) reduces false positives from stock/artistic photography.
+        s1_min_explicit: Minimum stage-1 score for stage-2's explicit verdict to be accepted.
+            When score1 < s1_min_explicit, stage-2 can only exonerate (not convict), preventing
+            overconfident stage-2 verdicts from overriding a sceptical stage-1 result.
 
     Returns:
         List of dicts, one per input path — classified or skipped::
 
             {
-                "path":    str,
-                "stage":   1 or 2,          # classified only
-                "score":   float,            # classified only; explicit probability (0–1)
-                "verdict": "explicit" | "not explicit" | "skipped"
-                "reason":  "too_small" | "unreadable"  # skipped only
+                "path":         str,
+                "stage":        1 or 2,          # classified only
+                "score":        float,            # classified only; explicit probability (0–1)
+                "stage1_score": float,            # stage-2 results only; the stage-1 score
+                "verdict":      "explicit" | "not explicit" | "skipped"
+                "reason":       "too_small" | "unreadable"  # skipped only
             }
     """
     from PIL import Image
@@ -217,7 +225,8 @@ def classify_batch(
             results.append({'path': path_str, 'stage': 1, 'score': score1, 'verdict': verdict2})
             continue
 
-        verdict2 = 'explicit' if score2 >= 0.5 else 'not explicit'
+        explicit2 = score2 >= s2_threshold and score1 >= s1_min_explicit
+        verdict2 = 'explicit' if explicit2 else 'not explicit'
         results.append({'path': path_str, 'stage': 2, 'score': score2, 'stage1_score': score1, 'verdict': verdict2})
 
     return results

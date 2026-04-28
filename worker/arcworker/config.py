@@ -45,6 +45,14 @@ NSFW_QUANTIZE = os.environ.get('NSFW_QUANTIZE', 'true').lower() not in ('false',
 # Stage-1 thresholds: score >= HIGH → explicit immediately; score <= LOW → not explicit immediately.
 NSFW_HIGH = float(os.environ.get('NSFW_HIGH', '0.90'))
 NSFW_LOW  = float(os.environ.get('NSFW_LOW',  '0.20'))
+# Stage-2 conviction thresholds.
+# NSFW_S2_THRESHOLD:   stage-2 score must reach this to convict (default 0.70 > hard-coded 0.50
+#                      reduces false positives from stock/artistic photography).
+# NSFW_S1_MIN_EXPLICIT: stage-1 score must reach this for stage-2's explicit verdict to count.
+#                      Images where stage-1 is sceptical (< 0.40) are not convicted by stage-2
+#                      alone, even if stage-2 is highly confident.
+NSFW_S2_THRESHOLD    = float(os.environ.get('NSFW_S2_THRESHOLD',    '0.70'))
+NSFW_S1_MIN_EXPLICIT = float(os.environ.get('NSFW_S1_MIN_EXPLICIT', '0.40'))
 # Minimum image area (pixels); images with w×h below this are skipped.
 # Default 16384 ≈ 128×128.  Area-based test avoids dropping valid wide frames.
 NSFW_MIN_PIXELS = int(os.environ.get('NSFW_MIN_PIXELS', '16384'))
