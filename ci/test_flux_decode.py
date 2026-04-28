@@ -498,7 +498,7 @@ class TestSkipAnalyses(unittest.TestCase):
             from myapp.extensions import db
             db.create_all()
             from myapp.blueprints.artefacts import queue_analyses_for_artefact
-            from myapp.database import Artefact, Item, StorageDirectory
+            from myapp.database import Analysis, Artefact, Item, StorageDirectory
             item = Item(name='test item')
             db.session.add(item)
             db.session.flush()
@@ -514,7 +514,6 @@ class TestSkipAnalyses(unittest.TestCase):
             db.session.flush()
 
             # Call with skip_analyses — should not queue FLUX_DECODE
-            from myapp.database import Analysis
             queue_analyses_for_artefact(
                 artefact,
                 skip_analyses=[AnalysisType.FLUX_DECODE.name],
