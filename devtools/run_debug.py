@@ -4,7 +4,9 @@
 #
 # run: python3 devtools/run_debug.py
 
-import os, os.path, sys
+import os
+import os.path
+import sys
 
 sys.path.append(
     os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir)))
@@ -14,7 +16,7 @@ from myapp.app import create_app
 if __name__ == '__main__':
     def walk(path, ext=None):
         extra_files=[path,]
-        for dirname, dirs, files in os.walk(path):
+        for dirname, _dirs, files in os.walk(path):
             for filename in files:
                 if ext != None and filename[-len(ext):] != ext:
                     continue

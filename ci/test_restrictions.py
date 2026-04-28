@@ -56,7 +56,7 @@ def _make_item_and_artefact(db):
     """Create a minimal Item + Artefact for testing (unique names each call)."""
     global _counter
     _counter += 1
-    from myapp.database import Item, Artefact, Platform
+    from myapp.database import Artefact, Item, Platform
     from shared.enums import ArtefactType
 
     platform = Platform(name=f'Test Platform {_counter}')
@@ -128,8 +128,9 @@ class TestArtefactRestriction(unittest.TestCase):
 
     def test_unique_constraint_prevents_duplicate(self):
         with self.app.app_context():
-            from myapp.database import ArtefactRestriction, RestrictionType
             from sqlalchemy.exc import IntegrityError
+
+            from myapp.database import ArtefactRestriction, RestrictionType
             _, artefact = _make_item_and_artefact(self.db)
 
             self.db.session.add(ArtefactRestriction(
@@ -183,7 +184,7 @@ class TestUserRestrictionBypass(unittest.TestCase):
 
     def test_can_bypass_restriction(self):
         with self.app.app_context():
-            from myapp.database import User, UserRestrictionBypass, RestrictionType
+            from myapp.database import RestrictionType, User, UserRestrictionBypass
 
             user = User(username='bypass_user', password_hash='x' * 60)
             self.db.session.add(user)
@@ -201,7 +202,10 @@ class TestUserRestrictionBypass(unittest.TestCase):
     def test_can_bypass_all_restrictions(self):
         with self.app.app_context():
             from myapp.database import (
-                User, UserRestrictionBypass, ArtefactRestriction, RestrictionType,
+                ArtefactRestriction,
+                RestrictionType,
+                User,
+                UserRestrictionBypass,
             )
 
             user = User(username='bypass_all_user', password_hash='x' * 60)
@@ -249,7 +253,9 @@ class TestUserRestrictionBypass(unittest.TestCase):
         """Admin users should implicitly bypass all restriction types."""
         with self.app.app_context():
             from myapp.database import (
-                User, ArtefactRestriction, RestrictionType,
+                ArtefactRestriction,
+                RestrictionType,
+                User,
             )
 
             admin = User(username='admin_bypass_user', password_hash='x' * 60, is_admin=True)
@@ -337,8 +343,8 @@ class TestArtefactSerialization(unittest.TestCase):
 
     def test_artefact_to_dict_includes_restrictions(self):
         with self.app.app_context():
-            from myapp.database import ArtefactRestriction, RestrictionType
             from myapp.blueprints.api import artefact_to_dict
+            from myapp.database import ArtefactRestriction, RestrictionType
 
             _, artefact = _make_item_and_artefact(self.db)
 
@@ -373,7 +379,11 @@ class TestFindAllKnownFilesBatch(unittest.TestCase):
         """When a file's hash appears in two active databases, both are returned."""
         with self.app.app_context():
             from myapp.database import (
-                HashDatabase, KnownFile, Partition, ExtractedFile, FilesystemType,
+                ExtractedFile,
+                FilesystemType,
+                HashDatabase,
+                KnownFile,
+                Partition,
             )
             from myapp.utils.hash_rescan import find_all_known_files_batch
 
@@ -441,8 +451,12 @@ class TestApplyDatabaseRestrictions(unittest.TestCase):
         apply_database_restrictions() should create the restriction."""
         with self.app.app_context():
             from myapp.database import (
-                HashDatabase, KnownFile, Partition, ExtractedFile,
-                FilesystemType, RestrictionType,
+                ExtractedFile,
+                FilesystemType,
+                HashDatabase,
+                KnownFile,
+                Partition,
+                RestrictionType,
             )
             from myapp.utils.hash_rescan import apply_database_restrictions
 
@@ -493,7 +507,11 @@ class TestApplyDatabaseRestrictions(unittest.TestCase):
         """Databases without restriction_type should not auto-restrict."""
         with self.app.app_context():
             from myapp.database import (
-                HashDatabase, KnownFile, Partition, ExtractedFile, FilesystemType,
+                ExtractedFile,
+                FilesystemType,
+                HashDatabase,
+                KnownFile,
+                Partition,
             )
             from myapp.utils.hash_rescan import apply_database_restrictions
 
@@ -537,8 +555,13 @@ class TestApplyDatabaseRestrictions(unittest.TestCase):
         on each matched file when the database has restriction_type set."""
         with self.app.app_context():
             from myapp.database import (
-                HashDatabase, KnownFile, Partition, ExtractedFile,
-                FilesystemType, RestrictionType, ExtractedFileRestriction,
+                ExtractedFile,
+                ExtractedFileRestriction,
+                FilesystemType,
+                HashDatabase,
+                KnownFile,
+                Partition,
+                RestrictionType,
             )
             from myapp.utils.hash_rescan import apply_database_restrictions
 
@@ -590,8 +613,13 @@ class TestApplyDatabaseRestrictions(unittest.TestCase):
         ExtractedFileRestriction rows."""
         with self.app.app_context():
             from myapp.database import (
-                HashDatabase, KnownFile, Partition, ExtractedFile,
-                FilesystemType, RestrictionType, ExtractedFileRestriction,
+                ExtractedFile,
+                ExtractedFileRestriction,
+                FilesystemType,
+                HashDatabase,
+                KnownFile,
+                Partition,
+                RestrictionType,
             )
             from myapp.utils.hash_rescan import apply_database_restrictions
 
@@ -645,7 +673,7 @@ class TestApplyDatabaseRestrictions(unittest.TestCase):
 
 def _make_partition_and_file(db, artefact, path='file.txt', parent=None):
     """Create a Partition + ExtractedFile; reuses existing partition if artefact already has one."""
-    from myapp.database import Partition, ExtractedFile, FilesystemType
+    from myapp.database import ExtractedFile, FilesystemType, Partition
     partition = Partition.query.filter_by(artefact_id=artefact.id).first()
     if partition is None:
         partition = Partition(
@@ -695,8 +723,9 @@ class TestExtractedFileRestriction(unittest.TestCase):
 
     def test_unique_constraint_prevents_duplicate(self):
         with self.app.app_context():
-            from myapp.database import ExtractedFileRestriction, RestrictionType
             from sqlalchemy.exc import IntegrityError
+
+            from myapp.database import ExtractedFileRestriction, RestrictionType
             _, artefact = _make_item_and_artefact(self.db)
             _, ef = _make_partition_and_file(self.db, artefact, 'dup.txt')
 
@@ -843,8 +872,11 @@ class TestAPIExtractedFileDownloadRestriction(unittest.TestCase):
     def test_restricted_extracted_file_returns_403(self):
         with self.app.app_context():
             from myapp.database import (
-                ArtefactRestriction, RestrictionType, Partition,
-                ExtractedFile, FilesystemType,
+                ArtefactRestriction,
+                ExtractedFile,
+                FilesystemType,
+                Partition,
+                RestrictionType,
             )
             _, artefact = _make_item_and_artefact(self.db)
 

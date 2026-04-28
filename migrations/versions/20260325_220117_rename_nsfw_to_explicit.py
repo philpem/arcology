@@ -11,8 +11,8 @@ Revision ID: 000069c45b2d
 Revises: 000069c2d776
 Create Date: 2026-03-25
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision = '000069c45b2d'
 down_revision = '000069c2d776'

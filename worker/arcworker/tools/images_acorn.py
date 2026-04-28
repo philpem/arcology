@@ -8,8 +8,9 @@ import re
 import traceback as _tb
 from pathlib import Path
 
-from .base import tool_result
 from ..config import log
+from .base import tool_result
+
 
 def _safe_sprite_name(name: str, index: int) -> str:
     """Return a filesystem-safe version of a sprite name."""

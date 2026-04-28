@@ -11,8 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from .config import log, TOOL_TIMEOUT, MAX_DECOMPRESSED_BYTES
-
+from .config import MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT, log
 
 COMPRESSION_EXTENSIONS = {
     '.zst': ['zstd', '-d', '-c'],

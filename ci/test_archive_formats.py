@@ -22,12 +22,12 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from shared.archive_formats import (
-    ArchiveType,
-    ArchiveCategory,
     ARCHIVE_FORMATS,
-    get_archive_info,
-    get_archive_by_filetype,
+    ArchiveCategory,
+    ArchiveType,
     get_archive_by_extension,
+    get_archive_by_filetype,
+    get_archive_info,
     is_archive_format,
     is_compressor_format,
     is_disk_image_format,

@@ -10,30 +10,29 @@ import json
 import shutil
 from pathlib import Path
 
-from shared.enums import ArtefactType, AnalysisType
+from shared.enums import AnalysisType, ArtefactType
 
 from ..config import log
 from ..tools import (
+    decompress_single_file,
+    detect_fat_filesystem,
+    enumerate_extracted_files,
+    extract_7z,
     extract_acorn_disc_image_manager,
     extract_dos_7z,
-    enumerate_extracted_files,
-    parse_iso_riscos_filetypes,
-    detect_fat_filesystem,
-    read_fat_volume_label,
-    has_riscos_zip_metadata,
+    extract_rar,
     extract_riscosarc,
+    extract_tar,
     extract_tbafs,
     extract_xfiles,
     extract_zip,
     extract_zip_riscos,
-    extract_tar,
-    extract_rar,
-    extract_7z,
-    decompress_single_file,
+    has_riscos_zip_metadata,
+    parse_iso_riscos_filetypes,
+    read_fat_volume_label,
 )
-from ..tools.iso9660 import parse_iso9660_pvd
 from ..tools.extraction import _parse_dim_report, convert_fcfs_to_raw
-
+from ..tools.iso9660 import parse_iso9660_pvd
 from ._common import analysis_handler
 
 
@@ -191,7 +190,9 @@ def _extract_top_level_archive(
     recognised disc images to derived artefacts.
     """
     import json
+
     from shared.archive_formats import ArchiveType, get_archive_info
+
     from ..config import OUTPUT_DIR
     from ..utils.paths import get_output_path
 
@@ -364,8 +365,8 @@ def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path
     When a 'partition_image_path' hint is provided (set by PARTITION_DETECT),
     uses that file directly instead of re-decompressing the original artefact.
     """
-    from ..utils.paths import get_output_path
     from ..config import OUTPUT_DIR
+    from ..utils.paths import get_output_path
 
     analysis_id = analysis['id']
     artefact_type = artefact.get('artefact_type', '')
@@ -636,12 +637,14 @@ def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path)
     Scans partition files for archives and queues extraction jobs.
     """
     import json
+
     from shared.archive_formats import (
-        get_archive_by_filetype,
         get_archive_by_extension,
+        get_archive_by_filetype,
         get_archive_info,
         is_compressor_format,
     )
+
     from ..config import MAX_ARCHIVE_DEPTH
 
     analysis_id = analysis['id']
@@ -770,11 +773,13 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
     the handler creates a new partition for the extracted files.
     """
     import json
+
     from shared.archive_formats import (
         ArchiveType,
         get_archive_info,
     )
-    from ..config import OUTPUT_DIR, MAX_ARCHIVE_DEPTH
+
+    from ..config import MAX_ARCHIVE_DEPTH, OUTPUT_DIR
     from ..utils.paths import get_output_path
 
     analysis_id = analysis['id']

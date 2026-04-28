@@ -12,7 +12,6 @@ import os
 import sys
 from pathlib import Path
 
-
 CONFIG_DIR = Path.home() / '.config' / 'arcology'
 CONFIG_FILE = CONFIG_DIR / 'config.ini'
 

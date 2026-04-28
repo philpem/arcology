@@ -4,14 +4,14 @@ Arcology - Profile Blueprint
 User profile management: change password and manage API application keys.
 """
 
-from flask import Blueprint, render_template, flash, session, abort
-from flask_login import login_required, current_user
+from flask import Blueprint, abort, flash, render_template, session
+from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
-from wtforms import StringField, PasswordField, SelectField
-from wtforms.validators import DataRequired, Length, EqualTo
+from wtforms import PasswordField, SelectField, StringField
+from wtforms.validators import DataRequired, EqualTo, Length
 
-from ..extensions import db
 from ..database import ApiKey, ApiKeyPermission, UserPermission
+from ..extensions import db
 from ..utils.web_forms import flash_form_errors, redirect_local
 
 ROUTENAME = __name__.replace('.', '_')

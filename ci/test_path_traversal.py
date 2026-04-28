@@ -17,9 +17,9 @@ Run:
         python -m unittest ci.test_path_traversal -v
 """
 
+import json
 import os
 import sys
-import json
 import tempfile
 import unittest
 
@@ -37,7 +37,7 @@ _AUTH = {'X-API-Key': _WORKER_KEY}
 
 def _make_fixtures(db):
     """Create Platform -> Item -> Artefact fixture. Returns (item, artefact)."""
-    from myapp.database import Platform, Item, Artefact
+    from myapp.database import Artefact, Item, Platform
     from shared.enums import ArtefactType
 
     platform = Platform(name='Test Platform')
@@ -138,9 +138,8 @@ class TestProduceArtefactStoragePathValidation(unittest.TestCase):
 
         with cls.app.app_context():
             _db.create_all()
-            from myapp.database import Platform, Item, Artefact, Analysis
-            from myapp.database import AnalysisStatus
-            from shared.enums import ArtefactType, AnalysisType
+            from myapp.database import Analysis, AnalysisStatus, Artefact, Item, Platform
+            from shared.enums import AnalysisType, ArtefactType
 
             platform = Platform(name='Test Platform 2')
             _db.session.add(platform)
@@ -212,6 +211,7 @@ class TestGetArtefactPathConfinement(unittest.TestCase):
 
     def _make_artefact(self, storage_path):
         from unittest.mock import MagicMock
+
         from myapp.database import StorageDirectory
         a = MagicMock()
         a.storage_path = storage_path
@@ -270,10 +270,18 @@ class TestResolveExtractedFilePathConfinement(unittest.TestCase):
 
         with self.app.app_context():
             _db.create_all()
-            from myapp.database import (Platform, Item, Artefact, Partition,
-                                        ExtractedFile, Analysis, AnalysisStatus,
-                                        StorageDirectory, FilesystemType)
-            from shared.enums import ArtefactType, AnalysisType
+            from myapp.database import (
+                Analysis,
+                AnalysisStatus,
+                Artefact,
+                ExtractedFile,
+                FilesystemType,
+                Item,
+                Partition,
+                Platform,
+                StorageDirectory,
+            )
+            from shared.enums import AnalysisType, ArtefactType
 
             platform = Platform(name='Traverse Platform')
             _db.session.add(platform)
@@ -357,9 +365,8 @@ class TestDeleteItemFilesConfinement(unittest.TestCase):
 
         with self.app.app_context():
             _db.create_all()
-            from myapp.database import (Platform, Item, Artefact, Analysis,
-                                        AnalysisStatus, StorageDirectory)
-            from shared.enums import ArtefactType, AnalysisType
+            from myapp.database import Analysis, AnalysisStatus, Artefact, Item, Platform, StorageDirectory
+            from shared.enums import AnalysisType, ArtefactType
 
             platform = Platform(name='Delete Platform')
             _db.session.add(platform)

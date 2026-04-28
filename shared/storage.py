@@ -16,7 +16,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import BinaryIO, Optional
+from typing import BinaryIO
 
 # Ensure SVG is always mapped correctly — some Linux systems omit it.
 mimetypes.add_type('image/svg+xml', '.svg')
@@ -30,7 +30,8 @@ def _mime_for_key(key: str) -> str:
 # botocore exception base classes — imported here so the module loads even
 # when boto3 is absent (LocalStorage users never import these).
 try:
-    from botocore.exceptions import BotoCoreError, ClientError as BotoClientError
+    from botocore.exceptions import BotoCoreError
+    from botocore.exceptions import ClientError as BotoClientError
 except ImportError:
     BotoCoreError = BotoClientError = Exception  # type: ignore[misc,assignment]
 
@@ -78,7 +79,7 @@ class StorageBackend(abc.ABC):
         """List all object keys under a prefix."""
 
     @abc.abstractmethod
-    def presigned_url(self, key: str, expires: int = 3600, filename: Optional[str] = None) -> Optional[str]:
+    def presigned_url(self, key: str, expires: int = 3600, filename: str | None = None) -> str | None:
         """Return a pre-signed download URL, or None if not supported."""
 
     @abc.abstractmethod
@@ -193,7 +194,7 @@ class LocalStorage(StorageBackend):
                 results.append(root_prefix + str(rel))
         return results
 
-    def presigned_url(self, key: str, expires: int = 3600, filename: Optional[str] = None) -> Optional[str]:
+    def presigned_url(self, key: str, expires: int = 3600, filename: str | None = None) -> str | None:
         # Local storage doesn't support pre-signed URLs
         return None
 
@@ -296,7 +297,7 @@ class S3Storage(StorageBackend):
                 ExtraArgs={'ContentType': _mime_for_key(key)},
             )
         except (BotoCoreError, BotoClientError) as exc:
-            raise IOError(f"S3 upload failed for '{key}': {exc}") from exc
+            raise OSError(f"S3 upload failed for '{key}': {exc}") from exc
 
     def get(self, key: str, dest_path: Path) -> None:
         dest = Path(dest_path)
@@ -307,9 +308,9 @@ class S3Storage(StorageBackend):
             code = exc.response.get('Error', {}).get('Code', '')
             if code in ('404', 'NoSuchKey'):
                 raise FileNotFoundError(f"S3 object not found: '{key}'") from exc
-            raise IOError(f"S3 download failed for '{key}': {exc}") from exc
+            raise OSError(f"S3 download failed for '{key}': {exc}") from exc
         except BotoCoreError as exc:
-            raise IOError(f"S3 download failed for '{key}': {exc}") from exc
+            raise OSError(f"S3 download failed for '{key}': {exc}") from exc
 
     def open_read(self, key: str) -> BinaryIO:
         try:
@@ -325,16 +326,16 @@ class S3Storage(StorageBackend):
             code = exc.response.get('Error', {}).get('Code', '')
             if code in ('404', 'NoSuchKey'):
                 raise FileNotFoundError(f"S3 object not found: '{key}'") from exc
-            raise IOError(f"S3 read failed for '{key}': {exc}") from exc
+            raise OSError(f"S3 read failed for '{key}': {exc}") from exc
         except BotoCoreError as exc:
-            raise IOError(f"S3 read failed for '{key}': {exc}") from exc
+            raise OSError(f"S3 read failed for '{key}': {exc}") from exc
 
     def delete(self, key: str) -> None:
         # S3 delete is idempotent — no error if key doesn't exist
         try:
             self._client.delete_object(Bucket=self.bucket, Key=key)
         except (BotoCoreError, BotoClientError) as exc:
-            raise IOError(f"S3 delete failed for '{key}': {exc}") from exc
+            raise OSError(f"S3 delete failed for '{key}': {exc}") from exc
 
     def delete_prefix(self, prefix: str) -> int:
         keys = self.list_prefix(prefix)
@@ -351,7 +352,7 @@ class S3Storage(StorageBackend):
                 )
                 deleted += len(batch)
         except (BotoCoreError, BotoClientError) as exc:
-            raise IOError(f"S3 delete_prefix failed for '{prefix}': {exc}") from exc
+            raise OSError(f"S3 delete_prefix failed for '{prefix}': {exc}") from exc
         return deleted
 
     def exists(self, key: str) -> bool:
@@ -372,7 +373,7 @@ class S3Storage(StorageBackend):
                 keys.append(obj['Key'])
         return keys
 
-    def presigned_url(self, key: str, expires: int = 3600, filename: Optional[str] = None) -> Optional[str]:
+    def presigned_url(self, key: str, expires: int = 3600, filename: str | None = None) -> str | None:
         params = {
             'Bucket': self.bucket,
             'Key': key,
@@ -401,7 +402,7 @@ class S3Storage(StorageBackend):
                     )
                     count += 1
         except (BotoCoreError, BotoClientError) as exc:
-            raise IOError(f"S3 put_tree failed for prefix '{prefix}': {exc}") from exc
+            raise OSError(f"S3 put_tree failed for prefix '{prefix}': {exc}") from exc
         return count
 
     def get_tree(self, prefix: str, dest_dir: Path) -> int:
@@ -419,7 +420,7 @@ class S3Storage(StorageBackend):
                 self._client.download_file(self.bucket, key, str(dest))
                 count += 1
         except (BotoCoreError, BotoClientError) as exc:
-            raise IOError(f"S3 get_tree failed for prefix '{prefix}': {exc}") from exc
+            raise OSError(f"S3 get_tree failed for prefix '{prefix}': {exc}") from exc
         return count
 
 

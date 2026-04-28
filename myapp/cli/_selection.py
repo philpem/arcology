@@ -1,9 +1,12 @@
 """Shared artefact selection helpers for CLI commands."""
 
 import re
+
 import click
-from ..database import Artefact, Item, Tag, Platform, Category
+
 from shared.enums import ArtefactType
+
+from ..database import Artefact, Category, Item, Platform, Tag
 
 
 def build_artefact_query(item_uuid=None, tag_name=None, platform_name=None,
@@ -62,7 +65,7 @@ def build_artefact_query(item_uuid=None, tag_name=None, platform_name=None,
                 f"Valid types: {valid}",
                 err=True,
             )
-            raise SystemExit(1)
+            raise SystemExit(1) from None
         query = query.filter(Artefact.artefact_type == at)
 
     return query

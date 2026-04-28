@@ -2,8 +2,8 @@
 
 from collections.abc import Iterable
 
-from ..extensions import db
 from ..database import Item, Tag
+from ..extensions import db
 
 
 def item_choice_list(model, placeholder: str):

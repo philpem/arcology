@@ -69,7 +69,7 @@ def _find_downgrade_target(migration_files):
             revisions[rev] = down_rev
 
     all_new = set(revisions)
-    for rev, down_rev in revisions.items():
+    for _rev, down_rev in revisions.items():
         if down_rev not in all_new:
             return down_rev  # None means "base"
 

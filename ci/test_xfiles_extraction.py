@@ -86,7 +86,7 @@ def _build_dir_chunk(
 
     # Build hash table
     hash_table = b''
-    for i, (name_bytes, _load, _exec_, _fsize, _attr, node) in enumerate(entries):
+    for i, (name_bytes, _load, _exec, _fsize, _attr, node) in enumerate(entries):
         ns = (name_bytes + b'\x00\x00\x00\x00')[:4]
         hash_table += ns + struct.pack('<II', entry_positions[i], node)
 

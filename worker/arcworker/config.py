@@ -4,9 +4,9 @@ Worker configuration.
 Loads settings from environment variables with sensible defaults.
 """
 
+import logging
 import os
 import sys
-import logging
 from pathlib import Path
 
 # API and directory configuration

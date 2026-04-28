@@ -5,10 +5,9 @@ Revises: 000069ac0c86
 Create Date: 2026-03-07 12:28:30.000000
 
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
-
 
 # revision identifiers, used by Alembic.
 revision = '000069ac19ee'

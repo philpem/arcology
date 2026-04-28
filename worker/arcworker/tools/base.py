@@ -9,7 +9,7 @@ import time
 import traceback
 from pathlib import Path
 
-from ..config import log, TOOL_TIMEOUT
+from ..config import TOOL_TIMEOUT, log
 from ..utils.text import sanitize_filename
 
 

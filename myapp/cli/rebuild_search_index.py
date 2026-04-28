@@ -1,10 +1,17 @@
 import json
+
 import click
-from ..extensions import db
+
 from ..database import (
-    Analysis, AnalysisType, AnalysisStatus,
-    Partition, ArtefactProtection, ArtefactMastering, RiscosModule,
+    Analysis,
+    AnalysisStatus,
+    AnalysisType,
+    ArtefactMastering,
+    ArtefactProtection,
+    Partition,
+    RiscosModule,
 )
+from ..extensions import db
 
 
 def _process_analyses(analysis_type, label, row_handler):

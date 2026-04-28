@@ -8,12 +8,12 @@ status updates, and artefact registration.
 import hashlib
 import shutil
 from pathlib import Path
-from typing import Optional
 
 import requests
 
-from .config import log
 from shared.enums import ArtefactType
+
+from .config import log
 from .tools import compute_file_hash
 
 
@@ -69,7 +69,7 @@ class ArcologyAPI:
             timeout=30,
         )
 
-    def get(self, endpoint: str) -> Optional[dict]:
+    def get(self, endpoint: str) -> dict | None:
         """
         GET request to API.
 
@@ -81,7 +81,7 @@ class ArcologyAPI:
         """
         return self._request('get', endpoint)
 
-    def put(self, endpoint: str, data: dict) -> Optional[dict]:
+    def put(self, endpoint: str, data: dict) -> dict | None:
         """
         PUT request to API.
 
@@ -94,7 +94,7 @@ class ArcologyAPI:
         """
         return self._request('put', endpoint, data=data)
 
-    def post(self, endpoint: str, data: dict) -> Optional[dict]:
+    def post(self, endpoint: str, data: dict) -> dict | None:
         """
         POST request to API.
 
@@ -107,7 +107,7 @@ class ArcologyAPI:
         """
         return self._request('post', endpoint, data=data)
 
-    def patch(self, endpoint: str, data: dict) -> Optional[dict]:
+    def patch(self, endpoint: str, data: dict) -> dict | None:
         """
         PATCH request to API.
 
@@ -162,7 +162,7 @@ class ArcologyAPI:
         except requests.HTTPError as e:
             raise RuntimeError(
                 f"update_analysis failed for analysis {analysis_id}: {e}"
-            )
+            ) from e
         except Exception as e:
             raise RuntimeError(
                 f"update_analysis failed for analysis {analysis_id} "
@@ -177,7 +177,7 @@ class ArcologyAPI:
         artefact_type: ArtefactType,
         auto_analyse: bool = True,
         skip_analyses: list[str] | None = None,
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """
         Register a derived artefact produced by an analysis.
         Stores file via storage backend and calls API.
@@ -332,7 +332,7 @@ class ArcologyAPI:
         artefact_uuid: str,
         analysis_type: str,
         hints: dict = None
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """
         Queue a new analysis for an artefact.
 

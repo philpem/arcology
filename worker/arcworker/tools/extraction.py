@@ -8,6 +8,7 @@ Supports:
 """
 
 import hashlib
+import logging
 import os
 import re
 import shutil
@@ -15,9 +16,11 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .base import run_tool_with_output, tool_result, exception_result
-from .partition import read_fat_volume_label
 from ..utils.text import normalize_extracted_filenames
+from .base import exception_result, run_tool_with_output, tool_result
+from .partition import read_fat_volume_label
+
+_log = logging.getLogger(__name__)
 
 
 def _decode_dos_cp850(data: bytes) -> str:
@@ -554,10 +557,6 @@ def _parse_inf_line(line: str) -> dict | None:
         # If rest[2] is hex and no rest[3], it's length with no access field
 
     return result
-
-
-import logging
-_log = logging.getLogger(__name__)
 
 
 def process_inf_sidecars(output_dir: Path) -> dict[str, dict]:

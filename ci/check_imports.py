@@ -8,8 +8,8 @@ Exits 0 if all imports succeed, 1 if any fail.
 """
 
 import importlib
-import sys
 import os
+import sys
 
 # Modules to import — covers the main app, shared definitions, and worker
 MODULES_TO_CHECK = [

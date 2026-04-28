@@ -52,7 +52,7 @@ class TestItemHierarchyModel(unittest.TestCase):
         cls.app, cls.db = _create_app_and_db()
 
     def setUp(self):
-        from myapp.database import Item, Platform, Category
+        from myapp.database import Category, Item, Platform
         with self.app.app_context():
             self.db.session.query(Item).delete()
             self.db.session.query(Platform).delete()
@@ -338,7 +338,7 @@ class TestMoveArtefact(unittest.TestCase):
         cls.headers = {'X-API-Key': _worker_key, 'Content-Type': 'application/json'}
 
     def setUp(self):
-        from myapp.database import Item, Artefact
+        from myapp.database import Artefact, Item
         with self.app.app_context():
             self.db.session.query(Artefact).delete()
             self.db.session.query(Item).filter(Item.name.like('test-mv-%')).delete()
@@ -360,8 +360,8 @@ class TestMoveArtefact(unittest.TestCase):
 
     def _create_artefact(self, item_uuid, label='Test Artefact'):
         """Create a minimal artefact via direct DB insertion."""
-        from myapp.database import Item, Artefact, ArtefactType
-        from myapp.utils.slugs import generate_slug, ensure_unique_slug
+        from myapp.database import Artefact, ArtefactType, Item
+        from myapp.utils.slugs import ensure_unique_slug, generate_slug
         with self.app.app_context():
             item = Item.query.filter_by(uuid=item_uuid).first()
             slug = ensure_unique_slug(generate_slug(label), Artefact, scope_filter={'item_id': item.id})
@@ -380,7 +380,7 @@ class TestMoveArtefact(unittest.TestCase):
     def _create_derived_artefact(self, parent_uuid, label='Derived'):
         """Create a derived artefact under a parent artefact."""
         from myapp.database import Artefact, ArtefactType
-        from myapp.utils.slugs import generate_slug, ensure_unique_slug
+        from myapp.utils.slugs import ensure_unique_slug, generate_slug
         with self.app.app_context():
             parent = Artefact.query.filter_by(uuid=parent_uuid).first()
             slug = ensure_unique_slug(generate_slug(label), Artefact, scope_filter={'item_id': parent.item_id})

@@ -1,6 +1,7 @@
 import click
+
 from ..database import Artefact
-from ..utils.hash_rescan import rescan_hashes_for_artefact, rescan_hashes_all
+from ..utils.hash_rescan import rescan_hashes_all, rescan_hashes_for_artefact
 
 
 @click.command('rescan-hashes')

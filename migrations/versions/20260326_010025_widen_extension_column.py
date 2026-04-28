@@ -8,8 +8,8 @@ Revision ID: 000069c48529
 Revises: 000069c45b2d
 Create Date: 2026-03-26
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision = '000069c48529'
 down_revision = '000069c45b2d'

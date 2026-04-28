@@ -4,12 +4,24 @@ Arcology Analysis Worker Package
 Modular worker for processing analysis jobs from the Arcology API.
 """
 
-from .config import (
-    ARCOLOGY_API, UPLOAD_DIR, OUTPUT_DIR, MAX_POLL, WORKER_API_KEY, log,
-    STORAGE_BACKEND, S3_ENDPOINT_URL, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION, S3_PUBLIC_URL,
-)
-from shared.enums import ArtefactType, AnalysisType
+from shared.enums import AnalysisType, ArtefactType
+
 from .analysis import AnalysisWorker
+from .config import (
+    ARCOLOGY_API,
+    MAX_POLL,
+    OUTPUT_DIR,
+    S3_ACCESS_KEY,
+    S3_BUCKET,
+    S3_ENDPOINT_URL,
+    S3_PUBLIC_URL,
+    S3_REGION,
+    S3_SECRET_KEY,
+    STORAGE_BACKEND,
+    UPLOAD_DIR,
+    WORKER_API_KEY,
+    log,
+)
 
 __all__ = [
     'AnalysisWorker',

@@ -8,14 +8,20 @@ the worker's folder-level product recognition after hash database changes.
 
 import json
 
-from sqlalchemy import or_, func
+from sqlalchemy import func, or_
 
-from ..extensions import db
 from ..database import (
-    ExtractedFile, Partition, KnownFile, HashDatabase,
-    Analysis, AnalysisType, AnalysisStatus,
-    ArtefactRestriction, ExtractedFileRestriction,
+    Analysis,
+    AnalysisStatus,
+    AnalysisType,
+    ArtefactRestriction,
+    ExtractedFile,
+    ExtractedFileRestriction,
+    HashDatabase,
+    KnownFile,
+    Partition,
 )
+from ..extensions import db
 
 
 def _active_known_file_query():

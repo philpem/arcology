@@ -18,8 +18,12 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from worker.arcworker.tools.riscos_module import (
-    decode_module, ModuleParseError, HelpParseError,
-    _parse_help_string, _parse_module_date_string, _read_string,
+    HelpParseError,
+    ModuleParseError,
+    _parse_help_string,
+    _parse_module_date_string,
+    _read_string,
+    decode_module,
 )
 
 

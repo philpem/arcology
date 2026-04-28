@@ -23,7 +23,6 @@ The detection logic is adapted from armlock_tool.py (standalone CLI).
 import struct
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # Disc record parsing
 # ---------------------------------------------------------------------------

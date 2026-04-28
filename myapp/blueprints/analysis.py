@@ -5,17 +5,17 @@ View and manage analysis jobs.
 """
 
 import re
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request, current_app
+from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
 from flask_login import login_required
 from sqlalchemy import case, func
 from sqlalchemy.orm import joinedload
 
-from ..extensions import db
 from ..database import Analysis, AnalysisStatus, Artefact
+from ..extensions import db
 from ..permissions import require_permission
-from ..utils.pagination import resolve_per_page, VALID_PER_PAGE
+from ..utils.pagination import VALID_PER_PAGE, resolve_per_page
 
 ROUTENAME = __name__.replace('.', '_')
 

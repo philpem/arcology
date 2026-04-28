@@ -15,11 +15,10 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from worker.arcworker.tools.iso9660 import (
-    _decode_str,
     _decode_pvd_datetime,
+    _decode_str,
     parse_iso9660_pvd,
 )
-
 
 _SECTOR = 2048
 

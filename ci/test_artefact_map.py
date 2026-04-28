@@ -23,12 +23,11 @@ if _REPO_ROOT not in sys.path:
 
 # shared.enums has no external dependencies — import directly for the
 # canonical set of valid enum members.
-from shared.enums import ArtefactType, AnalysisType
-
 # myapp.blueprints.artefacts imports Flask/SQLAlchemy at module level.
 # Those packages are available in the app-tests CI job (pip install is done
 # before these tests run).
-from myapp.blueprints.artefacts import EXTENSION_MAP, ANALYSIS_MAP, detect_artefact_type
+from myapp.blueprints.artefacts import ANALYSIS_MAP, EXTENSION_MAP, detect_artefact_type
+from shared.enums import AnalysisType, ArtefactType
 
 _ALL_ARTEFACT_TYPES = set(ArtefactType)
 _ALL_ANALYSIS_TYPES = set(AnalysisType)

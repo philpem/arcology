@@ -5,18 +5,18 @@ Tests the internal helpers in worker/arcworker/tools/fs_iso_riscos.py using
 synthetic data only — no ISO image file required.
 """
 
+import os
 import struct
 import sys
-import os
 import unittest
 
 # Add the repo root to sys.path so imports work without installation
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from worker.arcworker.tools.fs_iso_riscos import (
+    _get_nm_name,
     _get_riscos_filetype,
     _parse_archimedes_block,
-    _get_nm_name,
 )
 
 

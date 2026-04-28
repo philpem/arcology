@@ -30,14 +30,13 @@ os.environ.setdefault('WORKER_API_KEY', 'test')
 from datetime import datetime
 
 from worker.arcworker.tools.extraction import (
-    _parse_inf_line,
     _get_riscos_filetype,
+    _parse_inf_line,
     _riscos_timestamp_to_datetime,
     _translate_filename_bbc_to_dos,
     _translate_filename_dos_to_bbc,
     process_inf_sidecars,
 )
-
 
 # =============================================================================
 # _get_riscos_filetype

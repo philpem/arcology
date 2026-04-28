@@ -8,7 +8,7 @@ import argparse
 import sys
 
 from .client import ArcologyClient, ArcologyError
-from .config import get_config, create_config
+from .config import create_config, get_config
 
 
 def main():
@@ -272,15 +272,18 @@ def _cmd_configure(args):
 
 def _dispatch(client, args):
 	"""Route to the appropriate command handler."""
-	from .commands.items import (
-		cmd_items_list, cmd_items_create, cmd_items_view,
-		cmd_items_update, cmd_items_delete,
-		cmd_artefact_move,
-	)
-	from .commands.upload import cmd_upload
 	from .commands.download import cmd_download
-	from .commands.taxonomy import cmd_platforms, cmd_categories, cmd_tags
+	from .commands.items import (
+		cmd_artefact_move,
+		cmd_items_create,
+		cmd_items_delete,
+		cmd_items_list,
+		cmd_items_update,
+		cmd_items_view,
+	)
 	from .commands.status import cmd_health, cmd_status
+	from .commands.taxonomy import cmd_categories, cmd_platforms, cmd_tags
+	from .commands.upload import cmd_upload
 
 	if args.command == 'health':
 		cmd_health(client, args)
@@ -324,8 +327,11 @@ def _dispatch(client, args):
 
 	elif args.command == 'debug':
 		from .commands.debug import (
-			cmd_debug_analysis, cmd_debug_errors, cmd_debug_tree, cmd_debug_failures,
+			cmd_debug_analysis,
+			cmd_debug_errors,
+			cmd_debug_failures,
 			cmd_debug_processing_tree,
+			cmd_debug_tree,
 		)
 		if args.debug_command == 'analysis':
 			cmd_debug_analysis(client, args)
@@ -349,7 +355,7 @@ def _dispatch(client, args):
 		cmd_bulk_import(client, args)
 
 	elif args.command == 'hashdb':
-		from .commands.hashdb import cmd_hashdb_list, cmd_hashdb_export, cmd_hashdb_import
+		from .commands.hashdb import cmd_hashdb_export, cmd_hashdb_import, cmd_hashdb_list
 		from .commands.hashdb_generate import cmd_hashdb_generate_arcarc
 		if args.hashdb_command == 'list':
 			cmd_hashdb_list(client, args)

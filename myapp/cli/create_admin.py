@@ -1,8 +1,10 @@
 import os
 import sys
+
 import click
-from ..extensions import db
+
 from ..database import User, UserPermission
+from ..extensions import db
 
 
 @click.command('create-admin')

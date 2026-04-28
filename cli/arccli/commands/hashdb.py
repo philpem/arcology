@@ -111,7 +111,7 @@ def cmd_hashdb_import(client: ArcologyClient, args):
     if fmt == 'auto':
         fmt = 'csv' if input_file.lower().endswith('.csv') else 'json'
 
-    with open(input_file, 'r', encoding='utf-8') as fh:
+    with open(input_file, encoding='utf-8') as fh:
         content = fh.read()
 
     if fmt == 'csv':

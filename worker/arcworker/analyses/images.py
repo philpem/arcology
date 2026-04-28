@@ -18,13 +18,11 @@ from shared.enums import ArtefactType
 
 from ..config import log
 from ..tools import (
-    convert_sprite,
     convert_draw,
+    convert_sprite,
     parse_acorn_filename,
 )
-
 from ._common import analysis_handler
-
 
 # RISC OS filetype suffixes that indicate viewable file types.
 # Mapping: suffix (e.g. ',ff9') → ArtefactType
@@ -288,7 +286,7 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
     # Query file list from the database via API instead of scanning the
     # filesystem.  This avoids downloading the entire extraction tree
     # in S3 mode — only the viewable files will be fetched individually.
-    viewable_files: list[tuple[dict, 'ArtefactType']] = []
+    viewable_files: list[tuple[dict, ArtefactType]] = []
     if partition_uuid:
         files_resp = self.api.get(
             f"/partitions/{partition_uuid}/files?per_page=10000&show_known=true"

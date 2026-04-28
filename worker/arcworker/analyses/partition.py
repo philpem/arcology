@@ -13,16 +13,15 @@ from pathlib import Path
 
 from shared.enums import ArtefactType
 
-from ..config import log
 from ..compression import extract_partition_range, is_region_uniform
+from ..config import log
 from ..tools import (
-    detect_partitions_sfdisk,
     detect_acorn_adfs,
     detect_acorn_partitions,
-    detect_format_file_cmd,
     detect_fat_filesystem,
+    detect_format_file_cmd,
+    detect_partitions_sfdisk,
 )
-
 from ._common import analysis_handler
 from ._protections import queue_extraction_or_protection_remove
 

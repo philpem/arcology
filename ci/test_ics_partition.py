@@ -24,21 +24,21 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from worker.arcworker.tools.partition import (
+    FILECORE_BB_DISC_RECORD_OFFSET,
+    FILECORE_BOOT_BLOCK_OFFSET,
+    FILECORE_BOOT_BLOCK_SIZE,
     ICS_CHECKSUM_OFFSET,
     ICS_CHECKSUM_SEED,
     ICS_ENTRY_SIZE,
     ICS_PARTITION_TABLE_SIZE,
-    ICS_PROTECTION_OFFSET,
     ICS_PASSWORD_HASH_OFFSET,
+    ICS_PROTECTION_OFFSET,
     ICS_SECTOR_SIZE,
     ICS_TOTAL_CAPACITY_OFFSET,
-    FILECORE_BOOT_BLOCK_OFFSET,
-    FILECORE_BOOT_BLOCK_SIZE,
-    FILECORE_BB_DISC_RECORD_OFFSET,
-    _validate_ics_checksum,
     _decode_ics_protection,
-    _extract_ics_password_hashes,
     _detect_ics_partitions,
+    _extract_ics_password_hashes,
+    _validate_ics_checksum,
 )
 
 
@@ -127,7 +127,7 @@ def _build_disc_image(entries, total_capacity_sectors=0, boot_blocks=None):
 
     # Place boot blocks
     if boot_blocks:
-        for (start_sector, _size), bb in zip(entries, boot_blocks):
+        for (start_sector, _size), bb in zip(entries, boot_blocks, strict=False):
             if bb is None:
                 continue
             bb_offset = start_sector * ICS_SECTOR_SIZE + FILECORE_BOOT_BLOCK_OFFSET

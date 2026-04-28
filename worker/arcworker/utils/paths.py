@@ -10,15 +10,15 @@ Creates structured output directories:
 """
 
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any
 
 
-def _slug(value: Dict[str, Any], default: str = 'untitled') -> str:
+def _slug(value: dict[str, Any], default: str = 'untitled') -> str:
     """Return a safe slug fallback for a path segment dict."""
     return value.get('slug') or default
 
 
-def _segment(value: Dict[str, Any]) -> str:
+def _segment(value: dict[str, Any]) -> str:
     """Build a standard UUID_slug path segment."""
     return f"{value['uuid']}_{_slug(value)}"
 
@@ -29,21 +29,21 @@ def _ensure_dir(path: Path) -> Path:
     return path
 
 
-def _base_output_path(output_base: Path, item: Dict[str, Any]) -> Path:
+def _base_output_path(output_base: Path, item: dict[str, Any]) -> Path:
     """Return the item-level output directory path."""
     return output_base / _segment(item)
 
 
-def _artefact_output_path(output_base: Path, item: Dict[str, Any], artefact: Dict[str, Any]) -> Path:
+def _artefact_output_path(output_base: Path, item: dict[str, Any], artefact: dict[str, Any]) -> Path:
     """Return the artefact-level output directory path."""
     return _base_output_path(output_base, item) / _segment(artefact)
 
 
 def _analysis_output_path(
     output_base: Path,
-    item: Dict[str, Any],
-    artefact: Dict[str, Any],
-    analysis: Dict[str, Any],
+    item: dict[str, Any],
+    artefact: dict[str, Any],
+    analysis: dict[str, Any],
 ) -> Path:
     """Return the analysis-level output directory path."""
     analysis_type = analysis.get('analysis_type', 'untitled')
@@ -53,10 +53,10 @@ def _analysis_output_path(
 
 def get_output_path(
     output_base: Path,
-    item: Dict[str, Any],
-    artefact: Dict[str, Any],
-    analysis: Dict[str, Any],
-    partition: Optional[Dict[str, Any]] = None
+    item: dict[str, Any],
+    artefact: dict[str, Any],
+    analysis: dict[str, Any],
+    partition: dict[str, Any] | None = None
 ) -> Path:
     """
     Generate hierarchical output directory path.
@@ -95,7 +95,7 @@ def get_output_path(
     return path
 
 
-def get_item_path(output_base: Path, item: Dict[str, Any]) -> Path:
+def get_item_path(output_base: Path, item: dict[str, Any]) -> Path:
     """
     Get item-level directory path.
 
@@ -111,8 +111,8 @@ def get_item_path(output_base: Path, item: Dict[str, Any]) -> Path:
 
 def get_artefact_path(
     output_base: Path,
-    item: Dict[str, Any],
-    artefact: Dict[str, Any]
+    item: dict[str, Any],
+    artefact: dict[str, Any]
 ) -> Path:
     """
     Get artefact-level directory path.
@@ -130,9 +130,9 @@ def get_artefact_path(
 
 def get_analysis_path(
     output_base: Path,
-    item: Dict[str, Any],
-    artefact: Dict[str, Any],
-    analysis: Dict[str, Any]
+    item: dict[str, Any],
+    artefact: dict[str, Any],
+    analysis: dict[str, Any]
 ) -> Path:
     """
     Get analysis-level directory path.

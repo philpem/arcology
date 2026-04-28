@@ -34,12 +34,18 @@ class TestArtefactCleanupRegression(unittest.TestCase):
 
     def setUp(self):
         from myapp.app import create_app
-        from myapp.extensions import db as _db
         from myapp.database import (
-            User, UserPermission, Platform, Item, Artefact, Analysis,
-            AnalysisStatus, StorageDirectory,
+            Analysis,
+            AnalysisStatus,
+            Artefact,
+            Item,
+            Platform,
+            StorageDirectory,
+            User,
+            UserPermission,
         )
-        from shared.enums import ArtefactType, AnalysisType
+        from myapp.extensions import db as _db
+        from shared.enums import AnalysisType, ArtefactType
 
         self.app = create_app()
         self.app.config['TESTING'] = True

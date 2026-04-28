@@ -13,36 +13,70 @@ import re
 import shutil
 import tempfile
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
-from flask import Blueprint, jsonify, request, current_app, send_file, redirect
-from sqlalchemy import func, update, or_, select
+
+from flask import Blueprint, current_app, jsonify, redirect, request, send_file
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.orm.exc import StaleDataError
 
-from ..extensions import db, csrf
 from ..database import (
-    Item, Artefact, ArtefactType, Analysis, AnalysisType, AnalysisStatus,
-    Partition, ExtractedFile, FilesystemType, Platform, Category, Tag,
-    ExternalSystem, ExternalReference, HashDatabase, KnownFile, KnownProduct,
-    RecognisedProduct, StorageDirectory,
-    ApiKey, ApiKeyPermission, _API_KEY_PERMISSION_ORDER,
-    ArtefactProtection, ArtefactMastering, RiscosModule,
+    _API_KEY_PERMISSION_ORDER,
+    Analysis,
+    AnalysisStatus,
+    AnalysisType,
+    ApiKey,
+    ApiKeyPermission,
+    Artefact,
+    ArtefactMastering,
+    ArtefactProtection,
+    ArtefactType,
+    Category,
+    ExternalReference,
+    ExternalSystem,
+    ExtractedFile,
+    FilesystemType,
+    HashDatabase,
+    Item,
+    KnownFile,
+    KnownProduct,
+    Partition,
+    Platform,
+    RecognisedProduct,
+    RiscosModule,
+    StorageDirectory,
+    Tag,
 )
-from .artefacts import (
-    get_artefact_path, get_artefact_storage_key, _delete_artefact_files,
-    bulk_delete_item,
-    detect_artefact_type, save_uploaded_file, _get_storage_extension,
-    compute_file_hashes, queue_analyses_for_artefact, move_artefact_to_item,
-    _collect_all_file_restrictions, _collect_ancestor_file_restrictions,
+from ..extensions import csrf, db
+from ..utils.api_serializers import (
+    analysis_to_dict,
+    artefact_to_dict,
+    file_to_dict,
+    item_to_dict,
+    known_file_to_dict,
+    partition_to_dict,
 )
+from ..utils.db_helpers import get_by_id_or_404 as _get_by_id_or_404
+from ..utils.db_helpers import get_by_uuid_or_404 as _get_by_uuid_or_404
 from ..utils.hash_rescan import find_known_file
 from ..utils.item_helpers import assign_item_fields, assign_item_tags
-from ..utils.slugs import generate_slug, ensure_unique_slug
-from ..utils.api_serializers import (
-    item_to_dict, artefact_to_dict, analysis_to_dict,
-    partition_to_dict, file_to_dict, known_file_to_dict,
+from ..utils.slugs import ensure_unique_slug, generate_slug
+from ..utils.slugs import lookup_by_identifier as _lookup_by_identifier
+from .artefacts import (
+    _collect_all_file_restrictions,
+    _collect_ancestor_file_restrictions,
+    _delete_artefact_files,
+    _get_storage_extension,
+    bulk_delete_item,
+    compute_file_hashes,
+    detect_artefact_type,
+    get_artefact_path,
+    get_artefact_storage_key,
+    move_artefact_to_item,
+    queue_analyses_for_artefact,
+    save_uploaded_file,
 )
 
 ROUTENAME = __name__.replace('.', '_')
@@ -203,11 +237,6 @@ def _validate_storage_path(path: str) -> bool:
     return '..' not in os.path.normpath(path).split(os.sep)
 
 
-from ..utils.db_helpers import get_by_uuid_or_404 as _get_by_uuid_or_404
-from ..utils.db_helpers import get_by_id_or_404 as _get_by_id_or_404
-from ..utils.slugs import lookup_by_identifier as _lookup_by_identifier
-
-
 def _get_item_or_404(uuid):
     return _lookup_by_identifier(Item, uuid)
 
@@ -365,10 +394,14 @@ def update_item(uuid):
     data, error = _json_object(required=True)
     if error:
         return error
-    if 'name' in data: item.name = data['name']
-    if 'description' in data: item.description = data['description']
-    if 'platform_id' in data: item.platform_id = data['platform_id']
-    if 'category_id' in data: item.category_id = data['category_id']
+    if 'name' in data:
+        item.name = data['name']
+    if 'description' in data:
+        item.description = data['description']
+    if 'platform_id' in data:
+        item.platform_id = data['platform_id']
+    if 'category_id' in data:
+        item.category_id = data['category_id']
     if 'parent_uuid' in data:
         if data['parent_uuid'] is None:
             item.parent_id = None
@@ -1599,7 +1632,7 @@ def upload_artefact(item_uuid):
 	# Save file with UUID-based name
 	try:
 		storage_name, file_size = save_uploaded_file(file)
-	except IOError as exc:
+	except OSError as exc:
 		return error_response(f'Storage backend unavailable: {exc}', 503)
 
 	# Determine artefact type: use override if provided, otherwise auto-detect
@@ -1618,7 +1651,7 @@ def upload_artefact(item_uuid):
 	storage_key = current_app.storage.storage_key('uploads', storage_name)
 	try:
 		md5, sha256 = compute_file_hashes(storage_key, use_storage=True)
-	except IOError as exc:
+	except OSError as exc:
 		return error_response(f'Storage backend unavailable (hash): {exc}', 503)
 
 	# Preserve original filename
@@ -1951,7 +1984,7 @@ def chunked_upload_complete(upload_uuid):
 		storage_key = current_app.storage.storage_key('uploads', storage_name)
 		try:
 			current_app.storage.put(storage_key, tmp_path)
-		except IOError as exc:
+		except OSError as exc:
 			return error_response(f'Storage backend unavailable: {exc}', 503)
 	finally:
 		try:

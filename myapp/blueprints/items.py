@@ -4,16 +4,21 @@ Arcology - Items Blueprint
 CRUD operations for collection items.
 """
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request
+from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import login_required
 from flask_wtf import FlaskForm
-from wtforms import StringField, TextAreaField, SelectField
-from wtforms.validators import DataRequired, Optional, Length
 from sqlalchemy import func, or_
 from sqlalchemy.orm import selectinload
+from wtforms import SelectField, StringField, TextAreaField
+from wtforms.validators import DataRequired, Length, Optional
 
+from ..database import Artefact, Category, ExternalReference, ExternalSystem, Item, Platform
 from ..extensions import db
-from ..database import Item, Artefact, Platform, Category, ExternalSystem, ExternalReference
+from ..permissions import require_permission
+from ..utils.item_helpers import assign_item_fields, assign_item_tags, item_choice_list, item_parent_choice_list
+from ..utils.pagination import VALID_PER_PAGE, compute_letter_pages, resolve_per_page, resolve_sort
+from ..utils.slugs import get_or_create_slug, lookup_by_identifier
+from .artefacts import bulk_delete_item
 
 _ITEM_SORT_OPTIONS = {
     'name_asc':      func.lower(Item.name).asc(),
@@ -28,12 +33,6 @@ _ARTEFACT_SORT_OPTIONS = {
     'uploaded_asc':  Artefact.created_at.asc(),
     'uploaded_desc': Artefact.created_at.desc(),
 }
-from .artefacts import bulk_delete_item
-from ..permissions import require_permission
-from ..utils.item_helpers import item_choice_list, item_parent_choice_list, assign_item_fields, assign_item_tags
-
-from ..utils.slugs import get_or_create_slug, lookup_by_identifier
-from ..utils.pagination import compute_letter_pages, resolve_per_page, resolve_sort, VALID_PER_PAGE
 
 ROUTENAME = __name__.replace('.', '_')
 

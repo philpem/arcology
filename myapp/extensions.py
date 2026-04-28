@@ -5,10 +5,10 @@ Extensions are created here without being bound to a specific application instan
 They are initialized with the app in the application factory (create_app).
 """
 
-from flask_sqlalchemy import SQLAlchemy
-from flask_migrate import Migrate
-from flask_login import LoginManager
 from flask_bootstrap import Bootstrap5
+from flask_login import LoginManager
+from flask_migrate import Migrate
+from flask_sqlalchemy import SQLAlchemy
 from flask_wtf.csrf import CSRFProtect
 
 db = SQLAlchemy()

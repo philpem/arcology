@@ -77,7 +77,7 @@ class TestChunkedUpload(unittest.TestCase):
 
     @classmethod
     def _create_item(cls, db):
-        from myapp.database import Platform, Item
+        from myapp.database import Item, Platform
         platform = Platform(name='Test Platform Chunked')
         db.session.add(platform)
         db.session.flush()
