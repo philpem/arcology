@@ -93,6 +93,40 @@ def preprocess(
     return arr.transpose(2, 0, 1)[np.newaxis]
 
 
+def _score_image(img, sess, input_name: str, nsfw_idx: int,
+                 size: int, mean, std, resample: str, crop_pct: float) -> float:
+    """Return the highest explicit-content score across all crops of *img*.
+
+    For images whose width or height is >= 2× *size*, five crops are scored:
+    the centre crop (produced by ``preprocess()``) plus the four quadrant tiles
+    (top-left, top-right, bottom-left, bottom-right).  The quadrant tiles are
+    also independently preprocessed via ``preprocess()``, so each gets its own
+    aspect-preserving resize + centre-crop.
+
+    For smaller images only the centre crop is scored (identical to the
+    pre-multi-crop behaviour).
+    """
+    w, h = img.size
+    tiles = [img]
+
+    if w >= 2 * size or h >= 2 * size:
+        tiles += [
+            img.crop((0,    0,    w // 2, h // 2)),  # top-left
+            img.crop((w // 2, 0,  w,      h // 2)),  # top-right
+            img.crop((0,    h // 2, w // 2, h)),      # bottom-left
+            img.crop((w // 2, h // 2, w,    h)),      # bottom-right
+        ]
+
+    best = 0.0
+    for tile in tiles:
+        arr   = preprocess(tile, size, mean, std, resample, crop_pct)
+        out   = sess.run(None, {input_name: arr})[0]
+        score = float(softmax(out)[0, nsfw_idx])
+        if score > best:
+            best = score
+    return best
+
+
 def classify_batch(
     sess1,
     input_name1: str,
@@ -159,14 +193,11 @@ def classify_batch(
             if min_pixels > 0 and w * h < min_pixels:
                 img.close()
                 continue  # too small for a meaningful result
-            arr1 = preprocess(img, size1, mean1, std1, resample1, crop_pct1)
+            score1 = _score_image(
+                img, sess1, input_name1, nsfw_idx1, size1, mean1, std1, resample1, crop_pct1,
+            )
         except Exception:
             continue
-
-        # Stage 1
-        out1   = sess1.run(None, {input_name1: arr1})[0]
-        probs1 = softmax(out1)[0]
-        score1 = float(probs1[nsfw_idx1])
 
         if score1 >= high_threshold:
             results.append({'path': path_str, 'stage': 1, 'score': score1, 'verdict': 'explicit'})
@@ -178,15 +209,14 @@ def classify_batch(
 
         # Borderline: run stage 2
         try:
-            arr2 = preprocess(img, size2, mean2, std2, resample2, crop_pct2)
+            score2 = _score_image(
+                img, sess2, input_name2, nsfw_idx2, size2, mean2, std2, resample2, crop_pct2,
+            )
         except Exception:
             verdict2 = 'explicit' if score1 >= 0.5 else 'not explicit'
             results.append({'path': path_str, 'stage': 1, 'score': score1, 'verdict': verdict2})
             continue
 
-        out2   = sess2.run(None, {input_name2: arr2})[0]
-        probs2 = softmax(out2)[0]
-        score2 = float(probs2[nsfw_idx2])
         verdict2 = 'explicit' if score2 >= 0.5 else 'not explicit'
         results.append({'path': path_str, 'stage': 2, 'score': score2, 'verdict': verdict2})
 

@@ -3,8 +3,8 @@ Tests for the NSFW classifier (worker/arcworker/tools/nsfw.py).
 
 Covers:
   - preprocess(): shape, aspect-preserving resize, centre crop, normalisation
-  - classify_batch(): two-stage cascade, correct class index, min_size skip,
-    unreadable-image skip, borderline → stage 2 logic
+  - classify_batch(): two-stage cascade, correct class index, pixel-area skip,
+    unreadable-image skip, borderline → stage 2 logic, multi-crop for large images
   - softmax applied to raw logits before probability lookup
 
 These tests do NOT require ONNX models — sessions are mocked so they return
@@ -77,6 +77,45 @@ def _make_session(logits):
             return [np.array([logits], dtype=np.float32)]
 
     return _Session()
+
+
+def _make_counting_session(logits):
+    """Like _make_session but exposes a ``call_count`` attribute."""
+    class _Input:
+        name = 'pixel_values'
+
+    class _CountingSession:
+        def __init__(self_):
+            self_.call_count = 0
+
+        def get_inputs(self_):
+            return [_Input()]
+
+        def run(self_, output_names, feed_dict):
+            self_.call_count += 1
+            return [np.array([logits], dtype=np.float32)]
+
+    return _CountingSession()
+
+
+def _make_sequence_session(logits_sequence):
+    """Return a session whose ``run`` cycles through ``logits_sequence`` in order."""
+    class _Input:
+        name = 'pixel_values'
+
+    class _SequenceSession:
+        def __init__(self_):
+            self_._idx = 0
+
+        def get_inputs(self_):
+            return [_Input()]
+
+        def run(self_, output_names, feed_dict):
+            lgt = logits_sequence[self_._idx % len(logits_sequence)]
+            self_._idx += 1
+            return [np.array([lgt], dtype=np.float32)]
+
+    return _SequenceSession()
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +497,98 @@ class TestClassifyBatchEdgeCases(unittest.TestCase):
         finally:
             os.unlink(p1)
             os.unlink(p2)
+
+
+class TestMultiCrop(unittest.TestCase):
+    """Verify multi-crop inference for large images."""
+
+    def test_small_image_single_crop(self):
+        """An image smaller than 2× model input size is scored with one crop."""
+        # _META1 input_size=384; 2×384=768; image 300×300 — both below threshold
+        sess1 = _make_counting_session([5.0, -5.0])
+        path  = _make_image_file(300, 300)
+        try:
+            classify_batch(
+                sess1, 'pixel_values', _META1,
+                _make_session([0.0, 0.0]), 'pixel_values', _META2,
+                [path], high_threshold=0.90, low_threshold=0.20,
+            )
+        finally:
+            os.unlink(path)
+        self.assertEqual(sess1.call_count, 1)
+
+    def test_large_image_five_crops(self):
+        """An image with width >= 2× model input size is scored with five crops."""
+        # _META1 input_size=384; 2×384=768; image 800×600 — width 800 >= 768
+        sess1 = _make_counting_session([5.0, -5.0])
+        path  = _make_image_file(800, 600)
+        try:
+            classify_batch(
+                sess1, 'pixel_values', _META1,
+                _make_session([0.0, 0.0]), 'pixel_values', _META2,
+                [path], high_threshold=0.90, low_threshold=0.20,
+            )
+        finally:
+            os.unlink(path)
+        self.assertEqual(sess1.call_count, 5)
+
+    def test_tall_image_five_crops(self):
+        """An image with height >= 2× model input size is scored with five crops."""
+        # _META1 input_size=384; 2×384=768; image 400×800 — height 800 >= 768
+        sess1 = _make_counting_session([5.0, -5.0])
+        path  = _make_image_file(400, 800)
+        try:
+            classify_batch(
+                sess1, 'pixel_values', _META1,
+                _make_session([0.0, 0.0]), 'pixel_values', _META2,
+                [path], high_threshold=0.90, low_threshold=0.20,
+            )
+        finally:
+            os.unlink(path)
+        self.assertEqual(sess1.call_count, 5)
+
+    def test_corner_content_flagged(self):
+        """Explicit content that appears in only one quadrant tile is still caught.
+
+        Centre crop → safe (logits [-5, 5] → probs[0] ≈ 0.0001).
+        Top-left tile → explicit (logits [5, -5] → probs[0] ≈ 0.9999).
+        Other tiles → safe.  Maximum score drives verdict to 'explicit'.
+        """
+        logits_seq = [
+            [-5.0,  5.0],  # centre: safe
+            [ 5.0, -5.0],  # top-left: explicit
+            [-5.0,  5.0],  # top-right: safe
+            [-5.0,  5.0],  # bottom-left: safe
+            [-5.0,  5.0],  # bottom-right: safe
+        ]
+        sess1 = _make_sequence_session(logits_seq)
+        path  = _make_image_file(800, 600)
+        try:
+            results = classify_batch(
+                sess1, 'pixel_values', _META1,
+                _make_session([0.0, 0.0]), 'pixel_values', _META2,
+                [path], high_threshold=0.90, low_threshold=0.20,
+            )
+        finally:
+            os.unlink(path)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['verdict'], 'explicit')
+        self.assertGreater(results[0]['score'], 0.90)
+
+    def test_all_safe_crops_not_explicit(self):
+        """An image where every crop is safe is correctly classified as not explicit."""
+        sess1 = _make_counting_session([-5.0, 5.0])  # all crops → probs[0] ≈ 0
+        path  = _make_image_file(800, 600)
+        try:
+            results = classify_batch(
+                sess1, 'pixel_values', _META1,
+                _make_session([0.0, 0.0]), 'pixel_values', _META2,
+                [path], high_threshold=0.90, low_threshold=0.20,
+            )
+        finally:
+            os.unlink(path)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['verdict'], 'not explicit')
 
 
 if __name__ == '__main__':
