@@ -9,7 +9,6 @@ handler modules can import it without pulling in the AnalysisWorker class.
 import functools
 import json
 import traceback
-
 from ..config import log
 
 

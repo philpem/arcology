@@ -9,7 +9,6 @@ from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
 from wtforms import BooleanField, PasswordField, SelectField, StringField
 from wtforms.validators import DataRequired, EqualTo, Length, Optional
-
 from ..database import ApiKey, RestrictionType, User, UserPermission, UserRestrictionBypass
 from ..extensions import db
 from ..utils.web_forms import flash_form_errors, redirect_local

@@ -2,7 +2,6 @@
 
 import json
 from datetime import datetime
-
 from ..formatting import print_json, print_table, truncate
 
 

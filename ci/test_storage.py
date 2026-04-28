@@ -418,7 +418,6 @@ class TestStorageIntegrationWithApp(unittest.TestCase):
     def test_compute_file_hashes_via_storage(self):
         """compute_file_hashes with use_storage=True reads from the backend."""
         import hashlib
-
         from myapp.app import create_app
 
         app = create_app()

@@ -20,7 +20,6 @@ import logging
 import math
 import os
 import time
-
 import requests
 
 # Files larger than this threshold are uploaded in chunks

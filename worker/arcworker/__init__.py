@@ -5,7 +5,6 @@ Modular worker for processing analysis jobs from the Arcology API.
 """
 
 from shared.enums import AnalysisType, ArtefactType
-
 from .analysis import AnalysisWorker
 from .config import (
     ARCOLOGY_API,

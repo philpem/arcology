@@ -13,9 +13,7 @@ into web-viewable outputs.  Two operating modes:
 
 import json
 from pathlib import Path
-
 from shared.enums import ArtefactType
-
 from ..config import log
 from ..tools import (
     convert_draw,

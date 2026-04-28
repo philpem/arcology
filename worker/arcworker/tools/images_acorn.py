@@ -7,7 +7,6 @@ Provides wrappers for converting Acorn Sprite and Draw files to portable formats
 import re
 import traceback as _tb
 from pathlib import Path
-
 from ..config import log
 from .base import tool_result
 

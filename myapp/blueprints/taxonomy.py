@@ -10,7 +10,6 @@ from flask_wtf import FlaskForm
 from sqlalchemy import func
 from wtforms import SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Length, Optional
-
 from ..database import Category, ExternalSystem, HashDatabase, Platform, Tag
 from ..extensions import db
 from ..permissions import require_permission

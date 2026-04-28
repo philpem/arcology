@@ -1,11 +1,8 @@
 """Shared artefact selection helpers for CLI commands."""
 
 import re
-
 import click
-
 from shared.enums import ArtefactType
-
 from ..database import Artefact, Category, Item, Platform, Tag
 
 

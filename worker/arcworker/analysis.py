@@ -12,7 +12,6 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-
 from . import analyses as _analyses
 from .api import ArcologyAPI
 from .compression import decompress_if_needed
@@ -58,7 +57,6 @@ class AnalysisWorker:
 
         if storage is None:
             from shared.storage import create_storage
-
             from .config import (
                 S3_ACCESS_KEY,
                 S3_BUCKET,

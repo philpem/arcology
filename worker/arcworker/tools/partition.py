@@ -25,7 +25,6 @@ Adding a new Acorn partition scheme
 import json
 import struct
 from pathlib import Path
-
 from ..config import log
 from .base import run_tool_with_output, tool_result
 

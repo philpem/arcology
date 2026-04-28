@@ -7,9 +7,7 @@ the worker's folder-level product recognition after hash database changes.
 """
 
 import json
-
 from sqlalchemy import func, or_
-
 from ..database import (
     Analysis,
     AnalysisStatus,

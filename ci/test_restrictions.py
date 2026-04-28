@@ -129,7 +129,6 @@ class TestArtefactRestriction(unittest.TestCase):
     def test_unique_constraint_prevents_duplicate(self):
         with self.app.app_context():
             from sqlalchemy.exc import IntegrityError
-
             from myapp.database import ArtefactRestriction, RestrictionType
             _, artefact = _make_item_and_artefact(self.db)
 
@@ -724,7 +723,6 @@ class TestExtractedFileRestriction(unittest.TestCase):
     def test_unique_constraint_prevents_duplicate(self):
         with self.app.app_context():
             from sqlalchemy.exc import IntegrityError
-
             from myapp.database import ExtractedFileRestriction, RestrictionType
             _, artefact = _make_item_and_artefact(self.db)
             _, ef = _make_partition_and_file(self.db, artefact, 'dup.txt')

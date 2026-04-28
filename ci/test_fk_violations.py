@@ -498,7 +498,6 @@ class TestTaxonomyDeleteDefensiveChecks(unittest.TestCase):
             _db.create_all()
             # Create an admin user for login
             import bcrypt
-
             from myapp.database import User
             pw = bcrypt.hashpw(b'testpassword1234', bcrypt.gensalt()).decode('utf-8')
             user = User(username='fkadmin', password_hash=pw, is_admin=True)

@@ -102,9 +102,7 @@ class TestDashboardStats(unittest.TestCase):
         # Simulate the atomic claim (same as PUT /api/analysis/{id} with claim_worker)
         with self.app.app_context():
             from datetime import datetime, timezone
-
             from sqlalchemy import update
-
             from myapp.database import Analysis, AnalysisStatus
 
             result = self.db.session.execute(

@@ -1,8 +1,6 @@
 import json
-
 import click
 from flask import current_app
-
 from ..blueprints.artefacts import (
     _bulk_delete_artefact_dependents,
     _bulk_delete_artefacts,

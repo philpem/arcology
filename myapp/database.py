@@ -9,7 +9,6 @@ import secrets
 import uuid as uuid_module
 from datetime import datetime, timezone
 from typing import Optional
-
 import bcrypt
 from sqlalchemy import (
     JSON,
@@ -27,9 +26,7 @@ from sqlalchemy import (
 )
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
 from shared.enums import AnalysisType, ArtefactType
-
 from .extensions import db
 
 

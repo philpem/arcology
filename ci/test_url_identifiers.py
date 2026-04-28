@@ -80,7 +80,6 @@ class TestLookupByIdentifier(unittest.TestCase):
     def _lookup_404(self, identifier):
         """Assert that lookup raises a 404."""
         from werkzeug.exceptions import NotFound
-
         from myapp.database import Item
         from myapp.utils.slugs import lookup_by_identifier
         with self.app.app_context():
@@ -146,7 +145,6 @@ class TestArtefactLookup(unittest.TestCase):
 
     def _lookup_404(self, item_id, artefact_id):
         from werkzeug.exceptions import NotFound
-
         from myapp.database import Item
         from myapp.utils.slugs import lookup_artefact_by_id
         with self.app.app_context():

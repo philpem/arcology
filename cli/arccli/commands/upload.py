@@ -2,7 +2,6 @@
 
 import os
 import sys
-
 from ..client import compute_file_hashes
 from ..formatting import format_size, print_json
 

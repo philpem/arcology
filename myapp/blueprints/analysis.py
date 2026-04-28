@@ -6,12 +6,10 @@ View and manage analysis jobs.
 
 import re
 from datetime import datetime, timedelta, timezone
-
 from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
 from flask_login import login_required
 from sqlalchemy import case, func
 from sqlalchemy.orm import joinedload
-
 from ..database import Analysis, AnalysisStatus, Artefact
 from ..extensions import db
 from ..permissions import require_permission

@@ -1,8 +1,6 @@
 import os
 import sys
-
 import click
-
 from ..database import User, UserPermission
 from ..extensions import db
 

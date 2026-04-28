@@ -8,7 +8,6 @@ and Windows vector metafiles (WMF, EMF) via external tools (wmf2svg, Dexvert emf
 import shutil
 import subprocess
 from pathlib import Path
-
 from ..config import log
 from .base import run_tool_with_output
 from .svg_utils import postprocess_svg

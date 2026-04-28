@@ -11,7 +11,6 @@ import logging
 import re
 import sys
 from datetime import date
-
 from ..client import ArcologyClient
 
 log = logging.getLogger('arco.hashdb.generate-arcarc')

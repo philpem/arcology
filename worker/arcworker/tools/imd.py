@@ -11,7 +11,6 @@ copy-protection sectors and interleaves them into the output image.
 
 import struct
 from pathlib import Path
-
 from ..config import log
 from .partition import (
     FILECORE_BB_DISC_RECORD_OFFSET,

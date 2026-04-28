@@ -91,7 +91,7 @@ def get_local_migrations():
         if not filename.endswith('.py'):
             continue
         filepath = os.path.join(MIGRATIONS_DIR, filename)
-        with open(filepath) as f:
+        with open(filepath, 'r') as f:
             source = f.read()
         try:
             migrations.append(parse_migration_source(source, filename))

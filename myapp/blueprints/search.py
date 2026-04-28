@@ -5,11 +5,9 @@ Global cross-item search using a prefix query syntax.
 """
 
 import re
-
 from flask import Blueprint, render_template, request
 from flask_login import login_required
 from sqlalchemy import and_, distinct, func, or_
-
 from ..database import (
     Artefact,
     ArtefactMastering,

@@ -1,7 +1,6 @@
 """Shared item and tag helpers used by web and API flows."""
 
 from collections.abc import Iterable
-
 from ..database import Item, Tag
 from ..extensions import db
 

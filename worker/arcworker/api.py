@@ -8,11 +8,8 @@ status updates, and artefact registration.
 import hashlib
 import shutil
 from pathlib import Path
-
 import requests
-
 from shared.enums import ArtefactType
-
 from .config import log
 from .tools import compute_file_hash
 

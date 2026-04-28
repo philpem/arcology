@@ -27,7 +27,16 @@ ignore = [
     # Python identity check (always False) and breaks the query.
     "E711",  # comparison to None
     "E712",  # comparison to True/False
+    # `open(path, 'r')` is preferred over the bare `open(path)` form even though
+    # the mode string is technically redundant — being explicit aids readability.
+    "UP015",  # redundant-open-modes
 ]
+
+[tool.ruff.lint.isort]
+# Don't insert blank lines between import sections (stdlib / third-party /
+# first-party). The blank lines look fine at the top of a file but produce a
+# distracting "lots of blank lines" gap in function-local import blocks.
+no-lines-before = ["future", "standard-library", "third-party", "first-party", "local-folder"]
 
 [tool.ruff.lint.per-file-ignores]
 # Tests prepend the repo root to sys.path before importing, which forces

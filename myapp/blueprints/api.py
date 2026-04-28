@@ -15,13 +15,11 @@ import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-
 from flask import Blueprint, current_app, jsonify, redirect, request, send_file
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.orm.exc import StaleDataError
-
 from ..database import (
     _API_KEY_PERMISSION_ORDER,
     Analysis,

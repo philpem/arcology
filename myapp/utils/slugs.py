@@ -216,7 +216,6 @@ def lookup_artefact_by_id(item, artefact_id: str):
         Artefact instance, or aborts with 404 if not found or identifier is invalid.
     """
     from flask import abort
-
     from myapp.database import Artefact
 
     # Full UUID

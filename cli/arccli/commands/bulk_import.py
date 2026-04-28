@@ -8,7 +8,6 @@ Arcology Item, with all importable files as Artefacts.
 import logging
 import sys
 from pathlib import Path
-
 from ..client import ArcologyClient, ArcologyError
 
 log = logging.getLogger('arco.bulk-import')

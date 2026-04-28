@@ -50,7 +50,6 @@ import logging
 import struct
 from pathlib import Path
 from typing import BinaryIO
-
 import numpy as np
 
 log = logging.getLogger(__name__)

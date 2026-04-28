@@ -16,7 +16,6 @@ Reference:
 import logging
 import struct
 from pathlib import Path
-
 from .extraction import parse_acorn_filename
 
 log = logging.getLogger(__name__)

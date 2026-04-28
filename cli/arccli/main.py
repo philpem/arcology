@@ -6,7 +6,6 @@ Entry point and argument parsing.
 
 import argparse
 import sys
-
 from .client import ArcologyClient, ArcologyError
 from .config import create_config, get_config
 
