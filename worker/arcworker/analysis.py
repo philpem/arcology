@@ -527,7 +527,7 @@ class AnalysisWorker:
 
             try:
                 # Dispatch to appropriate handler
-                handler_name = __analyses.HANDLERS.get(analysis_type)
+                handler_name = _analyses.HANDLERS.get(analysis_type)
                 handler = getattr(self, handler_name, None) if handler_name else None
                 if handler:
                     handler(analysis, artefact, work_path)
