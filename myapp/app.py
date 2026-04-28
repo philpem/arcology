@@ -1,24 +1,24 @@
-from __future__ import absolute_import, unicode_literals
 
-from flask import Flask, render_template, redirect, request, url_for, flash, g
-from flask_login import (current_user, login_required,
-        login_user, logout_user)
-from flask_wtf import FlaskForm
-from wtforms import PasswordField, SubmitField, StringField
-from wtforms.validators import DataRequired
-from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 import os
 import secrets
 from urllib.parse import urlparse
 
-from .extensions import db, migrate, login_manager, bootstrap, csrf
+from flask import Flask, flash, g, redirect, render_template, request, url_for
+from flask_login import current_user, login_required, login_user, logout_user
+from flask_wtf import FlaskForm
+from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
+from wtforms import PasswordField, StringField, SubmitField
+from wtforms.validators import DataRequired
+
 from .database import UserPermission
+from .extensions import bootstrap, csrf, db, login_manager, migrate
+
 
 # Subclass the application so we can add the menu management functions
 class AppClass(Flask):
     def __init__(self, *args, **kwargs):
         # Let Flask initialise itself
-        super(AppClass, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         # Create an empty menu list
         self._myapp_menudata = list()
 
@@ -92,7 +92,7 @@ def create_app(config_name=None):
 
     # Flask-Login configuration
     login_manager.login_view = 'login'
-    login_manager.login_message = u'Please log in to access this page.'
+    login_manager.login_message = 'Please log in to access this page.'
 
     # tell jinja to remove extraneous whitespace
     app.jinja_env.trim_blocks = True
@@ -126,8 +126,9 @@ def create_app(config_name=None):
 
     # enable database logging (if enabled)
     if app.config.get('DEBUG_DB_LOG', False):
-        from flask.logging import default_handler
         import logging
+
+        from flask.logging import default_handler
         app.logger.warning('Warning - database logging enabled. This will spam the logs!')
         logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
         logging.getLogger('sqlalchemy.engine').addHandler(default_handler)
@@ -182,8 +183,9 @@ def create_app(config_name=None):
         return dict(user_can_write=can_write)
 
     # -- version context processor --
-    from .version import get_version
     import datetime
+
+    from .version import get_version
     @app.context_processor
     def inject_version():
         """Inject app_version and now into every template context."""
@@ -233,9 +235,10 @@ def create_app(config_name=None):
 def _register_blueprints(app):
     """ Load and register all blueprints from the 'blueprints' directory. """
     import pkgutil
+
     from . import blueprints
 
-    for importer,modname,ispkg in pkgutil.iter_modules(blueprints.__path__):
+    for _importer, modname, _ispkg in pkgutil.iter_modules(blueprints.__path__):
         try:
             module = __import__(f"myapp.blueprints.{modname}", fromlist=[modname])
             if hasattr(module, 'blueprint'):
@@ -270,7 +273,7 @@ def _register_login_handlers(app):
         except MultipleResultsFound:
             app.logger.error("USER LOGIN FAILURE: User '%s' has a doppelganger (duplicate username found)")
         except NoResultFound:
-            app.logger.warning("Userloader: id '%d' returned no results" % int(userid))
+            app.logger.warning("Userloader: id '%d' returned no results", int(userid))
             pass # with userrec = None
         return userrec
 
@@ -327,12 +330,12 @@ def _register_error_handlers(app):
 
 
 def _register_cli_commands(app):
+    from .cli.cancel_analysis import cancel_analysis
     from .cli.create_admin import create_admin
+    from .cli.dedup_artefacts import dedup_artefacts
+    from .cli.reanalyse import reanalyse
     from .cli.rebuild_search_index import rebuild_search_index
     from .cli.rescan_hashes import rescan_hashes
-    from .cli.reanalyse import reanalyse
-    from .cli.cancel_analysis import cancel_analysis
-    from .cli.dedup_artefacts import dedup_artefacts
 
     app.cli.add_command(create_admin)
     app.cli.add_command(rebuild_search_index)

@@ -152,10 +152,11 @@ class TestApiKeyLastUsedAtTimezone(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from myapp.app import create_app
-        from myapp.extensions import db
-        from myapp.database import User, UserPermission, ApiKey, ApiKeyPermission
         from datetime import datetime, timedelta
+
+        from myapp.app import create_app
+        from myapp.database import ApiKey, ApiKeyPermission, User, UserPermission
+        from myapp.extensions import db
 
         cls.app = create_app()
         cls.app.config['TESTING'] = True

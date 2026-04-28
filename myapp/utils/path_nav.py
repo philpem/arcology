@@ -5,7 +5,7 @@ They are pure-Python and have no Flask or database dependency so they can
 be unit-tested in isolation.
 """
 
-from typing import Iterable
+from collections.abc import Iterable
 
 from natsort import natsorted, ns
 

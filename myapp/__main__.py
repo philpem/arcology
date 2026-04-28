@@ -1,7 +1,6 @@
 # This allows us to run in a Flask test environment without Apache, e.g.:
 #   $ python -m myapp
 #
-from __future__ import absolute_import
 
 from .app import create_app
 

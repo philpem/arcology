@@ -33,8 +33,8 @@ class TestUserPreferenceModel(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from myapp.app import create_app
-        from myapp.extensions import db
         from myapp.database import User
+        from myapp.extensions import db
 
         cls.app = create_app()
         cls.app.config['TESTING'] = True
@@ -96,9 +96,9 @@ class TestResolvePerPage(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from myapp.app import create_app
-        from myapp.extensions import db
         from myapp.database import User
-        from myapp.utils.pagination import resolve_per_page, VALID_PER_PAGE
+        from myapp.extensions import db
+        from myapp.utils.pagination import VALID_PER_PAGE, resolve_per_page
 
         cls.app = create_app()
         cls.app.config['TESTING'] = True

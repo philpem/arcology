@@ -9,10 +9,9 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from ..config import log
 from .base import run_tool_with_output
 from .svg_utils import postprocess_svg
-
-from ..config import log
 
 # Extensions passed through unchanged (browser-native formats)
 _PASSTHROUGH_EXTS = frozenset({'.jpg', '.jpeg', '.png', '.gif', '.webp'})

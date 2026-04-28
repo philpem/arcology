@@ -12,14 +12,13 @@ copy-protection sectors and interleaves them into the output image.
 import struct
 from pathlib import Path
 
+from ..config import log
 from .partition import (
+    FILECORE_BB_DISC_RECORD_OFFSET,
     _is_valid_filecore_disc_record,
     _validate_filecore_boot_block_checksum,
-    FILECORE_BB_DISC_RECORD_OFFSET,
     detect_fat_filesystem,
 )
-from ..config import log
-
 
 # IMD sector size code → bytes per sector
 _IMD_SECTOR_SIZES = {0: 128, 1: 256, 2: 512, 3: 1024, 4: 2048, 5: 4096, 6: 8192}

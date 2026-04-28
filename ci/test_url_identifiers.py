@@ -79,9 +79,10 @@ class TestLookupByIdentifier(unittest.TestCase):
 
     def _lookup_404(self, identifier):
         """Assert that lookup raises a 404."""
+        from werkzeug.exceptions import NotFound
+
         from myapp.database import Item
         from myapp.utils.slugs import lookup_by_identifier
-        from werkzeug.exceptions import NotFound
         with self.app.app_context():
             with self.assertRaises(NotFound):
                 lookup_by_identifier(Item, identifier)
@@ -144,9 +145,10 @@ class TestArtefactLookup(unittest.TestCase):
             return lookup_artefact_by_id(item, artefact_id)
 
     def _lookup_404(self, item_id, artefact_id):
+        from werkzeug.exceptions import NotFound
+
         from myapp.database import Item
         from myapp.utils.slugs import lookup_artefact_by_id
-        from werkzeug.exceptions import NotFound
         with self.app.app_context():
             item = Item.query.get(item_id)
             with self.assertRaises(NotFound):
@@ -272,9 +274,9 @@ class TestSlugGeneration(unittest.TestCase):
             self.assertEqual(item.slug, original_slug)
 
     def test_artefact_sibling_slugs_unique(self):
-        from myapp.extensions import db
-        from myapp.utils.slugs import generate_slug, ensure_unique_slug
         from myapp.database import Artefact
+        from myapp.extensions import db
+        from myapp.utils.slugs import ensure_unique_slug, generate_slug
         with self.app.app_context():
             item = _make_item(db, name='Sibling Test Item')
             art1 = _make_artefact(db, item, label='Disc 1')
@@ -292,9 +294,9 @@ class TestSlugGeneration(unittest.TestCase):
 
     def test_artefact_slug_scoped_to_item(self):
         """Same slug can exist in different items."""
-        from myapp.extensions import db
-        from myapp.utils.slugs import generate_slug, ensure_unique_slug
         from myapp.database import Artefact
+        from myapp.extensions import db
+        from myapp.utils.slugs import ensure_unique_slug, generate_slug
         with self.app.app_context():
             item_a = _make_item(db, name='Item A For Scope Test')
             item_b = _make_item(db, name='Item B For Scope Test')
@@ -326,8 +328,8 @@ class TestRootArtefactProperty(unittest.TestCase):
         with cls.app.app_context():
             _db.create_all()
             item = _make_item(_db, name='Root Artefact Test Item')
-            from myapp.utils.slugs import generate_slug, ensure_unique_slug
             from myapp.database import Artefact
+            from myapp.utils.slugs import ensure_unique_slug, generate_slug
 
             # root artefact
             root = _make_artefact(_db, item, label='Disc 1')

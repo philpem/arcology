@@ -12,8 +12,8 @@ import tempfile
 from pathlib import Path
 
 from shared.enums import ArtefactType
-from .base import run_tool_with_output, run_and_build_result, tool_result
 
+from .base import run_and_build_result, run_tool_with_output, tool_result
 
 # Map (filesystem, cylinders, heads, sectors_per_track, sector_size) → gw format name.
 # Format names verified against Greaseweazle diskdefs at commit 26690f89.

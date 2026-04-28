@@ -17,7 +17,9 @@ This script is the entry point. The actual implementation is in the
 arcworker package which provides a modular, maintainable structure.
 """
 
-import os as _os, sys as _sys
+import os as _os
+import sys as _sys
+
 # Ensure the repo root (parent of this file's directory) is on sys.path so
 # that 'shared' is importable when running the worker outside Docker.
 _repo_root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
@@ -29,10 +31,11 @@ del _os, _sys, _repo_root
 # The underlying requests succeed; urllib3's assert_header_parsing() is
 # overly strict about HTTP responses that parse correctly in practice.
 import logging as _logging
+
 _logging.getLogger('urllib3.connection').setLevel(_logging.ERROR)
 del _logging
 
-from arcworker import AnalysisWorker, ARCOLOGY_API, UPLOAD_DIR, OUTPUT_DIR, WORKER_API_KEY
+from arcworker import ARCOLOGY_API, OUTPUT_DIR, UPLOAD_DIR, WORKER_API_KEY, AnalysisWorker
 
 
 def main():

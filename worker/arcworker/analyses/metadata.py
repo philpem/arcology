@@ -14,17 +14,16 @@ Covers:
 import json
 from pathlib import Path
 
-from shared.enums import ArtefactType, AnalysisType
+from shared.enums import AnalysisType, ArtefactType
 
 from ..config import log
 from ..tools import (
+    ModuleParseError,
     compute_file_hash,
     decode_module,
-    ModuleParseError,
 )
-from ..tools.iso9660 import parse_iso9660_pvd
 from ..tools.extraction import convert_fcfs_to_raw
-
+from ..tools.iso9660 import parse_iso9660_pvd
 from ._common import analysis_handler
 
 

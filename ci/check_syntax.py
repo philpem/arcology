@@ -9,7 +9,6 @@ import os
 import py_compile
 import sys
 
-
 # Directories to check, relative to the repository root
 CHECK_DIRS = ['myapp', 'worker', 'shared', 'ci', 'migrations']
 

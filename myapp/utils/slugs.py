@@ -6,7 +6,6 @@ file paths and URLs. Slugs are immutable once set.
 """
 
 import re
-from typing import Optional
 
 
 def generate_slug(text: str, max_length: int = 200) -> str:
@@ -120,7 +119,7 @@ def get_or_create_slug(obj, text_field: str, max_length: int = 200) -> str:
     return slug
 
 
-def get_slug(obj) -> Optional[str]:
+def get_slug(obj) -> str | None:
     """
     Get slug from object without creating one.
 
@@ -133,8 +132,8 @@ def get_slug(obj) -> Optional[str]:
     return getattr(obj, 'slug', None)
 
 
-def ensure_unique_slug(base_slug: str, model_class, existing_id: Optional[int] = None,
-                       scope_filter: Optional[dict] = None) -> str:
+def ensure_unique_slug(base_slug: str, model_class, existing_id: int | None = None,
+                       scope_filter: dict | None = None) -> str:
     """
     Ensure slug is unique by appending number if necessary.
 
@@ -217,6 +216,7 @@ def lookup_artefact_by_id(item, artefact_id: str):
         Artefact instance, or aborts with 404 if not found or identifier is invalid.
     """
     from flask import abort
+
     from myapp.database import Artefact
 
     # Full UUID

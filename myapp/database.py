@@ -4,17 +4,31 @@ Arcology Database Models
 Models for the digital artefact catalogue system.
 """
 
-from datetime import datetime, timezone
-from typing import Optional
+import enum
 import secrets
 import uuid as uuid_module
-from sqlalchemy import (
-    Column, ForeignKey, Sequence, Text, BigInteger, Index, Table, JSON
-)
-from sqlalchemy import Integer, String, Boolean, DateTime, Enum as SQLEnum
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from datetime import datetime, timezone
+from typing import Optional
+
 import bcrypt
-import enum
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Sequence,
+    String,
+    Table,
+    Text,
+)
+from sqlalchemy import Enum as SQLEnum
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from shared.enums import AnalysisType, ArtefactType
 
 from .extensions import db
 
@@ -46,9 +60,6 @@ _API_KEY_PERMISSION_ORDER = [
     ApiKeyPermission.READ_UPLOAD,
     ApiKeyPermission.READ_WRITE,
 ]
-
-
-from shared.enums import ArtefactType, AnalysisType
 
 
 class AnalysisStatus(enum.Enum):
@@ -225,7 +236,7 @@ class ApiKey(db.Model):
     permission:   Mapped[ApiKeyPermission]     = mapped_column(SQLEnum(ApiKeyPermission))
     is_active:    Mapped[bool]                 = mapped_column(Boolean, default=True)
     created_at:   Mapped[datetime]             = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    last_used_at: Mapped[Optional[datetime]]   = mapped_column(DateTime, nullable=True)
+    last_used_at: Mapped[datetime | None]   = mapped_column(DateTime, nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="api_keys")
 
@@ -280,10 +291,10 @@ class ExternalSystem(db.Model):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
-    system_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    base_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    url_template: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    system_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    base_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    url_template: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     references: Mapped[list["ExternalReference"]] = relationship(
         back_populates="system", cascade="all, delete-orphan"
@@ -301,8 +312,8 @@ class ExternalReference(db.Model):
     item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), index=True)
     system_id: Mapped[int] = mapped_column(ForeignKey("external_systems.id"), index=True)
     external_id: Mapped[str] = mapped_column(String(200), index=True)
-    external_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    external_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     item: Mapped["Item"] = relationship(back_populates="external_references")
@@ -313,7 +324,7 @@ class ExternalReference(db.Model):
     )
 
     @property
-    def url(self) -> Optional[str]:
+    def url(self) -> str | None:
         if self.external_url:
             return self.external_url
         if self.system.base_url and self.system.url_template:
@@ -331,8 +342,8 @@ class Platform(db.Model):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    parent_id: Mapped[Optional[int]] = mapped_column(ForeignKey("platforms.id"), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("platforms.id"), nullable=True)
 
     parent: Mapped[Optional["Platform"]] = relationship(back_populates="children", remote_side=[id])
     children: Mapped[list["Platform"]] = relationship(back_populates="parent")
@@ -345,8 +356,8 @@ class Category(db.Model):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    parent_id: Mapped[Optional[int]] = mapped_column(ForeignKey("categories.id"), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
 
     parent: Mapped[Optional["Category"]] = relationship(back_populates="children", remote_side=[id])
     children: Mapped[list["Category"]] = relationship(back_populates="parent")
@@ -374,11 +385,11 @@ class Item(db.Model):
     id: Mapped[int] = mapped_column(primary_key=True)
     uuid: Mapped[str] = mapped_column(String(32), unique=True, index=True, default=generate_uuid)
     name: Mapped[str] = mapped_column(String(255), index=True)
-    slug: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    platform_id: Mapped[Optional[int]] = mapped_column(ForeignKey("platforms.id"), index=True, nullable=True)
-    category_id: Mapped[Optional[int]] = mapped_column(ForeignKey("categories.id"), index=True, nullable=True)
-    parent_id: Mapped[Optional[int]] = mapped_column(ForeignKey("items.id"), index=True, nullable=True)
+    slug: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    platform_id: Mapped[int | None] = mapped_column(ForeignKey("platforms.id"), index=True, nullable=True)
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), index=True, nullable=True)
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("items.id"), index=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -476,10 +487,10 @@ class Artefact(db.Model):
     uuid: Mapped[str] = mapped_column(String(32), unique=True, index=True, default=generate_uuid)
     item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), index=True)
     label: Mapped[str] = mapped_column(String(255))
-    slug: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
+    slug: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
     artefact_type: Mapped[ArtefactType] = mapped_column(SQLEnum(ArtefactType))
     type_overridden: Mapped[bool] = mapped_column(Boolean, default=False)  # Was type manually set?
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     
     # File storage
     original_filename: Mapped[str] = mapped_column(String(255))  # User's original filename
@@ -487,21 +498,21 @@ class Artefact(db.Model):
     storage_directory: Mapped[StorageDirectory] = mapped_column(
         SQLEnum(StorageDirectory), default=StorageDirectory.UPLOADS
     )  # Which folder: uploads (original) or outputs (derived)
-    file_size: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    mime_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    file_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    mime_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     
     # Hashes (computed after upload)
-    md5: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
-    sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    md5: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     
     # Format-specific metadata (JSON)
-    media_metadata: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    media_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)
     
     # Derivation chain - if this artefact was produced by analysing another
-    parent_artefact_id: Mapped[Optional[int]] = mapped_column(
+    parent_artefact_id: Mapped[int | None] = mapped_column(
         ForeignKey("artefacts.id"), index=True, nullable=True
     )
-    derived_from_analysis_id: Mapped[Optional[int]] = mapped_column(
+    derived_from_analysis_id: Mapped[int | None] = mapped_column(
         ForeignKey("analyses.id", ondelete="SET NULL"), index=True, nullable=True
     )
     
@@ -569,28 +580,28 @@ class Analysis(db.Model):
     uuid: Mapped[str] = mapped_column(String(32), unique=True, index=True, default=generate_uuid)
     artefact_id: Mapped[int] = mapped_column(ForeignKey("artefacts.id"), index=True)
     analysis_type: Mapped[AnalysisType] = mapped_column(SQLEnum(AnalysisType))
-    slug: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
+    slug: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
     status: Mapped[AnalysisStatus] = mapped_column(SQLEnum(AnalysisStatus), default=AnalysisStatus.PENDING, index=True)
     
     # Tool info (filled by worker)
-    tool_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    tool_version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    tool_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    tool_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
     
     # Hints to help analysis (JSON) - e.g., {"platform": "bbc_micro", "filesystem": "adfs"}
-    hints: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    hints: Mapped[str | None] = mapped_column(Text, nullable=True)
     
     # Results
-    output_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    output_path: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
-    success: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
-    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON for structured results
-    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    output_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    output_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    success: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    details: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON for structured results
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
-    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     artefact: Mapped["Artefact"] = relationship(
         back_populates="analyses", foreign_keys=[artefact_id]
@@ -618,19 +629,19 @@ class Partition(db.Model):
     uuid: Mapped[str] = mapped_column(String(32), unique=True, index=True, default=generate_uuid)
     artefact_id: Mapped[int] = mapped_column(ForeignKey("artefacts.id"), index=True)
     partition_index: Mapped[int] = mapped_column(Integer, default=0)
-    label: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    slug: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
+    label: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    slug: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
     filesystem: Mapped[FilesystemType] = mapped_column(SQLEnum(FilesystemType))
-    container_format: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Detailed format from disc image tools (e.g., "Acorn ADFS E")
-    start_sector: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    sector_count: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    block_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    total_files: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    total_directories: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    total_bytes: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    unique_files: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    detection_details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON from partition detection (sfdisk, etc.)
-    gnu_file_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True, index=True)  # Output of file(1) on the image
+    container_format: Mapped[str | None] = mapped_column(Text, nullable=True)  # Detailed format from disc image tools (e.g., "Acorn ADFS E")
+    start_sector: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    sector_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    block_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_files: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_directories: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    unique_files: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    detection_details: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON from partition detection (sfdisk, etc.)
+    gnu_file_type: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)  # Output of file(1) on the image
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     artefact: Mapped["Artefact"] = relationship(back_populates="partitions")
@@ -647,27 +658,27 @@ class ExtractedFile(db.Model):
     partition_id: Mapped[int] = mapped_column(ForeignKey("partitions.id"), index=True)
     path: Mapped[str] = mapped_column(String(1000))
     filename: Mapped[str] = mapped_column(String(255), index=True)
-    extension: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
-    file_size: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    created_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    modified_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    accessed_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    attributes: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    md5: Mapped[Optional[str]] = mapped_column(String(32), index=True, nullable=True)
-    sha1: Mapped[Optional[str]] = mapped_column(String(40), index=True, nullable=True)
-    sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    crc32: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
-    known_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("known_files.id", ondelete="SET NULL"), index=True, nullable=True)
+    extension: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
+    file_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    modified_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    accessed_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    attributes: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    md5: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
+    sha1: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    crc32: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    known_file_id: Mapped[int | None] = mapped_column(ForeignKey("known_files.id", ondelete="SET NULL"), index=True, nullable=True)
     is_known: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
     # Archive/nested file support
-    parent_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("extracted_files.id"), nullable=True, index=True)
+    parent_file_id: Mapped[int | None] = mapped_column(ForeignKey("extracted_files.id"), nullable=True, index=True)
     is_archive: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     is_directory: Mapped[bool] = mapped_column(Boolean, default=False, index=True)  # True if this is a directory entry
-    archive_format: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # e.g., 'ArcFS', 'ZIP', 'CFS'
-    risc_os_filetype: Mapped[Optional[str]] = mapped_column(String(3), nullable=True, index=True)  # Hex filetype (e.g., '3fb')
-    load_address: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)  # RISC OS load address (8-char hex, e.g., 'fffff300')
-    exec_address: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)  # RISC OS exec address (8-char hex)
+    archive_format: Mapped[str | None] = mapped_column(String(50), nullable=True)  # e.g., 'ArcFS', 'ZIP', 'CFS'
+    risc_os_filetype: Mapped[str | None] = mapped_column(String(3), nullable=True, index=True)  # Hex filetype (e.g., '3fb')
+    load_address: Mapped[str | None] = mapped_column(String(8), nullable=True)  # RISC OS load address (8-char hex, e.g., 'fffff300')
+    exec_address: Mapped[str | None] = mapped_column(String(8), nullable=True)  # RISC OS exec address (8-char hex)
     extraction_depth: Mapped[int] = mapped_column(Integer, default=0)  # Nesting level (0=top-level)
 
     partition: Mapped["Partition"] = relationship(back_populates="files")
@@ -729,9 +740,9 @@ class ArtefactProtection(db.Model):
     artefact_id: Mapped[int] = mapped_column(ForeignKey('artefacts.id'), index=True)
     protection_type: Mapped[str] = mapped_column(String(64), index=True)
     # Known values: 'weak_bits', 'bad_crc', 'id_mismatch', 'ddam', 'duplicate_id'
-    track: Mapped[Optional[int]] = mapped_column(nullable=True)
-    side: Mapped[Optional[int]] = mapped_column(nullable=True)
-    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # e.g. sector ID string
+    track: Mapped[int | None] = mapped_column(nullable=True)
+    side: Mapped[int | None] = mapped_column(nullable=True)
+    details: Mapped[str | None] = mapped_column(Text, nullable=True)  # e.g. sector ID string
 
     artefact: Mapped["Artefact"] = relationship(back_populates="protection_indicators")
 
@@ -748,8 +759,8 @@ class ArtefactMastering(db.Model):
     artefact_id: Mapped[int] = mapped_column(ForeignKey('artefacts.id'), index=True)
     mastering_type: Mapped[str] = mapped_column(String(64), index=True)
     # Known values: 'traceback', 'formaster', 'unknown_mastering'
-    track: Mapped[Optional[int]] = mapped_column(nullable=True)
-    decoded: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Decoded mastering data string
+    track: Mapped[int | None] = mapped_column(nullable=True)
+    decoded: Mapped[str | None] = mapped_column(Text, nullable=True)  # Decoded mastering data string
 
     artefact: Mapped["Artefact"] = relationship(back_populates="mastering_indicators")
 
@@ -765,14 +776,14 @@ class RiscosModule(db.Model):
     id: Mapped[int] = mapped_column(primary_key=True)
     artefact_id: Mapped[int] = mapped_column(ForeignKey('artefacts.id'), index=True)
     title_string: Mapped[str] = mapped_column(String(255), index=True)  # Internal module name (e.g., "WindowManager")
-    help_title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Display name from help string (e.g., "Window Manager")
-    version: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # e.g., "2.05"
-    date: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # ISO date (e.g., "1990-01-31")
-    swi_chunk: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # SWI base number
-    file_path: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)  # Path within extraction
-    module_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)  # SHA-256
-    commands: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON list of command names
-    swi_names: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON list of full SWI names (e.g. ADFS_DiscOp)
+    help_title: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Display name from help string (e.g., "Window Manager")
+    version: Mapped[str | None] = mapped_column(String(20), nullable=True)  # e.g., "2.05"
+    date: Mapped[str | None] = mapped_column(String(10), nullable=True)  # ISO date (e.g., "1990-01-31")
+    swi_chunk: Mapped[int | None] = mapped_column(Integer, nullable=True)  # SWI base number
+    file_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)  # Path within extraction
+    module_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)  # SHA-256
+    commands: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list of command names
+    swi_names: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list of full SWI names (e.g. ADFS_DiscOp)
 
     artefact: Mapped["Artefact"] = relationship(back_populates="riscos_modules")
 
@@ -795,8 +806,8 @@ class ArtefactRestriction(db.Model):
     id: Mapped[int] = mapped_column(primary_key=True)
     artefact_id: Mapped[int] = mapped_column(ForeignKey("artefacts.id"), index=True)
     restriction_type: Mapped[RestrictionType] = mapped_column(SQLEnum(RestrictionType))
-    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    added_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("user.id"), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    added_by_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     artefact: Mapped["Artefact"] = relationship(back_populates="restrictions")
@@ -819,8 +830,8 @@ class ExtractedFileRestriction(db.Model):
     id: Mapped[int] = mapped_column(primary_key=True)
     extracted_file_id: Mapped[int] = mapped_column(ForeignKey("extracted_files.id"), index=True)
     restriction_type: Mapped[RestrictionType] = mapped_column(SQLEnum(RestrictionType))
-    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    added_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("user.id"), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    added_by_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     extracted_file: Mapped["ExtractedFile"] = relationship(back_populates="restrictions")
@@ -855,14 +866,14 @@ class HashDatabase(db.Model):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    source_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    platform_id: Mapped[Optional[int]] = mapped_column(ForeignKey("platforms.id", ondelete="SET NULL"), nullable=True)
-    file_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    platform_id: Mapped[int | None] = mapped_column(ForeignKey("platforms.id", ondelete="SET NULL"), nullable=True)
+    file_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     enable_product_recognition: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    restriction_type: Mapped[Optional[RestrictionType]] = mapped_column(
+    restriction_type: Mapped[RestrictionType | None] = mapped_column(
         SQLEnum(RestrictionType), nullable=True
     )  # If set, artefacts matching this DB's files are automatically restricted
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -880,7 +891,7 @@ class KnownProduct(db.Model):
     id: Mapped[int] = mapped_column(primary_key=True)
     database_id: Mapped[int] = mapped_column(ForeignKey("hash_databases.id"), index=True)
     title: Mapped[str] = mapped_column(String(200), index=True)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     path_match_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -896,18 +907,18 @@ class KnownFile(db.Model):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     database_id: Mapped[int] = mapped_column(ForeignKey("hash_databases.id"), index=True)
-    product_id: Mapped[Optional[int]] = mapped_column(ForeignKey("known_products.id"), index=True, nullable=True)
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("known_products.id"), index=True, nullable=True)
     filename: Mapped[str] = mapped_column(String(255), index=True)
-    file_size: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    md5: Mapped[Optional[str]] = mapped_column(String(32), index=True, nullable=True)
-    sha1: Mapped[Optional[str]] = mapped_column(String(40), index=True, nullable=True)
-    sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    crc32: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    file_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    md5: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
+    sha1: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    crc32: Mapped[str | None] = mapped_column(String(8), nullable=True)
     is_required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    relative_path: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
-    product_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
-    product_version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    relative_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    product_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    product_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     database: Mapped["HashDatabase"] = relationship(back_populates="known_files")
     product: Mapped[Optional["KnownProduct"]] = relationship(back_populates="known_files")
@@ -936,19 +947,19 @@ class HashRescanJob(db.Model):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     # Which database triggered the rescan (NULL = triggered from the index page).
-    database_id: Mapped[Optional[int]] = mapped_column(
+    database_id: Mapped[int | None] = mapped_column(
         ForeignKey("hash_databases.id", ondelete="SET NULL"), nullable=True, index=True
     )
     status: Mapped[HashRescanStatus] = mapped_column(
         SQLEnum(HashRescanStatus, name="hashrescanstatus"), nullable=False
     )
-    files_updated: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    files_total: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    queued_analyses: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    files_updated: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    files_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    queued_analyses: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     database: Mapped[Optional["HashDatabase"]] = relationship()
 

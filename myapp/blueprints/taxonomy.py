@@ -4,19 +4,18 @@ Arcology - Taxonomy Blueprint
 Platforms, categories, tags, and external systems.
 """
 
-from flask import Blueprint, render_template, flash
+from flask import Blueprint, flash, render_template
 from flask_login import login_required
 from flask_wtf import FlaskForm
-from wtforms import StringField, TextAreaField, SelectField
-from wtforms.validators import DataRequired, Optional, Length
-
 from sqlalchemy import func
+from wtforms import SelectField, StringField, TextAreaField
+from wtforms.validators import DataRequired, Length, Optional
 
+from ..database import Category, ExternalSystem, HashDatabase, Platform, Tag
 from ..extensions import db
-from ..database import Platform, Category, Tag, ExternalSystem, HashDatabase
 from ..permissions import require_permission
-from ..utils.web_forms import redirect_local
 from ..utils.db_helpers import model_choice_list
+from ..utils.web_forms import redirect_local
 
 ROUTENAME = __name__.replace('.', '_')
 

@@ -5,27 +5,51 @@ CRUD operations for digital artefacts with file upload and auto-analysis.
 """
 
 import glob
+import hashlib
+import json
+import mimetypes
 import os
 import re
-import hashlib
 import shutil
 import tempfile
 import threading
 import uuid
-import json
-import mimetypes
-from flask import Blueprint, render_template, redirect, url_for, flash, request, current_app, send_file, abort
-from flask_login import login_required, current_user
+
+from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, send_file, url_for
+from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
 from flask_wtf.file import FileField, FileRequired
-from wtforms import StringField, TextAreaField, SelectField, BooleanField, IntegerField
-from wtforms.validators import DataRequired, Optional
 from werkzeug.utils import secure_filename
+from wtforms import BooleanField, IntegerField, SelectField, StringField, TextAreaField
+from wtforms.validators import DataRequired, Optional
 
+from ..database import (
+    Analysis,
+    AnalysisStatus,
+    AnalysisType,
+    Artefact,
+    ArtefactMastering,
+    ArtefactProtection,
+    ArtefactRestriction,
+    ArtefactType,
+    ExtractedFile,
+    ExtractedFileRestriction,
+    HashDatabase,
+    Item,
+    KnownFile,
+    KnownProduct,
+    Partition,
+    Platform,
+    RecognisedProduct,
+    RiscosModule,
+    StorageDirectory,
+    Tag,
+    artefact_tags,
+)
 from ..extensions import db
 from ..permissions import require_permission
-from ..utils.slugs import generate_slug, ensure_unique_slug, lookup_by_identifier, lookup_artefact_by_id
 from ..riscos_filetypes import lookup_filetype_hex
+from ..utils.slugs import ensure_unique_slug, generate_slug, lookup_artefact_by_id, lookup_by_identifier
 
 
 def safe_original_filename(filename: str) -> str:
@@ -46,13 +70,6 @@ def safe_original_filename(filename: str) -> str:
     filename = filename.strip()
     return filename or 'upload'
 
-from ..database import (
-    Item, Artefact, ArtefactType, Partition, ExtractedFile,
-    Analysis, AnalysisType, AnalysisStatus, Platform, StorageDirectory, Tag,
-    ArtefactProtection, ArtefactMastering,
-    HashDatabase, KnownProduct, KnownFile, RecognisedProduct,
-    RiscosModule, ArtefactRestriction, ExtractedFileRestriction, artefact_tags,
-)
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -671,6 +688,7 @@ def get_all_derived_artefact_ids(artefact: Artefact) -> list[int]:
     (one per level of the derivation tree).
     """
     from sqlalchemy import select
+
     from ..extensions import db
 
     base = select(Artefact.id).where(Artefact.parent_artefact_id == artefact.id)
@@ -749,6 +767,7 @@ def _analysis_file_path(analysis, hint_file_map: dict) -> str | None:
                          (empty → top-level scan, returns None)
     """
     import json as _json
+
     from shared.enums import AnalysisType as _AT
 
     if not analysis.hints:
@@ -810,6 +829,7 @@ def _build_processing_tree(root: Artefact) -> tuple[dict, bool, dict, int]:
     """
     import json as _json
     from collections import defaultdict
+
     from shared.enums import AnalysisType as _AT
 
     all_ids = [root.id] + get_all_derived_artefact_ids(root)
@@ -1232,8 +1252,9 @@ _COLUMN_CLASSES = {
 def _render_viewer(artefact):
     """Build and render the viewer page for an artefact's converted outputs."""
     from collections import Counter, defaultdict
+
     from ..database import RestrictionType
-    from ..utils.pagination import ListPagination, VALID_PER_PAGE, resolve_per_page
+    from ..utils.pagination import VALID_PER_PAGE, ListPagination, resolve_per_page
 
     _viewable_types = (ArtefactType.ACORN_SPRITE, ArtefactType.ACORN_DRAW, ArtefactType.ACORN_TEXT)
     output_groups = []
@@ -1570,7 +1591,7 @@ def _render_viewer(artefact):
                 singles = dir_singles.get(d, [])
                 if singles:
                     bundle_id = hashlib.md5(
-                        f"{artefact.uuid}:thumb:{d}".encode('utf-8')
+                        f"{artefact.uuid}:thumb:{d}".encode()
                     ).hexdigest()[:12]
                     new_groups.append({
                         'label': d or '',
@@ -1662,7 +1683,7 @@ def _render_viewer(artefact):
         # (especially across paginated pages, where loop.index collides).
         key_source = group.get('source_file') or group.get('label') or ''
         group['stable_id'] = hashlib.md5(
-            f"{artefact.uuid}:{key_source}".encode('utf-8')
+            f"{artefact.uuid}:{key_source}".encode()
         ).hexdigest()[:12]
 
     return render_template(
@@ -1859,14 +1880,15 @@ def _render_artefact_view(artefact):
             )
         )
     
-    from ..utils.pagination import resolve_per_page, VALID_PER_PAGE
+    from ..utils.pagination import VALID_PER_PAGE, resolve_per_page
     per_page, page, view_all = resolve_per_page('FILES_PER_PAGE', 100)
 
     # Column sorting: sort=<col> ascending, sort=-<col> descending
     sort_param = request.args.get('sort', 'path')
     sort_desc = sort_param.startswith('-')
     sort_col = sort_param.lstrip('-')
-    from sqlalchemy import desc, func as _func
+    from sqlalchemy import desc
+    from sqlalchemy import func as _func
     _sort_columns = {
         'path': _func.lower(ExtractedFile.path),
         'size': ExtractedFile.file_size,
@@ -1894,8 +1916,8 @@ def _render_artefact_view(artefact):
 
     # Batch-query all matching KnownFiles across active hash databases
     # for the current page of files, so the template can show multiple badges.
-    from ..utils.hash_rescan import find_all_known_files_batch
     from ..database import RestrictionType
+    from ..utils.hash_rescan import find_all_known_files_batch
     file_known_matches = find_all_known_files_batch(files_pagination.items)
 
     # Build query args for pagination links, preserving all active filters
@@ -2448,7 +2470,8 @@ def add_to_hashdb(uuid):
     # matching the behaviour of the per-file add_known_file route in hashdb.py.
     if new_kfs and database.is_active:
         from sqlalchemy import or_ as _or
-        from ..utils.hash_rescan import rescan_hashes_for_new_known_files, queue_product_recognition_for_partitions
+
+        from ..utils.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_new_known_files
         rescan_hashes_for_new_known_files(new_kfs)
         if database.enable_product_recognition:
             conditions = []
@@ -2524,7 +2547,7 @@ def upload(item_id):
         storage_key = current_app.storage.storage_key('uploads', storage_path)
         try:
             md5, sha256 = compute_file_hashes(storage_key, use_storage=True)
-        except IOError:
+        except OSError:
             md5, sha256 = None, None
 
         if sha256:
@@ -3055,7 +3078,7 @@ def manage_restrictions(item_id=None, artefact_id=None, root_id=None):
     category = request.form.get('category', '')
     reason = request.form.get('reason', '').strip() or None
 
-    from ..database import RestrictionType, ArtefactRestriction
+    from ..database import ArtefactRestriction, RestrictionType
     try:
         rtype = RestrictionType(category)
     except (ValueError, KeyError):

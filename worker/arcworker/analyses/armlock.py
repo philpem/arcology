@@ -10,14 +10,12 @@ ARMlock signature is found on an ADFS partition.
 import json
 from pathlib import Path
 
-from shared.enums import ArtefactType, AnalysisType
+from shared.enums import AnalysisType, ArtefactType
 
 from ..config import log
 from ..tools import detect_armlock, remove_armlock
-
 from ._common import analysis_handler
 from ._protections import PROTECTION_SCHEMES, ProtectionScheme
-
 
 SCHEME = ProtectionScheme(
     name='armlock',

@@ -4,8 +4,8 @@ Revision ID: 000069c2d776
 Revises: 000069c2f0db
 Create Date: 2026-03-24
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = '000069c2d776'

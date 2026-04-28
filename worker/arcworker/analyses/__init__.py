@@ -13,42 +13,41 @@ handler attribute name on ``AnalysisWorker``; the dispatch loop in
 
 from shared.enums import AnalysisType
 
-from .flux import (
-    process_flux_visualisation,
-    process_detect_track_density,
-    process_flux_decode,
-    process_disc_mastering_detect,
-    process_disc_protection_detect,
-    _SCP_VIA_CONVERSION_TYPES,
-)
+from .armlock import process_armlock_remove
 from .extraction import (
-    process_file_extraction,
+    _PROMOTABLE_EXTENSIONS,
+    _apply_pling_renames,
+    _extract_top_level_archive,
+    _is_riscos_zip,
+    _sniff_archive_magic,
     process_archive_detect,
     process_archive_extract,
-    _apply_pling_renames,
-    _sniff_archive_magic,
-    _is_riscos_zip,
-    _extract_top_level_archive,
-    _PROMOTABLE_EXTENSIONS,
+    process_file_extraction,
+)
+from .flux import (
+    _SCP_VIA_CONVERSION_TYPES,
+    process_detect_track_density,
+    process_disc_mastering_detect,
+    process_disc_protection_detect,
+    process_flux_decode,
+    process_flux_visualisation,
 )
 from .images import (
-    process_format_convert,
-    _convert_file_to_outputs,
-    _detect_viewable_type,
-    _RISCOS_VIEWABLE_SUFFIXES,
     _EXT_VIEWABLE,
     _RISCOS_HEX_VIEWABLE,
+    _RISCOS_VIEWABLE_SUFFIXES,
+    _convert_file_to_outputs,
+    _detect_viewable_type,
+    process_format_convert,
 )
 from .metadata import (
     process_checksum_compute,
-    process_metadata_extract,
     process_format_identify,
+    process_metadata_extract,
     process_product_recognition,
     process_riscos_module_parse,
 )
-from .armlock import process_armlock_remove
 from .partition import process_partition_detect
-
 
 # AnalysisType.value → method name on AnalysisWorker.  Looked up via
 # getattr() in process_analysis().  Kept here (rather than as a dict of

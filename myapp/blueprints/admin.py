@@ -4,14 +4,14 @@ Arcology - Admin Blueprint
 User management and system configuration for administrators.
 """
 
-from flask import Blueprint, render_template, flash, request, current_app, abort
-from flask_login import login_required, current_user
+from flask import Blueprint, abort, current_app, flash, render_template, request
+from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
-from wtforms import SelectField, StringField, PasswordField, BooleanField
-from wtforms.validators import DataRequired, Length, EqualTo, Optional
+from wtforms import BooleanField, PasswordField, SelectField, StringField
+from wtforms.validators import DataRequired, EqualTo, Length, Optional
 
+from ..database import ApiKey, RestrictionType, User, UserPermission, UserRestrictionBypass
 from ..extensions import db
-from ..database import User, ApiKey, UserPermission, RestrictionType, UserRestrictionBypass
 from ..utils.web_forms import flash_form_errors, redirect_local
 
 ROUTENAME = __name__.replace('.', '_')

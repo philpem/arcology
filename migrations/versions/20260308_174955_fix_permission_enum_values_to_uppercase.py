@@ -10,9 +10,8 @@ Revises: 000069ac2032
 Create Date: 2026-03-08 17:49:55.000000
 
 """
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = '000069adb6c3'

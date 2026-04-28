@@ -22,9 +22,8 @@ if _REPO_ROOT not in sys.path:
 
 os.environ.setdefault('WORKER_API_KEY', 'test')
 
-from worker.arcworker.tools.imd import parse_imd_track0, detect_geometry_from_boot_data
 from worker.arcworker.tools.flux import _geometry_to_gw_format
-
+from worker.arcworker.tools.imd import detect_geometry_from_boot_data, parse_imd_track0
 
 # =============================================================================
 # IMD builder helpers

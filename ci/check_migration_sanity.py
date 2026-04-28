@@ -20,7 +20,6 @@ import os
 import re
 import sys
 
-
 MIGRATIONS_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     'migrations', 'versions'
@@ -66,7 +65,7 @@ def parse_header_metadata(source):
 
 def parse_migration(filepath):
     """Parse a migration file and extract key attributes."""
-    with open(filepath, 'r') as f:
+    with open(filepath) as f:
         source = f.read()
 
     tree = ast.parse(source, filepath)

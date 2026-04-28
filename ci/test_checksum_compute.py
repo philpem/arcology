@@ -12,9 +12,9 @@ Run:
         python -m unittest ci.test_checksum_compute -v
 """
 
+import json
 import os
 import sys
-import json
 import unittest
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -27,8 +27,8 @@ os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 
 _WORKER_KEY = os.environ['WORKER_API_KEY']
 
-from shared.enums import ArtefactType, AnalysisType
 from myapp.blueprints.artefacts import ANALYSIS_MAP
+from shared.enums import AnalysisType, ArtefactType
 
 
 class TestAnalysisMapDoesNotContainChecksum(unittest.TestCase):
@@ -51,8 +51,8 @@ class TestQueueAnalysesForArtefact(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from myapp.app import create_app
+        from myapp.database import Artefact, Item
         from myapp.extensions import db
-        from myapp.database import Item, Artefact
 
         cls.app = create_app()
         cls.app.config['TESTING'] = True
@@ -75,16 +75,16 @@ class TestQueueAnalysesForArtefact(unittest.TestCase):
 
     def setUp(self):
         """Clear all Analysis rows before each test."""
-        from myapp.extensions import db
         from myapp.database import Analysis
+        from myapp.extensions import db
 
         with self.app.app_context():
             Analysis.query.delete()
             db.session.commit()
 
     def _queue(self, **kwargs):
-        from myapp.database import Artefact
         from myapp.blueprints.artefacts import queue_analyses_for_artefact
+        from myapp.database import Artefact
 
         with self.app.app_context():
             from myapp.extensions import db
@@ -138,8 +138,8 @@ class TestPatchArtefactEndpoint(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from myapp.app import create_app
+        from myapp.database import Artefact, Item
         from myapp.extensions import db
-        from myapp.database import Item, Artefact
 
         cls.app = create_app()
         cls.app.config['TESTING'] = True

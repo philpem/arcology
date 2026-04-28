@@ -26,9 +26,8 @@ import json
 import struct
 from pathlib import Path
 
-from .base import run_tool_with_output, tool_result
 from ..config import log
-
+from .base import run_tool_with_output, tool_result
 
 # =========================================================================
 # Filecore disc-record helpers (shared by HCCS, Simtec, future schemes)
@@ -382,7 +381,7 @@ def _detect_ics_partitions(input_path: Path) -> dict:
 def _decode_hccs_password(obfuscated: bytes) -> str:
     """Decode an HCCS XOR-obfuscated partition password."""
     xor_key = bytes([0x06, 0x14, 0x1F, 0x07, 0x02, 0x1D, 0x17, 0x17])
-    decoded = bytes(b ^ k for b, k in zip(obfuscated[:8], xor_key))
+    decoded = bytes(b ^ k for b, k in zip(obfuscated[:8], xor_key, strict=False))
     return decoded.rstrip(b'\x00').decode('latin-1', errors='replace')
 
 def _decode_hccs_access_flags(flags: int) -> dict:
@@ -930,7 +929,7 @@ def detect_partitions_sfdisk(input_path: Path) -> dict:
         # detection methods rather than extracting nonsensical ranges.
         if len(partitions) > 1:
             sorted_parts = sorted(partitions, key=lambda p: p['start_byte'])
-            for a, b in zip(sorted_parts, sorted_parts[1:]):
+            for a, b in zip(sorted_parts, sorted_parts[1:], strict=False):
                 a_end = a['start_byte'] + a['size_bytes']
                 if a_end > b['start_byte']:
                     msg = (

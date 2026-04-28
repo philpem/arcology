@@ -4,8 +4,7 @@ import os
 import sys
 
 from ..client import compute_file_hashes
-from ..formatting import print_json, format_size
-
+from ..formatting import format_size, print_json
 
 # Files to skip in directory uploads
 JUNK_FILES = {'.DS_Store', 'Thumbs.db', 'desktop.ini', '._.'}

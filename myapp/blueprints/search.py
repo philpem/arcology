@@ -5,15 +5,24 @@ Global cross-item search using a prefix query syntax.
 """
 
 import re
+
 from flask import Blueprint, render_template, request
 from flask_login import login_required
-from sqlalchemy import or_, and_, distinct, func
+from sqlalchemy import and_, distinct, func, or_
 
-from ..extensions import db
 from ..database import (
-    Item, Artefact, Partition, ExtractedFile, FilesystemType,
-    ArtefactProtection, ArtefactMastering, RiscosModule, Tag, artefact_tags,
+    Artefact,
+    ArtefactMastering,
+    ArtefactProtection,
+    ExtractedFile,
+    FilesystemType,
+    Item,
+    Partition,
+    RiscosModule,
+    Tag,
+    artefact_tags,
 )
+from ..extensions import db
 from ..riscos_filetypes import lookup_filetype_hex
 
 ROUTENAME = __name__.replace('.', '_')

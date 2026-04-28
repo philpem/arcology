@@ -6,18 +6,18 @@ for use by the worker.
 """
 
 import os
+import re
 import struct
 import subprocess
-import re
 import tarfile
 import zipfile
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any
 
-from .base import run_tool_with_output, tool_result
 from ..compression import stream_to_file
-from ..config import log, TOOL_TIMEOUT, MAX_DECOMPRESSED_BYTES
-from ..utils.text import normalize_extracted_filenames, fix_riscos_c1_filenames, decode_riscos_latin1
+from ..config import MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT, log
+from ..utils.text import decode_riscos_latin1, fix_riscos_c1_filenames, normalize_extracted_filenames
+from .base import run_tool_with_output, tool_result
 
 
 def _validate_entry_path(name: str, fmt: str) -> None:
@@ -87,10 +87,10 @@ def _check_7z_paths(input_path: Path) -> None:
     try:
         result = subprocess.run(
             ['7z', 'l', '-slt', str(input_path)],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60,
+            capture_output=True, timeout=60,
         )
-    except subprocess.TimeoutExpired:
-        raise ValueError('7z listing timed out — archive rejected')
+    except subprocess.TimeoutExpired as e:
+        raise ValueError('7z listing timed out — archive rejected') from e
 
     past_header = False
     path = None
@@ -143,10 +143,10 @@ def _check_rar_paths(input_path: Path) -> None:
     try:
         result = subprocess.run(
             ['unrar', 'lt', str(input_path)],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60,
+            capture_output=True, timeout=60,
         )
-    except subprocess.TimeoutExpired:
-        raise ValueError('unrar listing timed out — archive rejected')
+    except subprocess.TimeoutExpired as e:
+        raise ValueError('unrar listing timed out — archive rejected') from e
 
     current_name: str | None = None
     for line in result.stdout.decode('utf-8', errors='replace').splitlines():
@@ -214,7 +214,7 @@ def sanitize_extracted_tree(output_dir: Path) -> int:
     return removed
 
 
-def _archive_error(tool: str, message: str, process_output: dict | None = None) -> Dict[str, Any]:
+def _archive_error(tool: str, message: str, process_output: dict | None = None) -> dict[str, Any]:
     """Build a standard failed archive-result payload."""
     return tool_result(False, tool=tool, error=message, process_output=process_output)
 
@@ -224,7 +224,7 @@ def _archive_success(
     summary: str,
     file_count: int,
     process_output: dict | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build a standard successful archive-result payload."""
     return tool_result(
         True,
@@ -271,7 +271,7 @@ def _run_extraction_command(
     cwd: str | None = None,
     normalize_names: bool = True,
     assert_confined: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Run an extractor command and apply the common post-processing flow."""
     result, output = run_tool_with_output(cmd, cwd=cwd)
 
@@ -297,7 +297,7 @@ def _run_extraction_command(
     )
 
 
-def extract_riscosarc(input_path: Path, output_dir: Path) -> Dict[str, Any]:
+def extract_riscosarc(input_path: Path, output_dir: Path) -> dict[str, Any]:
     """
     Extract archive using riscosarc.
 
@@ -355,7 +355,7 @@ def extract_riscosarc(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     )
 
 
-def extract_tbafs(input_path: Path, output_dir: Path) -> Dict[str, Any]:
+def extract_tbafs(input_path: Path, output_dir: Path) -> dict[str, Any]:
     """
     Extract TBAFS archive.
 
@@ -378,7 +378,7 @@ def extract_tbafs(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     )
 
 
-def extract_zip(input_path: Path, output_dir: Path) -> Dict[str, Any]:
+def extract_zip(input_path: Path, output_dir: Path) -> dict[str, Any]:
     """
     Extract ZIP archive.
 
@@ -480,7 +480,7 @@ def has_riscos_zip_metadata(zip_path: Path) -> bool:
     return False
 
 
-def extract_zip_riscos(input_path: Path, output_dir: Path) -> Dict[str, Any]:
+def extract_zip_riscos(input_path: Path, output_dir: Path) -> dict[str, Any]:
     """Extract a RISC OS ZIP archive with correct Latin-1 filename encoding.
 
     RISC OS archives store filenames in RISC OS Latin-1.  The hard space used
@@ -544,7 +544,7 @@ def extract_zip_riscos(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     )
 
 
-def extract_tar(input_path: Path, output_dir: Path, archive_type: str = 'tar') -> Dict[str, Any]:
+def extract_tar(input_path: Path, output_dir: Path, archive_type: str = 'tar') -> dict[str, Any]:
     """
     Extract TAR archive (optionally compressed).
 
@@ -586,7 +586,7 @@ def extract_tar(input_path: Path, output_dir: Path, archive_type: str = 'tar') -
     )
 
 
-def extract_rar(input_path: Path, output_dir: Path) -> Dict[str, Any]:
+def extract_rar(input_path: Path, output_dir: Path) -> dict[str, Any]:
     """
     Extract RAR archive.
 
@@ -613,7 +613,7 @@ def extract_rar(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     )
 
 
-def extract_7z(input_path: Path, output_dir: Path) -> Dict[str, Any]:
+def extract_7z(input_path: Path, output_dir: Path) -> dict[str, Any]:
     """
     Extract 7-Zip archive.
 
@@ -641,7 +641,7 @@ def extract_7z(input_path: Path, output_dir: Path) -> Dict[str, Any]:
     )
 
 
-def decompress_single_file(input_path: Path, output_file: Path, compressor: str) -> Dict[str, Any]:
+def decompress_single_file(input_path: Path, output_file: Path, compressor: str) -> dict[str, Any]:
     """
     Decompress a single-file compressor (gzip, bzip2, xz, zstd).
 
@@ -864,7 +864,7 @@ def _xfiles_extract_dir(
             inf_metadata[display_path] = meta
 
 
-def extract_xfiles(input_path: Path, output_dir: Path) -> Dict[str, Any]:
+def extract_xfiles(input_path: Path, output_dir: Path) -> dict[str, Any]:
     """Extract an X-Files archive (RISC OS filetype &B23).
 
     X-Files is a chunk-based archive format by Andy Armstrong that stores files

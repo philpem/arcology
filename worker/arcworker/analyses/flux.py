@@ -8,24 +8,26 @@ flux→IMD/HFE/RAW_SECTOR decode, and HFE mastering / protection scans.
 import json
 from pathlib import Path
 
-from shared.enums import ArtefactType, AnalysisType
+from shared.enums import AnalysisType, ArtefactType
 
-from ..config import log, MASTERING_TRACK_SCAN_COUNT
+from ..config import MASTERING_TRACK_SCAN_COUNT, log
 from ..tools import (
+    a2r_to_scp_gw,
+    dfi_to_scp_hxcfe,
+    flux_to_hfe_hxcfe,
+    flux_to_imd_hxcfe,
     flux_visualisation_fluxfox,
     flux_visualisation_hxcfe,
-    flux_to_imd_hxcfe,
-    flux_to_hfe_hxcfe,
-    dfi_to_scp_hxcfe,
-    a2r_to_scp_gw,
     sector_image_to_raw_greaseweazle,
 )
-from ..tools.imd import (parse_imd_track0, detect_geometry_from_boot_data,
-                         parse_imd_tracks, detect_track_density_mismatch)
 from ..tools.flux import _geometry_to_gw_format, scp_fix_track_density
-
+from ..tools.imd import (
+    detect_geometry_from_boot_data,
+    detect_track_density_mismatch,
+    parse_imd_track0,
+    parse_imd_tracks,
+)
 from ._common import analysis_handler
-
 
 # Flux formats that cannot be visualised or decoded directly — they must be
 # converted to SCP first and their SCP sibling's own FLUX_DECODE handles the

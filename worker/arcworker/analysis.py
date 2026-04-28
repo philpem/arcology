@@ -13,12 +13,11 @@ import tempfile
 import time
 from pathlib import Path
 
-from .config import log, MAX_POLL
-from .compression import decompress_if_needed
-from .api import ArcologyAPI
-from .utils.text import make_latin1_fspath
 from . import analyses as _analyses
-
+from .api import ArcologyAPI
+from .compression import decompress_if_needed
+from .config import MAX_POLL, log
+from .utils.text import make_latin1_fspath
 
 _COMPRESS_SUFFIXES = frozenset({'.gz', '.bz2', '.zst'})
 
@@ -59,9 +58,16 @@ class AnalysisWorker:
 
         if storage is None:
             from shared.storage import create_storage
-            from .config import (STORAGE_BACKEND, S3_ENDPOINT_URL, S3_BUCKET,
-                                 S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION,
-                                 S3_PUBLIC_URL)
+
+            from .config import (
+                S3_ACCESS_KEY,
+                S3_BUCKET,
+                S3_ENDPOINT_URL,
+                S3_PUBLIC_URL,
+                S3_REGION,
+                S3_SECRET_KEY,
+                STORAGE_BACKEND,
+            )
             storage = create_storage({
                 'STORAGE_BACKEND': STORAGE_BACKEND,
                 'S3_ENDPOINT_URL': S3_ENDPOINT_URL,

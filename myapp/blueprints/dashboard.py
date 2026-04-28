@@ -9,8 +9,8 @@ from flask_login import login_required
 from sqlalchemy import case, func
 from sqlalchemy.orm import joinedload
 
+from ..database import Analysis, AnalysisStatus, Artefact, Item
 from ..extensions import db
-from ..database import Item, Artefact, Analysis, AnalysisStatus
 
 ROUTENAME = __name__.replace('.', '_')
 

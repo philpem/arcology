@@ -222,7 +222,7 @@ class ArcologyClient:
 			for chunk_index in range(total_chunks):
 				data = f.read(chunk_size)
 				last_exc = None
-				for attempt in range(3):
+				for _attempt in range(3):
 					try:
 						self._upload_chunk(upload_uuid, chunk_index, data)
 						break

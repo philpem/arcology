@@ -48,8 +48,8 @@ class TestDashboardStats(unittest.TestCase):
 
     def _create_analysis(self):
         """Create a minimal analysis in PENDING state and return its id."""
-        from myapp.database import Platform, Item, Artefact, Analysis, AnalysisStatus
-        from shared.enums import ArtefactType, AnalysisType
+        from myapp.database import Analysis, AnalysisStatus, Artefact, Item, Platform
+        from shared.enums import AnalysisType, ArtefactType
 
         with self.app.app_context():
             # Reuse existing platform/item or create new ones
@@ -101,9 +101,11 @@ class TestDashboardStats(unittest.TestCase):
 
         # Simulate the atomic claim (same as PUT /api/analysis/{id} with claim_worker)
         with self.app.app_context():
-            from myapp.database import Analysis, AnalysisStatus
-            from sqlalchemy import update
             from datetime import datetime, timezone
+
+            from sqlalchemy import update
+
+            from myapp.database import Analysis, AnalysisStatus
 
             result = self.db.session.execute(
                 update(Analysis)

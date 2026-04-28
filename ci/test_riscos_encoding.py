@@ -24,9 +24,8 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from worker.arcworker.utils.text import decode_riscos_latin1, fix_riscos_c1_filenames
 from worker.arcworker.tools.archives import has_riscos_zip_metadata
-
+from worker.arcworker.utils.text import decode_riscos_latin1, fix_riscos_c1_filenames
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -1,14 +1,20 @@
 import json
+
 import click
 from flask import current_app
-from ..extensions import db
-from ..database import Artefact, Analysis, AnalysisStatus
+
 from ..blueprints.artefacts import (
-    reset_artefact_for_reanalysis, queue_analyses_for_artefact,
-    _cleanup_analysis_outputs, _delete_artefact_files,
-    _bulk_delete_artefact_dependents, _bulk_delete_artefacts,
-    get_all_derived_artefact_ids, get_output_folder,
+    _bulk_delete_artefact_dependents,
+    _bulk_delete_artefacts,
+    _cleanup_analysis_outputs,
+    _delete_artefact_files,
+    get_all_derived_artefact_ids,
+    get_output_folder,
+    queue_analyses_for_artefact,
+    reset_artefact_for_reanalysis,
 )
+from ..database import Analysis, AnalysisStatus, Artefact
+from ..extensions import db
 from ._selection import build_artefact_query
 
 

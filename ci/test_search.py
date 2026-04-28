@@ -249,12 +249,19 @@ class TestSearchLogic(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from myapp.app import create_app
-        from myapp.extensions import db as _db
         from myapp.database import (
-            Item, Artefact, Partition, ExtractedFile,
-            ArtefactProtection, ArtefactMastering, RiscosModule, Tag,
-            FilesystemType, StorageDirectory,
+            Artefact,
+            ArtefactMastering,
+            ArtefactProtection,
+            ExtractedFile,
+            FilesystemType,
+            Item,
+            Partition,
+            RiscosModule,
+            StorageDirectory,
+            Tag,
         )
+        from myapp.extensions import db as _db
         from shared.enums import ArtefactType
 
         cls.app = create_app()
@@ -422,7 +429,7 @@ class TestSearchLogic(unittest.TestCase):
             cls.part_id = part.id
 
     def _search(self, query_string):
-        from myapp.blueprints.search import parse_query, _run_search
+        from myapp.blueprints.search import _run_search, parse_query
         with self.app.app_context():
             return _run_search(parse_query(query_string))
 
@@ -910,14 +917,20 @@ class TestHashDBSearch(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from myapp.app import create_app
-        from myapp.extensions import db as _db
-        from myapp.database import (
-            Item, Artefact, Partition, ExtractedFile,
-            HashDatabase, KnownProduct, KnownFile,
-            FilesystemType, StorageDirectory,
-        )
-        from shared.enums import ArtefactType
         from myapp.blueprints.hashdb import search as _search_view  # noqa: F401 – import check
+        from myapp.database import (
+            Artefact,
+            ExtractedFile,
+            FilesystemType,
+            HashDatabase,
+            Item,
+            KnownFile,
+            KnownProduct,
+            Partition,
+            StorageDirectory,
+        )
+        from myapp.extensions import db as _db
+        from shared.enums import ArtefactType
 
         cls.app = create_app()
         cls.app.config['TESTING'] = True
@@ -1017,8 +1030,12 @@ class TestHashDBSearch(unittest.TestCase):
         """Call the search route's underlying logic directly."""
         from myapp.blueprints.hashdb import SEARCH_LIMIT
         from myapp.database import (
-            ExtractedFile, Partition, Artefact, Item,
-            KnownProduct, KnownFile,
+            Artefact,
+            ExtractedFile,
+            Item,
+            KnownFile,
+            KnownProduct,
+            Partition,
         )
         from myapp.extensions import db as _db
 

@@ -1,6 +1,6 @@
 import re
-from pathlib import Path
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 from scour.scour import scourString
 

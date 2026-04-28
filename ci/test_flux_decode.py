@@ -26,9 +26,8 @@ if _REPO_ROOT not in sys.path:
 
 os.environ.setdefault('WORKER_API_KEY', 'test')
 
-from shared.enums import ArtefactType, AnalysisType
+from shared.enums import AnalysisType, ArtefactType
 from worker.arcworker.analysis import AnalysisWorker
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -530,7 +529,7 @@ class TestSkipAnalyses(unittest.TestCase):
             from myapp.extensions import db
             db.create_all()
             from myapp.blueprints.artefacts import queue_analyses_for_artefact
-            from myapp.database import Artefact, Item, StorageDirectory, Analysis
+            from myapp.database import Analysis, Artefact, Item, StorageDirectory
             item = Item(name='test item 2')
             db.session.add(item)
             db.session.flush()

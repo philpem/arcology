@@ -68,7 +68,7 @@ class TestItemCascadeDelete(unittest.TestCase):
     def test_delete_item_cascades_to_artefacts(self):
         """Deleting an Item should cascade-delete all its Artefacts."""
         with self.app.app_context():
-            from myapp.database import Item, Artefact, Platform
+            from myapp.database import Artefact, Item, Platform
             from shared.enums import ArtefactType
 
             platform = Platform(name='Cascade Platform')
@@ -100,7 +100,7 @@ class TestItemCascadeDelete(unittest.TestCase):
     def test_delete_item_cascades_to_external_references(self):
         """Deleting an Item should cascade-delete its ExternalReferences."""
         with self.app.app_context():
-            from myapp.database import Item, ExternalReference, ExternalSystem, Platform
+            from myapp.database import ExternalReference, ExternalSystem, Item, Platform
 
             platform = Platform(name='Ref Platform')
             self.db.session.add(platform)
@@ -132,7 +132,7 @@ class TestItemCascadeDelete(unittest.TestCase):
     def test_delete_item_cleans_up_tag_associations(self):
         """Deleting an Item should remove M2M tag associations but not the Tags."""
         with self.app.app_context():
-            from myapp.database import Item, Tag, Platform
+            from myapp.database import Item, Platform, Tag
 
             platform = Platform(name='Tag Platform')
             self.db.session.add(platform)
@@ -181,8 +181,8 @@ class TestArtefactCascadeDelete(unittest.TestCase):
     def test_delete_artefact_cascades_to_analyses(self):
         """Deleting an Artefact should cascade-delete all its Analysis records."""
         with self.app.app_context():
-            from myapp.database import Artefact, Analysis, AnalysisStatus
-            from shared.enums import ArtefactType, AnalysisType
+            from myapp.database import Analysis, AnalysisStatus, Artefact
+            from shared.enums import AnalysisType, ArtefactType
 
             item = self._make_item()
             artefact = Artefact(
@@ -212,8 +212,7 @@ class TestArtefactCascadeDelete(unittest.TestCase):
     def test_delete_artefact_cascades_to_partitions_and_files(self):
         """Deleting an Artefact should cascade-delete Partitions and their ExtractedFiles."""
         with self.app.app_context():
-            from myapp.database import (Artefact, Partition, ExtractedFile,
-                                        FilesystemType)
+            from myapp.database import Artefact, ExtractedFile, FilesystemType, Partition
             from shared.enums import ArtefactType
 
             item = self._make_item()
@@ -256,8 +255,8 @@ class TestArtefactCascadeDelete(unittest.TestCase):
     def test_delete_artefact_cascades_to_derived_artefacts(self):
         """Deleting a parent Artefact should cascade-delete derived Artefacts."""
         with self.app.app_context():
-            from myapp.database import Artefact, Analysis, AnalysisStatus
-            from shared.enums import ArtefactType, AnalysisType
+            from myapp.database import Analysis, AnalysisStatus, Artefact
+            from shared.enums import AnalysisType, ArtefactType
 
             item = self._make_item()
             parent = Artefact(
@@ -385,11 +384,19 @@ class TestDeepCascadeDelete(unittest.TestCase):
     def test_delete_item_cascades_through_full_hierarchy(self):
         """Deleting an Item should cascade through Artefact -> Partition -> ExtractedFile."""
         with self.app.app_context():
-            from myapp.database import (Item, Platform, Artefact, Analysis,
-                                        Partition, ExtractedFile, AnalysisStatus,
-                                        FilesystemType, ArtefactProtection,
-                                        ArtefactMastering)
-            from shared.enums import ArtefactType, AnalysisType
+            from myapp.database import (
+                Analysis,
+                AnalysisStatus,
+                Artefact,
+                ArtefactMastering,
+                ArtefactProtection,
+                ExtractedFile,
+                FilesystemType,
+                Item,
+                Partition,
+                Platform,
+            )
+            from shared.enums import AnalysisType, ArtefactType
 
             platform = Platform(name='Deep Cascade Platform')
             self.db.session.add(platform)
@@ -490,8 +497,9 @@ class TestTaxonomyDeleteDefensiveChecks(unittest.TestCase):
             _enable_sqlite_fks(cls.app, _db)
             _db.create_all()
             # Create an admin user for login
-            from myapp.database import User
             import bcrypt
+
+            from myapp.database import User
             pw = bcrypt.hashpw(b'testpassword1234', bcrypt.gensalt()).decode('utf-8')
             user = User(username='fkadmin', password_hash=pw, is_admin=True)
             _db.session.add(user)
@@ -506,7 +514,7 @@ class TestTaxonomyDeleteDefensiveChecks(unittest.TestCase):
     def test_delete_platform_with_items_rejected(self):
         """Deleting a Platform with associated Items should be rejected (not 500)."""
         with self.app.app_context():
-            from myapp.database import Platform, Item
+            from myapp.database import Item, Platform
 
             platform = Platform(name='Platform With Items')
             self.db.session.add(platform)
@@ -607,7 +615,7 @@ class TestTaxonomyDeleteDefensiveChecks(unittest.TestCase):
     def test_delete_external_system_with_references_rejected(self):
         """Deleting an ExternalSystem with references should be rejected (not 500)."""
         with self.app.app_context():
-            from myapp.database import ExternalSystem, ExternalReference, Item, Platform
+            from myapp.database import ExternalReference, ExternalSystem, Item, Platform
 
             platform = Platform(name='ExtSys Platform')
             self.db.session.add(platform)
@@ -653,7 +661,7 @@ class TestTagDeletion(unittest.TestCase):
     def test_delete_tag_with_item_associations(self):
         """Deleting a Tag associated with Items should not raise IntegrityError."""
         with self.app.app_context():
-            from myapp.database import Item, Tag, Platform
+            from myapp.database import Item, Platform, Tag
 
             platform = Platform(name='Tag Del Platform')
             self.db.session.add(platform)
@@ -682,7 +690,7 @@ class TestTagDeletion(unittest.TestCase):
     def test_delete_tag_with_artefact_associations(self):
         """Deleting a Tag associated with Artefacts should not raise IntegrityError."""
         with self.app.app_context():
-            from myapp.database import Item, Artefact, Tag, Platform
+            from myapp.database import Artefact, Item, Platform, Tag
             from shared.enums import ArtefactType
 
             platform = Platform(name='ArtTag Platform')
@@ -717,7 +725,7 @@ class TestTagDeletion(unittest.TestCase):
     def test_delete_tag_with_both_item_and_artefact_associations(self):
         """Deleting a Tag associated with both Items and Artefacts should work."""
         with self.app.app_context():
-            from myapp.database import Item, Artefact, Tag, Platform
+            from myapp.database import Artefact, Item, Platform, Tag
             from shared.enums import ArtefactType
 
             platform = Platform(name='Both Tag Platform')
@@ -764,7 +772,7 @@ class TestHashDatabaseCascadeDelete(unittest.TestCase):
     def test_delete_database_cascades_to_known_files_and_products(self):
         """Deleting a HashDatabase should cascade-delete KnownProducts and KnownFiles."""
         with self.app.app_context():
-            from myapp.database import HashDatabase, KnownProduct, KnownFile
+            from myapp.database import HashDatabase, KnownFile, KnownProduct
 
             hdb = HashDatabase(name='Test DB', version='1.0')
             self.db.session.add(hdb)
@@ -795,9 +803,16 @@ class TestHashDatabaseCascadeDelete(unittest.TestCase):
     def test_delete_known_product_cascades_to_recognised_products(self):
         """Deleting a KnownProduct should cascade-delete RecognisedProduct rows."""
         with self.app.app_context():
-            from myapp.database import (HashDatabase, KnownProduct,
-                                        RecognisedProduct, Item, Platform,
-                                        Artefact, Partition, FilesystemType)
+            from myapp.database import (
+                Artefact,
+                FilesystemType,
+                HashDatabase,
+                Item,
+                KnownProduct,
+                Partition,
+                Platform,
+                RecognisedProduct,
+            )
             from shared.enums import ArtefactType
 
             # Create hash database side
@@ -870,9 +885,17 @@ class TestNullableFKEdgeCases(unittest.TestCase):
         or the delete should cascade — either way, no IntegrityError.
         """
         with self.app.app_context():
-            from myapp.database import (HashDatabase, KnownFile, KnownProduct,
-                                        ExtractedFile, Partition, Artefact,
-                                        Item, Platform, FilesystemType)
+            from myapp.database import (
+                Artefact,
+                ExtractedFile,
+                FilesystemType,
+                HashDatabase,
+                Item,
+                KnownFile,
+                KnownProduct,
+                Partition,
+                Platform,
+            )
             from shared.enums import ArtefactType
 
             hdb = HashDatabase(name='NullFK DB', version='1.0')
@@ -956,7 +979,7 @@ class TestNullableFKEdgeCases(unittest.TestCase):
         IntegrityError.
         """
         with self.app.app_context():
-            from myapp.database import Platform, HashDatabase
+            from myapp.database import HashDatabase, Platform
 
             platform = Platform(name='HashDB Platform')
             self.db.session.add(platform)
@@ -985,8 +1008,7 @@ class TestNullableFKEdgeCases(unittest.TestCase):
         ExtractedFile.parent_file_id is a self-referential nullable FK.
         """
         with self.app.app_context():
-            from myapp.database import (ExtractedFile, Partition, Artefact,
-                                        Item, Platform, FilesystemType)
+            from myapp.database import Artefact, ExtractedFile, FilesystemType, Item, Partition, Platform
             from shared.enums import ArtefactType
 
             platform = Platform(name='EF Parent Platform')
@@ -1065,7 +1087,7 @@ class TestAPIDeleteEndpoints(unittest.TestCase):
     def test_api_delete_item_with_artefacts(self):
         """DELETE /api/items/<uuid> with artefacts should cascade (not 500)."""
         with self.app.app_context():
-            from myapp.database import Item, Artefact, Platform
+            from myapp.database import Artefact, Item, Platform
             from shared.enums import ArtefactType
 
             platform = Platform(name='API Del Platform')
@@ -1094,9 +1116,8 @@ class TestAPIDeleteEndpoints(unittest.TestCase):
     def test_api_delete_artefact_with_analysis(self):
         """DELETE /api/artefacts/<uuid> with analyses should cascade (not 500)."""
         with self.app.app_context():
-            from myapp.database import (Item, Artefact, Analysis,
-                                        AnalysisStatus, Platform)
-            from shared.enums import ArtefactType, AnalysisType
+            from myapp.database import Analysis, AnalysisStatus, Artefact, Item, Platform
+            from shared.enums import AnalysisType, ArtefactType
 
             platform = Platform(name='API ArtDel Platform')
             self.db.session.add(platform)
@@ -1132,10 +1153,17 @@ class TestAPIDeleteEndpoints(unittest.TestCase):
     def test_api_delete_artefact_with_deep_hierarchy(self):
         """DELETE /api/artefacts/<uuid> with derived artefacts, partitions, and files."""
         with self.app.app_context():
-            from myapp.database import (Item, Artefact, Analysis, Partition,
-                                        ExtractedFile, AnalysisStatus, Platform,
-                                        FilesystemType)
-            from shared.enums import ArtefactType, AnalysisType
+            from myapp.database import (
+                Analysis,
+                AnalysisStatus,
+                Artefact,
+                ExtractedFile,
+                FilesystemType,
+                Item,
+                Partition,
+                Platform,
+            )
+            from shared.enums import AnalysisType, ArtefactType
 
             platform = Platform(name='API Deep Platform')
             self.db.session.add(platform)
@@ -1211,16 +1239,30 @@ class TestBulkDeleteItem(unittest.TestCase):
     def test_bulk_delete_full_hierarchy(self):
         """bulk_delete_item should remove Item + all descendants in one pass."""
         with self.app.app_context():
-            from myapp.database import (
-                Item, Artefact, Analysis, Partition, ExtractedFile,
-                AnalysisStatus, Platform, FilesystemType, Tag,
-                ExternalSystem, ExternalReference,
-                ArtefactProtection, ArtefactMastering, RiscosModule,
-                ArtefactRestriction, ExtractedFileRestriction,
-                RecognisedProduct, HashDatabase, KnownProduct, RestrictionType,
-            )
-            from shared.enums import ArtefactType, AnalysisType
             from myapp.blueprints.artefacts import bulk_delete_item
+            from myapp.database import (
+                Analysis,
+                AnalysisStatus,
+                Artefact,
+                ArtefactMastering,
+                ArtefactProtection,
+                ArtefactRestriction,
+                ExternalReference,
+                ExternalSystem,
+                ExtractedFile,
+                ExtractedFileRestriction,
+                FilesystemType,
+                HashDatabase,
+                Item,
+                KnownProduct,
+                Partition,
+                Platform,
+                RecognisedProduct,
+                RestrictionType,
+                RiscosModule,
+                Tag,
+            )
+            from shared.enums import AnalysisType, ArtefactType
 
             platform = Platform(name='Bulk Del Platform')
             self.db.session.add(platform)
@@ -1367,8 +1409,8 @@ class TestBulkDeleteItem(unittest.TestCase):
     def test_bulk_delete_empty_item(self):
         """bulk_delete_item should handle an item with no artefacts."""
         with self.app.app_context():
-            from myapp.database import Item, Platform
             from myapp.blueprints.artefacts import bulk_delete_item
+            from myapp.database import Item, Platform
 
             platform = Platform(name='Empty Del Platform')
             self.db.session.add(platform)

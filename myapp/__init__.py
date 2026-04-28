@@ -1,5 +1,5 @@
 from .app import create_app
-from .extensions import db, migrate, login_manager, bootstrap
+from .extensions import bootstrap, db, login_manager, migrate
 
 __all__ = ['create_app', 'db', 'migrate', 'login_manager', 'bootstrap']
 

@@ -4,8 +4,8 @@ Text and encoding utilities for handling filenames from various filesystems.
 
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 log = logging.getLogger(__name__)
 

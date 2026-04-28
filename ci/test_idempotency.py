@@ -38,7 +38,7 @@ def _make_fixtures(db, app):
 
     Returns (item, artefact) with IDs and UUIDs populated.
     """
-    from myapp.database import Platform, Item, Artefact
+    from myapp.database import Artefact, Item, Platform
     from shared.enums import ArtefactType
 
     platform = Platform(name='Test Platform')
@@ -117,9 +117,8 @@ class TestRequestAnalysisIdempotency(unittest.TestCase):
         self._post_analysis()
 
         with self.app.app_context():
-            from myapp.database import Analysis
+            from myapp.database import Analysis, Artefact
             from shared.enums import AnalysisType
-            from myapp.database import Artefact
 
             artefact = Artefact.query.filter_by(uuid=self.artefact_uuid).one()
             count = Analysis.query.filter_by(
@@ -136,8 +135,7 @@ class TestRequestAnalysisIdempotency(unittest.TestCase):
 
         # Transition to RUNNING
         with self.app.app_context():
-            from myapp.database import Analysis
-            from myapp.database import AnalysisStatus
+            from myapp.database import Analysis, AnalysisStatus
             a = Analysis.query.get(analysis_id)
             a.status = AnalysisStatus.RUNNING
             self.db.session.commit()

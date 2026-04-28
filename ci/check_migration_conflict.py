@@ -18,7 +18,6 @@ import os
 import subprocess
 import sys
 
-
 MIGRATIONS_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     'migrations', 'versions'
@@ -92,7 +91,7 @@ def get_local_migrations():
         if not filename.endswith('.py'):
             continue
         filepath = os.path.join(MIGRATIONS_DIR, filename)
-        with open(filepath, 'r') as f:
+        with open(filepath) as f:
             source = f.read()
         try:
             migrations.append(parse_migration_source(source, filename))

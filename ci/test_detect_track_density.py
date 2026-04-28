@@ -20,8 +20,7 @@ if _REPO_ROOT not in sys.path:
 
 os.environ.setdefault('WORKER_API_KEY', 'test')
 
-from worker.arcworker.tools.imd import parse_imd_tracks, detect_track_density_mismatch
-
+from worker.arcworker.tools.imd import detect_track_density_mismatch, parse_imd_tracks
 
 # =============================================================================
 # IMD builder helpers

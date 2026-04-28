@@ -10,9 +10,9 @@ Run:
 """
 
 import os
+import shutil
 import sys
 import tempfile
-import shutil
 import unittest
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -292,7 +292,7 @@ class TestCreateStorage(unittest.TestCase):
     """Test the create_storage factory function."""
 
     def test_default_creates_local(self):
-        from shared.storage import create_storage, LocalStorage
+        from shared.storage import LocalStorage, create_storage
         tmpdir = tempfile.mkdtemp()
         try:
             storage = create_storage({
@@ -304,7 +304,7 @@ class TestCreateStorage(unittest.TestCase):
             shutil.rmtree(tmpdir)
 
     def test_explicit_local_creates_local(self):
-        from shared.storage import create_storage, LocalStorage
+        from shared.storage import LocalStorage, create_storage
         tmpdir = tempfile.mkdtemp()
         try:
             storage = create_storage({
@@ -333,7 +333,7 @@ class TestCreateStorage(unittest.TestCase):
         self.assertIn('S3_ACCESS_KEY', str(ctx.exception))
 
     def test_case_insensitive_backend(self):
-        from shared.storage import create_storage, LocalStorage
+        from shared.storage import LocalStorage, create_storage
         tmpdir = tempfile.mkdtemp()
         try:
             storage = create_storage({
@@ -365,8 +365,8 @@ class TestStorageIntegrationWithApp(unittest.TestCase):
     def test_get_artefact_storage_key(self):
         """get_artefact_storage_key builds the correct storage key."""
         from myapp.app import create_app
+        from myapp.database import Artefact, Item, Platform, StorageDirectory
         from myapp.extensions import db
-        from myapp.database import Platform, Item, Artefact, StorageDirectory
         from shared.enums import ArtefactType
 
         app = create_app()
@@ -417,8 +417,9 @@ class TestStorageIntegrationWithApp(unittest.TestCase):
 
     def test_compute_file_hashes_via_storage(self):
         """compute_file_hashes with use_storage=True reads from the backend."""
-        from myapp.app import create_app
         import hashlib
+
+        from myapp.app import create_app
 
         app = create_app()
         app.config['TESTING'] = True
