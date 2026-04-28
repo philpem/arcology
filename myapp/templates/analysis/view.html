@@ -53,10 +53,18 @@
                     <dt>Hints</dt>
                     <dd>
                         {% for key, val in hints_data.items() %}
-                            {% if val is mapping or val is sequence and val is not string %}
+                            {% set is_complex = val is mapping or (val is sequence and val is not string) %}
+                            {% set is_long_string = val is string and val|length > 60 %}
+                            {% if is_complex or is_long_string %}
+                            {% set collapse_id = 'hint-' ~ analysis.id ~ '-' ~ loop.index %}
+                            {% set rendered = val | tojson(indent=2) if is_complex else val %}
                         <div class="mb-1">
-                            <span class="badge bg-secondary">{{ key }}</span>
-                            <pre class="mt-1 mb-0 p-2 bg-light rounded" style="max-height: 200px; overflow: auto; font-size: 0.75rem; white-space: pre-wrap; word-break: break-all;"><code>{{ val | tojson(indent=2) }}</code></pre>
+                            <a class="badge bg-secondary text-decoration-none" data-bs-toggle="collapse" href="#{{ collapse_id }}" role="button" aria-expanded="false" aria-controls="{{ collapse_id }}">
+                                <i class="bi bi-caret-right-fill"></i> {{ key }}
+                            </a>
+                            <div id="{{ collapse_id }}" class="collapse">
+                                <pre class="mt-1 mb-0 p-2 bg-light rounded" style="max-height: 200px; overflow: auto; font-size: 0.75rem; white-space: pre-wrap; word-break: break-all;"><code>{{ rendered }}</code></pre>
+                            </div>
                         </div>
                             {% else %}
                         <span class="badge bg-secondary me-1 text-wrap text-break" style="max-width: 100%;">{{ key }}: {{ val }}</span>
