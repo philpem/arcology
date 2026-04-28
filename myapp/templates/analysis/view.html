@@ -53,7 +53,14 @@
                     <dt>Hints</dt>
                     <dd>
                         {% for key, val in hints_data.items() %}
-                        <span class="badge bg-secondary me-1">{{ key }}: {{ val }}</span>
+                            {% if val is mapping or val is sequence and val is not string %}
+                        <div class="mb-1">
+                            <span class="badge bg-secondary">{{ key }}</span>
+                            <pre class="mt-1 mb-0 p-2 bg-light rounded" style="max-height: 200px; overflow: auto; font-size: 0.75rem; white-space: pre-wrap; word-break: break-all;"><code>{{ val | tojson(indent=2) }}</code></pre>
+                        </div>
+                            {% else %}
+                        <span class="badge bg-secondary me-1 text-wrap text-break" style="max-width: 100%;">{{ key }}: {{ val }}</span>
+                            {% endif %}
                         {% endfor %}
                     </dd>
                     {% endif %}
