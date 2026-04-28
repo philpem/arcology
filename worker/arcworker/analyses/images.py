@@ -95,7 +95,7 @@ _NSFW_META1_DEFAULT: dict = {
     'crop_pct':         1.0,
 }
 _NSFW_META2_DEFAULT: dict = {
-    'nsfw_class_index': 1,         # Prithiv id2label[1] == 'NSFW'
+    'nsfw_class_index': 1,         # Prithiv id2label[1] == 'NSFW' (per model card)
     'input_size':       224,
     'mean':             [0.48145466, 0.4578275,  0.40821073],  # CLIP/MetaCLIP
     'std':              [0.26862954, 0.26130258, 0.27577711],
@@ -466,7 +466,11 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
     if NSFW_ENABLED:
         from shared.enums import AnalysisType as _AT
         nsfw_fc_outputs = [
-            {'path': o['filename'], 'source_file': o['source_file']}
+            {
+                'path': o['filename'],
+                'source_file': o['source_file'],
+                **({'sprite_name': o['name']} if o.get('tool') == 'spritefile' and o.get('name') else {}),
+            }
             for o in all_outputs
             if o.get('type') == 'image' and not o.get('filename', '').endswith('.svg')
         ]
@@ -522,6 +526,7 @@ def process_nsfw_scan(self, analysis: dict, artefact: dict, work_dir: Path):
         from shared.storage import LocalStorage
         image_paths: list[str] = []
         db_path_map: dict[str, str] = {}
+        sprite_name_map: dict[str, str] = {}
 
         for item in format_convert_outputs:
             rel_path = item.get('path', '')
@@ -546,6 +551,8 @@ def process_nsfw_scan(self, analysis: dict, artefact: dict, work_dir: Path):
             local_str = str(local)
             image_paths.append(local_str)
             db_path_map[local_str] = source_file
+            if item.get('sprite_name'):
+                sprite_name_map[local_str] = item['sprite_name']
 
         raw_results = classify_batch(
             self._nsfw_sess1, self._nsfw_input1, self._nsfw_meta1,
@@ -553,20 +560,29 @@ def process_nsfw_scan(self, analysis: dict, artefact: dict, work_dir: Path):
             image_paths, NSFW_HIGH, NSFW_LOW, NSFW_MIN_PIXELS,
         )
         results = [
-            {**r, 'source_file': db_path_map.get(r['path'], r['path'])}
+            {
+                **r,
+                'source_file': db_path_map.get(r['path'], r['path']),
+                **({'sprite_name': sprite_name_map[r['path']]} if r['path'] in sprite_name_map else {}),
+            }
             for r in raw_results
         ]
         explicit_count = sum(1 for r in results if r['verdict'] == 'explicit')
+        skipped_count  = sum(1 for r in results if r['verdict'] == 'skipped')
+        scanned        = len(results) - skipped_count
         self.complete_analysis(
             analysis_id,
             summary=(
-                f'Scanned {len(results)} of {len(image_paths)} converted image(s): '
+                f'Scanned {scanned} of {len(image_paths)} converted image(s): '
                 f'{explicit_count} explicit'
+                + (f', {skipped_count} skipped' if skipped_count else '')
             ),
             details=json.dumps({
                 'mode':           'format_convert_scan',
+                'path_prefix':    path_prefix or None,
                 'found':          len(image_paths),
-                'scanned':        len(results),
+                'scanned':        scanned,
+                'skipped_count':  skipped_count,
                 'explicit_count': explicit_count,
                 'results':        results,
             }),
@@ -648,16 +664,21 @@ def process_nsfw_scan(self, analysis: dict, artefact: dict, work_dir: Path):
             for r in raw_results
         ]
         explicit_count = sum(1 for r in results if r['verdict'] == 'explicit')
+        skipped_count  = sum(1 for r in results if r['verdict'] == 'skipped')
+        scanned        = len(results) - skipped_count
         self.complete_analysis(
             analysis_id,
             summary=(
-                f'Scanned {len(results)} of {len(image_paths)} image(s): '
+                f'Scanned {scanned} of {len(image_paths)} image(s): '
                 f'{explicit_count} explicit'
+                + (f', {skipped_count} skipped' if skipped_count else '')
             ),
             details=json.dumps({
                 'mode':           'extraction_scan',
+                'path_prefix':    path_prefix or None,
                 'found':          len(image_paths),
-                'scanned':        len(results),
+                'scanned':        scanned,
+                'skipped_count':  skipped_count,
                 'explicit_count': explicit_count,
                 'results':        results,
             }),
@@ -688,10 +709,13 @@ def process_nsfw_scan(self, analysis: dict, artefact: dict, work_dir: Path):
             [str(input_path)], NSFW_HIGH, NSFW_LOW, NSFW_MIN_PIXELS,
         )
         if raw_results:
-            r       = raw_results[0]
-            summary = f'Stage {r["stage"]}: {r["verdict"]} (score={r["score"]:.3f})'
+            r = raw_results[0]
+            if r['verdict'] == 'skipped':
+                summary = f'Image skipped ({r["reason"]})'
+            else:
+                summary = f'Stage {r["stage"]}: {r["verdict"]} (score={r["score"]:.3f})'
         else:
-            summary = 'Image skipped (too small or unreadable)'
+            summary = 'No result'
         self.complete_analysis(
             analysis_id,
             summary=summary,

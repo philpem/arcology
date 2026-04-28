@@ -289,14 +289,10 @@ class TestClassifyBatchBasic(unittest.TestCase):
 
     def test_borderline_reaches_stage2_explicit(self):
         # Stage-1: probs[0] ≈ 0.5 (borderline)
-        # Stage-2: probs[1] ≈ 1.0 → explicit
-        sess1 = _make_session([0.0,  0.0])    # probs[0] = 0.5
-        sess2 = _make_session([5.0, -5.0])    # probs[1] ≈ 0.0  wait...
-
-        # META2 nsfw_class_index = 1, so score2 = probs[1]
-        # [5, -5] → softmax ≈ [0.9999, 0.0001] → probs[1] ≈ 0.0001 → not explicit
-        # Use [-5, 5] → probs[1] ≈ 0.9999 → explicit
-        sess2 = _make_session([-5.0, 5.0])
+        # Stage-2: META2 nsfw_class_index = 1, so score2 = probs[1]
+        # [-5, 5] → softmax ≈ [0.0001, 0.9999] → probs[1] ≈ 0.9999 → explicit
+        sess1 = _make_session([0.0,   0.0])   # probs[0] = 0.5 (borderline for stage 1)
+        sess2 = _make_session([-5.0,  5.0])   # probs[1] ≈ 0.9999 → explicit
         results = classify_batch(
             sess1, 'pixel_values', _META1,
             sess2, 'pixel_values', _META2,
@@ -405,7 +401,7 @@ class TestClassifyBatchNsfwClassIndex(unittest.TestCase):
 
 class TestClassifyBatchEdgeCases(unittest.TestCase):
     def test_unreadable_image_skipped(self):
-        """A corrupt file should be silently skipped (not appear in results)."""
+        """A corrupt file produces a skipped entry with reason='unreadable'."""
         f = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
         f.write(b'this is not an image')
         f.close()
@@ -417,11 +413,14 @@ class TestClassifyBatchEdgeCases(unittest.TestCase):
                 sess2, 'pixel_values', _META2,
                 [f.name], high_threshold=0.90, low_threshold=0.20,
             )
-            self.assertEqual(results, [])
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]['verdict'], 'skipped')
+            self.assertEqual(results[0]['reason'],  'unreadable')
         finally:
             os.unlink(f.name)
 
     def test_missing_file_skipped(self):
+        """A missing file produces a skipped entry with reason='unreadable'."""
         sess1 = _make_session([0.0, 0.0])
         sess2 = _make_session([0.0, 0.0])
         results = classify_batch(
@@ -429,10 +428,12 @@ class TestClassifyBatchEdgeCases(unittest.TestCase):
             sess2, 'pixel_values', _META2,
             ['/nonexistent/path/image.png'], high_threshold=0.90, low_threshold=0.20,
         )
-        self.assertEqual(results, [])
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['verdict'], 'skipped')
+        self.assertEqual(results[0]['reason'],  'unreadable')
 
     def test_min_pixels_skip(self):
-        """Images whose area (w×h) is below min_pixels are skipped."""
+        """Images below min_pixels produce a skipped entry with reason='too_small'."""
         path = _make_image_file(32, 32)  # 1024 pixels
         try:
             sess1 = _make_session([5.0, -5.0])
@@ -442,7 +443,9 @@ class TestClassifyBatchEdgeCases(unittest.TestCase):
                 sess2, 'pixel_values', _META2,
                 [path], high_threshold=0.90, low_threshold=0.20, min_pixels=4096,
             )
-            self.assertEqual(results, [])
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]['verdict'], 'skipped')
+            self.assertEqual(results[0]['reason'],  'too_small')
         finally:
             os.unlink(path)
 

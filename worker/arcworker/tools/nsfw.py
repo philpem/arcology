@@ -155,17 +155,15 @@ def classify_batch(
         min_pixels: Skip images whose total pixel area (w×h) is below this (0 = no limit)
 
     Returns:
-        List of dicts, one per classified path::
+        List of dicts, one per input path — classified or skipped::
 
             {
                 "path":    str,
-                "stage":   1 or 2,
-                "score":   float,   # explicit-content probability (0–1)
-                "verdict": "explicit" or "not explicit"
+                "stage":   1 or 2,          # classified only
+                "score":   float,            # classified only; explicit probability (0–1)
+                "verdict": "explicit" | "not explicit" | "skipped"
+                "reason":  "too_small" | "unreadable"  # skipped only
             }
-
-        Paths that cannot be loaded (missing, corrupt, or too small) are
-        skipped silently and do not appear in the output.
     """
     from PIL import Image
 
@@ -192,11 +190,13 @@ def classify_batch(
             w, h = img.size
             if min_pixels > 0 and w * h < min_pixels:
                 img.close()
-                continue  # too small for a meaningful result
+                results.append({'path': path_str, 'verdict': 'skipped', 'reason': 'too_small'})
+                continue
             score1 = _score_image(
                 img, sess1, input_name1, nsfw_idx1, size1, mean1, std1, resample1, crop_pct1,
             )
         except Exception:
+            results.append({'path': path_str, 'verdict': 'skipped', 'reason': 'unreadable'})
             continue
 
         if score1 >= high_threshold:
@@ -218,7 +218,7 @@ def classify_batch(
             continue
 
         verdict2 = 'explicit' if score2 >= 0.5 else 'not explicit'
-        results.append({'path': path_str, 'stage': 2, 'score': score2, 'verdict': verdict2})
+        results.append({'path': path_str, 'stage': 2, 'score': score2, 'stage1_score': score1, 'verdict': verdict2})
 
     return results
 

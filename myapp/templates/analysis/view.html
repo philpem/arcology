@@ -139,6 +139,11 @@
         </div>
         {% endif %}
         
+        {# NSFW scan results table #}
+        {% if details.results is defined %}
+        {% include "artefacts/_nsfw_scan.html" %}
+        {% endif %}
+
         {# Display process logs for debugging #}
         {% set process_outputs = [] %}
         {% for key, value in details.items() %}
