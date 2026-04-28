@@ -53,6 +53,13 @@ NSFW_LOW  = float(os.environ.get('NSFW_LOW',  '0.20'))
 #                      alone, even if stage-2 is highly confident.
 NSFW_S2_THRESHOLD    = float(os.environ.get('NSFW_S2_THRESHOLD',    '0.70'))
 NSFW_S1_MIN_EXPLICIT = float(os.environ.get('NSFW_S1_MIN_EXPLICIT', '0.40'))
+# Agreement conviction path: both s1 and s2 above this threshold → explicit.
+# Catches images where both models are moderately confident but neither alone
+# reaches the primary thresholds.  Default 0.55 (just above 0.5 for a two-class model).
+NSFW_AGREE_THRESHOLD = float(os.environ.get('NSFW_AGREE_THRESHOLD', '0.55'))
+# Strong s1 conviction path: s1 ≥ NSFW_S1_STRONG and s2 > NSFW_LOW → explicit.
+# Catches images where stage-1 is highly confident but stage-2 only weakly corroborates.
+NSFW_S1_STRONG       = float(os.environ.get('NSFW_S1_STRONG',       '0.75'))
 # Minimum image area (pixels); images with w×h below this are skipped.
 # Default 16384 ≈ 128×128.  Area-based test avoids dropping valid wide frames.
 NSFW_MIN_PIXELS = int(os.environ.get('NSFW_MIN_PIXELS', '16384'))

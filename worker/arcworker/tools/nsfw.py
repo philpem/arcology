@@ -151,6 +151,8 @@ def classify_batch(
     min_pixels: int = 0,
     s2_threshold: float = 0.5,
     s1_min_explicit: float = 0.0,
+    agree_threshold: float = 0.55,
+    s1_strong: float = 0.75,
 ) -> list[dict]:
     """
     Classify a list of image paths with the two-stage cascade.
@@ -166,27 +168,37 @@ def classify_batch(
         high_threshold: Stage-1 score above which result is explicit (no stage 2)
         low_threshold: Stage-1 score below which result is not explicit (no stage 2)
         min_pixels: Skip images whose total pixel area (w×h) is below this (0 = no limit)
-        s2_threshold: Stage-2 score that must be reached for an explicit verdict (default 0.5).
-            Raising this (e.g. to 0.70) reduces false positives from stock/artistic photography.
-        s1_min_explicit: Minimum stage-1 score for stage-2's explicit verdict to be accepted.
+        s2_threshold: Stage-2 score that must be reached for an explicit verdict on the primary
+            conviction path (default 0.5). Raising this (e.g. to 0.70) reduces false positives
+            from stock/artistic photography.
+        s1_min_explicit: Minimum stage-1 score for the primary conviction path.
             When score1 < s1_min_explicit, stage-2 can only exonerate (not convict), preventing
             overconfident stage-2 verdicts from overriding a sceptical stage-1 result.
+        agree_threshold: Both-models agreement threshold (default 0.55). When both stage-1 and
+            stage-2 independently exceed this value, the image is convicted regardless of
+            s2_threshold and s1_min_explicit. Catches cases where both models are moderately
+            confident but neither reaches the primary-path thresholds.
+        s1_strong: Strong stage-1 threshold (default 0.75). When stage-1 is highly confident
+            and stage-2 scores above low_threshold (i.e. does not clearly exonerate the image),
+            the image is convicted. Catches cases where stage-1 is very confident but stage-2
+            is only weakly corroborating.
 
     Returns:
         List of dicts, one per input path — classified or skipped::
 
             {
-                "path":            str,
-                "stage":           1 or 2,          # classified only
-                "score":           float,            # classified only; explicit probability (0–1)
-                "winning_crop":    str,              # crop name that produced the best score
-                "crops":           list[dict],       # [{"crop": name, "score": float}, ...]
-                "stage1_score":    float,            # stage-2 results only; stage-1 best score
-                "s1_winning_crop": str,              # stage-2 results only; stage-1 best crop
-                "s1_crops":        list[dict],       # stage-2 results only; all stage-1 crop scores
-                "s2_error":        bool,             # true when stage-2 failed and stage-1 was used as fallback
-                "verdict":         "explicit" | "not explicit" | "skipped"
-                "reason":          "too_small" | "unreadable"  # skipped only
+                "path":             str,
+                "stage":            1 or 2,          # classified only
+                "score":            float,            # classified only; explicit probability (0–1)
+                "winning_crop":     str,              # crop name that produced the best score
+                "crops":            list[dict],       # [{"crop": name, "score": float}, ...]
+                "stage1_score":     float,            # stage-2 results only; stage-1 best score
+                "s1_winning_crop":  str,              # stage-2 results only; stage-1 best crop
+                "s1_crops":         list[dict],       # stage-2 results only; all stage-1 crop scores
+                "conviction_path":  str,              # stage-2 explicit only: "primary"|"agree"|"strong_s1"
+                "s2_error":         bool,             # true when stage-2 failed and stage-1 was used as fallback
+                "verdict":          "explicit" | "not explicit" | "skipped"
+                "reason":           "too_small" | "unreadable"  # skipped only
             }
     """
     from PIL import Image
@@ -250,13 +262,24 @@ def classify_batch(
             })
             continue
 
-        explicit2 = score2 >= s2_threshold and score1 >= s1_min_explicit
+        # Three independent conviction paths (any one suffices):
+        #   primary:  s2 meets the main threshold and s1 is not sceptical
+        #   agree:    both models independently score above agree_threshold
+        #   strong_s1: stage-1 is highly confident and stage-2 doesn't clearly exonerate
+        primary  = score2 >= s2_threshold and score1 >= s1_min_explicit
+        agree    = score1 >= agree_threshold and score2 >= agree_threshold
+        strong   = score1 >= s1_strong and score2 > low_threshold
+        explicit2 = primary or agree or strong
+
         verdict2 = 'explicit' if explicit2 else 'not explicit'
-        results.append({
+        entry: dict = {
             'path': path_str, 'stage': 2, 'score': score2, 'verdict': verdict2,
             'winning_crop': winning_crop2, 'crops': crops2,
             'stage1_score': score1, 's1_winning_crop': winning_crop1, 's1_crops': crops1,
-        })
+        }
+        if explicit2:
+            entry['conviction_path'] = 'primary' if primary else ('agree' if agree else 'strong_s1')
+        results.append(entry)
 
     return results
 

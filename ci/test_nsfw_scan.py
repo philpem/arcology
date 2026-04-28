@@ -356,6 +356,78 @@ class TestClassifyBatchBasic(unittest.TestCase):
         self.assertEqual(results[0]['verdict'], 'explicit')
         self.assertEqual(results[0]['stage'],   2)
 
+    def test_agree_path_convicts_when_both_models_moderate(self):
+        # s1 ≈ 0.731 and s2 ≈ 0.650 — both above agree_threshold=0.55 but s2 < s2_threshold=0.80
+        # → primary path blocked, agree path fires.
+        # _META1 nsfw_class_index=0: softmax([0.5,-0.5])[0] ≈ 0.731
+        # _META2 nsfw_class_index=1: softmax([-0.31,0.31])[1] ≈ 0.650 (>0.55, <0.80)
+        sess1 = _make_session([0.5,  -0.5])   # s1 ≈ 0.731
+        sess2 = _make_session([-0.31, 0.31])  # s2(idx=1) ≈ 0.650 (>0.55, <0.80)
+        results = classify_batch(
+            sess1, 'pixel_values', _META1,
+            sess2, 'pixel_values', _META2,
+            [self.path], high_threshold=0.90, low_threshold=0.20,
+            s2_threshold=0.80, agree_threshold=0.55,
+        )
+        self.assertEqual(results[0]['verdict'],         'explicit')
+        self.assertEqual(results[0]['stage'],           2)
+        self.assertEqual(results[0]['conviction_path'], 'agree')
+
+    def test_agree_path_blocked_when_one_model_below_threshold(self):
+        # s1 ≈ 0.731 but s2 ≈ 0.269 (< agree_threshold=0.55) → agree path blocked
+        # Primary also blocked (s2 < s2_threshold=0.80) → not explicit
+        sess1 = _make_session([1.0,  0.0])   # s1 ≈ 0.731
+        sess2 = _make_session([1.0, -1.0])   # s2(idx=1) ≈ 0.119 (< 0.55)
+        results = classify_batch(
+            sess1, 'pixel_values', _META1,
+            sess2, 'pixel_values', _META2,
+            [self.path], high_threshold=0.90, low_threshold=0.20,
+            s2_threshold=0.80, agree_threshold=0.55, s1_strong=0.95,
+        )
+        self.assertEqual(results[0]['verdict'], 'not explicit')
+
+    def test_strong_s1_path_convicts_when_s1_high_s2_corroborates(self):
+        # s1 ≈ 0.881 (> s1_strong=0.75) and s2 = 0.5 (> low_threshold=0.20)
+        # Primary blocked (s2=0.5 < s2_threshold=0.70), agree blocked (s2=0.5 < 0.55)
+        # → strong_s1 path fires
+        # _META1 nsfw_class_index=0: softmax([1,-1])[0] ≈ 0.881
+        sess1 = _make_session([1.0, -1.0])   # s1 ≈ 0.881
+        sess2 = _make_session([0.0,  0.0])   # s2(idx=1) = 0.5 (> low=0.20, < s2_threshold)
+        results = classify_batch(
+            sess1, 'pixel_values', _META1,
+            sess2, 'pixel_values', _META2,
+            [self.path], high_threshold=0.90, low_threshold=0.20,
+            s2_threshold=0.70, s1_strong=0.75,
+        )
+        self.assertEqual(results[0]['verdict'],         'explicit')
+        self.assertEqual(results[0]['stage'],           2)
+        self.assertEqual(results[0]['conviction_path'], 'strong_s1')
+
+    def test_strong_s1_path_blocked_when_s2_below_low_threshold(self):
+        # s1 ≈ 0.881 (> s1_strong) but s2 ≈ 0.119 (< low_threshold=0.20)
+        # Stage-2 clearly exonerates → should not convict
+        sess1 = _make_session([1.0, -1.0])   # s1 ≈ 0.881
+        sess2 = _make_session([1.0, -1.0])   # s2(idx=1) ≈ 0.119 (< low=0.20)
+        results = classify_batch(
+            sess1, 'pixel_values', _META1,
+            sess2, 'pixel_values', _META2,
+            [self.path], high_threshold=0.90, low_threshold=0.20,
+            s2_threshold=0.70, s1_strong=0.75, agree_threshold=0.55,
+        )
+        self.assertEqual(results[0]['verdict'], 'not explicit')
+
+    def test_conviction_path_present_only_for_explicit_stage2(self):
+        # Not-explicit stage-2 results should not have conviction_path
+        sess1 = _make_session([0.0, 0.0])    # s1=0.5, borderline
+        sess2 = _make_session([5.0, -5.0])   # s2(idx=1)≈0.0001, not explicit
+        results = classify_batch(
+            sess1, 'pixel_values', _META1,
+            sess2, 'pixel_values', _META2,
+            [self.path], high_threshold=0.90, low_threshold=0.20,
+        )
+        self.assertEqual(results[0]['verdict'], 'not explicit')
+        self.assertNotIn('conviction_path', results[0])
+
     def test_empty_paths_returns_empty(self):
         sess1 = _make_session([0.0, 0.0])
         sess2 = _make_session([0.0, 0.0])

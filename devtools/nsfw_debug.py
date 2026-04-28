@@ -146,6 +146,8 @@ def _print_result(r: dict, show_crops: bool) -> None:
         score_str = f's1={_fmt_pct(s1)} → s2={_fmt_pct(score)}'
         if r.get('s2_error'):
             score_str += ' [s2-error/fallback]'
+        if r.get('conviction_path') and r.get('conviction_path') != 'primary':
+            score_str += f'  [{r["conviction_path"]}]'
     else:
         score_str = f's1={_fmt_pct(score)}'
 
