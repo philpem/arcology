@@ -5,6 +5,10 @@
 {% block content %}
 <nav aria-label="breadcrumb" class="mb-3">
     <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.index') }}">Items</a></li>
+        {% for ancestor in artefact.item.ancestors %}
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=ancestor.url_id) }}">{{ ancestor.name }}</a></li>
+        {% endfor %}
         <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=artefact.item.url_id) }}">{{ artefact.item.name }}</a></li>
         <li class="breadcrumb-item"><a href="{{ artefact_url(artefact.root_artefact) }}">{{ artefact.root_artefact.label }}</a></li>
         <li class="breadcrumb-item active">Analyses</li>

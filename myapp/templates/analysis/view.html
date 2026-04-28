@@ -5,6 +5,9 @@
 <nav aria-label="breadcrumb" class="mb-3">
     <ol class="breadcrumb">
         <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.index') }}">Items</a></li>
+        {% for ancestor in analysis.artefact.item.ancestors %}
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=ancestor.url_id) }}">{{ ancestor.name }}</a></li>
+        {% endfor %}
         <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=analysis.artefact.item.url_id) }}">{{ analysis.artefact.item.name }}</a></li>
         {% if analysis.artefact.parent_artefact %}
         <li class="breadcrumb-item"><a href="{{ artefact_url(analysis.artefact.root_artefact) }}">{{ analysis.artefact.root_artefact.label }}</a></li>
