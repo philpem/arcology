@@ -1217,8 +1217,7 @@ class TestBulkDeleteItem(unittest.TestCase):
                 ExternalSystem, ExternalReference,
                 ArtefactProtection, ArtefactMastering, RiscosModule,
                 ArtefactRestriction, ExtractedFileRestriction,
-                RecognisedProduct, HashDatabase, KnownProduct, KnownFile,
-                RestrictionType,
+                RecognisedProduct, HashDatabase, KnownProduct, RestrictionType,
             )
             from shared.enums import ArtefactType, AnalysisType
             from myapp.blueprints.artefacts import bulk_delete_item

@@ -10,7 +10,6 @@ Revision ID: 000069e72f63
 Revises: 000069e66a3f
 Create Date: 2026-04-21
 """
-import sqlalchemy as sa
 from alembic import op
 
 revision = '000069e72f63'

@@ -199,7 +199,6 @@ def sanitize_extracted_tree(output_dir: Path) -> int:
     Returns the number of entries removed.
     """
     removed = 0
-    real_base = str(output_dir.resolve())
     # Walk bottom-up so we handle nested symlinks before their parents.
     for entry in sorted(output_dir.rglob('*'), key=lambda p: len(p.parts), reverse=True):
         try:

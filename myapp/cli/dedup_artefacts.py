@@ -3,7 +3,7 @@ from flask import current_app
 from sqlalchemy import func
 
 from ..extensions import db
-from ..database import Artefact, Analysis
+from ..database import Artefact
 
 
 @click.command('dedup-artefacts')
@@ -50,8 +50,7 @@ def dedup_artefacts(dry_run):
             if not dry_run:
                 # Delete stored file
                 try:
-                    from ..blueprints.artefacts import get_artefact_storage_key, \
-                        _delete_artefact_files, _cleanup_artefact_outputs, \
+                    from ..blueprints.artefacts import _delete_artefact_files, _cleanup_artefact_outputs, \
                         _cleanup_artefact_outputs_s3
                     _delete_artefact_files(art)
                     from shared.storage import S3Storage

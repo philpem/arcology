@@ -153,7 +153,7 @@ def cmd_items_update(client, args):
 	if result.get('parent_uuid'):
 		print(f"  Parent: {result['parent_uuid']} ({result.get('parent_name', '')})")
 	else:
-		print(f"  Parent: (root item)")
+		print("  Parent: (root item)")
 
 
 def cmd_items_delete(client, args):

@@ -14,7 +14,6 @@ Run:
     python -m unittest ci.test_image_conversion -v
 """
 
-import io
 import os
 import shutil
 import sys

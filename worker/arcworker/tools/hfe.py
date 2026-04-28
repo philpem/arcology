@@ -946,7 +946,6 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5,
     n_tracks   = header['n_tracks']
     n_sides    = header['n_sides']
     hfe_ver    = header['version']
-    encoding   = header['track_encoding']
     track_list = header['track_list']
 
     first_scan = max(0, n_tracks - scan_count)

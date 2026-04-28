@@ -18,7 +18,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
@@ -498,7 +498,7 @@ class TestSkipAnalyses(unittest.TestCase):
             from myapp.extensions import db
             db.create_all()
             from myapp.blueprints.artefacts import queue_analyses_for_artefact
-            from myapp.database import Artefact, ArtefactType as DBArtefactType, Item, StorageDirectory
+            from myapp.database import Artefact, Item, StorageDirectory
             item = Item(name='test item')
             db.session.add(item)
             db.session.flush()
@@ -514,7 +514,7 @@ class TestSkipAnalyses(unittest.TestCase):
             db.session.flush()
 
             # Call with skip_analyses — should not queue FLUX_DECODE
-            from myapp.database import Analysis, AnalysisStatus
+            from myapp.database import Analysis
             queue_analyses_for_artefact(
                 artefact,
                 skip_analyses=[AnalysisType.FLUX_DECODE.name],

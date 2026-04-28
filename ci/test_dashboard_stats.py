@@ -91,7 +91,7 @@ class TestDashboardStats(unittest.TestCase):
 
     def test_pending_analysis_counted(self):
         """A PENDING analysis should appear in pending_analyses count."""
-        analysis_id = self._create_analysis()
+        self._create_analysis()
         stats = self._get_stats()
         self.assertGreater(stats['pending_analyses'], 0)
 
@@ -134,7 +134,6 @@ class TestDashboardStats(unittest.TestCase):
             a.status = AnalysisStatus.COMPLETED
             self.db.session.commit()
 
-        stats = self._get_stats()
         # The specific analysis we just completed should not be counted as running
         with self.app.app_context():
             from myapp.database import Analysis, AnalysisStatus

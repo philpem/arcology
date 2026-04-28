@@ -104,7 +104,7 @@ class TestItemHierarchyModel(unittest.TestCase):
             self.assertEqual([i.name for i in path], ['Root', 'Child'])
 
     def test_effective_platform_own(self):
-        from myapp.database import Item, Platform
+        from myapp.database import Platform
         with self.app.app_context():
             plat = Platform(name='TestPlatform')
             self.db.session.add(plat)
@@ -118,7 +118,7 @@ class TestItemHierarchyModel(unittest.TestCase):
             self.assertEqual(child.effective_platform.name, 'TestPlatform')
 
     def test_effective_platform_own_overrides_parent(self):
-        from myapp.database import Item, Platform
+        from myapp.database import Platform
         with self.app.app_context():
             plat_parent = Platform(name='ParentPlatform')
             plat_child = Platform(name='ChildPlatform')
@@ -133,7 +133,7 @@ class TestItemHierarchyModel(unittest.TestCase):
             self.assertEqual(child.effective_platform.name, 'ChildPlatform')
 
     def test_effective_category_inherits(self):
-        from myapp.database import Item, Category
+        from myapp.database import Category
         with self.app.app_context():
             cat = Category(name='TestCategory')
             self.db.session.add(cat)

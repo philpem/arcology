@@ -10,7 +10,6 @@ Run:
     python -m unittest ci.test_fat_volume_label -v
 """
 
-import io
 import os
 import sys
 import tempfile

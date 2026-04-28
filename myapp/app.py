@@ -1,9 +1,8 @@
 from __future__ import absolute_import, unicode_literals
 
-from flask_bootstrap import Bootstrap5
 from flask import Flask, render_template, redirect, request, url_for, flash, g
-from flask_login import (LoginManager, current_user, login_required,
-        login_user, logout_user, confirm_login, fresh_login_required)
+from flask_login import (current_user, login_required,
+        login_user, logout_user)
 from flask_wtf import FlaskForm
 from wtforms import PasswordField, SubmitField, StringField
 from wtforms.validators import DataRequired
@@ -13,7 +12,7 @@ import secrets
 from urllib.parse import urlparse
 
 from .extensions import db, migrate, login_manager, bootstrap, csrf
-from .database import UserPermission, ApiKeyPermission
+from .database import UserPermission
 
 # Subclass the application so we can add the menu management functions
 class AppClass(Flask):

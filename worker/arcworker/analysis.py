@@ -14,7 +14,6 @@ import time
 from pathlib import Path
 
 from .config import log, MAX_POLL
-from shared.enums import ArtefactType
 from .compression import decompress_if_needed
 from .api import ArcologyAPI
 from .utils.text import make_latin1_fspath
@@ -614,7 +613,7 @@ class AnalysisWorker:
                 log.info("Shutting down")
                 break
 
-            except Exception as e:
+            except Exception:
                 log.exception("Unexpected error in main loop")
                 time.sleep(MAX_POLL)
 # vim: ts=4 sw=4 et

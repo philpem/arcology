@@ -4,7 +4,7 @@ Arcology - Items Blueprint
 CRUD operations for collection items.
 """
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request, current_app
+from flask import Blueprint, render_template, redirect, url_for, flash, request
 from flask_login import login_required
 from flask_wtf import FlaskForm
 from wtforms import StringField, TextAreaField, SelectField
@@ -13,7 +13,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import selectinload
 
 from ..extensions import db
-from ..database import Item, Artefact, Platform, Category, Tag, ExternalSystem, ExternalReference
+from ..database import Item, Artefact, Platform, Category, ExternalSystem, ExternalReference
 
 _ITEM_SORT_OPTIONS = {
     'name_asc':      func.lower(Item.name).asc(),

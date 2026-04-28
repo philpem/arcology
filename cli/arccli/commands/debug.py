@@ -73,7 +73,7 @@ def cmd_debug_analysis(client, args):
 		return
 
 	if details.get('exception_trace'):
-		print(f"\n--- Exception Trace ---")
+		print("\n--- Exception Trace ---")
 		print(details['exception_trace'])
 
 	process_output = details.get('process_output')
@@ -107,11 +107,11 @@ def _print_process_output(po, label):
 	if po.get('duration_seconds') is not None:
 		print(f"  Duration:  {po['duration_seconds']:.1f}s")
 	if po.get('stdout'):
-		print(f"  stdout:")
+		print("  stdout:")
 		for line in po['stdout'].splitlines():
 			print(f"    {line}")
 	if po.get('stderr'):
-		print(f"  stderr:")
+		print("  stderr:")
 		for line in po['stderr'].splitlines():
 			print(f"    {line}")
 

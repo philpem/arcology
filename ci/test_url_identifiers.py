@@ -137,7 +137,7 @@ class TestArtefactLookup(unittest.TestCase):
             cls.other_item_id = cls.other_item.id
 
     def _lookup(self, item_id, artefact_id):
-        from myapp.database import Item, Artefact
+        from myapp.database import Item
         from myapp.utils.slugs import lookup_artefact_by_id
         with self.app.app_context():
             item = Item.query.get(item_id)
@@ -398,7 +398,6 @@ class TestRootArtefactProperty(unittest.TestCase):
                 from flask import url_for
                 expected = url_for('myapp_blueprints_artefacts.view',
                                    item_id=item.url_id, artefact_id=root.url_slug)
-                from myapp.app import create_app  # helper registered on app
                 # Call the template global directly via the app
                 result = self.app.jinja_env.globals['artefact_url'](root)
                 self.assertEqual(result, expected)
@@ -406,11 +405,10 @@ class TestRootArtefactProperty(unittest.TestCase):
 
     def test_artefact_url_derived_includes_root_id_segment(self):
         """artefact_url() for a derived artefact should include the root slug."""
-        from myapp.database import Artefact, Item
+        from myapp.database import Artefact
         with self.app.app_context():
             child = Artefact.query.get(self.child_id)
             root = Artefact.query.get(self.root_id)
-            item = Item.query.get(self.item_id)
             with self.app.test_request_context():
                 result = self.app.jinja_env.globals['artefact_url'](child)
                 # Should contain the root slug and the child slug as path segments

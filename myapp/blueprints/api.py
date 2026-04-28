@@ -16,7 +16,6 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from functools import wraps
 from flask import Blueprint, jsonify, request, current_app, send_file, redirect
-from flask_wtf.csrf import CSRFProtect
 from sqlalchemy import func, update, or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload
@@ -30,7 +29,6 @@ from ..database import (
     RecognisedProduct, StorageDirectory,
     ApiKey, ApiKeyPermission, _API_KEY_PERMISSION_ORDER,
     ArtefactProtection, ArtefactMastering, RiscosModule,
-    ExtractedFileRestriction,
 )
 from .artefacts import (
     get_artefact_path, get_artefact_storage_key, _delete_artefact_files,
@@ -2116,7 +2114,7 @@ def create_hash_database():
 @blueprint.route('/hash-databases/<int:db_id>/products', methods=['POST'])
 @require_auth('read_write')
 def create_known_product(db_id):
-    database = _get_hash_database_or_404(db_id)
+    _get_hash_database_or_404(db_id)
     data, error = _json_object(force=True)
     if error:
         return error
@@ -2137,7 +2135,7 @@ def create_known_product(db_id):
 @require_auth('read_write')
 def add_known_files_bulk(db_id, pid):
     database = _get_hash_database_or_404(db_id)
-    product = _get_known_product_or_404(db_id, pid)
+    _get_known_product_or_404(db_id, pid)
     data = _json_data(force=True)
     if data is None:
         data = {}
