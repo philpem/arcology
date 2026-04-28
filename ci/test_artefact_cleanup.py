@@ -200,5 +200,87 @@ class TestArtefactCleanupRegression(unittest.TestCase):
         self.assertTrue(os.path.exists(self.item_keep_file))
 
 
+class TestReanalysisClearsMediaMetadata(unittest.TestCase):
+    """Regression: reset_artefact_for_reanalysis must clear Artefact.media_metadata.
+
+    METADATA_EXTRACT writes ISO 9660 Primary Volume Descriptor info into
+    Artefact.media_metadata.  Previously, reset_artefact_for_reanalysis deleted
+    analyses, partitions, and derived artefacts but left media_metadata intact,
+    so stale ISO 9660 Volume Information continued to display after re-analyse.
+    """
+
+    def setUp(self):
+        from myapp.app import create_app
+        from myapp.database import (
+            Artefact,
+            Item,
+            Platform,
+            StorageDirectory,
+        )
+        from myapp.extensions import db as _db
+        from shared.enums import ArtefactType
+
+        self.app = create_app()
+        self.app.config['TESTING'] = True
+
+        self.tmpdir = tempfile.mkdtemp()
+        self.upload_folder = os.path.join(self.tmpdir, 'uploads')
+        self.output_folder = os.path.join(self.tmpdir, 'outputs')
+        self.app.config['UPLOAD_FOLDER'] = self.upload_folder
+        self.app.config['OUTPUT_FOLDER'] = self.output_folder
+        os.makedirs(self.upload_folder, exist_ok=True)
+        os.makedirs(self.output_folder, exist_ok=True)
+
+        from shared.storage import create_storage
+        self.app.storage = create_storage(dict(self.app.config))
+
+        self.db = _db
+        with self.app.app_context():
+            _db.create_all()
+
+            platform = Platform(name='ISO Platform')
+            _db.session.add(platform)
+            _db.session.flush()
+
+            item = Item(name='ISO Item', platform_id=platform.id)
+            _db.session.add(item)
+            _db.session.flush()
+
+            storage_name = 'reset.iso'
+            with open(os.path.join(self.upload_folder, storage_name), 'w') as f:
+                f.write('iso')
+
+            artefact = Artefact(
+                item_id=item.id,
+                label='ISO Disc',
+                artefact_type=ArtefactType.ISO,
+                original_filename='reset.iso',
+                storage_path=storage_name,
+                storage_directory=StorageDirectory.UPLOADS,
+                media_metadata=json.dumps({
+                    'iso9660': {
+                        'volume_identifier': 'STALE_VOLUME',
+                        'publisher_identifier': 'STALE_PUBLISHER',
+                    },
+                }),
+            )
+            _db.session.add(artefact)
+            _db.session.commit()
+            self.artefact_id = artefact.id
+
+    def test_reset_clears_media_metadata(self):
+        from myapp.blueprints.artefacts import reset_artefact_for_reanalysis
+        from myapp.database import Artefact
+
+        with self.app.app_context():
+            artefact = self.db.session.get(Artefact, self.artefact_id)
+            self.assertIsNotNone(artefact.media_metadata)
+
+            reset_artefact_for_reanalysis(artefact)
+
+            refreshed = self.db.session.get(Artefact, self.artefact_id)
+            self.assertIsNone(refreshed.media_metadata)
+
+
 if __name__ == '__main__':
     unittest.main()
