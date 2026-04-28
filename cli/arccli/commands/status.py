@@ -1,7 +1,6 @@
 """Status commands: health check, analysis status."""
 
 import sys
-
 from ..formatting import print_json
 
 

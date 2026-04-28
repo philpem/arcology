@@ -9,9 +9,7 @@ detected archive — at top level or nested).
 import json
 import shutil
 from pathlib import Path
-
 from shared.enums import AnalysisType, ArtefactType
-
 from ..config import log
 from ..tools import (
     decompress_single_file,
@@ -190,9 +188,7 @@ def _extract_top_level_archive(
     recognised disc images to derived artefacts.
     """
     import json
-
     from shared.archive_formats import ArchiveType, get_archive_info
-
     from ..config import OUTPUT_DIR
     from ..utils.paths import get_output_path
 
@@ -637,14 +633,12 @@ def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path)
     Scans partition files for archives and queues extraction jobs.
     """
     import json
-
     from shared.archive_formats import (
         get_archive_by_extension,
         get_archive_by_filetype,
         get_archive_info,
         is_compressor_format,
     )
-
     from ..config import MAX_ARCHIVE_DEPTH
 
     analysis_id = analysis['id']
@@ -773,12 +767,10 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
     the handler creates a new partition for the extracted files.
     """
     import json
-
     from shared.archive_formats import (
         ArchiveType,
         get_archive_info,
     )
-
     from ..config import MAX_ARCHIVE_DEPTH, OUTPUT_DIR
     from ..utils.paths import get_output_path
 

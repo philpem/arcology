@@ -7,10 +7,8 @@ Routes are intentionally unauthenticated (same as /api/health).
 
 import json
 import os
-
 import yaml
 from flask import Blueprint, Response, current_app
-
 from ..extensions import csrf
 
 ROUTENAME = __name__.replace('.', '_')
@@ -35,7 +33,7 @@ def openapi_yaml():
     """Serve the raw OpenAPI spec as YAML."""
     path = _spec_path()
     try:
-        with open(path, encoding='utf-8') as fh:
+        with open(path, 'r', encoding='utf-8') as fh:
             content = fh.read()
     except FileNotFoundError:
         return Response('OpenAPI spec not found', status=404, mimetype='text/plain')
@@ -47,7 +45,7 @@ def openapi_json():
     """Serve the OpenAPI spec converted to JSON."""
     path = _spec_path()
     try:
-        with open(path, encoding='utf-8') as fh:
+        with open(path, 'r', encoding='utf-8') as fh:
             spec = yaml.safe_load(fh)
     except FileNotFoundError:
         return Response('{"error":"OpenAPI spec not found"}', status=404, mimetype='application/json')

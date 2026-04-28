@@ -13,9 +13,7 @@ Covers:
 
 import json
 from pathlib import Path
-
 from shared.enums import AnalysisType, ArtefactType
-
 from ..config import log
 from ..tools import (
     ModuleParseError,

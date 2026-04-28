@@ -6,7 +6,6 @@ be unit-tested in isolation.
 """
 
 from collections.abc import Iterable
-
 from natsort import natsorted, ns
 
 

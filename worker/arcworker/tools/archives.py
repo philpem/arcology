@@ -13,7 +13,6 @@ import tarfile
 import zipfile
 from pathlib import Path
 from typing import Any
-
 from ..compression import stream_to_file
 from ..config import MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT, log
 from ..utils.text import decode_riscos_latin1, fix_riscos_c1_filenames, normalize_extracted_filenames

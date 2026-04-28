@@ -1,5 +1,4 @@
 import unittest
-
 from ci.check_migration_conflict import find_conflicts, get_new_migrations
 
 

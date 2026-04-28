@@ -1,7 +1,6 @@
 """Item management commands: list, create, view, update, delete."""
 
 import sys
-
 from ..formatting import print_json, print_table, truncate
 
 

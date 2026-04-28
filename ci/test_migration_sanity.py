@@ -1,5 +1,4 @@
 import unittest
-
 from ci.check_migration_sanity import (
     check_filename_order_matches_chain,
     check_header_consistency,

@@ -1,7 +1,5 @@
 import json
-
 import click
-
 from ..database import (
     Analysis,
     AnalysisStatus,

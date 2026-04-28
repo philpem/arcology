@@ -10,7 +10,6 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-
 from .config import MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT, log
 
 COMPRESSION_EXTENSIONS = {

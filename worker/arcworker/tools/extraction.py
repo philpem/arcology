@@ -15,7 +15,6 @@ import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-
 from ..utils.text import normalize_extracted_filenames
 from .base import exception_result, run_tool_with_output, tool_result
 from .partition import read_fat_volume_label

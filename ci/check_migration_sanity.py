@@ -65,7 +65,7 @@ def parse_header_metadata(source):
 
 def parse_migration(filepath):
     """Parse a migration file and extract key attributes."""
-    with open(filepath) as f:
+    with open(filepath, 'r') as f:
         source = f.read()
 
     tree = ast.parse(source, filepath)

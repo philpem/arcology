@@ -12,7 +12,6 @@ handler attribute name on ``AnalysisWorker``; the dispatch loop in
 """
 
 from shared.enums import AnalysisType
-
 from .armlock import process_armlock_remove
 from .extraction import (
     _PROMOTABLE_EXTENSIONS,

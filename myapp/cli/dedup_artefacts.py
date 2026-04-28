@@ -1,7 +1,6 @@
 import click
 from flask import current_app
 from sqlalchemy import func
-
 from ..database import Artefact
 from ..extensions import db
 

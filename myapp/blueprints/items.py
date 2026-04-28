@@ -11,7 +11,6 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import selectinload
 from wtforms import SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Length, Optional
-
 from ..database import Artefact, Category, ExternalReference, ExternalSystem, Item, Platform
 from ..extensions import db
 from ..permissions import require_permission

@@ -1,5 +1,4 @@
 import click
-
 from ..database import Analysis, AnalysisStatus, Artefact
 from ..extensions import db
 from ._selection import build_artefact_query

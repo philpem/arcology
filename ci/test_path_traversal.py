@@ -211,7 +211,6 @@ class TestGetArtefactPathConfinement(unittest.TestCase):
 
     def _make_artefact(self, storage_path):
         from unittest.mock import MagicMock
-
         from myapp.database import StorageDirectory
         a = MagicMock()
         a.storage_path = storage_path

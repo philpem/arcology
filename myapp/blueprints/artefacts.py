@@ -14,7 +14,6 @@ import shutil
 import tempfile
 import threading
 import uuid
-
 from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
@@ -22,7 +21,6 @@ from flask_wtf.file import FileField, FileRequired
 from werkzeug.utils import secure_filename
 from wtforms import BooleanField, IntegerField, SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Optional
-
 from ..database import (
     Analysis,
     AnalysisStatus,
@@ -688,7 +686,6 @@ def get_all_derived_artefact_ids(artefact: Artefact) -> list[int]:
     (one per level of the derivation tree).
     """
     from sqlalchemy import select
-
     from ..extensions import db
 
     base = select(Artefact.id).where(Artefact.parent_artefact_id == artefact.id)
@@ -767,7 +764,6 @@ def _analysis_file_path(analysis, hint_file_map: dict) -> str | None:
                          (empty → top-level scan, returns None)
     """
     import json as _json
-
     from shared.enums import AnalysisType as _AT
 
     if not analysis.hints:
@@ -829,7 +825,6 @@ def _build_processing_tree(root: Artefact) -> tuple[dict, bool, dict, int]:
     """
     import json as _json
     from collections import defaultdict
-
     from shared.enums import AnalysisType as _AT
 
     all_ids = [root.id] + get_all_derived_artefact_ids(root)
@@ -1252,7 +1247,6 @@ _COLUMN_CLASSES = {
 def _render_viewer(artefact):
     """Build and render the viewer page for an artefact's converted outputs."""
     from collections import Counter, defaultdict
-
     from ..database import RestrictionType
     from ..utils.pagination import VALID_PER_PAGE, ListPagination, resolve_per_page
 
@@ -2470,7 +2464,6 @@ def add_to_hashdb(uuid):
     # matching the behaviour of the per-file add_known_file route in hashdb.py.
     if new_kfs and database.is_active:
         from sqlalchemy import or_ as _or
-
         from ..utils.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_new_known_files
         rescan_hashes_for_new_known_files(new_kfs)
         if database.enable_product_recognition:

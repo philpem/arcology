@@ -9,14 +9,12 @@ import io
 import json
 import threading
 from datetime import datetime, timezone
-
 from flask import Blueprint, Response, current_app, flash, redirect, render_template, request, url_for
 from flask_login import login_required
 from flask_wtf import FlaskForm
 from sqlalchemy import func, or_
 from wtforms import BooleanField, SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Length, Optional
-
 from ..database import (
     Artefact,
     ExtractedFile,

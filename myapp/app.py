@@ -2,14 +2,12 @@
 import os
 import secrets
 from urllib.parse import urlparse
-
 from flask import Flask, flash, g, redirect, render_template, request, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 from flask_wtf import FlaskForm
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 from wtforms import PasswordField, StringField, SubmitField
 from wtforms.validators import DataRequired
-
 from .database import UserPermission
 from .extensions import bootstrap, csrf, db, login_manager, migrate
 
@@ -127,7 +125,6 @@ def create_app(config_name=None):
     # enable database logging (if enabled)
     if app.config.get('DEBUG_DB_LOG', False):
         import logging
-
         from flask.logging import default_handler
         app.logger.warning('Warning - database logging enabled. This will spam the logs!')
         logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
@@ -184,7 +181,6 @@ def create_app(config_name=None):
 
     # -- version context processor --
     import datetime
-
     from .version import get_version
     @app.context_processor
     def inject_version():
@@ -235,7 +231,6 @@ def create_app(config_name=None):
 def _register_blueprints(app):
     """ Load and register all blueprints from the 'blueprints' directory. """
     import pkgutil
-
     from . import blueprints
 
     for _importer, modname, _ispkg in pkgutil.iter_modules(blueprints.__path__):

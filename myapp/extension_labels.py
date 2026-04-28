@@ -5,7 +5,6 @@ Used to display non-RISC OS file types in the file listing and viewer.
 Curated lookup takes priority; mimetypes module is used as fallback.
 """
 import mimetypes as _mimetypes
-
 from .riscos_filetypes import get_filetype_name
 
 # Curated short labels for extensions common in retro/vintage computing collections.
