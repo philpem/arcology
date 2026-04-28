@@ -936,6 +936,15 @@ def reset_artefact_for_reanalysis(artefact: Artefact, commit: bool = True):
 
     _bulk_delete_artefact_dependents(all_ids)
 
+    # Clear analysis-derived metadata on the root artefact (e.g. the
+    # ISO 9660 Primary Volume Descriptor written by METADATA_EXTRACT).
+    # Without this, stale volume info survives a reset and is shown
+    # alongside the freshly queued analyses until they finish — and
+    # persists indefinitely if METADATA_EXTRACT is no longer queued
+    # (e.g. the artefact type was changed away from ISO).
+    Artefact.query.filter(Artefact.id == artefact.id).update(
+        {Artefact.media_metadata: None}, synchronize_session=False)
+
     # Delete derived artefacts: break self-referential FK, then delete.
     if all_derived_ids:
         _bulk_delete_artefacts(all_derived_ids)
