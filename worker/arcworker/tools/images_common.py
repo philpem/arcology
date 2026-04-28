@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from .base import run_tool_with_output, tool_result
+from .base import run_tool_with_output
 from .svg_utils import postprocess_svg
 
 from ..config import log

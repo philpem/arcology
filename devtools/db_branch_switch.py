@@ -118,10 +118,10 @@ def main():
     target_arg = target_rev if target_rev else 'base'
 
     print(f"\nDowngrade target: {target_arg}")
-    print(f"\nRun ONE of the following before switching branches:")
-    print(f"\n  Local venv:")
+    print("\nRun ONE of the following before switching branches:")
+    print("\n  Local venv:")
     print(f"    flask db downgrade {target_arg}")
-    print(f"\n  Docker:")
+    print("\n  Docker:")
     print(f"    docker compose exec -it web flask db downgrade {target_arg}")
 
 

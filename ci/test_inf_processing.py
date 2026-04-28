@@ -278,7 +278,7 @@ class TestProcessInfSidecars(unittest.TestCase):
             '=Config': b'cfg',
             '=Config.inf': '@Config FF000000 FF000000 3',
         })
-        meta = process_inf_sidecars(root)
+        process_inf_sidecars(root)
 
         self.assertTrue((root / '@Config').exists())
         self.assertFalse((root / '=Config').exists())
@@ -369,7 +369,7 @@ class TestProcessInfSidecars(unittest.TestCase):
             '?BOOT': b'dos-encoded',  # Would rename to #BOOT
             '?BOOT.inf': '#BOOT FFFFFD00 FFFFFF00 5',
         })
-        meta = process_inf_sidecars(root)
+        process_inf_sidecars(root)
 
         # Both files should still exist (rename skipped due to conflict)
         self.assertTrue((root / '#BOOT').exists())

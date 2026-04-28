@@ -2,7 +2,7 @@
 
 import sys
 
-from ..formatting import print_json, print_table
+from ..formatting import print_json
 
 
 def cmd_health(client, args):

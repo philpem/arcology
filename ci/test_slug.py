@@ -13,7 +13,6 @@ Run:
 
 import importlib.util
 import os
-import sys
 import unittest
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

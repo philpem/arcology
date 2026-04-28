@@ -10,7 +10,6 @@ The backend is selected via the STORAGE_BACKEND configuration variable.
 """
 
 import abc
-import io
 import logging
 import mimetypes
 import os

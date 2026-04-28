@@ -41,6 +41,12 @@ jobs:
       - name: Check Python syntax
         run: python ci/check_syntax.py
 
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Ruff lint (pyflakes ruleset)
+        run: ruff check .
+
       - name: Unit tests (stdlib only, no dependencies)
         # test_slug.py is the only test that can run without pip install.
         # All other test_*.py files are discovered in the app-tests job.

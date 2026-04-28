@@ -670,7 +670,7 @@ def get_all_derived_artefact_ids(artefact: Artefact) -> list[int]:
     Replaces the previous recursive ORM walk which triggered N+1 queries
     (one per level of the derivation tree).
     """
-    from sqlalchemy import literal_column, union_all, select
+    from sqlalchemy import select
     from ..extensions import db
 
     base = select(Artefact.id).where(Artefact.parent_artefact_id == artefact.id)
@@ -687,7 +687,6 @@ def _collect_all_analyses(artefact: Artefact) -> list:
     Uses the CTE-based get_all_derived_artefact_ids to avoid N+1 queries,
     then fetches all analyses in a single query.
     """
-    from ..extensions import db
     all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
     return Analysis.query.filter(Analysis.artefact_id.in_(all_ids)).order_by(Analysis.id.desc()).all()
 

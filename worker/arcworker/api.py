@@ -7,7 +7,6 @@ status updates, and artefact registration.
 
 import hashlib
 import shutil
-import uuid
 from pathlib import Path
 from typing import Optional
 

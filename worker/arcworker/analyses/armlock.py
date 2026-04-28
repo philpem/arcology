@@ -66,7 +66,7 @@ def process_armlock_remove(self, analysis: dict, artefact: dict, work_dir: Path)
             artefact['uuid'],
             filesystem_hint,
             partition_index,
-            partition_image_path=partition_image_path,
+            partition_image_path=hints.get('partition_image_path'),
         )
         self.complete_analysis(
             analysis_id,
@@ -117,8 +117,8 @@ def process_armlock_remove(self, analysis: dict, artefact: dict, work_dir: Path)
             cleaned_uuid = cleaned['artefact']['uuid']
             self.queue_file_extraction(cleaned_uuid, filesystem_hint, partition_index)
             summary = (
-                f'ARMlock disc security detected and removed. '
-                f'Cleaned artefact queued for file extraction.'
+                'ARMlock disc security detected and removed. '
+                'Cleaned artefact queued for file extraction.'
             )
             if detection.get('module_data'):
                 summary += ' ARMlock module saved.'

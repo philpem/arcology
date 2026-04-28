@@ -1018,12 +1018,11 @@ class TestHashDBSearch(unittest.TestCase):
         from myapp.blueprints.hashdb import SEARCH_LIMIT
         from myapp.database import (
             ExtractedFile, Partition, Artefact, Item,
-            HashDatabase, KnownProduct, KnownFile,
+            KnownProduct, KnownFile,
         )
         from myapp.extensions import db as _db
 
         with self.app.app_context():
-            database = HashDatabase.query.get(db_id)
             product_id = kwargs.get('product_id')
             file_id = kwargs.get('file_id')
 

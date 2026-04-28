@@ -30,7 +30,6 @@ from ..tools import (
     extract_rar,
     extract_7z,
     decompress_single_file,
-    detect_armlock,
 )
 from ..tools.iso9660 import parse_iso9660_pvd
 from ..tools.extraction import _parse_dim_report, convert_fcfs_to_raw
@@ -774,8 +773,6 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
     from shared.archive_formats import (
         ArchiveType,
         get_archive_info,
-        is_compressor_format,
-        is_disk_image_format,
     )
     from ..config import OUTPUT_DIR, MAX_ARCHIVE_DEPTH
     from ..utils.paths import get_output_path
@@ -787,7 +784,6 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
     file_id = hints.get('file_id')
     partition_uuid = hints.get('partition_uuid')
     archive_type_str = hints.get('archive_type')
-    is_compressor = hints.get('is_compressor', False)
     extraction_depth = hints.get('extraction_depth', 1)
     hinted_extraction_path = hints.get('extraction_path')
     path_prefix = hints.get('path_prefix', '')

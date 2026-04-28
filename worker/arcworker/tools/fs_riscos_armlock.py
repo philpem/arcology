@@ -112,7 +112,6 @@ def _parse_directory(image: bytearray, addr: int) -> tuple[bool, list]:
     """
     if addr + 0x800 > len(image):
         return False, []
-    seq = image[addr]
     magic = image[addr + 1:addr + 5]
     if magic not in (b"Hugo", b"Nick"):
         return False, []
