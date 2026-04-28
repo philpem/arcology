@@ -571,6 +571,22 @@ def process_nsfw_scan(self, analysis: dict, artefact: dict, work_dir: Path):
                 'results':        results,
             }),
         )
+        if partition_uuid and explicit_count:
+            explicit_restrictions = [
+                {
+                    'path':             r['source_file'],
+                    'restriction_type': 'explicit',
+                    'reason':           f'NSFW classifier stage {r["stage"]}: score={r["score"]:.3f}',
+                }
+                for r in results if r['verdict'] == 'explicit'
+            ]
+            resp = self.api.apply_file_restrictions(partition_uuid, explicit_restrictions)
+            if resp:
+                log.info(
+                    f'NSFW scan: applied {resp.get("applied", 0)} new, '
+                    f'updated {resp.get("updated", 0)} existing restrictions '
+                    f'({resp.get("not_found", 0)} paths not found in partition)'
+                )
 
     elif extraction_path:
         # extraction_scan: classify raster images in the extraction output.
@@ -646,6 +662,22 @@ def process_nsfw_scan(self, analysis: dict, artefact: dict, work_dir: Path):
                 'results':        results,
             }),
         )
+        if partition_uuid and explicit_count:
+            explicit_restrictions = [
+                {
+                    'path':             r['source_file'],
+                    'restriction_type': 'explicit',
+                    'reason':           f'NSFW classifier stage {r["stage"]}: score={r["score"]:.3f}',
+                }
+                for r in results if r['verdict'] == 'explicit'
+            ]
+            resp = self.api.apply_file_restrictions(partition_uuid, explicit_restrictions)
+            if resp:
+                log.info(
+                    f'NSFW scan: applied {resp.get("applied", 0)} new, '
+                    f'updated {resp.get("updated", 0)} existing restrictions '
+                    f'({resp.get("not_found", 0)} paths not found in partition)'
+                )
 
     else:
         # direct: classify the artefact file directly.
