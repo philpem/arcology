@@ -157,13 +157,17 @@ class TestAnalysisToDictArtefactShape(unittest.TestCase):
 
             cls.analysis_id = analysis.id
 
-    def test_embedded_artefact_has_worker_keys(self):
+    def test_embedded_artefact_has_worker_keys_with_storage(self):
+        """Worker /pending poll: include_artefact_storage=True must yield the
+        keys the worker reads from the embedded artefact dict."""
         from myapp.database import Analysis
         from myapp.utils.api_serializers import analysis_to_dict
 
         with self.app.app_context():
             analysis = Analysis.query.get(self.analysis_id)
-            d = analysis_to_dict(analysis, include_artefact=True)
+            d = analysis_to_dict(
+                analysis, include_artefact=True, include_artefact_storage=True
+            )
 
         art = d['artefact']
         # Keys read by worker/arcworker/analysis.py:105-106
@@ -177,6 +181,23 @@ class TestAnalysisToDictArtefactShape(unittest.TestCase):
         # Keys read elsewhere from the embedded shape
         for key in ('uuid', 'slug', 'label', 'original_filename', 'artefact_type'):
             self.assertIn(key, art)
+
+    def test_embedded_artefact_omits_storage_by_default(self):
+        """Read-only callers (/api/.../analyses, /api/analysis/failures) get
+        the embedded artefact without storage_path / storage_directory."""
+        from myapp.database import Analysis
+        from myapp.utils.api_serializers import analysis_to_dict
+
+        with self.app.app_context():
+            analysis = Analysis.query.get(self.analysis_id)
+            d = analysis_to_dict(analysis, include_artefact=True)
+
+        art = d['artefact']
+        self.assertNotIn('storage_path', art)
+        self.assertNotIn('storage_directory', art)
+        # Item shape and identity keys still present.
+        self.assertEqual(art['item']['slug'], 'worker-shape-item')
+        self.assertIn('slug', art)
 
 
 if __name__ == '__main__':

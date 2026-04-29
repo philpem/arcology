@@ -48,7 +48,7 @@ def artefact_to_dict(artefact, include_partitions=False, include_storage=False):
     return result
 
 
-def analysis_to_dict(analysis, include_artefact=False):
+def analysis_to_dict(analysis, include_artefact=False, include_artefact_storage=False):
     result = {
         'id': analysis.id, 'uuid': analysis.uuid, 'artefact_id': analysis.artefact_id,
         'artefact_uuid': analysis.artefact.uuid if analysis.artefact else None,
@@ -64,7 +64,9 @@ def analysis_to_dict(analysis, include_artefact=False):
     }
     if include_artefact:
         if analysis.artefact:
-            art_dict = artefact_to_dict(analysis.artefact, include_storage=True)
+            art_dict = artefact_to_dict(
+                analysis.artefact, include_storage=include_artefact_storage
+            )
             # Preserve the nested item shape that worker code reads as
             # artefact['item']['uuid'] / ['slug'] (see arcworker/analyses/*.py).
             art_dict['item'] = {
