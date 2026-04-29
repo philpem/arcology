@@ -232,7 +232,7 @@
                                     <a href="?{{ dict(pagination_args, filetype=file.risc_os_filetype, page=1) | urlencode }}"
                                        class="text-muted text-decoration-none"
                                        title="{{ file.risc_os_filetype | format_filetype }} — click to filter">
-                                        <small>{{ (file.risc_os_filetype | filetype_name) or ('&amp;' ~ file.risc_os_filetype | upper) }}</small>
+                                        <small>{{ (file.risc_os_filetype | filetype_name) or ('&' ~ file.risc_os_filetype | upper) }}</small>
                                     </a>
                                 {% elif file.extension %}
                                     <a href="?{{ dict(pagination_args, filetype=file.extension, page=1) | urlencode }}"
