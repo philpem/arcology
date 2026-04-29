@@ -91,6 +91,93 @@ class TestArtefactToDictSlugs(unittest.TestCase):
         self.assertIn('slug', node)
         self.assertEqual(node['slug'], self.expected_artefact_slug)
 
+    def test_artefact_to_dict_omits_storage_by_default(self):
+        from myapp.database import Artefact
+        from myapp.utils.api_serializers import artefact_to_dict
+
+        with self.app.app_context():
+            artefact = Artefact.query.get(self.artefact_id)
+            d = artefact_to_dict(artefact)
+
+        self.assertNotIn('storage_path', d)
+        self.assertNotIn('storage_directory', d)
+
+    def test_artefact_to_dict_include_storage(self):
+        from myapp.database import Artefact
+        from myapp.utils.api_serializers import artefact_to_dict
+
+        with self.app.app_context():
+            artefact = Artefact.query.get(self.artefact_id)
+            d = artefact_to_dict(artefact, include_storage=True)
+
+        self.assertEqual(d['storage_path'], 'disc1.img')
+        self.assertIn('storage_directory', d)
+
+
+class TestAnalysisToDictArtefactShape(unittest.TestCase):
+    """analysis_to_dict(include_artefact=True) must preserve every key the
+    worker reads from the embedded artefact dict (see arcworker/analysis.py
+    and arcworker/analyses/*.py)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.app import create_app
+        from myapp.database import Analysis, Artefact, Item
+        from myapp.extensions import db
+        from shared.enums import AnalysisType, ArtefactType
+
+        cls.app = create_app()
+        cls.app.config['TESTING'] = True
+
+        with cls.app.app_context():
+            db.create_all()
+
+            item = Item(name='Worker Shape Item')
+            item.slug = 'worker-shape-item'
+            db.session.add(item)
+            db.session.commit()
+
+            artefact = Artefact(
+                item_id=item.id,
+                label='Side A',
+                artefact_type=ArtefactType.SCP,
+                original_filename='side-a.scp',
+                storage_path='side-a.scp',
+            )
+            artefact.slug = 'side-a'
+            db.session.add(artefact)
+            db.session.commit()
+
+            analysis = Analysis(
+                artefact_id=artefact.id,
+                analysis_type=AnalysisType.METADATA_EXTRACT,
+            )
+            db.session.add(analysis)
+            db.session.commit()
+
+            cls.analysis_id = analysis.id
+
+    def test_embedded_artefact_has_worker_keys(self):
+        from myapp.database import Analysis
+        from myapp.utils.api_serializers import analysis_to_dict
+
+        with self.app.app_context():
+            analysis = Analysis.query.get(self.analysis_id)
+            d = analysis_to_dict(analysis, include_artefact=True)
+
+        art = d['artefact']
+        # Keys read by worker/arcworker/analysis.py:105-106
+        self.assertEqual(art['storage_path'], 'side-a.scp')
+        self.assertIn('storage_directory', art)
+        # Keys read by worker/arcworker/analyses/*.py via artefact['item'][...]
+        self.assertIn('item', art)
+        self.assertIn('uuid', art['item'])
+        self.assertIn('slug', art['item'])
+        self.assertEqual(art['item']['slug'], 'worker-shape-item')
+        # Keys read elsewhere from the embedded shape
+        for key in ('uuid', 'slug', 'label', 'original_filename', 'artefact_type'):
+            self.assertIn(key, art)
+
 
 if __name__ == '__main__':
     unittest.main()
