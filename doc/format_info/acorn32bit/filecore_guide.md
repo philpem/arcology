@@ -115,7 +115,7 @@ The disc record is the single most important structure on a FileCore disc. Every
 | +0x07 | 1 | `boot_option` | Boot action (0 = none, 1 = load, 2 = run, 3 = exec). |
 | +0x08 | 1 | `low_sector` | Lowest sector ID on a track, plus flags in bits 6–7. |
 | +0x09 | 1 | `nzones` | Number of zones in the allocation map (low byte). |
-| +0x0A | 2 | `zone_spare` | Cross-zone continuation bits per zone boundary. |
+| +0x0A | 2 | `zone_spare` | Bits reserved at the start of each zone for a fragment that spans from the previous zone (see §3.1). |
 | +0x0C | 4 | `root_dir` | Disc address of the root directory (see §2.3). |
 | +0x10 | 4 | `disc_size` | Total disc size in bytes (low 32 bits). |
 
@@ -257,7 +257,11 @@ The total width of the descriptor in bits equals the number of allocation units 
 
 When `idlen` > 15 (big map discs), the free chain link within each free fragment is still treated as a 15-bit value, even though the ID field is wider than 15 bits. Free fragments are never shorter than `idlen` + 1 bits. (Acorn FileCore Phase 1 Functional Specification, §3.2.) Note: the Phase 1 spec assumed a maximum sector size of 1024 bytes (8192 bits per zone), for which 13 bits suffices for any intra-zone offset. RISC OS 5 supports 2048 and 4096 byte sectors (G format); the handling of free chain links with these larger zones has not been verified against the source.
 
-**Zone spare bits:** The first `zone_spare` bits of each zone's allocation area are cross-zone continuation bits. They cannot start a new fragment — they always continue the last fragment of the previous zone. These bits do represent real allocation units and must be counted when computing disc addresses.
+**Zone spare bits:** A fragment's bit pattern (its `idlen`-bit ID, zero or more `0` padding bits, and a terminating `1` bit) can straddle a zone boundary — starting in one zone's map sector and continuing into the next. The `zone_spare` field in the disc record specifies how many bits at the start of each zone (other than zone 0) are reserved for this overflow. These continuation bits belong to the last fragment of the preceding zone: they carry no fragment ID of their own and cannot start a new fragment. They do represent real allocation units and must be counted when computing disc addresses.
+
+The value of `zone_spare` is fixed for the entire disc, not per-zone. It is chosen at format time to be large enough to accommodate the worst case — typically at least `idlen + 1` bits, ensuring that even if a fragment ID starts as the very last bits of a zone, the terminating `1` bit can fall in the next zone.
+
+This has an important consequence for zone parsing: when decoding a zone's last fragment, the decoder may reach the end of the sector without finding a terminating `1` bit. The remaining bits of that fragment — up to `zone_spare` of them — are at the start of the next zone's map sector. To determine the full length of the last fragment, the decoder must read into the next zone's `zone_spare` region. Conversely, those same bits are skipped when the next zone is decoded, since they have already been accounted for.
 
 **Pseudocode to decode a zone:**
 
@@ -280,12 +284,28 @@ while bit_pos < zone_end:
     alloc_unit += idlen
 
     # count the zero bits + terminating 1
+    # If we reach zone_end without finding a 1, continue
+    # reading into the next zone's zone_spare bits.
+    found_terminator = false
     while bit_pos < zone_end:
         b = read_bit(map_data, bit_pos)
         bit_pos += 1
         alloc_unit += 1
         if b == 1:
+            found_terminator = true
             break
+
+    if not found_terminator and zone < nzones - 1:
+        # Fragment spans into next zone — read up to
+        # zone_spare bits from the next zone's map sector
+        next_zone_data = load_zone(zone + 1)
+        next_bit_pos = zone_header_size_for(zone + 1) * 8
+        while next_bit_pos < next_zone_header + zone_spare:
+            b = read_bit(next_zone_data, next_bit_pos)
+            next_bit_pos += 1
+            alloc_unit += 1
+            if b == 1:
+                break
 
     frag_len = alloc_unit - frag_start
     record_fragment(zone, id, frag_start, frag_len)
@@ -1012,7 +1032,7 @@ There is no boot block on floppy discs. Hard discs with old maps do have a boot 
 
 **ZoneCheck** — Checksum byte at offset `+0x00` in each zone header. Computed by summing all 32-bit words in the sector with carry, subtracting the existing check byte, and folding to 8 bits via XOR (see §A.1).
 
-**zone_spare** — Disc record field: the number of bits at the start of each non-zero zone reserved for a fragment that spans the zone boundary. These bits belong to the last fragment of the preceding zone.
+**zone_spare** — Disc record field: the number of bits at the start of each non-zero zone reserved for a fragment whose bit pattern spans the zone boundary from the preceding zone. These continuation bits carry no fragment ID and belong to the last fragment of the preceding zone. See §3.1.
 
 ---
 
