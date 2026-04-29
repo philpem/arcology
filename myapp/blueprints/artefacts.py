@@ -1540,10 +1540,54 @@ def _render_viewer(artefact):
     viewer_col_class = _COLUMN_CLASSES[viewer_columns]
 
 
+    # ── Explicit-content gate (must run before thumbnail bundling) ───────────
+    # group['explicit'] must be set before the thumbnail bundling pass so that
+    # explicit groups are not pulled into the unified thumbnail grid.
+    explicit_type = RestrictionType.EXPLICIT
+    user_can_bypass_explicit = current_user.can_bypass_restriction(explicit_type)
+
+    artefact_is_explicit = any(
+        r.restriction_type == explicit_type for r in artefact.restrictions
+    )
+
+    explicit_file_paths: set[str] = set()
+    if not artefact_is_explicit:
+        partition_ids_expl = [
+            p.id for p in Partition.query.filter(
+                Partition.artefact_id.in_(all_artefact_ids)
+            ).all()
+        ]
+        if partition_ids_expl:
+            explicit_efs = (
+                ExtractedFile.query
+                .join(ExtractedFileRestriction,
+                      ExtractedFileRestriction.extracted_file_id == ExtractedFile.id)
+                .filter(
+                    ExtractedFileRestriction.restriction_type == explicit_type,
+                    ExtractedFile.partition_id.in_(partition_ids_expl),
+                )
+                .with_entities(ExtractedFile.path)
+                .all()
+            )
+            explicit_file_paths = {row.path for row in explicit_efs}
+
+    for group in output_groups:
+        group['explicit'] = (
+            artefact_is_explicit or group.get('source_file') in explicit_file_paths
+        )
+        # Stamp stable_id now so bundle_items (original group dicts pulled into
+        # the thumbnail bundle below) carry it for per-thumbnail explicit gates.
+        # Bundle wrapper groups receive their own stable_id when constructed.
+        key_source = group.get('source_file') or group.get('label') or ''
+        group['stable_id'] = hashlib.md5(
+            f"{artefact.uuid}:{key_source}".encode()
+        ).hexdigest()[:12]
+
     # ── Thumbnail mode (Mode 2 aggregate only) ────────────────────────────────
-    # Collects all single-image, non-explicit groups from the current page into
-    # one unified grid; sprite/multi-image groups and explicit groups remain as
-    # separate labelled sections below.
+    # Collects all single-image groups from the current page (including
+    # explicit ones, which the template wraps in per-thumbnail gates) into a
+    # unified grid; sprite/multi-image groups remain as separate labelled
+    # sections below.
     is_aggregate_mode = artefact.artefact_type not in _viewable_types
 
     thumb_param = request.args.get('thumb')
@@ -1566,7 +1610,10 @@ def _render_viewer(artefact):
         single_img_groups, other_groups = [], []
         for g in output_groups:
             img_count = sum(1 for o in g['outputs'] if o.get('type') == 'image')
-            if img_count == 1 and not g.get('explicit'):
+            if img_count == 1:
+                # Explicit single-image groups stay in the bundle; the template
+                # wraps each individual explicit thumbnail with its own gate so
+                # the directory grid stays unified.
                 single_img_groups.append(g)
             else:
                 other_groups.append(g)
@@ -1648,46 +1695,16 @@ def _render_viewer(artefact):
                         module_detail['commands'] = m.get('commands', [])
                         break
 
-    # ── Explicit-content gate ────────────────────────────────────────────────
-    explicit_type = RestrictionType.EXPLICIT
-    user_can_bypass_explicit = current_user.can_bypass_restriction(explicit_type)
-
-    artefact_is_explicit = any(
-        r.restriction_type == explicit_type for r in artefact.restrictions
-    )
-
-    explicit_file_paths: set[str] = set()
-    if not artefact_is_explicit:
-        partition_ids_expl = [
-            p.id for p in Partition.query.filter(
-                Partition.artefact_id.in_(all_artefact_ids)
-            ).all()
-        ]
-        if partition_ids_expl:
-            explicit_efs = (
-                ExtractedFile.query
-                .join(ExtractedFileRestriction,
-                      ExtractedFileRestriction.extracted_file_id == ExtractedFile.id)
-                .filter(
-                    ExtractedFileRestriction.restriction_type == explicit_type,
-                    ExtractedFile.partition_id.in_(partition_ids_expl),
-                )
-                .with_entities(ExtractedFile.path)
-                .all()
-            )
-            explicit_file_paths = {row.path for row in explicit_efs}
-
+    # ── Stable IDs for any group that didn't get one upstream ───────────────
+    # Most groups are stamped before thumbnail bundling so bundle_items keep
+    # their IDs; bundle wrapper groups already receive a bundle_id at
+    # construction.  Anything still missing (defensive) gets one now.
     for group in output_groups:
-        group['explicit'] = (
-            artefact_is_explicit or group.get('source_file') in explicit_file_paths
-        )
-        # Stable short ID for the explicit-gate sessionStorage key — must be
-        # unique per content so consent doesn't bleed between different files
-        # (especially across paginated pages, where loop.index collides).
-        key_source = group.get('source_file') or group.get('label') or ''
-        group['stable_id'] = hashlib.md5(
-            f"{artefact.uuid}:{key_source}".encode()
-        ).hexdigest()[:12]
+        if not group.get('stable_id'):
+            key_source = group.get('source_file') or group.get('label') or ''
+            group['stable_id'] = hashlib.md5(
+                f"{artefact.uuid}:{key_source}".encode()
+            ).hexdigest()[:12]
 
     return render_template(
         'artefacts/viewer.html',
