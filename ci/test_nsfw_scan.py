@@ -374,7 +374,7 @@ class TestClassifyBatchBasic(unittest.TestCase):
         self.assertEqual(results[0]['conviction_path'], 'agree')
 
     def test_agree_path_blocked_when_one_model_below_threshold(self):
-        # s1 ≈ 0.731 but s2 ≈ 0.269 (< agree_threshold=0.55) → agree path blocked
+        # s1 ≈ 0.731 but s2 ≈ 0.119 (< agree_threshold=0.55) → agree path blocked
         # Primary also blocked (s2 < s2_threshold=0.80) → not explicit
         sess1 = _make_session([1.0,  0.0])   # s1 ≈ 0.731
         sess2 = _make_session([1.0, -1.0])   # s2(idx=1) ≈ 0.119 (< 0.55)
@@ -382,39 +382,88 @@ class TestClassifyBatchBasic(unittest.TestCase):
             sess1, 'pixel_values', _META1,
             sess2, 'pixel_values', _META2,
             [self.path], high_threshold=0.90, low_threshold=0.20,
-            s2_threshold=0.80, agree_threshold=0.55, s1_strong=0.95,
+            s2_threshold=0.80, agree_threshold=0.55,
         )
         self.assertEqual(results[0]['verdict'], 'not explicit')
 
-    def test_strong_s1_path_convicts_when_s1_high_s2_corroborates(self):
-        # s1 ≈ 0.881 (> s1_strong=0.75) and s2 = 0.5 (> low_threshold=0.20)
-        # Primary blocked (s2=0.5 < s2_threshold=0.70), agree blocked (s2=0.5 < 0.55)
-        # → strong_s1 path fires
-        # _META1 nsfw_class_index=0: softmax([1,-1])[0] ≈ 0.881
-        sess1 = _make_session([1.0, -1.0])   # s1 ≈ 0.881
-        sess2 = _make_session([0.0,  0.0])   # s2(idx=1) = 0.5 (> low=0.20, < s2_threshold)
+    def test_colocated_blocks_uncorroborated_crops(self):
+        # Multi-crop image (800×800 → 5 crops on each stage).
+        # Stage 1 peaks on top-left at ~0.881 (borderline, drives the image into stage 2).
+        # Stage 2 peaks on bottom-right at ~0.9999.
+        # Their winning crops disagree, so the best per-crop min is ~0.269 → blocked.
+        # Crop order: centre, top-left, top-right, bottom-left, bottom-right.
+        big = _make_image_file(800, 800)
+        try:
+            sess1 = _make_sequence_session([
+                [-0.5, 0.5],   # centre   → idx0 ≈ 0.269
+                [ 1.0,-1.0],   # tl       → idx0 ≈ 0.881  (borderline; forces stage 2)
+                [-0.5, 0.5],   # tr       → 0.269
+                [-0.5, 0.5],   # bl       → 0.269
+                [-0.5, 0.5],   # br       → 0.269
+            ])
+            sess2 = _make_sequence_session([
+                [ 0.5,-0.5],   # centre   → idx1 ≈ 0.269
+                [ 0.5,-0.5],   # tl       → 0.269
+                [ 0.5,-0.5],   # tr       → 0.269
+                [ 0.5,-0.5],   # bl       → 0.269
+                [-5.0, 5.0],   # br       → 0.9999
+            ])
+            results = classify_batch(
+                sess1, 'pixel_values', _META1,
+                sess2, 'pixel_values', _META2,
+                [big], high_threshold=0.90, low_threshold=0.20,
+                colocated_threshold=0.45,
+            )
+            self.assertEqual(results[0]['verdict'], 'not explicit')
+            self.assertEqual(results[0]['stage'],   2)
+            self.assertLess(results[0]['colocated_score'], 0.45)
+        finally:
+            os.unlink(big)
+
+    def test_colocated_passes_when_same_crop_high(self):
+        # Multi-crop image where stage 1 and stage 2 BOTH peak on top-left.
+        # Per-crop min on top-left = min(0.731, 0.9999) ≈ 0.731 → above colocated threshold.
+        big = _make_image_file(800, 800)
+        try:
+            sess1 = _make_sequence_session([
+                [-0.5, 0.5],   # centre   ≈ 0.269
+                [ 1.0,-1.0],   # tl       ≈ 0.881
+                [-0.5, 0.5],   # tr       ≈ 0.269
+                [-0.5, 0.5],   # bl       ≈ 0.269
+                [-0.5, 0.5],   # br       ≈ 0.269
+            ])
+            sess2 = _make_sequence_session([
+                [ 0.5,-0.5],   # centre   ≈ 0.269
+                [-5.0, 5.0],   # tl       ≈ 0.9999
+                [ 0.5,-0.5],   # tr       ≈ 0.269
+                [ 0.5,-0.5],   # bl       ≈ 0.269
+                [ 0.5,-0.5],   # br       ≈ 0.269
+            ])
+            results = classify_batch(
+                sess1, 'pixel_values', _META1,
+                sess2, 'pixel_values', _META2,
+                [big], high_threshold=0.95, low_threshold=0.20,
+                colocated_threshold=0.45,
+            )
+            self.assertEqual(results[0]['verdict'],          'explicit')
+            self.assertEqual(results[0]['stage'],            2)
+            self.assertEqual(results[0]['colocated_crop'],   'top-left')
+            self.assertGreaterEqual(results[0]['colocated_score'], 0.45)
+        finally:
+            os.unlink(big)
+
+    def test_colocated_score_emitted_for_not_explicit_stage2(self):
+        # Stage-2 reached but not explicit — colocated_score/crop should still be present.
+        sess1 = _make_session([0.0,  0.0])    # s1 = 0.5 (borderline)
+        sess2 = _make_session([5.0, -5.0])    # s2(idx=1) ≈ 0.0001 → not explicit
         results = classify_batch(
             sess1, 'pixel_values', _META1,
             sess2, 'pixel_values', _META2,
             [self.path], high_threshold=0.90, low_threshold=0.20,
-            s2_threshold=0.70, s1_strong=0.75,
-        )
-        self.assertEqual(results[0]['verdict'],         'explicit')
-        self.assertEqual(results[0]['stage'],           2)
-        self.assertEqual(results[0]['conviction_path'], 'strong_s1')
-
-    def test_strong_s1_path_blocked_when_s2_below_low_threshold(self):
-        # s1 ≈ 0.881 (> s1_strong) but s2 ≈ 0.119 (< low_threshold=0.20)
-        # Stage-2 clearly exonerates → should not convict
-        sess1 = _make_session([1.0, -1.0])   # s1 ≈ 0.881
-        sess2 = _make_session([1.0, -1.0])   # s2(idx=1) ≈ 0.119 (< low=0.20)
-        results = classify_batch(
-            sess1, 'pixel_values', _META1,
-            sess2, 'pixel_values', _META2,
-            [self.path], high_threshold=0.90, low_threshold=0.20,
-            s2_threshold=0.70, s1_strong=0.75, agree_threshold=0.55,
         )
         self.assertEqual(results[0]['verdict'], 'not explicit')
+        self.assertIn('colocated_score', results[0])
+        self.assertIn('colocated_crop',  results[0])
 
     def test_conviction_path_present_only_for_explicit_stage2(self):
         # Not-explicit stage-2 results should not have conviction_path

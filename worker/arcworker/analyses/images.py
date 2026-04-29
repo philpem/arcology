@@ -503,12 +503,12 @@ def process_nsfw_scan(self, analysis: dict, artefact: dict, work_dir: Path):
     import json
     from ..config import (
         NSFW_AGREE_THRESHOLD,
+        NSFW_COLOCATED,
         NSFW_ENABLED,
         NSFW_HIGH,
         NSFW_LOW,
         NSFW_MIN_PIXELS,
         NSFW_S1_MIN_EXPLICIT,
-        NSFW_S1_STRONG,
         NSFW_S2_THRESHOLD,
     )
     from ..tools.nsfw import classify_batch
@@ -568,7 +568,7 @@ def process_nsfw_scan(self, analysis: dict, artefact: dict, work_dir: Path):
             self._nsfw_sess2, self._nsfw_input2, self._nsfw_meta2,
             image_paths, NSFW_HIGH, NSFW_LOW, NSFW_MIN_PIXELS,
             s2_threshold=NSFW_S2_THRESHOLD, s1_min_explicit=NSFW_S1_MIN_EXPLICIT,
-            agree_threshold=NSFW_AGREE_THRESHOLD, s1_strong=NSFW_S1_STRONG,
+            agree_threshold=NSFW_AGREE_THRESHOLD, colocated_threshold=NSFW_COLOCATED,
         )
         results = [
             {
@@ -670,7 +670,7 @@ def process_nsfw_scan(self, analysis: dict, artefact: dict, work_dir: Path):
             self._nsfw_sess2, self._nsfw_input2, self._nsfw_meta2,
             image_paths, NSFW_HIGH, NSFW_LOW, NSFW_MIN_PIXELS,
             s2_threshold=NSFW_S2_THRESHOLD, s1_min_explicit=NSFW_S1_MIN_EXPLICIT,
-            agree_threshold=NSFW_AGREE_THRESHOLD, s1_strong=NSFW_S1_STRONG,
+            agree_threshold=NSFW_AGREE_THRESHOLD, colocated_threshold=NSFW_COLOCATED,
         )
         results = [
             {**r, 'source_file': db_path_map.get(r['path'], r['path'])}
@@ -721,7 +721,7 @@ def process_nsfw_scan(self, analysis: dict, artefact: dict, work_dir: Path):
             self._nsfw_sess2, self._nsfw_input2, self._nsfw_meta2,
             [str(input_path)], NSFW_HIGH, NSFW_LOW, NSFW_MIN_PIXELS,
             s2_threshold=NSFW_S2_THRESHOLD, s1_min_explicit=NSFW_S1_MIN_EXPLICIT,
-            agree_threshold=NSFW_AGREE_THRESHOLD, s1_strong=NSFW_S1_STRONG,
+            agree_threshold=NSFW_AGREE_THRESHOLD, colocated_threshold=NSFW_COLOCATED,
         )
         if raw_results:
             r = raw_results[0]

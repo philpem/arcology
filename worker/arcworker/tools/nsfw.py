@@ -152,7 +152,7 @@ def classify_batch(
     s2_threshold: float = 0.5,
     s1_min_explicit: float = 0.0,
     agree_threshold: float = 0.55,
-    s1_strong: float = 0.75,
+    colocated_threshold: float = 0.45,
 ) -> list[dict]:
     """
     Classify a list of image paths with the two-stage cascade.
@@ -178,10 +178,11 @@ def classify_batch(
             stage-2 independently exceed this value, the image is convicted regardless of
             s2_threshold and s1_min_explicit. Catches cases where both models are moderately
             confident but neither reaches the primary-path thresholds.
-        s1_strong: Strong stage-1 threshold (default 0.75). When stage-1 is highly confident
-            and stage-2 scores above low_threshold (i.e. does not clearly exonerate the image),
-            the image is convicted. Catches cases where stage-1 is very confident but stage-2
-            is only weakly corroborating.
+        colocated_threshold: Per-crop agreement gate (default 0.45). For an image to be convicted
+            in stage 2, at least one crop must satisfy ``min(s1[crop], s2[crop]) >= colocated_threshold``.
+            Suppresses false positives where the two models flag different unrelated patches of
+            the same image (each finding skin-coloured noise in a different region) without
+            either confirming the other.
 
     Returns:
         List of dicts, one per input path — classified or skipped::
@@ -195,7 +196,9 @@ def classify_batch(
                 "stage1_score":     float,            # stage-2 results only; stage-1 best score
                 "s1_winning_crop":  str,              # stage-2 results only; stage-1 best crop
                 "s1_crops":         list[dict],       # stage-2 results only; all stage-1 crop scores
-                "conviction_path":  str,              # stage-2 explicit only: "primary"|"agree"|"strong_s1"
+                "colocated_score":  float,            # stage-2 results only; max over crops of min(s1, s2)
+                "colocated_crop":   str,              # stage-2 results only; crop that achieved colocated_score
+                "conviction_path":  str,              # stage-2 explicit only: "primary"|"agree"
                 "s2_error":         bool,             # true when stage-2 failed and stage-1 was used as fallback
                 "verdict":          "explicit" | "not explicit" | "skipped"
                 "reason":           "too_small" | "unreadable"  # skipped only
@@ -262,23 +265,41 @@ def classify_batch(
             })
             continue
 
-        # Three independent conviction paths (any one suffices):
+        # Per-crop co-located agreement: for each crop scored by both stages,
+        # take min(s1[crop], s2[crop]); the colocated score is the best of those.
+        # A high value means at least one crop independently triggers both models.
+        s1_by_crop = {c['crop']: c['score'] for c in crops1}
+        s2_by_crop = {c['crop']: c['score'] for c in crops2}
+        colocated_score = 0.0
+        colocated_crop  = ''
+        for crop_name, s2_val in s2_by_crop.items():
+            s1_val = s1_by_crop.get(crop_name)
+            if s1_val is None:
+                continue
+            paired = min(s1_val, s2_val)
+            if paired > colocated_score:
+                colocated_score = paired
+                colocated_crop  = crop_name
+
+        # Two independent conviction paths (any one suffices), gated by per-crop agreement:
         #   primary:  s2 meets the main threshold and s1 is not sceptical
         #   agree:    both models independently score above agree_threshold
-        #   strong_s1: stage-1 is highly confident and stage-2 doesn't clearly exonerate
+        # Both paths additionally require colocated_score >= colocated_threshold —
+        # the two models must agree on at least one specific crop, not just produce
+        # high scores in unrelated regions.
         primary  = score2 >= s2_threshold and score1 >= s1_min_explicit
         agree    = score1 >= agree_threshold and score2 >= agree_threshold
-        strong   = score1 >= s1_strong and score2 > low_threshold
-        explicit2 = primary or agree or strong
+        explicit2 = (primary or agree) and colocated_score >= colocated_threshold
 
         verdict2 = 'explicit' if explicit2 else 'not explicit'
         entry: dict = {
             'path': path_str, 'stage': 2, 'score': score2, 'verdict': verdict2,
             'winning_crop': winning_crop2, 'crops': crops2,
             'stage1_score': score1, 's1_winning_crop': winning_crop1, 's1_crops': crops1,
+            'colocated_score': colocated_score, 'colocated_crop': colocated_crop,
         }
         if explicit2:
-            entry['conviction_path'] = 'primary' if primary else ('agree' if agree else 'strong_s1')
+            entry['conviction_path'] = 'primary' if primary else 'agree'
         results.append(entry)
 
     return results

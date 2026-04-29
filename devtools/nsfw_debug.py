@@ -222,6 +222,7 @@ def main():
     ap.add_argument('--low',   type=float, default=float(os.environ.get('NSFW_LOW',   '0.20')))
     ap.add_argument('--s2-threshold',    type=float, default=float(os.environ.get('NSFW_S2_THRESHOLD',    '0.70')))
     ap.add_argument('--s1-min-explicit', type=float, default=float(os.environ.get('NSFW_S1_MIN_EXPLICIT', '0.40')))
+    ap.add_argument('--colocated',       type=float, default=float(os.environ.get('NSFW_COLOCATED',       '0.45')))
     ap.add_argument('--min-pixels', type=int, default=int(os.environ.get('NSFW_MIN_PIXELS', '16384')))
     ap.add_argument('--crops',       action='store_true', help='Show per-crop score breakdown')
     ap.add_argument('--sensitivity', action='store_true', help='Print threshold sensitivity table')
@@ -251,6 +252,7 @@ def main():
         min_pixels=args.min_pixels,
         s2_threshold=args.s2_threshold,
         s1_min_explicit=args.s1_min_explicit,
+        colocated_threshold=args.colocated,
     )
 
     if args.json:
@@ -283,7 +285,7 @@ def main():
 
     print('\n  Thresholds used:')
     print(f'    s1_high={args.high}  s1_low={args.low}  s2_threshold={args.s2_threshold}  s1_min_explicit={args.s1_min_explicit}')
-    print(f'    min_pixels={args.min_pixels}')
+    print(f'    colocated={args.colocated}  min_pixels={args.min_pixels}')
 
     if args.sensitivity:
         _sensitivity_table(
