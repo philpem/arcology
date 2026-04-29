@@ -51,6 +51,14 @@
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     background: rgba(0,0,0,0.75); z-index: 10; border-radius: 0.25rem;
 }
+/* Image aspect-ratio box used both for normal thumbnails (.viewer-img-card > a)
+   and for the <a> inside an explicit thumbnail gate. */
+.viewer-thumb-link {
+    display: block; position: relative; width: 100%; padding-bottom: 100%;
+    overflow: hidden;
+    background: repeating-conic-gradient(#e0e0e0 0% 25%, #ffffff 0% 50%) 0 0 / 16px 16px;
+    border: 1px solid #dee2e6;
+}
 /* 8-column grid at xl breakpoint (Bootstrap has no col-1.5) */
 @media (min-width: 1200px) {
     .col-custom-8-xl { flex: 0 0 12.5%; width: 12.5%; max-width: 12.5%; }
@@ -278,6 +286,37 @@
     {% if img_out %}
     {% set preview_file = img_out.svg_filename if img_out.svg_filename else img_out.filename %}
     <div class="{{ viewer_col_class }}">
+        {% if item.explicit and not user_can_bypass_explicit %}
+        {# No bypass: show a locked placeholder in place of the image. #}
+        <div class="card viewer-img-card h-100">
+            <div class="viewer-thumb-link bg-dark d-flex align-items-center justify-content-center">
+                <i class="bi bi-lock-fill text-secondary fs-3"></i>
+            </div>
+            <div class="card-footer p-1 text-center">
+                <span class="viewer-name font-monospace">{{ item.label }}</span>
+            </div>
+        </div>
+        {% elif item.explicit %}
+        {# Bypass permitted: blur thumbnail in-place with a per-card gate. #}
+        <div class="card viewer-img-card h-100">
+            <div class="explicit-gate" id="explicit-gate-{{ item.stable_id }}">
+                <div class="explicit-gate-overlay" id="explicit-overlay-{{ item.stable_id }}">
+                    <span class="badge bg-danger mb-2"><i class="bi bi-exclamation-triangle-fill"></i> Explicit</span>
+                    <button class="btn btn-outline-light btn-sm" onclick="revealExplicit('{{ item.stable_id }}')">Show</button>
+                </div>
+                <div id="explicit-content-{{ item.stable_id }}" class="explicit-content-blur">
+                    <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
+                       class="viewer-thumb-link" target="_blank" rel="noopener">
+                        <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
+                             class="viewer-img" alt="{{ img_out.name }}" loading="lazy">
+                    </a>
+                </div>
+            </div>
+            <div class="card-footer p-1 text-center">
+                <span class="viewer-name font-monospace">{{ item.label }}</span>
+            </div>
+        </div>
+        {% else %}
         <div class="card viewer-img-card h-100">
             <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
                target="_blank" rel="noopener">
@@ -288,6 +327,7 @@
                 <span class="viewer-name font-monospace">{{ item.label }}</span>
             </div>
         </div>
+        {% endif %}
     </div>
     {% endif %}
     {% endfor %}
