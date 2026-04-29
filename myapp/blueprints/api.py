@@ -1021,7 +1021,12 @@ def get_pending_analyses():
         .limit(50)
         .all()
     )
-    return jsonify({'analyses': [analysis_to_dict(a, include_artefact=True) for a in analyses]})
+    # Worker reads storage_path / storage_directory from each artefact to
+    # locate the input file (see worker/arcworker/analysis.py).
+    return jsonify({'analyses': [
+        analysis_to_dict(a, include_artefact=True, include_artefact_storage=True)
+        for a in analyses
+    ]})
 
 
 @blueprint.route('/analysis/reset-stale', methods=['POST'])
