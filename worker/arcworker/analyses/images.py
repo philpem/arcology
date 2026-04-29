@@ -461,7 +461,14 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
     # Queue NSFW_SCAN to classify the converted PNG outputs.  Must be queued
     # here (after FORMAT_CONVERT completes) rather than alongside it, because
     # the PNGs don't exist until the conversion finishes.
-    # SVG outputs (Draw files) are excluded — Pillow cannot read SVG.
+    #
+    # Only Sprite-to-PNG conversions are queued.  Raster sources whose outputs
+    # are produced by 'passthrough' (jpg/png/gif/webp byte copies) or
+    # 'pillow-convert' (bmp/tiff/pcx/tga/RISC OS hex JPEG → PNG) are already
+    # classified by NSFW extraction_scan against their originals — see the
+    # ext / risc_os_filetype filter in process_nsfw_scan.  Including them here
+    # would double the NSFW compute on every raster-heavy ISO.
+    # SVG outputs (Draw / WMF / EMF) are excluded — Pillow cannot read SVG.
     from ..config import NSFW_ENABLED
     if NSFW_ENABLED:
         from shared.enums import AnalysisType as _AT
@@ -472,7 +479,8 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
                 **({'sprite_name': o['name']} if o.get('tool') == 'spritefile' and o.get('name') else {}),
             }
             for o in all_outputs
-            if o.get('type') == 'image' and not o.get('filename', '').endswith('.svg')
+            if o.get('type') == 'image'
+            and o.get('tool') == 'spritefile'
         ]
         if nsfw_fc_outputs:
             fc_nsfw_hints: dict = {'format_convert_outputs': nsfw_fc_outputs}
