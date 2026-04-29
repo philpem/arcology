@@ -23,7 +23,7 @@ def item_to_dict(item, include_artefacts=False, _artefact_count=None):
     return result
 
 
-def artefact_to_dict(artefact, include_partitions=False):
+def artefact_to_dict(artefact, include_partitions=False, include_storage=False):
     result = {
         'id': artefact.id, 'uuid': artefact.uuid, 'slug': artefact.slug,
         'item_id': artefact.item_id,
@@ -40,6 +40,9 @@ def artefact_to_dict(artefact, include_partitions=False):
         'is_restricted': artefact.is_restricted,
         'created_at': artefact.created_at.isoformat(), 'updated_at': artefact.updated_at.isoformat()
     }
+    if include_storage:
+        result['storage_path'] = artefact.storage_path
+        result['storage_directory'] = artefact.storage_directory.value
     if include_partitions:
         result['partitions'] = [partition_to_dict(p) for p in artefact.partitions]
     return result
@@ -60,15 +63,17 @@ def analysis_to_dict(analysis, include_artefact=False):
         'completed_at': analysis.completed_at.isoformat() if analysis.completed_at else None
     }
     if include_artefact:
-        result['artefact'] = {'id': analysis.artefact.id, 'uuid': analysis.artefact.uuid,
-                             'slug': analysis.artefact.slug,
-                             'label': analysis.artefact.label,
-                             'original_filename': analysis.artefact.original_filename,
-                             'storage_path': analysis.artefact.storage_path,
-                             'storage_directory': analysis.artefact.storage_directory.value,
-                             'artefact_type': analysis.artefact.artefact_type.value,
-                             'item': {'uuid': analysis.artefact.item.uuid,
-                                      'slug': analysis.artefact.item.slug}} if analysis.artefact else None
+        if analysis.artefact:
+            art_dict = artefact_to_dict(analysis.artefact, include_storage=True)
+            # Preserve the nested item shape that worker code reads as
+            # artefact['item']['uuid'] / ['slug'] (see arcworker/analyses/*.py).
+            art_dict['item'] = {
+                'uuid': analysis.artefact.item.uuid,
+                'slug': analysis.artefact.item.slug,
+            }
+            result['artefact'] = art_dict
+        else:
+            result['artefact'] = None
     return result
 
 
