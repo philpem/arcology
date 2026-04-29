@@ -25,8 +25,10 @@ def item_to_dict(item, include_artefacts=False, _artefact_count=None):
 
 def artefact_to_dict(artefact, include_partitions=False):
     result = {
-        'id': artefact.id, 'uuid': artefact.uuid, 'item_id': artefact.item_id,
+        'id': artefact.id, 'uuid': artefact.uuid, 'slug': artefact.slug,
+        'item_id': artefact.item_id,
         'item_uuid': artefact.item.uuid, 'item_name': artefact.item.name,
+        'item_slug': artefact.item.slug,
         'label': artefact.label,
         'artefact_type': artefact.artefact_type.value,
         'type_overridden': artefact.type_overridden,
@@ -111,7 +113,7 @@ def analysis_tree_node(artefact):
     """
     from ..database import Analysis, Artefact
     node = {
-        'uuid': artefact.uuid, 'label': artefact.label,
+        'uuid': artefact.uuid, 'slug': artefact.slug, 'label': artefact.label,
         'artefact_type': artefact.artefact_type.value,
         'original_filename': artefact.original_filename,
         'parent_artefact_uuid': artefact.parent.uuid if artefact.parent_artefact_id else None,
@@ -168,6 +170,7 @@ def processing_tree_to_dict(root_artefact):
         art = node['artefact']
         return {
             'uuid': art.uuid,
+            'slug': art.slug,
             'label': art.label,
             'artefact_type': art.artefact_type.value,
             'original_filename': art.original_filename,
