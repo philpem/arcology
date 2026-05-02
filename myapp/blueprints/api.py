@@ -410,6 +410,8 @@ def update_item(uuid):
             if new_parent.id == item.id or item.is_ancestor_of(new_parent):
                 return error_response('Cannot move an item to itself or one of its descendants', 400)
             item.parent_id = new_parent.id
+    if 'name' in data:
+        item.slug = ensure_unique_slug(generate_slug(item.name), Item, existing_id=item.id)
     db.session.commit()
     return jsonify(item_to_dict(item))
 
@@ -1268,6 +1270,10 @@ def produce_artefact(id):
         existing.derived_from_analysis_id = analysis.id
         existing.label = data['label']
         existing.original_filename = data['original_filename']
+        existing.slug = ensure_unique_slug(
+            generate_slug(existing.label), Artefact,
+            existing_id=existing.id, scope_filter={'item_id': existing.item_id},
+        )
         try:
             db.session.commit()
         except Exception as e:
