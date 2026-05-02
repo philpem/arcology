@@ -2649,6 +2649,10 @@ def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
 
     if form.validate_on_submit():
         artefact.label = form.label.data
+        artefact.slug = ensure_unique_slug(
+            generate_slug(artefact.label), Artefact,
+            existing_id=artefact.id, scope_filter={'item_id': artefact.item_id},
+        )
         new_type = ArtefactType(form.artefact_type.data)
         if new_type != artefact.artefact_type:
             artefact.artefact_type = new_type

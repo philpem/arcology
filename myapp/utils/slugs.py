@@ -68,8 +68,8 @@ def get_or_create_slug(obj, text_field: str, max_length: int = 200) -> str:
     """
     Get existing slug or create and save new one.
 
-    Slugs are immutable once set - this function will not regenerate
-    an existing slug even if the source text has changed.
+    Used only at creation time. For updates, call ensure_unique_slug directly
+    so the slug tracks the current name/label.
 
     Args:
         obj: Database object (Item, Artefact, Analysis, Partition)

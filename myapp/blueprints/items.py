@@ -16,7 +16,7 @@ from ..extensions import db
 from ..permissions import require_permission
 from ..utils.item_helpers import assign_item_fields, assign_item_tags, item_choice_list, item_parent_choice_list
 from ..utils.pagination import VALID_PER_PAGE, compute_letter_pages, resolve_per_page, resolve_sort
-from ..utils.slugs import get_or_create_slug, lookup_by_identifier
+from ..utils.slugs import ensure_unique_slug, generate_slug, get_or_create_slug, lookup_by_identifier
 from .artefacts import bulk_delete_item
 
 _ITEM_SORT_OPTIONS = {
@@ -305,6 +305,7 @@ def edit(uuid):
         )
         assign_item_tags(item, form.tags.data)
 
+        item.slug = ensure_unique_slug(generate_slug(item.name), Item, existing_id=item.id)
         db.session.commit()
 
         flash(f'Item "{item.name}" updated successfully.', 'success')
