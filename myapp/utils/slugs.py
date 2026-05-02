@@ -106,8 +106,12 @@ def get_or_create_slug(obj, text_field: str, max_length: int = 200) -> str:
         # If no text and no existing slug, can't generate
         raise ValueError(f"Cannot generate slug: {text_field} is empty and no existing slug")
 
-    # Generate new slug
-    slug = generate_slug(text, max_length=max_length)
+    # Generate a unique slug (mirrors the API creation path)
+    from myapp.database import Item
+    model_class = type(obj)
+    base_slug = generate_slug(text, max_length=max_length)
+    scope = None if model_class is Item else {'item_id': obj.item_id}
+    slug = ensure_unique_slug(base_slug, model_class, scope_filter=scope)
 
     # Save to object
     if hasattr(obj, 'slug'):
