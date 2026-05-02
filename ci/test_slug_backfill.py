@@ -15,8 +15,6 @@ Run:
 import os
 import sys
 import unittest
-from unittest.mock import patch
-from io import StringIO
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
@@ -65,7 +63,6 @@ class TestBackfillSlugsItems(unittest.TestCase):
             _db.create_all()
 
     def setUp(self):
-        # Each test gets a clean context
         self.ctx = self.app.app_context()
         self.ctx.push()
 
@@ -82,13 +79,11 @@ class TestBackfillSlugsItems(unittest.TestCase):
             args.append('--dry-run')
         if 'batch_size' in kwargs:
             args += ['--batch-size', str(kwargs['batch_size'])]
-        # Run inside the existing app context by pushing app manually
         with self.app.app_context():
             result = runner.invoke(backfill_slugs, args, catch_exceptions=False)
         return result
 
     def test_null_item_slug_gets_assigned(self):
-        from myapp.database import Item
         item = _make_item(self.db, 'Test Item Alpha')
         self.assertIsNone(item.slug)
 
@@ -98,7 +93,6 @@ class TestBackfillSlugsItems(unittest.TestCase):
         self.assertEqual(item.slug, 'test-item-alpha')
 
     def test_item_with_existing_slug_is_skipped(self):
-        from myapp.database import Item
         item = _make_item(self.db, 'Already Slugged', slug='already-slugged')
 
         self._run_backfill()
@@ -107,9 +101,8 @@ class TestBackfillSlugsItems(unittest.TestCase):
         self.assertEqual(item.slug, 'already-slugged')
 
     def test_item_slug_collision_produces_suffix(self):
-        from myapp.database import Item
         # One item already holds the base slug
-        existing = _make_item(self.db, 'Duplicate Name', slug='duplicate-name')
+        _make_item(self.db, 'Duplicate Name', slug='duplicate-name')
         # Second item with the same name but no slug yet
         new_item = _make_item(self.db, 'Duplicate Name')
         self.assertIsNone(new_item.slug)
@@ -120,7 +113,6 @@ class TestBackfillSlugsItems(unittest.TestCase):
         self.assertEqual(new_item.slug, 'duplicate-name-2')
 
     def test_dry_run_does_not_write(self):
-        from myapp.database import Item
         item = _make_item(self.db, 'Dry Run Item')
         self.assertIsNone(item.slug)
 
@@ -175,7 +167,7 @@ class TestBackfillSlugsArtefacts(unittest.TestCase):
 
     def test_artefact_collision_within_item_produces_suffix(self):
         item = _make_item(self.db, 'Item Collision Test', slug='item-collision-test')
-        existing = _make_artefact(self.db, item, 'Side A', slug='side-a')
+        _make_artefact(self.db, item, 'Side A', slug='side-a')
         new_art = _make_artefact(self.db, item, 'Side A')
         self.assertIsNone(new_art.slug)
 
@@ -234,7 +226,7 @@ class TestGetOrCreateSlugUniqueness(unittest.TestCase):
     def test_get_or_create_slug_avoids_collision(self):
         from myapp.utils.slugs import get_or_create_slug
         # First item claims the base slug
-        item1 = _make_item(self.db, 'Collision Item', slug='collision-item')
+        _make_item(self.db, 'Collision Item', slug='collision-item')
         # Second item with the same name, no slug yet
         item2 = _make_item(self.db, 'Collision Item')
 
