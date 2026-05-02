@@ -25,6 +25,25 @@ inconsistencies.
 flask rebuild-search-index
 ```
 
+## backfill-slugs
+
+Populate the `slug` column for Items and Artefacts where it is NULL.  This
+affects rows created before slug-on-write was added to the creation paths.
+
+Run once after deploying the slug-on-write fix to bring legacy rows up to date.
+The command is idempotent — rows that already have a slug are skipped.
+
+```bash
+flask backfill-slugs                         # assign slugs to all NULL rows
+flask backfill-slugs --dry-run               # preview without changes
+flask backfill-slugs --batch-size 200        # smaller commit batches
+```
+
+Slugs are assigned using the same `ensure_unique_slug` logic as new rows:
+Items use global uniqueness; Artefacts are scoped per item (so two artefacts
+labelled "Disc 1" in different items each get `disc-1`, not `disc-1` and
+`disc-1-2`).
+
 ## rescan-hashes
 
 Re-link extracted files to active hash databases without re-analysing.
