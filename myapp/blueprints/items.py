@@ -240,6 +240,11 @@ def new():
 def view(uuid):
     """View an item and its artefacts."""
     item = lookup_by_identifier(Item, uuid)
+    if uuid != item.url_id:
+        loc = url_for(f'{ROUTENAME}.view', uuid=item.url_id)
+        if request.query_string:
+            loc += '?' + request.query_string.decode()
+        return redirect(loc, 301)
 
     per_page, page, view_all = resolve_per_page('ARTEFACTS_PER_PAGE', 25)
 
@@ -274,6 +279,8 @@ def view(uuid):
 def edit(uuid):
     """Edit an item (including moving it to a different parent)."""
     item = lookup_by_identifier(Item, uuid)
+    if request.method == 'GET' and uuid != item.url_id:
+        return redirect(url_for(f'{ROUTENAME}.edit', uuid=item.url_id), 301)
     form = ItemForm(obj=item)
 
     form.platform_id.choices = item_choice_list(Platform, '-- Select Platform --')
