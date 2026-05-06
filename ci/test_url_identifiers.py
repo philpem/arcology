@@ -179,6 +179,120 @@ class TestArtefactLookup(unittest.TestCase):
         self._lookup_404(self.item_id, 'nonexistent-slug')
 
 
+class TestPrefixCollisionLookupByIdentifier(unittest.TestCase):
+    """lookup_by_identifier: ambiguous prefix → slug tiebreaker or 404."""
+
+    # Forge two items whose UUIDs share the same first 8 hex characters by
+    # directly setting uuid on the model after creation.
+    SHARED_PREFIX = 'aabbccdd'
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.app import create_app
+        from myapp.extensions import db as _db
+
+        cls.app = create_app()
+        cls.app.config['TESTING'] = True
+
+        with cls.app.app_context():
+            _db.create_all()
+            a = _make_item(_db, name='Collision Alpha')
+            b = _make_item(_db, name='Collision Beta')
+            a.uuid = cls.SHARED_PREFIX + 'a' * 24
+            a.slug = 'collision-alpha'
+            b.uuid = cls.SHARED_PREFIX + 'b' * 24
+            b.slug = 'collision-beta'
+            _db.session.commit()
+            cls.item_a_id = a.id
+            cls.item_b_id = b.id
+
+    def _lookup(self, identifier):
+        from myapp.database import Item
+        from myapp.utils.slugs import lookup_by_identifier
+        with self.app.app_context():
+            return lookup_by_identifier(Item, identifier)
+
+    def _lookup_404(self, identifier):
+        from werkzeug.exceptions import NotFound
+        from myapp.database import Item
+        from myapp.utils.slugs import lookup_by_identifier
+        with self.app.app_context():
+            with self.assertRaises(NotFound):
+                lookup_by_identifier(Item, identifier)
+
+    def test_prefix_alone_is_ambiguous_returns_404(self):
+        self._lookup_404(self.SHARED_PREFIX)
+
+    def test_prefix_plus_correct_slug_resolves_a(self):
+        item = self._lookup(f'{self.SHARED_PREFIX}-collision-alpha')
+        self.assertEqual(item.id, self.item_a_id)
+
+    def test_prefix_plus_correct_slug_resolves_b(self):
+        item = self._lookup(f'{self.SHARED_PREFIX}-collision-beta')
+        self.assertEqual(item.id, self.item_b_id)
+
+    def test_prefix_plus_wrong_slug_returns_404(self):
+        self._lookup_404(f'{self.SHARED_PREFIX}-no-such-slug')
+
+
+class TestPrefixCollisionLookupArtefact(unittest.TestCase):
+    """lookup_artefact_by_id: ambiguous prefix within item → slug tiebreaker or 404."""
+
+    SHARED_PREFIX = 'eeff0011'
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.app import create_app
+        from myapp.extensions import db as _db
+
+        cls.app = create_app()
+        cls.app.config['TESTING'] = True
+
+        with cls.app.app_context():
+            _db.create_all()
+            cls.item = _make_item(_db, name='Artefact Collision Item')
+            a = _make_artefact(_db, cls.item, label='Side A')
+            b = _make_artefact(_db, cls.item, label='Side B')
+            a.uuid = cls.SHARED_PREFIX + 'a' * 24
+            a.slug = 'side-a'
+            b.uuid = cls.SHARED_PREFIX + 'b' * 24
+            b.slug = 'side-b'
+            _db.session.commit()
+            cls.item_id = cls.item.id
+            cls.art_a_id = a.id
+            cls.art_b_id = b.id
+
+    def _lookup(self, artefact_id):
+        from myapp.database import Item
+        from myapp.utils.slugs import lookup_artefact_by_id
+        with self.app.app_context():
+            item = Item.query.get(self.item_id)
+            return lookup_artefact_by_id(item, artefact_id)
+
+    def _lookup_404(self, artefact_id):
+        from werkzeug.exceptions import NotFound
+        from myapp.database import Item
+        from myapp.utils.slugs import lookup_artefact_by_id
+        with self.app.app_context():
+            item = Item.query.get(self.item_id)
+            with self.assertRaises(NotFound):
+                lookup_artefact_by_id(item, artefact_id)
+
+    def test_prefix_alone_is_ambiguous_returns_404(self):
+        self._lookup_404(self.SHARED_PREFIX)
+
+    def test_prefix_plus_correct_slug_resolves_a(self):
+        art = self._lookup(f'{self.SHARED_PREFIX}-side-a')
+        self.assertEqual(art.id, self.art_a_id)
+
+    def test_prefix_plus_correct_slug_resolves_b(self):
+        art = self._lookup(f'{self.SHARED_PREFIX}-side-b')
+        self.assertEqual(art.id, self.art_b_id)
+
+    def test_prefix_plus_wrong_slug_returns_404(self):
+        self._lookup_404(f'{self.SHARED_PREFIX}-no-such-slug')
+
+
 class TestUrlIdProperty(unittest.TestCase):
     """Tests for Item.url_id and Artefact.url_slug properties."""
 
