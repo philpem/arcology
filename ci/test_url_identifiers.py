@@ -612,6 +612,70 @@ class TestApiSlugGeneration(unittest.TestCase):
             self.assertNotEqual(a1.slug, a2.slug, f'Slugs not unique: {a1.slug!r}')
 
 
+class TestCanonicalRedirect(unittest.TestCase):
+    """GET views issue 301 to the canonical URL when a stale or short identifier is used."""
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.app import create_app
+        from myapp.extensions import db as _db
+
+        cls.app = create_app()
+        cls.app.config['TESTING'] = True
+        # Bypass @login_required so redirect tests aren't shadowed by auth redirects.
+        cls.app.config['LOGIN_DISABLED'] = True
+        cls.client = cls.app.test_client()
+
+        with cls.app.app_context():
+            _db.create_all()
+
+            item = _make_item(_db, name='Redirect Test Item')
+            item.slug = 'redirect-test-item'
+            _db.session.commit()
+            cls.item_prefix = item.uuid[:8]
+            cls.item_canonical_id = item.url_id  # e.g. 'abc123de-redirect-test-item'
+
+            artefact = _make_artefact(_db, item, label='Disc 1')
+            artefact.slug = 'disc-1'
+            _db.session.commit()
+            cls.artefact_prefix = artefact.uuid[:8]
+            cls.artefact_canonical_slug = 'disc-1'
+
+    def test_item_view_short_uuid_redirects_to_canonical(self):
+        """GET /items/<uuid8> → 301 to /items/<uuid8-slug>."""
+        r = self.client.get(f'/items/{self.item_prefix}')
+        self.assertEqual(r.status_code, 301)
+        self.assertIn(self.item_canonical_id, r.headers['Location'])
+
+    def test_item_view_canonical_url_no_redirect(self):
+        """GET /items/<uuid8-slug> → 200, no redirect."""
+        r = self.client.get(f'/items/{self.item_canonical_id}')
+        self.assertEqual(r.status_code, 200)
+
+    def test_item_view_query_string_preserved(self):
+        """Query string is preserved through the canonical redirect."""
+        r = self.client.get(f'/items/{self.item_prefix}?page=2')
+        self.assertEqual(r.status_code, 301)
+        self.assertIn('page=2', r.headers['Location'])
+
+    def test_artefact_view_short_uuid_redirects_to_canonical(self):
+        """GET /items/<uuid8>/artefacts/<uuid8> → 301 to canonical form."""
+        r = self.client.get(
+            f'/items/{self.item_prefix}/artefacts/{self.artefact_prefix}'
+        )
+        self.assertEqual(r.status_code, 301)
+        loc = r.headers['Location']
+        self.assertIn(self.item_canonical_id, loc)
+        self.assertIn(self.artefact_canonical_slug, loc)
+
+    def test_artefact_view_canonical_url_no_redirect(self):
+        """GET /items/<canonical>/artefacts/<slug> → 200, no redirect."""
+        r = self.client.get(
+            f'/items/{self.item_canonical_id}/artefacts/{self.artefact_canonical_slug}'
+        )
+        self.assertEqual(r.status_code, 200)
+
+
 if __name__ == '__main__':
     unittest.main()
 

@@ -1080,6 +1080,32 @@ def _artefact_view_kwargs(artefact):
     }
 
 
+def _canonical_redirect(endpoint, item, item_id, artefact, artefact_id, root_id=None):
+    """Return 301 to canonical URL if item_id/artefact_id are not in canonical form, else None.
+
+    Preserves the query string.  Only call on GET requests.
+    """
+    canonical_item_id = item.url_id
+    canonical_artefact_id = artefact.url_slug
+    if root_id is None:
+        if item_id == canonical_item_id and artefact_id == canonical_artefact_id:
+            return None
+        loc = url_for(endpoint, item_id=canonical_item_id, artefact_id=canonical_artefact_id)
+    else:
+        canonical_root_id = artefact.root_artefact.url_slug
+        if (item_id == canonical_item_id
+                and root_id == canonical_root_id
+                and artefact_id == canonical_artefact_id):
+            return None
+        loc = url_for(endpoint,
+                      item_id=canonical_item_id,
+                      root_id=canonical_root_id,
+                      artefact_id=canonical_artefact_id)
+    if request.query_string:
+        loc += '?' + request.query_string.decode()
+    return redirect(loc, 301)
+
+
 def _redirect_to_artefact_view(artefact):
     """Redirect to the standard artefact view."""
     return redirect(url_for(f'{ROUTENAME}.view', **_artefact_view_kwargs(artefact)))
@@ -1192,7 +1218,11 @@ def _check_artefact_file_restrictions(artefact):
 @login_required
 def view(item_id, artefact_id, root_id=None):
     """View an artefact and its partitions/files."""
-    _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
+    item, artefact = _resolve_artefact(item_id, artefact_id, root_id)
+    endpoint = f'{ROUTENAME}.view_nested' if root_id is not None else f'{ROUTENAME}.view'
+    redir = _canonical_redirect(endpoint, item, item_id, artefact, artefact_id, root_id)
+    if redir:
+        return redir
     return _render_artefact_view(artefact)
 
 
@@ -1227,7 +1257,10 @@ def tree(uuid):
 @login_required
 def viewer(item_id, artefact_id):
     """Viewer page for converted outputs (images, text, etc.)."""
-    _, artefact = _resolve_artefact(item_id, artefact_id)
+    item, artefact = _resolve_artefact(item_id, artefact_id)
+    redir = _canonical_redirect(f'{ROUTENAME}.viewer', item, item_id, artefact, artefact_id)
+    if redir:
+        return redir
     return _render_viewer(artefact)
 
 
@@ -1235,7 +1268,10 @@ def viewer(item_id, artefact_id):
 @login_required
 def viewer_nested(item_id, root_id, artefact_id):
     """Viewer page for converted outputs (nested artefact)."""
-    _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
+    item, artefact = _resolve_artefact(item_id, artefact_id, root_id)
+    redir = _canonical_redirect(f'{ROUTENAME}.viewer_nested', item, item_id, artefact, artefact_id, root_id)
+    if redir:
+        return redir
     return _render_viewer(artefact)
 
 
@@ -2637,12 +2673,19 @@ def upload(item_id):
 def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Edit artefact metadata."""
     artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
+
+    if request.method == 'GET' and uuid is None and item_id is not None:
+        endpoint = f'{ROUTENAME}.edit_nested' if root_id is not None else f'{ROUTENAME}.edit'
+        redir = _canonical_redirect(endpoint, artefact.item, item_id, artefact, artefact_id, root_id)
+        if redir:
+            return redir
+
     form = ArtefactEditForm(obj=artefact)
-    
+
     # Build type choices
     type_choices = [(t.value, t.value.upper().replace('_', ' ')) for t in ArtefactType]
     form.artefact_type.choices = type_choices
-    
+
     if request.method == 'GET':
         form.artefact_type.data = artefact.artefact_type.value
         form.tags.data = ', '.join(t.name for t in artefact.tags)
