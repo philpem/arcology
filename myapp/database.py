@@ -665,6 +665,7 @@ class Partition(db.Model):
     slug: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
     filesystem: Mapped[FilesystemType] = mapped_column(SQLEnum(FilesystemType))
     container_format: Mapped[str | None] = mapped_column(Text, nullable=True)  # Detailed format from disc image tools (e.g., "Acorn ADFS E")
+    archive_comment: Mapped[str | None] = mapped_column(Text, nullable=True)  # ZIP-style archive-wide comment, decoded as text
     start_sector: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     sector_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     block_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -707,6 +708,7 @@ class ExtractedFile(db.Model):
     is_archive: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     is_directory: Mapped[bool] = mapped_column(Boolean, default=False, index=True)  # True if this is a directory entry
     archive_format: Mapped[str | None] = mapped_column(String(50), nullable=True)  # e.g., 'ArcFS', 'ZIP', 'CFS'
+    archive_comment: Mapped[str | None] = mapped_column(Text, nullable=True)  # ZIP-style archive-wide comment, decoded as text
     risc_os_filetype: Mapped[str | None] = mapped_column(String(3), nullable=True, index=True)  # Hex filetype (e.g., '3fb')
     load_address: Mapped[str | None] = mapped_column(String(8), nullable=True)  # RISC OS load address (8-char hex, e.g., 'fffff300')
     exec_address: Mapped[str | None] = mapped_column(String(8), nullable=True)  # RISC OS exec address (8-char hex)

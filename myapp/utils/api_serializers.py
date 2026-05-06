@@ -83,6 +83,7 @@ def partition_to_dict(partition):
     return {'id': partition.id, 'uuid': partition.uuid, 'partition_index': partition.partition_index,
             'label': partition.label, 'filesystem': partition.filesystem.value,
             'container_format': partition.container_format,
+            'archive_comment': partition.archive_comment,
             'total_files': partition.total_files, 'unique_files': partition.unique_files}
 
 
@@ -106,6 +107,7 @@ def file_to_dict(f):
         'attributes': f.attributes,
         'is_archive': f.is_archive,
         'archive_format': f.archive_format,
+        'archive_comment': f.archive_comment,
         'parent_file_id': f.parent_file_id,
         'extraction_depth': f.extraction_depth,
     }

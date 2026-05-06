@@ -1356,6 +1356,7 @@ def add_partition(uuid):
     partition = Partition(artefact_id=artefact.id, partition_index=partition_index,
                           label=data.get('label'), filesystem=filesystem,
                           container_format=data.get('container_format'),
+                          archive_comment=data.get('archive_comment'),
                           total_files=data.get('total_files'), total_bytes=data.get('total_bytes'))
     db.session.add(partition)
     db.session.commit()
@@ -1522,7 +1523,10 @@ def mark_file_as_archive(file_id):
         return error
 
     file.is_archive = data.get('is_archive', True)
-    file.archive_format = data.get('archive_format')
+    if 'archive_format' in data:
+        file.archive_format = data.get('archive_format')
+    if 'archive_comment' in data:
+        file.archive_comment = data.get('archive_comment')
 
     db.session.commit()
     return jsonify(file_to_dict(file))

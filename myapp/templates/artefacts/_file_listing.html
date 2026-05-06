@@ -36,6 +36,17 @@
                     <a href="?{% if hashdb_mode %}mode=hashdb{% endif %}" class="btn btn-sm btn-outline-secondary" title="Clear all filters">Clear</a>
                 </form>
             </div>
+            {% if archive_comment_banner %}
+            <div class="card-body border-bottom py-2">
+                <div class="d-flex align-items-start gap-2">
+                    <i class="bi bi-chat-left-text-fill text-muted mt-1"></i>
+                    <div class="flex-grow-1">
+                        <div class="small text-muted mb-1">Archive comment{% if archive_comment_label %} — <span class="font-monospace">{{ archive_comment_label }}</span>{% endif %}</div>
+                        <pre class="mb-0 small" style="white-space: pre-wrap; font-family: monospace;">{{ archive_comment_banner }}</pre>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
             {{ render_subdirectory_bar(subdirectories, current_path, pagination_args, archive_paths=archive_paths, recognised_folder_paths=recognised_folder_paths) }}
             {{ render_letter_bar_compact(letter_pages, current_letter, pagination_args) }}
             {% if hashdb_mode %}
@@ -124,6 +135,17 @@
                                        title="Browse archive contents">
                                         <i class="bi bi-file-zip-fill"></i> <strong>{{ file_display_parts[-1] }}</strong>
                                     </a>
+                                    {% if file.archive_comment %}
+                                    <button type="button" class="btn btn-link btn-sm p-0 ms-1 text-muted"
+                                            data-bs-toggle="modal"
+                                            data-bs-target="#archiveInfoModal"
+                                            data-archive-name="{{ file.path }}"
+                                            data-archive-format="{{ file.archive_format or '' }}"
+                                            data-archive-comment="{{ file.archive_comment }}"
+                                            title="Show archive details">
+                                        <i class="bi bi-search"></i>
+                                    </button>
+                                    {% endif %}
                                 {% else %}
                                     {% set path_parts = file.path.split('/') %}
                                     {% if current_path %}
@@ -567,3 +589,41 @@
 })();
 </script>
 {% endif %}
+
+{# ── Archive details modal — shown when user clicks the magnifying-glass next to a nested archive ── #}
+<div class="modal fade" id="archiveInfoModal" tabindex="-1" aria-labelledby="archiveInfoModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="archiveInfoModalLabel">
+          <i class="bi bi-file-zip-fill"></i> Archive details — <span id="aim-name" class="font-monospace"></span>
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <dl class="row mb-3">
+          <dt class="col-sm-3">Format</dt>
+          <dd class="col-sm-9" id="aim-format"></dd>
+        </dl>
+        <h6>Archive comment</h6>
+        <pre id="aim-comment" class="border rounded p-2 small mb-0" style="white-space: pre-wrap; font-family: monospace; max-height: 60vh; overflow-y: auto;"></pre>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function() {
+    var modal = document.getElementById('archiveInfoModal');
+    if (!modal) return;
+    modal.addEventListener('show.bs.modal', function(event) {
+        var btn = event.relatedTarget;
+        if (!btn) return;
+        document.getElementById('aim-name').textContent = btn.getAttribute('data-archive-name') || '';
+        document.getElementById('aim-format').textContent = btn.getAttribute('data-archive-format') || '(unknown)';
+        document.getElementById('aim-comment').textContent = btn.getAttribute('data-archive-comment') || '';
+    });
+})();
+</script>

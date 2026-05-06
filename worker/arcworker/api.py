@@ -240,6 +240,7 @@ class ArcologyAPI:
         label: str = None,
         container_format: str = None,
         partition_index: int = 0,
+        archive_comment: str | None = None,
     ):
         """
         Register extracted file listing in API.
@@ -265,6 +266,8 @@ class ArcologyAPI:
             partition_data['label'] = label
         if container_format:
             partition_data['container_format'] = container_format
+        if archive_comment:
+            partition_data['archive_comment'] = archive_comment
 
         partition_resp = self.post(f"/artefacts/{artefact_uuid}/partitions", partition_data)
 

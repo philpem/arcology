@@ -223,14 +223,19 @@ def _archive_success(
     summary: str,
     file_count: int,
     process_output: dict | None = None,
+    archive_comment: str | None = None,
 ) -> dict[str, Any]:
     """Build a standard successful archive-result payload."""
+    extra: dict[str, Any] = {}
+    if archive_comment:
+        extra['archive_comment'] = archive_comment
     return tool_result(
         True,
         tool=tool,
         process_output=process_output,
         file_count=file_count,
         summary=summary,
+        **extra,
     )
 
 
@@ -377,6 +382,51 @@ def extract_tbafs(input_path: Path, output_dir: Path) -> dict[str, Any]:
     )
 
 
+def read_zip_comment(zip_path: Path) -> str | None:
+    """Return the ZIP archive-wide comment, or None if absent.
+
+    The comment lives in the End-of-Central-Directory (EOCD) record at
+    the end of a ZIP file.  ZIPs use Code Page 437 historically, so the
+    bytes are decoded as cp437 (with replacement on invalid sequences).
+
+    Uses raw struct parsing — Python's :mod:`zipfile` rejects RISC OS
+    ZIPs with the Acorn 0x4341 extra-field as ``BadZipFile`` even when
+    the EOCD itself is well-formed.
+
+    Returns:
+        The trimmed comment string, or None if the archive has no comment
+        or could not be parsed.
+    """
+    try:
+        with open(zip_path, 'rb') as fh:
+            fh.seek(0, 2)
+            file_size = fh.tell()
+            search_start = max(0, file_size - 65557)
+            fh.seek(search_start)
+            tail = fh.read()
+
+            eocd_pos = tail.rfind(b'PK\x05\x06')
+            if eocd_pos < 0:
+                return None
+            eocd = tail[eocd_pos:]
+            if len(eocd) < 22:
+                return None
+
+            comment_len = struct.unpack_from('<H', eocd, 20)[0]
+            if comment_len == 0:
+                return None
+
+            comment_bytes = eocd[22:22 + comment_len]
+            if len(comment_bytes) < comment_len:
+                return None
+    except OSError:
+        return None
+
+    text = comment_bytes.decode('cp437', errors='replace')
+    text = text.rstrip('\x00').rstrip()
+    return text or None
+
+
 def extract_zip(input_path: Path, output_dir: Path) -> dict[str, Any]:
     """
     Extract ZIP archive.
@@ -395,13 +445,18 @@ def extract_zip(input_path: Path, output_dir: Path) -> dict[str, Any]:
     except ValueError as e:
         return _archive_error('unzip', str(e))
 
-    return _run_extraction_command(
+    result = _run_extraction_command(
         tool='unzip',
         cmd=['unzip', '-F', '-q', str(input_path), '-d', str(output_dir)],
         output_dir=output_dir,
         summary='Extracted {file_count} files from ZIP archive',
         assert_confined=True,
     )
+    if result.get('success'):
+        comment = read_zip_comment(input_path)
+        if comment:
+            result['archive_comment'] = comment
+    return result
 
 
 
@@ -540,6 +595,7 @@ def extract_zip_riscos(input_path: Path, output_dir: Path) -> dict[str, Any]:
         f'Extracted {file_count} files from RISC OS ZIP archive',
         file_count,
         output,
+        archive_comment=read_zip_comment(input_path),
     )
 
 
