@@ -74,6 +74,10 @@ ROUTENAME = __name__.replace('.', '_')
 blueprint = Blueprint(ROUTENAME, __name__, url_prefix='', template_folder='templates')
 
 
+# Artefact types that have a dedicated viewer page (sprite/draw/text rendering).
+VIEWER_ARTEFACT_TYPES = (ArtefactType.ACORN_SPRITE, ArtefactType.ACORN_DRAW, ArtefactType.ACORN_TEXT)
+
+
 # =============================================================================
 # Type Detection
 # =============================================================================
@@ -1295,7 +1299,7 @@ def _render_viewer(artefact):
     from ..database import RestrictionType
     from ..utils.pagination import VALID_PER_PAGE, ListPagination, resolve_per_page
 
-    _viewable_types = (ArtefactType.ACORN_SPRITE, ArtefactType.ACORN_DRAW, ArtefactType.ACORN_TEXT)
+    _viewable_types = VIEWER_ARTEFACT_TYPES
     output_groups = []
 
     def _enrich_outputs(outputs):
@@ -1779,6 +1783,51 @@ def _render_viewer(artefact):
     )
 
 
+def _derived_artefact_url(artefact, endpoint):
+    """url_for() helper mirroring the canonical-URL logic from app.artefact_url().
+
+    Used during view-render where we need to materialise nested URLs in Python
+    rather than via the Jinja template global.
+    """
+    root = artefact.root_artefact
+    if root is not artefact:
+        route = f'{ROUTENAME}.{endpoint}_nested'
+        return url_for(route, item_id=artefact.item.url_id,
+                       root_id=root.url_slug, artefact_id=artefact.url_slug)
+    route = f'{ROUTENAME}.{endpoint}'
+    return url_for(route, item_id=artefact.item.url_id, artefact_id=artefact.url_slug)
+
+
+def _build_derived_entries(artefact):
+    """Walk derived_artefacts recursively into a flat list of dicts for the sidebar.
+
+    Each entry carries pre-computed URLs and restriction state so the template
+    stays declarative.
+    """
+    entries = []
+
+    def _walk(node, depth):
+        for child in node.derived_artefacts:
+            try:
+                restricted = not current_user.can_bypass_all_restrictions(child.restrictions)
+            except Exception:
+                restricted = bool(child.restrictions)
+            has_viewer = child.artefact_type in VIEWER_ARTEFACT_TYPES
+            entries.append({
+                'artefact': child,
+                'depth': depth,
+                'download_url': _derived_artefact_url(child, 'download'),
+                'viewer_url': _derived_artefact_url(child, 'viewer') if has_viewer else None,
+                'restricted': restricted,
+                'size_mb': round(child.file_size / 1024 / 1024, 2) if child.file_size else None,
+                'mime_type': child.mime_type or '',
+            })
+            _walk(child, depth + 1)
+
+    _walk(artefact, 0)
+    return entries
+
+
 def _render_artefact_view(artefact):
 
     # Only bind to request.args when the user has actively submitted a filter,
@@ -2123,7 +2172,7 @@ def _render_artefact_view(artefact):
     #   failed_conversion_info — dict file.path → {error, analysis_uuid, kind}
     #     kind='conversion'  for per-file FORMAT_CONVERT failures
     #     kind='extraction'  for ARCHIVE_EXTRACT failures (see below)
-    _viewable_types = (ArtefactType.ACORN_SPRITE, ArtefactType.ACORN_DRAW, ArtefactType.ACORN_TEXT)
+    _viewable_types = VIEWER_ARTEFACT_TYPES
     viewable_filenames = set()
     failed_conversion_info = {}
     if artefact.artefact_type not in _viewable_types:
@@ -2332,6 +2381,8 @@ def _render_artefact_view(artefact):
         for fid in set(file_ancestor_restrictions) | set(file_descendant_restrictions)
     }
 
+    derived_entries = _build_derived_entries(artefact)
+
     return render_template('artefacts/view.html',
                            artefact=artefact,
                            analyses=analyses,
@@ -2375,6 +2426,7 @@ def _render_artefact_view(artefact):
                            file_inherited_restrictions=file_inherited_restrictions,
                            file_ancestor_restrictions=file_ancestor_restrictions,
                            file_descendant_restrictions=file_descendant_restrictions,
+                           derived_entries=derived_entries,
                            move_item_choices=_move_item_choices(artefact))
 
 
