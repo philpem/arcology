@@ -189,21 +189,27 @@ def lookup_by_identifier(model_class, identifier: str):
 
     Accepts:
       '3f4a9b2cabc123def456789012345678'  -> exact UUID match
-      '3f4a9b2c'                           -> first-8-char UUID prefix match
-      '3f4a9b2c-elite-bbc-micro'           -> first-8-char UUID prefix match
-                                              (slug suffix is decorative, ignored for lookup)
+      '3f4a9b2c'                           -> UUID prefix match
+      '3f4a9b2c-elite-bbc-micro'           -> UUID prefix match; slug used as
+                                              tiebreaker if the prefix is ambiguous
 
     Returns:
-        Model instance, or aborts with 404 if not found or identifier is invalid.
+        Model instance, or aborts with 404 if not found, ambiguous, or invalid.
     """
     from flask import abort
     if re.fullmatch(r'[0-9a-f]{32}', identifier):
         return model_class.query.filter_by(uuid=identifier).first_or_404()
     if len(identifier) >= 8 and re.fullmatch(r'[0-9a-f]{8}', identifier[:8]):
         prefix = identifier[:8]
-        return model_class.query.filter(
-            model_class.uuid.startswith(prefix)
-        ).first_or_404()
+        slug_hint = identifier[9:] if len(identifier) > 9 and identifier[8] == '-' else None
+        matches = model_class.query.filter(model_class.uuid.startswith(prefix)).all()
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1 and slug_hint:
+            slug_matches = [m for m in matches if m.slug == slug_hint]
+            if len(slug_matches) == 1:
+                return slug_matches[0]
+        abort(404)
     abort(404)
 
 
@@ -213,11 +219,12 @@ def lookup_artefact_by_id(item, artefact_id: str):
 
     Resolution order:
       1. Full 32-char UUID → exact UUID match (scoped to item)
-      2. Pure slug (no leading hex chars) → slug match within item
-      3. 8-char hex prefix (optionally followed by -slug) → UUID prefix match within item
+      2. 8-char hex prefix (optionally followed by -slug) → UUID prefix match
+         within item; slug used as tiebreaker if the prefix is ambiguous
+      3. Pure slug (no leading hex chars) → slug match within item
 
     Returns:
-        Artefact instance, or aborts with 404 if not found or identifier is invalid.
+        Artefact instance, or aborts with 404 if not found, ambiguous, or invalid.
     """
     from flask import abort
     from myapp.database import Artefact
@@ -228,13 +235,21 @@ def lookup_artefact_by_id(item, artefact_id: str):
             uuid=artefact_id, item_id=item.id
         ).first_or_404()
 
-    # 8-char hex prefix (new short-UUID style, with optional -slug suffix)
+    # 8-char hex prefix with optional -slug tiebreaker
     if len(artefact_id) >= 8 and re.fullmatch(r'[0-9a-f]{8}', artefact_id[:8]):
         prefix = artefact_id[:8]
-        return Artefact.query.filter(
+        slug_hint = artefact_id[9:] if len(artefact_id) > 9 and artefact_id[8] == '-' else None
+        matches = Artefact.query.filter(
             Artefact.item_id == item.id,
-            Artefact.uuid.startswith(prefix)
-        ).first_or_404()
+            Artefact.uuid.startswith(prefix),
+        ).all()
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1 and slug_hint:
+            slug_matches = [m for m in matches if m.slug == slug_hint]
+            if len(slug_matches) == 1:
+                return slug_matches[0]
+        abort(404)
 
     # Pure slug lookup within item
     artefact = Artefact.query.filter_by(slug=artefact_id, item_id=item.id).first()
