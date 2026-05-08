@@ -63,10 +63,17 @@
                             title="Click to filter files by this partition">
                             <td><span class="badge bg-{{ partition_color }}">{{ p.partition_index }}</span></td>
                             <td>
-                                {% if pmeta.get('disc_name') %}
+                                {# Prefer the Partition row's label (set per-partition by
+                                   FILE_EXTRACTION reading the partition image directly) over
+                                   the disc_name surfaced by PARTITION_DETECT on the parent
+                                   image: some partition schemes return the same disc_name
+                                   from heuristic boot-block parsing for every partition,
+                                   whereas FILE_EXTRACTION reads each partition image
+                                   individually and is authoritative once it has run. #}
+                                {% if p.label %}
+                                <strong>{{ p.label }}</strong>
+                                {% elif pmeta.get('disc_name') %}
                                 <strong>{{ pmeta.get('disc_name') }}</strong>
-                                {% elif p.label %}
-                                {{ p.label }}
                                 {% else %}-{% endif %}
                             </td>
                             <td>
