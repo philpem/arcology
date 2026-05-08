@@ -286,6 +286,46 @@ def sector_image_to_raw_greaseweazle(
         gw_format=gw_format,
     )
 
+def sector_image_to_raw_greaseweazle_one_side(
+    input_path: Path,
+    output_path: Path,
+    gw_format: str,
+    head: int,
+    cylinders: int,
+) -> dict:
+    """
+    Convert one physical side of a sector/flux image to a raw sector image.
+
+    Uses Greaseweazle's --tracks selector to extract only the tracks belonging
+    to the specified physical head, producing a single-sided raw IMG.
+
+    Args:
+        input_path: Source image (SCP, IMD, HFE)
+        output_path: Output raw IMG file
+        gw_format:  Greaseweazle format name (single-sided variant, e.g. 'acorn.dfs.ss80')
+        head:       Physical head to extract (0 or 1)
+        cylinders:  Number of cylinders (used to bound the track selector)
+
+    Returns:
+        Result dict with success status, output type, gw_format, and process_output
+    """
+    cmd = [
+        'gw', 'convert',
+        '--format', gw_format,
+        '--tracks', f'c=0-{cylinders - 1}:h={head}',
+        str(input_path),
+        str(output_path),
+    ]
+    return run_and_build_result(
+        cmd,
+        tool='greaseweazle',
+        output_path=output_path,
+        summary=f'Converted head {head} to raw sector image (bad sectors filled)',
+        output_type=ArtefactType.RAW_SECTOR.value,
+        gw_format=gw_format,
+    )
+
+
 def scp_fix_track_density(input_path: Path, output_path: Path, heads: list[int] | None = None) -> dict:
     """
     Extract only even-indexed physical tracks from a double-stepped SCP,
