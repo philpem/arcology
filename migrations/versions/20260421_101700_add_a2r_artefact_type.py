@@ -22,11 +22,20 @@ def upgrade():
         op.execute(sa.text("ALTER TYPE artefacttype ADD VALUE IF NOT EXISTS 'A2R'"))
 
 
-_CASCADE_SQL = """
+def _cascade_sql(type_names):
+    """Build the FK-safe DELETE cascade for the given artefact type names.
+
+    PostgreSQL DO blocks cannot accept bind parameters, so type names are
+    inlined as quoted SQL literals.  Names are hardcoded enum identifiers
+    (no user input) so this is safe.
+    """
+    types_in = ', '.join(f"'{name}'" for name in type_names)
+    return f"""
     DO $$
     DECLARE _ids INTEGER[];
     BEGIN
-        SELECT array_agg(id) INTO _ids FROM artefacts WHERE artefact_type = ANY(:types::text[]);
+        SELECT array_agg(id) INTO _ids FROM artefacts
+            WHERE artefact_type IN ({types_in});
         IF _ids IS NULL THEN RETURN; END IF;
 
         UPDATE artefacts SET parent_artefact_id = NULL
@@ -53,7 +62,12 @@ _CASCADE_SQL = """
         DELETE FROM analyses WHERE artefact_id = ANY(_ids);
         DELETE FROM artefact_protection  WHERE artefact_id = ANY(_ids);
         DELETE FROM artefact_mastering   WHERE artefact_id = ANY(_ids);
-        DELETE FROM artefact_restrictions WHERE artefact_id = ANY(_ids);
+
+        IF EXISTS (SELECT FROM information_schema.tables
+                   WHERE table_schema = 'public'
+                     AND table_name = 'artefact_restrictions') THEN
+            DELETE FROM artefact_restrictions WHERE artefact_id = ANY(_ids);
+        END IF;
 
         IF EXISTS (SELECT FROM information_schema.tables
                    WHERE table_schema = 'public'
@@ -71,6 +85,6 @@ def downgrade():
     bind = op.get_bind()
     if bind.dialect.name != 'postgresql':
         return
-    op.execute(sa.text(_CASCADE_SQL).bindparams(types=['A2R']))
+    op.execute(sa.text(_cascade_sql(['A2R'])))
 
 # vim: ts=4 sw=4 et

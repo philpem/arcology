@@ -39,6 +39,10 @@ class _TolerantEnum(TypeDecorator):
     (e.g. NSFW_SCAN left behind after switching back to master).  In a healthy
     database — where downgrade() properly deletes orphan rows — this path is
     never taken.
+
+    DDL still emits as a native SQLEnum (PG enum type / SQLite VARCHAR).  We
+    bypass SQLEnum's result_processor so that unknown DB values become None
+    instead of raising LookupError before user code can intercept them.
     """
     impl = SQLEnum
     cache_ok = True
@@ -47,13 +51,18 @@ class _TolerantEnum(TypeDecorator):
         self._enum_cls = enum_cls
         super().__init__(enum_cls, **kw)
 
-    def process_result_value(self, value, dialect):
-        if value is None:
-            return None
-        try:
-            return self._enum_cls[value]
-        except KeyError:
-            return None
+    def result_processor(self, dialect, coltype):
+        enum_cls = self._enum_cls
+
+        def process(value):
+            if value is None or isinstance(value, enum_cls):
+                return value
+            try:
+                return enum_cls[value]
+            except KeyError:
+                return None
+
+        return process
 
 
 def generate_uuid() -> str:
