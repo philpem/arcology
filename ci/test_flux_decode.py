@@ -876,8 +876,8 @@ class TestPerSideIsolationSplit(unittest.TestCase):
             c.args[1] for c in worker.api.register_derived_artefact.call_args_list
             if c.args[3] == ArtefactType.RAW_SECTOR
         ]
-        self.assertTrue(any('Side 0' in l for l in labels), labels)
-        self.assertTrue(any('Side 1' in l for l in labels), labels)
+        self.assertTrue(any('Side 0' in label for label in labels), labels)
+        self.assertTrue(any('Side 1' in label for label in labels), labels)
 
     def test_merged_raw_sector_not_registered_when_isolated(self):
         """The merged single-image gw convert must NOT be called when isolation detected."""
