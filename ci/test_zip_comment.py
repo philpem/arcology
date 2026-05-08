@@ -1,7 +1,6 @@
 """Tests for read_zip_comment(): pure-Python ZIP archive-comment extractor."""
 
 import os
-import struct
 import sys
 import tempfile
 import unittest
