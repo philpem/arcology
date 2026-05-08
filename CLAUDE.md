@@ -219,16 +219,52 @@ See `doc/ADMIN_COMMANDS.md` for the full reference including all flags.
 > (uppercase). Using the lowercase `.value` will break at runtime with
 > `invalid input value for enum analysistype: "MY_NEW_TYPE"`.
 >
-> **Rollback pitfall:** adding a PostgreSQL enum value is effectively one-way
-> here. If a branch adds an `AnalysisType` and creates rows using it, then you
-> later revert the code without first cleaning up those rows, SQLAlchemy can
-> crash when materialising `Analysis.analysis_type` with errors like
-> `LookupError: 'DETECT_TRACK_DENSITY' is not among the defined enum values`.
-> Before reverting code that removes an analysis enum, delete or rewrite any
-> `analyses` rows that still reference that enum name.
+> **Rollback convention — downgrade() MUST clean up rows:** PostgreSQL cannot
+> remove an enum value once added, but the ORM crashes with `LookupError` when
+> it reads a row whose enum column holds a value absent from the Python enum.
+> Every migration that adds an enum value via `ALTER TYPE ... ADD VALUE` must
+> therefore have a `downgrade()` that deletes (or remaps) rows using that value.
+>
+> CI enforces this: `ci/check_migration_sanity.py` treats an empty `downgrade()`
+> on an ADD VALUE migration as a hard error.
+>
+> **For `AnalysisType`** — delete the analysis rows and null out any
+> `derived_from_analysis_id` references first (the FK may not have
+> `ON DELETE SET NULL` at this point in the downgrade chain):
+> ```python
+> def downgrade():
+>     bind = op.get_bind()
+>     if bind.dialect.name != 'postgresql':
+>         return
+>     op.execute(sa.text("""
+>         UPDATE artefacts SET derived_from_analysis_id = NULL
+>         WHERE derived_from_analysis_id IN (
+>             SELECT id FROM analyses WHERE analysis_type = 'MY_NEW_TYPE'
+>         )
+>     """))
+>     op.execute(sa.text("DELETE FROM analyses WHERE analysis_type = 'MY_NEW_TYPE'"))
+> ```
+>
+> **For `ArtefactType`** — use the cascade helper block from any existing
+> artefact-type migration (e.g. `20260324_201523_add_arc_artefact_type.py`).
+> Copy the `_CASCADE_SQL` constant and call it with the type name(s):
+> ```python
+> op.execute(sa.text(_CASCADE_SQL).bindparams(types=['MY_NEW_TYPE']))
+> ```
+>
+> **For `FilesystemType`** — remap to `UNKNOWN` rather than deleting:
+> ```python
+> op.execute(sa.text(
+>     "UPDATE partitions SET filesystem = 'UNKNOWN' WHERE filesystem = 'MY_NEW_TYPE'"
+> ))
+> ```
+>
+> A `_TolerantEnum` TypeDecorator on `artefact_type` and `analysis_type` acts as
+> a crash-shield for any orphan row that slips through (returns `None` instead of
+> raising `LookupError`), but the proper fix is always the downgrade cleanup.
 
-The same applies to `ArtefactType` and any other SQLAlchemy `Enum` column
-backed by a Python `enum.Enum` class in this project.
+The same principle applies to any other SQLAlchemy `Enum` column backed by a
+Python `enum.Enum` class in this project.
 
 ### Adding a new artefact type
 
@@ -550,7 +586,7 @@ Worker external tools (compiled in worker Dockerfile): Fluxfox (Rust), HxCFE (C)
 - `myapp.cfg` is optional — environment variables take precedence and suffice for Docker deployments. `SQLALCHEMY_DATABASE_URI`, `SECRET_KEY`, and `WORKER_API_KEY` are all read from the environment if not set in `myapp.cfg`
 - `SECRET_KEY` auto-generates with a warning if missing, left at the default placeholder, or too short — set it explicitly in `.env` or `myapp.cfg` for persistent sessions
 - Alembic auto-generated migrations need manual review for renames and enum changes
-- **PostgreSQL enum pitfall**: `ALTER TYPE ... ADD VALUE` cannot run inside a transaction. Set `autocommit = True` at module level in migrations that add enum values (see "Adding values to a PostgreSQL enum" above)
+- **PostgreSQL enum pitfall**: `ALTER TYPE ... ADD VALUE` cannot run inside a transaction — set `autocommit = True` at module level. Also, downgrade() **must** delete/remap rows using the new value, or a branch switch leaves orphan rows that crash the ORM with `LookupError`. CI enforces this. See "Adding values to a PostgreSQL enum" above for the exact patterns.
 - Docker entrypoint (`Dentrypoint.sh`) runs `flask db upgrade` and `flask create-admin` on every start (both are idempotent)
 - `flask create-admin` reads `ADMIN_USERNAME`/`ADMIN_PASSWORD` env vars non-interactively; prompts if a TTY is available; warns and exits cleanly if neither. Passwords must be at least 12 characters
 - **Do NOT use Python's `zipfile` module on RISC OS ZIPs.** RISC OS ZIP archives contain Acorn-specific extra-field blocks (ID `0x4341` / "AC") that `zipfile.ZipFile` rejects with `BadZipFile`. Any code that needs to read RISC OS ZIP metadata (filenames, structure) must parse the ZIP central directory manually with `struct`, or shell out to `unzip`. The worker's `_is_riscos_zip()` and `extract_zip_riscos()` both avoid `zipfile` for this reason.

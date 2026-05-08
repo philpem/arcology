@@ -143,7 +143,17 @@ def downgrade():
     op.drop_index('ix_known_products_database_id', 'known_products')
     op.drop_table('known_products')
 
-    # Note: PostgreSQL does not support removing enum values.
-    # The 'PRODUCT_RECOGNITION' value added to analysistype cannot be undone.
+    # Remove rows using enum values no longer in the Python enum so the ORM
+    # doesn't raise LookupError when materialising Analysis objects.
+    if bind.dialect.name == 'postgresql':
+        op.execute(sa.text("""
+            UPDATE artefacts SET derived_from_analysis_id = NULL
+            WHERE derived_from_analysis_id IN (
+                SELECT id FROM analyses WHERE analysis_type = 'PRODUCT_RECOGNITION'
+            )
+        """))
+        op.execute(sa.text(
+            "DELETE FROM analyses WHERE analysis_type = 'PRODUCT_RECOGNITION'"
+        ))
 
 # vim: ts=4 sw=4 et

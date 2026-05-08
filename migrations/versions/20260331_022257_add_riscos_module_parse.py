@@ -39,6 +39,15 @@ def upgrade():
 
 def downgrade():
     op.drop_table('riscos_modules')
-    # PostgreSQL does not support removing enum values; enum downgrade is a no-op.
+    bind = op.get_bind()
+    if bind.dialect.name != 'postgresql':
+        return
+    op.execute(sa.text("""
+        UPDATE artefacts SET derived_from_analysis_id = NULL
+        WHERE derived_from_analysis_id IN (
+            SELECT id FROM analyses WHERE analysis_type = 'RISCOS_MODULE_PARSE'
+        )
+    """))
+    op.execute(sa.text("DELETE FROM analyses WHERE analysis_type = 'RISCOS_MODULE_PARSE'"))
 
 # vim: ts=4 sw=4 et

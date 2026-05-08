@@ -28,8 +28,15 @@ def upgrade():
 
 
 def downgrade():
-    # PostgreSQL does not support removing individual enum values without a
-    # full type recreation.  The extra enum value is harmless if the code reverts.
-    pass
+    bind = op.get_bind()
+    if bind.dialect.name != 'postgresql':
+        return
+    op.execute(sa.text("""
+        UPDATE artefacts SET derived_from_analysis_id = NULL
+        WHERE derived_from_analysis_id IN (
+            SELECT id FROM analyses WHERE analysis_type = 'ARMLOCK_REMOVE'
+        )
+    """))
+    op.execute(sa.text("DELETE FROM analyses WHERE analysis_type = 'ARMLOCK_REMOVE'"))
 
 # vim: ts=4 sw=4 et

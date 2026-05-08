@@ -23,7 +23,14 @@ def upgrade():
 
 
 def downgrade():
-    # PostgreSQL does not support removing enum values; leave it in place.
-    pass
+    bind = op.get_bind()
+    if bind.dialect.name != 'postgresql':
+        return
+    # Remap partitions using ARCHIVE back to UNKNOWN so the ORM doesn't raise
+    # LookupError after this migration is rolled back.  Deleting the rows is
+    # not appropriate here; the data is still valid, just re-classified.
+    op.execute(sa.text(
+        "UPDATE partitions SET filesystem = 'UNKNOWN' WHERE filesystem = 'ARCHIVE'"
+    ))
 
 # vim: ts=4 sw=4 et
