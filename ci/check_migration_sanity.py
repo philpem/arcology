@@ -9,8 +9,13 @@ Checks:
 2. Chain integrity: The down_revision chain must be linear and unbroken
    from the initial migration (down_revision=None) to head.
 
-3. Downgrade body: Warns (non-fatal) if a migration has an empty downgrade()
-   function — acceptable for enum additions but worth flagging.
+3. Downgrade body (error for ADD VALUE migrations): Any migration that adds
+   an enum value via ALTER TYPE ... ADD VALUE must have a non-empty downgrade()
+   that cleans up rows using that value.  An empty (pass-only) downgrade leaves
+   orphan rows that cause LookupError when the code is rolled back.
+
+4. Downgrade body (warning for other migrations): Warns if any other migration
+   has an empty downgrade() — acceptable for additive DDL but worth flagging.
 
 Uses only stdlib. Exits 0 if all checks pass, 1 on errors, 2 on warnings only.
 """
@@ -30,6 +35,10 @@ NEEDS_AUTOCOMMIT_PATTERNS = [
     re.compile(r'ALTER\s+TYPE\s+\w+\s+ADD\s+VALUE', re.IGNORECASE),
     re.compile(r'ALTER\s+TYPE\s+\w+\s+RENAME\s+VALUE', re.IGNORECASE),
 ]
+
+# Migrations that add enum values MUST have a real downgrade() so orphan rows
+# don't survive a branch switch and cause LookupError at query time.
+ADD_VALUE_PATTERN = re.compile(r'ALTER\s+TYPE\s+\w+\s+ADD\s+VALUE', re.IGNORECASE)
 
 HEADER_REVISION_RE = re.compile(
     r'^[ \t]*Revision ID:[ \t]*([^\r\n]*)[ \t]*$', re.MULTILINE
@@ -80,6 +89,7 @@ def parse_migration(filepath):
         'has_autocommit': False,
         'autocommit_value': None,
         'has_empty_downgrade': False,
+        'has_add_value': bool(ADD_VALUE_PATTERN.search(source)),
     }
     info.update(parse_header_metadata(source))
 
@@ -286,15 +296,26 @@ def check_filename_order_matches_chain(migrations):
 
 
 def check_downgrade_bodies(migrations):
-    """Warn about empty downgrade functions."""
+    """Error on empty downgrade for ADD VALUE migrations; warn for others."""
+    errors = []
     warnings = []
     for m in migrations:
-        if m['has_empty_downgrade']:
+        if not m['has_empty_downgrade']:
+            continue
+        if m['has_add_value']:
+            errors.append(
+                f"  {m['filename']}: downgrade() is empty but upgrade() adds an enum\n"
+                f"    value via ALTER TYPE ... ADD VALUE.  Add DELETE/UPDATE statements\n"
+                f"    to remove rows that use the new value, otherwise a branch switch\n"
+                f"    will leave orphan rows that cause LookupError at query time.\n"
+                f"    See CLAUDE.md \"Adding values to a PostgreSQL enum\" for the pattern."
+            )
+        else:
             warnings.append(
                 f"  {m['filename']}: downgrade() is empty (pass only). "
                 f"This migration cannot be rolled back."
             )
-    return warnings
+    return errors, warnings
 
 
 def check_header_consistency(migrations):
@@ -366,7 +387,10 @@ def main():
         all_warnings.append("Filename ordering warnings:")
         all_warnings.extend(order_warnings)
 
-    downgrade_warnings = check_downgrade_bodies(migrations)
+    downgrade_errors, downgrade_warnings = check_downgrade_bodies(migrations)
+    if downgrade_errors:
+        all_errors.append("Downgrade check failed (ADD VALUE migrations must clean up rows):")
+        all_errors.extend(downgrade_errors)
     if downgrade_warnings:
         all_warnings.append("Downgrade warnings:")
         all_warnings.extend(downgrade_warnings)

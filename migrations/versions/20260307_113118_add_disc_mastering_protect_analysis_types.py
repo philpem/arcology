@@ -31,10 +31,23 @@ def upgrade():
 
 
 def downgrade():
-    # PostgreSQL does not support removing individual enum values without a
-    # full type recreation, which would require temporarily dropping the
-    # analyses table column.  Downgrading is therefore a no-op; the extra
-    # enum values are harmless if the code reverts.
-    pass
+    bind = op.get_bind()
+    if bind.dialect.name != 'postgresql':
+        return
+    # Remove rows using enum values no longer in the Python enum so the ORM
+    # doesn't raise LookupError when materialising Analysis objects.
+    # NULL out derived_from_analysis_id first; the FK may not have ON DELETE
+    # SET NULL at this point in the downgrade chain.
+    op.execute(sa.text("""
+        UPDATE artefacts SET derived_from_analysis_id = NULL
+        WHERE derived_from_analysis_id IN (
+            SELECT id FROM analyses
+            WHERE analysis_type IN ('DISC_MASTERING_DETECT', 'DISC_PROTECTION_DETECT')
+        )
+    """))
+    op.execute(sa.text(
+        "DELETE FROM analyses"
+        " WHERE analysis_type IN ('DISC_MASTERING_DETECT', 'DISC_PROTECTION_DETECT')"
+    ))
 
 # vim: ts=4 sw=4 et

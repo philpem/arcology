@@ -26,8 +26,43 @@ from sqlalchemy import (
 )
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import TypeDecorator
 from shared.enums import AnalysisType, ArtefactType
 from .extensions import db
+
+
+class _TolerantEnum(TypeDecorator):
+    """Enum column that returns None for DB values absent from the Python enum.
+
+    Acts as a crash-shield when the DB contains a value added by a feature
+    branch whose migration was downgraded without cleaning up the rows first
+    (e.g. NSFW_SCAN left behind after switching back to master).  In a healthy
+    database — where downgrade() properly deletes orphan rows — this path is
+    never taken.
+
+    DDL still emits as a native SQLEnum (PG enum type / SQLite VARCHAR).  We
+    bypass SQLEnum's result_processor so that unknown DB values become None
+    instead of raising LookupError before user code can intercept them.
+    """
+    impl = SQLEnum
+    cache_ok = True
+
+    def __init__(self, enum_cls, **kw):
+        self._enum_cls = enum_cls
+        super().__init__(enum_cls, **kw)
+
+    def result_processor(self, dialect, coltype):
+        enum_cls = self._enum_cls
+
+        def process(value):
+            if value is None or isinstance(value, enum_cls):
+                return value
+            try:
+                return enum_cls[value]
+            except KeyError:
+                return None
+
+        return process
 
 
 def generate_uuid() -> str:
@@ -485,7 +520,7 @@ class Artefact(db.Model):
     item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), index=True)
     label: Mapped[str] = mapped_column(String(255))
     slug: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
-    artefact_type: Mapped[ArtefactType] = mapped_column(SQLEnum(ArtefactType))
+    artefact_type: Mapped[ArtefactType] = mapped_column(_TolerantEnum(ArtefactType))
     type_overridden: Mapped[bool] = mapped_column(Boolean, default=False)  # Was type manually set?
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     
@@ -576,7 +611,7 @@ class Analysis(db.Model):
     id: Mapped[int] = mapped_column(primary_key=True)
     uuid: Mapped[str] = mapped_column(String(32), unique=True, index=True, default=generate_uuid)
     artefact_id: Mapped[int] = mapped_column(ForeignKey("artefacts.id"), index=True)
-    analysis_type: Mapped[AnalysisType] = mapped_column(SQLEnum(AnalysisType))
+    analysis_type: Mapped[AnalysisType] = mapped_column(_TolerantEnum(AnalysisType))
     slug: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
     status: Mapped[AnalysisStatus] = mapped_column(SQLEnum(AnalysisStatus), default=AnalysisStatus.PENDING, index=True)
     
