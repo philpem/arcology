@@ -833,21 +833,9 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
 
     partition = partition_resp.get('partition', {})
 
-    # Find the file in the partition
-    files_resp = self.api.get(f"/partitions/{partition_uuid}/files?per_page=10000")
-    if not files_resp:
-        self.fail_analysis(analysis_id, 'Failed to get partition files')
-        return
-
-    # Find our specific file
-    target_file = None
-    for f in files_resp.get('files', []):
-        if f['id'] == file_id:
-            target_file = f
-            break
-
+    target_file = self.api.get(f"/files/{file_id}")
     if not target_file:
-        self.fail_analysis(analysis_id, f'File {file_id} not found in partition')
+        self.fail_analysis(analysis_id, f'File {file_id} not found')
         return
 
     # Determine extraction path: prefer value passed through hints (set by the
