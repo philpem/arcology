@@ -9,11 +9,11 @@ KnownFile.crc32 is retained for import/export round-trip compatibility
 with external hash databases (e.g. NSRL) that distribute CRC32 values.
 
 Revision ID: 00006a01ece1
-Revises: 000069d43024
+Revises: 000069e9644a
 Create Date: 2026-05-11 12:00:00
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision = '00006a01ece1'
 down_revision = '000069e9644a'
