@@ -2030,8 +2030,6 @@ paths:
                         type: string
                       sha256:
                         type: string
-                      crc32:
-                        type: string
                       is_directory:
                         type: boolean
                         default: false
