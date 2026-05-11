@@ -1519,6 +1519,15 @@ def mark_file_as_archive(file_id):
     return jsonify(file_to_dict(file))
 
 
+@blueprint.route('/files/<int:file_id>', methods=['GET'])
+@require_auth('read_only')
+def get_extracted_file(file_id):
+    if not _is_worker_request():
+        return error_response('Only the worker may access files by integer ID', 403)
+    file = _get_extracted_file_or_404(id=file_id)
+    return jsonify(file_to_dict(file))
+
+
 # =============================================================================
 # Lookup
 # =============================================================================
