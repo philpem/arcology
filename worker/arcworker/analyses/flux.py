@@ -25,7 +25,7 @@ from ..tools.flux import (
 )
 from ..tools.imd import (
     detect_geometry_from_boot_data,
-    detect_per_side_isolated,
+    detect_independent_sides,
     detect_track_density_mismatch,
     parse_imd_track0,
     parse_imd_tracks,
@@ -346,7 +346,7 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
     # For SCP/HFE: read the IMD sibling we just produced.
     # For IMD: read the source directly.
 
-    per_side_detection = None
+    independent_sides = None
 
     if source_type not in _SCP_VIA_CONVERSION_TYPES:
         gw_format = hints.get('gw_format')
@@ -384,12 +384,13 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
             gw_format = 'ibm.scan'
             gw_format_source = 'fallback'
 
-        # ── Step 2b: detect per-side isolation ──────────────────────────
-        # When both physical sides were written by a single-sided drive with
-        # head-select wired to drive-select (e.g. BBC Micro drives 0/2,
-        # RM 380Z/480Z), each side records IDAM head=0 regardless of which
-        # physical head read it.  Detect this by checking whether all sectors
-        # on physical head 1 carry IDAM head=0.
+        # ── Step 2b: detect independent-sides capture ──────────────────
+        # Some double-sided drives have head-select wired to a drive-select
+        # pin on the controller — to the controller and filesystem the two
+        # sides look like independent single-sided drives (e.g. BBC Micro
+        # drives 0/2, RM 380Z/480Z).  Each side records IDAM head=0 regardless
+        # of which physical head wrote it.  Detect this by checking whether
+        # all sectors on physical head 1 carry IDAM head=0.
         #
         # When detected: produce two single-sided RAW_SECTOR images (one per
         # physical side) instead of one merged image.  The HFE and IMD siblings
@@ -399,11 +400,11 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
         if imd_result['success']:
             all_tracks = parse_imd_tracks(imd_for_detection)
             if all_tracks:
-                per_side_detection = detect_per_side_isolated(all_tracks)
+                independent_sides = detect_independent_sides(all_tracks)
 
-        if per_side_detection and per_side_detection['detected']:
+        if independent_sides and independent_sides['detected']:
             log.info(
-                f"Per-side isolation detected: {per_side_detection['reason']}; "
+                f"Independent sides detected: {independent_sides['reason']}; "
                 f"splitting into two single-sided RAW_SECTOR artefacts"
             )
             # Derive the single-sided gw format: same geometry but heads=1.
@@ -463,8 +464,8 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
             details_dict['gw_track0'] = imd_track0_summary
         if detected_geometry:
             details_dict['gw_geometry'] = detected_geometry
-        if per_side_detection:
-            details_dict['per_side_detection'] = per_side_detection
+        if independent_sides:
+            details_dict['independent_sides'] = independent_sides
 
     if any_success:
         self.complete_analysis(

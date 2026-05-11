@@ -52,7 +52,7 @@ def _analysis() -> dict:
     return {'id': _ANALYSIS_ID, 'hints': None}
 
 
-_NO_PER_SIDE = {'detected': False, 'reason': 'no data on head 1', 'h1_tracks': 0, 'h1_idam_all_zero': False}
+_NOT_INDEPENDENT = {'detected': False, 'reason': 'no data on head 1', 'h1_tracks': 0, 'h1_idam_all_zero': False}
 
 
 def _run_flux_decode(artefact_type: ArtefactType, work_dir: Path,
@@ -62,7 +62,7 @@ def _run_flux_decode(artefact_type: ArtefactType, work_dir: Path,
     mocked out.  Returns (worker_mock, registered_calls) where registered_calls
     is the list of calls made to api.register_derived_artefact.
 
-    Per-side isolation detection is mocked to 'not detected' by default so
+    Independent-sides detection is mocked to 'not detected' by default so
     existing tests exercise the normal merged-image path.
     """
     artefact = _make_artefact(artefact_type)
@@ -84,7 +84,7 @@ def _run_flux_decode(artefact_type: ArtefactType, work_dir: Path,
          patch('worker.arcworker.analyses.flux.parse_imd_track0', return_value=None), \
          patch('worker.arcworker.analyses.flux.parse_imd_tracks', return_value=None), \
          patch('worker.arcworker.analyses.flux.detect_geometry_from_boot_data', return_value=None), \
-         patch('worker.arcworker.analyses.flux.detect_per_side_isolated', return_value=_NO_PER_SIDE):
+         patch('worker.arcworker.analyses.flux.detect_independent_sides', return_value=_NOT_INDEPENDENT):
 
         AnalysisWorker.process_flux_decode(worker, _analysis(), artefact, work_dir)
 
@@ -686,18 +686,18 @@ class TestDetectTrackDensityDownstreamQueueing(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Per-side isolation: detect_per_side_isolated() unit tests
+# Independent sides: detect_independent_sides() unit tests
 # ─────────────────────────────────────────────────────────────────────────────
 
-from worker.arcworker.tools.imd import detect_per_side_isolated
+from worker.arcworker.tools.imd import detect_independent_sides
 
 
 def _make_tracks(num_cylinders: int, h1_idam_zero: bool, h0_has_data: bool = True) -> list[dict]:
     """
-    Build a synthetic track list for detect_per_side_isolated() tests.
+    Build a synthetic track list for detect_independent_sides() tests.
 
-    h1_idam_zero=True  → each physical-head-1 track has idam_heads=[0, 0, …]  (isolated sides)
-    h1_idam_zero=False → each physical-head-1 track has idam_heads=[1, 1, …]  (genuine DS)
+    h1_idam_zero=True  → each physical-head-1 track has idam_heads=[0, 0, …]  (independent sides)
+    h1_idam_zero=False → each physical-head-1 track has idam_heads=[1, 1, …]  (normal DS)
     """
     tracks = []
     for cyl in range(num_cylinders):
@@ -731,60 +731,60 @@ def _make_tracks(num_cylinders: int, h1_idam_zero: bool, h0_has_data: bool = Tru
     return tracks
 
 
-class TestDetectPerSideIsolated(unittest.TestCase):
-    """Unit tests for detect_per_side_isolated()."""
+class TestDetectIndependentSides(unittest.TestCase):
+    """Unit tests for detect_independent_sides()."""
 
-    def test_isolated_sides_detected(self):
-        """Both heads present, head-1 IDAM head=0 → isolated."""
+    def test_independent_sides_detected(self):
+        """Both heads present, head-1 IDAM head=0 → independent sides."""
         tracks = _make_tracks(40, h1_idam_zero=True)
-        result = detect_per_side_isolated(tracks)
+        result = detect_independent_sides(tracks)
         self.assertTrue(result['detected'])
 
-    def test_genuine_ds_not_detected(self):
-        """Both heads present, head-1 IDAM head=1 → genuine DS, not isolated."""
+    def test_normal_ds_not_detected(self):
+        """Both heads present, head-1 IDAM head=1 → normal DS, not independent."""
         tracks = _make_tracks(40, h1_idam_zero=False)
-        result = detect_per_side_isolated(tracks)
+        result = detect_independent_sides(tracks)
         self.assertFalse(result['detected'])
 
     def test_single_sided_not_detected(self):
-        """Only head 0 has data → single-sided, not isolated."""
+        """Only head 0 has data → single-sided, not independent."""
         tracks = _make_tracks(40, h1_idam_zero=True, h0_has_data=True)
         # Override head-1 tracks to have no data
         for t in tracks:
             if t['head'] == 1:
                 t['has_data'] = False
-        result = detect_per_side_isolated(tracks)
+        result = detect_independent_sides(tracks)
         self.assertFalse(result['detected'])
 
     def test_h1_tracks_count_reported(self):
         """h1_tracks in result equals the number of head-1 tracks with data."""
         tracks = _make_tracks(40, h1_idam_zero=True)
-        result = detect_per_side_isolated(tracks)
+        result = detect_independent_sides(tracks)
         self.assertEqual(result['h1_tracks'], 40)
 
     def test_h1_idam_all_zero_flag(self):
         """h1_idam_all_zero is True when all head-1 sectors carry IDAM head=0."""
         tracks = _make_tracks(40, h1_idam_zero=True)
-        result = detect_per_side_isolated(tracks)
+        result = detect_independent_sides(tracks)
         self.assertTrue(result['h1_idam_all_zero'])
 
     def test_mixed_idam_heads_not_detected(self):
-        """If even one head-1 sector has IDAM head=1, isolation is not detected."""
+        """If even one head-1 sector has IDAM head=1, independent sides are not detected."""
         tracks = _make_tracks(40, h1_idam_zero=True)
         # Corrupt one sector's IDAM head on a head-1 track
         for t in tracks:
             if t['head'] == 1:
                 t['idam_heads'] = [0] * 9 + [1]
                 break
-        result = detect_per_side_isolated(tracks)
+        result = detect_independent_sides(tracks)
         self.assertFalse(result['detected'])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Per-side isolation: process_flux_decode() integration tests
+# Independent sides: process_flux_decode() integration tests
 # ─────────────────────────────────────────────────────────────────────────────
 
-_PER_SIDE_DETECTED = {
+_INDEPENDENT_SIDES_DETECTED = {
     'detected': True,
     'reason': 'head 1 IDAM all zero',
     'h1_tracks': 40,
@@ -805,11 +805,11 @@ _DFS_SS80_GEOMETRY = {
 _DFS_DS80_GEOMETRY = {**_DFS_SS80_GEOMETRY, 'heads': 2}
 
 
-def _run_flux_decode_per_side(work_dir: Path, per_side_detected: bool,
+def _run_flux_decode_independent_sides(work_dir: Path, independent_sides_detected: bool,
                                geometry: dict | None = None,
                                mock_side_result=None):
     """
-    Run process_flux_decode for an SCP source with per-side isolation either
+    Run process_flux_decode for an SCP source with independent-sides detection either
     detected or not.  Returns the worker mock.
     """
     artefact = _make_artefact(ArtefactType.SCP)
@@ -817,14 +817,14 @@ def _run_flux_decode_per_side(work_dir: Path, per_side_detected: bool,
     source_path.touch()
 
     side_result = mock_side_result or {'success': True}
-    per_side = _PER_SIDE_DETECTED if per_side_detected else _NO_PER_SIDE
+    per_side = _INDEPENDENT_SIDES_DETECTED if independent_sides_detected else _NOT_INDEPENDENT
 
     worker = MagicMock(spec=AnalysisWorker)
     worker.get_input_path.return_value = source_path
     worker.api = MagicMock()
     worker.api.register_derived_artefact.return_value = {'artefact': {'uuid': 'mock-uuid'}}
 
-    # Return a non-empty (truthy) track list so that detect_per_side_isolated is reached.
+    # Return a non-empty (truthy) track list so that detect_independent_sides is reached.
     # Return a proper stub track0 so detect_geometry_from_boot_data is invoked when
     # a geometry override is provided; the actual content is irrelevant since
     # detect_geometry_from_boot_data is also mocked.
@@ -840,16 +840,16 @@ def _run_flux_decode_per_side(work_dir: Path, per_side_detected: bool,
          patch('worker.arcworker.analyses.flux.parse_imd_track0', return_value=stub_track0), \
          patch('worker.arcworker.analyses.flux.parse_imd_tracks', return_value=stub_tracks), \
          patch('worker.arcworker.analyses.flux.detect_geometry_from_boot_data', return_value=geometry), \
-         patch('worker.arcworker.analyses.flux.detect_per_side_isolated', return_value=per_side):
+         patch('worker.arcworker.analyses.flux.detect_independent_sides', return_value=per_side):
 
         AnalysisWorker.process_flux_decode(worker, _analysis(), artefact, work_dir)
 
     return worker, mock_merged_gw, mock_side_gw
 
 
-class TestPerSideIsolationSplit(unittest.TestCase):
+class TestIndependentSidesSplit(unittest.TestCase):
     """
-    process_flux_decode must split isolated-sides discs into two single-sided
+    process_flux_decode must split independent-sides discs into two single-sided
     RAW_SECTOR artefacts and must NOT register the merged RAW_SECTOR.
     """
 
@@ -861,8 +861,8 @@ class TestPerSideIsolationSplit(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_two_raw_sector_artefacts_registered(self):
-        """Two RAW_SECTOR derived artefacts are registered when isolation detected."""
-        worker, _, _ = _run_flux_decode_per_side(self.work_dir, per_side_detected=True)
+        """Two RAW_SECTOR derived artefacts are registered when independent sides detected."""
+        worker, _, _ = _run_flux_decode_independent_sides(self.work_dir, independent_sides_detected=True)
         raw_calls = [
             c for c in worker.api.register_derived_artefact.call_args_list
             if c.args[3] == ArtefactType.RAW_SECTOR
@@ -871,7 +871,7 @@ class TestPerSideIsolationSplit(unittest.TestCase):
 
     def test_side_labels_contain_side_number(self):
         """Registered artefact labels include '(Side 0)' and '(Side 1)'."""
-        worker, _, _ = _run_flux_decode_per_side(self.work_dir, per_side_detected=True)
+        worker, _, _ = _run_flux_decode_independent_sides(self.work_dir, independent_sides_detected=True)
         labels = [
             c.args[1] for c in worker.api.register_derived_artefact.call_args_list
             if c.args[3] == ArtefactType.RAW_SECTOR
@@ -879,14 +879,14 @@ class TestPerSideIsolationSplit(unittest.TestCase):
         self.assertTrue(any('Side 0' in label for label in labels), labels)
         self.assertTrue(any('Side 1' in label for label in labels), labels)
 
-    def test_merged_raw_sector_not_registered_when_isolated(self):
-        """The merged single-image gw convert must NOT be called when isolation detected."""
-        worker, mock_merged_gw, _ = _run_flux_decode_per_side(self.work_dir, per_side_detected=True)
+    def test_merged_raw_sector_not_registered_when_independent(self):
+        """The merged single-image gw convert must NOT be called when independent sides detected."""
+        worker, mock_merged_gw, _ = _run_flux_decode_independent_sides(self.work_dir, independent_sides_detected=True)
         mock_merged_gw.assert_not_called()
 
     def test_one_side_gw_call_per_head(self):
         """sector_image_to_raw_greaseweazle_one_side is called twice (head 0 and head 1)."""
-        worker, _, mock_side_gw = _run_flux_decode_per_side(self.work_dir, per_side_detected=True)
+        worker, _, mock_side_gw = _run_flux_decode_independent_sides(self.work_dir, independent_sides_detected=True)
         self.assertEqual(mock_side_gw.call_count, 2)
         heads_used = [c.args[3] for c in mock_side_gw.call_args_list]
         self.assertIn(0, heads_used)
@@ -894,24 +894,24 @@ class TestPerSideIsolationSplit(unittest.TestCase):
 
     def test_single_sided_gw_format_chosen(self):
         """Single-sided format (acorn.dfs.ss80) selected when geometry is DS DFS 80-track."""
-        worker, _, mock_side_gw = _run_flux_decode_per_side(
-            self.work_dir, per_side_detected=True, geometry=_DFS_DS80_GEOMETRY
+        worker, _, mock_side_gw = _run_flux_decode_independent_sides(
+            self.work_dir, independent_sides_detected=True, geometry=_DFS_DS80_GEOMETRY
         )
         formats_used = [c.args[2] for c in mock_side_gw.call_args_list]
         for fmt in formats_used:
             self.assertEqual(fmt, 'acorn.dfs.ss80', f"Expected ss80 format, got {fmt!r}")
 
-    def test_no_isolation_uses_merged_path(self):
-        """Normal (non-isolated) disc produces one merged RAW_SECTOR via gw."""
-        worker, mock_merged_gw, mock_side_gw = _run_flux_decode_per_side(
-            self.work_dir, per_side_detected=False
+    def test_normal_disc_uses_merged_path(self):
+        """Normal (non-independent) disc produces one merged RAW_SECTOR via gw."""
+        worker, mock_merged_gw, mock_side_gw = _run_flux_decode_independent_sides(
+            self.work_dir, independent_sides_detected=False
         )
         mock_merged_gw.assert_called_once()
         mock_side_gw.assert_not_called()
 
     def test_hfe_and_imd_siblings_always_registered(self):
-        """HFE and IMD siblings are produced regardless of per-side isolation."""
-        worker, _, _ = _run_flux_decode_per_side(self.work_dir, per_side_detected=True)
+        """HFE and IMD siblings are produced regardless of independent-sides detection."""
+        worker, _, _ = _run_flux_decode_independent_sides(self.work_dir, independent_sides_detected=True)
         types_registered = [
             c.args[3] for c in worker.api.register_derived_artefact.call_args_list
         ]

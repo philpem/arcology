@@ -538,17 +538,20 @@ def detect_geometry_from_boot_data(track0: dict) -> dict | None:
     return None
 
 
-def detect_per_side_isolated(tracks: list[dict]) -> dict:
+def detect_independent_sides(tracks: list[dict]) -> dict:
     """
-    Detect a double-sided disc where each physical side was written by a
-    single-sided drive with the head-select wired to the drive-select pin.
+    Detect a double-sided disc whose two physical sides were captured as if
+    they were two independent single-sided discs.
 
-    The tell: every sector on physical head 1 has IDAM head = 0.  This
-    happens when the same drive images both sides of a disc independently
-    (e.g. BBC Micro drives 0/2, RM 380Z/480Z), so each side believes it is
-    the only (Side 0) of an independent disc.
+    This happens when a double-sided drive has its head-select wired to a
+    drive-select pin on the controller — to the controller and filesystem,
+    the second side looks like another single-sided drive (e.g. BBC Micro
+    drives 0/2, RM 380Z/480Z).  Each side records IDAM head = 0 regardless
+    of which physical head wrote it.
 
-    Contrast with a genuine double-sided disc (e.g. ADFS-L) where sectors on
+    The tell: every sector on physical head 1 has IDAM head = 0.
+
+    Contrast with a normal double-sided disc (e.g. ADFS-L) where sectors on
     physical head 1 correctly record IDAM head = 1.
 
     Requirements for detection:
@@ -576,7 +579,7 @@ def detect_per_side_isolated(tracks: list[dict]) -> dict:
             h1_data = True
             h1_tracks_with_data += 1
             # idam_heads is [head] * nsec when no head map present, meaning
-            # IDAM head == physical head (1) — that's a genuine DS disc.
+            # IDAM head == physical head (1) — a normal double-sided disc.
             if not all(h == 0 for h in t['idam_heads']):
                 h1_idam_all_zero = False
 
@@ -592,7 +595,7 @@ def detect_per_side_isolated(tracks: list[dict]) -> dict:
     elif not h1_data:
         reason = "No data on physical head 1 (single-sided disc)"
     else:
-        reason = "Physical head 1 sectors record IDAM head=1 — genuine double-sided disc"
+        reason = "Physical head 1 sectors record IDAM head=1 — double-sided disc"
 
     return {
         'detected':         detected,

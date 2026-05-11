@@ -299,6 +299,12 @@ def sector_image_to_raw_greaseweazle_one_side(
     Uses Greaseweazle's --tracks selector to extract only the tracks belonging
     to the specified physical head, producing a single-sided raw IMG.
 
+    TODO: verify behaviour against a real BBC Micro drive-0/2 or RM 380Z/480Z
+    flux capture — the unit tests mock the gw call, so the exact --tracks
+    selector behaviour for SCP sources (and whether gw correctly remaps IDAM
+    head=0 sectors from physical head 1 into the single-sided output) still
+    needs end-to-end confirmation.
+
     Args:
         input_path: Source image (SCP, IMD, HFE)
         output_path: Output raw IMG file
