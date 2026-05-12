@@ -384,28 +384,28 @@ def process_riscos_module_parse(self, analysis: dict, artefact: dict, work_dir: 
         self.fail_analysis(analysis_id, 'No partition_uuid in analysis hints')
         return
 
-    # Fetch files with RISC OS filetype ffa (Module)
-    files_resp = self.api.get(
-        f"/partitions/{partition_uuid}/files?per_page=10000&show_known=true"
-    )
-    if not files_resp:
-        self.fail_analysis(analysis_id, 'Failed to get partition files')
-        return
-
-    all_files = files_resp.get('files', [])
-
-    # When called after archive extraction, only process files that belong
-    # to that archive (DB paths are prefixed with the archive display path).
-    # Without this, a re-queued parse would re-scan the entire partition and
-    # try to open disc-level files using the wrong extraction_path.
+    # Fetch files with RISC OS filetype ffa (Module).
+    # Push the extraction-context filter to the API and paginate.
+    from urllib.parse import urlencode
+    base_params = {'show_known': 'true'}
     if path_prefix:
-        all_files = [f for f in all_files
-                     if f.get('path', '').startswith(path_prefix + '/')]
+        base_params['path_prefix'] = path_prefix
     else:
-        # Top-level scan: exclude nested-archive files, which have their
-        # own scoped RISCOS_MODULE_PARSE queued by ARCHIVE_EXTRACT.
-        all_files = [f for f in all_files
-                     if f.get('extraction_depth', 0) == 0]
+        base_params['extraction_depth'] = 0
+
+    all_files = []
+    page = 1
+    while True:
+        resp = self.api.get(
+            f"/partitions/{partition_uuid}/files?{urlencode({**base_params, 'per_page': 10000, 'page': page})}"
+        )
+        if not resp:
+            self.fail_analysis(analysis_id, 'Failed to get partition files')
+            return
+        all_files.extend(resp.get('files', []))
+        if page >= resp.get('pages', 1):
+            break
+        page += 1
 
     module_files = [
         f for f in all_files

@@ -1497,6 +1497,15 @@ def get_partition_files(uuid):
     if is_archive_param is not None:
         query = query.filter(ExtractedFile.is_archive == (is_archive_param.lower() == 'true'))
 
+    # Narrow to a specific archive extraction context (pushed down from worker
+    # to avoid transferring the entire partition just to filter in Python).
+    path_prefix_param = request.args.get('path_prefix')
+    extraction_depth_param = request.args.get('extraction_depth', type=int)
+    if path_prefix_param is not None:
+        query = query.filter(ExtractedFile.path.startswith(path_prefix_param + '/'))
+    if extraction_depth_param is not None:
+        query = query.filter(ExtractedFile.extraction_depth == extraction_depth_param)
+
     pagination = query.order_by(ExtractedFile.path).paginate(page=page, per_page=per_page)
     return jsonify({
         'files': [file_to_dict(f) for f in pagination.items],

@@ -655,26 +655,28 @@ def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path)
     # Get files not yet marked as archives (skip already-detected ones).
     # Must include known files (show_known=true) because archive files
     # can match the known-files database and would otherwise be hidden.
-    partition_resp = self.api.get(f"/partitions/{partition_uuid}/files?per_page=10000&is_archive=false&show_known=true")
-    if not partition_resp:
-        self.fail_analysis(analysis_id, 'Failed to get partition files')
-        return
-
-    files = partition_resp.get('files', [])
-
-    # Filter files to only those belonging to this archive's extraction
-    # context.  Without this, nested ARCHIVE_DETECT jobs pick up files
-    # from unrelated archives in the same partition and pass them wrong
-    # extraction_path / path_prefix hints, causing "file not found" in
-    # the subsequent ARCHIVE_EXTRACT.
+    # Push the extraction-context filter to the API so only the relevant
+    # subset is fetched; paginate to handle partitions larger than 10 000 files.
+    from urllib.parse import urlencode
+    base_params = {'is_archive': 'false', 'show_known': 'true'}
     if path_prefix:
-        # Nested detection: only process files extracted from this archive
-        # (their DB paths are prefixed with the archive's own path).
-        files = [f for f in files if f.get('path', '').startswith(path_prefix + '/')]
+        base_params['path_prefix'] = path_prefix
     else:
-        # Top-level detection (after FILE_EXTRACTION): only process files
-        # that came directly from the disc image, not from nested archives.
-        files = [f for f in files if f.get('extraction_depth', 0) == 0]
+        base_params['extraction_depth'] = 0
+
+    files = []
+    page = 1
+    while True:
+        resp = self.api.get(
+            f"/partitions/{partition_uuid}/files?{urlencode({**base_params, 'per_page': 10000, 'page': page})}"
+        )
+        if not resp:
+            self.fail_analysis(analysis_id, 'Failed to get partition files')
+            return
+        files.extend(resp.get('files', []))
+        if page >= resp.get('pages', 1):
+            break
+        page += 1
 
     archive_count = 0
     queued_count = 0
