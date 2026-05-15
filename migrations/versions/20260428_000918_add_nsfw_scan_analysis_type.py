@@ -25,4 +25,13 @@ def upgrade():
 
 
 def downgrade():
-    pass  # PostgreSQL does not support removing enum values
+    bind = op.get_bind()
+    if bind.dialect.name != 'postgresql':
+        return
+    op.execute(sa.text("""
+        UPDATE artefacts SET derived_from_analysis_id = NULL
+        WHERE derived_from_analysis_id IN (
+            SELECT id FROM analyses WHERE analysis_type = 'NSFW_SCAN'
+        )
+    """))
+    op.execute(sa.text("DELETE FROM analyses WHERE analysis_type = 'NSFW_SCAN'"))
