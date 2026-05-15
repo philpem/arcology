@@ -699,7 +699,6 @@ class ExtractedFile(db.Model):
     md5: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
     sha1: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
     sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    crc32: Mapped[str | None] = mapped_column(String(8), nullable=True)
     known_file_id: Mapped[int | None] = mapped_column(ForeignKey("known_files.id", ondelete="SET NULL"), index=True, nullable=True)
     is_known: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 

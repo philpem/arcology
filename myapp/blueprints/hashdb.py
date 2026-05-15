@@ -888,8 +888,8 @@ def save_all_files(db_id, pid):
         sha1 = normalize_hash(request.form.get(f'sha1_{kf.id}'))
         sha256 = normalize_hash(request.form.get(f'sha256_{kf.id}'))
         crc32 = normalize_hash(request.form.get(f'crc32_{kf.id}'))
-        if not any([md5, sha1, sha256, crc32]):
-            flash(f'File "{filename}" must have at least one hash.', 'danger')
+        if not any([md5, sha1, sha256]):
+            flash(f'File "{filename}" must have at least one of MD5, SHA1, or SHA256.', 'danger')
             return redirect(url_for(f'{ROUTENAME}.view_product', id=db_id, pid=pid))
         size_str = request.form.get(f'file_size_{kf.id}', '').strip()
         proposed[kf.id] = {
@@ -903,7 +903,7 @@ def save_all_files(db_id, pid):
     # Apply changes, tracking which files actually changed so we only rescan
     # those.  Changes to hash/size are what affect rescan outcomes; other
     # fields are metadata-only.
-    RESCAN_FIELDS = ('md5', 'sha1', 'sha256', 'crc32', 'file_size')
+    RESCAN_FIELDS = ('md5', 'sha1', 'sha256', 'file_size')
     changed_for_rescan = []
     any_changed = False
     for kf in product.known_files:
@@ -1005,8 +1005,8 @@ def add_known_file(db_id, pid):
     sha1 = normalize_hash(request.form.get('sha1'))
     sha256 = normalize_hash(request.form.get('sha256'))
     crc32 = normalize_hash(request.form.get('crc32'))
-    if not any([md5, sha1, sha256, crc32]):
-        flash('At least one hash is required.', 'danger')
+    if not any([md5, sha1, sha256]):
+        flash('At least one of MD5, SHA1, or SHA256 is required.', 'danger')
         return redirect(url_for(f'{ROUTENAME}.view_product', id=db_id, pid=pid))
     file_size_str = request.form.get('file_size', '').strip()
     file_size = int(file_size_str) if file_size_str.isdigit() else None

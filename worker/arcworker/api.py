@@ -246,7 +246,7 @@ class ArcologyAPI:
 
         Args:
             artefact_uuid: UUID of the artefact containing the files
-            files: List of file dicts with path, size, crc32, etc.
+            files: List of file dicts with path, size, md5, sha1, sha256, etc.
             filesystem: Filesystem type (e.g., 'fat', 'adfs')
             label: Optional partition label (e.g., disc name for ADFS)
             container_format: Optional detailed format info (e.g., "Acorn ADFS E")
@@ -308,7 +308,6 @@ class ArcologyAPI:
                     'extension': Path(path).suffix.lstrip('.').lower() or None,
                     'file_size': f.get('size'),
                     'modified_time': f.get('modified_time'),
-                    'crc32': f.get('crc32'),
                     'md5': f.get('md5'),
                     'sha1': f.get('sha1'),
                     'sha256': f.get('sha256'),
