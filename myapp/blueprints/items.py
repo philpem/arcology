@@ -11,7 +11,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import selectinload
 from wtforms import SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Length, Optional
-from ..database import Artefact, Category, ExternalReference, ExternalSystem, Item, Platform
+from ..database import Analysis, AnalysisStatus, Artefact, Category, ExternalReference, ExternalSystem, Item, Platform
 from ..extensions import db
 from ..permissions import require_permission
 from ..utils.item_helpers import assign_item_fields, assign_item_tags, item_choice_list, item_parent_choice_list
@@ -177,6 +177,67 @@ def index():
                            searching=searching)
 
 
+def _compute_artefact_analysis_status(root_artefact_ids):
+    """Aggregate analysis statuses across each root artefact's derived tree.
+
+    For each root artefact, sums analysis statuses across the artefact itself
+    and every descendant (via ``parent_artefact_id``). Returns a mapping
+    ``{root_artefact_id: (status_value, count, total)}``. Priority order
+    (worst-first): RUNNING > FAILED > PENDING > COMPLETED. Roots with no
+    analyses anywhere in their tree are absent from the dict.
+    """
+    if not root_artefact_ids:
+        return {}
+
+    # Walk the derived-artefact tree by iterative BFS, building a map from
+    # every descendant artefact_id back to the root it belongs to. Depth is
+    # typically 2-3 levels in practice, so this is a small number of queries.
+    descendant_to_root = {aid: aid for aid in root_artefact_ids}
+    frontier = list(root_artefact_ids)
+    while frontier:
+        children = (
+            db.session.query(Artefact.id, Artefact.parent_artefact_id)
+            .filter(Artefact.parent_artefact_id.in_(frontier))
+            .all()
+        )
+        if not children:
+            break
+        next_frontier = []
+        for child_id, parent_id in children:
+            if child_id in descendant_to_root:
+                continue  # defensive: avoid loops
+            descendant_to_root[child_id] = descendant_to_root[parent_id]
+            next_frontier.append(child_id)
+        frontier = next_frontier
+
+    rows = (
+        db.session.query(Analysis.artefact_id, Analysis.status, func.count(Analysis.id))
+        .filter(Analysis.artefact_id.in_(descendant_to_root.keys()))
+        .group_by(Analysis.artefact_id, Analysis.status)
+        .all()
+    )
+    by_root: dict[int, dict[AnalysisStatus, int]] = {}
+    for artefact_id, status, count in rows:
+        root = descendant_to_root[artefact_id]
+        bucket = by_root.setdefault(root, {})
+        bucket[status] = bucket.get(status, 0) + count
+
+    priority = (
+        AnalysisStatus.RUNNING,
+        AnalysisStatus.FAILED,
+        AnalysisStatus.PENDING,
+        AnalysisStatus.COMPLETED,
+    )
+    result = {}
+    for root_id, counts in by_root.items():
+        total = sum(counts.values())
+        for status in priority:
+            if counts.get(status):
+                result[root_id] = (status.value, counts[status], total)
+                break
+    return result
+
+
 def _build_tree_rows(root_items):
     """Recursively expand root items into (item, depth) rows for tree display."""
     rows = []
@@ -267,10 +328,15 @@ def view(uuid):
 
     artefacts_page = artefact_query.order_by(_ARTEFACT_SORT_OPTIONS[artefact_sort]).paginate(page=page, per_page=per_page)
 
+    artefact_analysis_status = _compute_artefact_analysis_status(
+        [a.id for a in artefacts_page.items]
+    )
+
     return render_template('items/view.html', item=item, artefacts_page=artefacts_page,
                            letter_pages=letter_pages, current_letter=current_letter,
                            valid_per_page=VALID_PER_PAGE, view_all=view_all,
-                           artefact_sort=artefact_sort)
+                           artefact_sort=artefact_sort,
+                           artefact_analysis_status=artefact_analysis_status)
 
 
 @blueprint.route('/<string:uuid>/edit', methods=['GET', 'POST'])
