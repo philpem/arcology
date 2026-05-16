@@ -2084,6 +2084,46 @@ def _render_artefact_view(artefact):
         ).with_entities(ExtractedFile.path).all()
         archive_paths = {af.path for af in archive_files}
 
+    # Header banner: when browsing inside an archive (or at the root of a
+    # top-level archive), surface its archive_comment above the file list.
+    # - At the root, a Partition with filesystem='archive' may carry the
+    #   comment (top-level archive uploads use this path).
+    # - Below the root, a nested archive's outer ExtractedFile carries the
+    #   comment so we can find it by exact path match.
+    archive_comment_banner = None
+    archive_comment_label = None
+    if current_path:
+        path_match = current_path.rstrip('/')
+        if path_match:
+            ef = (
+                ExtractedFile.query.join(Partition)
+                .filter(
+                    Partition.artefact_id.in_(all_artefact_ids),
+                    ExtractedFile.path == path_match,
+                    ExtractedFile.is_archive == True,
+                    ExtractedFile.archive_comment.isnot(None),
+                )
+                .with_entities(
+                    ExtractedFile.archive_comment,
+                    ExtractedFile.archive_format,
+                    ExtractedFile.filename,
+                )
+                .first()
+            )
+            if ef:
+                archive_comment_banner = ef.archive_comment
+                archive_comment_label = (
+                    f"{ef.filename} ({ef.archive_format})" if ef.archive_format else ef.filename
+                )
+    elif all_partitions:
+        for p in all_partitions:
+            if p.archive_comment:
+                archive_comment_banner = p.archive_comment
+                archive_comment_label = (
+                    f"{artefact.label} ({p.container_format})" if p.container_format else artefact.label
+                )
+                break
+
     # Extract completed analysis results for display.
     # These are surfaced as badges + cards directly on the artefact view page.
     mastering_analysis = None
@@ -2401,6 +2441,8 @@ def _render_artefact_view(artefact):
                            subdirectories=subdirectories,
                            current_path=current_path,
                            archive_paths=archive_paths,
+                           archive_comment_banner=archive_comment_banner,
+                           archive_comment_label=archive_comment_label,
                            current_sort=current_sort,
                            mastering_analysis=mastering_analysis,
                            protection_analysis=protection_analysis,

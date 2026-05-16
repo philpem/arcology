@@ -303,6 +303,7 @@ def _extract_top_level_archive(
     partition = self.api.register_file_listing(
         artefact['uuid'], files, 'archive',
         container_format=archive_info['name'],
+        archive_comment=result.get('archive_comment'),
     )
 
     # Promote extracted files with recognised extensions to derived
@@ -1030,6 +1031,20 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
     # Register extracted files in the same partition with parent_file_id
     if files:
         self.api.post_file_records(partition_uuid, files)
+
+    # If the archive carried a comment (e.g. ZIP archive-wide comment),
+    # attach it to the outer ExtractedFile so the UI can show it next to
+    # the archive entry.
+    archive_comment = result.get('archive_comment')
+    if archive_comment:
+        self.api.post(
+            f"/files/{file_id}/mark_archive",
+            {
+                'is_archive': True,
+                'archive_format': archive_info['name'],
+                'archive_comment': archive_comment,
+            },
+        )
 
     # Upload extraction tree to storage (no-op in local mode) BEFORE
     # queueing follow-up analyses.  Otherwise workers can claim the
