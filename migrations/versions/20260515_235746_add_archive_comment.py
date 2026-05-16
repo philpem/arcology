@@ -1,14 +1,14 @@
 """Add archive_comment columns to partitions and extracted_files
 
 Revision ID: 000069fabf0d
-Revises: 000069e9644a
-Create Date: 2026-05-06
+Revises: 00006a01ece1
+Create Date: 2026-05-15
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = '000069fabf0d'
-down_revision = '000069e9644a'
+down_revision = '00006a01ece1'
 branch_labels = None
 depends_on = None
 
