@@ -2,6 +2,21 @@
 {% from '_pagination.html' import render_pagination, render_letter_bar %}
 {% block page_title %}{{ item.name }}{% endblock %}
 
+{% macro analysis_lozenge(info) %}
+{% if info %}
+{% set status, count, total = info %}
+{% if status == 'running' %}
+<span class="badge bg-info ms-1" title="{{ count }} of {{ total }} analyses running"><i class="bi bi-arrow-repeat"></i> Processing</span>
+{% elif status == 'failed' %}
+<span class="badge bg-danger ms-1" title="{{ count }} of {{ total }} analyses failed"><i class="bi bi-exclamation-triangle"></i> Failed</span>
+{% elif status == 'pending' %}
+<span class="badge bg-warning text-dark ms-1" title="{{ count }} of {{ total }} analyses pending"><i class="bi bi-hourglass-split"></i> Pending</span>
+{% elif status == 'completed' %}
+<span class="badge bg-success ms-1" title="All {{ total }} analyses completed"><i class="bi bi-check-circle"></i> Done</span>
+{% endif %}
+{% endif %}
+{% endmacro %}
+
 {% block content %}
 <nav aria-label="breadcrumb" class="mb-3">
     <ol class="breadcrumb">
@@ -136,7 +151,10 @@
                 <div class="list-group-item">
                     <div class="d-flex justify-content-between">
                         <div>
-                            <h5><a href="{{ artefact_url(artefact) }}">{{ artefact.label }}</a></h5>
+                            <h5>
+                                <a href="{{ artefact_url(artefact) }}">{{ artefact.label }}</a>
+                                {{ analysis_lozenge(artefact_analysis_status.get(artefact.id)) }}
+                            </h5>
                             <p class="mb-1 text-muted">
                                 <span class="badge bg-secondary">{{ artefact.artefact_type.value.upper().replace('_', ' ') }}</span>
                                 <code>{{ artefact.original_filename }}</code>
