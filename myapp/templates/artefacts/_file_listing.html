@@ -17,6 +17,7 @@
             <div class="card-body border-bottom">
                 <form method="get" class="d-flex flex-wrap align-items-end gap-2">
                 {% if hashdb_mode %}<input type="hidden" name="mode" value="hashdb">{% endif %}
+                {% if file_form.path.data %}<input type="hidden" name="path" value="{{ file_form.path.data }}">{% endif %}
                     <div style="width: 180px;">
                         <select name="partition_uuid" class="form-select form-select-sm" title="Filter files by disk partition. Select a specific partition or show files from all partitions.">
                             <option value="">All Partitions</option>
@@ -33,7 +34,7 @@
                     <div>{{ file_form.filter_products(class="form-select form-select-sm", title="Filter files by product match status. 'Hide' removes files matched to a known product; 'Only' shows only files matched to a known product.") }}</div>
                     <div class="flex-grow-1"></div>
                     <button type="submit" class="btn btn-sm btn-secondary">Filter</button>
-                    <a href="?{% if hashdb_mode %}mode=hashdb{% endif %}" class="btn btn-sm btn-outline-secondary" title="Clear all filters">Clear</a>
+                    <a href="?{% if hashdb_mode %}mode=hashdb&{% endif %}{% if file_form.path.data %}path={{ file_form.path.data | urlencode }}{% endif %}" class="btn btn-sm btn-outline-secondary" title="Clear all filters">Clear</a>
                 </form>
             </div>
             {% if archive_comment_banner %}
