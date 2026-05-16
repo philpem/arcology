@@ -1014,12 +1014,27 @@ def _populate_search_index(analysis):
 @blueprint.route('/analysis/pending', methods=['GET'])
 @require_auth('read_only')
 def get_pending_analyses():
-    """Get pending analyses (for worker)."""
-    analyses = (
+    """Get pending analyses (for worker).
+
+    Optional query parameter:
+        types: comma-separated AnalysisType names to restrict results to
+               (e.g. ``?types=FLUX_VISUALISATION,FLUX_DECODE``).
+               Unknown names are silently ignored.
+    """
+    query = (
         Analysis.query
         .filter(Analysis.status == AnalysisStatus.PENDING)
         .options(joinedload(Analysis.artefact).joinedload(Artefact.item))
-        .order_by(Analysis.created_at)
+    )
+    types_param = request.args.get('types', '')
+    if types_param:
+        requested_names = [t.strip() for t in types_param.split(',') if t.strip()]
+        valid_types = [AnalysisType[n] for n in requested_names if n in AnalysisType.__members__]
+        if valid_types:
+            query = query.filter(Analysis.analysis_type.in_(valid_types))
+    analyses = (
+        query
+        .order_by(Analysis.priority.desc(), Analysis.created_at)
         .limit(50)
         .all()
     )

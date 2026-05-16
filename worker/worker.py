@@ -35,7 +35,7 @@ import logging as _logging
 _logging.getLogger('urllib3.connection').setLevel(_logging.ERROR)
 del _logging
 
-from arcworker import ARCOLOGY_API, OUTPUT_DIR, UPLOAD_DIR, WORKER_API_KEY, AnalysisWorker
+from arcworker import ARCOLOGY_API, OUTPUT_DIR, UPLOAD_DIR, WORKER_ANALYSIS_TYPES, WORKER_API_KEY, AnalysisWorker
 
 
 def main():
@@ -43,7 +43,8 @@ def main():
         api_url=ARCOLOGY_API,
         upload_dir=UPLOAD_DIR,
         output_dir=OUTPUT_DIR,
-        api_key=WORKER_API_KEY
+        api_key=WORKER_API_KEY,
+        analysis_types=WORKER_ANALYSIS_TYPES or None,
     )
     worker.run()
 

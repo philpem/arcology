@@ -40,7 +40,8 @@ class AnalysisWorker:
     """Main worker class that processes analysis jobs."""
 
     def __init__(self, api_url: str, upload_dir: Path, output_dir: Path,
-                 api_key: str = '', storage=None):
+                 api_key: str = '', storage=None,
+                 analysis_types: list[str] | None = None):
         """
         Initialize the worker.
 
@@ -50,6 +51,8 @@ class AnalysisWorker:
             output_dir: Directory for analysis outputs (e.g., visualisations)
             api_key: Worker API key for authentication
             storage: StorageBackend instance (if None, creates from config)
+            analysis_types: Optional list of AnalysisType names this worker
+                            will claim.  None/empty = claim all types.
         """
         self.uploads = upload_dir
         self.outputs = output_dir
@@ -81,6 +84,7 @@ class AnalysisWorker:
 
         self.api = ArcologyAPI(api_url, upload_dir, output_dir,
                                api_key=api_key, storage=storage)
+        self.analysis_types: list[str] = list(analysis_types) if analysis_types else []
         self._decompression_info = None  # Set by get_input_path() when decompression occurs
 
     def get_input_path(self, artefact: dict, work_dir: Path) -> Path:
@@ -566,7 +570,9 @@ class AnalysisWorker:
         Returns:
             Number of analyses processed (0 or 1)
         """
-        analyses = self.api.get_pending_analyses()
+        analyses = self.api.get_pending_analyses(
+            analysis_types=self.analysis_types or None
+        )
 
         if not analyses:
             return 0
@@ -594,6 +600,10 @@ class AnalysisWorker:
         log.info(f"API: {self.api.api}")
         log.info(f"Uploads: {self.uploads}")
         log.info(f"Outputs: {self.outputs}")
+        if self.analysis_types:
+            log.info(f"Job type filter: {', '.join(self.analysis_types)}")
+        else:
+            log.info("Job type filter: all types")
 
         # Recover any jobs left in RUNNING state by a previous worker crash
         self.api.reset_stale_analyses()
