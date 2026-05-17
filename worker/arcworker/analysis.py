@@ -9,6 +9,7 @@ class attribute at the bottom of this module so the function bodies
 """
 
 import shutil
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -602,6 +603,16 @@ class AnalysisWorker:
         log.info(f"Outputs: {self.outputs}")
         if self.analysis_types:
             log.info(f"Job type filter: {', '.join(self.analysis_types)}")
+            from shared.enums import AnalysisType
+            valid_names = set(AnalysisType.__members__)
+            unknown = [t for t in self.analysis_types if t not in valid_names]
+            if unknown:
+                log.error(
+                    "WORKER_ANALYSIS_TYPES contains unknown AnalysisType name(s): %s — "
+                    "check spelling against shared/enums.py",
+                    ', '.join(unknown),
+                )
+                sys.exit(1)
         else:
             log.info("Job type filter: all types")
 

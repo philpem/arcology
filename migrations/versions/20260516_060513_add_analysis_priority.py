@@ -15,11 +15,12 @@ depends_on = None
 
 def upgrade():
     op.add_column('analyses', sa.Column('priority', sa.Integer(), nullable=False, server_default='0'))
-    op.create_index('ix_analyses_priority', 'analyses', ['priority'])
+    # Composite index serves WHERE status = 'PENDING' ORDER BY priority DESC, created_at ASC
+    op.create_index('ix_analyses_status_priority_created', 'analyses', ['status', 'priority', 'created_at'])
 
 
 def downgrade():
-    op.drop_index('ix_analyses_priority', table_name='analyses')
+    op.drop_index('ix_analyses_status_priority_created', table_name='analyses')
     op.drop_column('analyses', 'priority')
 
 # vim: ts=4 sw=4 et
