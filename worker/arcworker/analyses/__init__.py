@@ -33,11 +33,17 @@ from .flux import (
 )
 from .images import (
     _EXT_VIEWABLE,
+    _NSFW_META1_DEFAULT,
+    _NSFW_META2_DEFAULT,
+    _RASTER_EXTENSIONS,
+    _RISC_OS_IMAGE_FILETYPES,
     _RISCOS_HEX_VIEWABLE,
     _RISCOS_VIEWABLE_SUFFIXES,
     _convert_file_to_outputs,
     _detect_viewable_type,
+    _load_nsfw_sessions,
     process_format_convert,
+    process_nsfw_scan,
 )
 from .metadata import (
     process_checksum_compute,
@@ -69,6 +75,7 @@ HANDLERS: dict[str, str] = {
     AnalysisType.ARMLOCK_REMOVE.value:          'process_armlock_remove',
     AnalysisType.FORMAT_CONVERT.value:          'process_format_convert',
     AnalysisType.RISCOS_MODULE_PARSE.value:     'process_riscos_module_parse',
+    AnalysisType.NSFW_SCAN.value:              'process_nsfw_scan',
 }
 
 
@@ -97,6 +104,12 @@ __all__ = [
     '_RISCOS_VIEWABLE_SUFFIXES',
     '_EXT_VIEWABLE',
     '_RISCOS_HEX_VIEWABLE',
+    '_RASTER_EXTENSIONS',
+    '_RISC_OS_IMAGE_FILETYPES',
+    '_NSFW_META1_DEFAULT',
+    '_NSFW_META2_DEFAULT',
+    '_load_nsfw_sessions',
+    'process_nsfw_scan',
     # Metadata
     'process_checksum_compute',
     'process_metadata_extract',

@@ -350,6 +350,25 @@ class ArcologyAPI:
 
         return self.post(f"/artefacts/{artefact_uuid}/analysis", data)
 
+    def apply_file_restrictions(
+        self,
+        partition_uuid: str,
+        restrictions: list[dict],
+    ) -> dict | None:
+        """Apply download restrictions to specific extracted files in a partition.
+
+        Args:
+            partition_uuid: UUID of the partition containing the files.
+            restrictions: List of {'path', 'restriction_type', 'reason'} dicts.
+
+        Returns:
+            API response dict, or None on failure.
+        """
+        return self.post(
+            f'/partitions/{partition_uuid}/files/restrict',
+            {'restrictions': restrictions},
+        )
+
     def get_pending_analyses(self) -> list[dict]:
         """
         Get list of pending analysis jobs.

@@ -938,6 +938,271 @@ class TestHashDatabaseRestrictionField(unittest.TestCase):
             self.assertEqual(db2.restriction_type, RestrictionType.MALWARE)
 
 
+# =============================================================================
+# POST /partitions/{uuid}/files/restrict
+# =============================================================================
+
+class TestApplyFileRestrictionsAPI(unittest.TestCase):
+    """Tests for POST /api/partitions/{uuid}/files/restrict."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app, cls.db = _create_app_and_db()
+        cls.client = cls.app.test_client()
+
+    def test_applies_new_restrictions(self):
+        with self.app.app_context():
+            _, artefact = _make_item_and_artefact(self.db)
+            partition, ef = _make_partition_and_file(self.db, artefact, 'img/adult.jpg')
+            _make_partition_and_file(self.db, artefact, 'img/safe.jpg')
+            p_uuid = partition.uuid
+            self.db.session.commit()
+
+        resp = self.client.post(
+            f'/api/partitions/{p_uuid}/files/restrict',
+            json={'restrictions': [
+                {'path': 'img/adult.jpg', 'restriction_type': 'explicit',
+                 'reason': 'NSFW classifier: score=0.97'},
+            ]},
+            headers={'X-API-Key': _WORKER_KEY},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data['applied'], 1)
+        self.assertEqual(data['updated'], 0)
+        self.assertEqual(data['not_found'], 0)
+
+        with self.app.app_context():
+            from myapp.database import ExtractedFile, RestrictionType
+            ef = ExtractedFile.query.filter_by(path='img/adult.jpg').first()
+            self.assertTrue(ef.is_restricted)
+            self.assertEqual(ef.restrictions[0].restriction_type, RestrictionType.EXPLICIT)
+            self.assertEqual(ef.restrictions[0].reason, 'NSFW classifier: score=0.97')
+
+    def test_idempotent_updates_reason(self):
+        with self.app.app_context():
+            _, artefact = _make_item_and_artefact(self.db)
+            partition, _ = _make_partition_and_file(self.db, artefact, 'img/dup.jpg')
+            p_uuid = partition.uuid
+            self.db.session.commit()
+
+        payload = {'restrictions': [
+            {'path': 'img/dup.jpg', 'restriction_type': 'explicit', 'reason': 'first'},
+        ]}
+        self.client.post(
+            f'/api/partitions/{p_uuid}/files/restrict',
+            json=payload,
+            headers={'X-API-Key': _WORKER_KEY},
+        )
+        resp = self.client.post(
+            f'/api/partitions/{p_uuid}/files/restrict',
+            json={'restrictions': [
+                {'path': 'img/dup.jpg', 'restriction_type': 'explicit', 'reason': 'updated'},
+            ]},
+            headers={'X-API-Key': _WORKER_KEY},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data['applied'], 0)
+        self.assertEqual(data['updated'], 1)
+
+        with self.app.app_context():
+            from myapp.database import ExtractedFile
+            ef = ExtractedFile.query.filter_by(path='img/dup.jpg').first()
+            self.assertEqual(len(ef.restrictions), 1)
+            self.assertEqual(ef.restrictions[0].reason, 'updated')
+
+    def test_not_found_paths_counted(self):
+        with self.app.app_context():
+            _, artefact = _make_item_and_artefact(self.db)
+            partition, _ = _make_partition_and_file(self.db, artefact, 'exists.jpg')
+            p_uuid = partition.uuid
+            self.db.session.commit()
+
+        resp = self.client.post(
+            f'/api/partitions/{p_uuid}/files/restrict',
+            json={'restrictions': [
+                {'path': 'exists.jpg', 'restriction_type': 'explicit'},
+                {'path': 'ghost.jpg', 'restriction_type': 'explicit'},
+            ]},
+            headers={'X-API-Key': _WORKER_KEY},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data['applied'], 1)
+        self.assertEqual(data['not_found'], 1)
+
+    def test_empty_restrictions_array_is_ok(self):
+        with self.app.app_context():
+            _, artefact = _make_item_and_artefact(self.db)
+            partition, _ = _make_partition_and_file(self.db, artefact, 'empty.txt')
+            p_uuid = partition.uuid
+            self.db.session.commit()
+
+        resp = self.client.post(
+            f'/api/partitions/{p_uuid}/files/restrict',
+            json={'restrictions': []},
+            headers={'X-API-Key': _WORKER_KEY},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data['applied'], 0)
+        self.assertEqual(data['updated'], 0)
+        self.assertEqual(data['not_found'], 0)
+
+    def test_non_worker_key_returns_403(self):
+        with self.app.app_context():
+            _, artefact = _make_item_and_artefact(self.db)
+            partition, _ = _make_partition_and_file(self.db, artefact, 'auth.txt')
+            p_uuid = partition.uuid
+            self.db.session.commit()
+
+        from myapp.app import create_app
+        from myapp.extensions import db as _db
+        app2 = create_app()
+        app2.config['TESTING'] = True
+        with app2.app_context():
+            _db.create_all()
+        client2 = app2.test_client()
+
+        resp = client2.post(
+            f'/api/partitions/{p_uuid}/files/restrict',
+            json={'restrictions': []},
+            headers={'X-API-Key': 'not-the-worker-key'},
+        )
+        self.assertEqual(resp.status_code, 401)
+
+    def test_invalid_restriction_type_skipped(self):
+        with self.app.app_context():
+            _, artefact = _make_item_and_artefact(self.db)
+            partition, _ = _make_partition_and_file(self.db, artefact, 'skip.jpg')
+            p_uuid = partition.uuid
+            self.db.session.commit()
+
+        resp = self.client.post(
+            f'/api/partitions/{p_uuid}/files/restrict',
+            json={'restrictions': [
+                {'path': 'skip.jpg', 'restriction_type': 'not_a_real_type'},
+            ]},
+            headers={'X-API-Key': _WORKER_KEY},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data['applied'], 0)
+
+    def test_missing_path_or_type_skipped(self):
+        with self.app.app_context():
+            _, artefact = _make_item_and_artefact(self.db)
+            partition, _ = _make_partition_and_file(self.db, artefact, 'present.jpg')
+            p_uuid = partition.uuid
+            self.db.session.commit()
+
+        resp = self.client.post(
+            f'/api/partitions/{p_uuid}/files/restrict',
+            json={'restrictions': [
+                {'restriction_type': 'explicit'},
+                {'path': 'present.jpg'},
+                {'path': 'present.jpg', 'restriction_type': 'explicit'},
+            ]},
+            headers={'X-API-Key': _WORKER_KEY},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data['applied'], 1)
+
+    def test_unknown_partition_returns_404(self):
+        resp = self.client.post(
+            '/api/partitions/00000000000000000000000000000000/files/restrict',
+            json={'restrictions': []},
+            headers={'X-API-Key': _WORKER_KEY},
+        )
+        self.assertEqual(resp.status_code, 404)
+
+    def test_restrictions_not_array_returns_400(self):
+        with self.app.app_context():
+            _, artefact = _make_item_and_artefact(self.db)
+            partition, _ = _make_partition_and_file(self.db, artefact, 'bad.txt')
+            p_uuid = partition.uuid
+            self.db.session.commit()
+
+        resp = self.client.post(
+            f'/api/partitions/{p_uuid}/files/restrict',
+            json={'restrictions': 'should-be-a-list'},
+            headers={'X-API-Key': _WORKER_KEY},
+        )
+        self.assertEqual(resp.status_code, 400)
+
+
+# =============================================================================
+# GET /partitions/{uuid}/files?show_known
+# =============================================================================
+
+class TestPartitionFilesShowKnown(unittest.TestCase):
+    """Tests for the show_known query parameter on GET /api/partitions/{uuid}/files."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app, cls.db = _create_app_and_db()
+        cls.client = cls.app.test_client()
+
+    def _setup_partition(self):
+        """Create a partition with one known and one unknown file. Returns (p_uuid, known_path, unknown_path)."""
+        with self.app.app_context():
+            _, artefact = _make_item_and_artefact(self.db)
+            partition, ef_unknown = _make_partition_and_file(self.db, artefact, 'unknown.txt')
+            _, ef_known = _make_partition_and_file(self.db, artefact, 'known.txt')
+            ef_known.is_known = True
+            self.db.session.commit()
+            return partition.uuid, 'known.txt', 'unknown.txt'
+
+    def test_default_excludes_known_files(self):
+        p_uuid, known_path, unknown_path = self._setup_partition()
+        resp = self.client.get(
+            f'/api/partitions/{p_uuid}/files',
+            headers={'X-API-Key': _WORKER_KEY},
+        )
+        self.assertEqual(resp.status_code, 200)
+        paths = {f['path'] for f in resp.get_json()['files']}
+        self.assertNotIn(known_path, paths)
+        self.assertIn(unknown_path, paths)
+
+    def test_show_known_false_excludes_known_files(self):
+        p_uuid, known_path, unknown_path = self._setup_partition()
+        resp = self.client.get(
+            f'/api/partitions/{p_uuid}/files?show_known=false',
+            headers={'X-API-Key': _WORKER_KEY},
+        )
+        self.assertEqual(resp.status_code, 200)
+        paths = {f['path'] for f in resp.get_json()['files']}
+        self.assertNotIn(known_path, paths)
+        self.assertIn(unknown_path, paths)
+
+    def test_show_known_true_includes_all_files(self):
+        p_uuid, known_path, unknown_path = self._setup_partition()
+        resp = self.client.get(
+            f'/api/partitions/{p_uuid}/files?show_known=true',
+            headers={'X-API-Key': _WORKER_KEY},
+        )
+        self.assertEqual(resp.status_code, 200)
+        paths = {f['path'] for f in resp.get_json()['files']}
+        self.assertIn(known_path, paths)
+        self.assertIn(unknown_path, paths)
+
+    def test_total_counts_reflect_filter(self):
+        p_uuid, _, _ = self._setup_partition()
+        resp_filtered = self.client.get(
+            f'/api/partitions/{p_uuid}/files',
+            headers={'X-API-Key': _WORKER_KEY},
+        )
+        resp_all = self.client.get(
+            f'/api/partitions/{p_uuid}/files?show_known=true',
+            headers={'X-API-Key': _WORKER_KEY},
+        )
+        total_filtered = resp_filtered.get_json()['total']
+        total_all = resp_all.get_json()['total']
+        self.assertGreater(total_all, total_filtered)
+
+
 if __name__ == '__main__':
     unittest.main()
 

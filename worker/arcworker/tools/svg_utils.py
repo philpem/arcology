@@ -1,7 +1,6 @@
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from scour.scour import scourString
 
 SVG_NS = "http://www.w3.org/2000/svg"
 XLINK_NS = "http://www.w3.org/1999/xlink"
@@ -80,6 +79,8 @@ def _run_scour(svg_text: str) -> str:
     """
     Run Scour with conservative, production-safe options.
     """
+    # Lazy import: scour is a worker-only dep, not installed in app-test CI.
+    from scour.scour import scourString
 
     # Scour expects CLI-style options object; we emulate minimal config
     class Options:

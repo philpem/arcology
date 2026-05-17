@@ -766,6 +766,8 @@ def _analysis_file_path(analysis, hint_file_map: dict) -> str | None:
                          (empty → direct artefact convert, returns None)
       RISCOS_MODULE_PARSE — path_prefix of the archive context
                          (empty → top-level scan, returns None)
+      NSFW_SCAN        — path_prefix of the archive context
+                         (empty → top-level scan, returns None)
     """
     import json as _json
     from shared.enums import AnalysisType as _AT
@@ -783,7 +785,7 @@ def _analysis_file_path(analysis, hint_file_map: dict) -> str | None:
         if fid and fid in hint_file_map:
             return hint_file_map[fid]['path']
         return None
-    if atype in (_AT.ARCHIVE_DETECT, _AT.FORMAT_CONVERT, _AT.RISCOS_MODULE_PARSE):
+    if atype in (_AT.ARCHIVE_DETECT, _AT.FORMAT_CONVERT, _AT.RISCOS_MODULE_PARSE, _AT.NSFW_SCAN):
         prefix = h.get('path_prefix', '')
         return prefix if prefix else None
     return None
