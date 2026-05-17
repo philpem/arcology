@@ -60,6 +60,11 @@ docker compose down -v
 See [doc/ADMIN_COMMANDS.md](doc/ADMIN_COMMANDS.md) for admin CLI commands
 (rebuild-search-index, rescan-hashes, reanalyse, etc.).
 
+For larger deployments — splitting workers into specialised pools (e.g.
+flux-decode vs lightweight metadata), running on Kubernetes, or giving
+web-UI uploads queue priority over bulk `arco` imports — see
+[doc/WORKER_POOLS.md](doc/WORKER_POOLS.md).
+
 ### Database browser (Adminer)
 
 Adminer is not started by default (it provides unauthenticated direct database

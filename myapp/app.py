@@ -48,6 +48,14 @@ def create_app(config_name=None):
     if not app.config.get('WORKER_API_KEY'):
         app.logger.warning("WORKER_API_KEY is not configured — worker API authentication will fail")
 
+    # Validate WEB_UI_ANALYSIS_PRIORITY when explicitly configured
+    web_priority = app.config.get('WEB_UI_ANALYSIS_PRIORITY')
+    if web_priority is not None and web_priority < 0:
+        raise ValueError(
+            f"WEB_UI_ANALYSIS_PRIORITY must be >= 0 (got {web_priority!r}); "
+            "a negative value would demote web UI jobs behind API/CLI jobs"
+        )
+
     # Warn and auto-generate SECRET_KEY if missing, left at the default placeholder, or too short
     secret_key = app.config.get('SECRET_KEY', '')
     if not secret_key or secret_key in ['0123456789ABCDEF', 'CHANGE_ME'] or len(secret_key) < 32:

@@ -70,6 +70,12 @@ def generate_uuid() -> str:
     return uuid_module.uuid4().hex
 
 
+# Analysis job priority.  Higher values are picked up first.  All jobs default
+# to ANALYSIS_PRIORITY_NORMAL.  Web UI views read the WEB_UI_ANALYSIS_PRIORITY
+# Flask config (default 0) and pass it to queue_analyses_for_artefact() so
+# operators can boost web-triggered jobs above API/CLI ones if they want to.
+ANALYSIS_PRIORITY_NORMAL = 0
+
 # =============================================================================
 # Enums
 # =============================================================================
@@ -630,6 +636,9 @@ class Analysis(db.Model):
     details: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON for structured results
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     
+    # Queue priority: higher value = picked up sooner (see ANALYSIS_PRIORITY_* constants)
+    priority: Mapped[int] = mapped_column(Integer, default=ANALYSIS_PRIORITY_NORMAL, index=True)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

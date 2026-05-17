@@ -350,14 +350,21 @@ class ArcologyAPI:
 
         return self.post(f"/artefacts/{artefact_uuid}/analysis", data)
 
-    def get_pending_analyses(self) -> list[dict]:
+    def get_pending_analyses(self, analysis_types: list[str] | None = None) -> list[dict]:
         """
         Get list of pending analysis jobs.
+
+        Args:
+            analysis_types: Optional list of AnalysisType names to restrict to.
+                            When provided, only jobs of those types are returned.
 
         Returns:
             List of analysis dicts, or empty list on error
         """
-        response = self.get('/analysis/pending')
+        url = '/analysis/pending'
+        if analysis_types:
+            url += '?types=' + ','.join(analysis_types)
+        response = self.get(url)
         if not response:
             return []
         return response.get('analyses', [])

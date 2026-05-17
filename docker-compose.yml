@@ -69,6 +69,10 @@ services:
       - LOG_LEVEL=INFO
       - MAX_ARCHIVE_DEPTH=10  # Maximum recursion depth for nested archives
       - WORKER_API_KEY=${WORKER_API_KEY}
+      # Restrict this worker to specific job types (comma-separated AnalysisType names).
+      # Leave unset (or empty) to accept all job types.
+      # Example for a dedicated flux-decoding worker pool:
+      #   - WORKER_ANALYSIS_TYPES=FLUX_VISUALISATION,FLUX_DECODE,METADATA_EXTRACT
     restart: unless-stopped
     deploy:
       # Default to 1 replica, override with --scale worker=N

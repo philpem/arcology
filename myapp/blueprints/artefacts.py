@@ -22,6 +22,7 @@ from werkzeug.utils import secure_filename
 from wtforms import BooleanField, IntegerField, SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Optional
 from ..database import (
+    ANALYSIS_PRIORITY_NORMAL,
     Analysis,
     AnalysisStatus,
     AnalysisType,
@@ -241,7 +242,8 @@ def queue_analyses_for_artefact(artefact: Artefact, hints: dict = None,
                                 checksum_only: bool = False,
                                 skip_duplicate_check: bool = False,
                                 commit: bool = True,
-                                skip_analyses: list[str] | None = None):
+                                skip_analyses: list[str] | None = None,
+                                priority: int = ANALYSIS_PRIORITY_NORMAL):
     """Queue appropriate analyses for an artefact based on its type.
 
     CHECKSUM_COMPUTE is always prepended as the first job regardless of artefact
@@ -256,6 +258,9 @@ def queue_analyses_for_artefact(artefact: Artefact, hints: dict = None,
     skip_analyses: list of AnalysisType *names* (uppercase strings, e.g. 'FLUX_DECODE')
     to suppress.  Used when registering siblings that must not re-trigger the
     parent analysis (ping-pong prevention).
+
+    priority: queue priority (ANALYSIS_PRIORITY_HIGH for web UI, ANALYSIS_PRIORITY_NORMAL
+    for API/CLI).  Higher value = picked up sooner by workers.
     """
     skip_set = set(skip_analyses or [])
     analysis_types = [AnalysisType.CHECKSUM_COMPUTE]
@@ -278,7 +283,8 @@ def queue_analyses_for_artefact(artefact: Artefact, hints: dict = None,
                 artefact_id=artefact.id,
                 analysis_type=analysis_type,
                 status=AnalysisStatus.PENDING,
-                hints=hints_json
+                hints=hints_json,
+                priority=priority,
             )
         db.session.add(analysis)
 
@@ -2744,7 +2750,10 @@ def upload(item_id):
                 hints['platform'] = platform.name
         if form.dfi_clock_mhz.data:
             hints['dfi_clock_mhz'] = form.dfi_clock_mhz.data
-        queue_analyses_for_artefact(artefact, hints if hints else None, checksum_only=not form.auto_analyse.data)
+        web_priority = current_app.config.get('WEB_UI_ANALYSIS_PRIORITY', ANALYSIS_PRIORITY_NORMAL)
+        queue_analyses_for_artefact(artefact, hints if hints else None,
+                                    checksum_only=not form.auto_analyse.data,
+                                    priority=web_priority)
         if form.auto_analyse.data:
             flash(f'Artefact "{artefact.label}" uploaded. Analysis queued.', 'success')
         else:
@@ -3413,7 +3422,8 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
             hints['notes'] = form.notes.data
 
         cleanup = reset_artefact_for_reanalysis(artefact)
-        queue_analyses_for_artefact(artefact, hints if hints else None)
+        web_priority = current_app.config.get('WEB_UI_ANALYSIS_PRIORITY', ANALYSIS_PRIORITY_NORMAL)
+        queue_analyses_for_artefact(artefact, hints if hints else None, priority=web_priority)
 
         # Run filesystem cleanup in background so the redirect happens immediately.
         app = current_app._get_current_object()

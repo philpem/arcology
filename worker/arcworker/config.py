@@ -35,6 +35,13 @@ MAX_DECOMPRESSED_BYTES = int(os.environ.get('MAX_DECOMPRESSED_BYTES', str(10 * 1
 # Mastering detection: number of trailing tracks to scan
 MASTERING_TRACK_SCAN_COUNT = int(os.environ.get('MASTERING_TRACK_SCAN_COUNT', '5'))
 
+# Job-type filter: comma-separated AnalysisType *names* this worker will accept.
+# e.g. "FLUX_VISUALISATION,FLUX_DECODE"  — empty string (default) accepts all types.
+WORKER_ANALYSIS_TYPES: list[str] = (
+    [t.strip() for t in os.environ['WORKER_ANALYSIS_TYPES'].split(',') if t.strip()]
+    if os.environ.get('WORKER_ANALYSIS_TYPES', '') else []
+)
+
 # Storage backend configuration: 'local' (default) or 's3'
 STORAGE_BACKEND = os.environ.get('STORAGE_BACKEND', 'local')
 S3_ENDPOINT_URL = os.environ.get('S3_ENDPOINT_URL', '')

@@ -18,6 +18,7 @@ from .config import (
     S3_SECRET_KEY,
     STORAGE_BACKEND,
     UPLOAD_DIR,
+    WORKER_ANALYSIS_TYPES,
     WORKER_API_KEY,
     log,
 )
@@ -31,6 +32,7 @@ __all__ = [
     'OUTPUT_DIR',
     'MAX_POLL',
     'WORKER_API_KEY',
+    'WORKER_ANALYSIS_TYPES',
     'STORAGE_BACKEND',
     'S3_ENDPOINT_URL',
     'S3_BUCKET',
