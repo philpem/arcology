@@ -240,7 +240,23 @@ def main():
     model_dir = Path(args.model_dir)
     sess1, inp1, meta1, sess2, inp2, meta2 = _load_sessions(model_dir, quantize=not args.no_quantize)
 
-    from worker.arcworker.tools.nsfw import classify_batch
+    from worker.arcworker.tools.nsfw import classify_batch, _build_tiles, _open_image
+
+    # Show tile geometry for the first image so users can confirm tiling is working
+    if images and not args.json:
+        try:
+            sample_img = _open_image(str(images[0]))
+            trigger = min(
+                meta1.get('input_size', 384),
+                meta2.get('input_size', 224),
+            )
+            tiles = _build_tiles(sample_img, trigger)
+            tile_names = [n for n, _ in tiles]
+            w, h = sample_img.size
+            print(f'  tile geometry for {images[0].name} ({w}×{h}): {len(tiles)} tiles — {tile_names}',
+                  file=sys.stderr)
+        except Exception:
+            pass
 
     print(f'\nScanning {len(images)} image(s)...', file=sys.stderr)
     results = classify_batch(
@@ -265,9 +281,9 @@ def main():
     skipped     = [r for r in results if r.get('verdict') == 'skipped']
     s1_only     = [r for r in results if r.get('stage') == 1]
     s2_reached  = [r for r in results if r.get('stage') == 2]
-    quadrant_triggered = [r for r in results
-                          if r.get('winning_crop', 'centre') != 'centre'
-                          or r.get('s1_winning_crop', 'centre') != 'centre']
+    tile_triggered = [r for r in results
+                      if r.get('winning_crop', 'centre') != 'centre'
+                      or r.get('s1_winning_crop', 'centre') != 'centre']
 
     print(f'\n=== Results ({len(results)} images) ===')
     for r in results:
@@ -280,8 +296,8 @@ def main():
     print(f'  Skipped:         {len(skipped)}')
     print(f'  Stage-1 only:    {len(s1_only)}')
     print(f'  Stage-2 reached: {len(s2_reached)}')
-    if quadrant_triggered:
-        print(f'  Quadrant-triggered: {len(quadrant_triggered)} image(s) where a non-centre crop was the winner')
+    if tile_triggered:
+        print(f'  Tile-triggered: {len(tile_triggered)} image(s) where a non-centre tile was the winner')
 
     print('\n  Thresholds used:')
     print(f'    s1_high={args.high}  s1_low={args.low}  s2_threshold={args.s2_threshold}  s1_min_explicit={args.s1_min_explicit}')

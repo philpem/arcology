@@ -387,26 +387,36 @@ class TestClassifyBatchBasic(unittest.TestCase):
         self.assertEqual(results[0]['verdict'], 'not explicit')
 
     def test_colocated_blocks_uncorroborated_crops(self):
-        # Multi-crop image (800×800 → 5 crops on each stage).
-        # Stage 1 peaks on top-left at ~0.881 (borderline, drives the image into stage 2).
-        # Stage 2 peaks on bottom-right at ~0.9999.
-        # Their winning crops disagree, so the best per-crop min is ~0.269 → blocked.
-        # Crop order: centre, top-left, top-right, bottom-left, bottom-right.
+        # Multi-crop image (800×800 → 10 tiles on each stage).
+        # Stage 1 peaks on tl at ~0.881 (borderline, drives the image into stage 2).
+        # Stage 2 peaks on br at ~0.9999.
+        # Their winning tiles disagree, so the best per-crop min is ~0.269 → blocked.
+        # Tile order: centre, tl, tc, tr, ml, mc, mr, bl, bc, br (10 tiles).
         big = _make_image_file(800, 800)
         try:
             sess1 = _make_sequence_session([
-                [-0.5, 0.5],   # centre   → idx0 ≈ 0.269
-                [ 1.0,-1.0],   # tl       → idx0 ≈ 0.881  (borderline; forces stage 2)
-                [-0.5, 0.5],   # tr       → 0.269
-                [-0.5, 0.5],   # bl       → 0.269
-                [-0.5, 0.5],   # br       → 0.269
+                [-0.5, 0.5],   # centre → idx0 ≈ 0.269
+                [ 1.0,-1.0],   # tl     → idx0 ≈ 0.881 (borderline; forces stage 2)
+                [-0.5, 0.5],   # tc     → 0.269
+                [-0.5, 0.5],   # tr     → 0.269
+                [-0.5, 0.5],   # ml     → 0.269
+                [-0.5, 0.5],   # mc     → 0.269
+                [-0.5, 0.5],   # mr     → 0.269
+                [-0.5, 0.5],   # bl     → 0.269
+                [-0.5, 0.5],   # bc     → 0.269
+                [-0.5, 0.5],   # br     → 0.269
             ])
             sess2 = _make_sequence_session([
-                [ 0.5,-0.5],   # centre   → idx1 ≈ 0.269
-                [ 0.5,-0.5],   # tl       → 0.269
-                [ 0.5,-0.5],   # tr       → 0.269
-                [ 0.5,-0.5],   # bl       → 0.269
-                [-5.0, 5.0],   # br       → 0.9999
+                [ 0.5,-0.5],   # centre → idx1 ≈ 0.269
+                [ 0.5,-0.5],   # tl     → 0.269
+                [ 0.5,-0.5],   # tc     → 0.269
+                [ 0.5,-0.5],   # tr     → 0.269
+                [ 0.5,-0.5],   # ml     → 0.269
+                [ 0.5,-0.5],   # mc     → 0.269
+                [ 0.5,-0.5],   # mr     → 0.269
+                [ 0.5,-0.5],   # bl     → 0.269
+                [ 0.5,-0.5],   # bc     → 0.269
+                [-5.0, 5.0],   # br     → idx1 ≈ 0.9999
             ])
             results = classify_batch(
                 sess1, 'pixel_values', _META1,
@@ -421,23 +431,34 @@ class TestClassifyBatchBasic(unittest.TestCase):
             os.unlink(big)
 
     def test_colocated_passes_when_same_crop_high(self):
-        # Multi-crop image where stage 1 and stage 2 BOTH peak on top-left.
-        # Per-crop min on top-left = min(0.731, 0.9999) ≈ 0.731 → above colocated threshold.
+        # Multi-crop image where stage 1 and stage 2 BOTH peak on tl.
+        # Per-crop min on tl = min(0.881, 0.9999) ≈ 0.881 → above colocated threshold.
+        # Tile order: centre, tl, tc, tr, ml, mc, mr, bl, bc, br (10 tiles).
         big = _make_image_file(800, 800)
         try:
             sess1 = _make_sequence_session([
-                [-0.5, 0.5],   # centre   ≈ 0.269
-                [ 1.0,-1.0],   # tl       ≈ 0.881
-                [-0.5, 0.5],   # tr       ≈ 0.269
-                [-0.5, 0.5],   # bl       ≈ 0.269
-                [-0.5, 0.5],   # br       ≈ 0.269
+                [-0.5, 0.5],   # centre ≈ 0.269
+                [ 1.0,-1.0],   # tl     ≈ 0.881
+                [-0.5, 0.5],   # tc     ≈ 0.269
+                [-0.5, 0.5],   # tr     ≈ 0.269
+                [-0.5, 0.5],   # ml     ≈ 0.269
+                [-0.5, 0.5],   # mc     ≈ 0.269
+                [-0.5, 0.5],   # mr     ≈ 0.269
+                [-0.5, 0.5],   # bl     ≈ 0.269
+                [-0.5, 0.5],   # bc     ≈ 0.269
+                [-0.5, 0.5],   # br     ≈ 0.269
             ])
             sess2 = _make_sequence_session([
-                [ 0.5,-0.5],   # centre   ≈ 0.269
-                [-5.0, 5.0],   # tl       ≈ 0.9999
-                [ 0.5,-0.5],   # tr       ≈ 0.269
-                [ 0.5,-0.5],   # bl       ≈ 0.269
-                [ 0.5,-0.5],   # br       ≈ 0.269
+                [ 0.5,-0.5],   # centre ≈ 0.269 (idx1)
+                [-5.0, 5.0],   # tl     ≈ 0.9999 (idx1)
+                [ 0.5,-0.5],   # tc     ≈ 0.269
+                [ 0.5,-0.5],   # tr     ≈ 0.269
+                [ 0.5,-0.5],   # ml     ≈ 0.269
+                [ 0.5,-0.5],   # mc     ≈ 0.269
+                [ 0.5,-0.5],   # mr     ≈ 0.269
+                [ 0.5,-0.5],   # bl     ≈ 0.269
+                [ 0.5,-0.5],   # bc     ≈ 0.269
+                [ 0.5,-0.5],   # br     ≈ 0.269
             ])
             results = classify_batch(
                 sess1, 'pixel_values', _META1,
@@ -447,7 +468,7 @@ class TestClassifyBatchBasic(unittest.TestCase):
             )
             self.assertEqual(results[0]['verdict'],          'explicit')
             self.assertEqual(results[0]['stage'],            2)
-            self.assertEqual(results[0]['colocated_crop'],   'top-left')
+            self.assertEqual(results[0]['colocated_crop'],   'tl')
             self.assertGreaterEqual(results[0]['colocated_score'], 0.45)
         finally:
             os.unlink(big)
@@ -704,9 +725,12 @@ class TestMultiCrop(unittest.TestCase):
             os.unlink(path)
         self.assertEqual(sess1.call_count, 1)
 
-    def test_large_image_five_crops(self):
-        """An image with width >= 2× model input size is scored with five crops."""
-        # _META1 input_size=384; 2×384=768; image 800×600 — width 800 >= 768
+    def test_large_image_ten_crops(self):
+        """An image with width >= 2× trigger size is scored with 10 tiles (centre + 3×3 grid).
+
+        Trigger size is min(size1, size2) = min(384, 224) = 224; 2×224=448.
+        Image 800×600 — width 800 >= 448.
+        """
         sess1 = _make_counting_session([5.0, -5.0])
         path  = _make_image_file(800, 600)
         try:
@@ -717,11 +741,13 @@ class TestMultiCrop(unittest.TestCase):
             )
         finally:
             os.unlink(path)
-        self.assertEqual(sess1.call_count, 5)
+        self.assertEqual(sess1.call_count, 10)  # centre + 9 grid tiles
 
-    def test_tall_image_five_crops(self):
-        """An image with height >= 2× model input size is scored with five crops."""
-        # _META1 input_size=384; 2×384=768; image 400×800 — height 800 >= 768
+    def test_tall_image_ten_crops(self):
+        """An image with height >= 2× trigger size is scored with 10 tiles.
+
+        Trigger size = min(384, 224) = 224; 2×224=448. Image 400×800 — height 800 >= 448.
+        """
         sess1 = _make_counting_session([5.0, -5.0])
         path  = _make_image_file(400, 800)
         try:
@@ -732,21 +758,27 @@ class TestMultiCrop(unittest.TestCase):
             )
         finally:
             os.unlink(path)
-        self.assertEqual(sess1.call_count, 5)
+        self.assertEqual(sess1.call_count, 10)  # centre + 9 grid tiles
 
     def test_corner_content_flagged(self):
-        """Explicit content that appears in only one quadrant tile is still caught.
+        """Explicit content that appears in only one grid tile is still caught.
 
-        Centre crop → safe (logits [-5, 5] → probs[0] ≈ 0.0001).
-        Top-left tile → explicit (logits [5, -5] → probs[0] ≈ 0.9999).
-        Other tiles → safe.  Maximum score drives verdict to 'explicit'.
+        Tile order (10 tiles): centre, tl, tc, tr, ml, mc, mr, bl, bc, br.
+        Centre → safe (logits [-5, 5] → score[0] ≈ 0.0001).
+        tl tile → explicit (logits [5, -5] → score[0] ≈ 0.9999).
+        All other tiles → safe.  Maximum score drives verdict to 'explicit'.
         """
         logits_seq = [
             [-5.0,  5.0],  # centre: safe
-            [ 5.0, -5.0],  # top-left: explicit
-            [-5.0,  5.0],  # top-right: safe
-            [-5.0,  5.0],  # bottom-left: safe
-            [-5.0,  5.0],  # bottom-right: safe
+            [ 5.0, -5.0],  # tl: explicit
+            [-5.0,  5.0],  # tc: safe
+            [-5.0,  5.0],  # tr: safe
+            [-5.0,  5.0],  # ml: safe
+            [-5.0,  5.0],  # mc: safe
+            [-5.0,  5.0],  # mr: safe
+            [-5.0,  5.0],  # bl: safe
+            [-5.0,  5.0],  # bc: safe
+            [-5.0,  5.0],  # br: safe
         ]
         sess1 = _make_sequence_session(logits_seq)
         path  = _make_image_file(800, 600)
@@ -761,15 +793,20 @@ class TestMultiCrop(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]['verdict'],      'explicit')
         self.assertGreater(results[0]['score'],      0.90)
-        self.assertEqual(results[0]['winning_crop'], 'top-left')
-        # Five crop entries should be present
-        self.assertEqual(len(results[0]['crops']), 5)
+        self.assertEqual(results[0]['winning_crop'], 'tl')
+        # Ten tile entries should be present (centre + 9 grid tiles)
+        self.assertEqual(len(results[0]['crops']), 10)
         crop_names = [c['crop'] for c in results[0]['crops']]
-        self.assertIn('centre',       crop_names)
-        self.assertIn('top-left',     crop_names)
-        self.assertIn('top-right',    crop_names)
-        self.assertIn('bottom-left',  crop_names)
-        self.assertIn('bottom-right', crop_names)
+        self.assertIn('centre', crop_names)
+        self.assertIn('tl',     crop_names)
+        self.assertIn('tc',     crop_names)
+        self.assertIn('tr',     crop_names)
+        self.assertIn('ml',     crop_names)
+        self.assertIn('mc',     crop_names)
+        self.assertIn('mr',     crop_names)
+        self.assertIn('bl',     crop_names)
+        self.assertIn('bc',     crop_names)
+        self.assertIn('br',     crop_names)
 
     def test_small_image_crops_list_has_one_entry(self):
         """Single-crop result includes a one-element crops list named 'centre'."""

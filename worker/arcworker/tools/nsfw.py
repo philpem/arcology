@@ -26,6 +26,23 @@ ONNX files so that runtime inference always uses the training-matched pipeline.
 
 Sessions are intentionally NOT managed here — callers should create them
 once and pass them in so models remain loaded across multiple jobs.
+
+Tiling strategy
+---------------
+For images large enough to benefit from sub-region analysis, a 3×3 overlapping
+grid of tiles is used (each tile 2/3 of the image width × 2/3 of the image
+height, with 1/3-image stride), plus the centre crop that the model's native
+preprocessing would produce.  This gives 10 tiles total when triggered.
+
+Crucially, the tile *coordinates* are decided once per image using the smaller
+of the two model input sizes as the trigger, so both stages always score the
+same set of tiles.  This guarantees that the per-crop colocated agreement gate
+in classify_batch() can pair every crop between the two stages.
+
+For very large scans (a tile's longer side > 4× the model input size) each
+tile is subdivided once more, yielding sub-tiles named e.g. ``top-left.0``,
+``top-left.1`` etc.  This preserves local detail that would otherwise be lost
+to heavy downsampling.
 """
 
 from pathlib import Path
@@ -48,6 +65,38 @@ def _get_resample_filter(name: str):
     }.get(name, Image.BICUBIC)
 
 
+def _open_image(path_or_img):
+    """Open and normalise a PIL Image for classification.
+
+    Applies EXIF orientation, flattens alpha onto a neutral grey background,
+    and converts to RGB.  Returns a PIL Image in RGB mode.
+    """
+    from PIL import Image, ImageOps
+
+    if isinstance(path_or_img, (str, Path)):
+        img = Image.open(path_or_img)
+    else:
+        img = path_or_img
+
+    # Apply EXIF orientation before any size inspection so rotated camera
+    # photos are treated with their correct dimensions and content layout.
+    img = ImageOps.exif_transpose(img)
+
+    # Flatten alpha onto neutral grey rather than black to avoid the
+    # "black halo on transparent PNG" artefact from simple convert('RGB').
+    if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+        bg = Image.new('RGB', img.size, (128, 128, 128))
+        if img.mode == 'P':
+            img = img.convert('RGBA')
+        if img.mode in ('RGBA', 'LA'):
+            bg.paste(img, mask=img.split()[-1])
+        else:
+            bg.paste(img)
+        return bg
+
+    return img.convert('RGB')
+
+
 def preprocess(
     img_or_path,
     size: int,
@@ -66,11 +115,7 @@ def preprocess(
 
     Returns a ``(1, 3, H, W)`` array ready for ONNX inference.
     """
-    from PIL import Image
-    if isinstance(img_or_path, (str, Path)):
-        img = Image.open(img_or_path).convert('RGB')
-    else:
-        img = img_or_path.convert('RGB')
+    img = _open_image(img_or_path)
 
     # Aspect-preserving resize so the shorter side reaches scale_size
     scale_size = max(size, round(size / crop_pct))
@@ -93,40 +138,86 @@ def preprocess(
     return arr.transpose(2, 0, 1)[np.newaxis]
 
 
-def _score_image(img, sess, input_name: str, nsfw_idx: int,
-                 size: int, mean, std, resample: str, crop_pct: float) -> tuple:
-    """Score *img* across centre + optional quadrant crops.
+def _build_tiles(img, trigger_size: int, large_threshold_factor: int = 4) -> list[tuple[str, object]]:
+    """Build a list of (name, tile_image) pairs for scoring.
 
-    Returns ``(best_score, winning_crop_name, crop_scores)`` where:
-      - ``best_score``       is the highest NSFW probability seen across all crops
-      - ``winning_crop_name`` is the name of the crop that produced it
-      - ``crop_scores``      is a list of ``{'crop': name, 'score': float}`` for every
-                             crop that was scored (always includes 'centre'; includes
-                             the four quadrant names when the image is large enough)
+    Always includes a ``'centre'`` entry (the full image, which each model
+    preprocesses with its own aspect-preserving resize + centre-crop).
 
-    For images whose width or height is >= 2× *size*, five crops are scored:
-    the centre crop plus the four quadrant tiles (top-left, top-right,
-    bottom-left, bottom-right).  For smaller images only the centre crop is
-    scored.
+    When ``max(w, h) >= 2 * trigger_size``, a 3×3 overlapping grid is added.
+    Each grid tile covers 2/3 of the image in each dimension with a 1/3-image
+    stride, giving 9 tiles that collectively cover the full image with overlap
+    at every boundary — ensuring subjects straddling the centreline appear
+    whole in at least one tile.
+
+    When a tile's longer side exceeds ``trigger_size * large_threshold_factor``,
+    the tile is subdivided once into four quadrant sub-tiles (named
+    ``<tile>.0`` … ``<tile>.3``) to preserve detail in very large scans.
+
+    The trigger_size should be ``min(size1, size2)`` so that both stages score
+    exactly the same tile set and the per-crop colocated agreement gate can
+    pair every crop.
     """
     w, h = img.size
-    tile_names = ['centre']
-    tiles      = [img]
+    tiles = [('centre', img)]
 
-    if w >= 2 * size or h >= 2 * size:
-        half_w, half_h = w // 2, h // 2
-        tile_names += ['top-left', 'top-right', 'bottom-left', 'bottom-right']
-        tiles += [
-            img.crop((0,      0,      half_w, half_h)),
-            img.crop((half_w, 0,      w,      half_h)),
-            img.crop((0,      half_h, half_w, h)),
-            img.crop((half_w, half_h, w,      h)),
-        ]
+    if max(w, h) < 2 * trigger_size:
+        return tiles
 
+    # 3×3 overlapping grid: tile size is 2/3 of each dimension,
+    # stride is 1/3 so adjacent tiles share 1/3 of their area.
+    tw = max(1, w * 2 // 3)
+    th = max(1, h * 2 // 3)
+    sx = max(1, w // 3)
+    sy = max(1, h // 3)
+
+    grid_names = [
+        'tl', 'tc', 'tr',
+        'ml', 'mc', 'mr',
+        'bl', 'bc', 'br',
+    ]
+    grid_idx = 0
+    for row in range(3):
+        for col in range(3):
+            x0 = min(col * sx, w - tw)
+            y0 = min(row * sy, h - th)
+            x1 = x0 + tw
+            y1 = y0 + th
+            tile_name = grid_names[grid_idx]
+            grid_idx += 1
+            tile_img = img.crop((x0, y0, x1, y1))
+
+            # Subdivide if this tile is still very large
+            tile_w, tile_h = tile_img.size
+            if max(tile_w, tile_h) > trigger_size * large_threshold_factor:
+                hw, hh = tile_w // 2, tile_h // 2
+                sub_tiles = [
+                    (f'{tile_name}.0', tile_img.crop((0,  0,  hw, hh))),
+                    (f'{tile_name}.1', tile_img.crop((hw, 0,  tile_w, hh))),
+                    (f'{tile_name}.2', tile_img.crop((0,  hh, hw, tile_h))),
+                    (f'{tile_name}.3', tile_img.crop((hw, hh, tile_w, tile_h))),
+                ]
+                tiles.extend(sub_tiles)
+            else:
+                tiles.append((tile_name, tile_img))
+
+    return tiles
+
+
+def _score_tiles(tiles: list[tuple[str, object]],
+                 sess, input_name: str, nsfw_idx: int,
+                 size: int, mean, std, resample: str, crop_pct: float) -> tuple:
+    """Score a pre-built list of (name, tile) pairs with *sess*.
+
+    Returns ``(best_score, winning_crop_name, crop_scores)`` where:
+      - ``best_score``       is the highest NSFW probability seen across all tiles
+      - ``winning_crop_name`` is the name of the tile that produced it
+      - ``crop_scores``      is a list of ``{'crop': name, 'score': float}``
+    """
     best         = 0.0
-    winning_crop = 'centre'
+    winning_crop = tiles[0][0]
     crop_scores  = []
-    for name, tile in zip(tile_names, tiles, strict=True):
+    for name, tile in tiles:
         arr   = preprocess(tile, size, mean, std, resample, crop_pct)
         out   = sess.run(None, {input_name: arr})[0]
         score = float(softmax(out)[0, nsfw_idx])
@@ -204,8 +295,6 @@ def classify_batch(
                 "reason":           "too_small" | "unreadable"  # skipped only
             }
     """
-    from PIL import Image
-
     nsfw_idx1  = meta1['nsfw_class_index']
     size1      = meta1.get('input_size', 384)
     mean1      = meta1['mean']
@@ -220,19 +309,23 @@ def classify_batch(
     resample2  = meta2.get('interpolation', 'bicubic')
     crop_pct2  = float(meta2.get('crop_pct', 1.0))
 
+    # Use the smaller model input size as the tile trigger so both stages
+    # always receive the same tile set — critical for the colocated gate.
+    trigger_size = min(size1, size2)
+
     results = []
 
     for path in paths:
         path_str = str(path)
         try:
-            img = Image.open(path_str)
+            img = _open_image(path_str)
             w, h = img.size
             if min_pixels > 0 and w * h < min_pixels:
-                img.close()
                 results.append({'path': path_str, 'verdict': 'skipped', 'reason': 'too_small'})
                 continue
-            score1, winning_crop1, crops1 = _score_image(
-                img, sess1, input_name1, nsfw_idx1, size1, mean1, std1, resample1, crop_pct1,
+            tiles = _build_tiles(img, trigger_size)
+            score1, winning_crop1, crops1 = _score_tiles(
+                tiles, sess1, input_name1, nsfw_idx1, size1, mean1, std1, resample1, crop_pct1,
             )
         except Exception:
             results.append({'path': path_str, 'verdict': 'skipped', 'reason': 'unreadable'})
@@ -254,11 +347,21 @@ def classify_batch(
 
         # Borderline: run stage 2
         try:
-            score2, winning_crop2, crops2 = _score_image(
-                img, sess2, input_name2, nsfw_idx2, size2, mean2, std2, resample2, crop_pct2,
+            score2, winning_crop2, crops2 = _score_tiles(
+                tiles, sess2, input_name2, nsfw_idx2, size2, mean2, std2, resample2, crop_pct2,
             )
         except Exception:
-            verdict2 = 'explicit' if score1 >= 0.5 else 'not explicit'
+            # Stage 2 failed — use calibrated thresholds rather than a stale
+            # hard-coded 0.5.  Borderline score1 values that can't be verified
+            # are treated conservatively (not explicit) rather than by a raw
+            # coin-flip.  s2_error=True is preserved so callers can surface
+            # these for manual review if desired.
+            if score1 >= high_threshold:
+                verdict2 = 'explicit'
+            elif score1 <= low_threshold:
+                verdict2 = 'not explicit'
+            else:
+                verdict2 = 'not explicit'
             results.append({
                 'path': path_str, 'stage': 1, 'score': score1, 'verdict': verdict2,
                 'winning_crop': winning_crop1, 'crops': crops1, 's2_error': True,
@@ -268,6 +371,8 @@ def classify_batch(
         # Per-crop co-located agreement: for each crop scored by both stages,
         # take min(s1[crop], s2[crop]); the colocated score is the best of those.
         # A high value means at least one crop independently triggers both models.
+        # Because both stages scored the same tile set, every crop name appears
+        # in both dicts — no silent key-miss that collapses to centre-only.
         s1_by_crop = {c['crop']: c['score'] for c in crops1}
         s2_by_crop = {c['crop']: c['score'] for c in crops2}
         colocated_score = 0.0
