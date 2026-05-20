@@ -222,7 +222,10 @@ FROM ubuntu:24.04 AS build-riscosarc
 
 # Pinned commit SHA — update this when upgrading riscosarc.
 # Current as of 2026-03-26; branch: master
-ARG RISCOSARC_VERSION=1f5cef10be4c5622eafb689d0dbe8f9f2601f141
+#ARG RISCOSARC_VERSION=1f5cef10be4c5622eafb689d0dbe8f9f2601f141
+#ARG RISCOSARC_REPO=https://github.com/mjwoodcock/riscosarc.git
+ARG RISCOSARC_REPO=https://github.com/philpem/riscosarc.git
+ARG RISCOSARC_VERSION=d8d5d69b6b8762608b67ce6926d94cc258686e15
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -230,7 +233,7 @@ RUN apt -y update && apt -y upgrade && \
     apt -y install git build-essential default-jdk
 
 # Clone and build riscosarc
-RUN git clone https://github.com/mjwoodcock/riscosarc.git /src/riscosarc && \
+RUN git clone "${RISCOSARC_REPO}" /src/riscosarc && \
     cd /src/riscosarc && git checkout "${RISCOSARC_VERSION}" && \
     mkdir build && \
     javac -d ./build *.java riscos/archive/*.java riscos/archive/container/*.java && \
