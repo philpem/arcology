@@ -1725,7 +1725,7 @@ def _render_viewer(artefact):
                 'commands': [],
             }
             mod_analysis = Analysis.query.filter(
-                Analysis.artefact_id.in_(all_artefact_ids),
+                Analysis.artefact_id == mod_row.artefact_id,
                 Analysis.analysis_type == AnalysisType.RISCOS_MODULE_PARSE,
                 Analysis.status == AnalysisStatus.COMPLETED,
             ).order_by(Analysis.id.desc()).first()
