@@ -16,33 +16,37 @@ def indented_item_choices(*, value_fn=lambda item: item.id,
                           exclude_ids=None):
     """Build a hierarchically-indented choice list of all items.
 
+    Items are returned in depth-first tree order (each parent immediately
+    before its children, siblings sorted alphabetically), so the visual
+    indentation in a flat select element always reflects the true hierarchy.
+
     Args:
         value_fn: callable returning the choice value for each item
                   (default: item.id; use ``lambda i: i.url_id`` for UUID keys).
         exclude_ids: optional set of item IDs to omit from the list.
+                     Excluded items and their entire subtrees are skipped.
 
     Returns:
-        List of ``(value, indented_name)`` tuples sorted by name.
+        List of ``(value, indented_name)`` tuples in tree traversal order.
     """
     all_items = Item.query.order_by(Item.name).all()
-    id_to_item = {item.id: item for item in all_items}
     _exclude = exclude_ids or set()
 
-    def _depth(item):
-        d = 0
-        current = item.parent_id
-        while current is not None:
-            d += 1
-            parent = id_to_item.get(current)
-            current = parent.parent_id if parent else None
-        return d
+    children_by_parent: dict[int | None, list] = {}
+    for item in all_items:
+        children_by_parent.setdefault(item.parent_id, []).append(item)
 
     choices = []
-    for item in all_items:
-        if item.id in _exclude:
-            continue
-        indent = '\u00a0\u00a0\u00a0\u00a0' * _depth(item)
-        choices.append((value_fn(item), f"{indent}{item.name}"))
+
+    def _traverse(parent_id, depth):
+        indent = '\u00a0\u00a0\u00a0\u00a0' * depth
+        for item in children_by_parent.get(parent_id, []):
+            if item.id in _exclude:
+                continue
+            choices.append((value_fn(item), f"{indent}{item.name}"))
+            _traverse(item.id, depth + 1)
+
+    _traverse(None, 0)
     return choices
 
 

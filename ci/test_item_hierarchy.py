@@ -469,5 +469,133 @@ class TestMoveArtefact(unittest.TestCase):
             self.assertTrue(moved.slug.startswith('duplicate-label'))
 
 
+# =============================================================================
+# indented_item_choices / item_parent_choice_list tests
+# =============================================================================
+
+class TestItemParentChoiceList(unittest.TestCase):
+    """Test that item_parent_choice_list returns items in correct tree order."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app, cls.db = _create_app_and_db()
+
+    def setUp(self):
+        from myapp.database import Item
+        with self.app.app_context():
+            self.db.session.query(Item).delete()
+            self.db.session.commit()
+
+    def _make_item(self, name, parent=None):
+        from myapp.database import Item
+        item = Item(name=name, parent_id=parent.id if parent else None)
+        self.db.session.add(item)
+        self.db.session.commit()
+        return item
+
+    def _choice_names(self, choices):
+        """Strip leading non-breaking spaces to get bare names from choices."""
+        return [label.lstrip(' ').lstrip() for _, label in choices]
+
+    def _choice_depths(self, choices):
+        """Count leading non-breaking space groups (4 per level) as depth."""
+        return [len(label) - len(label.lstrip(' ')) // 4 for _, label in choices]
+
+    def test_tree_traversal_order_parent_before_child(self):
+        """Child whose name sorts before parent must still appear after the parent."""
+        with self.app.app_context():
+            from myapp.utils.item_helpers import indented_item_choices
+            zebra = self._make_item('Zebra')
+            self._make_item('Apple', parent=zebra)  # 'A' < 'Z' alphabetically
+            self._make_item('Mango', parent=zebra)
+            self._make_item('Banana')
+
+            choices = indented_item_choices()
+            names = self._choice_names(choices)
+
+            # Banana and Zebra are roots, Zebra must precede Apple/Mango
+            self.assertLess(names.index('Banana'), names.index('Zebra'))
+            self.assertLess(names.index('Zebra'), names.index('Apple'))
+            self.assertLess(names.index('Zebra'), names.index('Mango'))
+            # Apple and Mango are siblings of Zebra, sorted alphabetically
+            self.assertLess(names.index('Apple'), names.index('Mango'))
+
+    def test_correct_depth_for_children(self):
+        """Children show at depth 1, grandchildren at depth 2."""
+        with self.app.app_context():
+            from myapp.utils.item_helpers import indented_item_choices
+            root = self._make_item('Root')
+            child = self._make_item('Child', parent=root)
+            self._make_item('Grandchild', parent=child)
+
+            choices = indented_item_choices()
+            depth_map = {
+                label.lstrip(' '): (len(label) - len(label.lstrip(' '))) // 4
+                for _, label in choices
+            }
+            self.assertEqual(depth_map['Root'], 0)
+            self.assertEqual(depth_map['Child'], 1)
+            self.assertEqual(depth_map['Grandchild'], 2)
+
+    def test_siblings_sorted_alphabetically(self):
+        """Siblings appear in alphabetical order under their parent."""
+        with self.app.app_context():
+            from myapp.utils.item_helpers import indented_item_choices
+            parent = self._make_item('Parent')
+            self._make_item('Charlie', parent=parent)
+            self._make_item('Alice', parent=parent)
+            self._make_item('Bob', parent=parent)
+
+            choices = indented_item_choices()
+            names = self._choice_names(choices)
+            siblings = [n for n in names if n in ('Alice', 'Bob', 'Charlie')]
+            self.assertEqual(siblings, ['Alice', 'Bob', 'Charlie'])
+
+    def test_exclude_item_and_descendants_absent(self):
+        """Excluded item and all its descendants must not appear in the list."""
+        with self.app.app_context():
+            from myapp.utils.item_helpers import item_parent_choice_list
+            root = self._make_item('Root')
+            child = self._make_item('Child', parent=root)
+            self._make_item('Grandchild', parent=child)
+            self._make_item('Other')
+
+            choices = item_parent_choice_list('-- none --', exclude_item=root)
+            names = self._choice_names(choices)
+
+            self.assertNotIn('Root', names)
+            self.assertNotIn('Child', names)
+            self.assertNotIn('Grandchild', names)
+            self.assertIn('Other', names)
+
+    def test_exclude_leaf_only(self):
+        """Excluding a leaf does not affect siblings or the parent."""
+        with self.app.app_context():
+            from myapp.utils.item_helpers import item_parent_choice_list
+            parent = self._make_item('Parent')
+            leaf = self._make_item('Leaf', parent=parent)
+            self._make_item('Sibling', parent=parent)
+
+            choices = item_parent_choice_list('-- none --', exclude_item=leaf)
+            names = self._choice_names(choices)
+
+            self.assertNotIn('Leaf', names)
+            self.assertIn('Parent', names)
+            self.assertIn('Sibling', names)
+
+    def test_no_exclude_returns_all_items(self):
+        """Without exclusion, all items are returned."""
+        with self.app.app_context():
+            from myapp.utils.item_helpers import indented_item_choices
+            self._make_item('Alpha')
+            self._make_item('Beta')
+
+            choices = indented_item_choices()
+            names = self._choice_names(choices)
+            self.assertIn('Alpha', names)
+            self.assertIn('Beta', names)
+            self.assertEqual(len(choices), 2)
+
+
 if __name__ == '__main__':
     unittest.main()
