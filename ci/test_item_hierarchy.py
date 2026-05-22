@@ -506,7 +506,7 @@ class TestItemParentChoiceList(unittest.TestCase):
         with self.app.app_context():
             from myapp.utils.item_helpers import indented_item_choices
             zebra = self._make_item('Zebra')
-            apple = self._make_item('Apple', parent=zebra)  # 'A' < 'Z' alphabetically
+            self._make_item('Apple', parent=zebra)  # 'A' < 'Z' alphabetically
             self._make_item('Mango', parent=zebra)
             self._make_item('Banana')
 
@@ -558,7 +558,7 @@ class TestItemParentChoiceList(unittest.TestCase):
             root = self._make_item('Root')
             child = self._make_item('Child', parent=root)
             self._make_item('Grandchild', parent=child)
-            other = self._make_item('Other')
+            self._make_item('Other')
 
             choices = item_parent_choice_list('-- none --', exclude_item=root)
             names = self._choice_names(choices)
