@@ -12,6 +12,8 @@ into web-viewable outputs.  Two operating modes:
 """
 
 import json
+import signal
+from contextlib import contextmanager
 from pathlib import Path
 from shared.enums import ArtefactType
 from ..config import log
@@ -21,6 +23,29 @@ from ..tools import (
     parse_acorn_filename,
 )
 from ._common import analysis_handler
+
+# Per-file timeout (seconds) for pure-Python conversion calls (spritefile,
+# DrawFileRender, PIL).  These libraries have no internal timeout; a
+# malformed input can cause a library to spin at 100 % CPU indefinitely.
+# SIGALRM is Unix-only but the worker always runs on Linux in Docker.
+_PER_FILE_CONVERT_TIMEOUT = 120
+
+
+@contextmanager
+def _conversion_timeout(seconds: int, label: str = ''):
+    """Raise TimeoutError if the block does not complete within `seconds`."""
+    def _handler(signum, frame):
+        raise TimeoutError(
+            f"Conversion timed out after {seconds}s"
+            + (f' ({label})' if label else '')
+        )
+    old_handler = signal.signal(signal.SIGALRM, _handler)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
 
 # RISC OS filetype suffixes that indicate viewable file types.
 # Mapping: suffix (e.g. ',ff9') → ArtefactType
@@ -93,14 +118,36 @@ def _convert_file_to_outputs(
     ``file_index`` is used to make temporary subdirectory names unique when
     converting multiple files within one analysis run.
     """
+    try:
+        return _convert_file_to_outputs_inner(
+            self, input_path, artefact_type, work_dir, output_subdir,
+            analysis_uuid, file_index,
+        )
+    except TimeoutError as exc:
+        log.warning("Conversion timed out for %s (%s): %s", input_path, artefact_type.value, exc)
+        return None, str(exc), []
+
+
+def _convert_file_to_outputs_inner(
+    self,
+    input_path: Path,
+    artefact_type: 'ArtefactType',
+    work_dir: Path,
+    output_subdir: str | None,
+    analysis_uuid: str,
+    file_index: int = 0,
+) -> tuple[list[dict] | None, str | None, list[str]]:
     outputs = []
+    warnings: list[str] = []
 
     if artefact_type == ArtefactType.ACORN_SPRITE:
         tmp_out = work_dir / f'sprites_{file_index}'
-        result = convert_sprite(input_path, tmp_out, analysis_uuid)
+        with _conversion_timeout(_PER_FILE_CONVERT_TIMEOUT, input_path.name):
+            result = convert_sprite(input_path, tmp_out, analysis_uuid)
+        warnings.extend(result.get('warnings', []))
         if not result['success']:
             log.warning(f"Sprite conversion failed for {input_path}: {result.get('error')}")
-            return None, result.get('error') or 'Conversion failed'
+            return None, result.get('error') or 'Conversion failed', warnings
         for sprite in result['sprites']:
             # Include file_index in the saved name so that sprites from
             # different source files within the same analysis run don't
@@ -126,9 +173,10 @@ def _convert_file_to_outputs(
     elif artefact_type == ArtefactType.ACORN_DRAW:
         true_name, _ = parse_acorn_filename(input_path.name)
         tmp_out = work_dir / f'draw_{file_index}'
-        result = convert_draw(input_path, tmp_out, analysis_uuid)
+        with _conversion_timeout(_PER_FILE_CONVERT_TIMEOUT, input_path.name):
+            result = convert_draw(input_path, tmp_out, analysis_uuid)
         if not result['success']:
-            return None, result.get('error') or 'Conversion failed'
+            return None, result.get('error') or 'Conversion failed', warnings
         # Include file_index so multiple Draw files in the same archive
         # each get a unique output filename rather than overwriting each other.
         saved_svg = self.save_output_file(
@@ -164,16 +212,17 @@ def _convert_file_to_outputs(
             })
         except Exception as e:
             log.warning(f"Text conversion failed for {input_path}: {e}")
-            return None, str(e)
+            return None, str(e), warnings
 
     elif artefact_type == ArtefactType.IMAGE:
         from ..tools.images_common import convert_image  # numpy/scour: worker-only
         true_name, _ = parse_acorn_filename(input_path.name)
         tmp_out = work_dir / f'image_{file_index}'
-        result = convert_image(input_path, tmp_out, analysis_uuid)
+        with _conversion_timeout(_PER_FILE_CONVERT_TIMEOUT, input_path.name):
+            result = convert_image(input_path, tmp_out, analysis_uuid)
         if not result['success']:
             log.warning(f"Image conversion failed for {input_path}: {result.get('error')}")
-            return None, result.get('error') or 'Conversion failed'
+            return None, result.get('error') or 'Conversion failed', warnings
         ext = Path(result['output_path']).suffix
         saved = self.save_output_file(
             Path(result['output_path']),
@@ -188,7 +237,7 @@ def _convert_file_to_outputs(
             'tool': result['tool'],
         })
 
-    return outputs, None
+    return outputs, None, warnings
 
 
 def _detect_viewable_type(self, path: Path) -> 'ArtefactType | None':
@@ -241,7 +290,7 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
     if artefact_type_str in _direct_types:
         input_path = self.get_input_path(artefact, work_dir)
         artefact_type = ArtefactType(artefact_type_str)
-        outputs, _ = self._convert_file_to_outputs(
+        outputs, _, file_warnings = self._convert_file_to_outputs(
             input_path, artefact_type, work_dir, output_subdir, analysis_uuid,
         )
         if outputs is None:
@@ -253,6 +302,7 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
             details=json.dumps({
                 'artefact_type': artefact_type_str,
                 'outputs': outputs,
+                'warnings': file_warnings,
             }),
         )
         return
@@ -346,7 +396,7 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
         # display_path is the DB path (already matches ExtractedFile.path)
         display_path = db_path
 
-        file_outputs, file_error = self._convert_file_to_outputs(
+        file_outputs, file_error, file_warnings = self._convert_file_to_outputs(
             file_path, viewable_type, work_dir, output_subdir, analysis_uuid, file_index,
         )
         file_index += 1
@@ -355,10 +405,13 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
             failed_conversions.append({
                 'source_file': display_path,
                 'error': file_error or 'Conversion failed',
+                'warnings': file_warnings,
             })
             continue
         for out in file_outputs:
             out['source_file'] = display_path
+            if file_warnings:
+                out['warnings'] = file_warnings
         all_outputs.extend(file_outputs)
 
     failed_suffix = f' ({len(failed_conversions)} failed)' if failed_conversions else ''
