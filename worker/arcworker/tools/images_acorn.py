@@ -4,6 +4,7 @@ Acorn/RISC OS image conversion tools.
 Provides wrappers for converting Acorn Sprite and Draw files to portable formats.
 """
 
+import io
 import re
 import traceback as _tb
 from pathlib import Path
@@ -17,6 +18,7 @@ def _safe_sprite_name(name: str, index: int) -> str:
     if not safe or safe.strip('_') == '':
         safe = f'sprite{index:02d}'
     return safe[:64]
+
 
 
 def convert_sprite(input_path: Path, output_dir: Path, analysis_uuid: str) -> dict:
@@ -47,19 +49,27 @@ def convert_sprite(input_path: Path, output_dir: Path, analysis_uuid: str) -> di
     error = None
 
     try:
-        with open(str(input_path), 'rb') as fh:
+        raw = input_path.read_bytes()
+    except OSError as e:
+        return tool_result(False, tool='spritefile', error=f'Cannot read file: {e}', sprites=[])
+
+    try:
+        with io.BytesIO(raw) as fh:
             sf = spritefile.spritefile(file=fh)
+        lib_warnings = list(getattr(sf, 'warnings', []))
+        for w in lib_warnings:
+            log.warning('spritefile warning in %s: %s', input_path.name, w)
         sprite_list = list(sf.sprites.items())  # [(name, sprite_dict), ...]
     except Exception as e:
         log.warning('Failed to open sprite file: %s\n%s', e, _tb.format_exc().rstrip())
         return tool_result(
             False, tool='spritefile',
-            error=f'Failed to open sprite file: {e}', sprites=[],
+            error=f'Failed to open sprite file: {e}', sprites=[], warnings=[],
         )
 
     if not sprite_list:
         return tool_result(
-            False, tool='spritefile', error='No sprites found in file', sprites=[],
+            False, tool='spritefile', error='No sprites found in file', sprites=[], warnings=lib_warnings,
         )
 
     for idx, (name, sprite) in enumerate(sprite_list):
@@ -106,6 +116,7 @@ def convert_sprite(input_path: Path, output_dir: Path, analysis_uuid: str) -> di
         tool='spritefile',
         error=(error if not success else None),
         sprites=sprites,
+        warnings=lib_warnings,
     )
 
 
