@@ -139,6 +139,52 @@
         </div>
         {% endif %}
         
+        {# Collect warnings from direct mode (details.warnings) and extraction scan mode #}
+        {% set ns = namespace(warnings=[]) %}
+        {% if details.warnings %}
+            {% for w in details.warnings %}
+                {% set entry = {'source': none, 'message': w} %}
+                {% if entry not in ns.warnings %}{% set ns.warnings = ns.warnings + [entry] %}{% endif %}
+            {% endfor %}
+        {% endif %}
+        {% if details.outputs %}
+            {% for output in details.outputs %}
+                {% if output.warnings %}
+                    {% for w in output.warnings %}
+                        {% set entry = {'source': output.get('source_file'), 'message': w} %}
+                        {% if entry not in ns.warnings %}{% set ns.warnings = ns.warnings + [entry] %}{% endif %}
+                    {% endfor %}
+                {% endif %}
+            {% endfor %}
+        {% endif %}
+        {% if details.failed_conversions %}
+            {% for fc in details.failed_conversions %}
+                {% if fc.warnings %}
+                    {% for w in fc.warnings %}
+                        {% set entry = {'source': fc.get('source_file'), 'message': w} %}
+                        {% if entry not in ns.warnings %}{% set ns.warnings = ns.warnings + [entry] %}{% endif %}
+                    {% endfor %}
+                {% endif %}
+            {% endfor %}
+        {% endif %}
+        {% if ns.warnings %}
+        <div class="card mb-4 border-warning">
+            <div class="card-header text-warning-emphasis bg-warning-subtle">
+                <i class="bi bi-exclamation-triangle"></i> Warnings ({{ ns.warnings|length }})
+            </div>
+            <div class="card-body p-0">
+                <ul class="list-group list-group-flush">
+                    {% for w in ns.warnings %}
+                    <li class="list-group-item">
+                        {% if w.source %}<span class="text-muted small me-2">{{ w.source }}:</span>{% endif %}
+                        {{ w.message }}
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+        {% endif %}
+
         {# Display process logs for debugging #}
         {% set process_outputs = [] %}
         {% for key, value in details.items() %}
