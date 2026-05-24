@@ -331,6 +331,7 @@ def queue_analyses_for_artefact(artefact: Artefact, hints: dict = None,
 
 class ArtefactUploadForm(FlaskForm):
     """Form for uploading a new artefact."""
+    item_id = SelectField('Item', coerce=int, validators=[DataRequired()])
     file = FileField('File', validators=[FileRequired()])
     label = StringField('Label', validators=[DataRequired()],
                         description='e.g., "Disc 1", "Program Disc", "Manual"')
@@ -2707,6 +2708,10 @@ def upload(item_id):
     item = lookup_by_identifier(Item, item_id)
     form = ArtefactUploadForm()
 
+    # Build item choices
+    from ..utils.item_helpers import indented_item_choices
+    form.item_id.choices = [(0, '-- Select item --')] + indented_item_choices()
+
     # Build type choices with auto-detect as default
     type_choices = [('auto', '-- Auto-detect --')]
     type_choices.extend([(t.value, _type_display_name(t)) for t in ArtefactType if t != ArtefactType.UNKNOWN])
@@ -2717,9 +2722,11 @@ def upload(item_id):
     form.platform_id.choices = [(0, '-- No hint --')] + [(p.id, p.name) for p in platforms]
 
     if form.validate_on_submit():
+        target_item = Item.query.get(form.item_id.data) or item
+
         file = form.file.data
         original_filename = safe_original_filename(file.filename)
-        
+
         # Detect or use specified type
         if form.artefact_type.data == 'auto':
             artefact_type = detect_artefact_type(original_filename)
@@ -2727,7 +2734,7 @@ def upload(item_id):
         else:
             artefact_type = ArtefactType(form.artefact_type.data)
             type_overridden = True
-        
+
         # Save file
         storage_path, file_size = save_uploaded_file(file)
 
@@ -2739,7 +2746,7 @@ def upload(item_id):
             md5, sha256 = None, None
 
         if sha256:
-            existing = Artefact.query.filter_by(item_id=item.id, sha256=sha256).first()
+            existing = Artefact.query.filter_by(item_id=target_item.id, sha256=sha256).first()
             if existing:
                 try:
                     current_app.storage.delete(storage_key)
@@ -2753,7 +2760,7 @@ def upload(item_id):
 
         # Create artefact record
         artefact = Artefact(
-            item_id=item.id,
+            item_id=target_item.id,
             label=form.label.data,
             artefact_type=artefact_type,
             type_overridden=type_overridden,
@@ -2765,13 +2772,13 @@ def upload(item_id):
             md5=md5,
             sha256=sha256,
         )
-        
+
         db.session.add(artefact)
         db.session.commit()
 
-        # Generate slug (unique within this item)
+        # Generate slug (unique within the target item)
         base_slug = generate_slug(artefact.label)
-        artefact.slug = ensure_unique_slug(base_slug, Artefact, scope_filter={'item_id': item.id})
+        artefact.slug = ensure_unique_slug(base_slug, Artefact, scope_filter={'item_id': target_item.id})
         db.session.commit()
 
         # Always queue checksum computation via the worker; also queue type-specific
@@ -2794,10 +2801,11 @@ def upload(item_id):
 
         if form.upload_more.data:
             return redirect(url_for(f'{ROUTENAME}.upload', item_id=item.url_id, upload_more=1))
-        return redirect(url_for(f'{ROUTENAME}.view', item_id=item.url_id, artefact_id=artefact.url_slug))
+        return redirect(url_for(f'{ROUTENAME}.view', item_id=target_item.url_id, artefact_id=artefact.url_slug))
 
     if request.args.get('upload_more') == '1':
         form.upload_more.data = True
+    form.item_id.data = item.id
     return render_template('artefacts/upload.html', form=form, item=item)
 
 

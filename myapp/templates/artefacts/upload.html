@@ -19,6 +19,18 @@
                     {{ form.hidden_tag() }}
 
                     <div class="mb-3">
+                        <div class="d-flex align-items-center gap-2 mb-1">
+                            {{ form.item_id.label(class="form-label mb-0") }}
+                            <button type="button" class="btn btn-sm btn-outline-secondary"
+                                    onclick="refreshItemChoices('item_id')">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh list
+                            </button>
+                        </div>
+                        {{ form.item_id(class="form-select") }}
+                        <div class="form-text">Artefact will be saved to this item.</div>
+                    </div>
+
+                    <div class="mb-3">
                         {{ form.file.label(class="form-label") }}
                         {{ form.file(class="form-control") }}
                         <div class="form-text">Select the file to upload (disk image, scan, etc.)</div>
@@ -352,6 +364,18 @@
         }
     });
 }());
+</script>
+<script>
+async function refreshItemChoices(selectId) {
+    const sel = document.getElementById(selectId);
+    const savedVal = sel.value;
+    const resp = await fetch('{{ url_for("myapp_blueprints_items.choices_json") }}');
+    const items = await resp.json();
+    sel.innerHTML = '';
+    sel.add(new Option('-- Select item --', '0'));
+    items.forEach(function(it) { sel.add(new Option(it.name, it.id)); });
+    sel.value = savedVal;
+}
 </script>
 {% endblock %}
 
