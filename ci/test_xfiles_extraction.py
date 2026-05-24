@@ -342,14 +342,16 @@ class TestXFilesExtraction(unittest.TestCase):
         img = _build_xfiles_image(entries, {2: content})
         result, _files = self._run_extract(img)
         self.assertFalse(result['success'])
-
-    def test_path_traversal_slash_rejected(self):
-        """A filename containing '/' is rejected."""
-        content = b'evil'
-        entries = [(b'sub/evil', 0, 0, len(content), _XFILES_ATTR_OWNER_RW, 2)]
+    
+    def test_nfs_slash_translated_to_dot(self):
+        """'/' in a stored filename is translated to '.' (RISC OS DOSFS/NFS convention)."""
+        content = b'data'
+        entries = [(b'Dyn336/K56', 0, 0, len(content), _XFILES_ATTR_OWNER_RW, 2)]
         img = _build_xfiles_image(entries, {2: content})
-        result, _files = self._run_extract(img)
-        self.assertFalse(result['success'])
+        result, files = self._run_extract(img)
+        self.assertTrue(result['success'])
+        self.assertIn('Dyn336.K56', files)
+        self.assertEqual(files['Dyn336.K56'], content)
 
     def test_dot_filename_rejected(self):
         """A filename of '.' is rejected."""
