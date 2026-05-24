@@ -14,7 +14,13 @@ from wtforms.validators import DataRequired, Length, Optional
 from ..database import Analysis, AnalysisStatus, Artefact, Category, ExternalReference, ExternalSystem, Item, Platform
 from ..extensions import db
 from ..permissions import require_permission
-from ..utils.item_helpers import assign_item_fields, assign_item_tags, indented_item_choices, item_choice_list, item_parent_choice_list
+from ..utils.item_helpers import (
+    assign_item_fields,
+    assign_item_tags,
+    indented_item_choices,
+    item_choice_list,
+    item_parent_choice_list,
+)
 from ..utils.pagination import VALID_PER_PAGE, compute_letter_pages, resolve_per_page, resolve_sort
 from ..utils.slugs import ensure_unique_slug, generate_slug, get_or_create_slug, lookup_by_identifier
 from .artefacts import bulk_delete_item
