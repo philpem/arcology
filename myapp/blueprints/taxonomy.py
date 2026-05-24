@@ -262,6 +262,22 @@ def new_tag():
     return render_template('taxonomy/taxonomy_form.html', form=form, title='New Tag')
 
 
+@blueprint.route('/tags/<int:id>/edit', methods=['GET', 'POST'])
+@login_required
+@require_permission('read_write')
+def edit_tag(id):
+    tag = Tag.query.get_or_404(id)
+    form = TagForm(obj=tag)
+
+    if form.validate_on_submit():
+        tag.name = form.name.data
+        db.session.commit()
+        flash(f'Tag renamed to "{tag.name}".', 'success')
+        return _route_redirect('tags')
+
+    return render_template('taxonomy/taxonomy_form.html', form=form, tag=tag, title='Edit Tag')
+
+
 @blueprint.route('/tags/<int:id>/delete', methods=['POST'])
 @login_required
 @require_permission('read_write')
