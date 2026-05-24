@@ -112,28 +112,35 @@
         {% set details = analysis.details | fromjson %}
 
         {# Display output images (flux visualisations, etc.) #}
-        {% if details.outputs %}
+        {% set image_outputs = details.outputs | selectattr('type', 'equalto', 'image') | list %}
+        {% if image_outputs %}
+        {% set image_count = image_outputs | length %}
         <div class="card mb-4">
-            <div class="card-header"><i class="bi bi-image"></i> Output Images</div>
-            <div class="card-body">
-                <div class="row">
-                    {% for output in details.outputs %}
-                    {% if output.type == 'image' %}
-                    <div class="col-md-6 mb-3">
-                        <div class="card">
-                            <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=output.filename) }}" target="_blank">
-                                <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=output.filename) }}"
-                                     class="card-img-top"
-                                     alt="{{ output.description }}"
-                                     style="cursor: pointer;">
-                            </a>
-                            <div class="card-body py-2">
-                                <small class="text-muted">{{ output.description }} ({{ output.tool }})</small>
+            <div class="card-header">
+                <a class="text-decoration-none" data-bs-toggle="collapse" href="#outputImages">
+                    <i class="bi bi-image"></i> Output Images ({{ image_count }} image{{ 's' if image_count != 1 else '' }})
+                </a>
+            </div>
+            <div id="outputImages" class="collapse">
+                <div class="card-body">
+                    <div class="row">
+                        {% for output in image_outputs %}
+                        <div class="col-md-6 mb-3">
+                            <div class="card">
+                                <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=output.filename) }}" target="_blank">
+                                    <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=output.filename) }}"
+                                         class="card-img-top"
+                                         alt="{{ output.description }}"
+                                         loading="lazy"
+                                         style="cursor: pointer;">
+                                </a>
+                                <div class="card-body py-2">
+                                    <small class="text-muted">{{ output.description }} ({{ output.tool }})</small>
+                                </div>
                             </div>
                         </div>
+                        {% endfor %}
                     </div>
-                    {% endif %}
-                    {% endfor %}
                 </div>
             </div>
         </div>
