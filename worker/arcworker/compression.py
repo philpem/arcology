@@ -11,6 +11,8 @@ import threading
 import time
 from pathlib import Path
 from .config import MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT, log
+from .exceptions import JobCancelledException
+from .tools.base import is_cancelled
 
 COMPRESSION_EXTENSIONS = {
     '.zst': ['zstd', '-d', '-c'],
@@ -50,6 +52,7 @@ def stream_to_file(
             'ok'            — completed normally
             'size_exceeded' — killed because output would exceed max_bytes
             'timeout'       — killed because wall-clock time exceeded timeout
+            'cancelled'     — killed because the job was cancelled server-side
     """
     stderr_buf: list[bytes] = []
 
@@ -69,6 +72,10 @@ def stream_to_file(
 
     with open(output_path, 'wb') as dst:
         while True:
+            if is_cancelled():
+                proc.kill()
+                outcome = 'cancelled'
+                break
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 proc.kill()
@@ -141,6 +148,13 @@ def decompress_if_needed(input_path: Path, work_dir: Path) -> Path:
             proc, decompressed_path, MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT
         )
         proc.wait()
+
+        if outcome == 'cancelled':
+            compressed_copy.unlink(missing_ok=True)
+            decompressed_path.unlink(missing_ok=True)
+            raise JobCancelledException(
+                f"Job cancelled during decompression of {input_path.name}"
+            )
 
         if outcome == 'timeout':
             compressed_copy.unlink(missing_ok=True)

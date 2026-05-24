@@ -5,11 +5,34 @@ Base utilities for running external tools.
 import hashlib
 import subprocess
 import sys
+import threading
 import time
 import traceback
 from pathlib import Path
 from ..config import TOOL_TIMEOUT, log
+from ..exceptions import JobCancelledException
 from ..utils.text import sanitize_filename
+
+# Module-level cancellation event.  Set by the monitoring thread in AnalysisWorker
+# when it detects that the current job has been deleted or is no longer running.
+# Cleared at the start of each job so stale signals don't carry over.
+# Safe as module-level state because each worker *process* handles one job at a time.
+_cancel_event = threading.Event()
+
+
+def set_cancel_event() -> None:
+    """Signal that the current job should be aborted."""
+    _cancel_event.set()
+
+
+def clear_cancel_event() -> None:
+    """Reset the cancel signal before starting a new job."""
+    _cancel_event.clear()
+
+
+def is_cancelled() -> bool:
+    """True if cancellation has been requested for the current job."""
+    return _cancel_event.is_set()
 
 
 def run_tool(cmd: list[str], timeout: int = None, cwd: str = None) -> subprocess.CompletedProcess:
@@ -23,16 +46,53 @@ def run_tool(cmd: list[str], timeout: int = None, cwd: str = None) -> subprocess
 
     Returns:
         CompletedProcess with stdout, stderr, and returncode
+
+    Raises:
+        JobCancelledException: If the job was cancelled while the tool was running.
+        subprocess.TimeoutExpired: If the tool exceeded the timeout.
     """
     if timeout is None:
         timeout = TOOL_TIMEOUT
     log.debug(f"Running: {' '.join(cmd)}" + (f" (cwd={cwd})" if cwd else ""))
-    result = subprocess.run(
+
+    # Check before spawning the process so we don't start work we'll immediately cancel.
+    if _cancel_event.is_set():
+        raise JobCancelledException(f"Job cancelled before subprocess started: {' '.join(cmd)}")
+
+    proc = subprocess.Popen(
         cmd,
-        capture_output=True,
-        timeout=timeout,
-        cwd=cwd
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=cwd,
     )
+    deadline = time.monotonic() + timeout
+    stdout = b''
+    stderr = b''
+    try:
+        while True:
+            if _cancel_event.is_set():
+                proc.kill()
+                proc.wait()
+                raise JobCancelledException(
+                    f"Job cancelled while running: {' '.join(cmd)}"
+                )
+            try:
+                stdout, stderr = proc.communicate(timeout=1.0)
+                break  # process finished normally
+            except subprocess.TimeoutExpired:
+                if time.monotonic() >= deadline:
+                    proc.kill()
+                    proc.wait()
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+                # Still within wall-clock limit — loop and re-check cancel.
+    except BaseException:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        raise
+
+    result = subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
     if result.returncode != 0:
         log.warning(f"Tool returned {result.returncode}: {result.stderr.decode(errors='replace')[:500]}")
     return result

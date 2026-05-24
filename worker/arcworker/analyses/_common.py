@@ -10,6 +10,7 @@ import functools
 import json
 import traceback
 from ..config import log
+from ..exceptions import JobCancelledException
 
 
 def analysis_handler(description: str):
@@ -33,6 +34,12 @@ def analysis_handler(description: str):
             analysis_uuid = analysis.get('uuid', '?')
             try:
                 return fn(self, analysis, artefact, work_dir)
+            except JobCancelledException:
+                log.info(
+                    f"Analysis {analysis_id} ({analysis_uuid}) aborted (cancelled "
+                    f"server-side) during {description}"
+                )
+                raise  # propagates to process_analysis() which handles it cleanly
             except FileNotFoundError as e:
                 # Expected when an artefact is deleted while jobs are
                 # queued — the physical file is gone but the worker

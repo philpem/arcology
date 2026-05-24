@@ -11,12 +11,15 @@ class attribute at the bottom of this module so the function bodies
 import shutil
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from . import analyses as _analyses
 from .api import ArcologyAPI
 from .compression import decompress_if_needed
-from .config import MAX_POLL, log
+from .config import CANCEL_CHECK_INTERVAL, MAX_POLL, log
+from .exceptions import JobCancelledException
+from .tools.base import clear_cancel_event, set_cancel_event
 from .utils.text import make_latin1_fspath
 
 _COMPRESS_SUFFIXES = frozenset({'.gz', '.bz2', '.zst'})
@@ -518,6 +521,36 @@ class AnalysisWorker:
     # Job Processing
     # =========================================================================
 
+    def _monitor_cancellation(self, analysis_uuid: str, stop_event: threading.Event) -> None:
+        """Daemon thread: poll API every CANCEL_CHECK_INTERVAL seconds.
+
+        Sets the module-level cancel event when the job is gone (404) or is no
+        longer in 'running' state, so that run_tool() / stream_to_file() can
+        abort the current subprocess promptly.
+        """
+        while not stop_event.wait(timeout=CANCEL_CHECK_INTERVAL):
+            try:
+                resp = self.api._request_response('get', f'/analysis/{analysis_uuid}')
+                if resp.status_code == 404:
+                    log.info(
+                        f"Analysis {analysis_uuid} no longer exists — "
+                        f"signalling cancellation"
+                    )
+                    set_cancel_event()
+                    return
+                if resp.status_code == 200:
+                    status = resp.json().get('status', '')
+                    if status not in ('running',):
+                        log.info(
+                            f"Analysis {analysis_uuid} status changed to "
+                            f"{status!r} — signalling cancellation"
+                        )
+                        set_cancel_event()
+                        return
+                # Any other HTTP error: network glitch, don't cancel.
+            except Exception as e:
+                log.debug(f"Cancel monitor for {analysis_uuid}: API check failed ({e}), will retry")
+
     def process_analysis(self, analysis: dict):
         """Process a single analysis job."""
         analysis_id = analysis['id']
@@ -529,36 +562,59 @@ class AnalysisWorker:
 
         # Status is already RUNNING from the atomic claim in claim_and_process().
 
-        # Create temporary work directory
-        with tempfile.TemporaryDirectory(prefix=f'arcology_{analysis_id}_') as work_dir:
-            work_path = Path(work_dir)
+        # Clear any stale cancel signal from a previous job, then start the
+        # monitoring thread that will re-set it if this job is cancelled remotely.
+        clear_cancel_event()
+        stop_monitor = threading.Event()
+        monitor_thread = threading.Thread(
+            target=self._monitor_cancellation,
+            args=(analysis_uuid, stop_monitor),
+            daemon=True,
+            name=f'cancel-monitor-{analysis_id}',
+        )
+        monitor_thread.start()
 
-            try:
-                # Dispatch to appropriate handler
-                handler_name = _analyses.HANDLERS.get(analysis_type)
-                handler = getattr(self, handler_name, None) if handler_name else None
-                if handler:
-                    handler(analysis, artefact, work_path)
-                else:
-                    log.warning(f"Unknown analysis type: {analysis_type}")
-                    self.fail_analysis(analysis_id, f'Unknown analysis type: {analysis_type}')
+        try:
+            # Create temporary work directory
+            with tempfile.TemporaryDirectory(prefix=f'arcology_{analysis_id}_') as work_dir:
+                work_path = Path(work_dir)
 
-            except Exception as e:
-                log.exception(f"Analysis {analysis_id} ({analysis_uuid}) failed with exception")
                 try:
-                    self.fail_analysis(analysis_id, str(e)[:1000])
-                except Exception:
-                    log.exception(
-                        f"Analysis {analysis_id} ({analysis_uuid}): failed to report failure to API "
-                        f"— job may remain in 'running' state"
+                    # Dispatch to appropriate handler
+                    handler_name = _analyses.HANDLERS.get(analysis_type)
+                    handler = getattr(self, handler_name, None) if handler_name else None
+                    if handler:
+                        handler(analysis, artefact, work_path)
+                    else:
+                        log.warning(f"Unknown analysis type: {analysis_type}")
+                        self.fail_analysis(analysis_id, f'Unknown analysis type: {analysis_type}')
+
+                except JobCancelledException:
+                    # Already logged by @analysis_handler.  Do NOT call fail_analysis()
+                    # — the analysis row has been deleted (or replaced) server-side.
+                    log.info(
+                        f"Analysis {analysis_id} ({analysis_uuid}) aborted: "
+                        f"job was cancelled server-side"
                     )
-            finally:
-                # In S3 mode, clean up the local partition cache once all
-                # analyses for this artefact have finished.
-                try:
-                    self._cleanup_partition_cache(artefact['uuid'])
-                except Exception:
-                    pass  # Best-effort cleanup, don't block on errors
+                except Exception as e:
+                    log.exception(f"Analysis {analysis_id} ({analysis_uuid}) failed with exception")
+                    try:
+                        self.fail_analysis(analysis_id, str(e)[:1000])
+                    except Exception:
+                        log.exception(
+                            f"Analysis {analysis_id} ({analysis_uuid}): failed to report failure to API "
+                            f"— job may remain in 'running' state"
+                        )
+                finally:
+                    # In S3 mode, clean up the local partition cache once all
+                    # analyses for this artefact have finished.
+                    try:
+                        self._cleanup_partition_cache(artefact['uuid'])
+                    except Exception:
+                        pass  # Best-effort cleanup, don't block on errors
+        finally:
+            stop_monitor.set()
+            monitor_thread.join(timeout=5.0)
 
     def claim_and_process(self) -> int:
         """
