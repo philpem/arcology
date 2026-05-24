@@ -628,9 +628,8 @@ def extract_tar(input_path: Path, output_dir: Path, archive_type: str = 'tar') -
     except ValueError as e:
         return _archive_error('tar', str(e))
 
-    # --no-absolute-filenames: explicitly reject entries with leading '/'
-    # even though GNU tar strips them by default.
-    cmd = ['tar', '--no-absolute-filenames'] + flags + ['-xf', str(input_path), '-C', str(output_dir)]
+    # GNU tar rejects entries with leading '/' by default.
+    cmd = ['tar'] + flags + ['-xf', str(input_path), '-C', str(output_dir)]
 
     return _run_extraction_command(
         tool='tar',
