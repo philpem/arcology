@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from ..compression import stream_to_file
 from ..config import MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT, log
+from ..exceptions import JobCancelledException
 from ..utils.text import decode_riscos_latin1, fix_riscos_c1_filenames, normalize_extracted_filenames
 from .base import run_tool_with_output, tool_result
 
@@ -730,6 +731,12 @@ def decompress_single_file(input_path: Path, output_file: Path, compressor: str)
         )
         proc.wait()
 
+        if outcome == 'cancelled':
+            output_file.unlink(missing_ok=True)
+            raise JobCancelledException(
+                f'{compressor} decompression cancelled server-side'
+            )
+
         if outcome == 'timeout':
             output_file.unlink(missing_ok=True)
             return tool_result(
@@ -761,6 +768,8 @@ def decompress_single_file(input_path: Path, output_file: Path, compressor: str)
             summary=f'Decompressed file using {compressor}',
             output_path=str(output_file),
         )
+    except JobCancelledException:
+        raise  # propagate cancellation; don't mask it as a tool failure
     except Exception as e:
         return tool_result(False, tool=compressor, error=f'{compressor} failed: {str(e)}')
 

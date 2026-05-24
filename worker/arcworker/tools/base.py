@@ -80,10 +80,12 @@ def run_tool(cmd: list[str], timeout: int = None, cwd: str = None) -> subprocess
                 stdout, stderr = proc.communicate(timeout=1.0)
                 break  # process finished normally
             except subprocess.TimeoutExpired:
+                # This 1-second tick timeout is an implementation detail; only
+                # surface a TimeoutExpired once the real wall-clock deadline passes.
                 if time.monotonic() >= deadline:
                     proc.kill()
                     proc.wait()
-                    raise subprocess.TimeoutExpired(cmd, timeout)
+                    raise subprocess.TimeoutExpired(cmd, timeout) from None
                 # Still within wall-clock limit — loop and re-check cancel.
     except BaseException:
         try:

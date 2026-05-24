@@ -531,25 +531,37 @@ class AnalysisWorker:
         while not stop_event.wait(timeout=CANCEL_CHECK_INTERVAL):
             try:
                 resp = self.api._request_response('get', f'/analysis/{analysis_uuid}')
-                if resp.status_code == 404:
+            except Exception as e:
+                # Network glitch: don't cancel, just retry next interval.
+                log.debug(f"Cancel monitor for {analysis_uuid}: API check failed ({e}), will retry")
+                continue
+
+            # The job may have finished (stop requested) while this request was
+            # in flight. Setting the shared cancel event now could abort the
+            # *next* job, so bail out without signalling.
+            if stop_event.is_set():
+                return
+
+            if resp.status_code == 404:
+                log.info(
+                    f"Analysis {analysis_uuid} no longer exists — "
+                    f"signalling cancellation"
+                )
+                set_cancel_event()
+                return
+            if resp.status_code == 200:
+                try:
+                    status = resp.json().get('status', '')
+                except ValueError:
+                    continue  # non-JSON body, treat as transient
+                if status not in ('running',):
                     log.info(
-                        f"Analysis {analysis_uuid} no longer exists — "
-                        f"signalling cancellation"
+                        f"Analysis {analysis_uuid} status changed to "
+                        f"{status!r} — signalling cancellation"
                     )
                     set_cancel_event()
                     return
-                if resp.status_code == 200:
-                    status = resp.json().get('status', '')
-                    if status not in ('running',):
-                        log.info(
-                            f"Analysis {analysis_uuid} status changed to "
-                            f"{status!r} — signalling cancellation"
-                        )
-                        set_cancel_event()
-                        return
-                # Any other HTTP error: network glitch, don't cancel.
-            except Exception as e:
-                log.debug(f"Cancel monitor for {analysis_uuid}: API check failed ({e}), will retry")
+            # Any other HTTP status: don't cancel.
 
     def process_analysis(self, analysis: dict):
         """Process a single analysis job."""
