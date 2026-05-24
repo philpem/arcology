@@ -892,6 +892,8 @@ def _xfiles_extract_dir(
                 f'entry {i} filename extends past chunk end'
             )
         name = decode_riscos_latin1(data[ep:ep + name_len])
+        # Translate from RISC OS filenames to UNIX e.g. / <=> .
+        name = name.replace('/', '.')
         _xfiles_safe_name(name)
 
         is_dir = bool(attr & _XFILES_ATTR_ISDIR)
