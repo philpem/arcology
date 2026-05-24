@@ -79,6 +79,39 @@ blueprint = Blueprint(ROUTENAME, __name__, url_prefix='', template_folder='templ
 VIEWER_ARTEFACT_TYPES = (ArtefactType.ACORN_SPRITE, ArtefactType.ACORN_DRAW, ArtefactType.ACORN_TEXT)
 
 
+# Human-readable display names for artefact types (used in form dropdowns).
+# Falls back to t.value.upper().replace('_', ' ') for any type not listed here.
+_ARTEFACT_TYPE_DISPLAY_NAMES = {
+    ArtefactType.SCP:          "SuperCard Pro (SCP)",
+    ArtefactType.DFI:          "DiscFerret (DFI)",
+    ArtefactType.A2R:          "Applesauce A2R",
+    ArtefactType.IMD:          "ImageDisk (IMD)",
+    ArtefactType.HFE:          "HxC Floppy Emulator (HFE)",
+    ArtefactType.RAW_SECTOR:   "Raw Sector Image",
+    ArtefactType.ISO:          "ISO 9660 Disc Image",
+    ArtefactType.DD_ZST:       "Compressed Raw Sector (zstd)",
+    ArtefactType.DD_GZ:        "Compressed Raw Sector (gzip)",
+    ArtefactType.DD_BZ2:       "Compressed Raw Sector (bzip2)",
+    ArtefactType.PDF:          "PDF Document",
+    ArtefactType.ZIP:          "ZIP Archive",
+    ArtefactType.TARGZ:        "TAR+GZip Archive",
+    ArtefactType.RAR:          "RAR Archive",
+    ArtefactType.ARC:          "ArcFS / Spark Archive",
+    ArtefactType.TBAFS:        "TBAFS Archive",
+    ArtefactType.XFILES:       "X-Files Archive",
+    ArtefactType.ACORN_SPRITE: "Acorn Sprite",
+    ArtefactType.ACORN_DRAW:   "Acorn Draw",
+    ArtefactType.ACORN_TEXT:   "Acorn Text / Script",
+    ArtefactType.IMAGE:        "Raster / Vector Image",
+    ArtefactType.UNKNOWN:      "Unknown",
+}
+
+
+def _type_display_name(t: ArtefactType) -> str:
+    """Return a human-readable display name for an ArtefactType."""
+    return _ARTEFACT_TYPE_DISPLAY_NAMES.get(t, t.value.upper().replace('_', ' '))
+
+
 # =============================================================================
 # Type Detection
 # =============================================================================
@@ -2676,7 +2709,7 @@ def upload(item_id):
 
     # Build type choices with auto-detect as default
     type_choices = [('auto', '-- Auto-detect --')]
-    type_choices.extend([(t.value, t.value.upper().replace('_', ' ')) for t in ArtefactType if t != ArtefactType.UNKNOWN])
+    type_choices.extend([(t.value, _type_display_name(t)) for t in ArtefactType if t != ArtefactType.UNKNOWN])
     form.artefact_type.choices = type_choices
 
     # Build platform choices
@@ -2786,7 +2819,7 @@ def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
     form = ArtefactEditForm(obj=artefact)
 
     # Build type choices
-    type_choices = [(t.value, t.value.upper().replace('_', ' ')) for t in ArtefactType]
+    type_choices = [(t.value, _type_display_name(t)) for t in ArtefactType]
     form.artefact_type.choices = type_choices
 
     if request.method == 'GET':
