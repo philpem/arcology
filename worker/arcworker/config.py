@@ -25,6 +25,10 @@ if not WORKER_API_KEY:
 # Subprocess timeout for tool execution and decompression (seconds)
 TOOL_TIMEOUT = int(os.environ.get('TOOL_TIMEOUT', '3600'))
 
+# How often (in seconds) the worker polls the API to detect mid-job cancellation.
+# Lower values detect cancellation sooner; higher values reduce API load.
+CANCEL_CHECK_INTERVAL = int(os.environ.get('CANCEL_CHECK_INTERVAL', '30'))
+
 # Archive extraction configuration
 MAX_ARCHIVE_DEPTH = int(os.environ.get('MAX_ARCHIVE_DEPTH', '10'))
 
