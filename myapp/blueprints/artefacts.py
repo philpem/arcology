@@ -43,13 +43,14 @@ from ..database import (
     RiscosModule,
     StorageDirectory,
     Tag,
+    User,
     artefact_tags,
 )
 from ..extensions import db
 from ..permissions import require_permission
 from ..riscos_filetypes import lookup_filetype_hex
 from ..utils.slugs import ensure_unique_slug, generate_slug, lookup_artefact_by_id, lookup_by_identifier
-from ..visibility import can_view_artefact, can_view_item
+from ..visibility import can_change_owner, can_manage_privacy, can_view_artefact, can_view_item
 
 
 def safe_original_filename(filename: str) -> str:
@@ -358,6 +359,8 @@ class ArtefactEditForm(FlaskForm):
                        description='Comma-separated list of tags')
     is_private = BooleanField('Private',
                               description='Visible only to you and administrators.')
+    owner_id = SelectField('Owner', coerce=int, validators=[Optional()],
+                           description='Reassign this artefact to another user.')
 
 
 class AnalyseForm(FlaskForm):
@@ -2850,10 +2853,21 @@ def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
     type_choices = [(t.value, _type_display_name(t)) for t in ArtefactType]
     form.artefact_type.choices = type_choices
 
+    can_priv = can_manage_privacy(artefact, current_user)
+    can_own = can_change_owner(artefact, current_user)
+    if can_own:
+        form.owner_id.choices = [(0, '-- No owner --')] + [
+            (u.id, u.username) for u in User.query.order_by(User.username).all()
+        ]
+    else:
+        del form['owner_id']
+
     if request.method == 'GET':
         form.artefact_type.data = artefact.artefact_type.value
         form.tags.data = ', '.join(t.name for t in artefact.tags)
         form.is_private.data = artefact.is_private
+        if can_own:
+            form.owner_id.data = artefact.owner_id or 0
 
     if form.validate_on_submit():
         artefact.label = form.label.data
@@ -2866,9 +2880,17 @@ def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
             artefact.artefact_type = new_type
             artefact.type_overridden = True
         artefact.description = form.description.data
-        if form.is_private.data and artefact.owner_id is None:
-            artefact.owner_id = current_user.id
-        artefact.is_private = form.is_private.data
+
+        # Owner reassignment (owner or admin only), applied before the privacy
+        # claim so an explicit choice wins over auto-claim.
+        if can_own:
+            artefact.owner_id = form.owner_id.data or None
+
+        # Privacy toggle (owner, admin, or anyone claiming an unowned artefact).
+        if can_priv:
+            if form.is_private.data and artefact.owner_id is None:
+                artefact.owner_id = current_user.id
+            artefact.is_private = form.is_private.data
 
         artefact.tags.clear()
         if form.tags.data:
@@ -2889,7 +2911,8 @@ def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
     return render_template('artefacts/edit.html',
                            form=form,
                            artefact=artefact,
-                           item=artefact.item)
+                           item=artefact.item,
+                           can_set_private=can_priv)
 
 
 def _delete_artefact_files(artefact):

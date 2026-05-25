@@ -309,6 +309,69 @@ class TestPrivacyApi(unittest.TestCase):
         self.assertEqual(self.client.get(f'/api/items/{uuid}', headers={'X-API-Key': self.key_b}).status_code, 200)
 
 
+class TestPrivacyManagement(unittest.TestCase):
+    """Privacy-toggle gating and owner reassignment via the REST API."""
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.app import create_app
+        from myapp.extensions import db
+        cls.app = create_app()
+        cls.app.config['TESTING'] = True
+        cls.client = cls.app.test_client()
+        cls.db = db
+        with cls.app.app_context():
+            db.create_all()
+            owner, cls.key_owner = _make_user(db, 'mgmt-owner')
+            other, cls.key_other = _make_user(db, 'mgmt-other')
+            _admin, cls.key_admin = _make_user(db, 'mgmt-admin', is_admin=True)
+            cls.other_id = other.id
+
+    def _new_public_item(self, name):
+        r = self.client.post('/api/items', headers={'X-API-Key': self.key_owner},
+                             json={'name': name})
+        return r.get_json()['uuid']
+
+    def _put(self, key, uuid, body):
+        return self.client.put(f'/api/items/{uuid}', headers={'X-API-Key': key}, json=body)
+
+    def test_non_owner_cannot_set_private(self):
+        uuid = self._new_public_item('mgmt-1')
+        # Other user can see the public item but must not be able to privatise it.
+        r = self._put(self.key_other, uuid, {'is_private': True})
+        self.assertEqual(r.status_code, 403, r.data)
+        # Confirm it is still public/visible to the other user.
+        self.assertEqual(self.client.get(f'/api/items/{uuid}',
+                                         headers={'X-API-Key': self.key_other}).status_code, 200)
+
+    def test_owner_can_set_private(self):
+        uuid = self._new_public_item('mgmt-2')
+        r = self._put(self.key_owner, uuid, {'is_private': True})
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(r.get_json()['is_private'])
+
+    def test_admin_can_reassign_owner(self):
+        uuid = self._new_public_item('mgmt-3')
+        # Non-owner cannot change the owner.
+        self.assertEqual(self._put(self.key_other, uuid, {'owner_id': self.other_id}).status_code, 403)
+        # Admin can.
+        r = self._put(self.key_admin, uuid, {'owner_id': self.other_id})
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.get_json()['owner'], 'mgmt-other')
+        # Now the new owner may toggle privacy.
+        self.assertEqual(self._put(self.key_other, uuid, {'is_private': True}).status_code, 200)
+
+    def test_owner_can_transfer_ownership(self):
+        uuid = self._new_public_item('mgmt-4')
+        r = self._put(self.key_owner, uuid, {'owner_id': self.other_id})
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.get_json()['owner'], 'mgmt-other')
+
+    def test_worker_can_manage(self):
+        uuid = self._new_public_item('mgmt-5')
+        self.assertEqual(self._put(_WORKER_KEY, uuid, {'is_private': True}).status_code, 200)
+
+
 if __name__ == '__main__':
     unittest.main()
 

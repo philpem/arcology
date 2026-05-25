@@ -34,6 +34,29 @@ def _user_id(user):
     return user.id if _is_authenticated(user) else None
 
 
+def is_owner(obj, user) -> bool:
+    """True if *user* owns *obj* (an Item or Artefact)."""
+    uid = _user_id(user)
+    return uid is not None and obj.owner_id == uid
+
+
+def can_manage_privacy(obj, user) -> bool:
+    """Who may toggle the privacy flag on *obj*.
+
+    The owner and administrators always may.  An object with no owner is
+    treated as claimable: any authenticated user may privatise it (and thereby
+    become its owner — see the edit handlers).
+    """
+    return _is_admin(user) or is_owner(obj, user) or (
+        obj.owner_id is None and _is_authenticated(user)
+    )
+
+
+def can_change_owner(obj, user) -> bool:
+    """Who may reassign ownership of *obj*: the current owner or an admin."""
+    return _is_admin(user) or is_owner(obj, user)
+
+
 def can_view_item(item: Item, user, *, sees_all: bool = False) -> bool:
     """Return True if *user* may view *item* (respecting privacy)."""
     if not item.private_effective:

@@ -79,6 +79,7 @@
                         {% endif %}
                     </dd>
                     <dt>Tags</dt><dd>{% for tag in item.tags %}<span class="badge bg-info">{{ tag.name }}</span> {% else %}<span class="text-muted">None</span>{% endfor %}</dd>
+                    <dt>Owner</dt><dd>{% if item.owner %}{{ item.owner.username }}{% else %}<span class="text-muted">None</span>{% endif %}</dd>
                 </dl>
             </div>
         </div>
