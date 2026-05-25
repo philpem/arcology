@@ -51,11 +51,22 @@
                         <div class="form-text">{{ form.tags.description }}</div>
                     </div>
 
+                    <div class="mb-3">
+                        <span class="form-label">Owner</span>
+                        <div class="form-text mb-1">{{ artefact.owner.username if artefact.owner else 'No owner' }}</div>
+                        {% if 'owner_id' in form %}
+                            {{ form.owner_id(class="form-select") }}
+                            <div class="form-text">{{ form.owner_id.description }}</div>
+                        {% endif %}
+                    </div>
+
+                    {% if can_set_private %}
                     <div class="mb-3 form-check">
                         {{ form.is_private(class="form-check-input") }}
                         {{ form.is_private.label(class="form-check-label") }}
                         <div class="form-text">{{ form.is_private.description }}</div>
                     </div>
+                    {% endif %}
 
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save</button>

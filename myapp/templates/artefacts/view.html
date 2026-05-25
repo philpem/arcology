@@ -57,6 +57,7 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
             <span class="badge bg-secondary">{{ artefact.artefact_type.value.upper().replace('_', ' ') }}</span>
             {% if artefact.type_overridden %}<span class="badge bg-warning text-dark">manually set</span>{% endif %}
         </p>
+        <p class="text-muted mb-1"><small><i class="bi bi-person"></i> Owner: {{ artefact.owner.username if artefact.owner else 'None' }}</small></p>
         {% if artefact.tags %}
         <p class="mb-1">
             {% for tag in artefact.tags %}<span class="badge bg-info text-dark me-1">{{ tag.name }}</span>{% endfor %}

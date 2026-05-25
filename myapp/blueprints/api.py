@@ -46,6 +46,7 @@ from ..database import (
     RiscosModule,
     StorageDirectory,
     Tag,
+    User,
 )
 from ..extensions import csrf, db
 from ..utils.api_serializers import (
@@ -64,6 +65,8 @@ from ..utils.privacy import recompute_item_privacy
 from ..utils.slugs import ensure_unique_slug, generate_slug
 from ..utils.slugs import lookup_by_identifier as _lookup_by_identifier
 from ..visibility import (
+    can_change_owner,
+    can_manage_privacy,
     can_view_artefact,
     can_view_item,
     item_visibility_clause,
@@ -435,6 +438,7 @@ def update_item(uuid):
     data, error = _json_object(required=True)
     if error:
         return error
+    api_user, sees_all = _api_viewer()
     privacy_changed = False
     if 'name' in data:
         item.name = data['name']
@@ -444,8 +448,20 @@ def update_item(uuid):
         item.platform_id = data['platform_id']
     if 'category_id' in data:
         item.category_id = data['category_id']
+    if 'owner_id' in data:
+        if not (sees_all or can_change_owner(item, api_user)):
+            return error_response('Not permitted to change owner', 403)
+        new_owner_id = data['owner_id']
+        if new_owner_id is not None and db.session.get(User, new_owner_id) is None:
+            return error_response('Owner user not found', 404)
+        item.owner_id = new_owner_id
     if 'is_private' in data:
-        item.is_private = bool(data['is_private'])
+        if not (sees_all or can_manage_privacy(item, api_user)):
+            return error_response('Not permitted to change privacy', 403)
+        new_private = bool(data['is_private'])
+        if new_private and item.owner_id is None and api_user is not None:
+            item.owner_id = api_user.id
+        item.is_private = new_private
         privacy_changed = True
     if 'parent_uuid' in data:
         if data['parent_uuid'] is None:

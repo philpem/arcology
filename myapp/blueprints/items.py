@@ -11,7 +11,17 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import selectinload
 from wtforms import BooleanField, SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Length, Optional
-from ..database import Analysis, AnalysisStatus, Artefact, Category, ExternalReference, ExternalSystem, Item, Platform
+from ..database import (
+    Analysis,
+    AnalysisStatus,
+    Artefact,
+    Category,
+    ExternalReference,
+    ExternalSystem,
+    Item,
+    Platform,
+    User,
+)
 from ..extensions import db
 from ..permissions import require_permission
 from ..utils.item_helpers import (
@@ -26,6 +36,8 @@ from ..utils.privacy import recompute_item_privacy
 from ..utils.slugs import ensure_unique_slug, generate_slug, get_or_create_slug, lookup_by_identifier
 from ..visibility import (
     artefact_visibility_clause,
+    can_change_owner,
+    can_manage_privacy,
     can_view_item,
     item_visibility_clause,
 )
@@ -70,6 +82,8 @@ class ItemForm(FlaskForm):
     is_private = BooleanField('Private',
                               description='Visible only to you and administrators. '
                                           'Privacy descends to all sub-items and artefacts.')
+    owner_id = SelectField('Owner', coerce=int, validators=[Optional()],
+                           description='Reassign this item to another user.')
 
 
 class ExternalReferenceForm(FlaskForm):
@@ -278,6 +292,8 @@ def _build_tree_rows(root_items):
 def new():
     """Create a new item."""
     form = ItemForm()
+    # The creator is always the owner; no owner picker on creation.
+    del form['owner_id']
 
     form.platform_id.choices = item_choice_list(Platform, '-- Select Platform --')
     form.category_id.choices = item_choice_list(Category, '-- Select Category --')
@@ -317,7 +333,8 @@ def new():
         flash(f'Item "{item.name}" created successfully.', 'success')
         return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
 
-    return render_template('items/form.html', form=form, title='New Item', preset_parent=preset_parent)
+    return render_template('items/form.html', form=form, title='New Item',
+                           preset_parent=preset_parent, can_set_private=True)
 
 
 @blueprint.route('/<string:uuid>')
@@ -384,10 +401,21 @@ def edit(uuid):
     # Exclude self and descendants from the parent dropdown to prevent cycles
     form.parent_id.choices = item_parent_choice_list('-- No parent (root item) --', exclude_item=item, viewer=current_user)
 
+    can_priv = can_manage_privacy(item, current_user)
+    can_own = can_change_owner(item, current_user)
+    if can_own:
+        form.owner_id.choices = [(0, '-- No owner --')] + [
+            (u.id, u.username) for u in User.query.order_by(User.username).all()
+        ]
+    else:
+        del form['owner_id']
+
     if request.method == 'GET':
         form.tags.data = ', '.join([t.name for t in item.tags])
         form.parent_id.data = item.parent_id or 0
         form.is_private.data = item.is_private
+        if can_own:
+            form.owner_id.data = item.owner_id or 0
 
     if form.validate_on_submit():
         new_parent_id = form.parent_id.data if form.parent_id.data != 0 else None
@@ -397,7 +425,8 @@ def edit(uuid):
             new_parent = Item.query.get(new_parent_id)
             if new_parent and item.is_ancestor_of(new_parent):
                 flash('Cannot move an item to one of its own descendants.', 'danger')
-                return render_template('items/form.html', form=form, item=item, title='Edit Item', preset_parent=None)
+                return render_template('items/form.html', form=form, item=item, title='Edit Item',
+                                       preset_parent=None, can_set_private=can_priv)
 
         assign_item_fields(
             item,
@@ -409,12 +438,18 @@ def edit(uuid):
         )
         assign_item_tags(item, form.tags.data)
 
+        # Owner reassignment (owner or admin only). Apply before the privacy
+        # claim below so an explicit choice wins over auto-claim.
+        if can_own:
+            item.owner_id = form.owner_id.data or None
+
+        # Privacy toggle (owner, admin, or anyone claiming an unowned item).
         # Marking an unowned item private would otherwise hide it from its own
-        # editor (only admins see owner-less private items); claim ownership so
-        # the user keeps access to what they just made private.
-        if form.is_private.data and item.owner_id is None:
-            item.owner_id = current_user.id
-        item.is_private = form.is_private.data
+        # editor, so claim ownership to keep the user's access.
+        if can_priv:
+            if form.is_private.data and item.owner_id is None:
+                item.owner_id = current_user.id
+            item.is_private = form.is_private.data
 
         item.slug = ensure_unique_slug(generate_slug(item.name), Item, existing_id=item.id)
         db.session.flush()
@@ -424,7 +459,8 @@ def edit(uuid):
         flash(f'Item "{item.name}" updated successfully.', 'success')
         return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
 
-    return render_template('items/form.html', form=form, item=item, title='Edit Item', preset_parent=None)
+    return render_template('items/form.html', form=form, item=item, title='Edit Item',
+                           preset_parent=None, can_set_private=can_priv)
 
 
 @blueprint.route('/<string:uuid>/delete', methods=['POST'])
