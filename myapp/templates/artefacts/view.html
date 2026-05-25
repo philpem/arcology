@@ -50,7 +50,9 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
-        <h1>{{ artefact.label }}</h1>
+        <h1>{{ artefact.label }}
+            {% if artefact.effective_private %}<span class="badge bg-warning text-dark align-middle" title="{% if artefact.is_private %}This artefact is private{% else %}Private (inherited from a private item){% endif %}"><i class="bi bi-lock-fill"></i> Private</span>{% endif %}
+        </h1>
         <p class="text-muted mb-1">
             <span class="badge bg-secondary">{{ artefact.artefact_type.value.upper().replace('_', ' ') }}</span>
             {% if artefact.type_overridden %}<span class="badge bg-warning text-dark">manually set</span>{% endif %}

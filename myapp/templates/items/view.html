@@ -29,7 +29,9 @@
 </nav>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h1>{{ item.name }}</h1>
+    <h1>{{ item.name }}
+        {% if item.private_effective %}<span class="badge bg-warning text-dark align-middle" title="{% if item.is_private %}This item is private{% else %}Private (inherited from a parent item){% endif %}"><i class="bi bi-lock-fill"></i> Private</span>{% endif %}
+    </h1>
     {% if user_can_write %}
     <div>
         {% if user_can_write %}<a href="{{ url_for('myapp_blueprints_items.new') }}?parent={{ item.uuid }}" class="btn btn-outline-success"><i class="bi bi-plus-lg"></i> New Child Item</a>{% endif %}

@@ -48,6 +48,12 @@
                     </div>
 
                     <div class="mb-3 form-check">
+                        {{ form.is_private(class="form-check-input") }}
+                        {{ form.is_private.label(class="form-check-label") }}
+                        <div class="form-text">{{ form.is_private.description }}</div>
+                    </div>
+
+                    <div class="mb-3 form-check">
                         {{ form.auto_analyse(class="form-check-input") }}
                         {{ form.auto_analyse.label(class="form-check-label") }}
                         <div class="form-text">Automatically queue appropriate analyses based on file type</div>

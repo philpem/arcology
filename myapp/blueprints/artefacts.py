@@ -49,6 +49,7 @@ from ..extensions import db
 from ..permissions import require_permission
 from ..riscos_filetypes import lookup_filetype_hex
 from ..utils.slugs import ensure_unique_slug, generate_slug, lookup_artefact_by_id, lookup_by_identifier
+from ..visibility import can_view_artefact, can_view_item
 
 
 def safe_original_filename(filename: str) -> str:
@@ -342,6 +343,8 @@ class ArtefactUploadForm(FlaskForm):
     artefact_type = SelectField('Type (auto-detected)', coerce=str, validators=[Optional()],
                                  description='Leave as "Auto-detect" unless incorrect')
     description = TextAreaField('Description', validators=[Optional()])
+    is_private = BooleanField('Private',
+                              description='Visible only to you and administrators.')
     auto_analyse = BooleanField('Run automatic analysis', default=True)
     upload_more = BooleanField('Upload more', default=False)
 
@@ -353,6 +356,8 @@ class ArtefactEditForm(FlaskForm):
     description = TextAreaField('Description', validators=[Optional()])
     tags = StringField('Tags', validators=[Optional()],
                        description='Comma-separated list of tags')
+    is_private = BooleanField('Private',
+                              description='Visible only to you and administrators.')
 
 
 class AnalyseForm(FlaskForm):
@@ -1098,9 +1103,15 @@ def _cleanup_artefact_outputs(artefact: Artefact, logger) -> None:
 
 
 def _resolve_artefact(item_id, artefact_id, root_id=None):
-    """Lookup helper: resolve item + artefact, validate root_id if nested URL."""
+    """Lookup helper: resolve item + artefact, validate root_id if nested URL.
+
+    Enforces privacy: a private artefact (or one in a private item) is hidden
+    from users who are neither its owner nor an administrator.
+    """
     item = lookup_by_identifier(Item, item_id)
     artefact = lookup_artefact_by_id(item, artefact_id)
+    if not can_view_artefact(artefact, current_user):
+        abort(404)
     if root_id is not None:
         root = lookup_artefact_by_id(item, root_id)
         if artefact.root_artefact.id != root.id:
@@ -1111,7 +1122,10 @@ def _resolve_artefact(item_id, artefact_id, root_id=None):
 def _get_artefact_or_404(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Load an artefact from either the nested or legacy route parameters."""
     if uuid is not None:
-        return Artefact.query.filter_by(uuid=uuid).first_or_404()
+        artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+        if not can_view_artefact(artefact, current_user):
+            abort(404)
+        return artefact
     _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
     return artefact
 
@@ -2706,11 +2720,13 @@ def _get_all_artefact_ids(artefact):
 def upload(item_id):
     """Upload a new artefact."""
     item = lookup_by_identifier(Item, item_id)
+    if not can_view_item(item, current_user):
+        abort(404)
     form = ArtefactUploadForm()
 
     # Build item choices
     from ..utils.item_helpers import indented_item_choices
-    form.item_id.choices = [(0, '-- Select item --')] + indented_item_choices()
+    form.item_id.choices = [(0, '-- Select item --')] + indented_item_choices(viewer=current_user)
 
     # Build type choices with auto-detect as default
     type_choices = [('auto', '-- Auto-detect --')]
@@ -2723,6 +2739,8 @@ def upload(item_id):
 
     if form.validate_on_submit():
         target_item = Item.query.get(form.item_id.data) or item
+        if not can_view_item(target_item, current_user):
+            abort(404)
 
         file = form.file.data
         original_filename = safe_original_filename(file.filename)
@@ -2771,6 +2789,8 @@ def upload(item_id):
             mime_type=mime_type,
             md5=md5,
             sha256=sha256,
+            owner_id=current_user.id,
+            is_private=form.is_private.data,
         )
 
         db.session.add(artefact)
@@ -2833,6 +2853,7 @@ def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
     if request.method == 'GET':
         form.artefact_type.data = artefact.artefact_type.value
         form.tags.data = ', '.join(t.name for t in artefact.tags)
+        form.is_private.data = artefact.is_private
 
     if form.validate_on_submit():
         artefact.label = form.label.data
@@ -2845,6 +2866,9 @@ def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
             artefact.artefact_type = new_type
             artefact.type_overridden = True
         artefact.description = form.description.data
+        if form.is_private.data and artefact.owner_id is None:
+            artefact.owner_id = current_user.id
+        artefact.is_private = form.is_private.data
 
         artefact.tags.clear()
         if form.tags.data:
@@ -3260,6 +3284,8 @@ def download_file(uuid):
     """
     ef = ExtractedFile.query.filter_by(uuid=uuid).first_or_404()
     artefact = ef.partition.artefact
+    if not can_view_artefact(artefact, current_user):
+        abort(404)
 
     restriction_redirect = _check_download_restrictions(artefact)
     if restriction_redirect:

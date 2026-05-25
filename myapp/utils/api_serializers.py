@@ -16,6 +16,9 @@ def item_to_dict(item, include_artefacts=False, _artefact_count=None):
         'tags': [t.name for t in item.tags],
         'child_count': len(item.children),
         'artefact_count': _artefact_count if _artefact_count is not None else len(item.artefacts),
+        'is_private': item.is_private,
+        'private_effective': item.private_effective,
+        'owner': item.owner.username if item.owner else None,
         'created_at': item.created_at.isoformat(), 'updated_at': item.updated_at.isoformat()
     }
     if include_artefacts:
@@ -38,6 +41,9 @@ def artefact_to_dict(artefact, include_partitions=False, include_storage=False):
         'tags': [t.name for t in artefact.tags],
         'restrictions': [r.restriction_type.value for r in artefact.restrictions],
         'is_restricted': artefact.is_restricted,
+        'is_private': artefact.is_private,
+        'effective_private': artefact.effective_private,
+        'owner': artefact.owner.username if artefact.owner else None,
         'created_at': artefact.created_at.isoformat(), 'updated_at': artefact.updated_at.isoformat()
     }
     if include_storage:

@@ -51,6 +51,12 @@
                         <div class="form-text">{{ form.tags.description }}</div>
                     </div>
 
+                    <div class="mb-3 form-check">
+                        {{ form.is_private(class="form-check-input") }}
+                        {{ form.is_private.label(class="form-check-label") }}
+                        <div class="form-text">{{ form.is_private.description }}</div>
+                    </div>
+
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save</button>
                         <a href="{{ artefact_url(artefact) }}" class="btn btn-outline-secondary">Cancel</a>
