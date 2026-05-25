@@ -15,7 +15,7 @@ import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from flask import Blueprint, current_app, jsonify, redirect, request, send_file
+from flask import Blueprint, abort, current_app, g, jsonify, redirect, request, send_file
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload
@@ -60,8 +60,14 @@ from ..utils.db_helpers import get_by_id_or_404 as _get_by_id_or_404
 from ..utils.db_helpers import get_by_uuid_or_404 as _get_by_uuid_or_404
 from ..utils.hash_rescan import find_known_file
 from ..utils.item_helpers import assign_item_fields, assign_item_tags
+from ..utils.privacy import recompute_item_privacy
 from ..utils.slugs import ensure_unique_slug, generate_slug
 from ..utils.slugs import lookup_by_identifier as _lookup_by_identifier
+from ..visibility import (
+    can_view_artefact,
+    can_view_item,
+    item_visibility_clause,
+)
 from .artefacts import (
     _collect_all_file_restrictions,
     _collect_ancestor_file_restrictions,
@@ -138,6 +144,8 @@ def require_auth(permission: str = 'read_only'):
             # Pre-shared worker key — always grants read_write, no DB hit needed
             worker_key = current_app.config.get('WORKER_API_KEY', '')
             if worker_key and hmac.compare_digest(raw, worker_key):
+                g.api_is_worker = True
+                g.api_user = None
                 return f(*args, **kwargs)
 
             # User application key
@@ -147,6 +155,8 @@ def require_auth(permission: str = 'read_only'):
             eff_idx = _API_KEY_PERMISSION_ORDER.index(key.effective_permission())
             if eff_idx < required_idx:
                 return error_response('Insufficient permissions', 403)
+            g.api_is_worker = False
+            g.api_user = key.user
             # Throttle last_used_at updates to avoid a write transaction on
             # every single API call.  Only update if stale by >60 seconds.
             now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -235,12 +245,40 @@ def _validate_storage_path(path: str) -> bool:
     return '..' not in os.path.normpath(path).split(os.sep)
 
 
+def _api_viewer():
+    """Return (user_or_None, sees_all) for the current API caller.
+
+    The worker authenticates with the pre-shared key and must be able to read
+    private content it has been asked to process, so it sees everything.  User
+    API keys are scoped to their owning user's visibility.
+    """
+    return getattr(g, 'api_user', None), bool(getattr(g, 'api_is_worker', False))
+
+
+def _require_view_item(item):
+    """Abort with 404 if the API caller may not view *item*."""
+    user, sees_all = _api_viewer()
+    if not can_view_item(item, user, sees_all=sees_all):
+        abort(404)
+
+
+def _require_view_artefact(artefact):
+    """Abort with 404 if the API caller may not view *artefact*."""
+    user, sees_all = _api_viewer()
+    if not can_view_artefact(artefact, user, sees_all=sees_all):
+        abort(404)
+
+
 def _get_item_or_404(uuid):
-    return _lookup_by_identifier(Item, uuid)
+    item = _lookup_by_identifier(Item, uuid)
+    _require_view_item(item)
+    return item
 
 
 def _get_artefact_or_404(uuid, *load_options):
-    return _get_by_uuid_or_404(Artefact, uuid, *load_options)
+    artefact = _get_by_uuid_or_404(Artefact, uuid, *load_options)
+    _require_view_artefact(artefact)
+    return artefact
 
 
 def _get_analysis_or_404(*, id=None, uuid=None, load_options=()):
@@ -292,7 +330,8 @@ def health_check():
 def list_items():
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 25, type=int)
-    query = Item.query
+    _user, _sees_all = _api_viewer()
+    query = Item.query.filter(item_visibility_clause(_user, sees_all=_sees_all))
 
     if request.args.get('q'):
         search = f'%{request.args["q"]}%'
@@ -369,9 +408,13 @@ def create_item():
         category_id=data.get('category_id'),
         parent_id=parent_id,
     )
+    api_user, _ = _api_viewer()
+    item.owner_id = api_user.id if api_user is not None else None
+    item.is_private = bool(data.get('is_private', False))
     db.session.add(item)
     db.session.flush()  # assigns item.id so tag back-references work correctly
     assign_item_tags(item, data.get('tags'))
+    recompute_item_privacy(item)
     db.session.commit()
     item.slug = ensure_unique_slug(generate_slug(item.name), Item)
     db.session.commit()
@@ -392,6 +435,7 @@ def update_item(uuid):
     data, error = _json_object(required=True)
     if error:
         return error
+    privacy_changed = False
     if 'name' in data:
         item.name = data['name']
     if 'description' in data:
@@ -400,6 +444,9 @@ def update_item(uuid):
         item.platform_id = data['platform_id']
     if 'category_id' in data:
         item.category_id = data['category_id']
+    if 'is_private' in data:
+        item.is_private = bool(data['is_private'])
+        privacy_changed = True
     if 'parent_uuid' in data:
         if data['parent_uuid'] is None:
             item.parent_id = None
@@ -410,8 +457,12 @@ def update_item(uuid):
             if new_parent.id == item.id or item.is_ancestor_of(new_parent):
                 return error_response('Cannot move an item to itself or one of its descendants', 400)
             item.parent_id = new_parent.id
+        privacy_changed = True
     if 'name' in data:
         item.slug = ensure_unique_slug(generate_slug(item.name), Item, existing_id=item.id)
+    if privacy_changed:
+        db.session.flush()
+        recompute_item_privacy(item)
     db.session.commit()
     return jsonify(item_to_dict(item))
 
@@ -452,10 +503,13 @@ def add_artefact(item_uuid):
     if not _validate_storage_path(data['storage_path']):
         return error_response('Invalid storage_path')
 
+    api_user, _ = _api_viewer()
     artefact = Artefact(item_id=item.id, label=data['label'], artefact_type=artefact_type,
                         description=data.get('description'), original_filename=data['original_filename'],
                         storage_path=data['storage_path'], storage_directory=storage_directory,
-                        file_size=data.get('file_size'), md5=data.get('md5'), sha256=data.get('sha256'))
+                        file_size=data.get('file_size'), md5=data.get('md5'), sha256=data.get('sha256'),
+                        owner_id=(api_user.id if api_user is not None else item.owner_id),
+                        is_private=bool(data.get('is_private', False)))
     db.session.add(artefact)
     db.session.commit()
     artefact.slug = ensure_unique_slug(generate_slug(artefact.label), Artefact, scope_filter={'item_id': item.id})
@@ -590,6 +644,7 @@ def download_extracted_file(uuid):
         .selectinload(Artefact.restrictions)
     ,))
     artefact = ef.partition.artefact
+    _require_view_artefact(artefact)
 
     if artefact.restrictions:
         return jsonify({
@@ -1236,7 +1291,10 @@ def produce_artefact(id):
         md5=data.get('md5'),
         sha256=data.get('sha256'),
         parent_artefact_id=analysis.artefact_id,
-        derived_from_analysis_id=analysis.id
+        derived_from_analysis_id=analysis.id,
+        # Derived artefacts inherit the source artefact's owner; item privacy
+        # descends automatically via Item.private_effective.
+        owner_id=analysis.artefact.owner_id,
     )
     
     db.session.add(artefact)

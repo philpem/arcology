@@ -4,12 +4,12 @@ Arcology - Items Blueprint
 CRUD operations for collection items.
 """
 
-from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
-from flask_login import login_required
+from flask import Blueprint, abort, flash, jsonify, redirect, render_template, request, url_for
+from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
 from sqlalchemy import func, or_
 from sqlalchemy.orm import selectinload
-from wtforms import SelectField, StringField, TextAreaField
+from wtforms import BooleanField, SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Length, Optional
 from ..database import Analysis, AnalysisStatus, Artefact, Category, ExternalReference, ExternalSystem, Item, Platform
 from ..extensions import db
@@ -22,7 +22,13 @@ from ..utils.item_helpers import (
     item_parent_choice_list,
 )
 from ..utils.pagination import VALID_PER_PAGE, compute_letter_pages, resolve_per_page, resolve_sort
+from ..utils.privacy import recompute_item_privacy
 from ..utils.slugs import ensure_unique_slug, generate_slug, get_or_create_slug, lookup_by_identifier
+from ..visibility import (
+    artefact_visibility_clause,
+    can_view_item,
+    item_visibility_clause,
+)
 from .artefacts import bulk_delete_item
 
 _ITEM_SORT_OPTIONS = {
@@ -61,6 +67,9 @@ class ItemForm(FlaskForm):
     category_id = SelectField('Category', coerce=int, validators=[Optional()])
     tags = StringField('Tags', validators=[Optional()],
                        description='Comma-separated list of tags')
+    is_private = BooleanField('Private',
+                              description='Visible only to you and administrators. '
+                                          'Privacy descends to all sub-items and artefacts.')
 
 
 class ExternalReferenceForm(FlaskForm):
@@ -97,7 +106,7 @@ def index():
                      (form.platform_id.data and form.platform_id.data != 0) or
                      (form.category_id.data and form.category_id.data != 0))
 
-    query = Item.query
+    query = Item.query.filter(item_visibility_clause(current_user))
 
     if form.q.data:
         search = f'%{form.q.data}%'
@@ -141,6 +150,8 @@ def index():
     tree_rows = None
     if view_mode == 'tree' and not searching:
         tree_rows = _build_tree_rows(pagination.items)
+        tree_rows = [(it, depth) for it, depth in tree_rows
+                     if can_view_item(it, current_user)]
 
     # Collect all visible item IDs — in tree mode this includes expanded children
     if tree_rows:
@@ -154,7 +165,9 @@ def index():
     if item_ids:
         counts = (
             db.session.query(Artefact.item_id, func.count(Artefact.id))
+            .join(Item, Artefact.item_id == Item.id)
             .filter(Artefact.item_id.in_(item_ids))
+            .filter(artefact_visibility_clause(current_user))
             .group_by(Artefact.item_id)
             .all()
         )
@@ -162,6 +175,7 @@ def index():
         child_counts_q = (
             db.session.query(Item.parent_id, func.count(Item.id))
             .filter(Item.parent_id.in_(item_ids))
+            .filter(item_visibility_clause(current_user))
             .group_by(Item.parent_id)
             .all()
         )
@@ -267,7 +281,7 @@ def new():
 
     form.platform_id.choices = item_choice_list(Platform, '-- Select Platform --')
     form.category_id.choices = item_choice_list(Category, '-- Select Category --')
-    form.parent_id.choices = item_parent_choice_list('-- No parent (root item) --')
+    form.parent_id.choices = item_parent_choice_list('-- No parent (root item) --', viewer=current_user)
 
     # Pre-select parent if ?parent=<uuid> is provided (e.g. from "New Child Item" button)
     preset_parent = None
@@ -291,8 +305,12 @@ def new():
             parent_id=form.parent_id.data if form.parent_id.data != 0 else None,
         )
         assign_item_tags(item, form.tags.data)
+        item.owner_id = current_user.id
+        item.is_private = form.is_private.data
 
         db.session.add(item)
+        db.session.flush()
+        recompute_item_privacy(item)
         db.session.commit()
         get_or_create_slug(item, 'name')
 
@@ -307,6 +325,8 @@ def new():
 def view(uuid):
     """View an item and its artefacts."""
     item = lookup_by_identifier(Item, uuid)
+    if not can_view_item(item, current_user):
+        abort(404)
     if uuid != item.url_id:
         loc = url_for(f'{ROUTENAME}.view', uuid=item.url_id)
         if request.query_string:
@@ -320,6 +340,8 @@ def view(uuid):
     artefact_query = (
         Artefact.query
         .filter_by(item_id=item.id, parent_artefact_id=None)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(artefact_visibility_clause(current_user))
         .options(selectinload(Artefact.derived_artefacts))
     )
 
@@ -351,6 +373,8 @@ def view(uuid):
 def edit(uuid):
     """Edit an item (including moving it to a different parent)."""
     item = lookup_by_identifier(Item, uuid)
+    if not can_view_item(item, current_user):
+        abort(404)
     if request.method == 'GET' and uuid != item.url_id:
         return redirect(url_for(f'{ROUTENAME}.edit', uuid=item.url_id), 301)
     form = ItemForm(obj=item)
@@ -358,11 +382,12 @@ def edit(uuid):
     form.platform_id.choices = item_choice_list(Platform, '-- Select Platform --')
     form.category_id.choices = item_choice_list(Category, '-- Select Category --')
     # Exclude self and descendants from the parent dropdown to prevent cycles
-    form.parent_id.choices = item_parent_choice_list('-- No parent (root item) --', exclude_item=item)
+    form.parent_id.choices = item_parent_choice_list('-- No parent (root item) --', exclude_item=item, viewer=current_user)
 
     if request.method == 'GET':
         form.tags.data = ', '.join([t.name for t in item.tags])
         form.parent_id.data = item.parent_id or 0
+        form.is_private.data = item.is_private
 
     if form.validate_on_submit():
         new_parent_id = form.parent_id.data if form.parent_id.data != 0 else None
@@ -384,7 +409,16 @@ def edit(uuid):
         )
         assign_item_tags(item, form.tags.data)
 
+        # Marking an unowned item private would otherwise hide it from its own
+        # editor (only admins see owner-less private items); claim ownership so
+        # the user keeps access to what they just made private.
+        if form.is_private.data and item.owner_id is None:
+            item.owner_id = current_user.id
+        item.is_private = form.is_private.data
+
         item.slug = ensure_unique_slug(generate_slug(item.name), Item, existing_id=item.id)
+        db.session.flush()
+        recompute_item_privacy(item)
         db.session.commit()
 
         flash(f'Item "{item.name}" updated successfully.', 'success')
@@ -399,6 +433,8 @@ def edit(uuid):
 def delete(uuid):
     """Delete an item and all its descendants (cascade)."""
     item = lookup_by_identifier(Item, uuid)
+    if not can_view_item(item, current_user):
+        abort(404)
     name = item.name
     parent = item.parent
 
@@ -417,6 +453,8 @@ def delete(uuid):
 def add_reference(uuid):
     """Add an external reference to an item."""
     item = lookup_by_identifier(Item, uuid)
+    if not can_view_item(item, current_user):
+        abort(404)
     form = ExternalReferenceForm()
     
     form.system_id.choices = [
@@ -451,6 +489,8 @@ def add_reference(uuid):
 def delete_reference(item_uuid, ref_id):
     """Delete an external reference."""
     item = lookup_by_identifier(Item, item_uuid)
+    if not can_view_item(item, current_user):
+        abort(404)
     ref = ExternalReference.query.get_or_404(ref_id)
 
     if ref.item_id != item.id:
@@ -468,7 +508,7 @@ def delete_reference(item_uuid, ref_id):
 @login_required
 def choices_json():
     """Return the full indented item list as JSON for AJAX selectors."""
-    choices = indented_item_choices()
+    choices = indented_item_choices(viewer=current_user)
     return jsonify([{'id': id_, 'name': name} for id_, name in choices])
 
 

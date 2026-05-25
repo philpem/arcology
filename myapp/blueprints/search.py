@@ -6,7 +6,7 @@ Global cross-item search using a prefix query syntax.
 
 import re
 from flask import Blueprint, render_template, request
-from flask_login import login_required
+from flask_login import current_user, login_required
 from sqlalchemy import and_, distinct, func, or_
 from ..database import (
     Artefact,
@@ -22,6 +22,7 @@ from ..database import (
 )
 from ..extensions import db
 from ..riscos_filetypes import lookup_filetype_hex
+from ..visibility import artefact_visibility_clause, item_visibility_clause
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -196,6 +197,7 @@ def _search_files(tokens):
         .join(Item, Artefact.item_id == Item.id)
         .filter(combined)
         .filter(ExtractedFile.is_directory == False)
+        .filter(artefact_visibility_clause(current_user))
         .order_by(func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path))
         .limit(RESULT_LIMIT + 1)
         .all()
@@ -227,6 +229,7 @@ def _search_partitions(tokens):
         .join(Artefact, Partition.artefact_id == Artefact.id)
         .join(Item, Artefact.item_id == Item.id)
         .filter(combined)
+        .filter(artefact_visibility_clause(current_user))
         .order_by(func.lower(Item.name), func.lower(Artefact.label), Partition.partition_index)
         .limit(RESULT_LIMIT + 1)
         .all()
@@ -245,6 +248,7 @@ def _search_protection(tokens):
             .join(Artefact, ArtefactProtection.artefact_id == Artefact.id)
             .join(Item, Artefact.item_id == Item.id)
             .filter(ArtefactProtection.protection_type == prot_type.lower())
+            .filter(artefact_visibility_clause(current_user))
             .order_by(func.lower(Item.name), func.lower(Artefact.label))
             .all()
         )
@@ -269,6 +273,7 @@ def _search_mastering(tokens):
             .join(Artefact, ArtefactMastering.artefact_id == Artefact.id)
             .join(Item, Artefact.item_id == Item.id)
             .filter(ArtefactMastering.mastering_type == mast_type.lower())
+            .filter(artefact_visibility_clause(current_user))
             .order_by(func.lower(Item.name), func.lower(Artefact.label))
             .all()
         )
@@ -300,6 +305,7 @@ def _search_modules(tokens):
                 _ilike(RiscosModule.title_string, mod_val),
                 _ilike(RiscosModule.help_title, mod_val)))
             .filter(ExtractedFile.is_directory == False)
+            .filter(artefact_visibility_clause(current_user))
             .order_by(func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path))
             .limit(RESULT_LIMIT + 1)
             .all()
@@ -326,6 +332,7 @@ def _search_commands(tokens):
             .filter(RiscosModule.commands.isnot(None))
             .filter(_ilike_json(RiscosModule.commands, cmd_val))
             .filter(ExtractedFile.is_directory == False)
+            .filter(artefact_visibility_clause(current_user))
             .order_by(func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path))
             .limit(RESULT_LIMIT + 1)
             .all()
@@ -352,6 +359,7 @@ def _search_swis(tokens):
             .filter(RiscosModule.swi_names.isnot(None))
             .filter(_ilike_json(RiscosModule.swi_names, swi_val))
             .filter(ExtractedFile.is_directory == False)
+            .filter(artefact_visibility_clause(current_user))
             .order_by(func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path))
             .limit(RESULT_LIMIT + 1)
             .all()
@@ -402,6 +410,7 @@ def _search_artefact_hashes(tokens):
         db.session.query(Artefact, Item)
         .join(Item, Artefact.item_id == Item.id)
         .filter(or_(*art_filters))
+        .filter(artefact_visibility_clause(current_user))
         .order_by(func.lower(Item.name), func.lower(Artefact.label))
         .limit(RESULT_LIMIT + 1)
         .all()
@@ -427,6 +436,7 @@ def _search_text_items(tokens):
     q = (
         Item.query
         .filter(or_(*text_filters))
+        .filter(item_visibility_clause(current_user))
         .order_by(func.lower(Item.name))
         .limit(RESULT_LIMIT + 1)
         .all()
@@ -450,6 +460,7 @@ def _search_text_artefacts(tokens):
         db.session.query(Artefact, Item)
         .join(Item, Artefact.item_id == Item.id)
         .filter(or_(*art_text_filters))
+        .filter(artefact_visibility_clause(current_user))
         .order_by(func.lower(Item.name), func.lower(Artefact.label))
         .limit(RESULT_LIMIT + 1)
         .all()

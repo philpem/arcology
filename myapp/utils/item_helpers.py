@@ -13,7 +13,7 @@ def item_choice_list(model, placeholder: str):
 
 
 def indented_item_choices(*, value_fn=lambda item: item.id,
-                          exclude_ids=None):
+                          exclude_ids=None, viewer=None):
     """Build a hierarchically-indented choice list of all items.
 
     Items are returned in depth-first tree order (each parent immediately
@@ -25,11 +25,17 @@ def indented_item_choices(*, value_fn=lambda item: item.id,
                   (default: item.id; use ``lambda i: i.url_id`` for UUID keys).
         exclude_ids: optional set of item IDs to omit from the list.
                      Excluded items and their entire subtrees are skipped.
+        viewer: optional user; when supplied, private items the viewer may not
+                see are filtered out (along with their subtrees).
 
     Returns:
         List of ``(value, indented_name)`` tuples in tree traversal order.
     """
-    all_items = Item.query.order_by(Item.name).all()
+    query = Item.query
+    if viewer is not None:
+        from ..visibility import item_visibility_clause
+        query = query.filter(item_visibility_clause(viewer))
+    all_items = query.order_by(Item.name).all()
     _exclude = exclude_ids or set()
 
     children_by_parent: dict[int | None, list] = {}
@@ -50,10 +56,11 @@ def indented_item_choices(*, value_fn=lambda item: item.id,
     return choices
 
 
-def item_parent_choice_list(placeholder: str, exclude_item=None):
+def item_parent_choice_list(placeholder: str, exclude_item=None, viewer=None):
     """Build a parent item select choice list, excluding an item and its descendants.
 
     exclude_item: the Item being edited (self + descendants are excluded to prevent cycles).
+    viewer: optional user; private items the viewer may not see are filtered out.
     Returns [(id, indented_name), ...] with indentation reflecting depth.
     """
     excluded_ids: set[int] = set()
@@ -65,7 +72,7 @@ def item_parent_choice_list(placeholder: str, exclude_item=None):
             excluded_ids.add(child.id)
             queue.extend(child.children)
 
-    return [(0, placeholder)] + indented_item_choices(exclude_ids=excluded_ids)
+    return [(0, placeholder)] + indented_item_choices(exclude_ids=excluded_ids, viewer=viewer)
 
 
 def parse_tag_names(raw_tags) -> list[str]:

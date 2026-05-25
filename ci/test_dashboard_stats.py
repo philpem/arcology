@@ -84,10 +84,14 @@ class TestDashboardStats(unittest.TestCase):
 
     def _get_stats(self):
         """Fetch stats via the JSON endpoint (uses worker API key)."""
-        # Use the internal helper directly to avoid needing browser auth
+        # Use the internal helper directly to avoid needing browser auth.
+        # Pass an admin user so visibility filtering does not exclude any rows.
         from myapp.blueprints.dashboard import _get_stats
+        from myapp.database import User
+        admin = User(username='stats-admin', is_admin=True)
+        admin.setPassword('x' * 12)
         with self.app.app_context():
-            return _get_stats()
+            return _get_stats(admin)
 
     def test_pending_analysis_counted(self):
         """A PENDING analysis should appear in pending_analyses count."""

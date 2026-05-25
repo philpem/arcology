@@ -25,6 +25,7 @@ from sqlalchemy import (
     Text,
 )
 from sqlalchemy import Enum as SQLEnum
+from sqlalchemy import false as sa_false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
 from shared.enums import AnalysisType, ArtefactType
@@ -428,11 +429,23 @@ class Item(db.Model):
     platform_id: Mapped[int | None] = mapped_column(ForeignKey("platforms.id"), index=True, nullable=True)
     category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), index=True, nullable=True)
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("items.id"), index=True, nullable=True)
+    # Privacy / ownership.  owner_id is the user who created the item (web user
+    # or the user owning the API key used for upload).  is_private is the
+    # explicit flag set by a user; private_effective is the denormalised result
+    # of "own flag OR any ancestor private" and is what queries filter on.
+    owner_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+    is_private: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa_false())
+    private_effective: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa_false(), index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     platform: Mapped[Optional["Platform"]] = relationship(back_populates="items")
     category: Mapped[Optional["Category"]] = relationship(back_populates="items")
+    owner: Mapped[Optional["User"]] = relationship("User", foreign_keys=[owner_id])
     parent: Mapped[Optional["Item"]] = relationship(back_populates="children", remote_side=[id])
     children: Mapped[list["Item"]] = relationship(back_populates="parent", cascade="all, delete-orphan")
     artefacts: Mapped[list["Artefact"]] = relationship(back_populates="item", cascade="all, delete-orphan")
@@ -524,6 +537,15 @@ class Artefact(db.Model):
     id: Mapped[int] = mapped_column(primary_key=True)
     uuid: Mapped[str] = mapped_column(String(32), unique=True, index=True, default=generate_uuid)
     item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), index=True)
+    # Privacy / ownership.  owner_id is the user who uploaded the artefact (web
+    # user or API-key user); derived artefacts inherit the parent's owner.
+    # is_private marks an individual artefact private even inside a public item;
+    # an artefact is also effectively private when its item is private (strict
+    # descend, via Item.private_effective).
+    owner_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+    is_private: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa_false())
     label: Mapped[str] = mapped_column(String(255))
     slug: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
     artefact_type: Mapped[ArtefactType] = mapped_column(_TolerantEnum(ArtefactType))
@@ -590,6 +612,12 @@ class Artefact(db.Model):
     restrictions: Mapped[list["ArtefactRestriction"]] = relationship(
         back_populates="artefact", cascade="all, delete-orphan"
     )
+    owner: Mapped[Optional["User"]] = relationship("User", foreign_keys=[owner_id])
+
+    @property
+    def effective_private(self) -> bool:
+        """True if this artefact is private itself or via its (private) item."""
+        return bool(self.is_private or (self.item is not None and self.item.private_effective))
 
     @property
     def is_restricted(self) -> bool:
