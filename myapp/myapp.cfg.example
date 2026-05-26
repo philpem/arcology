@@ -99,6 +99,12 @@ STALE_JOB_TIMEOUT_SECONDS = 3600
 # Set True if removing all Arcology roles in the IdP should fully block access.
 #OIDC_REQUIRE_ROLE = False
 
+# How often (in seconds) to re-check the user's roles from the IdP userinfo endpoint
+# while they are logged in.  0 (default) disables background sync — permissions only
+# update at login time.  Requires the IdP to include role claims in the userinfo
+# response (see Keycloak setup: "Add to userinfo" on the realm-role mapper).
+#OIDC_SYNC_INTERVAL = 0
+
 # Session lifetime for SSO logins (seconds).  Uses Flask's PERMANENT_SESSION_LIFETIME.
 # Default: 28800 (8 hours).  Set this in your deployment config as needed.
 #PERMANENT_SESSION_LIFETIME = 28800

@@ -37,7 +37,8 @@ def create_app(config_name=None):
                     'OIDC_DISCOVERY_URL', 'OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET',
                     'OIDC_SCOPES', 'OIDC_MATCH_CLAIM',
                     'OIDC_ROLE_ADMIN', 'OIDC_ROLE_READ_WRITE', 'OIDC_ROLE_READ_ONLY',
-                    'OIDC_ROLE_API_ACCESS', 'OIDC_REQUIRE_ROLE', 'OIDC_SINGLE_LOGOUT'):
+                    'OIDC_ROLE_API_ACCESS', 'OIDC_REQUIRE_ROLE', 'OIDC_SINGLE_LOGOUT',
+                    'OIDC_SYNC_INTERVAL'):
         env_val = os.environ.get(env_key)
         if env_val:
             app.config[env_key] = env_val

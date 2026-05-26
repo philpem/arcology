@@ -11,10 +11,11 @@ Routes:
   GET /auth/sso/logout    — local logout (+ provider single-logout if configured)
 """
 
+import time
 from urllib.parse import quote as urlquote
 from authlib.integrations.flask_client import OAuth
 from flask import Blueprint, abort, current_app, flash, redirect, request, session, url_for
-from flask_login import login_required, login_user, logout_user
+from flask_login import current_user, login_required, login_user, logout_user
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 from ..database import User, UserPermission
@@ -64,6 +65,10 @@ def init_app(app):
             'code_challenge_method': 'S256',
         },
     )
+
+    @app.before_request
+    def _oidc_sync_check():
+        return _background_sync()
 
 
 # =============================================================================
@@ -136,6 +141,15 @@ def sso_callback():
 
     login_user(user)
     session.permanent = True
+
+    # Cache access token and refresh token for background permission sync when enabled.
+    sync_interval = _sync_interval()
+    if sync_interval > 0:
+        if token.get('access_token'):
+            session['oidc_access_token'] = token['access_token']
+        if token.get('refresh_token'):
+            session['oidc_refresh_token'] = token['refresh_token']
+        session['oidc_sync_after'] = time.time() + sync_interval
 
     # Cache provider end-session endpoint and ID token only when single logout is
     # enabled — the ID token can be sizeable and is not needed otherwise.
@@ -384,5 +398,140 @@ def _redirect_clearing_provider_session(token: dict):
     except Exception:
         pass
     return redirect(url_for('login'))
+
+
+def _sync_interval() -> int:
+    """Return OIDC_SYNC_INTERVAL in seconds, or 0 if disabled/unconfigured."""
+    try:
+        return int(current_app.config.get('OIDC_SYNC_INTERVAL', 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _refresh_and_fetch_userinfo() -> dict | None:
+    """Use the stored refresh token to obtain a new access token, update the session,
+    and return fresh userinfo.  Returns None if the refresh token is missing, expired,
+    or revoked (caller should terminate the session).
+    """
+    import requests as _requests
+
+    refresh_token = session.get('oidc_refresh_token', '')
+    if not refresh_token:
+        return None
+
+    try:
+        metadata = _oauth.oidc.load_server_metadata()
+        token_endpoint = metadata.get('token_endpoint', '')
+        if not token_endpoint:
+            return None
+
+        resp = _requests.post(token_endpoint, data={
+            'grant_type': 'refresh_token',
+            'refresh_token': refresh_token,
+            'client_id': current_app.config.get('OIDC_CLIENT_ID', ''),
+            'client_secret': current_app.config.get('OIDC_CLIENT_SECRET', ''),
+        }, timeout=10)
+
+        if resp.status_code != 200:
+            current_app.logger.debug(
+                'OIDC token refresh failed for %r: HTTP %s', current_user.username, resp.status_code
+            )
+            return None
+
+        new_token = resp.json()
+        new_access = new_token.get('access_token', '')
+        if not new_access:
+            return None
+
+        session['oidc_access_token'] = new_access
+        if new_token.get('refresh_token'):
+            session['oidc_refresh_token'] = new_token['refresh_token']
+
+        return _oauth.oidc.userinfo(token={'access_token': new_access})
+
+    except Exception as exc:
+        current_app.logger.warning(
+            'OIDC token refresh error for %r: %s', current_user.username, exc
+        )
+        return None
+
+
+def _background_sync():
+    """Re-sync permissions from the IdP userinfo endpoint if the interval has elapsed.
+
+    Called via a before_request hook on every request.  Returns a redirect response
+    to force logout when the refresh token has expired or access has been revoked;
+    returns None to let the normal request proceed.
+
+    When the access token has expired, the refresh token is used to obtain a new
+    one silently — no user interaction required.  The session is only terminated
+    when the refresh token itself is expired or revoked, or when OIDC_REQUIRE_ROLE
+    is True and the user no longer has any Arcology role.
+
+    Requires the identity provider's userinfo endpoint to include the same role
+    claims as the ID token.  In Keycloak, enable "Add to userinfo" on the
+    realm-role mapper in addition to "Add to ID token".
+
+    Set OIDC_SYNC_INTERVAL = 0 (the default) to disable and rely solely on
+    login-time role sync.
+    """
+    if not current_user.is_authenticated or not current_user.oidc_managed:
+        return None
+
+    interval = _sync_interval()
+    if interval <= 0:
+        return None
+
+    if time.time() < session.get('oidc_sync_after', 0):
+        return None
+
+    access_token = session.get('oidc_access_token', '')
+    if not access_token:
+        session['oidc_sync_after'] = time.time() + interval
+        return None
+
+    try:
+        userinfo = _oauth.oidc.userinfo(token={'access_token': access_token})
+    except Exception as exc:
+        err = str(exc).lower()
+        if not any(k in err for k in ('401', 'unauthorized', 'invalid_token', 'token_expired')):
+            # IdP temporarily unreachable — preserve last known permissions and retry.
+            current_app.logger.warning(
+                'OIDC background sync failed for %r: %s', current_user.username, exc
+            )
+            session['oidc_sync_after'] = time.time() + interval
+            return None
+
+        # Access token has expired — use the refresh token to obtain a new one.
+        userinfo = _refresh_and_fetch_userinfo()
+        if userinfo is None:
+            # Refresh token also expired or revoked; session cannot continue.
+            current_app.logger.info(
+                'OIDC session expired for %r (refresh token invalid), forcing re-auth',
+                current_user.username,
+            )
+            logout_user()
+            flash('Your session has expired. Please sign in again.', 'info')
+            return redirect(url_for('login'))
+
+    role_matched = _sync_permissions(current_user, userinfo)
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    session['oidc_sync_after'] = time.time() + interval
+
+    if not role_matched and _bool_cfg(current_app, 'OIDC_REQUIRE_ROLE'):
+        current_app.logger.info(
+            'OIDC background sync: %r no longer has a permission role, revoking session',
+            current_user.username,
+        )
+        logout_user()
+        flash('Your account is not authorised to access this application. '
+              'Please contact your system administrator.', 'error')
+        return redirect(url_for('login'))
+
+    return None
 
 # vim: ts=4 sw=4 et

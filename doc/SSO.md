@@ -72,6 +72,7 @@ as environment variables (strings; `True`/`true`/`1` are all accepted for boolea
 | `OIDC_ROLE_API_ACCESS` | `"arcology-api"` | Provider role name that grants API key creation. |
 | `OIDC_REQUIRE_ROLE` | `False` | When `True`, users with no matching permission role are denied login entirely. When `False` (default), they are downgraded to `READ_ONLY` instead. |
 | `OIDC_SINGLE_LOGOUT` | `False` | Enable when the identity provider realm is **dedicated to Arcology** (not shared with other applications). When `True`: (1) the **Logout** button also terminates the provider session via RP-Initiated Logout; (2) users denied access are redirected through the provider logout to break the SSO re-authentication loop. Leave `False` for shared corporate SSO realms — logging out of Arcology should not end sessions in other applications. |
+| `OIDC_SYNC_INTERVAL` | `0` | How often (seconds) to re-check the user's roles from the IdP userinfo endpoint while they are logged in. `0` (default) disables background sync — permissions only update when the user logs in. Set to e.g. `300` for 5-minute role propagation. See [Background Role Sync](#background-role-sync). |
 | `PERMANENT_SESSION_LIFETIME` | Flask default (31 days) | Session lifetime in seconds for SSO logins. Recommended: `28800` (8 hours). |
 
 ---
@@ -200,7 +201,7 @@ client's ID token is changed:
    - **Claim JSON Type**: String
    - **Add to ID token**: **ON**
    - **Add to access token**: OFF *(access token already handled by the shared `roles` scope)*
-   - **Add to userinfo**: OFF
+   - **Add to userinfo**: **ON** *(required for `OIDC_SYNC_INTERVAL` background role sync)*
 5. Save.
 
 **Option B — realm-wide (affects all clients using the `roles` scope)**
@@ -254,6 +255,78 @@ Discovery URL format:
 ```
 https://<your-okta-domain>/.well-known/openid-configuration
 ```
+
+---
+
+## Background Role Sync
+
+By default (`OIDC_SYNC_INTERVAL = 0`), permissions are synchronised from the
+identity provider only when the user logs in.  A user whose roles are changed
+in the IdP will not see the change until their next login.
+
+Set `OIDC_SYNC_INTERVAL` to a positive number of seconds to enable periodic
+background re-checking.  On each Arcology request, if the interval has elapsed
+since the last check, Arcology calls the IdP's userinfo endpoint with the
+user's stored access token and re-runs role sync immediately:
+
+```ini
+OIDC_SYNC_INTERVAL = 300   # Re-check every 5 minutes
+```
+
+> **Before enabling `OIDC_SYNC_INTERVAL`, verify that your identity provider
+> returns role claims from its userinfo endpoint**, not just from the ID token.
+> If it does not, Arcology will see no roles on every background check and will
+> silently demote all SSO users to `READ_ONLY` (or terminate their sessions if
+> `OIDC_REQUIRE_ROLE = True`) within the first sync interval — even though login
+> works correctly.  See the [Keycloak](#keycloak) setup section and the
+> [troubleshooting entry](#users-are-unexpectedly-demoted-or-logged-out-after-enabling-oidc_sync_interval)
+> below before turning this on.
+
+**Effect of a role change mid-session**
+
+| Change in IdP | `OIDC_REQUIRE_ROLE = False` | `OIDC_REQUIRE_ROLE = True` |
+|---|---|---|
+| Permission role upgraded | New level applied within `OIDC_SYNC_INTERVAL` seconds | Same |
+| Permission role downgraded | Downgraded within interval | Same |
+| All Arcology roles removed | Downgraded to `READ_ONLY` within interval | Session terminated within interval |
+
+**Role claim sources**
+
+Background sync uses the same claim merging as login-time role sync — all
+four sources are checked and merged:
+
+1. `realm_access.roles` — Keycloak realm roles
+2. `resource_access.<client_id>.roles` — Keycloak client roles
+3. Top-level `roles` claim — generic OIDC providers
+4. `groups` claim — Azure AD, Okta
+
+The Keycloak-specific mapper requirement below applies to `realm_access.roles`.
+Other sources (`groups`, top-level `roles`) are typically already included in
+the userinfo response if they were configured for the ID token.
+
+**Token refresh**
+
+The stored access token has a finite lifetime (Keycloak default: 5 minutes).
+When it expires, Arcology automatically uses the stored refresh token to
+obtain a new access token silently — no user interaction required.  The
+Arcology session is only terminated when the refresh token itself expires or
+is revoked (e.g. by terminating the session in Keycloak admin), or when
+`OIDC_REQUIRE_ROLE = True` and the user no longer has any Arcology role.
+
+This is standard OIDC practice: revoking a user's Keycloak session (rather
+than just their roles) provides immediate access termination.
+
+Arcology does **not** expire sessions due to transient IdP unavailability —
+if the userinfo call fails for a network reason, the last known permissions
+are preserved and the sync is retried next interval.
+
+**Keycloak: enable userinfo role claims**
+
+The userinfo endpoint does not include `realm_access.roles` by default.  In
+the same per-client mapper you created for the ID token (Option A in the
+[Keycloak setup](#keycloak)), also enable **Add to userinfo: ON**.  Without
+this, background sync sees no roles and will downgrade users to `READ_ONLY`
+(or log them out if `OIDC_REQUIRE_ROLE = True`).
 
 ---
 
@@ -339,8 +412,13 @@ the web logs for the specific reason and follow the instructions in
 
 **Permissions are not updated after changing roles in the provider**
 
-Role sync runs on every SSO login.  The user must log out and log back in via
-SSO for the change to take effect.
+By default, role sync runs at login time only.  The user must log out and log
+back in via SSO for a role change to take effect.
+
+To propagate changes automatically while the user is logged in, set
+`OIDC_SYNC_INTERVAL` to a positive number of seconds (e.g. `300` for 5-minute
+checks).  See [Background Role Sync](#background-role-sync) for requirements
+and caveats, including the Keycloak userinfo mapper needed.
 
 **Keycloak shows "Invalid Redirect URI" on logout with `OIDC_SINGLE_LOGOUT = True`**
 
@@ -398,3 +476,42 @@ If your local usernames are short names (e.g. `alice`), set
 `OIDC_MATCH_CLAIM = email` and ensure local accounts have the `email` column
 populated, or switch to `OIDC_MATCH_CLAIM = sub` to always auto-provision fresh
 accounts rather than linking by name.
+
+**Users are unexpectedly demoted or logged out after enabling `OIDC_SYNC_INTERVAL`**
+
+**Symptom:** Everything works at login — users get the correct permissions — but
+within the first sync interval (e.g. 5 minutes) all SSO users are downgraded to
+`READ_ONLY`, or their sessions are terminated if `OIDC_REQUIRE_ROLE = True`.
+
+**Cause:** Your identity provider does not include role claims in its **userinfo**
+endpoint response.  Background sync calls the userinfo endpoint, not the ID
+token.  If the provider omits role claims from userinfo, Arcology sees an empty
+role set on every background check and treats the user as having no Arcology
+roles — triggering a downgrade or logout even though login (which uses the ID
+token) still worked correctly.
+
+**Fix (Keycloak):** In the per-client dedicated scope mapper you created for the
+ID token (Option A in the [Keycloak setup](#keycloak) section), also enable
+**Add to userinfo: ON** and save.  With this flag set, `realm_access.roles` will
+appear in the userinfo response and background sync will read the correct roles.
+
+Without this Keycloak mapper change, disabling `OIDC_SYNC_INTERVAL` (set it back
+to `0`) is the safest immediate workaround.
+
+**Fix (other providers):** Check your provider's documentation for how to include
+role or group claims in the userinfo response.  For Azure AD, group claims in the
+userinfo response may require the `GroupMember.Read.All` permission and the
+groups claim enabled on the token configuration.  For Okta, the groups claim must
+be added to the userinfo response in the **Sign On → OpenID Connect ID Token**
+section of the application settings.
+
+To confirm what the userinfo endpoint actually returns, call it directly with
+the user's access token:
+
+```bash
+curl -H "Authorization: Bearer <access_token>" \
+     https://keycloak.example.com/realms/myrealm/protocol/openid-connect/userinfo
+```
+
+The response must include `realm_access.roles` (or whichever claim source you
+rely on) for background sync to work correctly.
