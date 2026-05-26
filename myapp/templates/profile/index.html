@@ -6,6 +6,12 @@
 <div class="card mb-4">
 	<div class="card-header"><h5 class="mb-0">Change Password</h5></div>
 	<div class="card-body">
+		{% if current_user.oidc_managed %}
+		<p class="text-muted mb-0">
+			<i class="bi bi-shield-lock"></i>
+			Your account is managed by {{ oidc_provider_name }}. Password changes must be made through your identity provider.
+		</p>
+		{% else %}
 		<div class="row">
 			<div class="col-md-6">
 				<form method="post" action="{{ url_for('myapp_blueprints_profile.change_password') }}">
@@ -32,6 +38,7 @@
 				</form>
 			</div>
 		</div>
+		{% endif %}
 	</div>
 </div>
 

@@ -157,8 +157,11 @@ def edit_user(user_id):
             flash(f'Username "{form.username.data}" is already taken.', 'error')
             return render_template('admin/edit_user.html', form=form, user=user, editing_self=False, RestrictionType=RestrictionType)
 
-        # Validate password if provided
+        # Validate and apply password change (local accounts only)
         new_pw = form.new_password.data
+        if new_pw and user.oidc_managed:
+            flash('Password cannot be changed for SSO-managed accounts.', 'error')
+            return render_template('admin/edit_user.html', form=form, user=user, editing_self=False, RestrictionType=RestrictionType)
         if new_pw:
             if len(new_pw) < 12:
                 flash('Password must be at least 12 characters.', 'error')
@@ -169,10 +172,15 @@ def edit_user(user_id):
             user.setPassword(new_pw)
 
         user.username = form.username.data
-        user.permission = UserPermission(form.permission.data)
-        user.can_use_api = form.can_use_api.data
 
-        user.is_admin = form.is_admin.data
+        # Permissions for SSO-managed accounts are authoritative from the identity
+        # provider and will be overwritten on the user's next login anyway.
+        # Editing them here would be misleading and is a security risk (an admin
+        # could temporarily elevate a user who is currently logged in).
+        if not user.oidc_managed:
+            user.permission = UserPermission(form.permission.data)
+            user.can_use_api = form.can_use_api.data
+            user.is_admin = form.is_admin.data
 
         # Update restriction bypass permissions
         selected_bypasses = set(request.form.getlist('restriction_bypasses'))
@@ -212,6 +220,9 @@ def delete_user(user_id):
 def set_permission(user_id):
     _require_admin()
     user = User.query.get_or_404(user_id)
+    if user.oidc_managed:
+        flash(f'Permissions for "{user.username}" are managed by SSO and cannot be changed here.', 'error')
+        return _route_redirect('index')
     form = UserPermissionForm(prefix=f'u{user_id}')
     if form.validate_on_submit():
         try:
@@ -228,6 +239,9 @@ def set_permission(user_id):
 def toggle_api(user_id):
     _require_admin()
     user = User.query.get_or_404(user_id)
+    if user.oidc_managed:
+        flash(f'API access for "{user.username}" is managed by SSO and cannot be changed here.', 'error')
+        return _route_redirect('index')
     user.can_use_api = not user.can_use_api
     db.session.commit()
     state = 'enabled' if user.can_use_api else 'disabled'

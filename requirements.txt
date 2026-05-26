@@ -36,5 +36,8 @@ boto3
 # YAML parsing (used by api_docs blueprint to serve openapi.json)
 PyYAML
 
+# OAuth 2.0 / OpenID Connect (SSO via Keycloak, Okta, Azure AD, etc.)
+authlib
+
 # Test reporting (JUnit XML output for CI)
 unittest-xml-reporting

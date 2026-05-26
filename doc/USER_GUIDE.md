@@ -27,9 +27,17 @@ This guide covers the web interface. For the command-line client, see
 
 ### Logging In
 
-Navigate to your Arcology instance (e.g. `http://localhost:8000`) and log in
-with the username and password provided by your administrator. All pages
+Navigate to your Arcology instance (e.g. `http://localhost:8000`). All pages
 except the health-check API require authentication.
+
+Depending on how your instance is configured, you will see one or both of:
+
+- **Sign in with \<Provider\>** — single sign-on (SSO) via your organisation's
+  identity provider (Keycloak, Okta, Azure AD, etc.). Click the button and
+  complete authentication in the provider's login page; you will be redirected
+  back to Arcology automatically.
+- **Local login form** — enter the username and password provided by your
+  administrator.
 
 ### Permissions
 
@@ -459,8 +467,13 @@ Click your username in the top-right corner to access your profile page.
 
 ### Changing Your Password
 
-Enter your current password and a new password (minimum 12 characters), then
-confirm the new password and click **Change Password**.
+If your account uses local authentication, enter your current password and a
+new password (minimum 12 characters), then confirm the new password and click
+**Change Password**.
+
+If your account is managed by an SSO provider (shown by the provider name
+instead of a password form), passwords must be changed through your identity
+provider's own interface — Arcology does not store or manage your password.
 
 ### API Keys
 
@@ -507,6 +520,15 @@ status. Administrators can:
 
 Lowering a user's permission level automatically restricts any existing API keys
 to the new level.
+
+Users whose accounts are managed by an SSO provider are shown with an
+**SSO** badge next to their username. Their permission level and API access
+are synchronised from the provider's role assignments on each login, so manual
+changes here may be overridden at next sign-in. Password fields are hidden for
+SSO-managed accounts. To change an SSO user's permissions permanently, update
+their role assignments in the identity provider.
+
+See [SSO.md](SSO.md) for full configuration instructions.
 
 ### Worker API Key
 

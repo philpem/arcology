@@ -4,7 +4,24 @@
 {% block content %}
 <div class="row justify-content-center">
 	<div class="col-lg-6">
-		<h2>Edit User: {{ user.username }}</h2>
+		<h2>
+			Edit User: {{ user.username }}
+			{% if user.oidc_managed %}
+			<span class="badge bg-info text-dark ms-2" title="Account managed via SSO">
+				<i class="bi bi-shield-lock"></i> {{ oidc_provider_name }}
+			</span>
+			{% endif %}
+		</h2>
+
+		{% if user.oidc_managed %}
+		<div class="alert alert-info">
+			<i class="bi bi-shield-lock"></i>
+			This account is managed by <strong>{{ oidc_provider_name }}</strong>. Permissions and
+			admin status are controlled by the identity provider and cannot be edited here — they
+			are overwritten on every login. To change access, update the user's roles in
+			{{ oidc_provider_name }}.
+		</div>
+		{% endif %}
 
 		{% if editing_self %}
 		<div class="alert alert-info">
@@ -26,6 +43,7 @@
 						{% endfor %}
 					</div>
 
+					{% if not user.oidc_managed %}
 					<div class="mb-3">
 						{{ form.new_password.label(class="form-label") }}
 						{{ form.new_password(class="form-control" + (" is-invalid" if form.new_password.errors else ""), autocomplete="new-password", placeholder="Leave blank to keep current password") }}
@@ -42,7 +60,39 @@
 						<div class="invalid-feedback">{{ error }}</div>
 						{% endfor %}
 					</div>
+					{% else %}
+					<div class="mb-3">
+						<label class="form-label text-muted">Password</label>
+						<p class="form-control-plaintext text-muted">
+							<i class="bi bi-shield-lock"></i>
+							Managed by {{ oidc_provider_name }} — password changes must be made through the identity provider.
+						</p>
+					</div>
+					{% endif %}
 
+					{% if user.oidc_managed %}
+					<div class="mb-3">
+						<label class="form-label text-muted">Permission</label>
+						<p class="form-control-plaintext">
+							{{ user.permission.value | capitalize }}
+							<span class="text-muted small ms-1">(set by {{ oidc_provider_name }})</span>
+						</p>
+					</div>
+					<div class="mb-3">
+						<label class="form-label text-muted">Administrator</label>
+						<p class="form-control-plaintext">
+							{% if user.is_admin %}<span class="badge bg-dark">Yes</span>{% else %}<span class="text-muted">No</span>{% endif %}
+							<span class="text-muted small ms-1">(set by {{ oidc_provider_name }})</span>
+						</p>
+					</div>
+					<div class="mb-4">
+						<label class="form-label text-muted">API Key Access</label>
+						<p class="form-control-plaintext">
+							{% if user.can_use_api %}<span class="badge bg-success">Enabled</span>{% else %}<span class="text-muted">Disabled</span>{% endif %}
+							<span class="text-muted small ms-1">(set by {{ oidc_provider_name }})</span>
+						</p>
+					</div>
+					{% else %}
 					<div class="mb-3">
 						{{ form.permission.label(class="form-label") }}
 						{{ form.permission(class="form-select" + (" is-invalid" if form.permission.errors else "")) }}
@@ -73,6 +123,7 @@
 						</div>
 						<div class="form-text">Allows the user to create API keys for programmatic access.</div>
 					</div>
+					{% endif %}
 
 					{% if RestrictionType %}
 					<div class="mb-4">
