@@ -42,7 +42,8 @@
 				</td>
 				<td>
 					{% if user.oidc_managed %}
-					<span class="text-muted small">{{ user.permission.value | capitalize }}</span>
+					{% set _perm_labels = {'read_only': 'Read Only', 'read_write': 'Full Read/Write'} %}
+					<span class="text-muted small">{{ _perm_labels.get(user.permission.value, user.permission.value) }}</span>
 					<br><small class="text-muted"><i class="bi bi-shield-lock"></i> SSO-managed</small>
 					{% else %}
 					<form method="post" action="{{ url_for('myapp_blueprints_admin.set_permission', user_id=user.id) }}"
