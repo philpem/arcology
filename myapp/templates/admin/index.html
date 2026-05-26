@@ -28,11 +28,23 @@
 			<tbody>
 			{% for user in users %}
 			<tr>
-				<td class="align-middle">{{ user.username }}</td>
+				<td class="align-middle">
+					{{ user.username }}
+					{% if user.oidc_managed %}
+					<span class="badge bg-info text-dark ms-1"
+					      title="Account managed via {{ oidc_provider_name }}">
+						<i class="bi bi-shield-lock"></i> SSO
+					</span>
+					{% endif %}
+				</td>
 				<td class="align-middle">
 					{% if user.is_admin %}<span class="badge bg-dark">Admin</span>{% endif %}
 				</td>
 				<td>
+					{% if user.oidc_managed %}
+					<span class="text-muted small">{{ user.permission.value | capitalize }}</span>
+					<br><small class="text-muted"><i class="bi bi-shield-lock"></i> SSO-managed</small>
+					{% else %}
 					<form method="post" action="{{ url_for('myapp_blueprints_admin.set_permission', user_id=user.id) }}"
 						  class="d-flex gap-1 align-items-center">
 						{{ perm_forms[user.id].hidden_tag() }}
@@ -42,12 +54,21 @@
 					<small class="text-muted">
 						Lowering permission automatically restricts existing API keys.
 					</small>
+					{% endif %}
 				</td>
 				<td class="align-middle">
 					{% set kc = key_counts[user.id] %}
 					{% if kc %}<span class="badge bg-secondary">{{ kc }} active</span>{% else %}<span class="text-muted">—</span>{% endif %}
 				</td>
 				<td class="align-middle">
+					{% if user.oidc_managed %}
+					{% if user.can_use_api %}
+					<span class="badge bg-success">Enabled</span>
+					{% else %}
+					<span class="badge bg-light text-muted border">Disabled</span>
+					{% endif %}
+					<br><small class="text-muted"><i class="bi bi-shield-lock"></i> SSO-managed</small>
+					{% else %}
 					<div class="d-flex align-items-center gap-2">
 						{% if user.can_use_api %}
 						<span class="badge bg-success">Enabled</span>
@@ -63,6 +84,7 @@
 							{% endif %}
 						</form>
 					</div>
+					{% endif %}
 				</td>
 				<td class="align-middle">
 					<div class="d-flex gap-1">

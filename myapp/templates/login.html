@@ -9,7 +9,26 @@
 			<div class="card shadow-sm border-0">
 				<div class="card-body p-4 p-md-5">
 					<h2 class="h3 text-center mb-4">Please log in</h2>
+
+					{% if oidc_enabled %}
+					<div class="d-grid mb-3">
+						<a href="{{ url_for('myapp_blueprints_oidc_auth.sso_login', next=request.args.get('next', '')) }}"
+						   class="btn btn-primary btn-lg">
+							<i class="bi bi-box-arrow-in-right me-1"></i>
+							Sign in with {{ oidc_provider_name }}
+						</a>
+					</div>
+					{% endif %}
+
+					{% if oidc_enabled and local_login_enabled %}
+					<div class="d-flex align-items-center mb-3">
+						<hr class="flex-grow-1"><span class="px-2 text-muted small">or</span><hr class="flex-grow-1">
+					</div>
+					{% endif %}
+
+					{% if local_login_enabled %}
 					{{ render_form(form, action=url_for('login', next=request.args.get('next', '')), method='post') }}
+					{% endif %}
 				</div>
 			</div>
 		</div>

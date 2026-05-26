@@ -1,8 +1,7 @@
 
 import os
 import secrets
-from urllib.parse import urlparse
-from flask import Flask, flash, g, redirect, render_template, request, url_for
+from flask import Flask, abort, flash, g, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 from flask_wtf import FlaskForm
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
@@ -33,7 +32,12 @@ def create_app(config_name=None):
     for env_key in ('SECRET_KEY', 'SQLALCHEMY_DATABASE_URI', 'WORKER_API_KEY',
                     'STORAGE_BACKEND', 'S3_ENDPOINT_URL', 'S3_BUCKET',
                     'S3_ACCESS_KEY', 'S3_SECRET_KEY', 'S3_REGION',
-                    'S3_PUBLIC_URL'):
+                    'S3_PUBLIC_URL',
+                    'OIDC_ENABLED', 'LOCAL_LOGIN_ENABLED', 'OIDC_PROVIDER_NAME',
+                    'OIDC_DISCOVERY_URL', 'OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET',
+                    'OIDC_SCOPES', 'OIDC_MATCH_CLAIM',
+                    'OIDC_ROLE_ADMIN', 'OIDC_ROLE_READ_WRITE', 'OIDC_ROLE_READ_ONLY',
+                    'OIDC_ROLE_API_ACCESS', 'OIDC_REQUIRE_ROLE', 'OIDC_SINGLE_LOGOUT'):
         env_val = os.environ.get(env_key)
         if env_val:
             app.config[env_key] = env_val
@@ -288,6 +292,14 @@ def _register_login_handlers(app):
             submit=SubmitField("Log in")
 
         form = LoginForm()
+
+        # Enforce LOCAL_LOGIN_ENABLED server-side (the template merely hides the form).
+        local_login_on = app.config.get('LOCAL_LOGIN_ENABLED', True)
+        if isinstance(local_login_on, str):
+            local_login_on = local_login_on.lower() in ('1', 'true', 'yes')
+        if not local_login_on and form.is_submitted():
+            abort(403)
+
         if form.validate_on_submit():
             # login and validate the user
             userrec = None
@@ -304,10 +316,11 @@ def _register_login_handlers(app):
                     login_user(userrec)
                     #flash("Logged in successfully", "success")
                     # Redirect to the page the user was trying to reach, or the dashboard.
-                    # SECURITY: reject any next= URL with a netloc (host) component to
-                    # prevent open-redirect attacks that send users to external sites.
+                    # SECURITY: reject any next= URL without an absolute same-origin path.
+                    # urlparse alone does not catch browser-normalised open-redirects like
+                    # /\evil.com, so require the URL to start with a single '/'.
                     next_url = request.args.get("next")
-                    if next_url and urlparse(next_url).netloc != '':
+                    if next_url and (not next_url.startswith('/') or next_url.startswith('//')):
                         next_url = None
                     return redirect(next_url or url_for("myapp_blueprints_dashboard.index"))
 
@@ -318,6 +331,13 @@ def _register_login_handlers(app):
     @app.route("/logout")
     @login_required
     def logout():
+        # Delegate to the SSO logout route when single-logout is configured,
+        # so the provider session is also terminated.
+        oidc_single_logout = app.config.get('OIDC_SINGLE_LOGOUT', False)
+        if isinstance(oidc_single_logout, str):
+            oidc_single_logout = oidc_single_logout.lower() in ('1', 'true', 'yes')
+        if oidc_single_logout and session.get('oidc_end_session_endpoint'):
+            return redirect(url_for('myapp_blueprints_oidc_auth.sso_logout'))
         logout_user()
         flash("You have now been logged out.", "info")
         return redirect(url_for("login"))

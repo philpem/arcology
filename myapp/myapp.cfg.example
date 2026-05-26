@@ -54,6 +54,61 @@ STALE_JOB_TIMEOUT_SECONDS = 3600
 # results from a one-off web upload sooner.
 #WEB_UI_ANALYSIS_PRIORITY = 0
 
+# =============================================================================
+# SSO / OpenID Connect (OAuth 2.0)
+# Supports Keycloak, Okta, Azure AD, and any OIDC-compliant provider.
+# =============================================================================
+
+# Set to True to enable SSO login.
+#OIDC_ENABLED = False
+
+# Set to False to disable the local username/password login form.
+# Leave True during migration; set False once all users are on SSO.
+#LOCAL_LOGIN_ENABLED = True
+
+# Label shown on the SSO login button: "Sign in with <name>"
+#OIDC_PROVIDER_NAME = "Keycloak"
+
+# Provider discovery URL (the .well-known/openid-configuration endpoint).
+# Keycloak example: https://keycloak.example.com/realms/myrealm/.well-known/openid-configuration
+#OIDC_DISCOVERY_URL = ""
+
+# OAuth 2.0 client credentials (from the provider's client configuration).
+#OIDC_CLIENT_ID = "arcology"
+#OIDC_CLIENT_SECRET = ""
+
+# Scopes to request (space-separated).  Default covers the claims Arcology needs.
+#OIDC_SCOPES = "openid profile email"
+
+# Which OIDC claim to use when linking a first-time SSO login to an existing
+# local account.  Options: "preferred_username" (default), "email", "sub".
+# After linking, future logins always match by the stored subject (sub).
+#OIDC_MATCH_CLAIM = "preferred_username"
+
+# Keycloak realm/client role names that map to Arcology permission levels.
+# Roles are read from realm_access.roles, resource_access.<client_id>.roles,
+# the top-level "roles" claim, and the "groups" claim (for Azure AD / Okta).
+# Highest matching role wins (admin > read_write > read_only).
+#OIDC_ROLE_ADMIN      = "arcology-admin"
+#OIDC_ROLE_READ_WRITE = "arcology-read-write"
+#OIDC_ROLE_READ_ONLY  = "arcology-read-only"
+#OIDC_ROLE_API_ACCESS = "arcology-api"
+
+# When True, users with no matching permission role are denied login entirely.
+# When False (default), they are downgraded to READ_ONLY instead.
+# Set True if removing all Arcology roles in the IdP should fully block access.
+#OIDC_REQUIRE_ROLE = False
+
+# Session lifetime for SSO logins (seconds).  Uses Flask's PERMANENT_SESSION_LIFETIME.
+# Default: 28800 (8 hours).  Set this in your deployment config as needed.
+#PERMANENT_SESSION_LIFETIME = 28800
+
+# Enable when the identity provider realm is dedicated to Arcology (not shared with
+# other applications).  When True, both the Logout button and access-denial redirects
+# terminate the provider session via OIDC RP-Initiated Logout.
+# Leave False for shared corporate SSO realms.
+#OIDC_SINGLE_LOGOUT = False
+
 # Storage backend: 'local' (default) or 's3'
 # Local mode uses the filesystem (UPLOAD_FOLDER/OUTPUT_FOLDER above).
 # S3 mode enables distributed workers on separate machines.

@@ -80,6 +80,8 @@ def index():
 @blueprint.route('/change-password', methods=['POST'])
 @login_required
 def change_password():
+    if current_user.oidc_managed:
+        abort(403)
     form = ChangePasswordForm()
     if form.validate_on_submit():
         if not current_user.checkPassword(form.current_password.data):

@@ -191,6 +191,10 @@ class User(db.Model):
     permission    = Column(SQLEnum(UserPermission), nullable=False, default=UserPermission.READ_WRITE)
     can_use_api   = Column(Boolean, nullable=False, default=False)
     preferences   = Column(JSON, nullable=True, default=None)
+    # SSO / OIDC fields (null for local-only accounts)
+    oidc_sub      = Column(String(255), nullable=True, unique=True, index=True)
+    email         = Column(String(255), nullable=True)
+    oidc_managed  = Column(Boolean, nullable=False, default=False)
 
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     restriction_bypasses: Mapped[list["UserRestrictionBypass"]] = relationship(
