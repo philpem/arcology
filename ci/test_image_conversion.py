@@ -20,6 +20,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
@@ -144,7 +145,6 @@ class TestCommonImageConversion(unittest.TestCase):
         # codec fails (e.g. malformed TIFF missing StripByteCounts).
         # Patch Image.open so it raises OSError(-2) and verify the stored
         # error is human-readable rather than just "-2".
-        from unittest.mock import patch, MagicMock
         mock_img = MagicMock()
         mock_img.__enter__ = lambda s: s
         mock_img.__exit__ = MagicMock(return_value=False)
