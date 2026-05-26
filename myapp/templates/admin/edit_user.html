@@ -74,7 +74,8 @@
 					<div class="mb-3">
 						<label class="form-label text-muted">Permission</label>
 						<p class="form-control-plaintext">
-							{{ user.permission.value | capitalize }}
+							{% set _perm_labels = {'read_only': 'Read Only', 'read_write': 'Full Read/Write'} %}
+							{{ _perm_labels.get(user.permission.value, user.permission.value) }}
 							<span class="text-muted small ms-1">(set by {{ oidc_provider_name }})</span>
 						</p>
 					</div>
