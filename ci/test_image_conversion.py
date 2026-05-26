@@ -139,6 +139,28 @@ class TestCommonImageConversion(unittest.TestCase):
         self.assertFalse(result['success'])
         self.assertIsNotNone(result['error'])
 
+    def test_pillow_codec_integer_error_is_translated(self):
+        # Simulate the OSError(-2) that Ubuntu's Pillow raises when the C
+        # codec fails (e.g. malformed TIFF missing StripByteCounts).
+        # Patch Image.open so it raises OSError(-2) and verify the stored
+        # error is human-readable rather than just "-2".
+        from unittest.mock import patch, MagicMock
+        mock_img = MagicMock()
+        mock_img.__enter__ = lambda s: s
+        mock_img.__exit__ = MagicMock(return_value=False)
+        mock_img.format = 'TIFF'
+        mock_img.mode = 'RGB'
+        mock_img.save.side_effect = OSError(-2)
+        src = self.tmpdir / 'broken.tif'
+        src.write_bytes(b'II\x2a\x00')  # minimal TIFF header stub
+        with patch('PIL.Image.open', return_value=mock_img):
+            result = self._convert(src)
+        self.assertFalse(result['success'])
+        error = result['error']
+        self.assertNotEqual(error, '-2', 'bare "-2" should be translated')
+        self.assertIn('-2', error)
+        self.assertIn('decoding error', error)
+
     # --- WMF / EMF missing-tool handling ---
 
     @unittest.skipIf(_HAS_WMF2SVG, 'wmf2svg is installed — skipping missing-tool test')

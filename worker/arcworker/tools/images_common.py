@@ -5,8 +5,11 @@ Handles raster images (JPEG, PNG, GIF, BMP, TIFF, WebP, PCX, TGA) via Pillow
 and Windows vector metafiles (WMF, EMF) via external tools (wmf2svg, Dexvert emf2svg).
 """
 
+import os
 import shutil
 import subprocess
+import sys
+import tempfile
 from pathlib import Path
 from ..config import log
 from .base import run_tool_with_output
@@ -139,27 +142,73 @@ def convert_image(input_path: Path, output_dir: Path, analysis_uuid: str) -> dic
             error='Pillow not installed',
         )
     out_path = output_dir / f'{analysis_uuid}_image.png'
+
+    # Redirect C-level stderr (fd 2) so that LibTIFF error messages printed
+    # directly by libtiff before the OSError is raised can be captured and
+    # included in the failure record.
+    _stderr_tmp = tempfile.TemporaryFile()
+    _stderr_saved = os.dup(2)
+    os.dup2(_stderr_tmp.fileno(), 2)
+    _exc: Exception | None = None
+    _fmt: str | None = None
     try:
         with Image.open(input_path) as img:
-            fmt = img.format or ext.lstrip('.').upper()
+            _fmt = img.format or ext.lstrip('.').upper()
             if img.mode not in ('RGB', 'RGBA', 'L', 'P'):
                 img = img.convert('RGBA')
             img.save(str(out_path), 'PNG')
     except (OSError, UnidentifiedImageError) as e:
-        log.warning('Image conversion failed for %s: %s', input_path, e)
+        _exc = e
+    finally:
+        # Restore fd 2 before any logging so worker output is not swallowed.
+        sys.stderr.flush()
+        os.dup2(_stderr_saved, 2)
+        os.close(_stderr_saved)
+        _stderr_tmp.seek(0)
+        _libtiff_detail = _stderr_tmp.read().decode('utf-8', errors='replace').strip()
+        _stderr_tmp.close()
+
+    if _exc is None:
+        return _result(
+            True,
+            output_path=str(out_path),
+            fmt=_fmt,
+            tool='pillow-convert',
+            error=None,
+        )
+
+    if isinstance(_exc, UnidentifiedImageError):
+        log.warning('Image conversion failed for %s (unidentified format): %s',
+                    input_path, _exc)
         return _result(
             False,
             output_path=None,
             fmt=None,
             tool='pillow-convert',
-            error=str(e),
+            error=str(_exc),
         )
+
+    # Plain OSError — Ubuntu's Pillow raises OSError(negative_int) when the
+    # C codec fails (e.g. OSError(-2) for a malformed TIFF), giving str(e)=="-2".
+    # Translate via PIL.ImageFile.ERRORS and append any captured LibTIFF detail.
+    msg = str(_exc)
+    if _exc.args and isinstance(_exc.args[0], int) and _exc.args[0] < 0:
+        code = _exc.args[0]
+        try:
+            from PIL.ImageFile import ERRORS as _PIL_ERRORS
+            description = _PIL_ERRORS.get(code, 'unknown codec error')
+        except ImportError:
+            description = 'unknown codec error'
+        msg = f'Pillow codec error {code}: {description}'
+        if _libtiff_detail:
+            msg += f' — {_libtiff_detail}'
+    log.warning('Image conversion failed for %s: %s', input_path, msg)
     return _result(
-        True,
-        output_path=str(out_path),
-        fmt=fmt,
+        False,
+        output_path=None,
+        fmt=None,
         tool='pillow-convert',
-        error=None,
+        error=msg,
     )
 
 # vim: ts=4 sw=4 et
