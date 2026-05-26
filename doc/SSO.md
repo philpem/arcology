@@ -73,6 +73,7 @@ as environment variables (strings; `True`/`true`/`1` are all accepted for boolea
 | `OIDC_REQUIRE_ROLE` | `False` | When `True`, users with no matching permission role are denied login entirely. When `False` (default), they are downgraded to `READ_ONLY` instead. |
 | `OIDC_SINGLE_LOGOUT` | `False` | Enable when the identity provider realm is **dedicated to Arcology** (not shared with other applications). When `True`: (1) the **Logout** button also terminates the provider session via RP-Initiated Logout; (2) users denied access are redirected through the provider logout to break the SSO re-authentication loop. Leave `False` for shared corporate SSO realms — logging out of Arcology should not end sessions in other applications. |
 | `OIDC_SYNC_INTERVAL` | `0` | How often (seconds) to re-check the user's roles from the IdP userinfo endpoint while they are logged in. `0` (default) disables background sync — permissions only update when the user logs in. Set to e.g. `300` for 5-minute role propagation. See [Background Role Sync](#background-role-sync). |
+| `OIDC_AUTO_REDIRECT` | `True` | When `True` (default), visiting `/login` with `LOCAL_LOGIN_ENABLED = False` automatically redirects to the SSO provider, skipping the login page entirely. The redirect is suppressed when there is a pending flash message to display (e.g. after logout). Set `False` to always show the login page with the SSO button. |
 | `PERMANENT_SESSION_LIFETIME` | Flask default (31 days) | Session lifetime in seconds for SSO logins. Recommended: `28800` (8 hours). |
 
 ---

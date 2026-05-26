@@ -38,7 +38,7 @@ def create_app(config_name=None):
                     'OIDC_SCOPES', 'OIDC_MATCH_CLAIM',
                     'OIDC_ROLE_ADMIN', 'OIDC_ROLE_READ_WRITE', 'OIDC_ROLE_READ_ONLY',
                     'OIDC_ROLE_API_ACCESS', 'OIDC_REQUIRE_ROLE', 'OIDC_SINGLE_LOGOUT',
-                    'OIDC_SYNC_INTERVAL'):
+                    'OIDC_SYNC_INTERVAL', 'OIDC_AUTO_REDIRECT'):
         env_val = os.environ.get(env_key)
         if env_val:
             app.config[env_key] = env_val
@@ -300,6 +300,20 @@ def _register_login_handlers(app):
             local_login_on = local_login_on.lower() in ('1', 'true', 'yes')
         if not local_login_on and form.is_submitted():
             abort(403)
+
+        # Auto-redirect to SSO on GET when local login is disabled, OIDC is
+        # enabled, OIDC_AUTO_REDIRECT is on, and no flash messages are pending
+        # (flash messages must be shown before bouncing the user away).
+        if request.method == 'GET' and not local_login_on:
+            oidc_on = app.config.get('OIDC_ENABLED', False)
+            if isinstance(oidc_on, str):
+                oidc_on = oidc_on.lower() in ('1', 'true', 'yes')
+            auto_redir = app.config.get('OIDC_AUTO_REDIRECT', True)
+            if isinstance(auto_redir, str):
+                auto_redir = auto_redir.lower() in ('1', 'true', 'yes')
+            if oidc_on and auto_redir and not session.get('_flashes'):
+                next_url = request.args.get('next', '')
+                return redirect(url_for('myapp_blueprints_oidc_auth.sso_login', next=next_url))
 
         if form.validate_on_submit():
             # login and validate the user

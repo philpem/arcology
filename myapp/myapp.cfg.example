@@ -105,6 +105,12 @@ STALE_JOB_TIMEOUT_SECONDS = 3600
 # response (see Keycloak setup: "Add to userinfo" on the realm-role mapper).
 #OIDC_SYNC_INTERVAL = 0
 
+# When True (default), visiting /login with LOCAL_LOGIN_ENABLED = False automatically
+# redirects to the SSO provider, skipping the login page — unless there is a pending
+# flash message to display (e.g. "You have been logged out").  Set False to always
+# show the login page with the SSO button rather than bouncing straight to the provider.
+#OIDC_AUTO_REDIRECT = True
+
 # Session lifetime for SSO logins (seconds).  Uses Flask's PERMANENT_SESSION_LIFETIME.
 # Default: 28800 (8 hours).  Set this in your deployment config as needed.
 #PERMANENT_SESSION_LIFETIME = 28800
