@@ -94,11 +94,13 @@ def index():
     }
     worker_key = current_app.config.get('WORKER_API_KEY', '')
     perm_forms = {u.id: UserPermissionForm(prefix=f'u{u.id}', permission=u.permission.value) for u in users}
+    group_count = Group.query.count()
     return render_template('admin/index.html',
         users=users,
         key_counts=key_counts,
         worker_key=worker_key,
         perm_forms=perm_forms,
+        group_count=group_count,
     )
 
 

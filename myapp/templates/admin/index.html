@@ -134,6 +134,26 @@
 	</div>
 </div>
 
+<!-- Groups -->
+<div class="card mb-4">
+	<div class="card-header d-flex justify-content-between align-items-center">
+		<h5 class="mb-0">Groups</h5>
+		<a href="{{ url_for('myapp_blueprints_admin.groups') }}" class="btn btn-sm btn-primary">
+			<i class="bi bi-people"></i> Manage Groups
+		</a>
+	</div>
+	<div class="card-body">
+		{% if group_count %}
+		<p class="mb-0">{{ group_count }} group{{ 's' if group_count != 1 }} defined.
+		Local groups can be created and managed here; OIDC groups sync automatically on user login.</p>
+		{% else %}
+		<p class="mb-0 text-muted">No groups defined yet.
+		Groups let you share private items with multiple users at once.
+		<a href="{{ url_for('myapp_blueprints_admin.create_group') }}">Create the first group</a>.</p>
+		{% endif %}
+	</div>
+</div>
+
 <!-- Worker API Key -->
 <div class="card mb-4">
 	<div class="card-header"><h5 class="mb-0">Worker API Key</h5></div>
