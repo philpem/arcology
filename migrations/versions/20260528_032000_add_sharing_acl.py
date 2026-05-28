@@ -1,13 +1,19 @@
 """Add item sharing ACL: groups, group_memberships, item_shares
 
-Revision ID: 00006a1577fd
+Revision ID: 00006a17b70e
 Revises: 00006a144022
-Create Date: 2026-05-26
+Create Date: 2026-05-28
+
+Introduces three-tier per-item share permissions:
+  viewer  — read-only access
+  editor  — can add/modify content (artefacts, child items, references)
+  curator — full co-curation rights: privacy toggle, share management
+            (ownership transfer always requires the actual owner or an admin)
 """
 import sqlalchemy as sa
 from alembic import op
 
-revision = '00006a1577fd'
+revision = '00006a17b70e'
 down_revision = '00006a144022'
 branch_labels = None
 depends_on = None
@@ -51,6 +57,10 @@ def upgrade():
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('item_id', 'user_id', name='uq_item_share_user'),
         sa.UniqueConstraint('item_id', 'group_id', name='uq_item_share_group'),
+        sa.CheckConstraint(
+            "(user_id IS NOT NULL AND group_id IS NULL) OR (user_id IS NULL AND group_id IS NOT NULL)",
+            name='ck_item_shares_exactly_one_principal',
+        ),
     )
     op.create_index('ix_item_shares_item_id', 'item_shares', ['item_id'])
     op.create_index('ix_item_shares_user_id', 'item_shares', ['user_id'])
