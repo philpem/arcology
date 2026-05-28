@@ -121,6 +121,24 @@ STALE_JOB_TIMEOUT_SECONDS = 3600
 # Leave False for shared corporate SSO realms.
 #OIDC_SINGLE_LOGOUT = False
 
+# Sync group membership from the IdP on every login.  When True, the claim
+# named by OIDC_GROUP_SYNC_CLAIM is read and used to add/remove the user from
+# Arcology Groups (source='oidc').  Manually-assigned local group memberships
+# are preserved.  Groups are auto-created the first time a claim value appears.
+#
+# IMPORTANT — disabling this setting stops future syncs but does NOT remove
+# existing group memberships or delete groups that were created by a previous
+# sync run.  To clean up after disabling, delete groups manually in the admin UI.
+#OIDC_GROUP_SYNC_ENABLED = False
+#OIDC_GROUP_SYNC_CLAIM = "groups"
+#
+# When a local group has the same name as an incoming IdP claim, Arcology
+# can "link" it (convert it to IdP-managed), mirroring how local user accounts
+# are linked on first SSO login.  Set OIDC_GROUP_LINK_LOCAL = False to refuse
+# the link; the collision is logged at WARNING level and the user is not added
+# to that group.  Existing shares on the local group are always preserved.
+#OIDC_GROUP_LINK_LOCAL = True
+
 # Storage backend: 'local' (default) or 's3'
 # Local mode uses the filesystem (UPLOAD_FOLDER/OUTPUT_FOLDER above).
 # S3 mode enables distributed workers on separate machines.

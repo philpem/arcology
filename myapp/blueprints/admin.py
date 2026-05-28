@@ -7,9 +7,10 @@ User management and system configuration for administrators.
 from flask import Blueprint, abort, current_app, flash, render_template, request
 from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
-from wtforms import BooleanField, PasswordField, SelectField, StringField
+from sqlalchemy import func
+from wtforms import BooleanField, PasswordField, SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, EqualTo, Length, Optional
-from ..database import ApiKey, RestrictionType, User, UserPermission, UserRestrictionBypass
+from ..database import ApiKey, Group, RestrictionType, User, UserPermission, UserRestrictionBypass, group_memberships
 from ..extensions import db
 from ..utils.web_forms import flash_form_errors, redirect_local
 
@@ -70,6 +71,11 @@ class EditUserForm(FlaskForm):
     is_admin         = BooleanField('Administrator')
     permission       = SelectField('Permission', coerce=str, choices=PERMISSION_CHOICES)
     can_use_api      = BooleanField('API Key Access')
+
+
+class GroupForm(FlaskForm):
+    name        = StringField('Name', validators=[DataRequired(), Length(max=100)])
+    description = TextAreaField('Description', validators=[Optional()])
 
 
 # =============================================================================
@@ -247,5 +253,132 @@ def toggle_api(user_id):
     state = 'enabled' if user.can_use_api else 'disabled'
     flash(f'API key access {state} for "{user.username}".', 'success')
     return _route_redirect('index')
+
+
+# =============================================================================
+# Group management routes
+# =============================================================================
+
+@blueprint.route('/groups')
+@login_required
+def groups():
+    """List all groups with member counts."""
+    _require_admin()
+    groups_list = (
+        db.session.query(Group, func.count(group_memberships.c.user_id).label('member_count'))
+        .outerjoin(group_memberships, Group.id == group_memberships.c.group_id)
+        .group_by(Group.id)
+        .order_by(Group.name)
+        .all()
+    )
+    all_users = User.query.order_by(User.username).all()
+    return render_template('admin/groups.html', groups=groups_list, all_users=all_users)
+
+
+@blueprint.route('/groups/create', methods=['GET', 'POST'])
+@login_required
+def create_group():
+    """Create a new group."""
+    _require_admin()
+    form = GroupForm()
+    if form.validate_on_submit():
+        name = form.name.data.strip().lower()
+        if name.startswith('arcology-'):
+            flash('Group names starting with "arcology-" are reserved for internal use.', 'error')
+            return render_template('admin/group_form.html', form=form, title='Create Group')
+        if Group.query.filter_by(name=name).first():
+            flash(f'A group named "{name}" already exists.', 'error')
+            return render_template('admin/group_form.html', form=form, title='Create Group')
+        group = Group(name=name, description=form.description.data or None, source='local')
+        db.session.add(group)
+        db.session.commit()
+        flash(f'Group "{group.name}" created.', 'success')
+        return _route_redirect('groups')
+    return render_template('admin/group_form.html', form=form, title='Create Group')
+
+
+@blueprint.route('/groups/<int:group_id>/edit', methods=['GET', 'POST'])
+@login_required
+def edit_group(group_id):
+    """Edit a group's name and description."""
+    _require_admin()
+    group = Group.query.get_or_404(group_id)
+    if request.method == 'GET' and group.source == 'oidc':
+        flash('This group is managed by the identity provider — its name cannot be changed here.', 'warning')
+    form = GroupForm(obj=group)
+    if form.validate_on_submit():
+        name = form.name.data.strip().lower()
+        if group.source == 'oidc' and name != group.name:
+            flash('Group names managed by the identity provider cannot be changed here.', 'warning')
+            return render_template('admin/group_form.html', form=form, title='Edit Group', group=group)
+        if name.startswith('arcology-'):
+            flash('Group names starting with "arcology-" are reserved for internal use.', 'error')
+            return render_template('admin/group_form.html', form=form, title='Edit Group', group=group)
+        existing = Group.query.filter_by(name=name).first()
+        if existing and existing.id != group.id:
+            flash(f'A group named "{name}" already exists.', 'error')
+            return render_template('admin/group_form.html', form=form, title='Edit Group', group=group)
+        if group.source != 'oidc':
+            group.name = name
+        group.description = form.description.data or None
+        db.session.commit()
+        flash(f'Group "{group.name}" updated.', 'success')
+        return _route_redirect('groups')
+    return render_template('admin/group_form.html', form=form, title='Edit Group', group=group)
+
+
+@blueprint.route('/groups/<int:group_id>/delete', methods=['POST'])
+@login_required
+def delete_group(group_id):
+    """Delete a group."""
+    _require_admin()
+    group = Group.query.get_or_404(group_id)
+    name = group.name
+    db.session.delete(group)
+    db.session.commit()
+    flash(f'Group "{name}" deleted.', 'success')
+    return _route_redirect('groups')
+
+
+@blueprint.route('/groups/<int:group_id>/members/add', methods=['POST'])
+@login_required
+def add_group_member(group_id):
+    """Add a user to a group."""
+    _require_admin()
+    group = Group.query.get_or_404(group_id)
+    if group.source == 'oidc':
+        flash(f'Group "{group.name}" is managed by the identity provider. Membership is synced automatically on login.', 'error')
+        return _route_redirect('groups')
+    user_id = request.form.get('user_id', type=int)
+    if not user_id:
+        flash('Please select a user.', 'error')
+        return _route_redirect('groups')
+    user = User.query.get_or_404(user_id)
+    if user not in group.members:
+        group.members.append(user)
+        db.session.commit()
+        flash(f'Added "{user.username}" to group "{group.name}".', 'success')
+    else:
+        flash(f'"{user.username}" is already a member of "{group.name}".', 'warning')
+    return _route_redirect('groups')
+
+
+@blueprint.route('/groups/<int:group_id>/members/<int:user_id>/remove', methods=['POST'])
+@login_required
+def remove_group_member(group_id, user_id):
+    """Remove a user from a group."""
+    _require_admin()
+    group = Group.query.get_or_404(group_id)
+    if group.source == 'oidc':
+        flash(f'Group "{group.name}" is managed by the identity provider. Membership is synced automatically on login.', 'error')
+        return _route_redirect('groups')
+    user = User.query.get_or_404(user_id)
+    if user in group.members:
+        group.members.remove(user)
+        db.session.commit()
+        flash(f'Removed "{user.username}" from group "{group.name}".', 'success')
+    else:
+        flash(f'"{user.username}" is not a member of "{group.name}".', 'warning')
+    return _route_redirect('groups')
 
 # vim: ts=4 sw=4 et

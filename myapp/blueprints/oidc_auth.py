@@ -18,7 +18,7 @@ from flask import Blueprint, abort, current_app, flash, redirect, request, sessi
 from flask_login import current_user, login_required, login_user, logout_user
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
-from ..database import User, UserPermission
+from ..database import Group, User, UserPermission
 from ..extensions import db
 
 ROUTENAME = __name__.replace('.', '_')
@@ -319,6 +319,119 @@ def _collect_roles(userinfo: dict) -> frozenset:
     return frozenset(roles)
 
 
+def _sync_groups(user: User, userinfo: dict) -> None:
+    """Sync OIDC group claims to Arcology Group memberships.
+
+    Only runs when OIDC_GROUP_SYNC_ENABLED is True (default: False).  Only
+    touches groups with source='oidc'; manually-assigned local groups are
+    preserved.
+
+    Group names starting with 'arcology-' are reserved and skipped.
+    """
+    if not _bool_cfg(current_app, 'OIDC_GROUP_SYNC_ENABLED'):
+        return
+
+    claim_name = current_app.config.get('OIDC_GROUP_SYNC_CLAIM', 'groups')
+
+    # Distinguish absent claim (IdP not configured) from present-but-empty (user
+    # has no groups).  Absent → silent no-op.  Present-but-wrong-type → warning.
+    if claim_name not in userinfo:
+        return
+    raw_groups = userinfo[claim_name]
+    if not isinstance(raw_groups, list):
+        current_app.logger.warning(
+            'OIDC group sync: claim %r is not a list (got %s), skipping',
+            claim_name, type(raw_groups).__name__,
+        )
+        return
+
+    # Filter out reserved names (case-insensitive) and enforce length limit
+    desired_names = {
+        name for g in raw_groups
+        if isinstance(g, str)
+        for name in [g.strip()]
+        if name and len(name) <= 100
+        and not name.lower().startswith('arcology-')
+    }
+
+    link_local = _bool_cfg(current_app, 'OIDC_GROUP_LINK_LOCAL', default=True)
+
+    # Ensure Group records exist for each desired name
+    desired_groups = []
+    for name in desired_names:
+        # Look up by oidc_claim_name first (fast path for already-synced groups)
+        group = Group.query.filter_by(oidc_claim_name=name).first()
+        if group is None:
+            # Search by display name (lowercase-normalised)
+            existing = Group.query.filter_by(name=name.lower()).first()
+            if existing is not None:
+                if existing.source == 'oidc':
+                    # Already IdP-managed — oidc_claim_name may have drifted due
+                    # to an IdP case change.  Update it silently and continue.
+                    if existing.oidc_claim_name != name:
+                        current_app.logger.info(
+                            'OIDC group sync: updating oidc_claim_name for group '
+                            '%r (id=%d) from %r to %r',
+                            existing.name, existing.id, existing.oidc_claim_name, name,
+                        )
+                        existing.oidc_claim_name = name
+                    group = existing
+                else:
+                    # Local group with same name — apply the OIDC_GROUP_LINK_LOCAL gate.
+                    member_count = len(existing.members)
+                    if not link_local:
+                        current_app.logger.warning(
+                            'OIDC group sync: local group %r (id=%d, %d member(s)) '
+                            'collides with IdP claim %r — OIDC_GROUP_LINK_LOCAL is '
+                            'False, skipping; user will not be added to this group',
+                            existing.name, existing.id, member_count, name,
+                        )
+                        continue
+                    # Link the local group to the IdP, mirroring how local user
+                    # accounts are linked on first SSO login.  Existing shares on
+                    # the group are preserved; future membership is IdP-managed.
+                    current_app.logger.warning(
+                        'OIDC group sync: linking local group %r (id=%d, %d member(s)) '
+                        'to IdP claim %r — membership will now be IdP-managed; '
+                        'set OIDC_GROUP_LINK_LOCAL = False to prevent this',
+                        existing.name, existing.id, member_count, name,
+                    )
+                    existing.source = 'oidc'
+                    existing.oidc_claim_name = name
+                    group = existing
+            else:
+                # Wrap only the INSERT in a SAVEPOINT so a concurrent-creation
+                # race reverts just this one row, not earlier work in the same
+                # login transaction (e.g. a freshly auto-provisioned User row).
+                # The existing-group UPDATE paths above don't need a SAVEPOINT —
+                # they touch a single row already in the session.
+                try:
+                    with db.session.begin_nested():
+                        group = Group(name=name.lower(), source='oidc', oidc_claim_name=name)
+                        db.session.add(group)
+                        db.session.flush()
+                except IntegrityError:
+                    # Re-fetch the row committed by the winning concurrent session.
+                    group = Group.query.filter_by(name=name.lower()).first()
+                    if group is None:
+                        current_app.logger.warning(
+                            'OIDC group sync: IntegrityError creating group %r but '
+                            'lookup after savepoint rollback also found nothing — skipping',
+                            name,
+                        )
+                        continue
+        desired_groups.append(group)
+
+    # Compute current OIDC-sourced memberships for this user
+    current_oidc = {g for g in user.groups if g.source == 'oidc'}
+    desired_set = set(desired_groups)
+
+    for g in current_oidc - desired_set:
+        user.groups.remove(g)
+    for g in desired_set - current_oidc:
+        user.groups.append(g)
+
+
 def _sync_permissions(user: User, userinfo: dict) -> bool:
     """Map OIDC roles to Arcology permissions.  Only updates oidc_managed users.
 
@@ -364,6 +477,7 @@ def _sync_permissions(user: User, userinfo: dict) -> bool:
         'OIDC role sync result for %r: is_admin=%r permission=%r can_use_api=%r role_matched=%r',
         user.username, user.is_admin, user.permission, user.can_use_api, role_matched,
     )
+    _sync_groups(user, userinfo)
     return role_matched
 
 

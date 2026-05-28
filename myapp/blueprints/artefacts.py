@@ -50,7 +50,14 @@ from ..extensions import db
 from ..permissions import require_permission
 from ..riscos_filetypes import lookup_filetype_hex
 from ..utils.slugs import ensure_unique_slug, generate_slug, lookup_artefact_by_id, lookup_by_identifier
-from ..visibility import can_change_owner, can_manage_privacy, can_view_artefact, can_view_item
+from ..visibility import (
+    can_change_owner,
+    can_contribute_to_item,
+    can_curate_item,
+    can_manage_privacy,
+    can_view_artefact,
+    can_view_item,
+)
 
 
 def safe_original_filename(filename: str) -> str:
@@ -1131,6 +1138,21 @@ def _get_artefact_or_404(item_id=None, artefact_id=None, root_id=None, uuid=None
         return artefact
     _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
     return artefact
+
+
+def _require_manage_artefact_content(artefact):
+    """Abort if caller may not mutate artefact state.
+
+    Within a private item: editor+ share is required for content changes;
+    curator share (or owner/admin) is required to toggle artefact.is_private.
+    Within a public item: artefact.is_private can only be toggled by the
+    artefact owner or admin.
+    """
+    if artefact.item.private_effective:
+        if not can_contribute_to_item(artefact.item, current_user):
+            abort(403)
+    elif artefact.is_private and not can_manage_privacy(artefact, current_user):
+        abort(403)
 
 
 def _artefact_view_kwargs(artefact):
@@ -2725,6 +2747,8 @@ def upload(item_id):
     item = lookup_by_identifier(Item, item_id)
     if not can_view_item(item, current_user):
         abort(404)
+    if item.private_effective and not can_contribute_to_item(item, current_user):
+        abort(403)
     form = ArtefactUploadForm()
 
     # Build item choices
@@ -2744,6 +2768,8 @@ def upload(item_id):
         target_item = Item.query.get(form.item_id.data) or item
         if not can_view_item(target_item, current_user):
             abort(404)
+        if target_item.private_effective and not can_contribute_to_item(target_item, current_user):
+            abort(403)
 
         file = form.file.data
         original_filename = safe_original_filename(file.filename)
@@ -2840,6 +2866,7 @@ def upload(item_id):
 def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Edit artefact metadata."""
     artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
+    _require_manage_artefact_content(artefact)
 
     if request.method == 'GET' and uuid is None and item_id is not None:
         endpoint = f'{ROUTENAME}.edit_nested' if root_id is not None else f'{ROUTENAME}.edit'
@@ -2853,7 +2880,10 @@ def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
     type_choices = [(t.value, _type_display_name(t)) for t in ArtefactType]
     form.artefact_type.choices = type_choices
 
-    can_priv = can_manage_privacy(artefact, current_user)
+    # Curators on the parent item can also toggle artefact privacy.
+    can_priv = can_manage_privacy(artefact, current_user) or (
+        artefact.item is not None and can_curate_item(artefact.item, current_user)
+    )
     can_own = can_change_owner(artefact, current_user)
     if can_own:
         form.owner_id.choices = [(0, '-- No owner --')] + [
@@ -3014,6 +3044,8 @@ def move_artefact_to_item(artefact, new_item):
 def move(item_id=None, artefact_id=None):
     """Move a root artefact to a different item."""
     artefact = _get_artefact_or_404(item_id, artefact_id)
+    if artefact.item.private_effective and not can_contribute_to_item(artefact.item, current_user):
+        abort(403)
 
     if artefact.parent_artefact_id is not None:
         flash('Only root artefacts can be moved.', 'danger')
@@ -3025,6 +3057,17 @@ def move(item_id=None, artefact_id=None):
         return _redirect_to_artefact_view(artefact)
 
     target_item = lookup_by_identifier(Item, target_uuid)
+    if not can_view_item(target_item, current_user):
+        flash('Target item not found.', 'danger')
+        return _redirect_to_artefact_view(artefact)
+    # Prevent curators from publishing private artefacts by moving them into a
+    # public item (same logic as the API move route).
+    curator_on_source = (artefact.item.private_effective
+                         and not can_change_owner(artefact.item, current_user))
+    if (curator_on_source or target_item.private_effective) and \
+            not can_contribute_to_item(target_item, current_user):
+        flash('Not permitted to move artefacts into that item.', 'danger')
+        return _redirect_to_artefact_view(artefact)
 
     if target_item.id == artefact.item_id:
         flash('Artefact is already in that item.', 'warning')
@@ -3238,6 +3281,8 @@ def bulk_delete_item(item):
 def delete(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Delete an artefact and its file."""
     artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
+    if artefact.item.private_effective and not can_change_owner(artefact.item, current_user):
+        abort(403)
     item_url_id = artefact.item.url_id
     label = artefact.label
 
@@ -3332,6 +3377,7 @@ def download_file(uuid):
 def manage_restrictions(item_id=None, artefact_id=None, root_id=None):
     """Add or remove a download restriction on an artefact."""
     artefact = _get_artefact_or_404(item_id, artefact_id, root_id)
+    _require_manage_artefact_content(artefact)
 
     action = request.form.get('action', '')
     category = request.form.get('category', '')
@@ -3409,6 +3455,9 @@ def manage_file_restrictions(uuid):
     """Add or remove a restriction on an individual extracted file."""
     ef = ExtractedFile.query.filter_by(uuid=uuid).first_or_404()
     artefact = ef.partition.artefact
+    if not can_view_artefact(artefact, current_user):
+        abort(404)
+    _require_manage_artefact_content(artefact)
     # Always redirect to the root artefact so the user lands on the page that
     # shows the global restriction, even when the file belongs to a derived
     # artefact whose partition is displayed inline on the root's view.
@@ -3490,6 +3539,7 @@ def manage_file_restrictions(uuid):
 def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Re-run analysis on an artefact, clearing all previous results first."""
     artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
+    _require_manage_artefact_content(artefact)
     form = AnalyseForm()
 
     # Platform choices for hints
@@ -3572,6 +3622,7 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
 def compute_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Compute file hashes for an artefact."""
     artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
+    _require_manage_artefact_content(artefact)
 
     if not artefact.storage_path:
         flash('File not found — artefact has no stored file.', 'error')
@@ -3597,6 +3648,7 @@ def rescan_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None)
     """Re-link extracted files to active hash databases without re-analysing."""
     from ..utils.hash_rescan import rescan_hashes_for_artefact
     artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
+    _require_manage_artefact_content(artefact)
     updated, total = rescan_hashes_for_artefact(artefact)
     flash(f'Hash rescan complete: {updated} of {total} files updated.', 'success')
     return _redirect_to_artefact_view(artefact)
@@ -3609,6 +3661,9 @@ def rerun_product_recognition_route(uuid):
     """Queue PRODUCT_RECOGNITION for all partitions of an artefact without re-analysing."""
     from ..utils.hash_rescan import queue_product_recognition_for_partitions
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    if not can_view_artefact(artefact, current_user):
+        abort(404)
+    _require_manage_artefact_content(artefact)
     all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
     partition_ids = [
         p.id for p in Partition.query.filter(
