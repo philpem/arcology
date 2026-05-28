@@ -433,6 +433,26 @@ Rules:
   practical.
 - Do **not** use the raw hex revision ID as the filename prefix.
 
+#### Collapsing migrations before merge
+
+When a feature branch accumulates several migrations that are purely development
+artefacts (rename steps, incremental fixes that could have been in the original
+schema), collapse them into one before merging so the project history stays clean.
+
+Rules:
+- **Keep the final (head) `revision` ID.** Any environment already stamped at the
+  head remains compatible without manual intervention.
+- **Set `down_revision` to the pre-branch head** — the last revision that existed
+  on the target branch before your first migration.
+- Delete the intermediate migration files; they must not remain in the tree.
+- The consolidated migration's filename timestamp should match the final revision's
+  original timestamp so lexicographic ordering is preserved.
+
+If migrations are intentionally kept separate (e.g. one adds a table, another adds
+an index that deserves its own entry for clarity), apply the same revision-ID rules
+to each file in the chain — each file's `revision` stays unchanged, only
+`down_revision` of the *first* file in the chain is adjusted if the base moved.
+
 ### RISC OS INF sidecar file processing
 
 Several BBC Micro and RISC OS tools (currently Disc Image Manager; others may
