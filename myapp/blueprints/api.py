@@ -18,7 +18,7 @@ from functools import wraps
 from flask import Blueprint, abort, current_app, g, jsonify, redirect, request, send_file
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import contains_eager, joinedload, selectinload
 from sqlalchemy.orm.exc import StaleDataError
 from ..database import (
     _API_KEY_PERMISSION_ORDER,
@@ -36,8 +36,10 @@ from ..database import (
     ExternalSystem,
     ExtractedFile,
     FilesystemType,
+    Group,
     HashDatabase,
     Item,
+    ItemShare,
     KnownFile,
     KnownProduct,
     Partition,
@@ -56,6 +58,7 @@ from ..utils.api_serializers import (
     item_to_dict,
     known_file_to_dict,
     partition_to_dict,
+    share_to_dict,
 )
 from ..utils.db_helpers import get_by_id_or_404 as _get_by_id_or_404
 from ..utils.db_helpers import get_by_uuid_or_404 as _get_by_uuid_or_404
@@ -65,8 +68,14 @@ from ..utils.privacy import recompute_item_privacy
 from ..utils.slugs import ensure_unique_slug, generate_slug
 from ..utils.slugs import lookup_by_identifier as _lookup_by_identifier
 from ..visibility import (
+    SHARE_PERMISSIONS,
+    artefact_visibility_clause,
     can_change_owner,
+    can_claim_item,
+    can_contribute_to_item,
+    can_curate_item,
     can_manage_privacy,
+    can_manage_shares,
     can_view_artefact,
     can_view_item,
     item_visibility_clause,
@@ -272,6 +281,29 @@ def _require_view_artefact(artefact):
         abort(404)
 
 
+def _require_view_analysis(analysis):
+    """Abort with 404 if the API caller may not view an analysis' artefact."""
+    _require_view_artefact(analysis.artefact)
+
+
+def _require_view_partition(partition):
+    """Abort with 404 if the API caller may not view a partition's artefact."""
+    _require_view_artefact(partition.artefact)
+
+
+def _require_view_extracted_file(file):
+    """Abort with 404 if the API caller may not view a file's artefact."""
+    _require_view_partition(file.partition)
+
+
+def _require_manage_item_content(item):
+    """Return a 403 response if caller may not add or modify content on item."""
+    api_user, sees_all = _api_viewer()
+    if item.private_effective and not can_contribute_to_item(item, api_user, sees_all=sees_all):
+        return error_response('Not permitted to modify this item', 403)
+    return None
+
+
 def _get_item_or_404(uuid):
     item = _lookup_by_identifier(Item, uuid)
     _require_view_item(item)
@@ -286,18 +318,26 @@ def _get_artefact_or_404(uuid, *load_options):
 
 def _get_analysis_or_404(*, id=None, uuid=None, load_options=()):
     if uuid is not None:
-        return _get_by_uuid_or_404(Analysis, uuid, *load_options)
-    return _get_by_id_or_404(Analysis, id, *load_options)
+        analysis = _get_by_uuid_or_404(Analysis, uuid, *load_options)
+    else:
+        analysis = _get_by_id_or_404(Analysis, id, *load_options)
+    _require_view_analysis(analysis)
+    return analysis
 
 
 def _get_partition_or_404(uuid):
-    return _get_by_uuid_or_404(Partition, uuid)
+    partition = _get_by_uuid_or_404(Partition, uuid)
+    _require_view_partition(partition)
+    return partition
 
 
 def _get_extracted_file_or_404(*, id=None, uuid=None, load_options=()):
     if uuid is not None:
-        return _get_by_uuid_or_404(ExtractedFile, uuid, *load_options)
-    return _get_by_id_or_404(ExtractedFile, id, *load_options)
+        file = _get_by_uuid_or_404(ExtractedFile, uuid, *load_options)
+    else:
+        file = _get_by_id_or_404(ExtractedFile, id, *load_options)
+    _require_view_extracted_file(file)
+    return file
 
 
 def _get_hash_database_or_404(id):
@@ -395,11 +435,16 @@ def create_item():
     if 'name' not in data:
         return error_response('Name is required')
 
+    api_user, sees_all = _api_viewer()
     parent_id = None
     if data.get('parent_uuid'):
         parent = Item.query.filter(Item.uuid == data['parent_uuid']).first()
         if parent is None:
             return error_response('Parent item not found', 404)
+        if not can_view_item(parent, api_user, sees_all=sees_all):
+            return error_response('Parent item not found', 404)
+        if parent.private_effective and not can_contribute_to_item(parent, api_user, sees_all=sees_all):
+            return error_response('Not permitted to create child items under this parent', 403)
         parent_id = parent.id
 
     item = Item()
@@ -411,7 +456,6 @@ def create_item():
         category_id=data.get('category_id'),
         parent_id=parent_id,
     )
-    api_user, _ = _api_viewer()
     item.owner_id = api_user.id if api_user is not None else None
     item.is_private = bool(data.get('is_private', False))
     db.session.add(item)
@@ -428,7 +472,14 @@ def create_item():
 @require_auth('read_only')
 def get_item(uuid):
     item = _get_item_or_404(uuid)
-    return jsonify(item_to_dict(item, include_artefacts=True))
+    user, sees_all = _api_viewer()
+    visible_artefacts = (
+        Artefact.query.join(Item, Artefact.item_id == Item.id)
+        .filter(Artefact.item_id == item.id)
+        .filter(artefact_visibility_clause(user, sees_all=sees_all))
+        .all()
+    )
+    return jsonify(item_to_dict(item, include_artefacts=True, _artefacts=visible_artefacts))
 
 
 @blueprint.route('/items/<string:uuid>', methods=['PUT'])
@@ -439,6 +490,8 @@ def update_item(uuid):
     if error:
         return error
     api_user, sees_all = _api_viewer()
+    if item.private_effective and not can_contribute_to_item(item, api_user, sees_all=sees_all):
+        return error_response('Not permitted to modify this item', 403)
     privacy_changed = False
     if 'name' in data:
         item.name = data['name']
@@ -456,23 +509,30 @@ def update_item(uuid):
             return error_response('Owner user not found', 404)
         item.owner_id = new_owner_id
     if 'is_private' in data:
-        if not (sees_all or can_manage_privacy(item, api_user)):
+        if not (sees_all or can_curate_item(item, api_user, sees_all=sees_all)
+                or can_manage_privacy(item, api_user)):
             return error_response('Not permitted to change privacy', 403)
         new_private = bool(data['is_private'])
-        if new_private and item.owner_id is None and api_user is not None:
+        if new_private and can_claim_item(item, api_user):
             item.owner_id = api_user.id
         item.is_private = new_private
         privacy_changed = True
     if 'parent_uuid' in data:
-        if data['parent_uuid'] is None:
-            item.parent_id = None
-        else:
+        new_parent_id = None
+        if data['parent_uuid'] is not None:
             new_parent = Item.query.filter(Item.uuid == data['parent_uuid']).first()
             if new_parent is None:
                 return error_response('Parent item not found', 404)
+            if not can_view_item(new_parent, api_user, sees_all=sees_all):
+                return error_response('Parent item not found', 404)
+            if new_parent.private_effective and not (sees_all or can_change_owner(new_parent, api_user)):
+                return error_response('Not permitted to move items under this parent', 403)
             if new_parent.id == item.id or item.is_ancestor_of(new_parent):
                 return error_response('Cannot move an item to itself or one of its descendants', 400)
-            item.parent_id = new_parent.id
+            new_parent_id = new_parent.id
+        if new_parent_id != item.parent_id and not (sees_all or can_change_owner(item, api_user)):
+            return error_response('Not permitted to change parent', 403)
+        item.parent_id = new_parent_id
         privacy_changed = True
     if 'name' in data:
         item.slug = ensure_unique_slug(generate_slug(item.name), Item, existing_id=item.id)
@@ -487,6 +547,9 @@ def update_item(uuid):
 @require_auth('read_write')
 def delete_item(uuid):
     item = _get_item_or_404(uuid)
+    api_user, sees_all = _api_viewer()
+    if item.private_effective and not (sees_all or can_change_owner(item, api_user)):
+        return error_response('Not permitted to delete this item', 403)
     bulk_delete_item(item)
     return '', 204
 
@@ -519,7 +582,9 @@ def add_artefact(item_uuid):
     if not _validate_storage_path(data['storage_path']):
         return error_response('Invalid storage_path')
 
-    api_user, _ = _api_viewer()
+    api_user, sees_all = _api_viewer()
+    if item.private_effective and not can_contribute_to_item(item, api_user, sees_all=sees_all):
+        return error_response('Not permitted to add artefacts to this item', 403)
     artefact = Artefact(item_id=item.id, label=data['label'], artefact_type=artefact_type,
                         description=data.get('description'), original_filename=data['original_filename'],
                         storage_path=data['storage_path'], storage_directory=storage_directory,
@@ -544,6 +609,9 @@ def get_artefact(uuid):
 @require_auth('read_write')
 def delete_artefact(uuid):
     artefact = _get_artefact_or_404(uuid)
+    api_user, sees_all = _api_viewer()
+    if artefact.item.private_effective and not (sees_all or can_change_owner(artefact.item, api_user)):
+        return error_response('Not permitted to delete artefacts from this item', 403)
     _delete_artefact_files(artefact)
     db.session.delete(artefact)
     db.session.commit()
@@ -555,6 +623,9 @@ def delete_artefact(uuid):
 def move_artefact(uuid):
     """Move a root artefact (and its derived artefacts) to a different item."""
     artefact = _get_artefact_or_404(uuid)
+    api_user, sees_all = _api_viewer()
+    if artefact.item.private_effective and not can_contribute_to_item(artefact.item, api_user, sees_all=sees_all):
+        return error_response('Not permitted to move artefacts from this item', 403)
     data, error = _json_object()
     if error:
         return error
@@ -569,6 +640,17 @@ def move_artefact(uuid):
     target_item = Item.query.filter_by(uuid=target_uuid).first()
     if not target_item:
         return error_response('Target item not found', 404)
+    if not can_view_item(target_item, api_user, sees_all=sees_all):
+        return error_response('Target item not found', 404)
+    # A curator on the source (not the owner/admin) must not be able to move
+    # artefacts into a public item — that would silently publish private content.
+    # Require write access on the target whenever the source is private and the
+    # caller is acting as a curator rather than as owner/admin.
+    curator_on_source = (artefact.item.private_effective
+                         and not can_change_owner(artefact.item, api_user))
+    if (curator_on_source or target_item.private_effective) and \
+            not can_contribute_to_item(target_item, api_user, sees_all=sees_all):
+        return error_response('Not permitted to move artefacts into this item', 403)
 
     if target_item.id == artefact.item_id:
         return error_response('Artefact is already in that item', 400)
@@ -595,6 +677,9 @@ def update_artefact(uuid):
         clobbering one another.  Pass ``null`` to clear the field.
     """
     artefact = _get_artefact_or_404(uuid)
+    api_user, sees_all = _api_viewer()
+    if artefact.item.private_effective and not can_contribute_to_item(artefact.item, api_user, sees_all=sees_all):
+        return error_response('Not permitted to modify artefacts in this item', 403)
     data, error = _json_object()
     if error:
         return error
@@ -824,7 +909,14 @@ def search_failed_analyses():
 
     Query params: analysis_type, tool_name, since, until, error, page, per_page.
     """
-    query = Analysis.query.filter(Analysis.status == AnalysisStatus.FAILED)
+    _user, _sees_all = _api_viewer()
+    query = (
+        Analysis.query
+        .join(Artefact, Analysis.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(Analysis.status == AnalysisStatus.FAILED)
+        .filter(artefact_visibility_clause(_user, sees_all=_sees_all))
+    )
 
     analysis_type = request.args.get('analysis_type')
     if analysis_type:
@@ -858,8 +950,10 @@ def search_failed_analyses():
     if error_pattern:
         query = query.filter(Analysis.error_message.ilike(f'%{error_pattern}%'))
 
+    # Re-use the explicit join above for eager loading rather than emitting
+    # a second pair of aliased joins via joinedload().
     query = query.options(
-        joinedload(Analysis.artefact).joinedload(Artefact.item)
+        contains_eager(Analysis.artefact).contains_eager(Artefact.item)
     ).order_by(Analysis.completed_at.desc())
 
     page = request.args.get('page', 1, type=int)
@@ -1308,9 +1402,12 @@ def produce_artefact(id):
         sha256=data.get('sha256'),
         parent_artefact_id=analysis.artefact_id,
         derived_from_analysis_id=analysis.id,
-        # Derived artefacts inherit the source artefact's owner; item privacy
-        # descends automatically via Item.private_effective.
+        # Derived artefacts inherit the source artefact's owner and privacy flag.
+        # Item-level privacy descends automatically via Item.private_effective, but
+        # artefact-level is_private must be copied explicitly to avoid exposing a
+        # private artefact's derived outputs when the parent item is public.
         owner_id=analysis.artefact.owner_id,
+        is_private=analysis.artefact.is_private,
     )
     
     db.session.add(artefact)
@@ -1649,8 +1746,16 @@ def lookup_by_external():
     ref = ExternalReference.query.filter_by(system_id=system.id, external_id=external_id).first()
     if not ref:
         return error_response('Reference not found', 404)
-    
-    return jsonify(item_to_dict(ref.item, include_artefacts=True))
+
+    _require_view_item(ref.item)
+    user, sees_all = _api_viewer()
+    visible_artefacts = (
+        Artefact.query.join(Item, Artefact.item_id == Item.id)
+        .filter(Artefact.item_id == ref.item.id)
+        .filter(artefact_visibility_clause(user, sees_all=sees_all))
+        .all()
+    )
+    return jsonify(item_to_dict(ref.item, include_artefacts=True, _artefacts=visible_artefacts))
 
 
 @blueprint.route('/hash-lookup', methods=['GET'])
@@ -1668,9 +1773,14 @@ def hash_lookup():
     elif sha1:
         query = query.filter(ExtractedFile.sha1 == sha1.lower())
     
+    _user, _sees_all = _api_viewer()
     extracted = query.options(
         joinedload(ExtractedFile.partition).joinedload(Partition.artefact).joinedload(Artefact.item)
-    ).all()
+    ).join(Partition, ExtractedFile.partition_id == Partition.id) \
+     .join(Artefact, Partition.artefact_id == Artefact.id) \
+     .join(Item, Artefact.item_id == Item.id) \
+     .filter(artefact_visibility_clause(_user, sees_all=_sees_all)) \
+     .all()
     return jsonify({
         'known_file': known_file_to_dict(known) if known else None,
         'found_in': [{'artefact_id': f.partition.artefact_id, 'item_id': f.partition.artefact.item_id,
@@ -1737,6 +1847,9 @@ def upload_artefact(item_uuid):
 	Returns the created artefact JSON with 201 status.
 	"""
 	item = _get_item_or_404(item_uuid)
+	manage_error = _require_manage_item_content(item)
+	if manage_error:
+		return manage_error
 
 	if 'file' not in request.files:
 		return error_response('No file provided')
@@ -1933,7 +2046,10 @@ def chunked_upload_init():
 	if not item_uuid:
 		return error_response('item_uuid is required')
 	# Validate item exists
-	_get_item_or_404(item_uuid)
+	item = _get_item_or_404(item_uuid)
+	manage_error = _require_manage_item_content(item)
+	if manage_error:
+		return manage_error
 
 	label = data.get('label', '').strip()
 	if not label:
@@ -2061,6 +2177,9 @@ def chunked_upload_complete(upload_uuid):
 		return error_response(f'Missing chunks: {missing}', 400)
 
 	item = _get_item_or_404(meta['item_uuid'])
+	manage_error = _require_manage_item_content(item)
+	if manage_error:
+		return manage_error
 
 	# Determine artefact type
 	from werkzeug.utils import secure_filename
@@ -2384,6 +2503,116 @@ def report_recognised_products(uuid):
         )
         db.session.add(rp)
 
+    db.session.commit()
+    return jsonify({'status': 'ok'})
+
+
+# =============================================================================
+# Item sharing ACL endpoints
+# =============================================================================
+
+@blueprint.route('/items/<string:uuid>/shares', methods=['GET'])
+@require_auth('read_only')
+def list_shares(uuid):
+    """List all shares for an item.  Restricted to share managers (owner/admin)."""
+    if _is_worker_request():
+        return error_response('Workers may not access share lists', 403)
+    item = _get_item_or_404(uuid)
+    user, _ = _api_viewer()
+    if not can_manage_shares(item, user):
+        return error_response('Not authorised to view shares for this item', 403)
+    return jsonify([share_to_dict(s) for s in item.shares])
+
+
+@blueprint.route('/items/<string:uuid>/shares', methods=['POST'])
+@require_auth('read_write')
+def add_share(uuid):
+    """Add a share to an item.  Workers are not allowed to manage shares."""
+    if _is_worker_request():
+        return error_response('Workers may not manage shares', 403)
+    item = _get_item_or_404(uuid)
+    user, _ = _api_viewer()
+    if not can_manage_shares(item, user):
+        return error_response('Not authorised to manage shares for this item', 403)
+    if not item.private_effective:
+        return error_response('Only private items can be shared', 400)
+
+    data, err = _json_object(required=True)
+    if err:
+        return err
+    permission = data.get('permission', 'viewer')
+    if permission not in SHARE_PERMISSIONS:
+        return error_response('permission must be "viewer", "editor", or "curator"', 400)
+    if permission == 'curator' and not can_change_owner(item, user):
+        return error_response('Only the item owner or an administrator may grant curator access', 403)
+
+    # Resolve user by id or username
+    share_user = None
+    share_group = None
+
+    if 'user_id' in data:
+        try:
+            uid = int(data['user_id'])
+        except (TypeError, ValueError):
+            return error_response('user_id must be an integer', 400)
+        share_user = db.session.get(User, uid)
+        if not share_user:
+            return error_response('User not found', 404)
+        if share_user.id == item.owner_id:
+            return error_response('The item owner already has full access', 400)
+    elif 'username' in data:
+        share_user = User.query.filter_by(username=data['username']).first()
+        if not share_user:
+            return error_response('User not found', 404)
+        if share_user.id == item.owner_id:
+            return error_response('The item owner already has full access', 400)
+    elif 'group_id' in data:
+        try:
+            gid = int(data['group_id'])
+        except (TypeError, ValueError):
+            return error_response('group_id must be an integer', 400)
+        share_group = db.session.get(Group, gid)
+        if not share_group:
+            return error_response('Group not found', 404)
+        if share_group.name.lower().startswith('arcology-'):
+            return error_response('Groups with the "arcology-" prefix are reserved and cannot be used for sharing', 400)
+    elif 'group_name' in data:
+        share_group = Group.query.filter_by(name=data['group_name'].strip().lower()).first()
+        if not share_group:
+            return error_response('Group not found', 404)
+        if share_group.name.lower().startswith('arcology-'):
+            return error_response('Groups with the "arcology-" prefix are reserved and cannot be used for sharing', 400)
+    else:
+        return error_response('Provide user_id, username, group_id, or group_name')
+
+    if share_user is not None:
+        share = ItemShare(item_id=item.id, user_id=share_user.id, permission=permission)
+    else:
+        share = ItemShare(item_id=item.id, group_id=share_group.id, permission=permission)
+
+    db.session.add(share)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return error_response('Share already exists', 409)
+    return jsonify(share_to_dict(share)), 201
+
+
+@blueprint.route('/items/<string:uuid>/shares/<int:share_id>', methods=['DELETE'])
+@require_auth('read_write')
+def delete_share(uuid, share_id):
+    """Remove a share from an item.  Workers are not allowed to manage shares."""
+    if _is_worker_request():
+        return error_response('Workers may not manage shares', 403)
+    item = _get_item_or_404(uuid)
+    user, _ = _api_viewer()
+    if not can_manage_shares(item, user):
+        return error_response('Not authorised to manage shares for this item', 403)
+    share = ItemShare.query.filter_by(id=share_id, item_id=item.id).first()
+    if not share:
+        return error_response('Share not found', 404)
+    db.session.delete(share)
     db.session.commit()
     return jsonify({'status': 'ok'})
 

@@ -8,6 +8,7 @@ from flask import Blueprint, abort, flash, jsonify, redirect, render_template, r
 from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
 from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from wtforms import BooleanField, SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Length, Optional
@@ -18,9 +19,12 @@ from ..database import (
     Category,
     ExternalReference,
     ExternalSystem,
+    Group,
     Item,
+    ItemShare,
     Platform,
     User,
+    UserPermission,
 )
 from ..extensions import db
 from ..permissions import require_permission
@@ -35,9 +39,14 @@ from ..utils.pagination import VALID_PER_PAGE, compute_letter_pages, resolve_per
 from ..utils.privacy import recompute_item_privacy
 from ..utils.slugs import ensure_unique_slug, generate_slug, get_or_create_slug, lookup_by_identifier
 from ..visibility import (
+    SHARE_PERMISSIONS,
     artefact_visibility_clause,
     can_change_owner,
+    can_claim_item,
+    can_contribute_to_item,
+    can_curate_item,
     can_manage_privacy,
+    can_manage_shares,
     can_view_item,
     item_visibility_clause,
 )
@@ -311,6 +320,18 @@ def new():
                 form.parent_id.data = preset_parent.id
 
     if form.validate_on_submit():
+        new_parent_id = form.parent_id.data if form.parent_id.data != 0 else None
+        if new_parent_id is not None:
+            parent = db.session.get(Item, new_parent_id)
+            if parent is None or not can_view_item(parent, current_user):
+                flash('Parent item not found.', 'danger')
+                return render_template('items/form.html', form=form, title='New Item',
+                                       preset_parent=preset_parent, can_set_private=True)
+            if parent.private_effective and not can_contribute_to_item(parent, current_user):
+                flash('Only the parent owner or an administrator may create child items under that parent.', 'danger')
+                return render_template('items/form.html', form=form, title='New Item',
+                                       preset_parent=preset_parent, can_set_private=True)
+
         item = Item()
         assign_item_fields(
             item,
@@ -318,7 +339,7 @@ def new():
             description=form.description.data,
             platform_id=form.platform_id.data if form.platform_id.data != 0 else None,
             category_id=form.category_id.data if form.category_id.data != 0 else None,
-            parent_id=form.parent_id.data if form.parent_id.data != 0 else None,
+            parent_id=new_parent_id,
         )
         assign_item_tags(item, form.tags.data)
         item.owner_id = current_user.id
@@ -377,11 +398,35 @@ def view(uuid):
         [a.id for a in artefacts_page.items]
     )
 
+    user_can_manage_shares = can_manage_shares(item, current_user)
+    shareable_users = []
+    shareable_groups = []
+    if user_can_manage_shares:
+        shareable_users = User.query.filter(User.id != item.owner_id).order_by(User.username).all()
+        shareable_groups = Group.query.filter(
+            ~func.lower(Group.name).startswith('arcology-')
+        ).order_by(Group.name).all()
+
+    # Per-item write gates (mirrors route guards in edit() and delete()).
+    # Also require global read_write permission so a read-only admin
+    # (is_admin=True, permission=READ_ONLY) doesn't see buttons that 403.
+    can_write_globally = current_user.is_authenticated and current_user.has_permission(UserPermission.READ_WRITE)
+    user_can_contribute = can_write_globally and (not item.private_effective or can_contribute_to_item(item, current_user))
+    user_can_edit = can_write_globally and (not item.private_effective or can_curate_item(item, current_user))
+    user_can_delete = can_write_globally and (not item.private_effective or can_change_owner(item, current_user))
+
     return render_template('items/view.html', item=item, artefacts_page=artefacts_page,
                            letter_pages=letter_pages, current_letter=current_letter,
                            valid_per_page=VALID_PER_PAGE, view_all=view_all,
                            artefact_sort=artefact_sort,
-                           artefact_analysis_status=artefact_analysis_status)
+                           artefact_analysis_status=artefact_analysis_status,
+                           shares=item.shares,
+                           user_can_manage_shares=user_can_manage_shares,
+                           shareable_users=shareable_users,
+                           shareable_groups=shareable_groups,
+                           user_can_contribute=user_can_contribute,
+                           user_can_edit=user_can_edit,
+                           user_can_delete=user_can_delete)
 
 
 @blueprint.route('/<string:uuid>/edit', methods=['GET', 'POST'])
@@ -392,6 +437,11 @@ def edit(uuid):
     item = lookup_by_identifier(Item, uuid)
     if not can_view_item(item, current_user):
         abort(404)
+    # View-only share recipients may view private items but must not edit them.
+    # Curator shares may edit item metadata without changing owner/privacy.
+    # Public items remain editable by any read_write user (pre-existing behaviour).
+    if item.private_effective and not can_contribute_to_item(item, current_user):
+        abort(403)
     if request.method == 'GET' and uuid != item.url_id:
         return redirect(url_for(f'{ROUTENAME}.edit', uuid=item.url_id), 301)
     form = ItemForm(obj=item)
@@ -401,7 +451,7 @@ def edit(uuid):
     # Exclude self and descendants from the parent dropdown to prevent cycles
     form.parent_id.choices = item_parent_choice_list('-- No parent (root item) --', exclude_item=item, viewer=current_user)
 
-    can_priv = can_manage_privacy(item, current_user)
+    can_priv = can_curate_item(item, current_user) or can_manage_privacy(item, current_user)
     can_own = can_change_owner(item, current_user)
     if can_own:
         form.owner_id.choices = [(0, '-- No owner --')] + [
@@ -420,9 +470,27 @@ def edit(uuid):
     if form.validate_on_submit():
         new_parent_id = form.parent_id.data if form.parent_id.data != 0 else None
 
+        # Reparenting can change an item's effective privacy via inheritance,
+        # so a non-owner could otherwise hide a public item by moving it under
+        # their own private one.  Restrict parent changes to owner or admin.
+        if new_parent_id != item.parent_id and not can_change_owner(item, current_user):
+            flash('Only the owner or an administrator may move this item to a different parent.', 'danger')
+            return render_template('items/form.html', form=form, item=item, title='Edit Item',
+                                   preset_parent=None, can_set_private=can_priv)
+
+        if new_parent_id is not None:
+            new_parent = db.session.get(Item, new_parent_id)
+            if new_parent is None or not can_view_item(new_parent, current_user):
+                flash('Parent item not found.', 'danger')
+                return render_template('items/form.html', form=form, item=item, title='Edit Item',
+                                       preset_parent=None, can_set_private=can_priv)
+            if new_parent.private_effective and not can_contribute_to_item(new_parent, current_user):
+                flash('Only the parent owner or an administrator may move items under that parent.', 'danger')
+                return render_template('items/form.html', form=form, item=item, title='Edit Item',
+                                       preset_parent=None, can_set_private=can_priv)
+
         # Cycle prevention: ensure the chosen parent is not a descendant of this item
         if new_parent_id is not None:
-            new_parent = Item.query.get(new_parent_id)
             if new_parent and item.is_ancestor_of(new_parent):
                 flash('Cannot move an item to one of its own descendants.', 'danger')
                 return render_template('items/form.html', form=form, item=item, title='Edit Item',
@@ -443,11 +511,11 @@ def edit(uuid):
         if can_own:
             item.owner_id = form.owner_id.data or None
 
-        # Privacy toggle (owner, admin, or anyone claiming an unowned item).
-        # Marking an unowned item private would otherwise hide it from its own
-        # editor, so claim ownership to keep the user's access.
+        # Privacy toggle (owner, admin, curator share, or claiming an unowned item).
+        # Auto-claim: only when transitioning to private via a natural claim
+        # (not a curator share — curators manage content, they don't become owners).
         if can_priv:
-            if form.is_private.data and item.owner_id is None:
+            if form.is_private.data and can_claim_item(item, current_user):
                 item.owner_id = current_user.id
             item.is_private = form.is_private.data
 
@@ -471,6 +539,10 @@ def delete(uuid):
     item = lookup_by_identifier(Item, uuid)
     if not can_view_item(item, current_user):
         abort(404)
+    # Share recipients may view private items but must not delete them.
+    # Public items remain deletable by any read_write user (pre-existing behaviour).
+    if item.private_effective and not can_change_owner(item, current_user):
+        abort(403)
     name = item.name
     parent = item.parent
 
@@ -491,6 +563,8 @@ def add_reference(uuid):
     item = lookup_by_identifier(Item, uuid)
     if not can_view_item(item, current_user):
         abort(404)
+    if item.private_effective and not can_contribute_to_item(item, current_user):
+        abort(403)
     form = ExternalReferenceForm()
     
     form.system_id.choices = [
@@ -527,6 +601,8 @@ def delete_reference(item_uuid, ref_id):
     item = lookup_by_identifier(Item, item_uuid)
     if not can_view_item(item, current_user):
         abort(404)
+    if item.private_effective and not can_contribute_to_item(item, current_user):
+        abort(403)
     ref = ExternalReference.query.get_or_404(ref_id)
 
     if ref.item_id != item.id:
@@ -546,6 +622,84 @@ def choices_json():
     """Return the full indented item list as JSON for AJAX selectors."""
     choices = indented_item_choices(viewer=current_user)
     return jsonify([{'id': id_, 'name': name} for id_, name in choices])
+
+
+@blueprint.route('/<string:uuid>/shares/add', methods=['POST'])
+@login_required
+@require_permission('read_write')
+def add_share(uuid):
+    """Add a user or group share to a private item."""
+    item = lookup_by_identifier(Item, uuid)
+    if not can_view_item(item, current_user):
+        abort(404)
+    if not can_manage_shares(item, current_user):
+        abort(403)
+    if not item.private_effective:
+        flash('Only private items can be shared.', 'error')
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
+    share_type = request.form.get('share_type')  # 'user' or 'group'
+    permission = request.form.get('permission', 'viewer')
+    if permission not in SHARE_PERMISSIONS:
+        flash('Invalid share permission.', 'error')
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
+    if permission == 'curator' and not can_change_owner(item, current_user):
+        flash('Only the item owner or an administrator may grant curator access.', 'error')
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
+    if share_type == 'user':
+        user_id = request.form.get('user_id', type=int)
+        if not user_id:
+            flash('Please select a user.', 'error')
+            return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
+        target_user = db.session.get(User, user_id)
+        if not target_user:
+            flash('User not found.', 'error')
+            return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
+        if user_id == item.owner_id:
+            flash('The item owner already has access.', 'warning')
+            return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
+        share = ItemShare(item_id=item.id, user_id=user_id, permission=permission)
+        db.session.add(share)
+    elif share_type == 'group':
+        group_id = request.form.get('group_id', type=int)
+        if not group_id:
+            flash('Please select a group.', 'error')
+            return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
+        group = db.session.get(Group, group_id)
+        if not group:
+            flash('Group not found.', 'error')
+            return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
+        if group.name.lower().startswith('arcology-'):
+            flash('Groups with the "arcology-" prefix are reserved for internal use and cannot be used for sharing.', 'error')
+            return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
+        share = ItemShare(item_id=item.id, group_id=group_id, permission=permission)
+        db.session.add(share)
+    else:
+        flash('Invalid share type.', 'error')
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
+    try:
+        db.session.commit()
+        flash('Share added.', 'success')
+    except IntegrityError:
+        db.session.rollback()
+        flash('This user or group already has access.', 'warning')
+    return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
+
+
+@blueprint.route('/<string:uuid>/shares/<int:share_id>/remove', methods=['POST'])
+@login_required
+@require_permission('read_write')
+def remove_share(uuid, share_id):
+    """Remove a share from an item."""
+    item = lookup_by_identifier(Item, uuid)
+    if not can_view_item(item, current_user):
+        abort(404)
+    if not can_manage_shares(item, current_user):
+        abort(403)
+    share = ItemShare.query.filter_by(id=share_id, item_id=item.id).first_or_404()
+    db.session.delete(share)
+    db.session.commit()
+    flash('Share removed.', 'success')
+    return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
 
 
 # vim: ts=4 sw=4 et

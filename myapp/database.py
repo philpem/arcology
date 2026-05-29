@@ -177,6 +177,13 @@ artefact_tags = Table(
     Column("tag_id", Integer, ForeignKey("tags.id"), primary_key=True),
 )
 
+group_memberships = Table(
+    "group_memberships",
+    db.Model.metadata,
+    Column("user_id", Integer, ForeignKey("user.id", ondelete="CASCADE"), primary_key=True),
+    Column("group_id", Integer, ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True),
+)
+
 
 # =============================================================================
 # User Model (from template)
@@ -200,6 +207,7 @@ class User(db.Model):
     restriction_bypasses: Mapped[list["UserRestrictionBypass"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    groups: Mapped[list["Group"]] = relationship(secondary=group_memberships, back_populates="members")
 
     def can_bypass_restriction(self, restriction_type) -> bool:
         """Check if this user can bypass a specific restriction type.
@@ -455,6 +463,7 @@ class Item(db.Model):
     artefacts: Mapped[list["Artefact"]] = relationship(back_populates="item", cascade="all, delete-orphan")
     tags: Mapped[list["Tag"]] = relationship(secondary=item_tags, back_populates="items")
     external_references: Mapped[list["ExternalReference"]] = relationship(back_populates="item", cascade="all, delete-orphan")
+    shares: Mapped[list["ItemShare"]] = relationship(back_populates="item", cascade="all, delete-orphan")
 
     @property
     def url_id(self) -> str:
@@ -1058,6 +1067,49 @@ class RecognisedProduct(db.Model):
     __table_args__ = (
         Index("ix_recognised_products_partition_product", "partition_id", "product_id"),
     )
+
+
+# =============================================================================
+# Groups and Sharing
+# =============================================================================
+
+class Group(db.Model):
+    """A named group of users, used for sharing private items."""
+    __tablename__ = "groups"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 'local' = manually managed; 'oidc' = synced from identity-provider group claim
+    source: Mapped[str] = mapped_column(String(20), nullable=False, default='local')
+    oidc_claim_name: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    members: Mapped[list["User"]] = relationship(secondary=group_memberships, back_populates="groups")
+
+
+class ItemShare(db.Model):
+    """An explicit share grant giving a user or group access to a private item."""
+    __tablename__ = "item_shares"
+    __table_args__ = (
+        db.UniqueConstraint('item_id', 'user_id', name='uq_item_share_user'),
+        db.UniqueConstraint('item_id', 'group_id', name='uq_item_share_group'),
+        db.CheckConstraint(
+            "(user_id IS NOT NULL AND group_id IS NULL) OR (user_id IS NULL AND group_id IS NOT NULL)",
+            name='ck_item_shares_exactly_one_principal',
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), nullable=True, index=True)
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), nullable=True, index=True)
+    permission: Mapped[str] = mapped_column(String(20), nullable=False, default='viewer')
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    item: Mapped["Item"] = relationship(back_populates="shares")
+    user: Mapped[Optional["User"]] = relationship("User", foreign_keys=[user_id])
+    group: Mapped[Optional["Group"]] = relationship("Group")
 
 
 # vim: ts=4 sw=4 et

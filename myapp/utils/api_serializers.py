@@ -1,7 +1,19 @@
 """Shared API serializer helpers for Arcology models."""
 
 
-def item_to_dict(item, include_artefacts=False, _artefact_count=None):
+def share_to_dict(share):
+    """Serialise an ItemShare to a JSON-safe dict."""
+    return {
+        'id': share.id,
+        'item_id': share.item_id,
+        'user': share.user.username if share.user else None,
+        'group': share.group.name if share.group else None,
+        'permission': share.permission,
+        'created_at': share.created_at.isoformat(),
+    }
+
+
+def item_to_dict(item, include_artefacts=False, _artefact_count=None, _artefacts=None):
     ep = item.effective_platform
     ec = item.effective_category
     result = {
@@ -22,7 +34,8 @@ def item_to_dict(item, include_artefacts=False, _artefact_count=None):
         'created_at': item.created_at.isoformat(), 'updated_at': item.updated_at.isoformat()
     }
     if include_artefacts:
-        result['artefacts'] = [artefact_to_dict(a) for a in item.artefacts]
+        artefacts = item.artefacts if _artefacts is None else _artefacts
+        result['artefacts'] = [artefact_to_dict(a) for a in artefacts]
     return result
 
 

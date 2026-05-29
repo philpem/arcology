@@ -159,3 +159,34 @@ Options:
 | `--artefact-type TYPE` | Restrict to this artefact type (e.g. `SCP`, `HFE`) |
 | `--include-running` | Also cancel RUNNING analyses |
 | `--dry-run` | Show what would be cancelled without making changes |
+
+## reassign-ownership
+
+Bulk-transfers all items and artefacts owned by one user to another. Use
+this when a curator leaves and their private collection work needs to be
+handed over to a colleague. The source user's account is not modified.
+
+Also accessible via the admin web UI at `/admin/reassign-ownership`.
+
+```bash
+# Reassign everything from alice to bob
+flask reassign-ownership --from alice --to bob
+
+# Preview without making changes
+flask reassign-ownership --from alice --to bob --dry-run
+
+# Release to unowned (no new owner assigned)
+flask reassign-ownership --from alice --to none
+
+# Skip the interactive confirmation prompt
+flask reassign-ownership --from alice --to bob --yes
+```
+
+Options:
+
+| Flag | Description |
+|------|-------------|
+| `--from USERNAME` | User whose items and artefacts will be transferred (required) |
+| `--to USERNAME\|none` | Receiving user, or `none` to leave items unowned (required) |
+| `--dry-run` | Show counts without making any changes |
+| `--yes` | Skip the interactive confirmation prompt |

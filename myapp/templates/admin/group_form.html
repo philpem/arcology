@@ -1,0 +1,35 @@
+{% extends "_base.html" %}
+{% block page_title %}{{ title }}{% endblock %}
+
+{% block content %}
+<h1>{{ title }}</h1>
+
+{% if group and group.source == 'oidc' %}
+<div class="alert alert-warning">
+    <i class="bi bi-info-circle"></i> This group is managed by OIDC. Its name is controlled by the identity provider and cannot be changed here. You can update the description.
+</div>
+{% endif %}
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body">
+                <form method="post">
+                    {{ form.hidden_tag() }}
+                    <div class="mb-3">
+                        {{ form.name.label(class="form-label") }}
+                        {{ form.name(class="form-control", readonly=(group and group.source == 'oidc')) }}
+                        <div class="form-text text-muted">Group names starting with "arcology-" are reserved for internal use.</div>
+                    </div>
+                    <div class="mb-3">
+                        {{ form.description.label(class="form-label") }}
+                        {{ form.description(class="form-control", rows=3) }}
+                    </div>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                    <a href="{{ url_for('myapp_blueprints_admin.groups') }}" class="btn btn-outline-secondary ms-2">Cancel</a>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
