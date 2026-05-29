@@ -412,42 +412,54 @@ def reassign_ownership():
     user_choices = [(0, '— Unowned —')] + [(u.id, u.username) for u in users]
 
     form = ReassignOwnershipForm()
-    form.from_user_id.choices = [(u.id, u.username) for u in users]
+    form.from_user_id.choices = user_choices
     form.to_user_id.choices   = user_choices
 
     preview = None
 
     if form.validate_on_submit():
-        from_user = db.session.get(User, form.from_user_id.data)
-        if not from_user:
+        from_id = form.from_user_id.data  # 0 means unowned (owner_id IS NULL)
+        to_id   = form.to_user_id.data    # 0 means unowned
+
+        if from_id == to_id:
+            flash('Source and destination must be different.', 'error')
+            return render_template('admin/reassign_ownership.html', form=form, preview=None)
+
+        from_user = db.session.get(User, from_id) if from_id else None
+        to_user   = db.session.get(User, to_id)   if to_id   else None
+
+        if from_id and not from_user:
             flash('Source user not found.', 'error')
             return render_template('admin/reassign_ownership.html', form=form, preview=None)
-
-        to_user = db.session.get(User, form.to_user_id.data) if form.to_user_id.data else None
-        if to_user and to_user.id == from_user.id:
-            flash('Source and destination users must be different.', 'error')
+        if to_id and not to_user:
+            flash('Destination user not found.', 'error')
             return render_template('admin/reassign_ownership.html', form=form, preview=None)
 
-        item_count     = Item.query.filter_by(owner_id=from_user.id).count()
-        artefact_count = Artefact.query.filter_by(owner_id=from_user.id).count()
+        item_q     = Item.query.filter(Item.owner_id == from_user.id if from_user else Item.owner_id.is_(None))
+        artefact_q = Artefact.query.filter(Artefact.owner_id == from_user.id if from_user else Artefact.owner_id.is_(None))
+        item_count     = item_q.count()
+        artefact_count = artefact_q.count()
 
         if request.form.get('confirmed') == '1':
             new_owner_id = to_user.id if to_user else None
-            Item.query.filter_by(owner_id=from_user.id).update({'owner_id': new_owner_id})
-            Artefact.query.filter_by(owner_id=from_user.id).update({'owner_id': new_owner_id})
+            item_q.update({'owner_id': new_owner_id})
+            artefact_q.update({'owner_id': new_owner_id})
             db.session.commit()
-            to_label = to_user.username if to_user else 'unowned'
+            from_label = from_user.username if from_user else 'unowned'
+            to_label   = to_user.username   if to_user   else 'unowned'
             flash(
                 f'Reassigned {item_count} item(s) and {artefact_count} artefact(s) '
-                f'from "{from_user.username}" to {to_label}.',
+                f'from {from_label} to {to_label}.',
                 'success',
             )
             return _route_redirect('index')
 
         preview = {
-            'from_user':     from_user,
-            'to_user':       to_user,
-            'item_count':    item_count,
+            'from_user':      from_user,
+            'to_user':        to_user,
+            'from_id':        from_id,
+            'to_id':          to_id,
+            'item_count':     item_count,
             'artefact_count': artefact_count,
         }
 

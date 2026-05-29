@@ -10,7 +10,7 @@
 </div>
 
 <p class="text-muted">
-    Transfers all items and artefacts owned by one user to another user (or leaves them unowned).
+    Transfers all items and artefacts owned by one user (or currently unowned) to another user or to the unowned pool.
     Use this when a curator leaves and their work needs to be handed over to a colleague.
 </p>
 
@@ -21,8 +21,10 @@
         <h5 class="mb-0"><i class="bi bi-exclamation-triangle"></i> Confirm reassignment</h5>
     </div>
     <div class="card-body">
-        <p>The following will be reassigned from <strong>{{ preview.from_user.username }}</strong>
-        to <strong>{% if preview.to_user %}{{ preview.to_user.username }}{% else %}<em>unowned</em>{% endif %}</strong>:</p>
+        <p>The following will be reassigned from
+        <strong>{% if preview.from_user %}{{ preview.from_user.username }}{% else %}<em>unowned</em>{% endif %}</strong>
+        to
+        <strong>{% if preview.to_user %}{{ preview.to_user.username }}{% else %}<em>unowned</em>{% endif %}</strong>:</p>
         <ul>
             <li>{{ preview.item_count }} item{{ 's' if preview.item_count != 1 }}</li>
             <li>{{ preview.artefact_count }} artefact{{ 's' if preview.artefact_count != 1 }}</li>
@@ -30,13 +32,13 @@
         {% if preview.item_count == 0 and preview.artefact_count == 0 %}
         <div class="alert alert-info mb-3">
             <i class="bi bi-info-circle"></i>
-            <strong>{{ preview.from_user.username }}</strong> owns no items or artefacts — nothing will change.
+            Nothing to reassign — no items or artefacts match the selected source.
         </div>
         {% endif %}
         <form method="post">
             {{ form.hidden_tag() }}
-            <input type="hidden" name="from_user_id" value="{{ preview.from_user.id }}">
-            <input type="hidden" name="to_user_id"   value="{{ preview.to_user.id if preview.to_user else 0 }}">
+            <input type="hidden" name="from_user_id" value="{{ preview.from_id }}">
+            <input type="hidden" name="to_user_id"   value="{{ preview.to_id }}">
             <input type="hidden" name="confirmed"    value="1">
             <button type="submit" class="btn btn-warning"
                 {% if preview.item_count == 0 and preview.artefact_count == 0 %}disabled{% endif %}>
@@ -60,7 +62,7 @@
                     <div class="mb-3">
                         {{ form.from_user_id.label(class="form-label") }}
                         {{ form.from_user_id(class="form-select") }}
-                        <div class="form-text">The user whose items and artefacts will be transferred.</div>
+                        <div class="form-text">The user (or unowned pool) whose items and artefacts will be transferred.</div>
                     </div>
                     <div class="mb-3">
                         {{ form.to_user_id.label(class="form-label") }}
