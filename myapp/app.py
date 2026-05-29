@@ -373,6 +373,7 @@ def _register_cli_commands(app):
     from .cli.create_admin import create_admin
     from .cli.dedup_artefacts import dedup_artefacts
     from .cli.reanalyse import reanalyse
+    from .cli.reassign_ownership import reassign_ownership
     from .cli.rebuild_search_index import rebuild_search_index
     from .cli.rescan_hashes import rescan_hashes
 
@@ -382,6 +383,7 @@ def _register_cli_commands(app):
     app.cli.add_command(reanalyse)
     app.cli.add_command(cancel_analysis)
     app.cli.add_command(dedup_artefacts)
+    app.cli.add_command(reassign_ownership)
     app.cli.add_command(backfill_slugs)
 
 

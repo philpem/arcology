@@ -1,0 +1,81 @@
+{% extends "_base.html" %}
+{% block page_title %}Reassign Ownership{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Reassign Ownership</h1>
+    <a href="{{ url_for('myapp_blueprints_admin.index') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Admin
+    </a>
+</div>
+
+<p class="text-muted">
+    Transfers all items and artefacts owned by one user to another user (or leaves them unowned).
+    Use this when a curator leaves and their work needs to be handed over to a colleague.
+</p>
+
+{% if preview %}
+{# ── Step 2: confirmation ─────────────────────────────────────────────────── #}
+<div class="card border-warning mb-4">
+    <div class="card-header bg-warning-subtle">
+        <h5 class="mb-0"><i class="bi bi-exclamation-triangle"></i> Confirm reassignment</h5>
+    </div>
+    <div class="card-body">
+        <p>The following will be reassigned from <strong>{{ preview.from_user.username }}</strong>
+        to <strong>{% if preview.to_user %}{{ preview.to_user.username }}{% else %}<em>unowned</em>{% endif %}</strong>:</p>
+        <ul>
+            <li>{{ preview.item_count }} item{{ 's' if preview.item_count != 1 }}</li>
+            <li>{{ preview.artefact_count }} artefact{{ 's' if preview.artefact_count != 1 }}</li>
+        </ul>
+        {% if preview.item_count == 0 and preview.artefact_count == 0 %}
+        <div class="alert alert-info mb-3">
+            <i class="bi bi-info-circle"></i>
+            <strong>{{ preview.from_user.username }}</strong> owns no items or artefacts — nothing will change.
+        </div>
+        {% endif %}
+        <form method="post">
+            {{ form.hidden_tag() }}
+            <input type="hidden" name="from_user_id" value="{{ preview.from_user.id }}">
+            <input type="hidden" name="to_user_id"   value="{{ preview.to_user.id if preview.to_user else 0 }}">
+            <input type="hidden" name="confirmed"    value="1">
+            <button type="submit" class="btn btn-warning"
+                {% if preview.item_count == 0 and preview.artefact_count == 0 %}disabled{% endif %}>
+                <i class="bi bi-check-lg"></i> Confirm
+            </button>
+            <a href="{{ url_for('myapp_blueprints_admin.reassign_ownership') }}" class="btn btn-outline-secondary ms-2">
+                Cancel
+            </a>
+        </form>
+    </div>
+</div>
+
+{% else %}
+{# ── Step 1: select users ─────────────────────────────────────────────────── #}
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body">
+                <form method="post">
+                    {{ form.hidden_tag() }}
+                    <div class="mb-3">
+                        {{ form.from_user_id.label(class="form-label") }}
+                        {{ form.from_user_id(class="form-select") }}
+                        <div class="form-text">The user whose items and artefacts will be transferred.</div>
+                    </div>
+                    <div class="mb-3">
+                        {{ form.to_user_id.label(class="form-label") }}
+                        {{ form.to_user_id(class="form-select") }}
+                        <div class="form-text">
+                            Choose <em>— Unowned —</em> to release ownership without assigning a new owner.
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-arrow-right-circle"></i> Preview
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

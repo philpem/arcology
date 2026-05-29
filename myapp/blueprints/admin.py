@@ -10,7 +10,17 @@ from flask_wtf import FlaskForm
 from sqlalchemy import func
 from wtforms import BooleanField, PasswordField, SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, EqualTo, Length, Optional
-from ..database import ApiKey, Group, RestrictionType, User, UserPermission, UserRestrictionBypass, group_memberships
+from ..database import (
+    ApiKey,
+    Artefact,
+    Group,
+    Item,
+    RestrictionType,
+    User,
+    UserPermission,
+    UserRestrictionBypass,
+    group_memberships,
+)
 from ..extensions import db
 from ..utils.web_forms import flash_form_errors, redirect_local
 
@@ -382,5 +392,65 @@ def remove_group_member(group_id, user_id):
     else:
         flash(f'"{user.username}" is not a member of "{group.name}".', 'warning')
     return _route_redirect('groups')
+
+
+# =============================================================================
+# Ownership reassignment
+# =============================================================================
+
+class ReassignOwnershipForm(FlaskForm):
+    from_user_id = SelectField('From user', coerce=int)
+    to_user_id   = SelectField('To user', coerce=int)
+
+
+@blueprint.route('/reassign-ownership', methods=['GET', 'POST'])
+@login_required
+def reassign_ownership():
+    """Bulk-transfer all items and artefacts from one user to another."""
+    _require_admin()
+    users = User.query.order_by(User.username).all()
+    user_choices = [(0, '— Unowned —')] + [(u.id, u.username) for u in users]
+
+    form = ReassignOwnershipForm()
+    form.from_user_id.choices = [(u.id, u.username) for u in users]
+    form.to_user_id.choices   = user_choices
+
+    preview = None
+
+    if form.validate_on_submit():
+        from_user = db.session.get(User, form.from_user_id.data)
+        if not from_user:
+            flash('Source user not found.', 'error')
+            return render_template('admin/reassign_ownership.html', form=form, preview=None)
+
+        to_user = db.session.get(User, form.to_user_id.data) if form.to_user_id.data else None
+        if to_user and to_user.id == from_user.id:
+            flash('Source and destination users must be different.', 'error')
+            return render_template('admin/reassign_ownership.html', form=form, preview=None)
+
+        item_count     = Item.query.filter_by(owner_id=from_user.id).count()
+        artefact_count = Artefact.query.filter_by(owner_id=from_user.id).count()
+
+        if request.form.get('confirmed') == '1':
+            new_owner_id = to_user.id if to_user else None
+            Item.query.filter_by(owner_id=from_user.id).update({'owner_id': new_owner_id})
+            Artefact.query.filter_by(owner_id=from_user.id).update({'owner_id': new_owner_id})
+            db.session.commit()
+            to_label = to_user.username if to_user else 'unowned'
+            flash(
+                f'Reassigned {item_count} item(s) and {artefact_count} artefact(s) '
+                f'from "{from_user.username}" to {to_label}.',
+                'success',
+            )
+            return _route_redirect('index')
+
+        preview = {
+            'from_user':     from_user,
+            'to_user':       to_user,
+            'item_count':    item_count,
+            'artefact_count': artefact_count,
+        }
+
+    return render_template('admin/reassign_ownership.html', form=form, preview=preview)
 
 # vim: ts=4 sw=4 et

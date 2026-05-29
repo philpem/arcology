@@ -134,6 +134,23 @@
 	</div>
 </div>
 
+<!-- Ownership Reassignment -->
+<div class="card mb-4">
+	<div class="card-header d-flex justify-content-between align-items-center">
+		<h5 class="mb-0">Ownership Reassignment</h5>
+		<a href="{{ url_for('myapp_blueprints_admin.reassign_ownership') }}" class="btn btn-sm btn-outline-secondary">
+			<i class="bi bi-person-arrow-right"></i> Reassign Ownership
+		</a>
+	</div>
+	<div class="card-body">
+		<p class="mb-0 text-muted">
+			Transfer all items and artefacts from one user to another — use this when a curator
+			leaves and their work needs to be handed over to a colleague.
+			Also available as <code>flask reassign-ownership</code>.
+		</p>
+	</div>
+</div>
+
 <!-- Groups -->
 <div class="card mb-4">
 	<div class="card-header d-flex justify-content-between align-items-center">

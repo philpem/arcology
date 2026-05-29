@@ -171,6 +171,11 @@ flask reanalyse --all --dry-run         # preview without changes
 flask cancel-analysis --all             # every pending analysis
 flask cancel-analysis --artefact <UUID> # all pending on one artefact
 flask cancel-analysis --all --include-running  # also cancel running
+
+# Transfer all items and artefacts from a departing curator to a colleague
+flask reassign-ownership --from alice --to bob
+flask reassign-ownership --from alice --to none  # release to unowned
+flask reassign-ownership --from alice --to bob --dry-run
 ```
 
 See `doc/ADMIN_COMMANDS.md` for the full reference including all flags.
