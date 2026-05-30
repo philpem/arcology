@@ -42,7 +42,7 @@ def require_permission(level: str):
     def decorator(f):
         @wraps(f)
         def wrapper(*args, **kwargs):
-            if not current_user.has_permission(required):
+            if not (getattr(current_user, 'is_admin', False) or current_user.has_permission(required)):
                 abort(403)
             return f(*args, **kwargs)
         return wrapper

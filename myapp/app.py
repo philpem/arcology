@@ -189,12 +189,10 @@ def create_app(config_name=None):
     @app.context_processor
     def inject_user_permissions():
         """Inject user_can_write and public_mode into every template context."""
+        from .permissions import _bool_config
         can_write = (current_user.is_authenticated and
                      current_user.has_permission(UserPermission.READ_WRITE))
-        pm = app.config.get('PUBLIC_MODE', False)
-        if isinstance(pm, str):
-            pm = pm.lower() in ('1', 'true', 'yes')
-        return dict(user_can_write=can_write, public_mode=bool(pm))
+        return dict(user_can_write=can_write, public_mode=_bool_config('PUBLIC_MODE'))
 
     # -- version context processor --
     import datetime

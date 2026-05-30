@@ -321,6 +321,125 @@ class TestPublicDownloadsOn(unittest.TestCase):
                          'Download should not redirect to login in PUBLIC_MODE')
 
 
+# =============================================================================
+# Privacy bypass regression tests
+# =============================================================================
+
+class TestPrivacyBypasses(unittest.TestCase):
+    """Regression tests for privacy bypass bugs fixed after initial review.
+
+    Verifies:
+    - view_legacy enforces can_view_artefact (was missing the check)
+    - tree enforces can_view_artefact (was missing the check)
+    - Restricted artefact downloads do not crash for anonymous users (AttributeError
+      was raised when calling can_bypass_all_restrictions on AnonymousUserMixin)
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.extensions import db
+        cls.app = _make_app(PUBLIC_MODE=True, PUBLIC_DOWNLOADS=True)
+        cls.db = db
+        cls.client = cls.app.test_client()
+
+        with cls.app.app_context():
+            owner = _make_user(db, 'owner-bypass', permission='read_write')
+            cls.private_item = _make_item(db, 'Private Bypass Item', owner=owner, is_private=True)
+            cls.private_item_id = cls.private_item.url_id
+
+            from myapp.database import Artefact, ArtefactRestriction, ArtefactType, RestrictionType, StorageDirectory
+            priv_art = Artefact(
+                item_id=cls.private_item.id,
+                label='private.scp',
+                original_filename='private.scp',
+                artefact_type=ArtefactType.SCP,
+                storage_directory=StorageDirectory.UPLOADS,
+                storage_path='private.scp',
+                file_size=0,
+                owner_id=owner.id,
+            )
+            db.session.add(priv_art)
+            db.session.flush()
+            cls.private_artefact_uuid = priv_art.uuid
+
+            # Public item with a RESTRICTED artefact (triggers the bypass check)
+            pub_item = _make_item(db, 'Public Bypass Item', owner=owner, is_private=False)
+            pub_art = Artefact(
+                item_id=pub_item.id,
+                label='restricted.scp',
+                original_filename='restricted.scp',
+                artefact_type=ArtefactType.SCP,
+                storage_directory=StorageDirectory.UPLOADS,
+                storage_path='restricted.scp',
+                file_size=0,
+                owner_id=owner.id,
+            )
+            db.session.add(pub_art)
+            db.session.flush()
+            restriction = ArtefactRestriction(
+                artefact_id=pub_art.id,
+                restriction_type=RestrictionType.COPYRIGHT,
+                reason='test restriction',
+                added_by_id=owner.id,
+            )
+            db.session.add(restriction)
+            db.session.commit()
+            cls.restricted_artefact_uuid = pub_art.uuid
+
+    def test_view_legacy_hides_private_artefact_from_anonymous(self):
+        resp = self.client.get(f'/artefacts/{self.private_artefact_uuid}')
+        self.assertEqual(resp.status_code, 404,
+                         'Private artefact must 404 on legacy URL for anonymous user')
+
+    def test_tree_hides_private_artefact_from_anonymous(self):
+        resp = self.client.get(f'/artefacts/{self.private_artefact_uuid}/tree')
+        self.assertEqual(resp.status_code, 404,
+                         'Private artefact tree must 404 for anonymous user')
+
+    def test_restricted_artefact_download_does_not_crash_anonymous(self):
+        resp = self.client.get(f'/artefacts/{self.restricted_artefact_uuid}/download')
+        self.assertNotEqual(resp.status_code, 500,
+                            'Restricted-artefact download must not 500 for anonymous user')
+        # Should redirect back to artefact view (restriction block), not crash
+        self.assertEqual(resp.status_code, 302,
+                         'Restricted artefact should redirect (restriction blocked), not crash')
+
+
+# =============================================================================
+# require_permission is_admin bypass
+# =============================================================================
+
+class TestRequirePermissionAdminBypass(unittest.TestCase):
+    """Admins pass require_permission regardless of their permission enum value."""
+
+    def setUp(self):
+        self.app = _make_app()
+        self.db = __import__('myapp.extensions', fromlist=['db']).db
+
+    def test_admin_passes_require_permission_staff(self):
+        from myapp.permissions import require_permission
+        from myapp.database import UserPermission
+        with self.app.app_context():
+            from myapp.database import User
+            admin = User(username='test-admin-perm', password_hash='x',
+                         is_admin=True, permission=UserPermission.READ_WRITE)
+            # Simulate require_permission check: admin with READ_WRITE must pass STAFF gate
+            required = UserPermission('staff')
+            passes = getattr(admin, 'is_admin', False) or admin.has_permission(required)
+            self.assertTrue(passes,
+                            'Admin with READ_WRITE must pass require_permission("staff")')
+
+    def test_non_admin_read_write_fails_require_permission_staff(self):
+        with self.app.app_context():
+            from myapp.database import User, UserPermission
+            user = User(username='test-rw-perm', password_hash='x',
+                        is_admin=False, permission=UserPermission.READ_WRITE)
+            required = UserPermission('staff')
+            passes = getattr(user, 'is_admin', False) or user.has_permission(required)
+            self.assertFalse(passes,
+                             'READ_WRITE non-admin must fail require_permission("staff")')
+
+
 if __name__ == '__main__':
     unittest.main()
 

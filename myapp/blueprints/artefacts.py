@@ -1199,7 +1199,7 @@ def _check_download_restrictions(artefact):
     if not artefact.restrictions:
         return None
 
-    if not current_user.can_bypass_all_restrictions(artefact.restrictions):
+    if not current_user.is_authenticated or not current_user.can_bypass_all_restrictions(artefact.restrictions):
         categories = ', '.join(r.restriction_type.label for r in artefact.restrictions)
         flash(f'Download restricted: {categories}', 'danger')
         return _redirect_to_artefact_view(artefact)
@@ -1253,7 +1253,7 @@ def _check_file_download_restrictions(ef):
     if not all_restrictions:
         return None
 
-    if not current_user.can_bypass_all_restrictions(all_restrictions):
+    if not current_user.is_authenticated or not current_user.can_bypass_all_restrictions(all_restrictions):
         categories = ', '.join({r.restriction_type.label for r in all_restrictions})
         flash(f'File download restricted: {categories}', 'danger')
         return _redirect_to_artefact_view(ef.partition.artefact)
@@ -1284,7 +1284,7 @@ def _check_artefact_file_restrictions(artefact):
     if not file_restrictions:
         return None
 
-    if not current_user.can_bypass_all_restrictions(file_restrictions):
+    if not current_user.is_authenticated or not current_user.can_bypass_all_restrictions(file_restrictions):
         categories = ', '.join({r.restriction_type.label for r in file_restrictions})
         flash(f'Download restricted (artefact contains restricted files): {categories}', 'danger')
         return _redirect_to_artefact_view(artefact)
@@ -1314,6 +1314,8 @@ def view(item_id, artefact_id, root_id=None):
 def view_legacy(uuid):
     """Legacy flat-URL compat shim — resolves and renders without redirect."""
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    if not can_view_artefact(artefact, current_user):
+        abort(404)
     return _render_artefact_view(artefact)
 
 
@@ -1322,6 +1324,8 @@ def view_legacy(uuid):
 def tree(uuid):
     """Processing tree view — shows the full artefact derivation tree with analysis status."""
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    if not can_view_artefact(artefact, current_user):
+        abort(404)
     root = artefact.root_artefact
     if root is not artefact:
         return redirect(url_for(f'{ROUTENAME}.tree', uuid=root.uuid))
@@ -3686,6 +3690,18 @@ def rerun_product_recognition_route(uuid):
 @public_readable
 def get_output_file(filename):
     """Serve an analysis output file (visualisation, etc.)."""
+    # Output paths follow {item_part}/{artefact_uuid}_{slug}/{file...}.
+    # Extract the artefact UUID from the second path component and enforce
+    # visibility so private artefacts' outputs are not exposed.
+    path_parts = filename.split('/', 2)
+    artefact_for_check = None
+    if len(path_parts) >= 2:
+        uuid_candidate = path_parts[1].split('_', 1)[0]
+        if len(uuid_candidate) == 32:
+            artefact_for_check = Artefact.query.filter_by(uuid=uuid_candidate).first()
+    if artefact_for_check is None or not can_view_artefact(artefact_for_check, current_user):
+        abort(404)
+
     storage = current_app.storage
     key = storage.storage_key('outputs', filename)
 
