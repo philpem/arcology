@@ -201,6 +201,43 @@ See `doc/ADMIN_COMMANDS.md` for the full reference including all flags.
 - **CSRF**: Enabled globally via Flask-WTF. The API blueprint exempts itself in `init_app()`.
 - **Security**: bcrypt password hashing, CSRF protection, UUID-based URLs (no IDOR)
 
+## Public Mode and Access Tiers
+
+### Configuration keys
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `PUBLIC_MODE` | `False` | Allow anonymous read-only browsing of non-private content. |
+| `PUBLIC_DOWNLOADS` | `True` | Allow anonymous file downloads (only when PUBLIC_MODE is on). Set False for metadata-only public access. |
+
+Both can be set in `myapp.cfg` (Python booleans) or as environment variables (`true`/`false`/`1`/`0`).
+
+### Access tier hierarchy
+
+```
+anonymous (PUBLIC_MODE) < READ_ONLY < READ_WRITE < STAFF < admin (is_admin=True)
+```
+
+| Tier | `UserPermission` value | Can browse | Can upload/edit | Taxonomy management | User management |
+|------|-----------------------|------------|-----------------|--------------------|----|
+| Anonymous | — (no account) | ✓ (when PUBLIC_MODE) | ✗ | ✗ | ✗ |
+| Patron | `READ_ONLY` | ✓ | ✗ | ✗ | ✗ |
+| Researcher | `READ_WRITE` | ✓ | ✓ | ✓ | ✗ |
+| Staff | `STAFF` | ✓ | ✓ | ✓ | ✗ |
+| Admin | (`is_admin=True`) | ✓ | ✓ | ✓ | ✓ |
+
+### Decorator: `@public_readable` vs `@login_required`
+
+Routes decorated with `@public_readable` (from `myapp/permissions.py`) behave like `@login_required` when `PUBLIC_MODE` is off.  When `PUBLIC_MODE` is on, anonymous users are allowed through.  Apply to read-only GET routes only (lists, detail views, search, taxonomy lists, output file serving).  Write routes must keep `@login_required`.
+
+`@public_downloadable` similarly gates download/stream routes, additionally checking `PUBLIC_DOWNLOADS`.
+
+Both decorators respect Flask-Login's `LOGIN_DISABLED` config flag (used by tests).
+
+### OIDC role for STAFF tier
+
+Set `OIDC_ROLE_STAFF` (default `arcology-staff`) in the IdP to map SSO users to the STAFF permission tier.
+
 ## Key Patterns
 
 ### Adding a new blueprint

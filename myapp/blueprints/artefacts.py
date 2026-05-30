@@ -47,7 +47,7 @@ from ..database import (
     artefact_tags,
 )
 from ..extensions import db
-from ..permissions import require_permission
+from ..permissions import public_downloadable, public_readable, require_permission
 from ..riscos_filetypes import lookup_filetype_hex
 from ..utils.slugs import ensure_unique_slug, generate_slug, lookup_artefact_by_id, lookup_by_identifier
 from ..visibility import (
@@ -1298,7 +1298,7 @@ def _check_artefact_file_restrictions(artefact):
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>')
 @blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>', endpoint='view_nested')
-@login_required
+@public_readable
 def view(item_id, artefact_id, root_id=None):
     """View an artefact and its partitions/files."""
     item, artefact = _resolve_artefact(item_id, artefact_id, root_id)
@@ -1310,7 +1310,7 @@ def view(item_id, artefact_id, root_id=None):
 
 
 @blueprint.route('/artefacts/<string:uuid>')
-@login_required
+@public_readable
 def view_legacy(uuid):
     """Legacy flat-URL compat shim — resolves and renders without redirect."""
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
@@ -1318,7 +1318,7 @@ def view_legacy(uuid):
 
 
 @blueprint.route('/artefacts/<string:uuid>/tree')
-@login_required
+@public_readable
 def tree(uuid):
     """Processing tree view — shows the full artefact derivation tree with analysis status."""
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
@@ -1337,7 +1337,7 @@ def tree(uuid):
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/viewer')
-@login_required
+@public_readable
 def viewer(item_id, artefact_id):
     """Viewer page for converted outputs (images, text, etc.)."""
     item, artefact = _resolve_artefact(item_id, artefact_id)
@@ -1348,7 +1348,7 @@ def viewer(item_id, artefact_id):
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/viewer')
-@login_required
+@public_readable
 def viewer_nested(item_id, root_id, artefact_id):
     """Viewer page for converted outputs (nested artefact)."""
     item, artefact = _resolve_artefact(item_id, artefact_id, root_id)
@@ -3307,7 +3307,7 @@ def delete(item_id=None, artefact_id=None, root_id=None, uuid=None):
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/download')
 @blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/download', endpoint='download_nested')
 @blueprint.route('/artefacts/<string:uuid>/download', endpoint='download_legacy')
-@login_required
+@public_downloadable
 def download(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Download the artefact file.  Blocked when the artefact itself is
     restricted, or when any extracted file within it carries a restriction the
@@ -3343,7 +3343,7 @@ def download(item_id=None, artefact_id=None, root_id=None, uuid=None):
 
 
 @blueprint.route('/files/<string:uuid>/download', endpoint='download_file')
-@login_required
+@public_downloadable
 def download_file(uuid):
     """Download an individual extracted file from a partition.
 
@@ -3683,9 +3683,9 @@ def rerun_product_recognition_route(uuid):
 
 
 @blueprint.route('/outputs/<path:filename>')
-@login_required
+@public_readable
 def get_output_file(filename):
-    """Serve an analysis output file (visualisation, etc.) to logged-in users."""
+    """Serve an analysis output file (visualisation, etc.)."""
     storage = current_app.storage
     key = storage.storage_key('outputs', filename)
 

@@ -12,7 +12,7 @@ from wtforms import SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Length, Optional
 from ..database import Category, ExternalSystem, HashDatabase, Platform, Tag
 from ..extensions import db
-from ..permissions import require_permission
+from ..permissions import public_readable, require_permission
 from ..utils.db_helpers import model_choice_list
 from ..utils.web_forms import redirect_local
 
@@ -31,7 +31,7 @@ def init_app(app):
 # =============================================================================
 
 @blueprint.route('/')
-@login_required
+@public_readable
 def index():
     """Taxonomy overview - redirect to platforms or show navigation."""
     return render_template('taxonomy/index.html')
@@ -120,7 +120,7 @@ def _delete_with_guards(obj, endpoint: str, success_label: str, guards: list[tup
 # =============================================================================
 
 @blueprint.route('/platforms')
-@login_required
+@public_readable
 def platforms():
     platforms = Platform.query.filter(Platform.parent_id.is_(None)).order_by(func.lower(Platform.name)).all()
     return render_template('taxonomy/platforms.html', platforms=platforms)
@@ -181,7 +181,7 @@ def delete_platform(id):
 # =============================================================================
 
 @blueprint.route('/categories')
-@login_required
+@public_readable
 def categories():
     categories = Category.query.filter(Category.parent_id.is_(None)).order_by(func.lower(Category.name)).all()
     return render_template('taxonomy/categories.html', categories=categories)
@@ -240,7 +240,7 @@ def delete_category(id):
 # =============================================================================
 
 @blueprint.route('/tags')
-@login_required
+@public_readable
 def tags():
     tags = Tag.query.order_by(func.lower(Tag.name)).all()
     return render_template('taxonomy/tags.html', tags=tags)
@@ -291,7 +291,7 @@ def delete_tag(id):
 # =============================================================================
 
 @blueprint.route('/external-systems')
-@login_required
+@public_readable
 def external_systems():
     systems = ExternalSystem.query.order_by(func.lower(ExternalSystem.name)).all()
     return render_template('taxonomy/external_systems.html', systems=systems)

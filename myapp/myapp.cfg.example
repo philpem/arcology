@@ -27,7 +27,25 @@ SQLALCHEMY_TRACK_MODIFICATIONS = False
 #    'pool_pre_ping': True,  # Verify connections are alive before using
 #}
 
+# =============================================================================
+# Public (anonymous) access
+# When PUBLIC_MODE is True, unauthenticated visitors can browse and search
+# non-private items and artefacts without logging in.  All write actions
+# (create, edit, delete, upload, share) remain login-gated.
+# Private content is hidden from anonymous viewers as usual.
+#
+# PUBLIC_DOWNLOADS controls whether anonymous visitors may download artefact
+# files.  Only takes effect when PUBLIC_MODE is True.  Default: True.
+#
+# Tier hierarchy (ascending privilege):
+#   anonymous (PUBLIC_MODE) < READ_ONLY < READ_WRITE < STAFF < admin
+# =============================================================================
+#PUBLIC_MODE = False
+#PUBLIC_DOWNLOADS = True
+
+# =============================================================================
 # Arcology-specific settings
+# =============================================================================
 UPLOAD_FOLDER = "uploads"           # Relative to instance folder, or absolute path
 OUTPUT_FOLDER = "outputs"           # For analysis outputs (visualisations, etc.)
 MAX_CONTENT_LENGTH = 4 * 1024 * 1024 * 1024  # 4GB max upload
