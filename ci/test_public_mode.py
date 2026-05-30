@@ -74,7 +74,6 @@ class TestStaffPermissionTier(unittest.TestCase):
     """UserPermission.STAFF ordering and has_permission() semantics."""
 
     def setUp(self):
-        from myapp.app import create_app
         from myapp.extensions import db
         self.app = _make_app()
         self.db = db
@@ -287,8 +286,8 @@ class TestPublicDownloadsOn(unittest.TestCase):
             owner = _make_user(db, 'owner-dl2', permission='read_write')
             item = _make_item(db, 'Download Item', owner=owner, is_private=False)
 
-            from myapp.database import Artefact, ArtefactType, StorageDirectory
             import uuid as uuid_mod
+            from myapp.database import Artefact, ArtefactType, StorageDirectory
             storage_path = f'{uuid_mod.uuid4().hex}.scp'
             file_path = os.path.join(cls.tmpdir, storage_path)
             with open(file_path, 'wb') as f:
@@ -417,7 +416,6 @@ class TestRequirePermissionAdminBypass(unittest.TestCase):
         self.db = __import__('myapp.extensions', fromlist=['db']).db
 
     def test_admin_passes_require_permission_staff(self):
-        from myapp.permissions import require_permission
         from myapp.database import UserPermission
         with self.app.app_context():
             from myapp.database import User
