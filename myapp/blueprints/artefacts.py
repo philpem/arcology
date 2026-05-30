@@ -1313,9 +1313,7 @@ def view(item_id, artefact_id, root_id=None):
 @public_readable
 def view_legacy(uuid):
     """Legacy flat-URL compat shim — resolves and renders without redirect."""
-    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
-    if not can_view_artefact(artefact, current_user):
-        abort(404)
+    artefact = _get_artefact_or_404(uuid=uuid)
     return _render_artefact_view(artefact)
 
 
@@ -1323,9 +1321,7 @@ def view_legacy(uuid):
 @public_readable
 def tree(uuid):
     """Processing tree view — shows the full artefact derivation tree with analysis status."""
-    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
-    if not can_view_artefact(artefact, current_user):
-        abort(404)
+    artefact = _get_artefact_or_404(uuid=uuid)
     root = artefact.root_artefact
     if root is not artefact:
         return redirect(url_for(f'{ROUTENAME}.tree', uuid=root.uuid))
@@ -3687,7 +3683,7 @@ def rerun_product_recognition_route(uuid):
 
 
 @blueprint.route('/outputs/<path:filename>')
-@public_readable
+@public_downloadable
 def get_output_file(filename):
     """Serve an analysis output file (visualisation, etc.)."""
     # Output paths follow {item_part}/{artefact_uuid}_{slug}/{file...}.

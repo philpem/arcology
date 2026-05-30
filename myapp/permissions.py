@@ -23,8 +23,10 @@ def require_permission(level: str):
     """
     Decorator for web routes that enforces the current user's permission level.
 
-    Must be applied AFTER @login_required so that current_user is guaranteed
-    to be an authenticated User object.
+    Intended for use after @login_required or @public_readable.  As a
+    belt-and-braces measure it also handles unauthenticated callers: anonymous
+    users are always denied with 401 rather than crashing, so the decorator is
+    safe even if it is accidentally applied without a prior auth gate.
 
     Usage::
 
@@ -42,6 +44,9 @@ def require_permission(level: str):
     def decorator(f):
         @wraps(f)
         def wrapper(*args, **kwargs):
+            if not current_user.is_authenticated:
+                from .extensions import login_manager
+                return login_manager.unauthorized()
             if not (getattr(current_user, 'is_admin', False) or current_user.has_permission(required)):
                 abort(403)
             return f(*args, **kwargs)
