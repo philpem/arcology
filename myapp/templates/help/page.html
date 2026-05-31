@@ -1,0 +1,101 @@
+{% extends "_base.html" %}
+{% block page_title %}{{ title }} — Help{% endblock %}
+
+{% block styles %}
+{{ super() }}
+<style>
+/* Sidebar navigation */
+.help-nav .nav-link {
+    color: var(--bs-body-color);
+    border-radius: 0.25rem;
+    padding: 0.35rem 0.75rem;
+}
+.help-nav .nav-link:hover { background: var(--bs-light); }
+.help-nav .nav-link.active {
+    background: var(--bs-primary);
+    color: #fff;
+    font-weight: 500;
+}
+.help-sidebar { position: sticky; top: 1rem; }
+
+/* Rendered Markdown styling */
+.help-content h2 {
+    margin-top: 2rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--bs-border-color);
+}
+.help-content h3 { margin-top: 1.5rem; }
+.help-content table { width: 100%; margin-bottom: 1rem; }
+.help-content table th { background: var(--bs-light); }
+.help-content blockquote {
+    border-left: 4px solid var(--bs-primary);
+    background: #f0f4ff;
+    padding: 0.6rem 1rem;
+    margin: 1rem 0;
+    border-radius: 0 0.25rem 0.25rem 0;
+}
+.help-content blockquote p { margin-bottom: 0; }
+.help-content pre {
+    background: #f8f9fa;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 0.25rem;
+    padding: 0.75rem 1rem;
+}
+.help-content code { font-size: 0.875em; }
+.help-anchor {
+    margin-left: 0.4rem;
+    opacity: 0;
+    font-size: 0.8em;
+    text-decoration: none;
+}
+.help-content h2:hover .help-anchor,
+.help-content h3:hover .help-anchor { opacity: 0.5; }
+</style>
+{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_help.index') }}">Help</a></li>
+        {% if current_slug != 'index' %}
+        <li class="breadcrumb-item active">{{ title }}</li>
+        {% endif %}
+    </ol>
+</nav>
+
+<div class="row">
+    <!-- Sidebar -->
+    <div class="col-lg-3 col-md-4 mb-4">
+        <div class="help-sidebar">
+            <div class="card">
+                <div class="card-header fw-semibold"><i class="bi bi-book"></i> Help Topics</div>
+                <div class="card-body p-2">
+                    <nav class="help-nav nav flex-column">
+                        {% for slug, label in pages if slug != 'index' %}
+                        <a class="nav-link{{ ' active' if slug == current_slug else '' }}"
+                           href="{{ url_for('myapp_blueprints_help.page', slug=slug) }}">
+                            {% if slug == 'getting-started' %}<i class="bi bi-play-circle me-1"></i>{% endif %}
+                            {% if slug == 'analysis' %}<i class="bi bi-gear me-1"></i>{% endif %}
+                            {% if slug == 'searching' %}<i class="bi bi-search me-1"></i>{% endif %}
+                            {% if slug == 'permissions' %}<i class="bi bi-shield me-1"></i>{% endif %}
+                            {{ label }}
+                        </a>
+                        {% endfor %}
+                    </nav>
+                </div>
+            </div>
+            <div class="mt-3 small text-muted ps-1">
+                <i class="bi bi-github"></i>
+                Found a mistake? <a href="https://github.com/philpem/arcology/issues" target="_blank" rel="noopener">Open an issue</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main content -->
+    <div class="col-lg-9 col-md-8">
+        <div class="help-content">
+            {{ content | safe }}
+        </div>
+    </div>
+</div>
+{% endblock %}
