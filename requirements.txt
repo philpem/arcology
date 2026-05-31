@@ -36,6 +36,9 @@ boto3
 # YAML parsing (used by api_docs blueprint to serve openapi.json)
 PyYAML
 
+# Markdown rendering (used by in-app help pages)
+Markdown
+
 # OAuth 2.0 / OpenID Connect (SSO via Keycloak, Okta, Azure AD, etc.)
 authlib
 
