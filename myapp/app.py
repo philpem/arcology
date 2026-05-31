@@ -37,8 +37,9 @@ def create_app(config_name=None):
                     'OIDC_DISCOVERY_URL', 'OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET',
                     'OIDC_SCOPES', 'OIDC_MATCH_CLAIM',
                     'OIDC_ROLE_ADMIN', 'OIDC_ROLE_READ_WRITE', 'OIDC_ROLE_READ_ONLY',
-                    'OIDC_ROLE_API_ACCESS', 'OIDC_REQUIRE_ROLE', 'OIDC_SINGLE_LOGOUT',
-                    'OIDC_SYNC_INTERVAL', 'OIDC_AUTO_REDIRECT'):
+                    'OIDC_ROLE_STAFF', 'OIDC_ROLE_API_ACCESS', 'OIDC_REQUIRE_ROLE',
+                    'OIDC_SINGLE_LOGOUT', 'OIDC_SYNC_INTERVAL', 'OIDC_AUTO_REDIRECT',
+                    'PUBLIC_MODE', 'PUBLIC_DOWNLOADS'):
         env_val = os.environ.get(env_key)
         if env_val:
             app.config[env_key] = env_val
@@ -187,10 +188,11 @@ def create_app(config_name=None):
     # -- user permission context processor --
     @app.context_processor
     def inject_user_permissions():
-        """Inject user_can_write into every template context."""
+        """Inject user_can_write and public_mode into every template context."""
+        from .permissions import _bool_config
         can_write = (current_user.is_authenticated and
                      current_user.has_permission(UserPermission.READ_WRITE))
-        return dict(user_can_write=can_write)
+        return dict(user_can_write=can_write, public_mode=_bool_config('PUBLIC_MODE'))
 
     # -- version context processor --
     import datetime

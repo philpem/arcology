@@ -32,7 +32,7 @@
 				</button>
 				<div class="collapse navbar-collapse" id="navbarNav">
 					<ul class="navbar-nav me-auto">
-{% if current_user.is_authenticated %}{% with menuitems = menu %}{%- for menuitem in menuitems %}
+{% if current_user.is_authenticated or public_mode %}{% with menuitems = menu %}{%- for menuitem in menuitems %}
 						<li class="nav-item"><a class="nav-link{% if menuitem.endpoint == request.endpoint %} active{% endif %}" href="{{ url_for(menuitem.endpoint) }}">{{ menuitem.label }}</a></li>
 {%- endfor %}{% endwith %}{% endif %}
 					</ul>
@@ -46,7 +46,9 @@
 						<li class="nav-item"><a class="nav-link" href="{{ url_for('logout') }}" title="Log out"><i class="bi bi-box-arrow-right"></i> Logout</a></li>
 					</ul>
 {% else %}
-					<span class="navbar-text">Not logged in</span>
+					<ul class="navbar-nav">
+						<li class="nav-item"><a class="nav-link" href="{{ url_for('login') }}"><i class="bi bi-box-arrow-in-right"></i> Log in</a></li>
+					</ul>
 {% endif %}
 				</div>
 			</div>

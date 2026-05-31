@@ -1,11 +1,23 @@
 #!/usr/bin/env bash
-# Pre-push hook: detect Alembic migration conflicts before pushing.
+# Pre-push hook: run Ruff lint and detect Alembic migration conflicts.
 #
 # Install:  git config core.hooksPath hooks
 # Bypass:   git push --no-verify
 set -e
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# Always run Ruff against the whole repo (matches CI: ruff check .)
+# Ruff is checked before reading stdin so the migration loop isn't affected.
+if command -v ruff >/dev/null 2>&1; then
+    echo "pre-push: Running Ruff lint check..."
+    ruff check "$REPO_ROOT" || { echo "pre-push: Ruff found issues. Run 'ruff check --fix .' to auto-fix."; exit 1; }
+elif python3 -m ruff --version >/dev/null 2>&1; then
+    echo "pre-push: Running Ruff lint check..."
+    python3 -m ruff check "$REPO_ROOT" || { echo "pre-push: Ruff found issues. Run 'ruff check --fix .' to auto-fix."; exit 1; }
+else
+    echo "pre-push: WARNING — ruff not found, skipping lint check (install with: pip install ruff)"
+fi
 
 # Read push details from stdin (format: <local ref> <local sha> <remote ref> <remote sha>)
 has_migrations=false

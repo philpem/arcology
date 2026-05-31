@@ -6,7 +6,7 @@ Global cross-item search using a prefix query syntax.
 
 import re
 from flask import Blueprint, render_template, request
-from flask_login import current_user, login_required
+from flask_login import current_user
 from sqlalchemy import and_, distinct, func, or_
 from ..database import (
     Artefact,
@@ -21,6 +21,7 @@ from ..database import (
     artefact_tags,
 )
 from ..extensions import db
+from ..permissions import public_readable
 from ..riscos_filetypes import lookup_filetype_hex
 from ..visibility import artefact_visibility_clause, item_visibility_clause
 
@@ -89,7 +90,7 @@ def parse_query(raw: str) -> dict:
 # =============================================================================
 
 @blueprint.route('/')
-@login_required
+@public_readable
 def index():
     q = request.args.get('q', '').strip()
     tokens = parse_query(q)

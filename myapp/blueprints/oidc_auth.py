@@ -445,14 +445,15 @@ def _sync_permissions(user: User, userinfo: dict) -> bool:
     roles = _collect_roles(userinfo)
     cfg = current_app.config
 
-    admin_role = cfg.get('OIDC_ROLE_ADMIN', 'arcology-admin')
-    rw_role    = cfg.get('OIDC_ROLE_READ_WRITE', 'arcology-read-write')
-    ro_role    = cfg.get('OIDC_ROLE_READ_ONLY', 'arcology-read-only')
-    api_role   = cfg.get('OIDC_ROLE_API_ACCESS', 'arcology-api')
+    admin_role  = cfg.get('OIDC_ROLE_ADMIN', 'arcology-admin')
+    rw_role     = cfg.get('OIDC_ROLE_READ_WRITE', 'arcology-read-write')
+    staff_role  = cfg.get('OIDC_ROLE_STAFF', 'arcology-staff')
+    ro_role     = cfg.get('OIDC_ROLE_READ_ONLY', 'arcology-read-only')
+    api_role    = cfg.get('OIDC_ROLE_API_ACCESS', 'arcology-api')
 
     current_app.logger.debug(
-        'OIDC role sync for %r: found roles %r (checking admin=%r rw=%r ro=%r api=%r)',
-        user.username, sorted(roles), admin_role, rw_role, ro_role, api_role,
+        'OIDC role sync for %r: found roles %r (checking admin=%r rw=%r staff=%r ro=%r api=%r)',
+        user.username, sorted(roles), admin_role, rw_role, staff_role, ro_role, api_role,
     )
 
     user.is_admin = admin_role in roles
@@ -460,6 +461,9 @@ def _sync_permissions(user: User, userinfo: dict) -> bool:
 
     if admin_role in roles or rw_role in roles:
         user.permission = UserPermission.READ_WRITE
+        role_matched = True
+    elif staff_role in roles:
+        user.permission = UserPermission.STAFF
         role_matched = True
     elif ro_role in roles:
         user.permission = UserPermission.READ_ONLY

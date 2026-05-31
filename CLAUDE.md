@@ -191,7 +191,7 @@ See `doc/ADMIN_COMMANDS.md` for the full reference including all flags.
 
 - **Indentation**: 4 spaces per level (PEP 8 standard). Files end with `# vim: ts=4 sw=4 et`.
 - **Python version**: 3.10+ (uses PEP 585 type hints in newer code)
-- **Linting**: CI enforces [Ruff](https://docs.astral.sh/ruff/) for style and import order. Run `ruff check <files>` before committing; `ruff check --fix <files>` applies safe auto-fixes. The two most common issues are unsorted imports (I001) and undefined names from missing imports (F821).
+- **Linting**: CI enforces [Ruff](https://docs.astral.sh/ruff/) for style and import order. CI runs `ruff check .` (the **entire repository**, including `ci/`). Run `ruff check .` before committing; `ruff check --fix .` applies safe auto-fixes. The two most common issues are unsorted imports (I001) and undefined names from missing imports (F821). The pre-push hook also runs this check automatically.
 - **UUIDs for public identifiers**: URLs and API responses use UUID hex strings, not sequential integer IDs
 - **Application factory pattern**: `create_app()` in `app.py`; extensions bound in factory, not at import time
 - **Blueprint auto-discovery**: Any module in `myapp/blueprints/` with a `blueprint` variable is auto-registered. Optional `init_app(app)` for additional setup.
@@ -200,6 +200,43 @@ See `doc/ADMIN_COMMANDS.md` for the full reference including all flags.
 - **Shared archive formats**: `ArchiveType` and `ARCHIVE_FORMATS` are defined in `shared/archive_formats.py` and imported by the worker — edit only `shared/archive_formats.py`
 - **CSRF**: Enabled globally via Flask-WTF. The API blueprint exempts itself in `init_app()`.
 - **Security**: bcrypt password hashing, CSRF protection, UUID-based URLs (no IDOR)
+
+## Public Mode and Access Tiers
+
+### Configuration keys
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `PUBLIC_MODE` | `False` | Allow anonymous read-only browsing of non-private content. |
+| `PUBLIC_DOWNLOADS` | `True` | Allow anonymous file downloads (only when PUBLIC_MODE is on). Set False for metadata-only public access. |
+
+Both can be set in `myapp.cfg` (Python booleans) or as environment variables (`true`/`false`/`1`/`0`).
+
+### Access tier hierarchy
+
+```
+anonymous (PUBLIC_MODE) < READ_ONLY < READ_WRITE < STAFF < admin (is_admin=True)
+```
+
+| Tier | `UserPermission` value | Can browse | Can upload/edit | Taxonomy management | User management |
+|------|-----------------------|------------|-----------------|--------------------|----|
+| Anonymous | — (no account) | ✓ (when PUBLIC_MODE) | ✗ | ✗ | ✗ |
+| Patron | `READ_ONLY` | ✓ | ✗ | ✗ | ✗ |
+| Researcher | `READ_WRITE` | ✓ | ✓ | ✓ | ✗ |
+| Staff | `STAFF` | ✓ | ✓ | ✓ | ✗ |
+| Admin | (`is_admin=True`) | ✓ | ✓ | ✓ | ✓ |
+
+### Decorator: `@public_readable` vs `@login_required`
+
+Routes decorated with `@public_readable` (from `myapp/permissions.py`) behave like `@login_required` when `PUBLIC_MODE` is off.  When `PUBLIC_MODE` is on, anonymous users are allowed through.  Apply to read-only GET routes only (lists, detail views, search, taxonomy lists, output file serving).  Write routes must keep `@login_required`.
+
+`@public_downloadable` similarly gates download/stream routes, additionally checking `PUBLIC_DOWNLOADS`.
+
+Both decorators respect Flask-Login's `LOGIN_DISABLED` config flag (used by tests).
+
+### OIDC role for STAFF tier
+
+Set `OIDC_ROLE_STAFF` (default `arcology-staff`) in the IdP to map SSO users to the STAFF permission tier.
 
 ## Key Patterns
 
@@ -590,11 +627,11 @@ SQLALCHEMY_DATABASE_URI=sqlite:///:memory: SECRET_KEY=test WORKER_API_KEY=test \
     python -m unittest discover -s ci -p "test_*.py" -v
 ```
 
-CI also runs Ruff on every push. Check and auto-fix before committing:
+CI runs Ruff on every push against the entire repository (`ruff check .`). The pre-push hook enforces this locally. Check and auto-fix before committing:
 
 ```bash
-ruff check myapp/ shared/ worker/ cli/          # report issues
-ruff check --fix myapp/ shared/ worker/ cli/    # apply safe fixes
+ruff check .          # report issues (matches CI exactly)
+ruff check --fix .    # apply safe auto-fixes
 ```
 
 When modifying code, also verify manually:

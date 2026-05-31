@@ -47,7 +47,7 @@ from ..database import (
     artefact_tags,
 )
 from ..extensions import db
-from ..permissions import require_permission
+from ..permissions import public_downloadable, public_readable, require_permission
 from ..riscos_filetypes import lookup_filetype_hex
 from ..utils.slugs import ensure_unique_slug, generate_slug, lookup_artefact_by_id, lookup_by_identifier
 from ..visibility import (
@@ -1199,7 +1199,7 @@ def _check_download_restrictions(artefact):
     if not artefact.restrictions:
         return None
 
-    if not current_user.can_bypass_all_restrictions(artefact.restrictions):
+    if not current_user.is_authenticated or not current_user.can_bypass_all_restrictions(artefact.restrictions):
         categories = ', '.join(r.restriction_type.label for r in artefact.restrictions)
         flash(f'Download restricted: {categories}', 'danger')
         return _redirect_to_artefact_view(artefact)
@@ -1253,7 +1253,7 @@ def _check_file_download_restrictions(ef):
     if not all_restrictions:
         return None
 
-    if not current_user.can_bypass_all_restrictions(all_restrictions):
+    if not current_user.is_authenticated or not current_user.can_bypass_all_restrictions(all_restrictions):
         categories = ', '.join({r.restriction_type.label for r in all_restrictions})
         flash(f'File download restricted: {categories}', 'danger')
         return _redirect_to_artefact_view(ef.partition.artefact)
@@ -1284,7 +1284,7 @@ def _check_artefact_file_restrictions(artefact):
     if not file_restrictions:
         return None
 
-    if not current_user.can_bypass_all_restrictions(file_restrictions):
+    if not current_user.is_authenticated or not current_user.can_bypass_all_restrictions(file_restrictions):
         categories = ', '.join({r.restriction_type.label for r in file_restrictions})
         flash(f'Download restricted (artefact contains restricted files): {categories}', 'danger')
         return _redirect_to_artefact_view(artefact)
@@ -1298,7 +1298,7 @@ def _check_artefact_file_restrictions(artefact):
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>')
 @blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>', endpoint='view_nested')
-@login_required
+@public_readable
 def view(item_id, artefact_id, root_id=None):
     """View an artefact and its partitions/files."""
     item, artefact = _resolve_artefact(item_id, artefact_id, root_id)
@@ -1310,18 +1310,18 @@ def view(item_id, artefact_id, root_id=None):
 
 
 @blueprint.route('/artefacts/<string:uuid>')
-@login_required
+@public_readable
 def view_legacy(uuid):
     """Legacy flat-URL compat shim — resolves and renders without redirect."""
-    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    artefact = _get_artefact_or_404(uuid=uuid)
     return _render_artefact_view(artefact)
 
 
 @blueprint.route('/artefacts/<string:uuid>/tree')
-@login_required
+@public_readable
 def tree(uuid):
     """Processing tree view — shows the full artefact derivation tree with analysis status."""
-    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    artefact = _get_artefact_or_404(uuid=uuid)
     root = artefact.root_artefact
     if root is not artefact:
         return redirect(url_for(f'{ROUTENAME}.tree', uuid=root.uuid))
@@ -1337,7 +1337,7 @@ def tree(uuid):
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/viewer')
-@login_required
+@public_readable
 def viewer(item_id, artefact_id):
     """Viewer page for converted outputs (images, text, etc.)."""
     item, artefact = _resolve_artefact(item_id, artefact_id)
@@ -1348,7 +1348,7 @@ def viewer(item_id, artefact_id):
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/viewer')
-@login_required
+@public_readable
 def viewer_nested(item_id, root_id, artefact_id):
     """Viewer page for converted outputs (nested artefact)."""
     item, artefact = _resolve_artefact(item_id, artefact_id, root_id)
@@ -3307,7 +3307,7 @@ def delete(item_id=None, artefact_id=None, root_id=None, uuid=None):
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/download')
 @blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/download', endpoint='download_nested')
 @blueprint.route('/artefacts/<string:uuid>/download', endpoint='download_legacy')
-@login_required
+@public_downloadable
 def download(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Download the artefact file.  Blocked when the artefact itself is
     restricted, or when any extracted file within it carries a restriction the
@@ -3343,7 +3343,7 @@ def download(item_id=None, artefact_id=None, root_id=None, uuid=None):
 
 
 @blueprint.route('/files/<string:uuid>/download', endpoint='download_file')
-@login_required
+@public_downloadable
 def download_file(uuid):
     """Download an individual extracted file from a partition.
 
@@ -3683,9 +3683,21 @@ def rerun_product_recognition_route(uuid):
 
 
 @blueprint.route('/outputs/<path:filename>')
-@login_required
+@public_downloadable
 def get_output_file(filename):
-    """Serve an analysis output file (visualisation, etc.) to logged-in users."""
+    """Serve an analysis output file (visualisation, etc.)."""
+    # Output paths follow {item_part}/{artefact_uuid}_{slug}/{file...}.
+    # Extract the artefact UUID from the second path component and enforce
+    # visibility so private artefacts' outputs are not exposed.
+    path_parts = filename.split('/', 2)
+    artefact_for_check = None
+    if len(path_parts) >= 2:
+        uuid_candidate = path_parts[1].split('_', 1)[0]
+        if len(uuid_candidate) == 32:
+            artefact_for_check = Artefact.query.filter_by(uuid=uuid_candidate).first()
+    if artefact_for_check is None or not can_view_artefact(artefact_for_check, current_user):
+        abort(404)
+
     storage = current_app.storage
     key = storage.storage_key('outputs', filename)
 

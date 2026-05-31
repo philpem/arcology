@@ -27,7 +27,7 @@ from ..database import (
     UserPermission,
 )
 from ..extensions import db
-from ..permissions import require_permission
+from ..permissions import public_readable, require_permission
 from ..utils.item_helpers import (
     assign_item_fields,
     assign_item_tags,
@@ -115,7 +115,7 @@ class SearchForm(FlaskForm):
 # =============================================================================
 
 @blueprint.route('/')
-@login_required
+@public_readable
 def index():
     """List all items with search/filter."""
     form = SearchForm(request.args)
@@ -359,7 +359,7 @@ def new():
 
 
 @blueprint.route('/<string:uuid>')
-@login_required
+@public_readable
 def view(uuid):
     """View an item and its artefacts."""
     item = lookup_by_identifier(Item, uuid)

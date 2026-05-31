@@ -5,11 +5,12 @@ Homepage and dashboard views.
 """
 
 from flask import Blueprint, jsonify, render_template
-from flask_login import current_user, login_required
+from flask_login import current_user
 from sqlalchemy import case, func
 from sqlalchemy.orm import joinedload
 from ..database import Analysis, AnalysisStatus, Artefact, Item
 from ..extensions import db
+from ..permissions import public_readable
 from ..visibility import artefact_visibility_clause, item_visibility_clause
 
 ROUTENAME = __name__.replace('.', '_')
@@ -55,7 +56,7 @@ def _get_stats(user):
 
 
 @blueprint.route("/")
-@login_required
+@public_readable
 def index():
     """Homepage with dashboard statistics."""
     # Recent items with artefact count subquery (avoids N+1 lazy loads)
@@ -93,7 +94,7 @@ def index():
 
 
 @blueprint.route("/stats.json")
-@login_required
+@public_readable
 def stats_json():
     """Dashboard statistics as JSON (for live counter updates)."""
     return jsonify(_get_stats(current_user))

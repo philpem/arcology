@@ -85,6 +85,7 @@ class UserPermission(enum.Enum):
     """Permission level for a web UI user. Controls all actions in both the web UI and the API."""
     READ_ONLY  = "read_only"   # View everything; no modifications
     READ_WRITE = "read_write"  # Full CRUD access
+    STAFF      = "staff"       # READ_WRITE + taxonomy/hash-DB management; below admin
 
 
 class ApiKeyPermission(enum.Enum):
@@ -244,7 +245,7 @@ class User(db.Model):
             return str(self.id)
 
     def has_permission(self, required: UserPermission) -> bool:
-        order = [UserPermission.READ_ONLY, UserPermission.READ_WRITE]
+        order = [UserPermission.READ_ONLY, UserPermission.READ_WRITE, UserPermission.STAFF]
         return order.index(self.permission) >= order.index(required)
 
     def setPassword(self, password):
