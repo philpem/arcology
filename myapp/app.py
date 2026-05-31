@@ -44,6 +44,15 @@ def create_app(config_name=None):
         if env_val:
             app.config[env_key] = env_val
 
+    # Integer env vars — loaded separately so they're stored as int, not str.
+    for int_key in ('WEB_UI_ANALYSIS_PRIORITY', 'STALE_JOB_TIMEOUT_SECONDS'):
+        env_val = os.environ.get(int_key)
+        if env_val is not None:
+            try:
+                app.config[int_key] = int(env_val)
+            except ValueError:
+                app.logger.warning(f'{int_key} env var is not an integer: {env_val!r}')
+
     # Abort if no database URI is configured
     if not app.config.get('SQLALCHEMY_DATABASE_URI'):
         raise RuntimeError(

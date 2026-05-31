@@ -65,12 +65,9 @@ STALE_JOB_TIMEOUT_SECONDS = 3600
 
 # Priority assigned to analyses queued via the web UI (uploads, re-analyse
 # button).  Workers pick up jobs in order of priority DESC, created_at ASC.
-# Default 0 means web and API/CLI jobs share the same FIFO queue (the
-# behaviour before this option existed).  Raise to e.g. 10 to make
-# interactive web uploads jump ahead of bulk API/CLI uploads — useful when
-# a long `arco upload --dir ...` is in progress and a user wants to see
-# results from a one-off web upload sooner.
-#WEB_UI_ANALYSIS_PRIORITY = 0
+# Default 10 (ANALYSIS_PRIORITY_HIGH) keeps interactive web uploads ahead
+# of bulk API/CLI submissions.  Set to 0 to revert to a shared FIFO queue.
+#WEB_UI_ANALYSIS_PRIORITY = 10
 
 # =============================================================================
 # SSO / OpenID Connect (OAuth 2.0)

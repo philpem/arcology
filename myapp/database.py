@@ -71,11 +71,13 @@ def generate_uuid() -> str:
     return uuid_module.uuid4().hex
 
 
-# Analysis job priority.  Higher values are picked up first.  All jobs default
-# to ANALYSIS_PRIORITY_NORMAL.  Web UI views read the WEB_UI_ANALYSIS_PRIORITY
-# Flask config (default 0) and pass it to queue_analyses_for_artefact() so
-# operators can boost web-triggered jobs above API/CLI ones if they want to.
+# Analysis job priority.  Higher values are picked up first.
+# ANALYSIS_PRIORITY_NORMAL: default for API/CLI-submitted jobs.
+# ANALYSIS_PRIORITY_HIGH: default for web UI uploads and re-analyses,
+#   keeping interactive jobs ahead of bulk API/CLI submissions.
+# Override via WEB_UI_ANALYSIS_PRIORITY in myapp.cfg or environment.
 ANALYSIS_PRIORITY_NORMAL = 0
+ANALYSIS_PRIORITY_HIGH = 10
 
 # =============================================================================
 # Enums
