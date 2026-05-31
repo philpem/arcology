@@ -90,7 +90,7 @@
         <div class="card mb-4">
             <div class="card-header d-flex justify-content-between">
                 <span><i class="bi bi-link-45deg"></i> External References</span>
-                {% if user_can_contribute %}<a href="{{ url_for('myapp_blueprints_items.add_reference', uuid=item.url_id) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-plus"></i></a>{% endif %}
+                {% if user_can_contribute %}<a href="{{ url_for('myapp_blueprints_items.add_reference', uuid=item.url_id) }}" class="btn btn-sm btn-outline-primary" aria-label="Add external reference"><i class="bi bi-plus"></i></a>{% endif %}
             </div>
             <ul class="list-group list-group-flush">
                 {% for ref in item.external_references %}
@@ -100,7 +100,7 @@
                     <form action="{{ url_for('myapp_blueprints_items.delete_reference', item_uuid=item.url_id, ref_id=ref.id) }}" method="post" onsubmit="return confirm('Remove {{ ref.system.name }} reference \'{{ ref.external_id }}\'?');">
 
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-x"></i></button>
+                        <button type="submit" class="btn btn-sm btn-outline-danger" aria-label="Remove reference"><i class="bi bi-x"></i></button>
                     </form>
                     {% endif %}
                 </li>

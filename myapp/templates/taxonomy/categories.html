@@ -17,15 +17,15 @@
 <div class="card">
     <div class="list-group list-group-flush">
         {% for category in categories recursive %}
-        <div class="list-group-item d-flex justify-content-between" style="padding-left: {{ loop.depth * 1.5 }}rem;">
+        <div class="list-group-item d-flex justify-content-between depth-indent" style="--depth: {{ loop.depth }}; --depth-base: 0rem; --depth-step: 1.5rem;">
             <div><strong>{{ category.name }}</strong> <span class="badge bg-secondary">{{ category.items|length }}</span></div>
             {% if user_can_write %}
             <div>
-                <a href="{{ url_for('myapp_blueprints_taxonomy.edit_category', id=category.id) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
+                <a href="{{ url_for('myapp_blueprints_taxonomy.edit_category', id=category.id) }}" class="btn btn-sm btn-outline-primary" aria-label="Edit {{ category.name }}"><i class="bi bi-pencil"></i></a>
                 {% if not category.items and not category.children %}
                 <form action="{{ url_for('myapp_blueprints_taxonomy.delete_category', id=category.id) }}" method="post" class="d-inline">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete?');"><i class="bi bi-trash"></i></button>
+                    <button type="submit" class="btn btn-sm btn-outline-danger" aria-label="Delete {{ category.name }}" onclick="return confirm('Delete?');"><i class="bi bi-trash"></i></button>
                 </form>
                 {% endif %}
             </div>

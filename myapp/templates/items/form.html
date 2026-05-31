@@ -27,7 +27,7 @@
             <div class="card-body">
                 <form method="post">
                     {{ form.hidden_tag() }}
-                    <div class="mb-3">{{ form.name.label(class="form-label") }}{{ form.name(class="form-control") }}</div>
+                    <div class="mb-3">{{ form.name.label(class="form-label") }}<span class="text-danger ms-1" aria-hidden="true">*</span>{{ form.name(class="form-control") }}</div>
                     <div class="mb-3">{{ form.description.label(class="form-label") }}{{ form.description(class="form-control", rows=4) }}</div>
                     <div class="mb-3">{{ form.parent_id.label(class="form-label") }}{{ form.parent_id(class="form-select") }}
                         <div class="form-text">Place this item under another item in the collection hierarchy.</div>

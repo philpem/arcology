@@ -58,7 +58,7 @@
                 {% if view_mode == 'tree' and tree_rows and not searching %}
                 {% for item, depth in tree_rows %}
                 <tr>
-                    <td style="padding-left: {{ 1 + depth * 1.5 }}rem;">
+                    <td class="depth-indent" style="--depth: {{ depth }}; --depth-base: 1rem; --depth-step: 1.5rem;">
                         {% if depth > 0 %}<i class="bi bi-arrow-return-right text-muted me-1"></i>{% endif %}
                         <a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a>
                         {% if item.private_effective %}<i class="bi bi-lock-fill text-warning ms-1" title="Private"></i>{% endif %}
