@@ -115,7 +115,7 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
     </div>
     <div>
         {% if artefact.restrictions %}
-            {% if current_user.can_bypass_all_restrictions(artefact.restrictions) %}
+            {% if current_user.is_authenticated and current_user.can_bypass_all_restrictions(artefact.restrictions) %}
             <a href="{{ artefact_url(artefact, 'download', confirm_bypass='1') }}" class="btn btn-outline-danger"
                onclick="return confirm('This artefact has download restrictions. Are you sure you want to download it?')">
                 <i class="bi bi-download"></i> Download (Override)
@@ -126,7 +126,7 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
             </button>
             {% endif %}
         {% elif artefact_file_restrictions %}
-            {% if current_user.can_bypass_all_restrictions(artefact_file_restrictions) %}
+            {% if current_user.is_authenticated and current_user.can_bypass_all_restrictions(artefact_file_restrictions) %}
             <a href="{{ artefact_url(artefact, 'download', confirm_bypass='1') }}" class="btn btn-outline-danger"
                onclick="return confirm('This artefact contains files with download restrictions. Are you sure you want to download it?')">
                 <i class="bi bi-download"></i> Download (Override)
@@ -136,8 +136,12 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
                 <i class="bi bi-lock-fill"></i> Restricted
             </button>
             {% endif %}
-        {% else %}
+        {% elif current_user.is_authenticated or public_downloads %}
         <a href="{{ artefact_url(artefact, 'download') }}" class="btn btn-success"><i class="bi bi-download"></i> Download</a>
+        {% else %}
+        <a href="{{ url_for('login', next=request.url) }}" class="btn btn-outline-secondary">
+            <i class="bi bi-box-arrow-in-right"></i> Log in to Download
+        </a>
         {% endif %}
         {% if has_converted_outputs %}
         <a href="{{ artefact_url(artefact, 'viewer') }}{% if file_form.path.data %}?path={{ file_form.path.data | urlencode }}{% endif %}" class="btn btn-outline-info"><i class="bi bi-eye"></i> View</a>
@@ -148,7 +152,7 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
         <form action="{{ artefact_url(artefact, 'delete') }}" method="post" class="d-inline" onsubmit="return confirm('Delete artefact \'{{ artefact.label }}\' and all related analyses? This cannot be undone.');">
 
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-outline-danger"><i class="bi bi-trash"></i></button>
+            <button type="submit" class="btn btn-outline-danger" aria-label="Delete artefact"><i class="bi bi-trash"></i></button>
         </form>
         {% endif %}
     </div>

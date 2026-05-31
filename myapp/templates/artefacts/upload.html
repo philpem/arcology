@@ -20,7 +20,7 @@
 
                     <div class="mb-3">
                         <div class="d-flex align-items-center gap-2 mb-1">
-                            {{ form.item_id.label(class="form-label mb-0") }}
+                            {{ form.item_id.label(class="form-label mb-0") }}<span class="text-danger ms-1" aria-hidden="true">*</span>
                             <button type="button" class="btn btn-sm btn-outline-secondary"
                                     onclick="refreshItemChoices('item_id')">
                                 <i class="bi bi-arrow-clockwise"></i> Refresh list
@@ -31,7 +31,7 @@
                     </div>
 
                     <div class="mb-3">
-                        {{ form.file.label(class="form-label") }}
+                        {{ form.file.label(class="form-label") }}<span class="text-danger ms-1" aria-hidden="true">*</span>
                         {{ form.file(class="form-control") }}
                         <div class="form-text">Select the file to upload (disk image, scan, etc.)</div>
                     </div>
