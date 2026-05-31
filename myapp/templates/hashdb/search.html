@@ -63,7 +63,7 @@
                     {% endif %}
                 </td>
                 <td class="text-muted text-nowrap">
-                    {% if ef.file_size is not none %}{{ ef.file_size | filesizeformat }}{% endif %}
+                    {% if ef.file_size is not none %}<span title="{{ ef.file_size }} bytes">{{ ef.file_size | format_filesize }}</span>{% endif %}
                 </td>
                 <td class="text-muted small">
                     <a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a>

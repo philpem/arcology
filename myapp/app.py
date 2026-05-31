@@ -145,6 +145,17 @@ def create_app(config_name=None):
         return _ANALYSIS_TYPE_DISPLAY.get(s, s.replace('_', ' ').title())
     app.jinja_env.filters['format_analysis_type'] = _format_analysis_type
 
+    def _format_filesize(size_bytes):
+        """Format a byte count as a human-readable size with the most appropriate unit."""
+        if size_bytes is None:
+            return '-'
+        size = float(size_bytes)
+        for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
+            if abs(size) < 1024.0 or unit == 'TB':
+                return f'{int(size)} {unit}' if unit == 'B' else f'{size:.1f} {unit}'
+            size /= 1024.0
+    app.jinja_env.filters['format_filesize'] = _format_filesize
+
     # enable database logging (if enabled)
     if app.config.get('DEBUG_DB_LOG', False):
         import logging

@@ -337,7 +337,7 @@
                             <span class="badge bg-secondary">Opt</span>
                             {% endif %}
                         </td>
-                        <td class="text-muted">{{ kf.file_size if kf.file_size is not none else '—' }}</td>
+                        <td class="text-muted">{% if kf.file_size is not none %}<span title="{{ kf.file_size }} bytes">{{ kf.file_size | format_filesize }}</span>{% else %}—{% endif %}</td>
                         <td><code class="text-break">{{ kf.md5 or '—' }}</code></td>
                         <td><code class="text-break">{{ kf.sha1 or '—' }}</code></td>
                         <td><code class="text-break">{{ kf.sha256 or '—' }}</code></td>
