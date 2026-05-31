@@ -32,7 +32,7 @@ from ..utils.item_helpers import (
     assign_item_fields,
     assign_item_tags,
     indented_item_choices,
-    item_choice_list,
+    indented_taxonomy_choices,
     item_parent_choice_list,
 )
 from ..utils.pagination import VALID_PER_PAGE, compute_letter_pages, resolve_per_page, resolve_sort
@@ -120,8 +120,8 @@ def index():
     """List all items with search/filter."""
     form = SearchForm(request.args)
 
-    form.platform_id.choices = item_choice_list(Platform, '-- All Platforms --')
-    form.category_id.choices = item_choice_list(Category, '-- All Categories --')
+    form.platform_id.choices = indented_taxonomy_choices(Platform, '-- All Platforms --')
+    form.category_id.choices = indented_taxonomy_choices(Category, '-- All Categories --')
 
     # Tree view toggle: 'tree' shows indented hierarchy; default shows root items only.
     view_mode = request.args.get('view', 'flat')
@@ -304,8 +304,8 @@ def new():
     # The creator is always the owner; no owner picker on creation.
     del form['owner_id']
 
-    form.platform_id.choices = item_choice_list(Platform, '-- Select Platform --')
-    form.category_id.choices = item_choice_list(Category, '-- Select Category --')
+    form.platform_id.choices = indented_taxonomy_choices(Platform, '-- Select Platform --')
+    form.category_id.choices = indented_taxonomy_choices(Category, '-- Select Category --')
     form.parent_id.choices = item_parent_choice_list('-- No parent (root item) --', viewer=current_user)
 
     # Pre-select parent if ?parent=<uuid> is provided (e.g. from "New Child Item" button)
@@ -446,8 +446,8 @@ def edit(uuid):
         return redirect(url_for(f'{ROUTENAME}.edit', uuid=item.url_id), 301)
     form = ItemForm(obj=item)
 
-    form.platform_id.choices = item_choice_list(Platform, '-- Select Platform --')
-    form.category_id.choices = item_choice_list(Category, '-- Select Category --')
+    form.platform_id.choices = indented_taxonomy_choices(Platform, '-- Select Platform --')
+    form.category_id.choices = indented_taxonomy_choices(Category, '-- Select Category --')
     # Exclude self and descendants from the parent dropdown to prevent cycles
     form.parent_id.choices = item_parent_choice_list('-- No parent (root item) --', exclude_item=item, viewer=current_user)
 

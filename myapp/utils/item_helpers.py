@@ -12,6 +12,30 @@ def item_choice_list(model, placeholder: str):
     ]
 
 
+def indented_taxonomy_choices(model, placeholder: str):
+    """Build a hierarchically-indented select list for Platform or Category.
+
+    Produces depth-first tree order with non-breaking-space indentation so a
+    flat <select> element visually reflects the parent/child hierarchy.  The
+    model must have ``id``, ``name``, ``parent_id``, and ``children`` fields.
+    """
+    all_rows = model.query.order_by(model.name).all()
+    children_map: dict[int | None, list] = {}
+    for row in all_rows:
+        children_map.setdefault(row.parent_id, []).append(row)
+
+    choices = [(0, placeholder)]
+
+    def _traverse(parent_id, depth):
+        indent = '    ' * depth
+        for row in children_map.get(parent_id, []):
+            choices.append((row.id, f"{indent}{row.name}"))
+            _traverse(row.id, depth + 1)
+
+    _traverse(None, 0)
+    return choices
+
+
 def indented_item_choices(*, value_fn=lambda item: item.id,
                           exclude_ids=None, viewer=None):
     """Build a hierarchically-indented choice list of all items.
