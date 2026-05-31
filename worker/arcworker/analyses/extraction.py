@@ -144,10 +144,13 @@ def _sniff_archive_magic(file_path: Path):
     if len(header) >= 8 and header[0] == 0x1A and header[1:8] == b'archive':
         return ArchiveType.ARCFS
 
-    # Spark: 0x1A followed by 0x00, 0x80-0x89, or 0xFF
+    # Spark: 0x1A followed by a valid method byte.
+    # Methods 0x01-0x09 cover stored, packed, squeezed, and crunch variants.
+    # Methods 0x80-0x89 cover Squash/ArcFS compatibility entries.
+    # 0x00 = end-of-archive marker; 0xFF = directory entry.
     if header[0] == 0x1A:
         second = header[1]
-        if second == 0x00 or (0x80 <= second <= 0x89) or second == 0xFF:
+        if second == 0x00 or (0x01 <= second <= 0x09) or (0x80 <= second <= 0x89) or second == 0xFF:
             return ArchiveType.SPARK
 
     # ZIP: PK\x03\x04
@@ -279,9 +282,12 @@ def _extract_top_level_archive(
     # Spark/ArcFS fallback: if riscosarc fails, the file might
     # actually be a ZIP with RISC OS filetypes (SparkFS uses
     # filetype &DDC for both Spark and ZIP).
+    # Only replace the result when the ZIP fallback succeeds; otherwise
+    # keep the riscosarc error so the reported tool and details are correct.
     if not result['success'] and archive_type == ArchiveType.SPARK:
-        result = extract_zip_riscos(input_path, extract_dir)
-        if result['success']:
+        zip_result = extract_zip_riscos(input_path, extract_dir)
+        if zip_result['success']:
+            result = zip_result
             archive_type = ArchiveType.ZIP_RISCOS
             archive_info = get_archive_info(archive_type)
 
@@ -976,9 +982,12 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
         # used for Spark. If riscosarc unpacking fails, try Zip.
         # Upgrade archive_type to ZIP_RISCOS so the display name reflects
         # the actual container format while keeping is_acorn_archive True.
+        # Only replace the result when the ZIP fallback succeeds; otherwise
+        # keep the riscosarc error so the reported tool and details are correct.
         if not result['success'] and archive_type == ArchiveType.SPARK:
-            result = extract_zip_riscos(archive_path, temp_output_dir)
-            if result['success']:
+            zip_result = extract_zip_riscos(archive_path, temp_output_dir)
+            if zip_result['success']:
+                result = zip_result
                 archive_type = ArchiveType.ZIP_RISCOS
                 archive_info = get_archive_info(archive_type)
 
