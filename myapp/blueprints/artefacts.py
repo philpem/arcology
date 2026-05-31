@@ -22,6 +22,7 @@ from werkzeug.utils import secure_filename
 from wtforms import BooleanField, IntegerField, SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Optional
 from ..database import (
+    ANALYSIS_PRIORITY_HIGH,
     ANALYSIS_PRIORITY_NORMAL,
     Analysis,
     AnalysisStatus,
@@ -2839,7 +2840,7 @@ def upload(item_id):
                 hints['platform'] = platform.name
         if form.dfi_clock_mhz.data:
             hints['dfi_clock_mhz'] = form.dfi_clock_mhz.data
-        web_priority = current_app.config.get('WEB_UI_ANALYSIS_PRIORITY', ANALYSIS_PRIORITY_NORMAL)
+        web_priority = current_app.config.get('WEB_UI_ANALYSIS_PRIORITY', ANALYSIS_PRIORITY_HIGH)
         queue_analyses_for_artefact(artefact, hints if hints else None,
                                     checksum_only=not form.auto_analyse.data,
                                     priority=web_priority)
@@ -3562,7 +3563,7 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
             hints['notes'] = form.notes.data
 
         cleanup = reset_artefact_for_reanalysis(artefact)
-        web_priority = current_app.config.get('WEB_UI_ANALYSIS_PRIORITY', ANALYSIS_PRIORITY_NORMAL)
+        web_priority = current_app.config.get('WEB_UI_ANALYSIS_PRIORITY', ANALYSIS_PRIORITY_HIGH)
         queue_analyses_for_artefact(artefact, hints if hints else None, priority=web_priority)
 
         # Run filesystem cleanup in background so the redirect happens immediately.
