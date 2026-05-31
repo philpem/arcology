@@ -150,7 +150,7 @@ def create_app(config_name=None):
         if size_bytes is None:
             return '-'
         size = float(size_bytes)
-        for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
+        for unit in ('B', 'KiB', 'MiB', 'GiB', 'TiB'):
             if abs(size) < 1024.0 or unit == 'TB':
                 return f'{int(size)} {unit}' if unit == 'B' else f'{size:.1f} {unit}'
             size /= 1024.0
