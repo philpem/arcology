@@ -1318,6 +1318,30 @@ def view_legacy(uuid):
     return _render_artefact_view(artefact)
 
 
+@blueprint.route('/artefacts/<string:uuid>/analysis-status.json')
+@public_readable
+def analysis_status_json(uuid):
+    """Lightweight JSON endpoint returning analysis status counts for an artefact tree.
+
+    Used by the artefact view page to poll for completion without a full reload.
+    Returns: {"pending": N, "running": N, "completed": N, "failed": N, "total": N}
+    """
+    from flask import jsonify
+    artefact = _get_artefact_or_404(uuid=uuid)
+    all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    counts = {s.value: 0 for s in AnalysisStatus}
+    rows = (
+        db.session.query(Analysis.status, db.func.count(Analysis.id))
+        .filter(Analysis.artefact_id.in_(all_ids))
+        .group_by(Analysis.status)
+        .all()
+    )
+    for status, n in rows:
+        counts[status.value] = n
+    counts['total'] = sum(counts.values())
+    return jsonify(counts)
+
+
 @blueprint.route('/artefacts/<string:uuid>/tree')
 @public_readable
 def tree(uuid):
