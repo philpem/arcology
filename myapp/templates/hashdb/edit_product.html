@@ -168,7 +168,7 @@
                     <input type="number" name="file_size_{{ kf.id }}" class="form-control form-control-sm"
                            value="{{ kf.file_size or '' }}" style="min-width:65px">
                     {% else %}
-                    {{ kf.file_size if kf.file_size is not none else '—' }}
+                    {% if kf.file_size is not none %}<span title="{{ kf.file_size }} bytes">{{ kf.file_size | format_filesize }}</span>{% else %}—{% endif %}
                     {% endif %}
                 </td>
                 <td>

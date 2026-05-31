@@ -248,7 +248,7 @@
                                 {% endif %}
                                 {% endif %}
                             </td>
-                            <td>{% if file.is_directory %}<span class="text-muted">DIR</span>{% elif file.file_size %}{{ (file.file_size / 1024)|round(1) }} KB{% else %}-{% endif %}</td>
+                            <td>{% if file.is_directory %}<span class="text-muted">DIR</span>{% elif file.file_size %}<span title="{{ file.file_size }} bytes">{{ file.file_size | format_filesize }}</span>{% else %}-{% endif %}</td>
                             <td class="text-nowrap">{% set _fdate = file.modified_time or file.created_time %}{% if _fdate %}<span class="text-muted small" title="{{ 'modified' if file.modified_time else 'created' }}: {{ _fdate.isoformat() }}">{{ _fdate.strftime('%Y-%m-%d %H:%M') }}</span>{% else %}-{% endif %}</td>
                             <td>
                                 {% if file.risc_os_filetype %}

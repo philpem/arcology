@@ -10,7 +10,7 @@
                     {% endif %}
                     {% set decomp = partition_detect_details.get('decompression', {}) %}
                     {% if decomp.get('was_decompressed') %}
-                    <span class="badge bg-secondary ms-1" title="Input was decompressed from {{ decomp.get('compression_format', '?') }} ({{ ((decomp.get('compressed_size', 0)) / 1024 / 1024) | round(1) }} MB &rarr; {{ ((decomp.get('decompressed_size', 0)) / 1024 / 1024) | round(1) }} MB)">
+                    <span class="badge bg-secondary ms-1" title="Input was decompressed from {{ decomp.get('compression_format', '?') }} ({{ decomp.get('compressed_size', 0) | format_filesize }} &rarr; {{ decomp.get('decompressed_size', 0) | format_filesize }})">
                         <i class="bi bi-file-zip"></i> {{ decomp.get('compression_format', '') }}
                     </span>
                     {% endif %}
@@ -33,7 +33,7 @@
                     <strong>{{ acorn.get('scheme', '') | upper }}</strong>
                     {% if acorn.get('description') %}&mdash; {{ acorn.get('description') }}{% endif %}
                     {% if acorn.get('total_capacity_bytes') %}
-                    ({{ (acorn.get('total_capacity_bytes') / 1024 / 1024) | round(1) }} MB)
+                    (<span title="{{ acorn.get('total_capacity_bytes') }} bytes">{{ acorn.get('total_capacity_bytes') | format_filesize }}</span>)
                     {% endif %}
                     {% set nxhdr = acorn.get('nexus_header', {}) %}
                     {% if nxhdr %}

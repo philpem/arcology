@@ -1923,7 +1923,7 @@ def _build_derived_entries(artefact):
                 'download_url': _derived_artefact_url(child, 'download'),
                 'viewer_url': _derived_artefact_url(child, 'viewer') if has_viewer else None,
                 'restricted': restricted,
-                'size_mb': round(child.file_size / 1024 / 1024, 2) if child.file_size else None,
+                'file_size': child.file_size,
                 'mime_type': child.mime_type or '',
             })
             _walk(child, depth + 1)
