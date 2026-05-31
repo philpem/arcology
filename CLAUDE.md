@@ -191,7 +191,7 @@ See `doc/ADMIN_COMMANDS.md` for the full reference including all flags.
 
 - **Indentation**: 4 spaces per level (PEP 8 standard). Files end with `# vim: ts=4 sw=4 et`.
 - **Python version**: 3.10+ (uses PEP 585 type hints in newer code)
-- **Linting**: CI enforces [Ruff](https://docs.astral.sh/ruff/) for style and import order. Run `ruff check <files>` before committing; `ruff check --fix <files>` applies safe auto-fixes. The two most common issues are unsorted imports (I001) and undefined names from missing imports (F821).
+- **Linting**: CI enforces [Ruff](https://docs.astral.sh/ruff/) for style and import order. CI runs `ruff check .` (the **entire repository**, including `ci/`). Run `ruff check .` before committing; `ruff check --fix .` applies safe auto-fixes. The two most common issues are unsorted imports (I001) and undefined names from missing imports (F821). The pre-push hook also runs this check automatically.
 - **UUIDs for public identifiers**: URLs and API responses use UUID hex strings, not sequential integer IDs
 - **Application factory pattern**: `create_app()` in `app.py`; extensions bound in factory, not at import time
 - **Blueprint auto-discovery**: Any module in `myapp/blueprints/` with a `blueprint` variable is auto-registered. Optional `init_app(app)` for additional setup.
@@ -627,11 +627,11 @@ SQLALCHEMY_DATABASE_URI=sqlite:///:memory: SECRET_KEY=test WORKER_API_KEY=test \
     python -m unittest discover -s ci -p "test_*.py" -v
 ```
 
-CI also runs Ruff on every push. Check and auto-fix before committing:
+CI runs Ruff on every push against the entire repository (`ruff check .`). The pre-push hook enforces this locally. Check and auto-fix before committing:
 
 ```bash
-ruff check myapp/ shared/ worker/ cli/          # report issues
-ruff check --fix myapp/ shared/ worker/ cli/    # apply safe fixes
+ruff check .          # report issues (matches CI exactly)
+ruff check --fix .    # apply safe auto-fixes
 ```
 
 When modifying code, also verify manually:
