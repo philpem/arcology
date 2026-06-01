@@ -83,9 +83,9 @@
 </div>
 {% endblock %}
 
-{% if all_tags %}
 {% block scripts %}
 {{ super() }}
+{% if all_tags %}
 <script>
 (function () {
     var input = document.getElementById('tags-input');
@@ -125,5 +125,5 @@
     updatePickerState();
 })();
 </script>
-{% endblock %}
 {% endif %}
+{% endblock %}
