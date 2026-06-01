@@ -18,6 +18,33 @@ from .svg_utils import postprocess_svg
 # Extensions passed through unchanged (browser-native formats)
 _PASSTHROUGH_EXTS = frozenset({'.jpg', '.jpeg', '.png', '.gif', '.webp'})
 
+
+def _sniff_browser_native_ext(input_path: Path) -> str | None:
+    """Identify a browser-native image by its magic bytes.
+
+    Returns the canonical extension ('.jpg', '.png', '.gif', '.webp') if the
+    file's leading bytes match a browser-native raster format, else None.
+
+    This backstops the extension-based passthrough check: RISC OS extracts
+    name files with a ',xxx' filetype suffix (e.g. 'Photo,c85') rather than a
+    DOS extension, so a real JPEG arrives with no '.jpg' suffix and would
+    otherwise be needlessly re-encoded to PNG by the Pillow fallback.
+    """
+    try:
+        with open(input_path, 'rb') as f:
+            header = f.read(12)
+    except OSError:
+        return None
+    if header.startswith(b'\xff\xd8\xff'):
+        return '.jpg'
+    if header.startswith(b'\x89PNG\r\n\x1a\n'):
+        return '.png'
+    if header[:6] in (b'GIF87a', b'GIF89a'):
+        return '.gif'
+    if header[:4] == b'RIFF' and header[8:12] == b'WEBP':
+        return '.webp'
+    return None
+
 # Extensions converted to SVG via external tools.
 def _wmf_cmd(src: Path, dst: Path) -> list[str]:
     return ['wmf-cli', '--input', str(src), '--output', str(dst)]
@@ -119,13 +146,18 @@ def convert_image(input_path: Path, output_dir: Path, analysis_uuid: str) -> dic
         )
 
     # --- Pass-through raster ---
-    if ext in _PASSTHROUGH_EXTS:
-        out_path = output_dir / f'{analysis_uuid}_image{ext}'
+    # Trust the extension first; for files without a recognised extension
+    # (notably RISC OS extracts named 'Photo,c85' with no '.jpg' suffix),
+    # fall back to a magic-byte sniff so browser-native formats are copied
+    # through unchanged rather than re-encoded to PNG below.
+    passthrough_ext = ext if ext in _PASSTHROUGH_EXTS else _sniff_browser_native_ext(input_path)
+    if passthrough_ext:
+        out_path = output_dir / f'{analysis_uuid}_image{passthrough_ext}'
         shutil.copy2(input_path, out_path)
         return _result(
             True,
             output_path=str(out_path),
-            fmt=ext.lstrip('.').upper(),
+            fmt=passthrough_ext.lstrip('.').upper(),
             tool='passthrough',
             error=None,
         )
