@@ -180,14 +180,27 @@
 			must be configured on both the web container and every worker container.
 		</p>
 		{% if worker_key %}
-		<div class="d-flex align-items-center gap-2 mb-2">
-			<pre class="bg-light border rounded p-2 mb-0 flex-grow-1 user-select-all"><code>{{ worker_key }}</code></pre>
-			<button type="button" class="btn btn-sm btn-outline-secondary" onclick="copyToClipboard('{{ worker_key }}', this)" title="Copy worker key">
+		{% set _key_prefix = worker_key[:7] if worker_key|length > 7 else worker_key %}
+		{% set _key_masked = _key_prefix ~ '…' ~ worker_key[-4:] %}
+		<div class="d-flex align-items-center gap-2 mb-2" id="worker-key-row">
+			<pre class="bg-light border rounded p-2 mb-0 flex-grow-1 user-select-all font-monospace"
+			     id="worker-key-display">{{ _key_masked }}</pre>
+			<button type="button" class="btn btn-sm btn-outline-secondary"
+			        id="worker-key-reveal"
+			        onclick="revealWorkerKey({{ worker_key | tojson }})"
+			        title="Reveal full key">
+				<i class="bi bi-eye"></i> Reveal
+			</button>
+			<button type="button" class="btn btn-sm btn-outline-secondary d-none"
+			        id="worker-key-copy"
+			        onclick="copyToClipboard(document.getElementById('worker-key-display').textContent, this)"
+			        title="Copy worker key">
 				<i class="bi bi-clipboard"></i> Copy
 			</button>
 		</div>
 		<p class="text-muted small mb-0">
 			<i class="bi bi-info-circle"></i>
+			Treat this key like a password — it grants full worker API access.
 			To generate a new key: <code>python3 -c "import secrets; print('wrk_' + secrets.token_hex(32))"</code>
 			— then update <code>.env</code> and restart both services.
 		</p>
@@ -200,4 +213,15 @@
 		{% endif %}
 	</div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+function revealWorkerKey(fullKey) {
+    document.getElementById('worker-key-display').textContent = fullKey;
+    document.getElementById('worker-key-reveal').classList.add('d-none');
+    document.getElementById('worker-key-copy').classList.remove('d-none');
+}
+</script>
 {% endblock %}
