@@ -4,7 +4,7 @@ Arcology - Admin Blueprint
 User management and system configuration for administrators.
 """
 
-from flask import Blueprint, abort, current_app, flash, render_template, request
+from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
 from sqlalchemy import func
@@ -17,6 +17,7 @@ from ..database import (
     Item,
     RestrictionType,
     User,
+    UserArtefactBypass,
     UserPermission,
     UserRestrictionBypass,
     group_memberships,
@@ -165,6 +166,20 @@ def create_user():
     return render_template('admin/create_user.html', form=form, RestrictionType=RestrictionType)
 
 
+def _render_edit_user(form, user, **kwargs):
+    """Render the edit_user page, injecting per-artefact bypass list."""
+    artefact_bypasses = (
+        UserArtefactBypass.query
+        .filter_by(user_id=user.id)
+        .order_by(UserArtefactBypass.artefact_id, UserArtefactBypass.restriction_type)
+        .all()
+    )
+    kwargs.setdefault('editing_self', False)
+    kwargs.setdefault('RestrictionType', RestrictionType)
+    return render_template('admin/edit_user.html', form=form, user=user,
+                           artefact_bypasses=artefact_bypasses, **kwargs)
+
+
 @blueprint.route('/users/<int:user_id>/edit', methods=['GET', 'POST'])
 @login_required
 def edit_user(user_id):
@@ -181,8 +196,7 @@ def edit_user(user_id):
             permission=user.permission.value,
             can_use_api=user.can_use_api,
         )
-        return render_template('admin/edit_user.html', form=form, user=user,
-                               editing_self=False, RestrictionType=RestrictionType)
+        return _render_edit_user(form, user)
 
     form = EditUserForm()
     if form.validate_on_submit():
@@ -190,20 +204,20 @@ def edit_user(user_id):
         existing = User.query.filter_by(username=form.username.data).first()
         if existing and existing.id != user.id:
             flash(f'Username "{form.username.data}" is already taken.', 'error')
-            return render_template('admin/edit_user.html', form=form, user=user, editing_self=False, RestrictionType=RestrictionType)
+            return _render_edit_user(form, user)
 
         # Validate and apply password change (local accounts only)
         new_pw = form.new_password.data
         if new_pw and user.oidc_managed:
             flash('Password cannot be changed for SSO-managed accounts.', 'error')
-            return render_template('admin/edit_user.html', form=form, user=user, editing_self=False, RestrictionType=RestrictionType)
+            return _render_edit_user(form, user)
         if new_pw:
             if len(new_pw) < 12:
                 flash('Password must be at least 12 characters.', 'error')
-                return render_template('admin/edit_user.html', form=form, user=user, editing_self=False, RestrictionType=RestrictionType)
+                return _render_edit_user(form, user)
             if new_pw != form.confirm_password.data:
                 flash('Passwords must match.', 'error')
-                return render_template('admin/edit_user.html', form=form, user=user, editing_self=False, RestrictionType=RestrictionType)
+                return _render_edit_user(form, user)
             user.setPassword(new_pw)
 
         user.username = form.username.data
@@ -232,7 +246,18 @@ def edit_user(user_id):
 
     # Form validation failed
     flash_form_errors(form)
-    return render_template('admin/edit_user.html', form=form, user=user, editing_self=False, RestrictionType=RestrictionType)
+    return _render_edit_user(form, user)
+
+
+@blueprint.route('/users/<int:user_id>/artefact-bypass/<int:bypass_id>/revoke', methods=['POST'])
+@login_required
+def revoke_artefact_bypass(user_id, bypass_id):
+    _require_admin()
+    bypass = UserArtefactBypass.query.filter_by(id=bypass_id, user_id=user_id).first_or_404()
+    db.session.delete(bypass)
+    db.session.commit()
+    flash('Per-artefact bypass revoked.', 'success')
+    return redirect(url_for('.edit_user', user_id=user_id))
 
 
 @blueprint.route('/users/<int:user_id>/delete', methods=['POST'])
