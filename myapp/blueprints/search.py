@@ -58,7 +58,7 @@ _TOKEN_RE = re.compile(
     re.UNICODE,
 )
 
-RESULT_LIMIT = 200
+PER_PAGE = 50
 
 
 def parse_query(raw: str) -> dict:
@@ -93,9 +93,15 @@ def parse_query(raw: str) -> dict:
 @public_readable
 def index():
     q = request.args.get('q', '').strip()
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+    except (ValueError, TypeError):
+        page = 1
     tokens = parse_query(q)
 
-    results = _run_search(tokens) if q else None
+    results = _run_search(tokens, page=page) if q else None
+    has_next = bool(results and results.pop('has_next', False))
+    has_prev = page > 1
 
     known_protection_types = sorted(
         v for (v,) in db.session.query(distinct(ArtefactProtection.protection_type)).all()
@@ -109,7 +115,10 @@ def index():
         q=q,
         tokens=tokens,
         results=results,
-        RESULT_LIMIT=RESULT_LIMIT,
+        PER_PAGE=PER_PAGE,
+        page=page,
+        has_next=has_next,
+        has_prev=has_prev,
         FilesystemType=FilesystemType,
         known_protection_types=known_protection_types,
         known_mastering_types=known_mastering_types,
@@ -168,7 +177,7 @@ def _dedup_by_artefact(rows):
     return deduped
 
 
-def _search_files(tokens):
+def _search_files(tokens, page=1):
     """Search ExtractedFile by hash, filename, path, type, or extension."""
     # Build per-key filter lists: OR within a key, AND across keys.
     per_key = {}
@@ -200,14 +209,15 @@ def _search_files(tokens):
         .filter(ExtractedFile.is_directory == False)
         .filter(artefact_visibility_clause(current_user))
         .order_by(func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path))
-        .limit(RESULT_LIMIT + 1)
+        .offset((page - 1) * PER_PAGE)
+        .limit(PER_PAGE + 1)
         .all()
     )
-    truncated = len(q) > RESULT_LIMIT
-    return q[:RESULT_LIMIT], truncated
+    truncated = len(q) > PER_PAGE
+    return q[:PER_PAGE], truncated
 
 
-def _search_partitions(tokens):
+def _search_partitions(tokens, page=1):
     """Search Partitions by label, ident, or filesystem type."""
     per_key = {}
     for v in tokens.get('label', []):
@@ -232,14 +242,15 @@ def _search_partitions(tokens):
         .filter(combined)
         .filter(artefact_visibility_clause(current_user))
         .order_by(func.lower(Item.name), func.lower(Artefact.label), Partition.partition_index)
-        .limit(RESULT_LIMIT + 1)
+        .offset((page - 1) * PER_PAGE)
+        .limit(PER_PAGE + 1)
         .all()
     )
-    truncated = len(q) > RESULT_LIMIT
-    return q[:RESULT_LIMIT], truncated
+    truncated = len(q) > PER_PAGE
+    return q[:PER_PAGE], truncated
 
 
-def _search_protection(tokens):
+def _search_protection(tokens, page=1):
     """Search ArtefactProtection by protection type."""
     all_results = []
     truncated = False
@@ -251,12 +262,14 @@ def _search_protection(tokens):
             .filter(ArtefactProtection.protection_type == prot_type.lower())
             .filter(artefact_visibility_clause(current_user))
             .order_by(func.lower(Item.name), func.lower(Artefact.label))
+            .offset((page - 1) * PER_PAGE)
+            .limit(PER_PAGE + 1)
             .all()
         )
         deduped = _dedup_by_artefact(q)
-        if len(deduped) > RESULT_LIMIT:
+        if len(deduped) > PER_PAGE:
             truncated = True
-            deduped = deduped[:RESULT_LIMIT]
+            deduped = deduped[:PER_PAGE]
         all_results.extend([
             {'type': 'protection', 'protection_type': prot_type, 'artefact': a, 'item': i}
             for _, a, i in deduped
@@ -264,7 +277,7 @@ def _search_protection(tokens):
     return all_results, truncated
 
 
-def _search_mastering(tokens):
+def _search_mastering(tokens, page=1):
     """Search ArtefactMastering by mastering type."""
     all_results = []
     truncated = False
@@ -276,12 +289,14 @@ def _search_mastering(tokens):
             .filter(ArtefactMastering.mastering_type == mast_type.lower())
             .filter(artefact_visibility_clause(current_user))
             .order_by(func.lower(Item.name), func.lower(Artefact.label))
+            .offset((page - 1) * PER_PAGE)
+            .limit(PER_PAGE + 1)
             .all()
         )
         deduped = _dedup_by_artefact(q)
-        if len(deduped) > RESULT_LIMIT:
+        if len(deduped) > PER_PAGE:
             truncated = True
-            deduped = deduped[:RESULT_LIMIT]
+            deduped = deduped[:PER_PAGE]
         all_results.extend([
             {'type': 'mastering', 'mastering_type': mast_type, 'artefact': a, 'item': i}
             for _, a, i in deduped
@@ -289,7 +304,7 @@ def _search_mastering(tokens):
     return all_results, truncated
 
 
-def _search_modules(tokens):
+def _search_modules(tokens, page=1):
     """Search RiscosModule by title_string or help_title, returning file tuples."""
     all_results = []
     truncated = False
@@ -308,16 +323,17 @@ def _search_modules(tokens):
             .filter(ExtractedFile.is_directory == False)
             .filter(artefact_visibility_clause(current_user))
             .order_by(func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path))
-            .limit(RESULT_LIMIT + 1)
+            .offset((page - 1) * PER_PAGE)
+            .limit(PER_PAGE + 1)
             .all()
         )
-        if len(q) > RESULT_LIMIT:
+        if len(q) > PER_PAGE:
             truncated = True
-        all_results.extend(q[:RESULT_LIMIT])
+        all_results.extend(q[:PER_PAGE])
     return all_results, truncated
 
 
-def _search_commands(tokens):
+def _search_commands(tokens, page=1):
     """Search RiscosModule by star command name, returning file tuples."""
     all_results = []
     truncated = False
@@ -335,16 +351,17 @@ def _search_commands(tokens):
             .filter(ExtractedFile.is_directory == False)
             .filter(artefact_visibility_clause(current_user))
             .order_by(func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path))
-            .limit(RESULT_LIMIT + 1)
+            .offset((page - 1) * PER_PAGE)
+            .limit(PER_PAGE + 1)
             .all()
         )
-        if len(q) > RESULT_LIMIT:
+        if len(q) > PER_PAGE:
             truncated = True
-        all_results.extend(q[:RESULT_LIMIT])
+        all_results.extend(q[:PER_PAGE])
     return all_results, truncated
 
 
-def _search_swis(tokens):
+def _search_swis(tokens, page=1):
     """Search RiscosModule by SWI name, returning file tuples."""
     all_results = []
     truncated = False
@@ -362,16 +379,17 @@ def _search_swis(tokens):
             .filter(ExtractedFile.is_directory == False)
             .filter(artefact_visibility_clause(current_user))
             .order_by(func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path))
-            .limit(RESULT_LIMIT + 1)
+            .offset((page - 1) * PER_PAGE)
+            .limit(PER_PAGE + 1)
             .all()
         )
-        if len(q) > RESULT_LIMIT:
+        if len(q) > PER_PAGE:
             truncated = True
-        all_results.extend(q[:RESULT_LIMIT])
+        all_results.extend(q[:PER_PAGE])
     return all_results, truncated
 
 
-def _search_tags(tokens):
+def _search_tags(tokens, page=1):
     """Search artefacts by tag name."""
     all_results = []
     truncated = False
@@ -383,12 +401,13 @@ def _search_tags(tokens):
             .join(Tag, artefact_tags.c.tag_id == Tag.id)
             .filter(_ilike(Tag.name, tag_val))
             .order_by(func.lower(Item.name), func.lower(Artefact.label))
-            .limit(RESULT_LIMIT + 1)
+            .offset((page - 1) * PER_PAGE)
+            .limit(PER_PAGE + 1)
             .all()
         )
-        if len(q) > RESULT_LIMIT:
+        if len(q) > PER_PAGE:
             truncated = True
-            q = q[:RESULT_LIMIT]
+            q = q[:PER_PAGE]
         all_results.extend([
             {'type': 'tag', 'tag_name': tag_val, 'artefact': a, 'item': i}
             for a, i in q
@@ -396,7 +415,7 @@ def _search_tags(tokens):
     return all_results, truncated
 
 
-def _search_artefact_hashes(tokens):
+def _search_artefact_hashes(tokens, page=1):
     """Search artefact-level hashes (md5, sha256)."""
     art_filters = []
     for h in tokens.get('md5', []):
@@ -413,17 +432,18 @@ def _search_artefact_hashes(tokens):
         .filter(or_(*art_filters))
         .filter(artefact_visibility_clause(current_user))
         .order_by(func.lower(Item.name), func.lower(Artefact.label))
-        .limit(RESULT_LIMIT + 1)
+        .offset((page - 1) * PER_PAGE)
+        .limit(PER_PAGE + 1)
         .all()
     )
-    truncated = len(q) > RESULT_LIMIT
+    truncated = len(q) > PER_PAGE
     return [
         {'type': 'artefact_hash', 'artefact': a, 'item': i}
-        for a, i in q[:RESULT_LIMIT]
+        for a, i in q[:PER_PAGE]
     ], truncated
 
 
-def _search_text_items(tokens):
+def _search_text_items(tokens, page=1):
     """Free-text search on item name/description."""
     text_filters = []
     for v in tokens.get('text', []):
@@ -439,14 +459,15 @@ def _search_text_items(tokens):
         .filter(or_(*text_filters))
         .filter(item_visibility_clause(current_user))
         .order_by(func.lower(Item.name))
-        .limit(RESULT_LIMIT + 1)
+        .offset((page - 1) * PER_PAGE)
+        .limit(PER_PAGE + 1)
         .all()
     )
-    truncated = len(q) > RESULT_LIMIT
-    return q[:RESULT_LIMIT], truncated
+    truncated = len(q) > PER_PAGE
+    return q[:PER_PAGE], truncated
 
 
-def _search_text_artefacts(tokens):
+def _search_text_artefacts(tokens, page=1):
     """Free-text search on artefact label/description."""
     art_text_filters = []
     for v in tokens.get('text', []):
@@ -463,41 +484,46 @@ def _search_text_artefacts(tokens):
         .filter(or_(*art_text_filters))
         .filter(artefact_visibility_clause(current_user))
         .order_by(func.lower(Item.name), func.lower(Artefact.label))
-        .limit(RESULT_LIMIT + 1)
+        .offset((page - 1) * PER_PAGE)
+        .limit(PER_PAGE + 1)
         .all()
     )
-    truncated = len(q) > RESULT_LIMIT
+    truncated = len(q) > PER_PAGE
     return [
         {'type': 'artefact_text', 'artefact': a, 'item': i}
-        for a, i in q[:RESULT_LIMIT]
+        for a, i in q[:PER_PAGE]
     ], truncated
 
 
-def _run_search(tokens: dict) -> dict:
+def _run_search(tokens: dict, page: int = 1) -> dict:
     """Execute queries and return result buckets."""
     results = {
         'files':             [],
         'artefacts':         [],
         'catalogue_items':   [],
         'truncated':         {},
+        'has_next':          False,
     }
 
     has_file_terms = any(k in tokens for k in ('md5', 'sha1', 'sha256', 'filename', 'path', 'type', 'ext'))
     has_disc_terms = any(k in tokens for k in ('label', 'ident', 'fs'))
     has_text = 'text' in tokens
 
+    def _note_trunc(bucket, trunc):
+        if trunc:
+            results['truncated'][bucket] = True
+            results['has_next'] = True
+
     # File search: triggered by hash, filename, path, type, ext filters.
     if has_file_terms or any(k in tokens for k in ('md5', 'sha1', 'sha256')):
-        files, trunc = _search_files(tokens)
+        files, trunc = _search_files(tokens, page=page)
         results['files'] = files
-        if trunc:
-            results['truncated']['files'] = True
+        _note_trunc('files', trunc)
 
     # Disc/partition search
     if has_disc_terms:
-        partitions, trunc = _search_partitions(tokens)
-        if trunc:
-            results['truncated']['artefacts'] = True
+        partitions, trunc = _search_partitions(tokens, page=page)
+        _note_trunc('artefacts', trunc)
         results['artefacts'].extend([
             {'type': 'partition', 'partition': p, 'artefact': a, 'item': i}
             for p, a, i in partitions
@@ -505,63 +531,54 @@ def _run_search(tokens: dict) -> dict:
 
     # Protection indicator search
     if 'protection' in tokens:
-        prot_results, trunc = _search_protection(tokens)
-        if trunc:
-            results['truncated']['artefacts'] = True
+        prot_results, trunc = _search_protection(tokens, page=page)
+        _note_trunc('artefacts', trunc)
         results['artefacts'].extend(prot_results)
 
     # Mastering indicator search
     if 'mastering' in tokens:
-        mast_results, trunc = _search_mastering(tokens)
-        if trunc:
-            results['truncated']['artefacts'] = True
+        mast_results, trunc = _search_mastering(tokens, page=page)
+        _note_trunc('artefacts', trunc)
         results['artefacts'].extend(mast_results)
 
     # RISC OS module search (results are file tuples)
     if 'module' in tokens:
-        mod_results, trunc = _search_modules(tokens)
-        if trunc:
-            results['truncated']['files'] = True
+        mod_results, trunc = _search_modules(tokens, page=page)
+        _note_trunc('files', trunc)
         results['files'].extend(mod_results)
 
     # Star command search (results are file tuples)
     if 'command' in tokens:
-        cmd_results, trunc = _search_commands(tokens)
-        if trunc:
-            results['truncated']['files'] = True
+        cmd_results, trunc = _search_commands(tokens, page=page)
+        _note_trunc('files', trunc)
         results['files'].extend(cmd_results)
 
     # SWI name search (results are file tuples)
     if 'swi' in tokens:
-        swi_results, trunc = _search_swis(tokens)
-        if trunc:
-            results['truncated']['files'] = True
+        swi_results, trunc = _search_swis(tokens, page=page)
+        _note_trunc('files', trunc)
         results['files'].extend(swi_results)
 
     # Tag search
     if 'tag' in tokens:
-        tag_results, trunc = _search_tags(tokens)
-        if trunc:
-            results['truncated']['artefacts'] = True
+        tag_results, trunc = _search_tags(tokens, page=page)
+        _note_trunc('artefacts', trunc)
         results['artefacts'].extend(tag_results)
 
     # Artefact hash search
     if any(k in tokens for k in ('md5', 'sha256')):
-        hash_results, trunc = _search_artefact_hashes(tokens)
-        if trunc:
-            results['truncated']['artefacts'] = True
+        hash_results, trunc = _search_artefact_hashes(tokens, page=page)
+        _note_trunc('artefacts', trunc)
         results['artefacts'].extend(hash_results)
 
     # Free-text search
     if has_text:
-        items, trunc = _search_text_items(tokens)
+        items, trunc = _search_text_items(tokens, page=page)
         results['catalogue_items'] = items
-        if trunc:
-            results['truncated']['items'] = True
+        _note_trunc('items', trunc)
 
-        art_text_results, trunc = _search_text_artefacts(tokens)
-        if trunc:
-            results['truncated']['artefacts'] = True
+        art_text_results, trunc = _search_text_artefacts(tokens, page=page)
+        _note_trunc('artefacts', trunc)
         results['artefacts'].extend(art_text_results)
 
     # Deduplicate file results (module/command searches may overlap with file searches)

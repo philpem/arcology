@@ -209,7 +209,7 @@
 {% if results.files %}
 <div class="tab-pane fade show active" id="tab-files">
 	{% if results.truncated.get('files') %}
-	<div class="alert alert-warning py-2"><i class="bi bi-exclamation-triangle"></i> Showing first {{ RESULT_LIMIT }} results — refine your search to narrow down.</div>
+	<div class="alert alert-info py-2"><i class="bi bi-info-circle"></i> Showing {{ PER_PAGE }} results per page — use the navigation below to see more.</div>
 	{% endif %}
 	<div class="table-responsive">
 		<table class="table table-sm table-hover">
@@ -265,7 +265,7 @@
 {% if results.artefacts %}
 <div class="tab-pane fade{% if not results.files %} show active{% endif %}" id="tab-artefacts">
 	{% if results.truncated.get('artefacts') %}
-	<div class="alert alert-warning py-2"><i class="bi bi-exclamation-triangle"></i> Showing first {{ RESULT_LIMIT }} results — refine your search to narrow down.</div>
+	<div class="alert alert-info py-2"><i class="bi bi-info-circle"></i> Showing {{ PER_PAGE }} results per page — use the navigation below to see more.</div>
 	{% endif %}
 	<div class="table-responsive">
 		<table class="table table-sm table-hover">
@@ -315,7 +315,7 @@
 {% if results.catalogue_items %}
 <div class="tab-pane fade{% if not results.files and not results.artefacts %} show active{% endif %}" id="tab-items">
 	{% if results.truncated.get('items') %}
-	<div class="alert alert-warning py-2"><i class="bi bi-exclamation-triangle"></i> Showing first {{ RESULT_LIMIT }} results — refine your search to narrow down.</div>
+	<div class="alert alert-info py-2"><i class="bi bi-info-circle"></i> Showing {{ PER_PAGE }} results per page — use the navigation below to see more.</div>
 	{% endif %}
 	<div class="table-responsive">
 		<table class="table table-sm table-hover">
@@ -348,6 +348,27 @@
 {% endif %}
 
 </div>{# /tab-content #}
+
+{% if has_prev or has_next %}
+<nav class="d-flex justify-content-between align-items-center mt-3" aria-label="Search result pages">
+    {% if has_prev %}
+    <a href="?{{ dict(request.args, page=page-1) | urlencode }}" class="btn btn-outline-secondary">
+        <i class="bi bi-chevron-left"></i> Previous
+    </a>
+    {% else %}
+    <span></span>
+    {% endif %}
+    <span class="text-muted small">Page {{ page }}</span>
+    {% if has_next %}
+    <a href="?{{ dict(request.args, page=page+1) | urlencode }}" class="btn btn-outline-secondary">
+        Next <i class="bi bi-chevron-right"></i>
+    </a>
+    {% else %}
+    <span></span>
+    {% endif %}
+</nav>
+{% endif %}
+
 {% endif %}{# total > 0 #}
 {% endif %}{# results is not none #}
 
