@@ -7,20 +7,21 @@ Hash databases, known products, and file recognition.
 import csv
 import io
 import json
-import threading
-from datetime import datetime, timezone
-from flask import Blueprint, Response, current_app, flash, redirect, render_template, request, url_for
+from flask import Blueprint, Response, flash, redirect, render_template, request, url_for
 from flask_login import login_required
 from flask_wtf import FlaskForm
 from sqlalchemy import func, or_
 from wtforms import BooleanField, SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Length, Optional
 from ..database import (
+    ANALYSIS_PRIORITY_NORMAL,
+    Analysis,
+    AnalysisStatus,
+    AnalysisType,
     Artefact,
     ExtractedFile,
     HashDatabase,
     HashRescanJob,
-    HashRescanStatus,
     Item,
     KnownFile,
     KnownProduct,
@@ -163,6 +164,45 @@ def _platform_choices():
     return model_choice_list(Platform, label='-- All Platforms --')
 
 
+def _queue_hash_rescan_jobs():
+    """Queue HASH_RESCAN Analysis jobs for every artefact with extracted files.
+
+    Skips artefacts that already have a pending or running HASH_RESCAN job
+    to avoid flooding the queue on repeated clicks.  Returns the number of
+    newly queued jobs.
+    """
+    artefact_ids_with_files = {
+        row[0] for row in
+        db.session.query(Partition.artefact_id)
+        .filter(Partition.total_files > 0)
+        .all()
+    }
+    if not artefact_ids_with_files:
+        return 0
+
+    already_active = {
+        row[0] for row in
+        db.session.query(Analysis.artefact_id)
+        .filter(
+            Analysis.artefact_id.in_(artefact_ids_with_files),
+            Analysis.analysis_type == AnalysisType.HASH_RESCAN,
+            Analysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.RUNNING]),
+        )
+        .all()
+    }
+    to_queue = artefact_ids_with_files - already_active
+    for aid in to_queue:
+        db.session.add(Analysis(
+            artefact_id=aid,
+            analysis_type=AnalysisType.HASH_RESCAN,
+            status=AnalysisStatus.PENDING,
+            priority=ANALYSIS_PRIORITY_NORMAL,
+        ))
+    if to_queue:
+        db.session.commit()
+    return len(to_queue)
+
+
 # =============================================================================
 # Index / List
 # =============================================================================
@@ -172,7 +212,12 @@ def _platform_choices():
 def index():
     databases = HashDatabase.query.order_by(func.lower(HashDatabase.name)).all()
     rescan_job = HashRescanJob.query.order_by(HashRescanJob.id.desc()).first()
-    return render_template('hashdb/index.html', databases=databases, rescan_job=rescan_job)
+    pending_rescan = Analysis.query.filter(
+        Analysis.analysis_type == AnalysisType.HASH_RESCAN,
+        Analysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.RUNNING]),
+    ).count()
+    return render_template('hashdb/index.html', databases=databases,
+                           rescan_job=rescan_job, pending_rescan=pending_rescan)
 
 
 # =============================================================================
@@ -687,117 +732,16 @@ def import_database():
         return _route_redirect('view', id=database.id)
 
 
-# =============================================================================
-# Background rescan
-# =============================================================================
-
-def _run_rescan_background(app, job_id):
-    """Background thread: run a full hash rescan and update the HashRescanJob row.
-
-    All state is stored in the database so every gunicorn worker process
-    sees the same status — no in-process shared state is used.
-    """
-    from ..utils.hash_rescan import (
-        apply_database_restrictions,
-        queue_product_recognition_for_partitions,
-        rescan_hashes_all,
-    )
-
-    with app.app_context():
-        job = db.session.get(HashRescanJob, job_id)
-        if not job:
-            return
-        job.started_at = datetime.now(timezone.utc)
-        db.session.commit()
-
-        try:
-            updated, total = rescan_hashes_all()
-
-            # Apply auto-restrictions from flagged databases to artefacts
-            # whose extracted files now match those databases.
-            has_flagged_db = HashDatabase.query.filter(
-                HashDatabase.is_active == True,
-                HashDatabase.restriction_type.isnot(None),
-            ).first()
-            if has_flagged_db:
-                affected_artefacts = (
-                    Artefact.query
-                    .join(Partition, Partition.artefact_id == Artefact.id)
-                    .join(ExtractedFile, ExtractedFile.partition_id == Partition.id)
-                    .join(KnownFile, ExtractedFile.known_file_id == KnownFile.id)
-                    .join(HashDatabase, KnownFile.database_id == HashDatabase.id)
-                    .filter(
-                        ExtractedFile.is_known == True,
-                        HashDatabase.restriction_type.isnot(None),
-                    )
-                    .distinct()
-                    .all()
-                )
-                for artefact in affected_artefacts:
-                    apply_database_restrictions(artefact)
-
-            # Queue product recognition for all partitions that have files,
-            # but only for databases that have it enabled.
-            queued = 0
-            has_recognition = HashDatabase.query.filter_by(
-                is_active=True, enable_product_recognition=True
-            ).first()
-            if has_recognition:
-                partition_ids = {
-                    row[0] for row in
-                    Partition.query
-                    .with_entities(Partition.id)
-                    .filter(Partition.total_files > 0)
-                    .all()
-                }
-                queued = queue_product_recognition_for_partitions(partition_ids)
-
-            job.status = HashRescanStatus.COMPLETED
-            job.files_updated = updated
-            job.files_total = total
-            job.queued_analyses = queued
-        except Exception as e:
-            job.status = HashRescanStatus.FAILED
-            job.error_message = str(e)
-        finally:
-            job.completed_at = datetime.now(timezone.utc)
-            db.session.commit()
-
-
-def _start_rescan(database_id):
-    """Create a HashRescanJob and launch the background thread.
-
-    Returns (job, None) on success or (None, error_message) if a rescan
-    is already running.
-    """
-    running = HashRescanJob.query.filter_by(status=HashRescanStatus.RUNNING).first()
-    if running:
-        return None, 'A rescan is already in progress.'
-
-    job = HashRescanJob(
-        database_id=database_id,
-        status=HashRescanStatus.RUNNING,
-        created_at=datetime.now(timezone.utc),
-    )
-    db.session.add(job)
-    db.session.commit()
-
-    app = current_app._get_current_object()
-    t = threading.Thread(target=_run_rescan_background, args=(app, job.id), daemon=True)
-    t.start()
-    return job, None
-
-
 @blueprint.route('/rescan', methods=['POST'])
 @login_required
 @require_permission('read_write')
 def rescan_all():
-    """Trigger a full collection-wide hash rescan (from the index page)."""
-    job, err = _start_rescan(database_id=None)
-    if err:
-        flash(err, 'warning')
+    """Queue HASH_RESCAN worker jobs for all artefacts (from the index page)."""
+    n = _queue_hash_rescan_jobs()
+    if n:
+        flash(f'Hash rescan queued: {n} artefact(s) will be processed by the worker.', 'info')
     else:
-        flash('Hash rescan started in the background.', 'info')
+        flash('No artefacts with extracted files found, or all are already queued.', 'warning')
     return redirect(url_for(f'{ROUTENAME}.index'))
 
 
@@ -805,13 +749,13 @@ def rescan_all():
 @login_required
 @require_permission('read_write')
 def rescan(id):
-    """Trigger a full collection-wide hash rescan (from a database view page)."""
+    """Queue HASH_RESCAN worker jobs (from a database view page)."""
     HashDatabase.query.get_or_404(id)
-    job, err = _start_rescan(database_id=id)
-    if err:
-        flash(err, 'warning')
+    n = _queue_hash_rescan_jobs()
+    if n:
+        flash(f'Hash rescan queued: {n} artefact(s) will be processed by the worker.', 'info')
     else:
-        flash('Hash rescan started in the background.', 'info')
+        flash('No artefacts with extracted files found, or all are already queued.', 'warning')
     return redirect(url_for(f'{ROUTENAME}.view', id=id))
 
 

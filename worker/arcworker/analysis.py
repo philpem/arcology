@@ -517,6 +517,9 @@ class AnalysisWorker:
     process_partition_detect      = _analyses.process_partition_detect
     process_armlock_remove        = _analyses.process_armlock_remove
 
+    # Maintenance
+    process_hash_rescan           = _analyses.process_hash_rescan
+
     # =========================================================================
     # Job Processing
     # =========================================================================
