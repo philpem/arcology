@@ -349,7 +349,7 @@
 
 </div>{# /tab-content #}
 
-{% if has_prev or has_next %}
+{% if has_prev or has_next or VALID_PER_PAGE %}
 <nav class="d-flex justify-content-between align-items-center mt-3" aria-label="Search result pages">
     {% if has_prev %}
     <a href="?{{ dict(request.args, page=page-1) | urlencode }}" class="btn btn-outline-secondary">
@@ -358,7 +358,21 @@
     {% else %}
     <span></span>
     {% endif %}
-    <span class="text-muted small">Page {{ page }}</span>
+
+    <div class="d-flex align-items-center gap-2">
+        {% if has_prev or has_next %}
+        <span class="text-muted small">Page {{ page }}</span>
+        {% endif %}
+        {% if VALID_PER_PAGE %}
+        <div class="btn-group btn-group-sm" role="group" aria-label="Results per page">
+            {% for pp in VALID_PER_PAGE %}
+            <a class="btn {{ 'btn-secondary' if PER_PAGE == pp else 'btn-outline-secondary' }}"
+               href="?{{ dict(request.args, per_page=pp, page=1) | urlencode }}">{{ pp }}</a>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+
     {% if has_next %}
     <a href="?{{ dict(request.args, page=page+1) | urlencode }}" class="btn btn-outline-secondary">
         Next <i class="bi bi-chevron-right"></i>
