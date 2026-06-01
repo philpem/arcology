@@ -2967,6 +2967,7 @@ def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
                            form=form,
                            artefact=artefact,
                            item=artefact.item,
+                           all_tags=Tag.all_for_picker(),
                            can_set_private=can_priv)
 
 

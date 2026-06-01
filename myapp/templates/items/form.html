@@ -1,4 +1,5 @@
 {% extends "_base.html" %}
+{% from "_tag_picker.html" import tag_picker, tag_picker_script %}
 {% block page_title %}{{ title }}{% endblock %}
 
 {% block content %}
@@ -40,7 +41,12 @@
                             <div class="form-text">Leave blank to inherit from parent.</div>
                         </div>
                     </div>
-                    <div class="mb-3">{{ form.tags.label(class="form-label") }}{{ form.tags(class="form-control") }}<div class="form-text">Comma-separated</div></div>
+                    <div class="mb-3">
+                        {{ form.tags.label(class="form-label") }}
+                        {{ form.tags(class="form-control", id="tags-input", autocomplete="off") }}
+                        <div class="form-text">Comma-separated.{% if all_tags %} Click to add:{% endif %}</div>
+                        {{ tag_picker(all_tags) }}
+                    </div>
                     {% if item %}
                     <div class="mb-3">
                         <span class="form-label">Owner</span>
@@ -67,4 +73,9 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+{{ tag_picker_script() }}
 {% endblock %}

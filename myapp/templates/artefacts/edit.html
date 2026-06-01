@@ -1,4 +1,5 @@
 {% extends "_base.html" %}
+{% from "_tag_picker.html" import tag_picker, tag_picker_script %}
 {% block page_title %}Edit Artefact{% endblock %}
 
 {% block content %}
@@ -47,8 +48,9 @@
 
                     <div class="mb-3">
                         {{ form.tags.label(class="form-label") }}
-                        {{ form.tags(class="form-control", placeholder="e.g. commercial, copy-protected, original") }}
-                        <div class="form-text">{{ form.tags.description }}</div>
+                        {{ form.tags(class="form-control", id="tags-input", autocomplete="off", placeholder="e.g. commercial, copy-protected, original") }}
+                        <div class="form-text">{{ form.tags.description }}{% if all_tags %} Click to add:{% endif %}</div>
+                        {{ tag_picker(all_tags) }}
                     </div>
 
                     <div class="mb-3">
@@ -77,4 +79,9 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+{{ tag_picker_script() }}
 {% endblock %}

@@ -427,6 +427,11 @@ class Tag(db.Model):
     items: Mapped[list["Item"]] = relationship(secondary=item_tags, back_populates="tags")
     artefacts: Mapped[list["Artefact"]] = relationship(secondary=artefact_tags, back_populates="tags")
 
+    @classmethod
+    def all_for_picker(cls):
+        """All tags, ordered by name, for the tag-picker autocomplete UI."""
+        return cls.query.order_by(cls.name).all()
+
 
 # =============================================================================
 # Core Models
