@@ -108,6 +108,59 @@ class TestCommonImageConversion(unittest.TestCase):
         self.assertEqual(result['tool'], 'passthrough')
         self.assertEqual(Path(result['output_path']).read_bytes(), original_bytes)
 
+    # --- Pass-through by content sniff (RISC OS filetype-suffix names) ---
+
+    def test_jpeg_riscos_suffix_passthrough(self):
+        # RISC OS extracts name JPEGs 'Photo,c85' (no '.jpg' extension).
+        # The bytes are a real JPEG, so they must be passed through unchanged
+        # rather than re-encoded to PNG.
+        src = self.tmpdir / 'Photo,c85'
+        _make_jpeg(src)
+        original_bytes = src.read_bytes()
+        result = self._convert(src)
+        self.assertTrue(result['success'])
+        self.assertEqual(result['tool'], 'passthrough')
+        self.assertEqual(result['format'], 'JPG')
+        out = Path(result['output_path'])
+        self.assertEqual(out.suffix, '.jpg')
+        self.assertEqual(out.read_bytes(), original_bytes)
+
+    def test_png_riscos_suffix_passthrough(self):
+        src = self.tmpdir / 'Image,b60'  # RISC OS PNG filetype
+        _make_png(src)
+        original_bytes = src.read_bytes()
+        result = self._convert(src)
+        self.assertTrue(result['success'])
+        self.assertEqual(result['tool'], 'passthrough')
+        out = Path(result['output_path'])
+        self.assertEqual(out.suffix, '.png')
+        self.assertEqual(out.read_bytes(), original_bytes)
+
+    def test_gif_riscos_suffix_passthrough(self):
+        src = self.tmpdir / 'Anim,695'  # RISC OS GIF filetype
+        _make_gif(src)
+        original_bytes = src.read_bytes()
+        result = self._convert(src)
+        self.assertTrue(result['success'])
+        self.assertEqual(result['tool'], 'passthrough')
+        out = Path(result['output_path'])
+        self.assertEqual(out.suffix, '.gif')
+        self.assertEqual(out.read_bytes(), original_bytes)
+
+    def test_bmp_riscos_suffix_still_converts_to_png(self):
+        # BMP is not browser-native; even without a '.bmp' extension it must
+        # still be converted to PNG (the magic sniff only passes through
+        # browser-native formats).
+        src = self.tmpdir / 'Picture,69c'  # RISC OS BMP filetype
+        _make_bmp(src)
+        result = self._convert(src)
+        self.assertTrue(result['success'])
+        self.assertEqual(result['tool'], 'pillow-convert')
+        out = Path(result['output_path'])
+        self.assertEqual(out.suffix, '.png')
+        with Image.open(out) as img:
+            self.assertEqual(img.format, 'PNG')
+
     # --- Pillow-convert tests ---
 
     def test_bmp_converts_to_png(self):
