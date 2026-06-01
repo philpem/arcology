@@ -67,6 +67,22 @@ WORKER_API_KEY = ""
 # longest expected analysis run time.  Default: 3600 (1 hour).
 STALE_JOB_TIMEOUT_SECONDS = 3600
 
+# =============================================================================
+# Email notifications (optional)
+# Users who set an email address and enable notifications in their profile
+# will receive one email when all analyses for an uploaded artefact finish.
+#
+# Leave MAIL_SERVER unset (or blank) to disable email entirely.
+# Flask-Mail-compatible key names are used for easy migration.
+# =============================================================================
+#MAIL_SERVER   = "smtp.example.com"
+#MAIL_PORT     = 587
+#MAIL_USE_TLS  = True
+#MAIL_USE_SSL  = False
+#MAIL_USERNAME = ""
+#MAIL_PASSWORD = ""
+#MAIL_DEFAULT_SENDER = "arcology@example.com"
+
 # Priority assigned to analyses queued via the web UI (uploads, re-analyse
 # button).  Workers pick up jobs in order of priority DESC, created_at ASC.
 # Default 10 (ANALYSIS_PRIORITY_HIGH) keeps interactive web uploads ahead

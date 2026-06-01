@@ -66,14 +66,16 @@ def create_app(config_name=None):
                     'OIDC_SINGLE_LOGOUT', 'OIDC_SYNC_INTERVAL', 'OIDC_AUTO_REDIRECT',
                     'PUBLIC_MODE', 'PUBLIC_DOWNLOADS',
                     'JINJA_BYTECODE_CACHE', 'JINJA_BYTECODE_CACHE_DIR', 'JINJA_PREWARM',
-                    'SENTRY_DSN'):
+                    'SENTRY_DSN',
+                    'MAIL_SERVER', 'MAIL_USERNAME', 'MAIL_PASSWORD', 'MAIL_DEFAULT_SENDER',
+                    'MAIL_USE_TLS', 'MAIL_USE_SSL'):
         env_val = os.environ.get(env_key)
         if env_val:
             app.config[env_key] = env_val
 
     # Integer env vars — loaded separately so they're stored as int, not str.
     for int_key in ('WEB_UI_ANALYSIS_PRIORITY', 'STALE_JOB_TIMEOUT_SECONDS',
-                    'MAX_UPLOAD_SIZE'):
+                    'MAX_UPLOAD_SIZE', 'MAIL_PORT'):
         env_val = os.environ.get(int_key)
         if env_val is not None:
             try:
