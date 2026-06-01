@@ -140,7 +140,19 @@ check, which only matches exact endpoints — so "Items" is only active when on
 
 ## Resolved Items
 
-*(move items here once a design is agreed and a PR is open)*
+### DB-4 — Slug regeneration on item rename
+
+**Resolution:** Already implemented. The item edit route (`items.py` line 522)
+runs `item.slug = ensure_unique_slug(generate_slug(item.name), Item, existing_id=item.id)`
+on every save.  `lookup_by_identifier` resolves old UUID-prefix URLs and the item
+view route 301-redirects to the current canonical URL.  No code changes needed.
+The backlog entry was based on an incorrect reading of the codebase.
+
+### RV-1 — Navbar active-class coverage
+
+**Decision (2026-06-01):** Blueprint-prefix match.  Extract blueprint name from
+`menuitem.endpoint` with `.rsplit('.', 1)[0]` and test whether it appears in
+`request.endpoint`.  Implemented in PR #418 (`fix/navbar-active-class`).
 
 ---
 
