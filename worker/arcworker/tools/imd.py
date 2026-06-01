@@ -160,12 +160,14 @@ def parse_imd_tracks(imd_path: Path) -> list[dict] | None:
     Returns a list of track dicts (in file order), each containing:
         physical_index  int        0-based position in file (= physical track number)
         cylinder        int        cylinder byte from track header
-        head            int        head number (0 or 1)
+        head            int        head number (0 or 1) — physical head
         encoding        str        'FM' or 'MFM'
         sector_size     int        bytes per sector
         sector_ids      list[int]  sector ID map
         sector_cyls     list[int]  per-sector IDAM cylinder — from cylinder map
                                    if present, otherwise [cylinder] * nsec
+        idam_heads      list[int]  per-sector IDAM head — from head map if present,
+                                   otherwise [head] * nsec (physical head repeated)
         has_data        bool       True if any sector type != 0
         is_uniform_fill bool       True if every present sector consists of a
                                    single repeated byte value (all compressed, or
@@ -225,11 +227,14 @@ def parse_imd_tracks(imd_path: Path) -> list[dict] | None:
         else:
             sector_cyls = [cylinder] * nsec
 
-        # Optional head map (skip)
+        # Optional head map → per-sector IDAM heads
         if head_map_present:
             if pos + nsec > len(data):
                 break
+            idam_heads = list(data[pos:pos + nsec])
             pos += nsec
+        else:
+            idam_heads = [head] * nsec
 
         # Read sector data: determine has_data and is_uniform_fill.
         # is_uniform_fill tracks whether every present sector consists of a
@@ -282,6 +287,7 @@ def parse_imd_tracks(imd_path: Path) -> list[dict] | None:
             'sector_size':     sector_size,
             'sector_ids':      sector_ids,
             'sector_cyls':     sector_cyls,
+            'idam_heads':      idam_heads,
             'has_data':        has_data,
             'is_uniform_fill': is_uniform_fill,
         })
@@ -530,5 +536,72 @@ def detect_geometry_from_boot_data(track0: dict) -> dict | None:
                         'probe': 'C'}
 
     return None
+
+
+def detect_independent_sides(tracks: list[dict]) -> dict:
+    """
+    Detect a double-sided disc whose two physical sides were captured as if
+    they were two independent single-sided discs.
+
+    This happens when a double-sided drive has its head-select wired to a
+    drive-select pin on the controller — to the controller and filesystem,
+    the second side looks like another single-sided drive (e.g. BBC Micro
+    drives 0/2, RM 380Z/480Z).  Each side records IDAM head = 0 regardless
+    of which physical head wrote it.
+
+    The tell: every sector on physical head 1 has IDAM head = 0.
+
+    Contrast with a normal double-sided disc (e.g. ADFS-L) where sectors on
+    physical head 1 correctly record IDAM head = 1.
+
+    Requirements for detection:
+    - Both physical heads 0 and 1 have tracks with data.
+    - Every sector on physical head 1 tracks has IDAM head = 0.
+    - There is at least one track with data on physical head 1.
+
+    Returns:
+        detected        bool    True when all conditions met
+        reason          str     Human-readable explanation
+        h1_tracks       int     Number of physical head-1 tracks with data
+        h1_idam_all_zero bool   All head-1 sectors had IDAM head = 0
+    """
+    h0_data = False
+    h1_data = False
+    h1_tracks_with_data = 0
+    h1_idam_all_zero = True  # innocent until proven guilty
+
+    for t in tracks:
+        if not t['has_data']:
+            continue
+        if t['head'] == 0:
+            h0_data = True
+        elif t['head'] == 1:
+            h1_data = True
+            h1_tracks_with_data += 1
+            # idam_heads is [head] * nsec when no head map present, meaning
+            # IDAM head == physical head (1) — a normal double-sided disc.
+            if not all(h == 0 for h in t['idam_heads']):
+                h1_idam_all_zero = False
+
+    detected = h0_data and h1_data and h1_idam_all_zero and h1_tracks_with_data > 0
+
+    if detected:
+        reason = (
+            f"Physical head 1 has {h1_tracks_with_data} track(s) with data, "
+            f"all recording IDAM head=0 — each side is an independent single-sided disc"
+        )
+    elif not h0_data:
+        reason = "No data on physical head 0"
+    elif not h1_data:
+        reason = "No data on physical head 1 (single-sided disc)"
+    else:
+        reason = "Physical head 1 sectors record IDAM head=1 — double-sided disc"
+
+    return {
+        'detected':         detected,
+        'reason':           reason,
+        'h1_tracks':        h1_tracks_with_data,
+        'h1_idam_all_zero': h1_idam_all_zero,
+    }
 
 # vim: ts=4 sw=4 et

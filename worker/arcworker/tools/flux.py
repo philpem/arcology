@@ -286,6 +286,57 @@ def sector_image_to_raw_greaseweazle(
         gw_format=gw_format,
     )
 
+def sector_image_to_raw_greaseweazle_one_side(
+    input_path: Path,
+    output_path: Path,
+    gw_format: str,
+    head: int,
+    cylinders: int,
+) -> dict:
+    """
+    Convert one physical side of a sector/flux image to a raw sector image.
+
+    Uses Greaseweazle's --tracks selector to extract only the tracks belonging
+    to the specified physical head, producing a single-sided raw IMG.
+
+    Greaseweazle maps input→output tracks positionally: a single-sided output
+    format (e.g. acorn.dfs.ss80) only ever requests logical head 0, so the
+    selector must always resolve to head 0.  Repeated 'h=' tokens do NOT build
+    an input→output remap — the last one wins — so 'h=1:h=0' silently collapses
+    to plain head 0 and reads physical head 0 for both sides.  To lift *physical*
+    head 1 into the head-0 output we use 'hswap', which flips the physical head
+    inside greaseweazle's ch_to_pch() mapping while leaving the logical head at 0.
+
+    Args:
+        input_path: Source image (SCP, IMD, HFE)
+        output_path: Output raw IMG file
+        gw_format:  Greaseweazle format name (single-sided variant, e.g. 'acorn.dfs.ss80')
+        head:       Physical head to extract (0 or 1)
+        cylinders:  Number of cylinders (used to bound the track selector)
+
+    Returns:
+        Result dict with success status, output type, gw_format, and process_output
+    """
+    # Physical head 0 → logical head 0 directly; physical head 1 → logical head 0
+    # via hswap (see the note above on why 'h=1:h=0' does not work).
+    head_sel = 'hswap:h=0' if head == 1 else 'h=0'
+    cmd = [
+        'gw', 'convert',
+        '--format', gw_format,
+        '--tracks', f'c=0-{cylinders - 1}:{head_sel}',
+        str(input_path),
+        str(output_path),
+    ]
+    return run_and_build_result(
+        cmd,
+        tool='greaseweazle',
+        output_path=output_path,
+        summary=f'Converted head {head} to raw sector image (bad sectors filled)',
+        output_type=ArtefactType.RAW_SECTOR.value,
+        gw_format=gw_format,
+    )
+
+
 def scp_fix_track_density(input_path: Path, output_path: Path, heads: list[int] | None = None) -> dict:
     """
     Extract only even-indexed physical tracks from a double-stepped SCP,

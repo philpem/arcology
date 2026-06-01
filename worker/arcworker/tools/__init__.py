@@ -42,6 +42,7 @@ from .flux import (
     flux_visualisation_fluxfox,
     flux_visualisation_hxcfe,
     sector_image_to_raw_greaseweazle,
+    sector_image_to_raw_greaseweazle_one_side,
 )
 from .fs_iso_riscos import parse_iso_riscos_filetypes
 from .fs_riscos_armlock import detect_armlock, remove_armlock
@@ -72,6 +73,7 @@ __all__ = [
     'dfi_to_scp_hxcfe',
     'a2r_to_scp_gw',
     'sector_image_to_raw_greaseweazle',
+    'sector_image_to_raw_greaseweazle_one_side',
     'extract_acorn_disc_image_manager',
     'extract_dos_7z',
     'extract_iso_7z',

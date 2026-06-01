@@ -11,6 +11,7 @@ from shared.enums import AnalysisType, ArtefactType
 from ..config import MASTERING_TRACK_SCAN_COUNT, log
 from ..tools import (
     a2r_to_scp_gw,
+    compute_file_hash,
     dfi_to_scp_hxcfe,
     flux_to_hfe_hxcfe,
     flux_to_imd_hxcfe,
@@ -18,9 +19,14 @@ from ..tools import (
     flux_visualisation_hxcfe,
     sector_image_to_raw_greaseweazle,
 )
-from ..tools.flux import _geometry_to_gw_format, scp_fix_track_density
+from ..tools.flux import (
+    _geometry_to_gw_format,
+    scp_fix_track_density,
+    sector_image_to_raw_greaseweazle_one_side,
+)
 from ..tools.imd import (
     detect_geometry_from_boot_data,
+    detect_independent_sides,
     detect_track_density_mismatch,
     parse_imd_track0,
     parse_imd_tracks,
@@ -341,6 +347,8 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
     # For SCP/HFE: read the IMD sibling we just produced.
     # For IMD: read the source directly.
 
+    independent_sides = None
+
     if source_type not in _SCP_VIA_CONVERSION_TYPES:
         gw_format = hints.get('gw_format')
         gw_format_source = 'hint' if gw_format else None
@@ -377,21 +385,113 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
             gw_format = 'ibm.scan'
             gw_format_source = 'fallback'
 
-        # ── Step 3: gw convert source → RAW_SECTOR ──────────────────────
-        # Always feed gw the original source artefact (closest-to-original rule).
+        # ── Step 2b: detect independent-sides capture ──────────────────
+        # Some double-sided drives have head-select wired to a drive-select
+        # pin on the controller — to the controller and filesystem the two
+        # sides look like independent single-sided drives (e.g. BBC Micro
+        # drives 0/2, RM 380Z/480Z).  Each side records IDAM head=0 regardless
+        # of which physical head wrote it.  Detect this by checking whether
+        # all sectors on physical head 1 carry IDAM head=0.
+        #
+        # When detected: produce two single-sided RAW_SECTOR images (one per
+        # physical side) instead of one merged image.  The HFE and IMD siblings
+        # already produced above still represent the complete physical disc and
+        # are kept as-is.
 
-        img_path = work_dir / f"{input_path.stem}.img"
-        img_result = sector_image_to_raw_greaseweazle(input_path, img_path, gw_format=gw_format)
-        results.append(('IMG', img_result))
+        if imd_result['success']:
+            all_tracks = parse_imd_tracks(imd_for_detection)
+            if all_tracks:
+                independent_sides = detect_independent_sides(all_tracks)
 
-        if img_result['success']:
-            derived = self.api.register_derived_artefact(
-                analysis_id,
-                f"{artefact_label} (raw sectors)",
-                img_path,
-                ArtefactType.RAW_SECTOR
+        if independent_sides and independent_sides['detected']:
+            log.info(
+                f"Independent sides detected: {independent_sides['reason']}; "
+                f"splitting into two single-sided RAW_SECTOR artefacts"
             )
-            log.info(f"Created derived IMG artefact: {derived}")
+            # Derive the single-sided gw format: same geometry but heads=1.
+            # _geometry_to_gw_format may return None if no map entry exists;
+            # fall back to 'ibm.scan' (same as the merged-image fallback).
+            if detected_geometry:
+                ss_gw_format = _geometry_to_gw_format(
+                    **{**detected_geometry, 'heads': 1}
+                ) or 'ibm.scan'
+            else:
+                ss_gw_format = 'ibm.scan'
+
+            cylinders = detected_geometry.get('cylinders', 80) if detected_geometry else 80
+
+            # Generate both single-sided images first, then decide how to
+            # register them based on whether their content actually differs.
+            side_paths = {}
+            for head in (0, 1):
+                side_path = work_dir / f"{input_path.stem}_side{head}.img"
+                side_result = sector_image_to_raw_greaseweazle_one_side(
+                    input_path, side_path, ss_gw_format, head, cylinders
+                )
+                results.append((f'IMG side {head}', side_result))
+                if side_result['success']:
+                    side_paths[head] = side_path
+
+            # A freshly-formatted disc (e.g. blank/identical DFS catalogues on
+            # both sides) can produce byte-identical side images.  The
+            # (item_id, sha256) uniqueness constraint forbids two
+            # identical-content artefacts in one item, so the second
+            # register_derived_artefact would collide and the web side would
+            # re-home/relabel the first (leaving a single artefact mislabelled
+            # "Side 1").  Detect that here and register a single combined
+            # artefact instead.
+            side_hashes = {
+                head: compute_file_hash(path)[1]  # (md5, sha256, size) → sha256
+                for head, path in side_paths.items()
+            }
+            sides_identical = (
+                len(side_paths) == 2 and side_hashes[0] == side_hashes[1]
+            )
+            independent_sides['sides_identical'] = sides_identical
+
+            if sides_identical:
+                log.info(
+                    "Both physical sides are byte-identical (e.g. a blank "
+                    "formatted disc) — registering a single combined artefact"
+                )
+                derived = self.api.register_derived_artefact(
+                    analysis_id,
+                    f"{artefact_label} (Sides 0 & 1, identical)",
+                    side_paths[0],
+                    ArtefactType.RAW_SECTOR,
+                )
+                log.info(f"Created derived combined-sides artefact: {derived}")
+            else:
+                for head, side_path in side_paths.items():
+                    derived = self.api.register_derived_artefact(
+                        analysis_id,
+                        f"{artefact_label} (Side {head})",
+                        side_path,
+                        ArtefactType.RAW_SECTOR,
+                        # Number each side's partition by its physical side so the
+                        # parent disc's aggregated partition list reads
+                        # "partition 0" / "partition 1" rather than two "0"s.
+                        analysis_hints={'partition_index_base': head},
+                    )
+                    log.info(f"Created derived side-{head} artefact: {derived}")
+
+        else:
+            # ── Step 3: gw convert source → RAW_SECTOR ──────────────────
+            # Normal path: single merged image.
+            # Always feed gw the original source artefact (closest-to-original).
+
+            img_path = work_dir / f"{input_path.stem}.img"
+            img_result = sector_image_to_raw_greaseweazle(input_path, img_path, gw_format=gw_format)
+            results.append(('IMG', img_result))
+
+            if img_result['success']:
+                derived = self.api.register_derived_artefact(
+                    analysis_id,
+                    f"{artefact_label} (raw sectors)",
+                    img_path,
+                    ArtefactType.RAW_SECTOR
+                )
+                log.info(f"Created derived IMG artefact: {derived}")
 
     # ── Report ───────────────────────────────────────────────────────────
     any_success = any(r[1]['success'] for r in results)
@@ -405,6 +505,8 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
             details_dict['gw_track0'] = imd_track0_summary
         if detected_geometry:
             details_dict['gw_geometry'] = detected_geometry
+        if independent_sides:
+            details_dict['independent_sides'] = independent_sides
 
     if any_success:
         self.complete_analysis(

@@ -1288,6 +1288,20 @@ def get_output_file(filename):
 # Partitions & Files
 # =============================================================================
 
+def _merge_produce_hints(analysis, data):
+    """Build the hints dict for follow-on analyses of a derived artefact.
+
+    Starts from the parent analysis's hints (shared by all siblings) and
+    overlays any per-artefact hints supplied in the produce-artefact payload.
+    Per-artefact hints win on conflict.  Returns None when there are no hints.
+    """
+    hints = json.loads(analysis.hints) if analysis.hints else {}
+    artefact_hints = data.get('hints')
+    if isinstance(artefact_hints, dict):
+        hints = {**hints, **artefact_hints}
+    return hints or None
+
+
 @blueprint.route('/analysis/<int:id>/produce-artefact', methods=['POST'])
 @require_auth('read_upload')
 def produce_artefact(id):
@@ -1476,7 +1490,7 @@ def produce_artefact(id):
         queued_analyses = []
         if data.get('auto_analyse', True):
             from .artefacts import ANALYSIS_MAP
-            hints = json.loads(analysis.hints) if analysis.hints else None
+            hints = _merge_produce_hints(analysis, data)
             skip_analyses = data.get('skip_analyses') or []
             queue_analyses_for_artefact(existing, hints, skip_analyses=skip_analyses)
             skip_set = set(skip_analyses)
@@ -1498,7 +1512,7 @@ def produce_artefact(id):
     queued_analyses = []
     if data.get('auto_analyse', True):
         from .artefacts import ANALYSIS_MAP
-        hints = json.loads(analysis.hints) if analysis.hints else None
+        hints = _merge_produce_hints(analysis, data)
         skip_analyses = data.get('skip_analyses') or []
         queue_analyses_for_artefact(artefact, hints, skip_analyses=skip_analyses)
         skip_set = set(skip_analyses)

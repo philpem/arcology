@@ -186,6 +186,7 @@ class ArcologyAPI:
         artefact_type: ArtefactType,
         auto_analyse: bool = True,
         skip_analyses: list[str] | None = None,
+        analysis_hints: dict | None = None,
     ) -> dict | None:
         """
         Register a derived artefact produced by an analysis.
@@ -202,6 +203,13 @@ class ArcologyAPI:
                 auto-queuing follow-on analyses.  Used to prevent ping-pong: e.g.
                 HFE/IMD siblings produced by FLUX_DECODE carry skip_analyses=['FLUX_DECODE']
                 so they don't re-trigger the decode.
+            analysis_hints: Optional dict merged into the hints of the follow-on
+                analyses queued for this derived artefact (on top of the parent
+                analysis's hints).  Used to pass per-artefact context that the
+                parent analysis's shared hints cannot express — e.g. the
+                independent-sides split tags each side with
+                {'partition_index_base': <side>} so its partition is numbered
+                by side rather than always 0.
 
         Returns:
             API response dict, or None on error
@@ -240,6 +248,8 @@ class ArcologyAPI:
         }
         if skip_analyses:
             payload['skip_analyses'] = skip_analyses
+        if analysis_hints:
+            payload['hints'] = analysis_hints
 
         # Register via API - derived artefacts use 'outputs' storage directory
         return self.post(f"/analysis/{analysis_id}/produce-artefact", payload)
