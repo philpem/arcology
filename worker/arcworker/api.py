@@ -123,12 +123,11 @@ class ArcologyAPI:
         Returns the result dict {updated, total, recognition_queued}, or None
         on network/server error.
         """
-        resp = self._request('post', f'/artefact/{artefact_uuid}/hash-rescan')
-        if resp is None or not resp.ok:
-            log.error('run_hash_rescan(%s): HTTP %s', artefact_uuid,
-                      resp.status_code if resp else 'no response')
+        result = self._request('post', f'/artefact/{artefact_uuid}/hash-rescan')
+        if result is None:
+            log.error('run_hash_rescan(%s): API call failed', artefact_uuid)
             return None
-        return resp.json()
+        return result
 
     def update_artefact_hashes(self, artefact_uuid: str, md5: str, sha256: str):
         """Write computed MD5 and SHA256 hashes back to the artefact record."""
