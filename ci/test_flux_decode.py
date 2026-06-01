@@ -807,10 +807,16 @@ _DFS_DS80_GEOMETRY = {**_DFS_SS80_GEOMETRY, 'heads': 2}
 
 def _run_flux_decode_independent_sides(work_dir: Path, independent_sides_detected: bool,
                                geometry: dict | None = None,
-                               mock_side_result=None):
+                               mock_side_result=None,
+                               sides_identical: bool = False):
     """
     Run process_flux_decode for an SCP source with independent-sides detection either
     detected or not.  Returns the worker mock.
+
+    The mocked one-side gw conversion writes a real file for each head so that
+    the worker's identical-sides hash comparison has something to hash.  By
+    default the two sides get distinct content (so both register); pass
+    sides_identical=True to make them byte-identical (blank-disc case).
     """
     artefact = _make_artefact(ArtefactType.SCP)
     source_path = work_dir / artefact['storage_path']
@@ -818,6 +824,12 @@ def _run_flux_decode_independent_sides(work_dir: Path, independent_sides_detecte
 
     side_result = mock_side_result or {'success': True}
     per_side = _INDEPENDENT_SIDES_DETECTED if independent_sides_detected else _NOT_INDEPENDENT
+
+    def _one_side_side_effect(input_path, output_path, gw_format, head, cylinders):
+        # Materialise the side image so compute_file_hash() can read it.
+        content = b'IDENTICAL' if sides_identical else f'SIDE{head}'.encode()
+        Path(output_path).write_bytes(content)
+        return side_result
 
     worker = MagicMock(spec=AnalysisWorker)
     worker.get_input_path.return_value = source_path
@@ -836,7 +848,7 @@ def _run_flux_decode_independent_sides(work_dir: Path, independent_sides_detecte
     with patch('worker.arcworker.analyses.flux.flux_to_imd_hxcfe', return_value={'success': True}), \
          patch('worker.arcworker.analyses.flux.flux_to_hfe_hxcfe', return_value={'success': True}), \
          patch('worker.arcworker.analyses.flux.sector_image_to_raw_greaseweazle', return_value={'success': True}) as mock_merged_gw, \
-         patch('worker.arcworker.analyses.flux.sector_image_to_raw_greaseweazle_one_side', return_value=side_result) as mock_side_gw, \
+         patch('worker.arcworker.analyses.flux.sector_image_to_raw_greaseweazle_one_side', side_effect=_one_side_side_effect) as mock_side_gw, \
          patch('worker.arcworker.analyses.flux.parse_imd_track0', return_value=stub_track0), \
          patch('worker.arcworker.analyses.flux.parse_imd_tracks', return_value=stub_tracks), \
          patch('worker.arcworker.analyses.flux.detect_geometry_from_boot_data', return_value=geometry), \
@@ -879,6 +891,23 @@ class TestIndependentSidesSplit(unittest.TestCase):
         self.assertTrue(any('Side 0' in label for label in labels), labels)
         self.assertTrue(any('Side 1' in label for label in labels), labels)
 
+    def test_side_partition_index_base_hint(self):
+        """Each side artefact is tagged with partition_index_base = its side number.
+
+        This makes the parent disc's aggregated partition list read
+        'partition 0' / 'partition 1' instead of two indistinguishable '0's.
+        """
+        worker, _, _ = _run_flux_decode_independent_sides(self.work_dir, independent_sides_detected=True)
+        bases = {
+            c.args[1]: c.kwargs.get('analysis_hints', {}).get('partition_index_base')
+            for c in worker.api.register_derived_artefact.call_args_list
+            if c.args[3] == ArtefactType.RAW_SECTOR
+        }
+        side0 = next(v for k, v in bases.items() if 'Side 0' in k)
+        side1 = next(v for k, v in bases.items() if 'Side 1' in k)
+        self.assertEqual(side0, 0)
+        self.assertEqual(side1, 1)
+
     def test_merged_raw_sector_not_registered_when_independent(self):
         """The merged single-image gw convert must NOT be called when independent sides detected."""
         worker, mock_merged_gw, _ = _run_flux_decode_independent_sides(self.work_dir, independent_sides_detected=True)
@@ -917,6 +946,26 @@ class TestIndependentSidesSplit(unittest.TestCase):
         ]
         self.assertIn(ArtefactType.HFE, types_registered)
         self.assertIn(ArtefactType.IMD, types_registered)
+
+    def test_identical_sides_register_single_artefact(self):
+        """Byte-identical sides (e.g. blank disc) register ONE combined RAW_SECTOR.
+
+        Two identical-content artefacts cannot coexist under the (item_id, sha256)
+        uniqueness constraint, so the split must collapse to a single artefact
+        rather than letting the second registration collide and re-home the first.
+        """
+        worker, _, mock_side_gw = _run_flux_decode_independent_sides(
+            self.work_dir, independent_sides_detected=True, sides_identical=True
+        )
+        # Both sides are still converted...
+        self.assertEqual(mock_side_gw.call_count, 2)
+        # ...but only one RAW_SECTOR artefact is registered, labelled as combined.
+        raw_calls = [
+            c for c in worker.api.register_derived_artefact.call_args_list
+            if c.args[3] == ArtefactType.RAW_SECTOR
+        ]
+        self.assertEqual(len(raw_calls), 1)
+        self.assertIn('identical', raw_calls[0].args[1].lower())
 
 
 if __name__ == '__main__':

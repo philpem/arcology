@@ -144,6 +144,17 @@ def process_partition_detect(self, analysis: dict, artefact: dict, work_dir: Pat
             'size_bytes': file_size,
         }]
 
+    # Offset partition indices by partition_index_base when set.  This is used
+    # by the independent-sides split (FLUX_DECODE): each physical side becomes
+    # its own single-sided artefact, but because they share the parent disc's
+    # partition list in the UI they would all show as "partition 0" and be
+    # indistinguishable.  Numbering side 1's partition(s) from base 1 makes the
+    # aggregated list read "partition 0" / "partition 1" (i.e. side 0 / side 1).
+    partition_index_base = hints.get('partition_index_base', 0)
+    if partition_index_base:
+        for _p in detected_partitions:
+            _p['index'] += partition_index_base
+
     # -----------------------------------------------------------------
     # Decide how to persist partition images for FILE_EXTRACTION
     # -----------------------------------------------------------------

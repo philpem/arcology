@@ -11,6 +11,7 @@ from shared.enums import AnalysisType, ArtefactType
 from ..config import MASTERING_TRACK_SCAN_COUNT, log
 from ..tools import (
     a2r_to_scp_gw,
+    compute_file_hash,
     dfi_to_scp_hxcfe,
     flux_to_hfe_hxcfe,
     flux_to_imd_hxcfe,
@@ -419,6 +420,9 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
 
             cylinders = detected_geometry.get('cylinders', 80) if detected_geometry else 80
 
+            # Generate both single-sided images first, then decide how to
+            # register them based on whether their content actually differs.
+            side_paths = {}
             for head in (0, 1):
                 side_path = work_dir / f"{input_path.stem}_side{head}.img"
                 side_result = sector_image_to_raw_greaseweazle_one_side(
@@ -426,11 +430,48 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
                 )
                 results.append((f'IMG side {head}', side_result))
                 if side_result['success']:
+                    side_paths[head] = side_path
+
+            # A freshly-formatted disc (e.g. blank/identical DFS catalogues on
+            # both sides) can produce byte-identical side images.  The
+            # (item_id, sha256) uniqueness constraint forbids two
+            # identical-content artefacts in one item, so the second
+            # register_derived_artefact would collide and the web side would
+            # re-home/relabel the first (leaving a single artefact mislabelled
+            # "Side 1").  Detect that here and register a single combined
+            # artefact instead.
+            side_hashes = {
+                head: compute_file_hash(path)[1]  # (md5, sha256, size) → sha256
+                for head, path in side_paths.items()
+            }
+            sides_identical = (
+                len(side_paths) == 2 and side_hashes[0] == side_hashes[1]
+            )
+            independent_sides['sides_identical'] = sides_identical
+
+            if sides_identical:
+                log.info(
+                    "Both physical sides are byte-identical (e.g. a blank "
+                    "formatted disc) — registering a single combined artefact"
+                )
+                derived = self.api.register_derived_artefact(
+                    analysis_id,
+                    f"{artefact_label} (Sides 0 & 1, identical)",
+                    side_paths[0],
+                    ArtefactType.RAW_SECTOR,
+                )
+                log.info(f"Created derived combined-sides artefact: {derived}")
+            else:
+                for head, side_path in side_paths.items():
                     derived = self.api.register_derived_artefact(
                         analysis_id,
                         f"{artefact_label} (Side {head})",
                         side_path,
                         ArtefactType.RAW_SECTOR,
+                        # Number each side's partition by its physical side so the
+                        # parent disc's aggregated partition list reads
+                        # "partition 0" / "partition 1" rather than two "0"s.
+                        analysis_hints={'partition_index_base': head},
                     )
                     log.info(f"Created derived side-{head} artefact: {derived}")
 
