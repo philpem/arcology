@@ -36,7 +36,7 @@
 				<div class="collapse navbar-collapse" id="navbarNav">
 					<ul class="navbar-nav me-auto">
 {% if current_user.is_authenticated or public_mode %}{% with menuitems = menu %}{%- for menuitem in menuitems %}
-						<li class="nav-item"><a class="nav-link{% if menuitem.endpoint == request.endpoint %} active{% endif %}" href="{{ url_for(menuitem.endpoint) }}">{{ menuitem.label }}</a></li>
+						<li class="nav-item"><a class="nav-link{% if request.endpoint and menuitem.endpoint.rsplit('.', 1)[0] in request.endpoint %} active{% endif %}" href="{{ url_for(menuitem.endpoint) }}">{{ menuitem.label }}</a></li>
 {%- endfor %}{% endwith %}{% endif %}
 					</ul>
 
