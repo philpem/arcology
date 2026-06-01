@@ -298,7 +298,7 @@ def _build_tree_rows(root_items):
 
 def _render_item_form(form, **kwargs):
     """Render the item create/edit form, injecting the full tag list for autocomplete."""
-    kwargs.setdefault('all_tags', Tag.query.order_by(Tag.name).all())
+    kwargs.setdefault('all_tags', Tag.all_for_picker())
     return render_template('items/form.html', form=form, **kwargs)
 
 

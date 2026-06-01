@@ -1,4 +1,5 @@
 {% extends "_base.html" %}
+{% from "_tag_picker.html" import tag_picker, tag_picker_script %}
 {% block page_title %}{{ title }}{% endblock %}
 
 {% block content %}
@@ -44,16 +45,7 @@
                         {{ form.tags.label(class="form-label") }}
                         {{ form.tags(class="form-control", id="tags-input", autocomplete="off") }}
                         <div class="form-text">Comma-separated.{% if all_tags %} Click to add:{% endif %}</div>
-                        {% if all_tags %}
-                        <div class="mt-1 d-flex flex-wrap gap-1" id="tag-picker">
-                            {% for tag in all_tags %}
-                            <button type="button"
-                                    class="btn btn-sm btn-outline-info py-0 px-2 tag-pick"
-                                    data-tag="{{ tag.name }}"
-                                    title="Add '{{ tag.name }}'">{{ tag.name }}</button>
-                            {% endfor %}
-                        </div>
-                        {% endif %}
+                        {{ tag_picker(all_tags) }}
                     </div>
                     {% if item %}
                     <div class="mb-3">
@@ -85,45 +77,5 @@
 
 {% block scripts %}
 {{ super() }}
-{% if all_tags %}
-<script>
-(function () {
-    var input = document.getElementById('tags-input');
-    var picker = document.getElementById('tag-picker');
-    if (!input || !picker) return;
-
-    function currentTags() {
-        return input.value.split(',').map(function (t) { return t.trim(); }).filter(Boolean);
-    }
-
-    function updatePickerState() {
-        var active = currentTags().map(function (t) { return t.toLowerCase(); });
-        picker.querySelectorAll('.tag-pick').forEach(function (btn) {
-            var isActive = active.indexOf(btn.dataset.tag.toLowerCase()) !== -1;
-            btn.classList.toggle('active', isActive);
-            btn.classList.toggle('btn-info', isActive);
-            btn.classList.toggle('btn-outline-info', !isActive);
-        });
-    }
-
-    picker.querySelectorAll('.tag-pick').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-            var tags = currentTags();
-            var tagName = btn.dataset.tag;
-            var idx = tags.map(function (t) { return t.toLowerCase(); }).indexOf(tagName.toLowerCase());
-            if (idx === -1) {
-                tags.push(tagName);
-            } else {
-                tags.splice(idx, 1);
-            }
-            input.value = tags.join(', ');
-            updatePickerState();
-        });
-    });
-
-    input.addEventListener('input', updatePickerState);
-    updatePickerState();
-})();
-</script>
-{% endif %}
+{{ tag_picker_script() }}
 {% endblock %}
