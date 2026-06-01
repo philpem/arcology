@@ -31,6 +31,7 @@ from .flux import (
     process_flux_decode,
     process_flux_visualisation,
 )
+from .hashdb import process_hash_rescan
 from .images import (
     _EXT_VIEWABLE,
     _RISCOS_HEX_VIEWABLE,
@@ -69,6 +70,7 @@ HANDLERS: dict[str, str] = {
     AnalysisType.ARMLOCK_REMOVE.value:          'process_armlock_remove',
     AnalysisType.FORMAT_CONVERT.value:          'process_format_convert',
     AnalysisType.RISCOS_MODULE_PARSE.value:     'process_riscos_module_parse',
+    AnalysisType.HASH_RESCAN.value:             'process_hash_rescan',
 }
 
 
@@ -107,5 +109,7 @@ __all__ = [
     'process_armlock_remove',
     # Partition
     'process_partition_detect',
+    # Hash rescan
+    'process_hash_rescan',
 ]
 # vim: ts=4 sw=4 et

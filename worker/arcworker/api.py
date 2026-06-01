@@ -117,6 +117,19 @@ class ArcologyAPI:
         """
         return self._request('patch', endpoint, data=data)
 
+    def run_hash_rescan(self, artefact_uuid: str) -> dict | None:
+        """Trigger a server-side hash rescan for one artefact.
+
+        Returns the result dict {updated, total, recognition_queued}, or None
+        on network/server error.
+        """
+        resp = self._request('post', f'/artefact/{artefact_uuid}/hash-rescan')
+        if resp is None or not resp.ok:
+            log.error('run_hash_rescan(%s): HTTP %s', artefact_uuid,
+                      resp.status_code if resp else 'no response')
+            return None
+        return resp.json()
+
     def update_artefact_hashes(self, artefact_uuid: str, md5: str, sha256: str):
         """Write computed MD5 and SHA256 hashes back to the artefact record."""
         self.patch(f"/artefacts/{artefact_uuid}", {'md5': md5, 'sha256': sha256})

@@ -2306,6 +2306,34 @@ def chunked_upload_complete(upload_uuid):
 # Hash Database API (for CLI import/export and worker recognition)
 # =============================================================================
 
+@blueprint.route('/artefact/<string:uuid>/hash-rescan', methods=['POST'])
+@require_auth('read_write')
+def run_hash_rescan(uuid):
+    """Worker endpoint: run a hash rescan for one artefact and return results.
+
+    Called by the worker when it processes a HASH_RESCAN analysis job.
+    Runs rescan_hashes_for_artefact(), optionally queues product recognition,
+    and returns {updated, total, recognition_queued}.
+    """
+    from ..utils.hash_rescan import (
+        queue_product_recognition_for_partitions,
+        rescan_hashes_for_artefact,
+    )
+    artefact = _get_by_uuid_or_404(Artefact, uuid)
+    updated, total = rescan_hashes_for_artefact(artefact)
+
+    recognition_queued = 0
+    has_recognition = HashDatabase.query.filter_by(
+        is_active=True, enable_product_recognition=True
+    ).first()
+    if has_recognition:
+        partition_ids = [p.id for p in artefact.partitions if p.total_files > 0]
+        if partition_ids:
+            recognition_queued = queue_product_recognition_for_partitions(partition_ids)
+
+    return jsonify({'updated': updated, 'total': total, 'recognition_queued': recognition_queued})
+
+
 @blueprint.route('/hash-databases', methods=['GET'])
 @require_auth('read_only')
 def list_hash_databases():

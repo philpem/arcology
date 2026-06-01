@@ -94,4 +94,7 @@ class AnalysisType(enum.Enum):
     # RISC OS / Acorn specific
     RISCOS_MODULE_PARSE    = "riscos_module_parse"    # Parse RISC OS relocatable module metadata (title, version, date, SWIs, commands)
 
+    # Maintenance
+    HASH_RESCAN            = "hash_rescan"             # Re-link extracted files against active hash databases
+
 # vim: ts=4 sw=4 et
