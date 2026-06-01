@@ -120,7 +120,7 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
     </div>
     <div>
         {% if artefact.restrictions %}
-            {% if current_user.is_authenticated and current_user.can_bypass_all_restrictions(artefact.restrictions) %}
+            {% if current_user.is_authenticated and current_user.can_bypass_all_restrictions(artefact.restrictions, artefact.id) %}
             <a href="{{ artefact_url(artefact, 'download', confirm_bypass='1') }}" class="btn btn-outline-danger"
                onclick="return confirm('This artefact has download restrictions. Are you sure you want to download it?')">
                 <i class="bi bi-download"></i> Download (Override)
@@ -131,7 +131,7 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
             </button>
             {% endif %}
         {% elif artefact_file_restrictions %}
-            {% if current_user.is_authenticated and current_user.can_bypass_all_restrictions(artefact_file_restrictions) %}
+            {% if current_user.is_authenticated and current_user.can_bypass_all_restrictions(artefact_file_restrictions, artefact.id) %}
             <a href="{{ artefact_url(artefact, 'download', confirm_bypass='1') }}" class="btn btn-outline-danger"
                onclick="return confirm('This artefact contains files with download restrictions. Are you sure you want to download it?')">
                 <i class="bi bi-download"></i> Download (Override)

@@ -41,10 +41,12 @@ from ..database import (
     Partition,
     Platform,
     RecognisedProduct,
+    RestrictionType,
     RiscosModule,
     StorageDirectory,
     Tag,
     User,
+    UserArtefactBypass,
     artefact_tags,
 )
 from ..extensions import db
@@ -1200,7 +1202,7 @@ def _check_download_restrictions(artefact):
     if not artefact.restrictions:
         return None
 
-    if not current_user.is_authenticated or not current_user.can_bypass_all_restrictions(artefact.restrictions):
+    if not current_user.is_authenticated or not current_user.can_bypass_all_restrictions(artefact.restrictions, artefact_id=artefact.id):
         categories = ', '.join(r.restriction_type.label for r in artefact.restrictions)
         flash(f'Download restricted: {categories}', 'danger')
         return _redirect_to_artefact_view(artefact)
@@ -1254,7 +1256,8 @@ def _check_file_download_restrictions(ef):
     if not all_restrictions:
         return None
 
-    if not current_user.is_authenticated or not current_user.can_bypass_all_restrictions(all_restrictions):
+    if not current_user.is_authenticated or not current_user.can_bypass_all_restrictions(
+            all_restrictions, artefact_id=ef.partition.artefact_id):
         categories = ', '.join({r.restriction_type.label for r in all_restrictions})
         flash(f'File download restricted: {categories}', 'danger')
         return _redirect_to_artefact_view(ef.partition.artefact)
@@ -1285,7 +1288,8 @@ def _check_artefact_file_restrictions(artefact):
     if not file_restrictions:
         return None
 
-    if not current_user.is_authenticated or not current_user.can_bypass_all_restrictions(file_restrictions):
+    if not current_user.is_authenticated or not current_user.can_bypass_all_restrictions(
+            file_restrictions, artefact_id=artefact.id):
         categories = ', '.join({r.restriction_type.label for r in file_restrictions})
         flash(f'Download restricted (artefact contains restricted files): {categories}', 'danger')
         return _redirect_to_artefact_view(artefact)
@@ -1913,7 +1917,7 @@ def _build_derived_entries(artefact):
     def _walk(node, depth):
         for child in node.derived_artefacts:
             try:
-                restricted = not current_user.can_bypass_all_restrictions(child.restrictions)
+                restricted = not current_user.can_bypass_all_restrictions(child.restrictions, artefact_id=child.id)
             except Exception:
                 restricted = bool(child.restrictions)
             has_viewer = child.artefact_type in VIEWER_ARTEFACT_TYPES
@@ -2527,6 +2531,21 @@ def _render_artefact_view(artefact):
 
     derived_entries = _build_derived_entries(artefact)
 
+    # Per-artefact bypass data: only loaded for admins to avoid unnecessary queries.
+    if current_user.is_authenticated and current_user.is_admin:
+        artefact_user_bypasses = (
+            UserArtefactBypass.query
+            .filter_by(artefact_id=artefact.id)
+            .order_by(UserArtefactBypass.restriction_type)
+            .all()
+        )
+        bypass_eligible_users = (
+            User.query.order_by(User.username).all()
+        )
+    else:
+        artefact_user_bypasses = []
+        bypass_eligible_users = []
+
     return render_template('artefacts/view.html',
                            artefact=artefact,
                            analyses=analyses,
@@ -2573,6 +2592,8 @@ def _render_artefact_view(artefact):
                            file_ancestor_restrictions=file_ancestor_restrictions,
                            file_descendant_restrictions=file_descendant_restrictions,
                            derived_entries=derived_entries,
+                           artefact_user_bypasses=artefact_user_bypasses,
+                           bypass_eligible_users=bypass_eligible_users,
                            move_item_choices=_move_item_choices(artefact))
 
 
@@ -3394,6 +3415,61 @@ def download_file(uuid):
         abort(404, description='Extracted file not found on disk')
 
     return send_file(file_path, as_attachment=True, download_name=ef.filename)
+
+
+@blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/bypass', methods=['POST'])
+@blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/bypass', methods=['POST'], endpoint='grant_bypass_nested')
+@login_required
+def grant_bypass(item_id=None, artefact_id=None, root_id=None):
+    """Grant a per-artefact restriction bypass to a user (admin only)."""
+    if not current_user.is_admin:
+        abort(403)
+    _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
+    user_id = request.form.get('user_id', type=int)
+    rtype_value = request.form.get('restriction_type', '')
+    reason = request.form.get('reason', '').strip() or None
+    if not user_id or not rtype_value:
+        flash('User and restriction type are required.', 'danger')
+        return _redirect_to_artefact_view(artefact)
+    try:
+        rtype = RestrictionType(rtype_value)
+    except ValueError:
+        flash('Invalid restriction type.', 'danger')
+        return _redirect_to_artefact_view(artefact)
+    target_user = User.query.get_or_404(user_id)
+    existing = UserArtefactBypass.query.filter_by(
+        user_id=target_user.id, artefact_id=artefact.id, restriction_type=rtype
+    ).first()
+    if existing:
+        flash(f'{target_user.username} already has a bypass for {rtype.label} on this artefact.', 'warning')
+    else:
+        db.session.add(UserArtefactBypass(
+            user_id=target_user.id,
+            artefact_id=artefact.id,
+            restriction_type=rtype,
+            reason=reason,
+            granted_by_id=current_user.id,
+        ))
+        db.session.commit()
+        flash(f'Granted {target_user.username} download access ({rtype.label}) for this artefact.', 'success')
+    return _redirect_to_artefact_view(artefact)
+
+
+@blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/bypass/<int:bypass_id>/revoke', methods=['POST'])
+@blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/bypass/<int:bypass_id>/revoke', methods=['POST'], endpoint='revoke_bypass_nested')
+@login_required
+def revoke_bypass(item_id=None, artefact_id=None, root_id=None, bypass_id=None):
+    """Revoke a per-artefact restriction bypass (admin only)."""
+    if not current_user.is_admin:
+        abort(403)
+    _, artefact = _resolve_artefact(item_id, artefact_id, root_id)
+    bypass = UserArtefactBypass.query.filter_by(id=bypass_id, artefact_id=artefact.id).first_or_404()
+    username = bypass.user.username
+    rtype_label = bypass.restriction_type.label
+    db.session.delete(bypass)
+    db.session.commit()
+    flash(f'Revoked {username}\'s {rtype_label} bypass for this artefact.', 'success')
+    return _redirect_to_artefact_view(artefact)
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/restrictions', methods=['POST'])

@@ -210,6 +210,10 @@ class User(db.Model):
     restriction_bypasses: Mapped[list["UserRestrictionBypass"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    artefact_bypasses: Mapped[list["UserArtefactBypass"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan",
+        foreign_keys="UserArtefactBypass.user_id",
+    )
     groups: Mapped[list["Group"]] = relationship(secondary=group_memberships, back_populates="members")
 
     def can_bypass_restriction(self, restriction_type) -> bool:
@@ -221,8 +225,12 @@ class User(db.Model):
             return True
         return any(rb.restriction_type == restriction_type for rb in self.restriction_bypasses)
 
-    def can_bypass_all_restrictions(self, restrictions) -> bool:
+    def can_bypass_all_restrictions(self, restrictions, artefact_id=None) -> bool:
         """Check if this user can bypass all of the given ArtefactRestriction objects.
+
+        Checks global per-type bypasses first.  When artefact_id is supplied,
+        also checks per-artefact bypasses for any remaining restriction types
+        not covered by the global grants.
 
         Admins implicitly bypass all restriction types.
         """
@@ -230,8 +238,23 @@ class User(db.Model):
             return True
         if self.is_admin:
             return True
-        bypass_types = {rb.restriction_type for rb in self.restriction_bypasses}
-        return all(r.restriction_type in bypass_types for r in restrictions)
+        global_bypass_types = {rb.restriction_type for rb in self.restriction_bypasses}
+        missing = [r for r in restrictions if r.restriction_type not in global_bypass_types]
+        if not missing:
+            return True
+        if artefact_id is None:
+            return False
+        from sqlalchemy import and_ as _and
+        specific_types = {
+            ab.restriction_type
+            for ab in UserArtefactBypass.query.filter(
+                _and(
+                    UserArtefactBypass.user_id == self.id,
+                    UserArtefactBypass.artefact_id == artefact_id,
+                )
+            ).all()
+        }
+        return all(r.restriction_type in specific_types for r in missing)
 
     def is_authenticated(self):
         return True
@@ -615,6 +638,10 @@ class Artefact(db.Model):
     riscos_modules: Mapped[list["RiscosModule"]] = relationship(
         back_populates="artefact", cascade="all, delete-orphan"
     )
+    user_bypasses: Mapped[list["UserArtefactBypass"]] = relationship(
+        back_populates="artefact", cascade="all, delete-orphan",
+        foreign_keys="UserArtefactBypass.artefact_id",
+    )
 
     # Derived artefacts (e.g., sector image from flux decode)
     parent_artefact: Mapped[Optional["Artefact"]] = relationship(
@@ -945,6 +972,37 @@ class UserRestrictionBypass(db.Model):
     restriction_type: Mapped[RestrictionType] = mapped_column(SQLEnum(RestrictionType))
 
     user: Mapped["User"] = relationship(back_populates="restriction_bypasses")
+
+
+class UserArtefactBypass(db.Model):
+    """Per-artefact, per-restriction-type download bypass granted to a specific user.
+
+    More granular than UserRestrictionBypass: grants access to one artefact
+    only, rather than all artefacts of a given restriction type.  Intended
+    for cases where a curator needs to share one restricted artefact with a
+    researcher without granting a collection-wide bypass.
+
+    Checked after global UserRestrictionBypass in User.can_bypass_all_restrictions().
+    """
+    __tablename__ = "user_artefact_bypasses"
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'artefact_id', 'restriction_type',
+                            name='uq_user_artefact_bypass'),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), index=True)
+    artefact_id: Mapped[int] = mapped_column(ForeignKey("artefacts.id", ondelete="CASCADE"), index=True)
+    restriction_type: Mapped[RestrictionType] = mapped_column(SQLEnum(RestrictionType))
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    granted_by_id: Mapped[int | None] = mapped_column(ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
+
+    user: Mapped["User"] = relationship(back_populates="artefact_bypasses",
+                                        foreign_keys=[user_id])
+    artefact: Mapped["Artefact"] = relationship(back_populates="user_bypasses",
+                                                foreign_keys=[artefact_id])
+    granted_by: Mapped["User | None"] = relationship(foreign_keys=[granted_by_id])
 
 
 # =============================================================================

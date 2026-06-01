@@ -150,6 +150,46 @@
 						<a href="{{ url_for('myapp_blueprints_admin.index') }}" class="btn btn-secondary">Cancel</a>
 					</div>
 				</form>
+
+				{% if artefact_bypasses %}
+				<hr>
+				<h5 class="mb-3">Per-Artefact Download Access</h5>
+				<p class="text-muted small">These grants allow this user to download specific restricted artefacts, independent of their global bypass permissions.</p>
+				<table class="table table-sm table-bordered">
+					<thead class="table-light">
+						<tr>
+							<th>Artefact</th>
+							<th>Restriction Type</th>
+							<th>Reason</th>
+							<th>Granted</th>
+							<th></th>
+						</tr>
+					</thead>
+					<tbody>
+						{% for bypass in artefact_bypasses %}
+						<tr>
+							<td>
+								{% if bypass.artefact %}
+								<a href="{{ artefact_url(bypass.artefact, 'view') }}">{{ bypass.artefact.filename or bypass.artefact.id }}</a>
+								{% else %}
+								<span class="text-muted">(deleted)</span>
+								{% endif %}
+							</td>
+							<td><span class="badge bg-secondary">{{ bypass.restriction_type.label }}</span></td>
+							<td>{{ bypass.reason or '—' }}</td>
+							<td>{{ bypass.created_at.strftime('%Y-%m-%d') if bypass.created_at else '—' }}</td>
+							<td>
+								<form method="post" action="{{ url_for('myapp_blueprints_admin.revoke_artefact_bypass', user_id=user.id, bypass_id=bypass.id) }}" class="d-inline">
+									<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+									<button type="submit" class="btn btn-danger btn-sm"
+											onclick="return confirm('Revoke this per-artefact bypass?')">Revoke</button>
+								</form>
+							</td>
+						</tr>
+						{% endfor %}
+					</tbody>
+				</table>
+				{% endif %}
 			</div>
 		</div>
 	</div>

@@ -196,6 +196,75 @@
                 </div>
             </div>
         </div>
+        {% if current_user.is_admin and artefact.restrictions %}
+        <div class="card mb-4">
+            <div class="card-header">
+                <a class="text-decoration-none" data-bs-toggle="collapse" href="#bypassSection" role="button" aria-expanded="{{ 'true' if artefact_user_bypasses else 'false' }}" aria-controls="bypassSection">
+                    <i class="bi bi-person-check"></i> Per-User Download Access
+                    {% if artefact_user_bypasses %}<span class="badge bg-secondary ms-1">{{ artefact_user_bypasses|length }}</span>{% endif %}
+                </a>
+            </div>
+            <div class="collapse{% if artefact_user_bypasses %} show{% endif %}" id="bypassSection">
+                <div class="card-body">
+                    {% if artefact_user_bypasses %}
+                    <table class="table table-sm mb-3">
+                        <thead><tr><th>User</th><th>Type</th><th>Reason</th><th></th></tr></thead>
+                        <tbody>
+                        {% for bp in artefact_user_bypasses %}
+                        <tr>
+                            <td><code>{{ bp.user.username }}</code></td>
+                            <td><span class="badge bg-warning text-dark">{{ bp.restriction_type.label }}</span></td>
+                            <td class="small text-muted">{{ bp.reason or '—' }}</td>
+                            <td class="text-end">
+                                <form action="{{ artefact_url(artefact, 'revoke_bypass', bypass_id=bp.id) }}" method="post" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger"
+                                            onclick="return confirm('Revoke access for {{ bp.user.username }}?')"
+                                            aria-label="Revoke access for {{ bp.user.username }}">
+                                        <i class="bi bi-x-lg"></i>
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <p class="text-muted small mb-2">No per-user access grants yet.</p>
+                    {% endif %}
+                    {% set _artefact_rtypes = artefact.restrictions | map(attribute='restriction_type') | list %}
+                    <form action="{{ artefact_url(artefact, 'grant_bypass') }}" method="post" class="row g-2 align-items-end">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="col">
+                            <label class="form-label small mb-0">User</label>
+                            <select name="user_id" class="form-select form-select-sm" required>
+                                <option value="">Select user…</option>
+                                {% for u in bypass_eligible_users %}
+                                <option value="{{ u.id }}">{{ u.username }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-auto">
+                            <label class="form-label small mb-0">Type</label>
+                            <select name="restriction_type" class="form-select form-select-sm" required>
+                                <option value="">Select…</option>
+                                {% for rtype in _artefact_rtypes %}
+                                <option value="{{ rtype.value }}">{{ rtype.label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col">
+                            <label class="form-label small mb-0">Reason (optional)</label>
+                            <input type="text" name="reason" class="form-control form-control-sm" placeholder="e.g. Research exemption">
+                        </div>
+                        <div class="col-auto">
+                            <button type="submit" class="btn btn-sm btn-success"><i class="bi bi-person-plus"></i> Grant</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        {% endif %}
         {% endif %}
 
         {% if derived_entries %}
