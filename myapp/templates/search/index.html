@@ -181,7 +181,7 @@
 	<li class="nav-item">
 		<a class="nav-link active" data-bs-toggle="tab" href="#tab-files">
 			<i class="bi bi-file-earmark"></i> Files
-			<span class="badge bg-secondary ms-1">{{ results.files|length }}{% if results.truncated.get('files') %}+{% endif %}</span>
+			<span class="badge bg-secondary ms-1" title="{{ totals.files }} total">{{ totals.files if totals.files else results.files|length }}</span>
 		</a>
 	</li>
 	{% endif %}
@@ -189,7 +189,7 @@
 	<li class="nav-item">
 		<a class="nav-link{% if not results.files %} active{% endif %}" data-bs-toggle="tab" href="#tab-artefacts">
 			<i class="bi bi-disc"></i> Artefacts
-			<span class="badge bg-secondary ms-1">{{ results.artefacts|length }}{% if results.truncated.get('artefacts') %}+{% endif %}</span>
+			<span class="badge bg-secondary ms-1" title="{{ totals.artefacts }} total">{{ totals.artefacts if totals.artefacts else results.artefacts|length }}</span>
 		</a>
 	</li>
 	{% endif %}
@@ -197,7 +197,7 @@
 	<li class="nav-item">
 		<a class="nav-link{% if not results.files and not results.artefacts %} active{% endif %}" data-bs-toggle="tab" href="#tab-items">
 			<i class="bi bi-collection"></i> Items
-			<span class="badge bg-secondary ms-1">{{ results.catalogue_items|length }}{% if results.truncated.get('items') %}+{% endif %}</span>
+			<span class="badge bg-secondary ms-1" title="{{ totals.items }} total">{{ totals.items if totals.items else results.catalogue_items|length }}</span>
 		</a>
 	</li>
 	{% endif %}
@@ -208,9 +208,6 @@
 {# --- Files tab --- #}
 {% if results.files %}
 <div class="tab-pane fade show active" id="tab-files">
-	{% if results.truncated.get('files') %}
-	<div class="alert alert-info py-2"><i class="bi bi-info-circle"></i> Showing {{ PER_PAGE }} results per page — use the navigation below to see more.</div>
-	{% endif %}
 	<div class="table-responsive">
 		<table class="table table-sm table-hover">
 			<thead><tr>
@@ -264,9 +261,6 @@
 {# --- Artefacts tab --- #}
 {% if results.artefacts %}
 <div class="tab-pane fade{% if not results.files %} show active{% endif %}" id="tab-artefacts">
-	{% if results.truncated.get('artefacts') %}
-	<div class="alert alert-info py-2"><i class="bi bi-info-circle"></i> Showing {{ PER_PAGE }} results per page — use the navigation below to see more.</div>
-	{% endif %}
 	<div class="table-responsive">
 		<table class="table table-sm table-hover">
 			<thead><tr>
@@ -314,9 +308,6 @@
 {# --- Items tab --- #}
 {% if results.catalogue_items %}
 <div class="tab-pane fade{% if not results.files and not results.artefacts %} show active{% endif %}" id="tab-items">
-	{% if results.truncated.get('items') %}
-	<div class="alert alert-info py-2"><i class="bi bi-info-circle"></i> Showing {{ PER_PAGE }} results per page — use the navigation below to see more.</div>
-	{% endif %}
 	<div class="table-responsive">
 		<table class="table table-sm table-hover">
 			<thead><tr>
@@ -349,19 +340,39 @@
 
 </div>{# /tab-content #}
 
-{% if has_prev or has_next or VALID_PER_PAGE %}
-<nav class="d-flex justify-content-between align-items-center mt-3" aria-label="Search result pages">
+{% set _max_total = [totals.files, totals.artefacts, totals.items] | max %}
+{% set _start = (page - 1) * PER_PAGE + 1 %}
+{% set _end = [page * PER_PAGE, _max_total] | min %}
+<nav class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-3" aria-label="Search result pages">
+    {# Prev button #}
     {% if has_prev %}
-    <a href="?{{ dict(request.args, page=page-1) | urlencode }}" class="btn btn-outline-secondary">
+    <a href="?{{ dict(request.args, page=page-1) | urlencode }}" class="btn btn-outline-secondary btn-sm">
         <i class="bi bi-chevron-left"></i> Previous
     </a>
     {% else %}
     <span></span>
     {% endif %}
 
-    <div class="d-flex align-items-center gap-2">
-        {% if has_prev or has_next %}
-        <span class="text-muted small">Page {{ page }}</span>
+    {# Centre: showing + page jump + per-page selector #}
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+        {% if _max_total > 0 %}
+        <span class="text-muted small">
+            Showing {{ _start }}–{{ _end }} of {{ _max_total }}
+        </span>
+        {% endif %}
+        {% if total_pages > 1 %}
+        <form method="get" class="d-inline-flex align-items-center gap-1">
+            {% for k, v in request.args.items() %}
+            {% if k != 'page' %}<input type="hidden" name="{{ k }}" value="{{ v | e }}">{% endif %}
+            {% endfor %}
+            <label class="text-muted small mb-0" for="search-page-jump">Page</label>
+            <input type="number" id="search-page-jump" name="page"
+                   min="1" max="{{ total_pages }}" value="{{ page }}"
+                   class="form-control form-control-sm text-center"
+                   style="width: 4.5rem;"
+                   aria-label="Go to page">
+            <span class="text-muted small">of {{ total_pages }}</span>
+        </form>
         {% endif %}
         {% if VALID_PER_PAGE %}
         <div class="btn-group btn-group-sm" role="group" aria-label="Results per page">
@@ -373,15 +384,15 @@
         {% endif %}
     </div>
 
+    {# Next button #}
     {% if has_next %}
-    <a href="?{{ dict(request.args, page=page+1) | urlencode }}" class="btn btn-outline-secondary">
+    <a href="?{{ dict(request.args, page=page+1) | urlencode }}" class="btn btn-outline-secondary btn-sm">
         Next <i class="bi bi-chevron-right"></i>
     </a>
     {% else %}
     <span></span>
     {% endif %}
 </nav>
-{% endif %}
 
 {% endif %}{# total > 0 #}
 {% endif %}{# results is not none #}

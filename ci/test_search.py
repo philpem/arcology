@@ -864,10 +864,13 @@ class TestSearchLogic(unittest.TestCase):
         self.assertIn('files', results)
         self.assertIn('artefacts', results)
         self.assertIn('catalogue_items', results)
-        self.assertIn('truncated', results)
+        self.assertIn('totals', results)
         self.assertEqual(results['files'], [])
         self.assertEqual(results['artefacts'], [])
         self.assertEqual(results['catalogue_items'], [])
+        self.assertEqual(results['totals']['files'], 0)
+        self.assertEqual(results['totals']['artefacts'], 0)
+        self.assertEqual(results['totals']['items'], 0)
 
 
 # =============================================================================
