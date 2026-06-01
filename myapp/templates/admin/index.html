@@ -108,6 +108,19 @@
 										<button type="button" class="btn-close" data-bs-dismiss="modal"></button>
 									</div>
 									<div class="modal-body">
+										{% set _items = item_owner_counts.get(user.id, 0) %}
+										{% set _artefacts = artefact_owner_counts.get(user.id, 0) %}
+										{% if _items or _artefacts %}
+										<div class="alert alert-warning mb-3">
+											<i class="bi bi-exclamation-triangle-fill"></i>
+											<strong>{{ user.username }}</strong> owns
+											{% if _items %}<strong>{{ _items }}</strong> item(s){% endif %}
+											{% if _items and _artefacts %} and {% endif %}
+											{% if _artefacts %}<strong>{{ _artefacts }}</strong> artefact(s){% endif %}.
+											You must release ownership before deleting:
+											<code>flask reassign-ownership --from {{ user.username }} --to none</code>
+										</div>
+										{% endif %}
 										Are you sure you want to delete user <strong>{{ user.username }}</strong>?
 										This will also revoke all their API keys and cannot be undone.
 									</div>
@@ -115,7 +128,10 @@
 										<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
 										<form method="post" action="{{ url_for('myapp_blueprints_admin.delete_user', user_id=user.id) }}">
 											{{ perm_forms[user.id].hidden_tag() }}
-											<button type="submit" class="btn btn-danger">Delete</button>
+											<button type="submit" class="btn btn-danger"
+											        {% if item_owner_counts.get(user.id, 0) or artefact_owner_counts.get(user.id, 0) %}disabled{% endif %}>
+												Delete
+											</button>
 										</form>
 									</div>
 								</div>
