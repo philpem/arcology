@@ -23,6 +23,7 @@ from ..database import (
     Item,
     ItemShare,
     Platform,
+    Tag,
     User,
     UserPermission,
 )
@@ -295,6 +296,12 @@ def _build_tree_rows(root_items):
     return rows
 
 
+def _render_item_form(form, **kwargs):
+    """Render the item create/edit form, injecting the full tag list for autocomplete."""
+    kwargs.setdefault('all_tags', Tag.query.order_by(Tag.name).all())
+    return render_template('items/form.html', form=form, **kwargs)
+
+
 @blueprint.route('/new', methods=['GET', 'POST'])
 @login_required
 @require_permission('read_write')
@@ -325,11 +332,11 @@ def new():
             parent = db.session.get(Item, new_parent_id)
             if parent is None or not can_view_item(parent, current_user):
                 flash('Parent item not found.', 'danger')
-                return render_template('items/form.html', form=form, title='New Item',
+                return _render_item_form(form, title='New Item',
                                        preset_parent=preset_parent, can_set_private=True)
             if parent.private_effective and not can_contribute_to_item(parent, current_user):
                 flash('Only the parent owner or an administrator may create child items under that parent.', 'danger')
-                return render_template('items/form.html', form=form, title='New Item',
+                return _render_item_form(form, title='New Item',
                                        preset_parent=preset_parent, can_set_private=True)
 
         item = Item()
@@ -354,7 +361,7 @@ def new():
         flash(f'Item "{item.name}" created successfully.', 'success')
         return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
 
-    return render_template('items/form.html', form=form, title='New Item',
+    return _render_item_form(form, title='New Item',
                            preset_parent=preset_parent, can_set_private=True)
 
 
@@ -475,25 +482,25 @@ def edit(uuid):
         # their own private one.  Restrict parent changes to owner or admin.
         if new_parent_id != item.parent_id and not can_change_owner(item, current_user):
             flash('Only the owner or an administrator may move this item to a different parent.', 'danger')
-            return render_template('items/form.html', form=form, item=item, title='Edit Item',
+            return _render_item_form(form, item=item, title='Edit Item',
                                    preset_parent=None, can_set_private=can_priv)
 
         if new_parent_id is not None:
             new_parent = db.session.get(Item, new_parent_id)
             if new_parent is None or not can_view_item(new_parent, current_user):
                 flash('Parent item not found.', 'danger')
-                return render_template('items/form.html', form=form, item=item, title='Edit Item',
+                return _render_item_form(form, item=item, title='Edit Item',
                                        preset_parent=None, can_set_private=can_priv)
             if new_parent.private_effective and not can_contribute_to_item(new_parent, current_user):
                 flash('Only the parent owner or an administrator may move items under that parent.', 'danger')
-                return render_template('items/form.html', form=form, item=item, title='Edit Item',
+                return _render_item_form(form, item=item, title='Edit Item',
                                        preset_parent=None, can_set_private=can_priv)
 
         # Cycle prevention: ensure the chosen parent is not a descendant of this item
         if new_parent_id is not None:
             if new_parent and item.is_ancestor_of(new_parent):
                 flash('Cannot move an item to one of its own descendants.', 'danger')
-                return render_template('items/form.html', form=form, item=item, title='Edit Item',
+                return _render_item_form(form, item=item, title='Edit Item',
                                        preset_parent=None, can_set_private=can_priv)
 
         assign_item_fields(
@@ -527,7 +534,7 @@ def edit(uuid):
         flash(f'Item "{item.name}" updated successfully.', 'success')
         return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
 
-    return render_template('items/form.html', form=form, item=item, title='Edit Item',
+    return _render_item_form(form, item=item, title='Edit Item',
                            preset_parent=None, can_set_private=can_priv)
 
 
