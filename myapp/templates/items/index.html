@@ -97,7 +97,7 @@
     </div>
 </div>
 
-{{ render_pagination(pagination, 'myapp_blueprints_items.index', {
+{{ render_pagination(pagination, {
     'q': request.args.get('q'),
     'platform_id': request.args.get('platform_id'),
     'category_id': request.args.get('category_id'),
