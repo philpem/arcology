@@ -8,6 +8,7 @@ from flask import Blueprint, flash, render_template
 from flask_login import login_required
 from flask_wtf import FlaskForm
 from sqlalchemy import func
+from sqlalchemy.orm import selectinload
 from wtforms import SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Length, Optional
 from ..database import Category, ExternalSystem, HashDatabase, Platform, Tag
@@ -242,7 +243,10 @@ def delete_category(id):
 @blueprint.route('/tags')
 @public_readable
 def tags():
-    tags = Tag.query.order_by(func.lower(Tag.name)).all()
+    tags = (Tag.query
+            .options(selectinload(Tag.items), selectinload(Tag.artefacts))
+            .order_by(func.lower(Tag.name))
+            .all())
     return render_template('taxonomy/tags.html', tags=tags)
 
 
