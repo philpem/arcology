@@ -3676,6 +3676,14 @@ def rescan_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None)
     artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
     _require_manage_artefact_content(artefact)
     updated, total = rescan_hashes_for_artefact(artefact)
+    # Clear any stale FAILED HASH_RESCAN analysis rows so the status lozenge
+    # reflects the successful rescan rather than the previous failure.
+    Analysis.query.filter(
+        Analysis.artefact_id == artefact.id,
+        Analysis.analysis_type == AnalysisType.HASH_RESCAN,
+        Analysis.status == AnalysisStatus.FAILED,
+    ).delete(synchronize_session=False)
+    db.session.commit()
     flash(f'Hash rescan complete: {updated} of {total} files updated.', 'success')
     return _redirect_to_artefact_view(artefact)
 
