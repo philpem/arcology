@@ -250,8 +250,8 @@ def delete_user(user_id):
         flash(
             f'Cannot delete "{username}": they own {item_count} item(s) and '
             f'{artefact_count} artefact(s). '
-            f'Release ownership first with: '
-            f'flask reassign-ownership --from {username} --to none',
+            f'Use the Ownership Reassignment tool below to transfer their work to '
+            f'another user, or release it as unowned, then delete the account.',
             'danger',
         )
         return _route_redirect('index')
@@ -442,6 +442,12 @@ def reassign_ownership():
     form = ReassignOwnershipForm()
     form.from_user_id.choices = user_choices
     form.to_user_id.choices   = user_choices
+
+    # Pre-select the source user when linked from the delete-user warning.
+    if request.method == 'GET':
+        from_arg = request.args.get('from_user', type=int)
+        if from_arg is not None and any(choice_id == from_arg for choice_id, _ in user_choices):
+            form.from_user_id.data = from_arg
 
     preview = None
 

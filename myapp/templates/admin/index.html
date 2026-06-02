@@ -117,8 +117,10 @@
 											{% if _items %}<strong>{{ _items }}</strong> item(s){% endif %}
 											{% if _items and _artefacts %} and {% endif %}
 											{% if _artefacts %}<strong>{{ _artefacts }}</strong> artefact(s){% endif %}.
-											You must release ownership before deleting:
-											<code>flask reassign-ownership --from {{ user.username }} --to none</code>
+											You must reassign or release their ownership before deleting.
+											Use
+											<a href="{{ url_for('myapp_blueprints_admin.reassign_ownership', from_user=user.id) }}">Ownership Reassignment</a>
+											to transfer their items and artefacts to another user, or release them as unowned.
 										</div>
 										{% endif %}
 										Are you sure you want to delete user <strong>{{ user.username }}</strong>?
@@ -160,8 +162,9 @@
 	</div>
 	<div class="card-body">
 		<p class="mb-0 text-muted">
-			Transfer all items and artefacts from one user to another — use this when a curator
-			leaves and their work needs to be handed over to a colleague.
+			Transfer all items and artefacts from one user to another. Useful when someone
+			leaves and their work needs handing over to a colleague, or before deleting a user
+			who still owns content.
 		</p>
 	</div>
 </div>
