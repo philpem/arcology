@@ -108,6 +108,21 @@
 										<button type="button" class="btn-close" data-bs-dismiss="modal"></button>
 									</div>
 									<div class="modal-body">
+										{% set _items = item_owner_counts.get(user.id, 0) %}
+										{% set _artefacts = artefact_owner_counts.get(user.id, 0) %}
+										{% if _items or _artefacts %}
+										<div class="alert alert-warning mb-3">
+											<i class="bi bi-exclamation-triangle-fill"></i>
+											<strong>{{ user.username }}</strong> owns
+											{% if _items %}<strong>{{ _items }}</strong> item(s){% endif %}
+											{% if _items and _artefacts %} and {% endif %}
+											{% if _artefacts %}<strong>{{ _artefacts }}</strong> artefact(s){% endif %}.
+											You must reassign or release their ownership before deleting.
+											Use
+											<a href="{{ url_for('myapp_blueprints_admin.reassign_ownership', from_user=user.id) }}">Ownership Reassignment</a>
+											to transfer their items and artefacts to another user, or release them as unowned.
+										</div>
+										{% endif %}
 										Are you sure you want to delete user <strong>{{ user.username }}</strong>?
 										This will also revoke all their API keys and cannot be undone.
 									</div>
@@ -115,7 +130,10 @@
 										<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
 										<form method="post" action="{{ url_for('myapp_blueprints_admin.delete_user', user_id=user.id) }}">
 											{{ perm_forms[user.id].hidden_tag() }}
-											<button type="submit" class="btn btn-danger">Delete</button>
+											<button type="submit" class="btn btn-danger"
+											        {% if item_owner_counts.get(user.id, 0) or artefact_owner_counts.get(user.id, 0) %}disabled{% endif %}>
+												Delete
+											</button>
 										</form>
 									</div>
 								</div>
@@ -144,8 +162,9 @@
 	</div>
 	<div class="card-body">
 		<p class="mb-0 text-muted">
-			Transfer all items and artefacts from one user to another — use this when a curator
-			leaves and their work needs to be handed over to a colleague.
+			Transfer all items and artefacts from one user to another. Useful when someone
+			leaves and their work needs handing over to a colleague, or before deleting a user
+			who still owns content.
 		</p>
 	</div>
 </div>

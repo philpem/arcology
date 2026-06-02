@@ -98,17 +98,33 @@ class GroupForm(FlaskForm):
 def index():
     _require_admin()
     users = User.query.order_by(User.username).all()
+    user_ids = [u.id for u in users]
     # Count active API keys per user
     key_counts = {
         u.id: ApiKey.query.filter_by(user_id=u.id, is_active=True).count()
         for u in users
     }
+    # Count owned items and artefacts per user (for delete modal warnings)
+    item_owner_counts = dict(
+        db.session.query(Item.owner_id, func.count(Item.id))
+        .filter(Item.owner_id.in_(user_ids))
+        .group_by(Item.owner_id)
+        .all()
+    ) if user_ids else {}
+    artefact_owner_counts = dict(
+        db.session.query(Artefact.owner_id, func.count(Artefact.id))
+        .filter(Artefact.owner_id.in_(user_ids))
+        .group_by(Artefact.owner_id)
+        .all()
+    ) if user_ids else {}
     worker_key = current_app.config.get('WORKER_API_KEY', '')
     perm_forms = {u.id: UserPermissionForm(prefix=f'u{u.id}', permission=u.permission.value) for u in users}
     group_count = Group.query.count()
     return render_template('admin/index.html',
         users=users,
         key_counts=key_counts,
+        item_owner_counts=item_owner_counts,
+        artefact_owner_counts=artefact_owner_counts,
         worker_key=worker_key,
         perm_forms=perm_forms,
         group_count=group_count,
@@ -228,6 +244,17 @@ def delete_user(user_id):
         return _route_redirect('index')
     user = User.query.get_or_404(user_id)
     username = user.username
+    item_count = Item.query.filter_by(owner_id=user.id).count()
+    artefact_count = Artefact.query.filter_by(owner_id=user.id).count()
+    if item_count or artefact_count:
+        flash(
+            f'Cannot delete "{username}": they own {item_count} item(s) and '
+            f'{artefact_count} artefact(s). '
+            f'Use the Ownership Reassignment tool below to transfer their work to '
+            f'another user, or release it as unowned, then delete the account.',
+            'danger',
+        )
+        return _route_redirect('index')
     db.session.delete(user)
     db.session.commit()
     flash(f'User "{username}" deleted.', 'success')
@@ -415,6 +442,12 @@ def reassign_ownership():
     form = ReassignOwnershipForm()
     form.from_user_id.choices = user_choices
     form.to_user_id.choices   = user_choices
+
+    # Pre-select the source user when linked from the delete-user warning.
+    if request.method == 'GET':
+        from_arg = request.args.get('from_user', type=int)
+        if from_arg is not None and any(choice_id == from_arg for choice_id, _ in user_choices):
+            form.from_user_id.data = from_arg
 
     preview = None
 
