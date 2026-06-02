@@ -257,7 +257,7 @@
                 <div class="list-group-item text-muted text-center">No artefacts yet</div>
                 {% endfor %}
             </div>
-            {{ render_pagination(artefacts_page, 'myapp_blueprints_items.view', {'uuid': item.url_id, 'per_page': request.args.get('per_page'), 'artefact_sort': artefact_sort}, valid_per_page=valid_per_page, view_all=view_all) }}
+            {{ render_pagination(artefacts_page, {'per_page': request.args.get('per_page'), 'artefact_sort': artefact_sort}, valid_per_page=valid_per_page, view_all=view_all) }}
         </div>
     </div>
 </div>

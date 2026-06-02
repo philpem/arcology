@@ -1,55 +1,112 @@
-{% macro render_pagination(pagination, endpoint, extra_args={}, valid_per_page=none, view_all=false) %}
-{# Build a clean copy of extra_args without page/per_page — the macro sets those explicitly #}
-{% set _args = extra_args.items() | rejectattr('0', 'in', ['page', 'per_page']) | list %}
-{% set base_args = dict(_args) %}
+{# =============================================================================
+   Shared pagination controls
+   -----------------------------------------------------------------------------
+   One visual pattern, two thin wrappers:
+     * render_pagination()          – freestanding <nav> (lists, search, …)
+     * render_pagination_compact()  – wrapped in a .card-footer (file browser)
+
+   Both delegate to _pagination_inner(), so the layout is identical everywhere:
+     * centre  – Prev ‹ … numbered page links … › Next, with the *current*
+                 page rendered as an editable "Page [x] of y" jump box whenever
+                 the page list is truncated (i.e. iter_pages() emits an ellipsis)
+     * right   – per-page selector (25/50/100/250/All)
+     * below   – centred "Showing X–Y of N"
+
+   All callers pass a `pagination` object (Flask-SQLAlchemy Pagination or the
+   ListPagination shim) plus `pagination_args` – a dict of the current query
+   args *without* `page`.  Links are built relative to the current path, so
+   route path params (e.g. <uuid>) are preserved automatically.
+   ============================================================================= #}
+
+{% macro _pagination_inner(pagination, pagination_args, valid_per_page=none, view_all=false) %}
+{% set pages_list = pagination.iter_pages(left_edge=1, left_current=2, right_current=3, right_edge=1) | list %}
+{% set truncated = none in pages_list %}
 {% if pagination.pages > 1 or valid_per_page %}
-<nav class="mt-4" aria-label="Page navigation">
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+    {# left spacer (equal grow, zero basis) keeps the page group centred on md+ #}
+    <div class="d-none d-md-block" style="flex: 1 1 0;"></div>
+
+    {# centre: page navigation group #}
     {% if pagination.pages > 1 %}
-    <ul class="pagination justify-content-center">
-        {% if pagination.has_prev %}
-        <li class="page-item">
-            <a class="page-link" href="{{ url_for(endpoint, page=pagination.prev_num, per_page=extra_args.get('per_page'), **base_args) }}">‹</a>
-        </li>
-        {% else %}
-        <li class="page-item disabled"><span class="page-link">‹</span></li>
-        {% endif %}
-
-        {% for pg in pagination.iter_pages(left_edge=1, left_current=2, right_current=3, right_edge=1) %}
-            {% if pg %}
-            <li class="page-item {{ 'active' if pg == pagination.page else '' }}">
-                <a class="page-link" href="{{ url_for(endpoint, page=pg, per_page=extra_args.get('per_page'), **base_args) }}">{{ pg }}</a>
-            </li>
+    <nav aria-label="Page navigation">
+        <ul class="pagination pagination-sm justify-content-center flex-wrap mb-0">
+            {% if pagination.has_prev %}
+            <li class="page-item"><a class="page-link" href="?{{ dict(pagination_args, page=pagination.prev_num) | urlencode }}" aria-label="Previous">‹</a></li>
             {% else %}
-            <li class="page-item disabled"><span class="page-link">…</span></li>
+            <li class="page-item disabled"><span class="page-link">‹</span></li>
             {% endif %}
-        {% endfor %}
 
-        {% if pagination.has_next %}
-        <li class="page-item">
-            <a class="page-link" href="{{ url_for(endpoint, page=pagination.next_num, per_page=extra_args.get('per_page'), **base_args) }}">›</a>
-        </li>
-        {% else %}
-        <li class="page-item disabled"><span class="page-link">›</span></li>
-        {% endif %}
-    </ul>
+            {% for pg in pages_list %}
+                {% if pg is none %}
+                <li class="page-item disabled"><span class="page-link">…</span></li>
+                {% elif pg == pagination.page and truncated %}
+                {# editable current-page jump box – type a number, Enter to jump #}
+                <li class="page-item active" aria-current="page">
+                    <form method="get" class="page-link d-inline-flex align-items-center gap-1 py-0">
+                        {% for k, v in pagination_args.items() %}
+                        {% if k != 'page' and v is not none %}<input type="hidden" name="{{ k }}" value="{{ v | e }}">{% endif %}
+                        {% endfor %}
+                        <span>Page</span>
+                        <input type="number" name="page" min="1" max="{{ pagination.pages }}" value="{{ pagination.page }}"
+                               class="form-control form-control-sm text-center p-0"
+                               style="width: 3rem; height: 1.5rem;" aria-label="Go to page">
+                        <span>of {{ pagination.pages }}</span>
+                    </form>
+                </li>
+                {% elif pg == pagination.page %}
+                <li class="page-item active" aria-current="page"><span class="page-link">{{ pg }}</span></li>
+                {% else %}
+                <li class="page-item"><a class="page-link" href="?{{ dict(pagination_args, page=pg) | urlencode }}">{{ pg }}</a></li>
+                {% endif %}
+            {% endfor %}
+
+            {% if pagination.has_next %}
+            <li class="page-item"><a class="page-link" href="?{{ dict(pagination_args, page=pagination.next_num) | urlencode }}" aria-label="Next">›</a></li>
+            {% else %}
+            <li class="page-item disabled"><span class="page-link">›</span></li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% else %}
+    <div></div>
     {% endif %}
-    <p class="text-center text-muted small">
-        Showing {{ ((pagination.page - 1) * pagination.per_page) + 1 }}–{{ [pagination.page * pagination.per_page, pagination.total]|min }} of {{ pagination.total }}
-    </p>
-    {% if valid_per_page %}
-    <div class="d-flex justify-content-center gap-1 mt-2">
-        <span class="text-muted small me-1 align-self-center">Per page:</span>
+
+    {# right: per-page selector (equal grow, zero basis, aligned end) #}
+    <div class="d-flex justify-content-end align-items-center gap-1" style="flex: 1 1 0;">
+        {% if valid_per_page %}
+        <span class="text-muted small me-1">Per page:</span>
         {% for pp in valid_per_page %}
         <a class="btn btn-sm {{ 'btn-secondary' if (not view_all and pagination.per_page == pp) else 'btn-outline-secondary' }}"
-           href="{{ url_for(endpoint, per_page=pp, **base_args) }}">{{ pp }}</a>
+           href="?{{ dict(pagination_args, per_page=pp, page=1) | urlencode }}">{{ pp }}</a>
         {% endfor %}
         <a class="btn btn-sm {{ 'btn-secondary' if view_all else 'btn-outline-secondary' }}"
-           href="{{ url_for(endpoint, per_page=0, **base_args) }}">All</a>
+           href="?{{ dict(pagination_args, per_page=0, page=1) | urlencode }}">All</a>
+        {% endif %}
     </div>
-    {% endif %}
+</div>
+{% endif %}
+{% if pagination.total > 0 %}
+<p class="text-center text-muted small mt-2 mb-0">
+    Showing {{ ((pagination.page - 1) * pagination.per_page) + 1 }}–{{ [pagination.page * pagination.per_page, pagination.total] | min }} of {{ pagination.total }}
+</p>
+{% endif %}
+{% endmacro %}
+
+
+{% macro render_pagination(pagination, pagination_args, valid_per_page=none, view_all=false) %}
+{% if pagination.total > 0 %}
+<nav class="mt-4" aria-label="Page navigation">
+    {{ _pagination_inner(pagination, pagination_args, valid_per_page, view_all) }}
 </nav>
-{% elif pagination.total > 0 %}
-<p class="text-center text-muted small mt-3">{{ pagination.total }} result{{ 's' if pagination.total != 1 else '' }}</p>
+{% endif %}
+{% endmacro %}
+
+
+{% macro render_pagination_compact(pagination, pagination_args, valid_per_page=none, view_all=false) %}
+{% if pagination.total > 0 %}
+<div class="card-footer">
+    {{ _pagination_inner(pagination, pagination_args, valid_per_page, view_all) }}
+</div>
 {% endif %}
 {% endmacro %}
 
@@ -98,49 +155,6 @@
     <span class="btn btn-sm btn-outline-secondary disabled" tabindex="-1" aria-disabled="true">{{ ch }}</span>
     {% endif %}
     {% endfor %}
-</div>
-{% endif %}
-{% endmacro %}
-
-
-{% macro render_pagination_compact(pagination, pagination_args, valid_per_page=none, view_all=false) %}
-{% if pagination.total > 0 %}
-<div class="card-footer">
-    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-        {# Page navigation -- only shown when there is more than one page #}
-        {% if pagination.pages > 1 %}
-        <nav><ul class="pagination pagination-sm mb-0">
-            {% if pagination.has_prev %}<li class="page-item"><a class="page-link" href="?{{ dict(pagination_args, page=pagination.prev_num) | urlencode }}">‹</a></li>
-            {% else %}<li class="page-item disabled"><span class="page-link">‹</span></li>{% endif %}
-            {% for pg in pagination.iter_pages(left_edge=1, left_current=2, right_current=3, right_edge=1) %}
-                {% if pg %}
-                <li class="page-item {{ 'active' if pg == pagination.page else '' }}">
-                    <a class="page-link" href="?{{ dict(pagination_args, page=pg) | urlencode }}">{{ pg }}</a>
-                </li>
-                {% else %}
-                <li class="page-item disabled"><span class="page-link">…</span></li>
-                {% endif %}
-            {% endfor %}
-            {% if pagination.has_next %}<li class="page-item"><a class="page-link" href="?{{ dict(pagination_args, page=pagination.next_num) | urlencode }}">›</a></li>
-            {% else %}<li class="page-item disabled"><span class="page-link">›</span></li>{% endif %}
-        </ul></nav>
-        {% else %}
-        <span class="text-muted small">{{ pagination.total }} file{{ 's' if pagination.total != 1 else '' }}</span>
-        {% endif %}
-
-        {% if valid_per_page %}
-        {# Per-page selector #}
-        <div class="d-flex align-items-center gap-1">
-            <span class="text-muted small me-1">Per page:</span>
-            {% for pp in valid_per_page %}
-            <a class="btn btn-sm {{ 'btn-secondary' if (not view_all and pagination.per_page == pp) else 'btn-outline-secondary' }}"
-               href="?{{ dict(pagination_args, per_page=pp) | urlencode }}">{{ pp }}</a>
-            {% endfor %}
-            <a class="btn btn-sm {{ 'btn-secondary' if view_all else 'btn-outline-secondary' }}"
-               href="?{{ dict(pagination_args, per_page=0) | urlencode }}">All</a>
-        </div>
-        {% endif %}
-    </div>
 </div>
 {% endif %}
 {% endmacro %}

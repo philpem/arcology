@@ -1,4 +1,5 @@
 {% extends "_base.html" %}
+{% from '_pagination.html' import render_pagination %}
 {% block page_title %}Search{% endblock %}
 
 {% block content %}
@@ -197,7 +198,7 @@
 	<li class="nav-item">
 		<a class="nav-link{% if not results.files and not results.artefacts %} active{% endif %}" data-bs-toggle="tab" href="#tab-items">
 			<i class="bi bi-collection"></i> Items
-			<span class="badge bg-secondary ms-1" title="{{ totals.items }} total">{{ totals.items if totals.items else results.catalogue_items|length }}</span>
+			<span class="badge bg-secondary ms-1" title="{{ totals['items'] }} total">{{ totals['items'] if totals['items'] else results.catalogue_items|length }}</span>
 		</a>
 	</li>
 	{% endif %}
@@ -340,59 +341,7 @@
 
 </div>{# /tab-content #}
 
-{% set _max_total = [totals.files, totals.artefacts, totals.items] | max %}
-{% set _start = (page - 1) * PER_PAGE + 1 %}
-{% set _end = [page * PER_PAGE, _max_total] | min %}
-<nav class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-3" aria-label="Search result pages">
-    {# Prev button #}
-    {% if has_prev %}
-    <a href="?{{ dict(request.args, page=page-1) | urlencode }}" class="btn btn-outline-secondary btn-sm">
-        <i class="bi bi-chevron-left"></i> Previous
-    </a>
-    {% else %}
-    <span></span>
-    {% endif %}
-
-    {# Centre: showing + page jump + per-page selector #}
-    <div class="d-flex align-items-center gap-3 flex-wrap">
-        {% if _max_total > 0 %}
-        <span class="text-muted small">
-            Showing {{ _start }}–{{ _end }} of {{ _max_total }}
-        </span>
-        {% endif %}
-        {% if total_pages > 1 %}
-        <form method="get" class="d-inline-flex align-items-center gap-1">
-            {% for k, v in request.args.items() %}
-            {% if k != 'page' %}<input type="hidden" name="{{ k }}" value="{{ v | e }}">{% endif %}
-            {% endfor %}
-            <label class="text-muted small mb-0" for="search-page-jump">Page</label>
-            <input type="number" id="search-page-jump" name="page"
-                   min="1" max="{{ total_pages }}" value="{{ page }}"
-                   class="form-control form-control-sm text-center"
-                   style="width: 4.5rem;"
-                   aria-label="Go to page">
-            <span class="text-muted small">of {{ total_pages }}</span>
-        </form>
-        {% endif %}
-        {% if VALID_PER_PAGE %}
-        <div class="btn-group btn-group-sm" role="group" aria-label="Results per page">
-            {% for pp in VALID_PER_PAGE %}
-            <a class="btn {{ 'btn-secondary' if PER_PAGE == pp else 'btn-outline-secondary' }}"
-               href="?{{ dict(request.args, per_page=pp, page=1) | urlencode }}">{{ pp }}</a>
-            {% endfor %}
-        </div>
-        {% endif %}
-    </div>
-
-    {# Next button #}
-    {% if has_next %}
-    <a href="?{{ dict(request.args, page=page+1) | urlencode }}" class="btn btn-outline-secondary btn-sm">
-        Next <i class="bi bi-chevron-right"></i>
-    </a>
-    {% else %}
-    <span></span>
-    {% endif %}
-</nav>
+{{ render_pagination(pagination, pagination_args, valid_per_page=valid_per_page, view_all=view_all) }}
 
 {% endif %}{# total > 0 #}
 {% endif %}{# results is not none #}

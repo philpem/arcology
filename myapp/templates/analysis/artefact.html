@@ -52,7 +52,7 @@
     </div>
 </div>
 
-{{ render_pagination(pagination, 'myapp_blueprints_analysis.artefact_analyses', {'uuid': artefact.uuid, 'status': status_filter, 'per_page': request.args.get('per_page')}, valid_per_page=valid_per_page, view_all=view_all) }}
+{{ render_pagination(pagination, {'status': status_filter, 'per_page': request.args.get('per_page')}, valid_per_page=valid_per_page, view_all=view_all) }}
 {% endblock %}
 
 {# vim: ts=4 sw=4 et #}

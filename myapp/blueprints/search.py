@@ -23,7 +23,7 @@ from ..database import (
 from ..extensions import db
 from ..permissions import public_readable
 from ..riscos_filetypes import lookup_filetype_hex
-from ..utils.pagination import VALID_PER_PAGE, resolve_per_page
+from ..utils.pagination import VALID_PER_PAGE, ListPagination, resolve_per_page
 from ..visibility import artefact_visibility_clause, item_visibility_clause
 
 ROUTENAME = __name__.replace('.', '_')
@@ -94,23 +94,25 @@ def parse_query(raw: str) -> dict:
 @public_readable
 def index():
     q = request.args.get('q', '').strip()
-    per_page, page, _view_all = resolve_per_page('SEARCH_PER_PAGE', PER_PAGE)
+    per_page, page, view_all = resolve_per_page('SEARCH_PER_PAGE', PER_PAGE)
     # Clamp page to ≥1 (resolve_per_page already does this via request.args)
     page = max(1, page)
     tokens = parse_query(q)
 
-    import math
     results = _run_search(tokens, page=page, per_page=per_page) if q else None
     if results:
-        has_next = results.pop('has_next', False)
+        results.pop('has_next', None)
         totals = results.pop('totals', {'files': 0, 'artefacts': 0, 'items': 0})
         max_total = max(totals.values()) if totals else 0
-        total_pages = max(1, math.ceil(max_total / per_page)) if max_total else 1
     else:
-        has_next = False
         totals = {'files': 0, 'artefacts': 0, 'items': 0}
-        total_pages = 1
-    has_prev = page > 1
+        max_total = 0
+
+    # Build a Pagination-compatible object across the largest result bucket so
+    # search shares the common pagination macro.  range() keeps this O(1) — the
+    # shim only needs the count, not the rows (those live in `results`).
+    pagination = ListPagination(range(max_total), page, per_page)
+    pagination_args = {k: v for k, v in request.args.items() if k != 'page'}
 
     known_protection_types = sorted(
         v for (v,) in db.session.query(distinct(ArtefactProtection.protection_type)).all()
@@ -125,12 +127,10 @@ def index():
         tokens=tokens,
         results=results,
         totals=totals,
-        PER_PAGE=per_page,
-        VALID_PER_PAGE=VALID_PER_PAGE,
-        page=page,
-        total_pages=total_pages,
-        has_next=has_next,
-        has_prev=has_prev,
+        pagination=pagination,
+        pagination_args=pagination_args,
+        valid_per_page=VALID_PER_PAGE,
+        view_all=view_all,
         FilesystemType=FilesystemType,
         known_protection_types=known_protection_types,
         known_mastering_types=known_mastering_types,
