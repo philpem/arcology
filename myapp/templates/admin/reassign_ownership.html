@@ -11,7 +11,7 @@
 
 <p class="text-muted">
     Transfers all items and artefacts owned by one user (or currently unowned) to another user or to the unowned pool.
-    Use this when a curator leaves and their work needs to be handed over to a colleague.
+    Useful when someone leaves and their work needs handing over to a colleague.
 </p>
 
 {% if preview %}
@@ -69,6 +69,9 @@
                         {{ form.to_user_id(class="form-select") }}
                         <div class="form-text">
                             Choose <em>— Unowned —</em> to release ownership without assigning a new owner.
+                            Public content then becomes claimable by any signed-in user, but
+                            <strong>private content released as unowned stays visible only to administrators</strong>
+                            (and anyone it was already shared with) until an admin reassigns it or makes it public.
                         </div>
                     </div>
                     <button type="submit" class="btn btn-primary">
