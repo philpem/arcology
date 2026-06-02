@@ -206,7 +206,7 @@
 			     id="worker-key-display">{{ _key_masked }}</pre>
 			<button type="button" class="btn btn-sm btn-outline-secondary"
 			        id="worker-key-reveal"
-			        onclick="revealWorkerKey({{ worker_key | tojson }})"
+			        data-worker-key="{{ worker_key }}"
 			        title="Reveal full key">
 				<i class="bi bi-eye"></i> Reveal
 			</button>
@@ -237,10 +237,10 @@
 {% block scripts %}
 {{ super() }}
 <script>
-function revealWorkerKey(fullKey) {
-    document.getElementById('worker-key-display').textContent = fullKey;
-    document.getElementById('worker-key-reveal').classList.add('d-none');
+document.getElementById('worker-key-reveal')?.addEventListener('click', function () {
+    document.getElementById('worker-key-display').textContent = this.dataset.workerKey;
+    this.classList.add('d-none');
     document.getElementById('worker-key-copy').classList.remove('d-none');
-}
+});
 </script>
 {% endblock %}
