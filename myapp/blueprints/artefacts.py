@@ -3436,6 +3436,10 @@ def grant_bypass(item_id=None, artefact_id=None, root_id=None):
     except ValueError:
         flash('Invalid restriction type.', 'danger')
         return _redirect_to_artefact_view(artefact)
+    # A bypass only makes sense for a restriction the artefact actually carries.
+    if rtype not in {r.restriction_type for r in artefact.restrictions}:
+        flash(f'This artefact has no {rtype.label} restriction to bypass.', 'danger')
+        return _redirect_to_artefact_view(artefact)
     target_user = User.query.get_or_404(user_id)
     existing = UserArtefactBypass.query.filter_by(
         user_id=target_user.id, artefact_id=artefact.id, restriction_type=rtype

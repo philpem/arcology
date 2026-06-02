@@ -244,15 +244,14 @@ class User(db.Model):
             return True
         if artefact_id is None:
             return False
-        from sqlalchemy import and_ as _and
+        # Filter the user's per-artefact grants in memory.  The
+        # ``artefact_bypasses`` relationship is lazy-loaded once and cached on
+        # the instance, so repeated calls in a loop (e.g. when rendering a tree
+        # of derived artefacts) do not issue a query per artefact.
         specific_types = {
             ab.restriction_type
-            for ab in UserArtefactBypass.query.filter(
-                _and(
-                    UserArtefactBypass.user_id == self.id,
-                    UserArtefactBypass.artefact_id == artefact_id,
-                )
-            ).all()
+            for ab in self.artefact_bypasses
+            if ab.artefact_id == artefact_id
         }
         return all(r.restriction_type in specific_types for r in missing)
 
