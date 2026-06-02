@@ -191,6 +191,16 @@ def _queue_hash_rescan_jobs():
         .all()
     }
     to_queue = artefact_ids_with_files - already_active
+
+    # Clear stale FAILED records before queuing fresh attempts so the status
+    # lozenge reflects the new run rather than the old failure.
+    if to_queue:
+        Analysis.query.filter(
+            Analysis.artefact_id.in_(to_queue),
+            Analysis.analysis_type == AnalysisType.HASH_RESCAN,
+            Analysis.status == AnalysisStatus.FAILED,
+        ).delete(synchronize_session=False)
+
     for aid in to_queue:
         db.session.add(Analysis(
             artefact_id=aid,
