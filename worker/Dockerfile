@@ -225,7 +225,7 @@ FROM ubuntu:24.04 AS build-riscosarc
 #ARG RISCOSARC_VERSION=1f5cef10be4c5622eafb689d0dbe8f9f2601f141
 #ARG RISCOSARC_REPO=https://github.com/mjwoodcock/riscosarc.git
 ARG RISCOSARC_REPO=https://github.com/philpem/riscosarc.git
-ARG RISCOSARC_VERSION=d8d5d69b6b8762608b67ce6926d94cc258686e15
+ARG RISCOSARC_VERSION=4b5a5672a3f70dd7540ff7b1d48db19755f6a6c6
 
 ARG DEBIAN_FRONTEND=noninteractive
 
