@@ -1919,6 +1919,7 @@ def _render_viewer(artefact):
         current_path=current_path,
         subdirectories=subdirectories,
         archive_paths=archive_paths,
+        file_filter=file_filter,
         filename_filter=filename_filter,
         file_list_args={k: v for k, v in [
             ('path', current_path or None),
