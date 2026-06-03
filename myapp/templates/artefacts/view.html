@@ -194,29 +194,10 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
 {% block scripts %}
 {{ super() }}
 {% if status_counts.pending or status_counts.running %}
-<script>
-(function () {
-    var POLL_INTERVAL = 6000;
-    var statusUrl = {{ url_for('myapp_blueprints_artefacts.analysis_status_json', uuid=artefact.uuid) | tojson }};
-    var reloadScheduled = false;
-
-    function pollStatus() {
-        fetch(statusUrl, {cache: 'no-store'}).then(function (r) {
-            if (!r.ok) return;
-            return r.json();
-        }).then(function (d) {
-            if (!d) return;
-            if (d.pending === 0 && d.running === 0) {
-                if (!reloadScheduled) {
-                    reloadScheduled = true;
-                    setTimeout(function () { window.location.reload(); }, 500);
-                }
-            }
-        }).catch(function () {});
-    }
-
-    setInterval(pollStatus, POLL_INTERVAL);
-})();
-</script>
+{% from '_polling.html' import analysis_status_poller %}
+{{ analysis_status_poller(
+    url_for('myapp_blueprints_artefacts.analysis_status_json', uuid=artefact.uuid),
+    interval=6000
+) }}
 {% endif %}
 {% endblock %}
