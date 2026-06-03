@@ -62,8 +62,11 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-SENTRY_DSN = os.environ.get('SENTRY_DSN', '')
-SENTRY_TRACES_SAMPLE_RATE = float(os.environ.get('SENTRY_TRACES_SAMPLE_RATE', '1.0'))
+SENTRY_DSN = os.environ.get('SENTRY_WORKER_DSN') or os.environ.get('SENTRY_DSN', '')
+SENTRY_TRACES_SAMPLE_RATE = float(
+    os.environ.get('SENTRY_WORKER_TRACES_SAMPLE_RATE')
+    or os.environ.get('SENTRY_TRACES_SAMPLE_RATE', '1.0')
+)
 
 if SENTRY_DSN:
     import sentry_sdk
