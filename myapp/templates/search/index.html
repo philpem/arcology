@@ -36,7 +36,8 @@
 			<code>swi:</code> (SWI name)
 			<code>protection:</code> <code>mastering:</code> <code>tag:</code>
 			— bare words search item and artefact names &amp; descriptions.
-			Use <code>*</code> as wildcard in filename/path/tag. Quote multi-word values: <code>module:"Voice Module"</code> <code>label:"Boot Disc"</code>
+			<code>filename:</code> matches exactly without a wildcard (<code>filename:!Run</code> matches only <code>!Run</code>); use <code>*</code> for glob matching (<code>filename:!Run*</code> matches <code>!RunImage</code> etc.). <code>path:</code> matches as a substring by default.
+			Other fields use substring matching by default. Quote multi-word values: <code>module:"Voice Module"</code> <code>label:"Boot Disc"</code>
 		</div>
 	</div>
 </div>

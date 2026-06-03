@@ -451,6 +451,18 @@ class TestSearchLogic(unittest.TestCase):
         filenames = [ef.filename for ef, *_ in results['files']]
         self.assertIn('!RunImage', filenames)
 
+    def test_filename_exact_match_no_substring(self):
+        # filename:!Run must NOT match !RunImage — exact match only (#449)
+        results = self._search('filename:!Run')
+        filenames = [ef.filename for ef, *_ in results['files']]
+        self.assertNotIn('!RunImage', filenames)
+
+    def test_filename_exact_match_full_name(self):
+        # filename:!RunImage should still find the exact file
+        results = self._search('filename:!RunImage')
+        filenames = [ef.filename for ef, *_ in results['files']]
+        self.assertIn('!RunImage', filenames)
+
     def test_filename_no_directories(self):
         # Directory entries must never appear in file results
         results = self._search('filename:!Impression')
