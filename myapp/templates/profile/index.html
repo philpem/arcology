@@ -2,7 +2,22 @@
 {% block page_title %}Profile{% endblock %}
 
 {% block content %}
-<h1 class="mb-4">Profile</h1>
+<div class="d-flex justify-content-between align-items-center mb-4">
+	<div>
+		<h1 class="mb-1">Profile</h1>
+		<p class="text-muted mb-0">
+			<strong>{{ current_user.username }}</strong>
+			&mdash;
+			{% if current_user.is_admin %}Administrator
+			{% elif current_user.permission.value == 'staff' %}Staff
+			{% elif current_user.permission.value == 'read_write' %}Researcher
+			{% else %}Patron{% endif %}
+			{% if current_user.oidc_managed %}
+			&mdash; <i class="bi bi-shield-lock"></i> Managed by {{ oidc_provider_name }}
+			{% endif %}
+		</p>
+	</div>
+</div>
 <!-- Change Password -->
 <div class="card mb-4">
 	<div class="card-header"><h5 class="mb-0">Change Password</h5></div>

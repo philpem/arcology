@@ -191,7 +191,7 @@
                 {% if user_can_contribute %}<a href="{{ url_for('myapp_blueprints_items.new') }}?parent={{ item.uuid }}" class="btn btn-sm btn-outline-success"><i class="bi bi-plus"></i> New Child</a>{% endif %}
             </div>
             <div class="list-group list-group-flush">
-                {% for child in item.children|sort(attribute='name') %}
+                {% for child in item.children|sort(attribute='name', case_sensitive=False) %}
                 <div class="list-group-item d-flex justify-content-between align-items-center">
                     <a href="{{ url_for('myapp_blueprints_items.view', uuid=child.url_id) }}">{{ child.name }}</a>
                     <div>
@@ -209,6 +209,8 @@
                 <span><i class="bi bi-disc"></i> Artefacts ({{ artefacts_page.total }})</span>
                 <div class="d-flex gap-2 align-items-center">
                     <form method="get" class="d-flex align-items-center">
+                        <input type="hidden" name="per_page" value="{{ request.args.get('per_page', '') }}">
+                        <input type="hidden" name="letter" value="{{ request.args.get('letter', '') }}">
                         <select name="artefact_sort" class="form-select form-select-sm" style="width: auto;" onchange="this.form.submit()">
                             <option value="label_asc" {% if artefact_sort == 'label_asc' %}selected{% endif %}>Label (A–Z)</option>
                             <option value="label_desc" {% if artefact_sort == 'label_desc' %}selected{% endif %}>Label (Z–A)</option>
