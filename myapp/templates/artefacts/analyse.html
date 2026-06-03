@@ -21,7 +21,7 @@
             <div class="card-body">
                 <div class="alert alert-info">
                     <strong>File:</strong> {{ artefact.original_filename }}<br>
-                    <strong>Type:</strong> {{ artefact.artefact_type.value.upper().replace('_', ' ') }}
+                    <strong>Type:</strong> {{ (artefact.artefact_type | enum_value('unknown')).upper().replace('_', ' ') }}
                 </div>
 
                 <div class="alert alert-warning">

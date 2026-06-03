@@ -62,6 +62,7 @@ from ..utils.api_serializers import (
 )
 from ..utils.db_helpers import get_by_id_or_404 as _get_by_id_or_404
 from ..utils.db_helpers import get_by_uuid_or_404 as _get_by_uuid_or_404
+from ..utils.enum_display import enum_value
 from ..utils.hash_rescan import find_known_file
 from ..utils.item_helpers import assign_item_fields, assign_item_tags
 from ..utils.privacy import recompute_item_privacy
@@ -1100,7 +1101,7 @@ def _populate_search_index(analysis):
     except (ValueError, TypeError):
         current_app.logger.warning(
             f"Could not parse details JSON for analysis {analysis.uuid} "
-            f"({analysis.analysis_type.value}) — skipping search index update"
+            f"({enum_value(analysis.analysis_type)}) — skipping search index update"
         )
         return
 
@@ -1191,7 +1192,7 @@ def _populate_search_index(analysis):
     except Exception:
         current_app.logger.exception(
             f"Error populating search index for analysis {analysis.uuid} "
-            f"({analysis.analysis_type.value})"
+            f"({enum_value(analysis.analysis_type)})"
         )
 
 
@@ -1411,7 +1412,7 @@ def produce_artefact(id):
             for prior in prior_derived:
                 current_app.logger.info(
                     f"Removing prior derived artefact {prior.uuid} "
-                    f"(from previous {analysis.analysis_type.value} analysis) "
+                    f"(from previous {enum_value(analysis.analysis_type)} analysis) "
                     f"before re-run"
                 )
                 _delete_artefact_files(prior)

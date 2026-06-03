@@ -52,7 +52,7 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
     <div>
         <h1>{{ artefact.label }} <button type="button" class="btn btn-sm btn-outline-secondary ms-1 align-middle" onclick="copyToClipboard(window.location.href, this)" title="Copy permalink" aria-label="Copy permalink"><i class="bi bi-link-45deg"></i></button></h1>
         <p class="text-muted mb-1">
-            <span class="badge bg-secondary">{{ artefact.artefact_type.value.upper().replace('_', ' ') }}</span>
+            <span class="badge bg-secondary">{{ (artefact.artefact_type | enum_value('unknown')).upper().replace('_', ' ') }}</span>
             {% if artefact.effective_private %}<span class="badge bg-warning text-dark" title="{% if artefact.is_private %}This artefact is private{% else %}Private (inherited from a private item){% endif %}"><i class="bi bi-lock-fill"></i> Private</span>{% endif %}
             {% if artefact.type_overridden %}<span class="badge bg-warning text-dark">manually set</span>{% endif %}
             {% if status_counts.pending or status_counts.running %}
