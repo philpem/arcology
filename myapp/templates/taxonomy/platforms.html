@@ -15,9 +15,9 @@
 </div>
 
 <div class="card">
-    <div class="list-group list-group-flush">
+    <div class="list-group list-group-flush" style="--depth-base: 0rem; --depth-step: 1.5rem;">
         {% for platform in platforms recursive %}
-        <div class="list-group-item d-flex justify-content-between depth-indent" style="--depth: {{ loop.depth }}; --depth-base: 0rem; --depth-step: 1.5rem;">
+        <div class="list-group-item d-flex justify-content-between depth-indent" style="--depth: {{ loop.depth }};">
             <div><strong>{{ platform.name }}</strong> <span class="badge bg-secondary">{{ platform.items|length }}</span></div>
             {% if user_can_write %}
             <div>
