@@ -15,10 +15,10 @@
 
         <h3>Documentation</h3>
         <ul>
-            <li><a href="https://github.com/philpem/arcology/blob/master/doc/USER_GUIDE.md" target="_blank" rel="noopener">User Guide</a> &mdash; how to use Arcology</li>
-            <li><a href="https://github.com/philpem/arcology/blob/master/doc/CLI.md" target="_blank" rel="noopener">CLI Reference</a> &mdash; the <code>arco</code> command-line client</li>
-            <li><a href="https://github.com/philpem/arcology/blob/master/README.md" target="_blank" rel="noopener">README</a> &mdash; quick-start and feature overview</li>
-            <li><a href="https://github.com/philpem/arcology/blob/master/CONTRIBUTING.md" target="_blank" rel="noopener">Contributing guide</a> &mdash; architecture notes and contribution workflow</li>
+            <li><a href="{{ url_for('myapp_blueprints_help.page', slug='getting-started') }}">Getting Started</a> &mdash; first steps with Arcology</li>
+            <li><a href="{{ url_for('myapp_blueprints_help.page', slug='searching') }}">Search Reference</a> &mdash; query syntax and prefix keys</li>
+            <li><a href="{{ url_for('myapp_blueprints_help.page', slug='analysis') }}">Analysis Pipeline</a> &mdash; how disc images are processed</li>
+            <li><a href="{{ url_for('myapp_blueprints_help.page', slug='permissions') }}">Permissions &amp; Access</a> &mdash; user roles and access tiers</li>
             <li><a href="{{ url_for('myapp_blueprints_api.health_check') }}" target="_blank" rel="noopener">REST API</a> &mdash; available at <code>/api/</code></li>
         </ul>
 

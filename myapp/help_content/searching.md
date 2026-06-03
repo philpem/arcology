@@ -53,9 +53,11 @@ filename:elite*       → files starting with "elite"
 filename:*disc*       → files containing "disc"
 ```
 
-A value without `*` matches as a substring automatically — `filename:readme` finds `readme`, `readme.txt`, `readme.old`, etc.
+**`filename:` uses exact match by default** — `filename:readme` finds only a file named exactly `readme`, not `readme.txt` or `readme.old`.  Use a wildcard to broaden the search: `filename:readme*` matches `readme`, `readme.txt`, and `readme.old`.
 
-> **Note:** `*` is a simple wildcard, not a regular expression.  Use `filename:*foo*` if you need to anchor both ends.
+**`path:` uses substring match by default** — `path:games` finds any file whose full path contains `games`.
+
+> **Note:** `*` is a simple wildcard, not a regular expression.  Use `filename:*foo*` if you need to match anywhere within a filename.
 
 ---
 
@@ -73,6 +75,18 @@ These search the files extracted from disc images and archives.
 | `sha256:` | | SHA-256 hash (exact, lowercase hex) |
 | `type:` | `filetype:` | RISC OS filetype — hex code or name (see below) |
 | `ident:` | `gnu:`, `gnufile:` | File format from magic-byte detection |
+
+### Path Separator
+
+Paths are always stored with **`/` as the separator**, regardless of the source filesystem.  RISC OS uses `.` (dot) internally, but when files are extracted to Linux the directory structure uses `/`, and that is what is stored in the database and shown in breadcrumb trails.
+
+```
+path:!Boot/!Run         → file !Run inside directory !Boot
+path:Games/Elite*       → files starting with "Elite" inside a Games directory
+path:*fonts*            → any path containing "fonts"
+```
+
+Use `path:*dirname*` to find a directory by name without caring about its position in the hierarchy.
 
 ### RISC OS Filetype Search
 
@@ -194,4 +208,5 @@ Each result bucket (files, partitions, artefacts, items) is capped at **200 resu
 | `module:Desktop swi:Wimp_Poll` | Modules that provide `Wimp_Poll` and are called Desktop |
 | `mastering:traceback` | Discs with a Traceback mastering fingerprint |
 | `sha256:abc123` | File with that exact SHA-256 hash |
-| `path:*/games/* filename:loader` | Files named "loader" inside a "games" directory anywhere |
+| `path:*Games* filename:loader` | Files named "loader" inside a directory named "Games" |
+| `path:!Boot/!Run` | File `!Run` directly inside directory `!Boot` (RISC OS disc) |
