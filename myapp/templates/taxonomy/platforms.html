@@ -18,7 +18,7 @@
     <div class="list-group list-group-flush" style="--depth-base: 0rem; --depth-step: 1.5rem;">
         {% for platform in platforms recursive %}
         <div class="list-group-item d-flex justify-content-between depth-indent" style="--depth: {{ loop.depth }};">
-            <div><strong>{{ platform.name }}</strong> <span class="badge bg-secondary">{{ platform.items|length }}</span></div>
+            <div><strong>{{ platform.name }}</strong> <span class="badge bg-secondary" title="{{ platform.items|length }} item(s) directly on this platform{% if platform.children %} — child platforms may have additional items{% endif %}">{{ platform.items|length }}</span></div>
             {% if user_can_write %}
             <div>
                 <a href="{{ url_for('myapp_blueprints_taxonomy.edit_platform', id=platform.id) }}" class="btn btn-sm btn-outline-primary" aria-label="Edit {{ platform.name }}"><i class="bi bi-pencil"></i></a>

@@ -18,7 +18,7 @@
     <div class="list-group list-group-flush" style="--depth-base: 0rem; --depth-step: 1.5rem;">
         {% for category in categories recursive %}
         <div class="list-group-item d-flex justify-content-between depth-indent" style="--depth: {{ loop.depth }};">
-            <div><strong>{{ category.name }}</strong> <span class="badge bg-secondary">{{ category.items|length }}</span></div>
+            <div><strong>{{ category.name }}</strong> <span class="badge bg-secondary" title="{{ category.items|length }} item(s) directly in this category{% if category.children %} — child categories may have additional items{% endif %}">{{ category.items|length }}</span></div>
             {% if user_can_write %}
             <div>
                 <a href="{{ url_for('myapp_blueprints_taxonomy.edit_category', id=category.id) }}" class="btn btn-sm btn-outline-primary" aria-label="Edit {{ category.name }}"><i class="bi bi-pencil"></i></a>
