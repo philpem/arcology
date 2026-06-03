@@ -2011,11 +2011,15 @@ def _render_artefact_view(artefact):
     # Configurable via ANALYSES_SHOWN in myapp.cfg (default: 5).
     analyses_shown_limit = current_app.config.get('ANALYSES_SHOWN', 5)
 
-    # Fetch all related analyses for stats, newest first (eager-load artefact for template)
+    # Fetch all related analyses for stats, newest first (eager-load artefact for template).
+    # Defer the large `details` JSON column: the analyses list/counts never read it
+    # (only analysis_type/status/artefact/uuid are shown). The few detail-bearing
+    # analyses surfaced as cards are fetched separately below (#447).
+    from sqlalchemy.orm import defer
     from sqlalchemy.orm import joinedload as _jl_a
     all_related_analyses = Analysis.query.filter(
         Analysis.artefact_id.in_(all_artefact_ids)
-    ).options(_jl_a(Analysis.artefact)).order_by(Analysis.id.desc()).all()
+    ).options(_jl_a(Analysis.artefact), defer(Analysis.details)).order_by(Analysis.id.desc()).all()
     total_analyses_count = len(all_related_analyses)
 
     # Status breakdown counts (displayed in the card header)
@@ -2051,6 +2055,10 @@ def _render_artefact_view(artefact):
         _sil(ExtractedFile.partition),
         _sil(ExtractedFile.known_file).selectinload(KnownFile.product),
         _sil(ExtractedFile.known_file).selectinload(KnownFile.database),
+        # The file table reads file.restrictions on every row (download icon,
+        # restriction badges, manage button). Eager-load it here to avoid an
+        # N+1 of one extracted_file_restrictions query per file (issue #447).
+        _sil(ExtractedFile.restrictions),
     )
 
     # Filter by specific partition if requested.
@@ -2197,29 +2205,47 @@ def _render_artefact_view(artefact):
     current_path = file_form.path.data.strip() if file_form.path.data else ''
     subdirectories: list = []
 
+    # Set of archive file paths so the template can show archive icons for
+    # "directories" that are actually archives.
+    archive_paths = set()
     if all_partitions:
+        from sqlalchemy import or_ as _or_flags
         from ..utils.path_nav import compute_subdirectories
 
         # Infer subdirectories from file paths (covers non-empty directories).
         all_file_paths = [p for (p,) in files_query.with_entities(ExtractedFile.path).all()]
         subdir_set = set(compute_subdirectories(all_file_paths, current_path))
 
-        # Also surface explicit is_directory=True entries (covers empty directories
-        # recorded by the worker). These are excluded from files_query when
-        # filters suppress directory rows, so query them separately.
-        dir_entries_query = (
-            ExtractedFile.query.join(Partition)
+        # Single scan for the two flag-based path sets (#447):
+        #   - is_directory entries → empty directories excluded from files_query
+        #     when filters suppress directory rows (honours the partition filter).
+        #   - is_archive entries → archive_paths (intentionally unfiltered by
+        #     partition, matching prior behaviour).
+        _sel_partition = file_form.partition_uuid.data
+        flag_rows = (
+            db.session.query(
+                ExtractedFile.path,
+                ExtractedFile.is_directory,
+                ExtractedFile.is_archive,
+                Partition.uuid,
+            )
+            .join(Partition)
             .filter(
                 Partition.artefact_id.in_(all_artefact_ids),
-                ExtractedFile.is_directory == True,
+                _or_flags(
+                    ExtractedFile.is_directory == True,
+                    ExtractedFile.is_archive == True,
+                ),
             )
-            .with_entities(ExtractedFile.path)
+            .all()
         )
-        if file_form.partition_uuid.data:
-            dir_entries_query = dir_entries_query.filter(
-                Partition.uuid == file_form.partition_uuid.data
-            )
-        for (dir_path,) in dir_entries_query.all():
+        for dir_path, is_dir, is_arc, p_uuid in flag_rows:
+            if is_arc:
+                archive_paths.add(dir_path)
+            if not is_dir:
+                continue
+            if _sel_partition and p_uuid != _sel_partition:
+                continue
             if current_path:
                 if not dir_path.startswith(current_path):
                     continue
@@ -2232,16 +2258,6 @@ def _render_artefact_view(artefact):
 
         from natsort import natsorted, ns
         subdirectories = natsorted(subdir_set, alg=ns.IGNORECASE)
-
-    # Build a set of archive file paths so the template can show archive
-    # icons for "directories" that are actually archives.
-    archive_paths = set()
-    if all_partitions:
-        archive_files = ExtractedFile.query.join(Partition).filter(
-            Partition.artefact_id.in_(all_artefact_ids),
-            ExtractedFile.is_archive == True
-        ).with_entities(ExtractedFile.path).all()
-        archive_paths = {af.path for af in archive_files}
 
     # Header banner: when browsing inside an archive (or at the root of a
     # top-level archive), surface its archive_comment above the file list.
@@ -2291,7 +2307,21 @@ def _render_artefact_view(artefact):
     armlock_analysis = None
     flux_visualisation_analysis = None
     density_detect_analysis = None
-    for a in all_related_analyses:
+    # Load `details` only for the analysis types surfaced as cards/badges, newest
+    # first, rather than carrying details for every analysis (#447). Picking the
+    # first match per type preserves the previous "most recent completed" behaviour.
+    _detail_types = (
+        AnalysisType.DISC_MASTERING_DETECT, AnalysisType.DISC_PROTECTION_DETECT,
+        AnalysisType.PARTITION_DETECT, AnalysisType.ARMLOCK_REMOVE,
+        AnalysisType.FLUX_VISUALISATION, AnalysisType.DETECT_TRACK_DENSITY,
+    )
+    _detail_analyses = Analysis.query.filter(
+        Analysis.artefact_id.in_(all_artefact_ids),
+        Analysis.status == AnalysisStatus.COMPLETED,
+        Analysis.analysis_type.in_(_detail_types),
+        Analysis.details.isnot(None),
+    ).order_by(Analysis.id.desc()).all()
+    for a in _detail_analyses:
         if a.status == AnalysisStatus.COMPLETED and a.details:
             if mastering_analysis is None and a.analysis_type == AnalysisType.DISC_MASTERING_DETECT:
                 try:
@@ -2448,13 +2478,13 @@ def _render_artefact_view(artefact):
         if mod.file_path:
             module_info[mod.file_path] = mod
 
-    # "View" button: show if artefact is viewable type, or has any FORMAT_CONVERT
+    # "View" button: show if artefact is viewable type, or has any FORMAT_CONVERT.
+    # When not a viewable type we already fetched every FORMAT_CONVERT analysis
+    # into `convs` above (same guard), so reuse it rather than issuing another
+    # existence query (#447).
     has_converted_outputs = artefact.artefact_type in _viewable_types
     if not has_converted_outputs:
-        has_converted_outputs = Analysis.query.filter(
-            Analysis.artefact_id.in_(all_artefact_ids),
-            Analysis.analysis_type == AnalysisType.FORMAT_CONVERT,
-        ).first() is not None
+        has_converted_outputs = bool(convs)
 
     # Recognised products for all partitions of this artefact tree
     recognised_products = []

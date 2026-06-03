@@ -68,6 +68,7 @@ def create_app(config_name=None):
                     'OIDC_ROLE_STAFF', 'OIDC_ROLE_API_ACCESS', 'OIDC_REQUIRE_ROLE',
                     'OIDC_SINGLE_LOGOUT', 'OIDC_SYNC_INTERVAL', 'OIDC_AUTO_REDIRECT',
                     'PUBLIC_MODE', 'PUBLIC_DOWNLOADS',
+                    'JINJA_BYTECODE_CACHE', 'JINJA_BYTECODE_CACHE_DIR', 'JINJA_PREWARM',
                     'SENTRY_DSN'):
         env_val = os.environ.get(env_key)
         if env_val:
@@ -169,6 +170,20 @@ def create_app(config_name=None):
     # tell jinja to remove extraneous whitespace
     app.jinja_env.trim_blocks = True
     app.jinja_env.lstrip_blocks = True
+
+    # Persist compiled template bytecode to disk so a freshly-started worker
+    # does not pay the lex/parse/codegen cost on the first render of each
+    # template (the dominant cost of cold-worker page loads — issue #447).
+    # Disable with JINJA_BYTECODE_CACHE=false.
+    if str(app.config.get('JINJA_BYTECODE_CACHE', True)).lower() not in ('false', '0', 'no'):
+        from jinja2 import FileSystemBytecodeCache
+        cache_dir = app.config.get('JINJA_BYTECODE_CACHE_DIR') or \
+            os.path.join(app.instance_path, 'jinja_cache')
+        try:
+            os.makedirs(cache_dir, exist_ok=True)
+            app.jinja_env.bytecode_cache = FileSystemBytecodeCache(cache_dir)
+        except OSError as e:
+            app.logger.warning(f'Could not enable Jinja bytecode cache at {cache_dir}: {e}')
 
     # Add custom Jinja2 filters
     import json
@@ -354,7 +369,36 @@ def create_app(config_name=None):
     _register_blueprints(app)
     _register_cli_commands(app)
 
+    # Compile all templates at startup (after blueprints register their template
+    # folders) so the lex/parse/codegen cost is paid once during worker boot
+    # rather than on the first user request to hit each template — the dominant
+    # cost of cold-worker page loads (#447). Disable with JINJA_PREWARM=false.
+    if str(app.config.get('JINJA_PREWARM', True)).lower() not in ('false', '0', 'no'):
+        _prewarm_templates(app)
+
     return app
+
+
+def _prewarm_templates(app):
+    """Pre-compile every template so no user request pays compilation cost.
+
+    Compilation only parses and generates code (no rendering), so loading every
+    template is side-effect free. Failures are logged and skipped so a single
+    unparseable template never blocks startup.
+    """
+    compiled = 0
+    try:
+        names = app.jinja_env.list_templates()
+    except Exception as e:  # loader may not support listing
+        app.logger.warning(f'Template prewarm skipped (cannot list templates): {e}')
+        return
+    for name in names:
+        try:
+            app.jinja_env.get_template(name)
+            compiled += 1
+        except Exception as e:
+            app.logger.debug(f'Template prewarm skipped {name}: {e}')
+    app.logger.info(f'Prewarmed {compiled}/{len(names)} templates')
 
 
 def _register_blueprints(app):
