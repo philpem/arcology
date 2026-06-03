@@ -219,7 +219,7 @@
                                 <form action="{{ artefact_url(artefact, 'revoke_bypass', bypass_id=bp.id) }}" method="post" class="d-inline">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <button type="submit" class="btn btn-sm btn-outline-danger"
-                                            onclick="return confirm('Revoke access for {{ bp.user.username }}?')"
+                                            onclick="return confirm('Revoke access for ' + {{ bp.user.username | tojson }} + '?')"
                                             aria-label="Revoke access for {{ bp.user.username }}">
                                         <i class="bi bi-x-lg"></i>
                                     </button>
