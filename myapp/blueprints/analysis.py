@@ -6,7 +6,7 @@ View and manage analysis jobs.
 
 import re
 from datetime import datetime, timedelta, timezone
-from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
+from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import login_required
 from sqlalchemy import case, func
 from sqlalchemy.orm import joinedload
@@ -274,6 +274,15 @@ def queue():
     return render_template('analysis/queue.html', pending=pending, running=running,
                            pending_total=pending_total, running_total=running_total,
                            queue_limit=QUEUE_DISPLAY_LIMIT, stale_cutoff=cutoff)
+
+
+@blueprint.route('/queue/status.json')
+@login_required
+def queue_status_json():
+    """Return pending/running counts for the queue page JS poller."""
+    pending = Analysis.query.filter(Analysis.status == AnalysisStatus.PENDING).count()
+    running = Analysis.query.filter(Analysis.status == AnalysisStatus.RUNNING).count()
+    return jsonify(pending=pending, running=running)
 
 
 # vim: ts=4 sw=4 et

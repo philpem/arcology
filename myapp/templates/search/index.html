@@ -223,7 +223,7 @@
 				<td>
 					<a href="{{ artefact_url(art) }}?path={{ ef.browse_path | urlencode }}#files"
 					   class="font-monospace text-decoration-none">{{ ef.path }}</a>
-					{% if art.restrictions and current_user.can_bypass_all_restrictions(art.restrictions) %}
+					{% if art.restrictions and current_user.is_authenticated and current_user.can_bypass_all_restrictions(art.restrictions) %}
 					<a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=ef.uuid, confirm_bypass='1') }}"
 					   class="text-danger ms-1" title="Download file (restricted — bypass active)"
 					   onclick="return confirm('This artefact has download restrictions. Download anyway?')"><i class="bi bi-download"></i></a>

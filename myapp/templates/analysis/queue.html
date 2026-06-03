@@ -1,6 +1,5 @@
 {% extends "_base.html" %}
 {% block page_title %}Analysis Queue{% endblock %}
-{% block styles %}{{ super() }}<meta http-equiv="refresh" content="10">{% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -67,4 +66,34 @@
     <div class="card-body text-muted">No analyses pending</div>
     {% endif %}
 </div>
+{% endblock %}
+{% block scripts %}
+{{ super() }}
+{% if pending_total or running_total %}
+<script>
+(function () {
+    var POLL_INTERVAL = 8000;
+    var statusUrl = {{ url_for('myapp_blueprints_analysis.queue_status_json') | tojson }};
+    var knownPending = {{ pending_total }};
+    var knownRunning = {{ running_total }};
+
+    function pollStatus() {
+        fetch(statusUrl, {cache: 'no-store'}).then(function (r) {
+            if (!r.ok) return;
+            return r.json();
+        }).then(function (d) {
+            if (!d) return;
+            if (d.pending !== knownPending || d.running !== knownRunning) {
+                window.location.reload();
+            }
+            if (d.pending === 0 && d.running === 0) {
+                clearInterval(timer);
+            }
+        }).catch(function () {});
+    }
+
+    var timer = setInterval(pollStatus, POLL_INTERVAL);
+})();
+</script>
+{% endif %}
 {% endblock %}
