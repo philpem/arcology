@@ -228,9 +228,14 @@ class User(db.Model):
     def can_bypass_all_restrictions(self, restrictions, artefact_id=None) -> bool:
         """Check if this user can bypass all of the given ArtefactRestriction objects.
 
-        Checks global per-type bypasses first.  When artefact_id is supplied,
+        Checks global per-type bypasses first.  When ``artefact_id`` is supplied,
         also checks per-artefact bypasses for any remaining restriction types
         not covered by the global grants.
+
+        ``artefact_id`` may be a single id or an iterable of ids.  Passing the
+        chain of an artefact and its ancestors (see ``Artefact.ancestor_ids``)
+        lets a grant on an original uploaded artefact cover restricted files in
+        artefacts derived from it.
 
         Admins implicitly bypass all restriction types.
         """
@@ -244,6 +249,7 @@ class User(db.Model):
             return True
         if artefact_id is None:
             return False
+        allowed_ids = {artefact_id} if isinstance(artefact_id, int) else set(artefact_id)
         # Filter the user's per-artefact grants in memory.  The
         # ``artefact_bypasses`` relationship is lazy-loaded once and cached on
         # the instance, so repeated calls in a loop (e.g. when rendering a tree
@@ -251,7 +257,7 @@ class User(db.Model):
         specific_types = {
             ab.restriction_type
             for ab in self.artefact_bypasses
-            if ab.artefact_id == artefact_id
+            if ab.artefact_id in allowed_ids
         }
         return all(r.restriction_type in specific_types for r in missing)
 
@@ -678,6 +684,22 @@ class Artefact(db.Model):
         while a.parent_artefact_id is not None:
             a = a.parent_artefact
         return a
+
+    @property
+    def ancestor_ids(self) -> set[int]:
+        """IDs of this artefact and all its ancestors up the derivation chain.
+
+        A per-artefact download bypass granted on any ancestor (e.g. the
+        original uploaded artefact) therefore cascades to cover restrictions on
+        artefacts derived from it.  Pass this to
+        ``User.can_bypass_all_restrictions(..., artefact_id=...)``.
+        """
+        ids = set()
+        a = self
+        while a is not None:
+            ids.add(a.id)
+            a = a.parent_artefact
+        return ids
 
     @property
     def url_slug(self) -> str:

@@ -74,6 +74,7 @@ from ..visibility import (
     can_claim_item,
     can_contribute_to_item,
     can_curate_item,
+    can_download_despite_restrictions,
     can_manage_privacy,
     can_manage_shares,
     can_view_artefact,
@@ -81,6 +82,7 @@ from ..visibility import (
     item_visibility_clause,
 )
 from .artefacts import (
+    _artefact_contained_file_restrictions,
     _collect_all_file_restrictions,
     _collect_ancestor_file_restrictions,
     _delete_artefact_files,
@@ -713,11 +715,21 @@ def update_artefact(uuid):
 def download_artefact(uuid):
     artefact = _get_artefact_or_404(uuid, selectinload(Artefact.restrictions))
 
-    # Enforce download restrictions
-    if artefact.restrictions:
+    # Enforce download restrictions, honouring the caller's bypass grants.
+    user, _ = _api_viewer()
+    if not can_download_despite_restrictions(user, artefact.restrictions, artefact):
         return jsonify({
             'error': 'Download restricted',
             'restrictions': [r.restriction_type.value for r in artefact.restrictions],
+        }), 403
+
+    # Block the original download when its extracted contents are restricted
+    # (mirrors the website's _check_artefact_file_restrictions).
+    contained = _artefact_contained_file_restrictions(artefact)
+    if not can_download_despite_restrictions(user, contained, artefact):
+        return jsonify({
+            'error': 'Download restricted (artefact contains restricted files)',
+            'restrictions': list({r.restriction_type.value for r in contained}),
         }), 403
 
     storage = current_app.storage
@@ -747,7 +759,9 @@ def download_extracted_file(uuid):
     artefact = ef.partition.artefact
     _require_view_artefact(artefact)
 
-    if artefact.restrictions:
+    # Restriction gate, honouring the caller's bypass grants (same policy as web).
+    user, _ = _api_viewer()
+    if not can_download_despite_restrictions(user, artefact.restrictions, artefact):
         return jsonify({
             'error': 'Download restricted',
             'restrictions': [r.restriction_type.value for r in artefact.restrictions],
@@ -758,7 +772,7 @@ def download_extracted_file(uuid):
     file_restrictions = (
         _collect_all_file_restrictions(ef) + _collect_ancestor_file_restrictions(ef)
     )
-    if file_restrictions:
+    if not can_download_despite_restrictions(user, file_restrictions, artefact):
         return jsonify({
             'error': 'File download restricted',
             'restrictions': list({r.restriction_type.value for r in file_restrictions}),

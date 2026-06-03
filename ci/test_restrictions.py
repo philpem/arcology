@@ -330,6 +330,136 @@ class TestAPIDownloadRestriction(unittest.TestCase):
         self.assertNotEqual(resp.status_code, 403)
 
 
+def _make_user_with_key(db, username, *, is_admin=False):
+    """Create a READ_WRITE user with an API key; return (user, raw_key)."""
+    from myapp.database import ApiKey, ApiKeyPermission, User, UserPermission
+    user = User(username=username, password_hash='x', is_admin=is_admin,
+                permission=UserPermission.READ_WRITE, can_use_api=True)
+    db.session.add(user)
+    db.session.flush()
+    key_obj, raw = ApiKey.create(user_id=user.id, name=f'{username}-key',
+                                 permission=ApiKeyPermission.READ_WRITE)
+    db.session.add(key_obj)
+    db.session.commit()
+    return user, raw
+
+
+class TestAPIDownloadBypass(unittest.TestCase):
+    """A user API key honours the owning user's restriction bypass, like the website."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app, cls.db = _create_app_and_db()
+        cls.client = cls.app.test_client()
+
+    def test_user_key_without_bypass_blocked(self):
+        with self.app.app_context():
+            from myapp.database import ArtefactRestriction, RestrictionType
+            _, artefact = _make_item_and_artefact(self.db)
+            self.db.session.add(ArtefactRestriction(
+                artefact_id=artefact.id, restriction_type=RestrictionType.COPYRIGHT))
+            _, raw = _make_user_with_key(self.db, 'nobypass')
+            self.db.session.commit()
+            uuid = artefact.uuid
+
+        resp = self.client.get(
+            f'/api/artefacts/{uuid}/download', headers={'X-API-Key': raw})
+        self.assertEqual(resp.status_code, 403)
+
+    def test_user_key_with_global_bypass_allowed(self):
+        with self.app.app_context():
+            from myapp.database import (
+                ArtefactRestriction,
+                RestrictionType,
+                UserRestrictionBypass,
+            )
+            _, artefact = _make_item_and_artefact(self.db)
+            self.db.session.add(ArtefactRestriction(
+                artefact_id=artefact.id, restriction_type=RestrictionType.COPYRIGHT))
+            user, raw = _make_user_with_key(self.db, 'globalbypass')
+            self.db.session.add(UserRestrictionBypass(
+                user_id=user.id, restriction_type=RestrictionType.COPYRIGHT))
+            self.db.session.commit()
+            uuid = artefact.uuid
+
+        resp = self.client.get(
+            f'/api/artefacts/{uuid}/download', headers={'X-API-Key': raw})
+        # Bypass clears the 403 gate; file is absent on disk so 404, never 403.
+        self.assertNotEqual(resp.status_code, 403)
+
+    def test_user_key_with_per_artefact_grant_allowed(self):
+        with self.app.app_context():
+            from myapp.database import (
+                ArtefactRestriction,
+                RestrictionType,
+                UserArtefactBypass,
+            )
+            _, artefact = _make_item_and_artefact(self.db)
+            self.db.session.add(ArtefactRestriction(
+                artefact_id=artefact.id, restriction_type=RestrictionType.COPYRIGHT))
+            user, raw = _make_user_with_key(self.db, 'pagrant')
+            self.db.session.flush()
+            self.db.session.add(UserArtefactBypass(
+                user_id=user.id, artefact_id=artefact.id,
+                restriction_type=RestrictionType.COPYRIGHT))
+            self.db.session.commit()
+            uuid = artefact.uuid
+
+        resp = self.client.get(
+            f'/api/artefacts/{uuid}/download', headers={'X-API-Key': raw})
+        self.assertNotEqual(resp.status_code, 403)
+
+
+class TestAPIArtefactContainsRestrictedFile(unittest.TestCase):
+    """API artefact download is blocked when extracted contents are restricted.
+
+    Parity with the website's _check_artefact_file_restrictions: downloading the
+    original must be refused when a file within it carries a restriction the
+    caller cannot bypass.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app, cls.db = _create_app_and_db()
+        cls.client = cls.app.test_client()
+
+    def _artefact_with_restricted_file(self, rtype):
+        from myapp.database import ExtractedFileRestriction
+        _, artefact = _make_item_and_artefact(self.db)
+        _, ef = _make_partition_and_file(self.db, artefact, path='inner.bin')
+        self.db.session.add(ExtractedFileRestriction(
+            extracted_file_id=ef.id, restriction_type=rtype))
+        self.db.session.flush()
+        return artefact
+
+    def test_worker_blocked_when_contains_restricted_file(self):
+        with self.app.app_context():
+            from myapp.database import RestrictionType
+            artefact = self._artefact_with_restricted_file(RestrictionType.EXPLICIT)
+            self.db.session.commit()
+            uuid = artefact.uuid
+
+        resp = self.client.get(
+            f'/api/artefacts/{uuid}/download', headers={'X-API-Key': _WORKER_KEY})
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn('explicit', resp.get_json()['restrictions'])
+
+    def test_user_with_grant_can_download_artefact_with_restricted_file(self):
+        with self.app.app_context():
+            from myapp.database import RestrictionType, UserArtefactBypass
+            artefact = self._artefact_with_restricted_file(RestrictionType.EXPLICIT)
+            user, raw = _make_user_with_key(self.db, 'filegrant')
+            self.db.session.add(UserArtefactBypass(
+                user_id=user.id, artefact_id=artefact.id,
+                restriction_type=RestrictionType.EXPLICIT))
+            self.db.session.commit()
+            uuid = artefact.uuid
+
+        resp = self.client.get(
+            f'/api/artefacts/{uuid}/download', headers={'X-API-Key': raw})
+        self.assertNotEqual(resp.status_code, 403)
+
+
 # =============================================================================
 # artefact_to_dict serialization tests
 # =============================================================================

@@ -170,7 +170,7 @@
 						<tr>
 							<td>
 								{% if bypass.artefact %}
-								<a href="{{ artefact_url(bypass.artefact, 'view') }}">{{ bypass.artefact.filename or bypass.artefact.id }}</a>
+								<a href="{{ artefact_url(bypass.artefact, 'view') }}">{{ bypass.artefact.label or bypass.artefact.original_filename }}</a>
 								{% else %}
 								<span class="text-muted">(deleted)</span>
 								{% endif %}
