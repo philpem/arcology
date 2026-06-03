@@ -324,15 +324,19 @@ def cmd_bulk_import(client: ArcologyClient, args):
         return
 
     # Validate the parent item up front so we fail fast rather than on every
-    # collection.
+    # collection.  The GET endpoint accepts slug-style identifiers, but the
+    # create-item endpoint matches on the raw UUID only — so resolve to the
+    # canonical UUID here and pass that to create_item().
+    parent_uuid = None
     if args.parent:
         try:
             parent = client.get_item(args.parent)
         except ArcologyError as e:
             print(f'Error: parent item "{args.parent}" not found: {e}', file=sys.stderr)
             sys.exit(1)
+        parent_uuid = parent.get('uuid', args.parent)
         log.info('Nesting created items under parent: %s (%s)',
-                 args.parent[:8], parent.get('name', '?'))
+                 parent_uuid[:8], parent.get('name', '?'))
 
     # Look up platform (once)
     platform_id = client.lookup_platform(args.platform)
@@ -369,8 +373,8 @@ def cmd_bulk_import(client: ArcologyClient, args):
                 item_data['platform_id'] = platform_id
             if category_id:
                 item_data['category_id'] = category_id
-            if args.parent:
-                item_data['parent_uuid'] = args.parent
+            if parent_uuid:
+                item_data['parent_uuid'] = parent_uuid
 
             try:
                 result = client.create_item(**item_data)
