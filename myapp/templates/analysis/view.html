@@ -1,5 +1,5 @@
 {% extends "_base.html" %}
-{% block page_title %}Analysis #{{ analysis.id }}{% endblock %}
+{% block page_title %}{{ analysis.analysis_type|format_analysis_type }} (#{{ analysis.id }}){% endblock %}
 
 {% block content %}
 <nav aria-label="breadcrumb" class="mb-3">
@@ -18,7 +18,7 @@
 </nav>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h1>Analysis #{{ analysis.id }} <span class="badge {{ analysis.status.value | status_badge_class }}">{{ analysis.status.value }}</span></h1>
+    <h1>Analysis #{{ analysis.id }} <span class="badge {{ analysis.status.value | status_badge_class }}">{{ analysis.status.value | capitalize }}</span></h1>
     <div>
         {% if user_can_write %}
         {% if analysis.status.value == 'pending' %}
@@ -26,7 +26,7 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-outline-danger"><i class="bi bi-x-lg"></i> Cancel</button>
         </form>
-        {% elif analysis.status.value == 'failed' %}
+        {% elif analysis.status.value == 'failed' or (analysis.status.value == 'completed' and not analysis.success) %}
         <form action="{{ url_for('myapp_blueprints_analysis.retry', uuid=analysis.uuid) }}" method="post" class="d-inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-outline-primary"><i class="bi bi-arrow-repeat"></i> Retry</button>
@@ -88,7 +88,7 @@
                             {% elif analysis.status.value == 'failed' %}
                                 <span class="badge bg-danger">No</span>
                             {% else %}
-                                <span class="badge bg-warning">Partial</span>
+                                <span class="badge bg-warning text-dark">Completed with warnings</span>
                             {% endif %}
                         </dd>
                         {% if analysis.summary %}<dt>Summary</dt><dd>{{ analysis.summary }}</dd>{% endif %}
@@ -266,7 +266,7 @@
                     <i class="bi bi-code"></i> Raw Details
                 </a>
             </div>
-            <div id="rawDetails" class="collapse show">
+            <div id="rawDetails" class="collapse{% if analysis.status.value == 'failed' %} show{% endif %}">
                 <div class="card-body">
                     <pre class="mb-0" style="max-height: 400px; overflow: auto;"><code>{{ details | tojson(indent=2) }}</code></pre>
                 </div>
