@@ -239,6 +239,46 @@ within an extracted listing. If a restriction applies:
 Explicit content restrictions additionally hide the file listing until the user
 actively chooses to reveal it.
 
+#### Granting download access
+
+A bypass can be granted in two ways:
+
+- **Global, per-type** -- gives a user override access to *every* artefact
+  carrying a particular restriction type. Managed from the admin user-edit page.
+- **Per-artefact** -- gives a user override access to *one specific* restricted
+  artefact, independently of any global bypass. Use this for narrow exemptions
+  (e.g. a researcher who needs a single restricted file).
+
+To grant per-artefact access, open the restricted artefact as an administrator
+and use the **Per-User Download Access** card in the sidebar. Choose the user,
+the restriction type to bypass, and an optional reason, then click **Grant**.
+Each grant has a revoke button, and existing grants for a user are also listed
+(and revocable) on that user's admin edit page.
+
+A grant covers restrictions of the chosen type **anywhere in the artefact and
+its derived artefacts** -- the artefact-level restriction, any individual
+extracted files carrying that restriction type, and the same on artefacts
+derived from this one (e.g. a sector image decoded from a flux dump). So if a
+single extracted file is restricted, you can grant a user access to it here; the
+restriction type for that file appears in the **Type** dropdown even when the
+parent artefact is otherwise unrestricted.
+
+Bypasses apply wherever that user authenticates. Downloads through the REST API
+and the `arco` CLI (using one of the user's API keys) honour exactly the same
+grants as the website, so a bypass granted here also unblocks programmatic
+downloads for that user. The internal analysis worker is not a user and remains
+blocked from restricted downloads.
+
+> **Where is the card?** The **Per-User Download Access** card only appears
+> when **all** of these are true: you are an administrator, you have write
+> access, and the artefact has **at least one download restriction** -- on the
+> artefact itself, on one of its extracted files, or on a file in an artefact
+> derived from it. If nothing is restricted there is nothing to bypass, so the
+> card is hidden -- add a
+> restriction first (using the **Download Restrictions** card directly above it,
+> or the per-file restriction controls in the file browser), and the access card
+> will appear (it auto-expands when grants already exist).
+
 ### Editing and Deleting
 
 Click **Edit** to change the label, type override, description, or tags.
@@ -517,6 +557,10 @@ status. Administrators can:
 - **Edit users** -- change permission level, admin status, or API access
 - **Delete users** -- permanently remove a user account (requires confirmation)
 - **Toggle API access** -- enable or disable a user's ability to create API keys
+- **Manage download bypasses** -- the edit-user page has checkboxes to set the
+  user's global per-type restriction bypasses, and lists any per-artefact
+  download grants with a revoke button for each. See
+  [Granting download access](#granting-download-access).
 
 Lowering a user's permission level automatically restricts any existing API keys
 to the new level.

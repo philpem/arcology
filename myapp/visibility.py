@@ -222,6 +222,34 @@ def can_view_artefact(artefact: Artefact, user, *, sees_all: bool = False) -> bo
     return artefact.owner_id == uid or (artefact.item is not None and artefact.item.owner_id == uid)
 
 
+def can_download_despite_restrictions(user, restrictions, artefact) -> bool:
+    """Single source of truth for whether a caller may download restricted content.
+
+    Used by both the web download routes and the REST API so the two paths
+    cannot drift apart.  Download restrictions are an access gate distinct from
+    privacy/visibility: unlike private content (which the worker may read to
+    analyse), restricted bytes are released only to a user who holds a bypass.
+
+    * No restrictions → always allowed.
+    * Anonymous, or a non-user caller such as the worker key (``user`` is None
+      or not authenticated) → blocked.
+    * Otherwise the user must be able to bypass *every* restriction — via a
+      global per-type bypass or a per-artefact grant on ``artefact`` or any of
+      its ancestors, so a grant on an original upload cascades to the artefacts
+      derived from it.
+
+    ``restrictions`` is any iterable of objects exposing ``.restriction_type``
+    (``ArtefactRestriction`` or ``ExtractedFileRestriction``).  ``artefact`` is
+    the artefact whose ancestor chain scopes per-artefact grants — for a file
+    download pass the file's owning artefact (``ef.partition.artefact``).
+    """
+    if not restrictions:
+        return True
+    if not _is_authenticated(user):
+        return False
+    return user.can_bypass_all_restrictions(restrictions, artefact_id=artefact.ancestor_ids)
+
+
 def item_visibility_clause(user, *, sees_all: bool = False):
     """SQLAlchemy clause to filter an ``Item`` query by *user*'s visibility."""
     if sees_all or _is_admin(user):

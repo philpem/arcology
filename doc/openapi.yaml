@@ -1273,8 +1273,11 @@ paths:
       operationId: download_artefact
       summary: Download artefact file
       description: >
-        Download the original artefact file. Returns 403 with a list of
-        restriction types if any download restrictions are set.
+        Download the original artefact file. If any download restrictions are
+        set, returns 403 with a list of restriction types — unless the user
+        owning the API key holds a bypass for every restriction (a global
+        per-type bypass, or a per-artefact grant on this artefact or one of its
+        ancestors), in which case the download proceeds as for the website.
       tags: [Artefacts]
       responses:
         "200":
@@ -2184,7 +2187,10 @@ paths:
       summary: Download extracted file
       description: >
         Download an individual extracted file from within a partition or archive.
-        Returns 403 if the parent artefact has download restrictions.
+        Returns 403 if the parent artefact or the file itself has download
+        restrictions — unless the user owning the API key holds a bypass for
+        every restriction (global per-type, or a per-artefact grant on the
+        owning artefact or one of its ancestors), matching the website.
       tags: [Files]
       responses:
         "200":

@@ -57,6 +57,7 @@ from ..visibility import (
     can_change_owner,
     can_contribute_to_item,
     can_curate_item,
+    can_download_despite_restrictions,
     can_manage_privacy,
     can_view_artefact,
     can_view_item,
@@ -1202,7 +1203,7 @@ def _check_download_restrictions(artefact):
     if not artefact.restrictions:
         return None
 
-    if not current_user.is_authenticated or not current_user.can_bypass_all_restrictions(artefact.restrictions, artefact_id=artefact.id):
+    if not can_download_despite_restrictions(current_user, artefact.restrictions, artefact):
         categories = ', '.join(r.restriction_type.label for r in artefact.restrictions)
         flash(f'Download restricted: {categories}', 'danger')
         return _redirect_to_artefact_view(artefact)
@@ -1256,8 +1257,7 @@ def _check_file_download_restrictions(ef):
     if not all_restrictions:
         return None
 
-    if not current_user.is_authenticated or not current_user.can_bypass_all_restrictions(
-            all_restrictions, artefact_id=ef.partition.artefact_id):
+    if not can_download_despite_restrictions(current_user, all_restrictions, ef.partition.artefact):
         categories = ', '.join({r.restriction_type.label for r in all_restrictions})
         flash(f'File download restricted: {categories}', 'danger')
         return _redirect_to_artefact_view(ef.partition.artefact)
@@ -1269,15 +1269,14 @@ def _check_file_download_restrictions(ef):
     return None
 
 
-def _check_artefact_file_restrictions(artefact):
-    """Block artefact download when any extracted file within it has restrictions.
+def _artefact_contained_file_restrictions(artefact):
+    """All ExtractedFileRestriction objects on the artefact's own extracted files.
 
-    Called after _check_download_restrictions() has cleared artefact-level
-    restrictions.  Uses a single query over all partitions of this artefact.
-    Because ExtractedFileRestriction has .restriction_type, the existing
-    can_bypass_all_restrictions() method works on these objects directly.
+    A single query over every partition of this artefact.  Shared by the web
+    download gate and the REST API so both block downloading an artefact whose
+    extracted contents are restricted.
     """
-    file_restrictions = (
+    return (
         ExtractedFileRestriction.query
         .join(ExtractedFile, ExtractedFileRestriction.extracted_file_id == ExtractedFile.id)
         .join(Partition, ExtractedFile.partition_id == Partition.id)
@@ -1285,11 +1284,20 @@ def _check_artefact_file_restrictions(artefact):
         .all()
     )
 
+
+def _check_artefact_file_restrictions(artefact):
+    """Block artefact download when any extracted file within it has restrictions.
+
+    Called after _check_download_restrictions() has cleared artefact-level
+    restrictions.  Because ExtractedFileRestriction has .restriction_type, the
+    existing can_bypass_all_restrictions() method works on these objects directly.
+    """
+    file_restrictions = _artefact_contained_file_restrictions(artefact)
+
     if not file_restrictions:
         return None
 
-    if not current_user.is_authenticated or not current_user.can_bypass_all_restrictions(
-            file_restrictions, artefact_id=artefact.id):
+    if not can_download_despite_restrictions(current_user, file_restrictions, artefact):
         categories = ', '.join({r.restriction_type.label for r in file_restrictions})
         flash(f'Download restricted (artefact contains restricted files): {categories}', 'danger')
         return _redirect_to_artefact_view(artefact)
@@ -1299,6 +1307,36 @@ def _check_artefact_file_restrictions(artefact):
         return _redirect_to_artefact_view(artefact)
 
     return None
+
+
+def _grantable_bypass_rtypes(artefact):
+    """RestrictionTypes a per-user bypass can be granted for on this artefact.
+
+    Covers both artefact-level and file-level restrictions across this artefact
+    *and any artefacts derived from it* — the artefact detail page surfaces
+    restrictions from the whole derived tree, so the grant form must offer those
+    types too.
+
+    A grant is created against this artefact; download enforcement walks each
+    restricted artefact/file up its derivation chain (Artefact.ancestor_ids), so
+    a grant here cascades to cover restrictions anywhere in the tree below it.
+    """
+    all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    art_rtypes = (
+        db.session.query(ArtefactRestriction.restriction_type)
+        .filter(ArtefactRestriction.artefact_id.in_(all_ids))
+        .distinct()
+    )
+    types = {row[0] for row in art_rtypes}
+    file_rtypes = (
+        db.session.query(ExtractedFileRestriction.restriction_type)
+        .join(ExtractedFile, ExtractedFileRestriction.extracted_file_id == ExtractedFile.id)
+        .join(Partition, ExtractedFile.partition_id == Partition.id)
+        .filter(Partition.artefact_id.in_(all_ids))
+        .distinct()
+    )
+    types.update(row[0] for row in file_rtypes)
+    return types
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>')
@@ -1914,10 +1952,14 @@ def _build_derived_entries(artefact):
     """
     entries = []
 
-    def _walk(node, depth):
+    # Thread the ancestor-id set down the recursion (each node's set includes
+    # itself) so per-artefact bypass checks need no per-child parent walk.
+    def _walk(node, depth, node_ancestor_ids):
         for child in node.derived_artefacts:
+            child_ancestor_ids = node_ancestor_ids | {child.id}
             try:
-                restricted = not current_user.can_bypass_all_restrictions(child.restrictions, artefact_id=child.id)
+                restricted = not current_user.can_bypass_all_restrictions(
+                    child.restrictions, artefact_id=child_ancestor_ids)
             except Exception:
                 restricted = bool(child.restrictions)
             has_viewer = child.artefact_type in VIEWER_ARTEFACT_TYPES
@@ -1930,9 +1972,9 @@ def _build_derived_entries(artefact):
                 'file_size': child.file_size,
                 'mime_type': child.mime_type or '',
             })
-            _walk(child, depth + 1)
+            _walk(child, depth + 1, child_ancestor_ids)
 
-    _walk(artefact, 0)
+    _walk(artefact, 0, artefact.ancestor_ids)
     return entries
 
 
@@ -2542,9 +2584,13 @@ def _render_artefact_view(artefact):
         bypass_eligible_users = (
             User.query.order_by(User.username).all()
         )
+        bypass_grantable_rtypes = sorted(
+            _grantable_bypass_rtypes(artefact), key=lambda rt: rt.label
+        )
     else:
         artefact_user_bypasses = []
         bypass_eligible_users = []
+        bypass_grantable_rtypes = []
 
     return render_template('artefacts/view.html',
                            artefact=artefact,
@@ -2594,6 +2640,7 @@ def _render_artefact_view(artefact):
                            derived_entries=derived_entries,
                            artefact_user_bypasses=artefact_user_bypasses,
                            bypass_eligible_users=bypass_eligible_users,
+                           bypass_grantable_rtypes=bypass_grantable_rtypes,
                            move_item_choices=_move_item_choices(artefact))
 
 
@@ -3436,8 +3483,9 @@ def grant_bypass(item_id=None, artefact_id=None, root_id=None):
     except ValueError:
         flash('Invalid restriction type.', 'danger')
         return _redirect_to_artefact_view(artefact)
-    # A bypass only makes sense for a restriction the artefact actually carries.
-    if rtype not in {r.restriction_type for r in artefact.restrictions}:
+    # A bypass only makes sense for a restriction the artefact actually carries,
+    # either at artefact level or on one of its extracted files.
+    if rtype not in _grantable_bypass_rtypes(artefact):
         flash(f'This artefact has no {rtype.label} restriction to bypass.', 'danger')
         return _redirect_to_artefact_view(artefact)
     target_user = User.query.get_or_404(user_id)

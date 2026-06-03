@@ -196,7 +196,7 @@
                 </div>
             </div>
         </div>
-        {% if current_user.is_admin and artefact.restrictions %}
+        {% if current_user.is_admin and bypass_grantable_rtypes %}
         <div class="card mb-4">
             <div class="card-header">
                 <a class="text-decoration-none" data-bs-toggle="collapse" href="#bypassSection" role="button" aria-expanded="{{ 'true' if artefact_user_bypasses else 'false' }}" aria-controls="bypassSection">
@@ -232,7 +232,7 @@
                     {% else %}
                     <p class="text-muted small mb-2">No per-user access grants yet.</p>
                     {% endif %}
-                    {% set _artefact_rtypes = artefact.restrictions | map(attribute='restriction_type') | list %}
+                    <p class="text-muted small mb-2">A grant lets the chosen user download every artefact-level or file-level restriction of that type within this artefact and the artefacts derived from it.</p>
                     <form action="{{ artefact_url(artefact, 'grant_bypass') }}" method="post" class="row g-2 align-items-end">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <div class="col">
@@ -248,7 +248,7 @@
                             <label class="form-label small mb-0">Type</label>
                             <select name="restriction_type" class="form-select form-select-sm" required>
                                 <option value="">Select…</option>
-                                {% for rtype in _artefact_rtypes %}
+                                {% for rtype in bypass_grantable_rtypes %}
                                 <option value="{{ rtype.value }}">{{ rtype.label }}</option>
                                 {% endfor %}
                             </select>
