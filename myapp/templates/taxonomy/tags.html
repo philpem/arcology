@@ -15,28 +15,43 @@
 </div>
 
 <div class="card">
-    <div class="card-body">
-        {% for tag in tags | sort(attribute='name', case_sensitive=False) %}
-        <span class="d-inline-flex align-items-center badge bg-info fs-6 me-2 mb-2 p-2 gap-1">
-            {{ tag.name }}
-            {% set _count = tag.items|length + tag.artefacts|length %}
-            <span class="badge bg-dark" title="{{ tag.items|length }} item(s), {{ tag.artefacts|length }} artefact(s)">{{ _count }}</span>
-            {% if user_can_write %}
-            <a href="{{ url_for('myapp_blueprints_taxonomy.edit_tag', id=tag.id) }}"
-               class="btn btn-sm btn-light text-dark px-1 py-0 lh-1 ms-1"
-               title="Edit tag" aria-label="Edit tag {{ tag.name }}" style="font-size: 0.85rem; min-width: 1.5rem;"><i class="bi bi-pencil"></i></a>
-            <form action="{{ url_for('myapp_blueprints_taxonomy.delete_tag', id=tag.id) }}" method="post" class="d-inline"
-                  onsubmit="return confirm('Delete tag ' + {{ tag.name | tojson }} + '? This cannot be undone.');">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-sm btn-light text-dark px-1 py-0 lh-1"
-                        aria-label="Delete tag {{ tag.name }}"
-                        style="font-size: 0.85rem; min-width: 1.5rem;"><i class="bi bi-trash"></i></button>
-            </form>
-            {% endif %}
-        </span>
-        {% else %}
-        <p class="text-muted mb-0">No tags defined</p>
-        {% endfor %}
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Name</th>
+                    <th class="text-end" style="width: 7rem;">Items</th>
+                    <th class="text-end" style="width: 7rem;">Artefacts</th>
+                    {% if user_can_write %}<th style="width: 6rem;"></th>{% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for tag in tags | sort(attribute='name', case_sensitive=False) %}
+                <tr>
+                    <td>
+                        <span class="badge bg-info text-dark me-1">{{ tag.name }}</span>
+                    </td>
+                    <td class="text-end text-muted">{{ tag.items|length }}</td>
+                    <td class="text-end text-muted">{{ tag.artefacts|length }}</td>
+                    {% if user_can_write %}
+                    <td class="text-end">
+                        <a href="{{ url_for('myapp_blueprints_taxonomy.edit_tag', id=tag.id) }}"
+                           class="btn btn-sm btn-outline-primary me-1"
+                           aria-label="Edit tag {{ tag.name }}"><i class="bi bi-pencil"></i></a>
+                        <form action="{{ url_for('myapp_blueprints_taxonomy.delete_tag', id=tag.id) }}" method="post" class="d-inline"
+                              onsubmit="return confirm('Delete tag ' + {{ tag.name | tojson }} + '? This cannot be undone.');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-outline-danger"
+                                    aria-label="Delete tag {{ tag.name }}"><i class="bi bi-trash"></i></button>
+                        </form>
+                    </td>
+                    {% endif %}
+                </tr>
+                {% else %}
+                <tr><td colspan="4" class="text-center text-muted py-4">No tags defined</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 {% endblock %}
