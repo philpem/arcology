@@ -236,7 +236,7 @@ ANALYSIS_MAP = {
     # FLUX_DECODE is included so that standalone HFE/IMD uploads trigger extraction
     # (same pipeline as SCP, starting from wherever in the chain the source sits).
     ArtefactType.IMD: [AnalysisType.METADATA_EXTRACT, AnalysisType.FLUX_DECODE],
-    ArtefactType.HFE: [AnalysisType.DISC_MASTERING_DETECT, AnalysisType.DISC_PROTECTION_DETECT, AnalysisType.FLUX_DECODE],
+    ArtefactType.HFE: [AnalysisType.FLUX_VISUALISATION, AnalysisType.DISC_MASTERING_DETECT, AnalysisType.DISC_PROTECTION_DETECT, AnalysisType.FLUX_DECODE],
     #ArtefactType.TD0: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY],
     #ArtefactType.D64: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_EXTRACTION],
     #ArtefactType.ADF: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_EXTRACTION],
