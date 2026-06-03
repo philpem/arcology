@@ -150,6 +150,19 @@ def _ilike(col, val):
     return col.ilike(pattern)
 
 
+def _ilike_path(col, val):
+    """Case-insensitive filter for filename/path fields.
+
+    Without a wildcard: exact match (filename:!Run matches only '!Run').
+    With a wildcard:    glob match (filename:!Run* matches '!RunImage' etc.).
+
+    This is more intuitive for filesystem names than the default substring
+    behaviour of _ilike(), which would make filename:!Run match !RunImage.
+    """
+    pattern = val.replace('*', '%')
+    return col.ilike(pattern)
+
+
 def _ilike_json(col, val):
     """Like _ilike but always wraps in %..% for JSON text column searches.
 
@@ -200,7 +213,7 @@ def _search_files(tokens, page=1, per_page=PER_PAGE):
     for h in tokens.get('sha256', []):
         per_key.setdefault('sha256', []).append(ExtractedFile.sha256 == h.lower())
     for v in tokens.get('filename', []):
-        per_key.setdefault('filename', []).append(_ilike(ExtractedFile.filename, v))
+        per_key.setdefault('filename', []).append(_ilike_path(ExtractedFile.filename, v))
     for v in tokens.get('path', []):
         per_key.setdefault('path', []).append(_ilike(ExtractedFile.path, v))
     for v in tokens.get('type', []):
