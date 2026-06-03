@@ -4,14 +4,14 @@
 {% block content %}
 <div class="row justify-content-center">
 	<div class="col-lg-6">
-		<h2>
+		<h1>
 			Edit User: {{ user.username }}
 			{% if user.oidc_managed %}
 			<span class="badge bg-info text-dark ms-2" title="Account managed via SSO">
 				<i class="bi bi-shield-lock"></i> {{ oidc_provider_name }}
 			</span>
 			{% endif %}
-		</h2>
+		</h1>
 
 		{% if user.oidc_managed %}
 		<div class="alert alert-info">
