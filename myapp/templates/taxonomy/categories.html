@@ -25,7 +25,7 @@
                 {% if not category.items and not category.children %}
                 <form action="{{ url_for('myapp_blueprints_taxonomy.delete_category', id=category.id) }}" method="post" class="d-inline">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-sm btn-outline-danger" aria-label="Delete {{ category.name }}" onclick="return confirm('Delete?');"><i class="bi bi-trash"></i></button>
+                    <button type="submit" class="btn btn-sm btn-outline-danger" aria-label="Delete {{ category.name }}" onclick="return confirm('Delete category \'{{ category.name }}\'? This cannot be undone.');"><i class="bi bi-trash"></i></button>
                 </form>
                 {% endif %}
             </div>
