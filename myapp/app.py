@@ -1,6 +1,7 @@
 
 import os
 import secrets
+from urllib.parse import urlsplit
 from flask import Flask, abort, flash, g, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 from flask_wtf import FlaskForm
@@ -10,6 +11,29 @@ from wtforms import PasswordField, StringField, SubmitField
 from wtforms.validators import DataRequired
 from .database import UserPermission
 from .extensions import bootstrap, csrf, db, login_manager, migrate
+
+
+def _s3_public_origin(config):
+    """Return the ``scheme://host[:port]`` origin browsers load S3 outputs from.
+
+    Only relevant when S3 storage is active and a browser-reachable URL is
+    configured.  Prefers ``S3_PUBLIC_URL`` (the public, browser-facing host) and
+    falls back to ``S3_ENDPOINT_URL``.  Returns ``None`` when not using S3, when
+    no URL is configured, or when the URL cannot be parsed into an origin — in
+    which case the CSP is left unchanged.
+
+    Only the origin is returned (no path/query): CSP source expressions match on
+    origin, so this whitelists every pre-signed object URL on that host.
+    """
+    if str(config.get('STORAGE_BACKEND', 'local')).lower() != 's3':
+        return None
+    url = config.get('S3_PUBLIC_URL') or config.get('S3_ENDPOINT_URL')
+    if not url:
+        return None
+    parts = urlsplit(url.strip())
+    if not parts.scheme or not parts.netloc:
+        return None
+    return f"{parts.scheme}://{parts.netloc}"
 
 
 # Subclass the application so we can add the menu management functions
@@ -264,12 +288,25 @@ def create_app(config_name=None):
     # Allows Bootstrap CSS/JS/Icons fonts from cdn.jsdelivr.net plus inline
     # styles and scripts used throughout the templates.  Set CSP_HEADER to an
     # empty string in config to disable (e.g. when the reverse proxy sets it).
+    #
+    # When S3 storage is configured with a browser-reachable public URL on a
+    # different origin (S3_PUBLIC_URL, e.g. https://arco-s3.example.com), output
+    # files are served by redirecting <img> requests to pre-signed URLs on that
+    # origin.  Browsers re-check CSP against each redirect hop, so the S3 origin
+    # must be whitelisted in img-src/media-src or every visualisation is blocked.
+    _s3_origin = _s3_public_origin(app.config)
+    _img_src = "'self' data:"
+    _media_src = "'self'"
+    if _s3_origin:
+        _img_src = f"{_img_src} {_s3_origin}"
+        _media_src = f"{_media_src} {_s3_origin}"
     _DEFAULT_CSP = (
         "default-src 'self'; "
         "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
         "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
         "font-src 'self' https://cdn.jsdelivr.net; "
-        "img-src 'self' data:; "
+        f"img-src {_img_src}; "
+        f"media-src {_media_src}; "
         "connect-src 'self'; "
         "object-src 'none'; "
         "frame-ancestors 'none'"
