@@ -3,9 +3,6 @@
 
 {% block styles %}
 {{ super() }}
-{% if has_active_analyses %}
-<meta http-equiv="refresh" content="10">
-{% endif %}
 <style>
 .pt-node { position: relative; }
 .pt-node-body { border-left: 2px solid #dee2e6; margin-left: 0.75rem; padding-left: 0.75rem; }
@@ -183,7 +180,7 @@
     </div>
     <div class="d-flex gap-2 align-items-center">
         {% if has_active_analyses %}
-        <span class="badge bg-info text-dark"><i class="bi bi-arrow-repeat pt-spin me-1"></i>Auto-refreshing</span>
+        <span class="badge bg-info text-dark" id="pt-refresh-badge"><i class="bi bi-arrow-repeat pt-spin me-1"></i>Analysing&hellip;</span>
         {% endif %}
         <a href="{{ artefact_url(artefact) }}" class="btn btn-outline-secondary">
             <i class="bi bi-arrow-left"></i> Back to Artefact
@@ -221,6 +218,32 @@
 
 {% block scripts %}
 {{ super() }}
+{% if has_active_analyses %}
+<script>
+(function () {
+    var POLL_INTERVAL = 8000;
+    var statusUrl = {{ url_for('myapp_blueprints_artefacts.analysis_status_json', uuid=artefact.uuid) | tojson }};
+    var knownPending = {{ status_counts.pending or 0 }};
+    var knownRunning = {{ status_counts.running or 0 }};
+    var reloadScheduled = false;
+
+    function pollStatus() {
+        fetch(statusUrl, {cache: 'no-store'}).then(function (r) {
+            if (!r.ok) return;
+            return r.json();
+        }).then(function (d) {
+            if (!d || reloadScheduled) return;
+            if (d.pending !== knownPending || d.running !== knownRunning) {
+                reloadScheduled = true;
+                setTimeout(function () { window.location.reload(); }, 500);
+            }
+        }).catch(function () {});
+    }
+
+    var timer = setInterval(pollStatus, POLL_INTERVAL);
+})();
+</script>
+{% endif %}
 <script>
 document.querySelectorAll('.pt-toggle').forEach(function (header) {
     var collapseEl = document.querySelector(header.dataset.target);
