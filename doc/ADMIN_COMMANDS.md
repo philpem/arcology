@@ -3,6 +3,23 @@
 Flask CLI commands for managing the Arcology instance. In Docker, prefix
 each command with `docker compose exec web`.
 
+## set-password
+
+Forcibly set the local-authentication password for an existing user. Use this
+to recover a locked-out account without needing shell database access.
+
+```bash
+flask set-password alice                         # interactive prompt
+flask set-password alice --password 'newpassword123'
+
+# Bypass the 12-character minimum (emergency recovery only):
+flask set-password alice --no-min-length --password 'short'
+```
+
+The `--no-min-length` flag exists purely for account recovery edge cases where
+a short password must be set temporarily. Change it to a strong password
+immediately after regaining access.
+
 ## create-admin
 
 Create an administrator user account. Idempotent — skips if a user already
