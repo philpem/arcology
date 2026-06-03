@@ -8,6 +8,8 @@
                     <dt>Original Filename</dt><dd><code>{{ artefact.original_filename }}</code></dd>
                     <dt>Size</dt><dd>{% if artefact.file_size %}<span title="{{ artefact.file_size }} bytes">{{ artefact.file_size | format_filesize }}</span>{% else %}-{% endif %}</dd>
                     <dt>MIME Type</dt><dd>{{ artefact.mime_type or '-' }}</dd>
+                    <dt>Uploaded</dt><dd><span title="{{ artefact.created_at.isoformat() }}">{{ artefact.created_at.strftime('%Y-%m-%d %H:%M') }}</span></dd>
+                    <dt>Updated</dt><dd><span title="{{ artefact.updated_at.isoformat() }}">{{ artefact.updated_at.strftime('%Y-%m-%d %H:%M') }}</span></dd>
                     <dt>MD5</dt><dd>{% if artefact.md5 %}<code class="small">{{ artefact.md5 }}</code><button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 ms-1" onclick="copyToClipboard('{{ artefact.md5 }}', this)" title="Copy MD5"><i class="bi bi-clipboard"></i></button>{% else %}<span class="text-muted">Not computed</span>{% endif %}</dd>
                     <dt>SHA256</dt><dd>{% if artefact.sha256 %}<code class="small" title="{{ artefact.sha256 }}">{{ artefact.sha256[:16] }}&hellip;</code><button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 ms-1" onclick="copyToClipboard('{{ artefact.sha256 }}', this)" title="Copy SHA256"><i class="bi bi-clipboard"></i></button>{% else %}<span class="text-muted">Not computed</span>{% endif %}</dd>
                     {% if artefact.parent_artefact %}
