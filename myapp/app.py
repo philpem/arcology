@@ -83,7 +83,7 @@ def create_app(config_name=None):
                 app.logger.warning(f'{int_key} env var is not an integer: {env_val!r}')
 
     # Float env vars — loaded separately so they're stored as float, not str.
-    for float_key in ('SENTRY_TRACES_SAMPLE_RATE',):
+    for float_key in ('SENTRY_TRACES_SAMPLE_RATE', 'SENTRY_PROFILES_SAMPLE_RATE'):
         env_val = os.environ.get(float_key)
         if env_val is not None:
             try:
@@ -137,6 +137,7 @@ def create_app(config_name=None):
                 dsn=app.config['SENTRY_DSN'],
                 integrations=[FlaskIntegration(), SqlalchemyIntegration()],
                 traces_sample_rate=app.config.get('SENTRY_TRACES_SAMPLE_RATE', 1.0),
+                profiles_sample_rate=app.config.get('SENTRY_PROFILES_SAMPLE_RATE', 1.0),
                 send_default_pii=True,
                 )
 
