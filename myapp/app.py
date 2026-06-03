@@ -82,6 +82,15 @@ def create_app(config_name=None):
             except ValueError:
                 app.logger.warning(f'{int_key} env var is not an integer: {env_val!r}')
 
+    # Float env vars — loaded separately so they're stored as float, not str.
+    for float_key in ('SENTRY_TRACES_SAMPLE_RATE',):
+        env_val = os.environ.get(float_key)
+        if env_val is not None:
+            try:
+                app.config[float_key] = float(env_val)
+            except ValueError:
+                app.logger.warning(f'{float_key} env var is not a number: {env_val!r}')
+
     # Abort if no database URI is configured
     if not app.config.get('SQLALCHEMY_DATABASE_URI'):
         raise RuntimeError(
