@@ -400,6 +400,7 @@ def _register_cli_commands(app):
     from .cli.reassign_ownership import reassign_ownership
     from .cli.rebuild_search_index import rebuild_search_index
     from .cli.rescan_hashes import rescan_hashes
+    from .cli.set_password import set_password
 
     app.cli.add_command(create_admin)
     app.cli.add_command(rebuild_search_index)
@@ -409,6 +410,7 @@ def _register_cli_commands(app):
     app.cli.add_command(dedup_artefacts)
     app.cli.add_command(reassign_ownership)
     app.cli.add_command(backfill_slugs)
+    app.cli.add_command(set_password)
 
 
 # vim: ts=4 sw=4 et
