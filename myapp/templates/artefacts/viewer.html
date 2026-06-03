@@ -163,7 +163,7 @@
     <input type="text" name="filename" value="{{ filename_filter }}"
            class="form-control form-control-sm" placeholder="Filename (*.wmf)" style="width:150px"
            title="Filter outputs by filename glob. * matches any characters, ? matches one character.">
-    <button type="submit" class="btn btn-sm btn-outline-secondary" title="Apply filename filter">
+    <button type="submit" class="btn btn-sm btn-outline-secondary" title="Apply filename filter" aria-label="Apply filename filter">
         <i class="bi bi-funnel"></i>
     </button>
     {% if filename_filter %}

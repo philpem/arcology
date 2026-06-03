@@ -19,7 +19,7 @@
                 {% if hashdb_mode %}<input type="hidden" name="mode" value="hashdb">{% endif %}
                 {% if file_form.path.data %}<input type="hidden" name="path" value="{{ file_form.path.data }}">{% endif %}
                     <div style="width: 180px;">
-                        <select name="partition_uuid" class="form-select form-select-sm" title="Filter files by disk partition. Select a specific partition or show files from all partitions.">
+                        <select name="partition_uuid" class="form-select form-select-sm" aria-label="Filter by disk partition" title="Filter files by disk partition. Select a specific partition or show files from all partitions.">
                             <option value="">All Partitions</option>
                             {% for p in all_partitions %}
                             <option value="{{ p.uuid }}" {{ 'selected' if file_form.partition_uuid.data == p.uuid else '' }}>
@@ -28,10 +28,10 @@
                             {% endfor %}
                         </select>
                     </div>
-                    <div style="width: 180px;">{{ file_form.filename(class="form-control form-control-sm", placeholder="Filename (glob: *.txt)", title="Filter by filename. Supports glob wildcards: * matches any characters, ? matches a single character. Example: *.txt, README*") }}</div>
-                    <div style="width: 110px;">{{ file_form.filetype(class="form-control form-control-sm", placeholder="Filetype/ext", title="Filter by RISC OS filetype (e.g. fff, Text, Drawfile) or file extension (e.g. wmf, bmp, png). Leading # or & is stripped automatically.") }}</div>
-                    <div>{{ file_form.hide_known(class="form-select form-select-sm", title="Filter files by hash database match status. 'Hide' removes files matching known hashes; 'Only' shows only files matching known hashes.") }}</div>
-                    <div>{{ file_form.filter_products(class="form-select form-select-sm", title="Filter files by product match status. 'Hide' removes files matched to a known product; 'Only' shows only files matched to a known product.") }}</div>
+                    <div style="width: 180px;">{{ file_form.filename(class="form-control form-control-sm", placeholder="Filename (glob: *.txt)", aria_label="Filter by filename", title="Filter by filename. Supports glob wildcards: * matches any characters, ? matches a single character. Example: *.txt, README*") }}</div>
+                    <div style="width: 110px;">{{ file_form.filetype(class="form-control form-control-sm", placeholder="Filetype/ext", aria_label="Filter by filetype or extension", title="Filter by RISC OS filetype (e.g. fff, Text, Drawfile) or file extension (e.g. wmf, bmp, png). Leading # or & is stripped automatically.") }}</div>
+                    <div>{{ file_form.hide_known(class="form-select form-select-sm", aria_label="Filter by hash database status", title="Filter files by hash database match status. 'Hide' removes files matching known hashes; 'Only' shows only files matching known hashes.") }}</div>
+                    <div>{{ file_form.filter_products(class="form-select form-select-sm", aria_label="Filter by product match status", title="Filter files by product match status. 'Hide' removes files matched to a known product; 'Only' shows only files matched to a known product.") }}</div>
                     <div class="flex-grow-1"></div>
                     <button type="submit" class="btn btn-sm btn-secondary">Filter</button>
                     <a href="?{% if hashdb_mode %}mode=hashdb&{% endif %}{% if file_form.path.data %}path={{ file_form.path.data | urlencode }}{% endif %}" class="btn btn-sm btn-outline-secondary" title="Clear all filters">Clear</a>
@@ -69,7 +69,7 @@
                 {% endmacro %}
                 <table class="table table-sm table-hover mb-0">
                     <thead><tr>
-                        {% if hashdb_mode %}<th><input type="checkbox" id="select-all-files" title="Select all on this page"></th>{% endif %}
+                        {% if hashdb_mode %}<th><input type="checkbox" id="select-all-files" aria-label="Select all files on this page"></th>{% endif %}
                         {{ sort_th('Path', 'path') }}
                         {{ sort_th('Size', 'size') }}
                         {{ sort_th('Date', 'date') }}
@@ -291,11 +291,11 @@
 </div>
 
 <!-- Hash DB modal -->
-<div class="modal fade" id="hashdbModal" tabindex="-1">
+<div class="modal fade" id="hashdbModal" tabindex="-1" aria-labelledby="hashdbModalLabel">
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title"><i class="bi bi-database-add"></i> Add to Hash Database</h5>
+                <h5 class="modal-title" id="hashdbModalLabel"><i class="bi bi-database-add"></i> Add to Hash Database</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">

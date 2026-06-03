@@ -41,7 +41,8 @@
                     {{ form.hidden_tag() }}
 
                     <div class="mb-2">
-                        <button type="button" class="btn btn-sm btn-outline-secondary" id="hints-toggle">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="hints-toggle"
+                                aria-expanded="false" aria-controls="hints-section">
                             <i class="bi bi-sliders"></i> Analysis hints
                             <i class="bi bi-chevron-down ms-1" id="hints-chevron"></i>
                         </button>
@@ -109,9 +110,11 @@
 
     hintsEl.addEventListener('show.bs.collapse', function () {
         hintsChevron.classList.replace('bi-chevron-down', 'bi-chevron-up');
+        hintsToggle.setAttribute('aria-expanded', 'true');
     });
     hintsEl.addEventListener('hide.bs.collapse', function () {
         hintsChevron.classList.replace('bi-chevron-up', 'bi-chevron-down');
+        hintsToggle.setAttribute('aria-expanded', 'false');
     });
 
     hintsToggle.addEventListener('click', function () {
