@@ -80,7 +80,8 @@ def _stale_cutoff():
 def index():
     """List all analysis jobs."""
     status_filter = request.args.get('status')
-    
+    artefact_filter = request.args.get('artefact', '').strip() or None
+
     query = Analysis.query
 
     if status_filter:
@@ -89,6 +90,11 @@ def index():
             query = query.filter(Analysis.status == status)
         except ValueError:
             pass
+
+    if artefact_filter:
+        query = query.join(Artefact, Analysis.artefact_id == Artefact.id).filter(
+            Artefact.label.ilike(f'%{artefact_filter}%')
+        )
 
     per_page, page, view_all = resolve_per_page('ANALYSES_PER_PAGE', 50)
 
@@ -115,6 +121,7 @@ def index():
                            analyses=pagination.items,
                            pagination=pagination,
                            status_filter=status_filter,
+                           artefact_filter=artefact_filter,
                            status_counts=status_counts,
                            valid_per_page=VALID_PER_PAGE,
                            view_all=view_all)

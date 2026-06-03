@@ -8,12 +8,24 @@
     <a href="{{ url_for('myapp_blueprints_analysis.queue') }}" class="btn btn-outline-primary"><i class="bi bi-list-task"></i> View Queue</a>
 </div>
 
-<div class="btn-group mb-4">
-    <a href="{{ url_for('myapp_blueprints_analysis.index') }}" class="btn btn-outline-secondary {{ 'active' if not status_filter else '' }}">All</a>
-    <a href="{{ url_for('myapp_blueprints_analysis.index', status='pending') }}" class="btn btn-outline-warning {{ 'active' if status_filter == 'pending' else '' }}">Pending ({{ status_counts.pending }})</a>
-    <a href="{{ url_for('myapp_blueprints_analysis.index', status='running') }}" class="btn btn-outline-info {{ 'active' if status_filter == 'running' else '' }}">Running ({{ status_counts.running }})</a>
-    <a href="{{ url_for('myapp_blueprints_analysis.index', status='completed') }}" class="btn btn-outline-success {{ 'active' if status_filter == 'completed' else '' }}">Completed ({{ status_counts.completed }})</a>
-    <a href="{{ url_for('myapp_blueprints_analysis.index', status='failed') }}" class="btn btn-outline-danger {{ 'active' if status_filter == 'failed' else '' }}">Failed ({{ status_counts.failed }})</a>
+<div class="d-flex flex-wrap gap-3 align-items-center mb-4">
+    <div class="btn-group">
+        <a href="{{ url_for('myapp_blueprints_analysis.index', artefact=artefact_filter) }}" class="btn btn-outline-secondary {{ 'active' if not status_filter else '' }}">All</a>
+        <a href="{{ url_for('myapp_blueprints_analysis.index', status='pending', artefact=artefact_filter) }}" class="btn btn-outline-warning {{ 'active' if status_filter == 'pending' else '' }}">Pending ({{ status_counts.pending }})</a>
+        <a href="{{ url_for('myapp_blueprints_analysis.index', status='running', artefact=artefact_filter) }}" class="btn btn-outline-info {{ 'active' if status_filter == 'running' else '' }}">Running ({{ status_counts.running }})</a>
+        <a href="{{ url_for('myapp_blueprints_analysis.index', status='completed', artefact=artefact_filter) }}" class="btn btn-outline-success {{ 'active' if status_filter == 'completed' else '' }}">Completed ({{ status_counts.completed }})</a>
+        <a href="{{ url_for('myapp_blueprints_analysis.index', status='failed', artefact=artefact_filter) }}" class="btn btn-outline-danger {{ 'active' if status_filter == 'failed' else '' }}">Failed ({{ status_counts.failed }})</a>
+    </div>
+    <form method="get" class="d-flex gap-2 align-items-center">
+        {% if status_filter %}<input type="hidden" name="status" value="{{ status_filter }}">{% endif %}
+        <input type="text" name="artefact" class="form-control form-control-sm" style="width: 220px;"
+               placeholder="Filter by artefact…" aria-label="Filter by artefact label"
+               value="{{ artefact_filter or '' }}">
+        <button type="submit" class="btn btn-sm btn-secondary">Filter</button>
+        {% if artefact_filter %}
+        <a href="{{ url_for('myapp_blueprints_analysis.index', status=status_filter) }}" class="btn btn-sm btn-outline-secondary" title="Clear artefact filter"><i class="bi bi-x"></i></a>
+        {% endif %}
+    </form>
 </div>
 
 <div class="card">
@@ -37,5 +49,5 @@
     </div>
 </div>
 
-{{ render_pagination(pagination, {'status': status_filter, 'per_page': request.args.get('per_page')}, valid_per_page=valid_per_page, view_all=view_all) }}
+{{ render_pagination(pagination, {'status': status_filter, 'artefact': artefact_filter, 'per_page': request.args.get('per_page')}, valid_per_page=valid_per_page, view_all=view_all) }}
 {% endblock %}
