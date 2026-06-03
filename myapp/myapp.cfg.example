@@ -70,6 +70,27 @@ STALE_JOB_TIMEOUT_SECONDS = 3600
 #WEB_UI_ANALYSIS_PRIORITY = 10
 
 # =============================================================================
+# Content Security Policy
+# =============================================================================
+# The app sets a CSP header on every response.  The default policy allows
+# Bootstrap CSS/JS/Icons from cdn.jsdelivr.net and inline styles/scripts.
+# Override CSP_HEADER to customise it; set it to "" to disable (e.g. when
+# the reverse proxy sets the header instead — but do not set it in both places,
+# as browsers apply multiple CSP headers as a logical AND which is usually
+# more restrictive than intended).
+#
+#CSP_HEADER = (
+#    "default-src 'self'; "
+#    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+#    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+#    "font-src 'self' https://cdn.jsdelivr.net; "
+#    "img-src 'self' data:; "
+#    "connect-src 'self'; "
+#    "object-src 'none'; "
+#    "frame-ancestors 'none'"
+#)
+
+# =============================================================================
 # SSO / OpenID Connect (OAuth 2.0)
 # Supports Keycloak, Okta, Azure AD, and any OIDC-compliant provider.
 # =============================================================================
