@@ -237,8 +237,10 @@ def cmd_bulk_import(client: ArcologyClient, args):
             args.name_prefix = 'Arcarc'
         args.smart_labels = True
 
-    if args.tag is None:
-        print('Error: --tag is required (or use --arcarc for arcarc.nl defaults)', file=sys.stderr)
+    # --tag is optional for importing, but required for --purge: without it
+    # the purge would match (and delete) every item in the catalogue.
+    if args.purge and args.tag is None:
+        print('Error: --tag is required with --purge', file=sys.stderr)
         sys.exit(1)
 
     if args.name_prefix is None:
@@ -365,9 +367,12 @@ def cmd_bulk_import(client: ArcologyClient, args):
             item_uuid = existing_item['uuid']
             log.info('Using existing item: %s', item_uuid[:8])
         else:
+            tags = [coll_name.lower()]
+            if args.tag:
+                tags.insert(0, args.tag)
             item_data = {
                 'name': item_name,
-                'tags': [args.tag, coll_name.lower()],
+                'tags': tags,
             }
             if platform_id:
                 item_data['platform_id'] = platform_id

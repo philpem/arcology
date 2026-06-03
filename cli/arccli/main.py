@@ -145,7 +145,7 @@ def main():
 	bulk_parser.add_argument('--archive-dir', default=None,
 	                         help='Local mirror root (required unless --purge)')
 	bulk_parser.add_argument('--tag', default=None,
-	                         help='Tag for imported items (required unless --arcarc)')
+	                         help='Tag for imported items (optional; required with --purge)')
 	bulk_parser.add_argument('--categories', default=None,
 	                         help='Filter by top-level directory (comma-separated)')
 	bulk_parser.add_argument('--skip-dirs', default=None,

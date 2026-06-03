@@ -103,12 +103,16 @@ preset includes a built-in map (Apps=Applications, PD=Public Domain, etc.).
 
 ### Tagging and deduplication
 
-Every imported Item is tagged with `--tag` plus the lowercase collection name
-(e.g. `apps`, `games`). The tag is used for:
+`--tag` is optional. When supplied, every imported Item is tagged with it plus
+the lowercase collection name (e.g. `apps`, `games`); without it, Items get only
+the lowercase collection-name tag. The tag is used for:
 
 - **Resume mode** (`--resume`): matches existing Items by name + tag to avoid
-  creating duplicates, then skips Artefacts whose filename already exists
-- **Purge mode** (`--purge`): finds all Items with the tag for bulk deletion
+  creating duplicates, then skips Artefacts whose filename already exists.
+  Without `--tag`, matching falls back to name alone, which may match an
+  unrelated Item of the same name — pass `--tag` when resuming to be precise.
+- **Purge mode** (`--purge`): finds all Items with the tag for bulk deletion.
+  `--tag` is **required** with `--purge` (otherwise it would match every Item).
 
 ## Examples
 
@@ -270,7 +274,7 @@ arco bulk-import --archive-dir ~/arcarc/archive --arcarc --categories Apps,Games
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--archive-dir PATH` | *(required)* | Local directory to import |
-| `--tag TAG` | *(required)* | Tag applied to all imported Items |
+| `--tag TAG` | *(none)* | Tag applied to all imported Items (required with `--purge`) |
 | `--categories LIST` | *(all)* | Filter by top-level directory, comma-separated |
 | `--skip-dirs LIST` | *(none)* | Skip directories by name at any level, comma-separated |
 | `--skip-ext LIST` | *(none)* | Skip files by extension (e.g. `.pdf,.txt`) |
