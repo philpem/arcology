@@ -123,7 +123,93 @@ variables.
 | `S3_ACCESS_KEY` | — | S3 access key ID (required for S3) |
 | `S3_SECRET_KEY` | — | S3 secret access key (required for S3) |
 | `S3_REGION` | `us-east-1` | S3 region (use `garage` for Garage) |
-| `S3_PUBLIC_URL` | (same as endpoint) | Browser-reachable S3 URL for presigned download links. Set this when `S3_ENDPOINT_URL` is a Docker-internal hostname (e.g. `http://garage:3900`) that browsers cannot reach. |
+| `S3_PUBLIC_URL` | (same as endpoint) | Browser-reachable S3 URL for presigned download links. Set this when `S3_ENDPOINT_URL` is a Docker-internal hostname (e.g. `http://garage:3900`) that browsers cannot reach. See [Exposing S3 publicly behind a reverse proxy](#exposing-s3-publicly-behind-a-reverse-proxy). |
+
+## Exposing S3 publicly behind a reverse proxy
+
+When `S3_ENDPOINT_URL` points at a Docker-internal hostname (e.g.
+`http://garage:3900`), browsers can't reach it.  Downloads work by the web app
+generating a **pre-signed URL** and redirecting the browser to it, so that URL
+must resolve to a public, browser-reachable address.  Set `S3_PUBLIC_URL` to
+that public address and front the storage backend with a TLS-terminating
+reverse proxy.
+
+The web app builds and signs the pre-signed URL against `S3_PUBLIC_URL`, so the
+proxy in front of the backend must preserve two things that the SigV4 signature
+covers, or every download fails with `403 SignatureDoesNotMatch`:
+
+1. **The `Host` header** — it must equal the host in `S3_PUBLIC_URL`.  Pass it
+   through unchanged; do **not** let the proxy substitute the upstream host.
+2. **The request path** — it is part of the signature.  Do **not** rewrite or
+   strip any part of it.
+
+### Recommended: dedicated subdomain
+
+The simplest working layout gives the storage backend its own hostname (e.g.
+`s3.example.com`) with no path prefix:
+
+```bash
+# Web container
+S3_ENDPOINT_URL=http://garage:3900       # internal, not browser-reachable
+S3_PUBLIC_URL=https://s3.example.com     # public, signed + browser-reachable
+```
+
+```nginx
+# Public S3 endpoint for Arcology pre-signed download URLs.
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name s3.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/s3.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/s3.example.com/privkey.pem;
+
+    # Artefacts can be multi-GB; don't buffer or cap the body.
+    client_max_body_size 0;
+    proxy_buffering          off;
+    proxy_request_buffering  off;
+    proxy_http_version       1.1;
+
+    location / {
+        # Internal Garage/MinIO endpoint (host:port from S3_ENDPOINT_URL).
+        proxy_pass http://127.0.0.1:3900;
+
+        # CRITICAL: the pre-signed signature covers the Host header, which the
+        # web app signed as the S3_PUBLIC_URL host. Pass it through verbatim, or
+        # every download 403s with SignatureDoesNotMatch.
+        proxy_set_header Host $host;
+
+        # Do NOT rewrite the URI — the path is part of the signature.
+        # `location /` with a host-only proxy_pass forwards it unchanged.
+
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+The two non-obvious lines — `proxy_set_header Host $host;` and the absence of
+any URI rewrite — are what make pre-signed URLs survive the proxy.
+
+### Why a path prefix (e.g. `https://example.com/s3`) does not work
+
+`S3_PUBLIC_URL` *can* include a path, and the web app will faithfully sign and
+emit URLs like `https://example.com/s3/<bucket>/<key>`.  The problem is at the
+backend, not the client:
+
+- If the proxy forwards `/s3/...` **unchanged**, the signature validates, but
+  path-style S3 backends (Garage, MinIO) treat the first path segment (`s3`) as
+  the **bucket name** → wrong bucket / `NoSuchKey`.
+- If the proxy **strips** `/s3` to fix routing, the backend recomputes the
+  signature over the shortened path, which no longer matches → `403
+  SignatureDoesNotMatch`.
+
+You cannot both preserve the prefix (for the signature) and strip it (for
+routing) with plain proxying, and Garage/MinIO have no "serve at a sub-path"
+mode.  Use a dedicated subdomain instead.  (Serving everything under one host at
+a sub-path would require re-signing each request at the edge — e.g. with
+OpenResty/Lua — which is well beyond a stock Nginx config.)
 
 ## How it works
 
