@@ -168,6 +168,13 @@ def main():
 	                         help='Upload every recognised image form; do not collapse '
 	                              'raw/compressed/archived duplicates of the same image '
 	                              '(default: keep only the best form, archive > compressed > raw)')
+	bulk_parser.add_argument('--bundle-sidecars', action='store_true',
+	                         help='Bundle each disk image with its loose sidecar files '
+	                              '(ddrescue .map, readme, .log, checksums sharing its '
+	                              'directory) into a single zip and upload that instead')
+	bulk_parser.add_argument('--bundle-tmpdir', default=None,
+	                         help='Directory for temporary bundle zips (default: system '
+	                              'temp). Needs free space roughly equal to the image size.')
 	bulk_parser.add_argument('--flat', action='store_true',
 	                         help='Treat archive-dir as a single collection')
 	bulk_parser.add_argument('--arcarc', action='store_true',

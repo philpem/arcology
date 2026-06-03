@@ -7,6 +7,8 @@ Arcology Item, with all importable files as Artefacts.
 
 import logging
 import sys
+import tempfile
+import zipfile
 from pathlib import Path
 from ..client import ArcologyClient, ArcologyError
 
@@ -222,6 +224,63 @@ def _dedupe_image_forms(files: list[dict]) -> tuple[list[dict], list[dict]]:
         kept.extend(survivors)
         dropped.extend(f for f in group if id(f) not in survivor_ids)
     return kept, dropped
+
+
+# ---------------------------------------------------------------------------
+# Sidecar bundling (--bundle-sidecars)
+# ---------------------------------------------------------------------------
+
+# Loose files in an image's directory that are bundled with it, even when they
+# do not share the image's base name.
+_SIDECAR_NAME_PREFIXES = ('readme', 'read.me', 'changelog', 'changes',
+                          'checksum', 'md5', 'sha1', 'sha256', 'sha512')
+_SIDECAR_EXTENSIONS = ('.md5', '.sha1', '.sha256', '.sha512')
+
+
+def _bundle_eligible(filename: str) -> bool:
+    """True for raw-sector images (raw or compressed) that may carry sidecars.
+
+    Archive containers and non-image types (iso/scp/pdf/…) are never bundled.
+    """
+    return _form_rank(filename) in (_RANK_RAW, _RANK_COMPRESSED)
+
+
+def _is_sidecar(entry: Path, base: str) -> bool:
+    """Whether *entry* should be bundled with an image whose base name is *base*."""
+    if not entry.is_file() or _is_importable(entry):
+        return False
+    name = entry.name.lower()
+    if name.startswith(base + '.'):
+        return True
+    if entry.suffix.lower() in _SIDECAR_EXTENSIONS:
+        return True
+    return any(name.startswith(p) for p in _SIDECAR_NAME_PREFIXES)
+
+
+def _find_sidecars(image_path: Path, base: str) -> list[Path]:
+    """Loose sidecar files in *image_path*'s directory to bundle with it."""
+    try:
+        siblings = sorted(image_path.parent.iterdir())
+    except OSError:
+        return []
+    return [e for e in siblings if e != image_path and _is_sidecar(e, base)]
+
+
+def _build_sidecar_bundle(image_path: Path, sidecars: list[Path],
+                          base: str, tmp_dir: str) -> Path:
+    """Write a zip of the (already-compressed) image plus its text sidecars.
+
+    The image is stored without recompression; small sidecars are deflated.
+    Returns the path to the created zip.
+    """
+    zip_path = Path(tmp_dir) / f'{base}.zip'
+    with zipfile.ZipFile(zip_path, 'w') as zf:
+        zf.write(image_path, arcname=image_path.name,
+                 compress_type=zipfile.ZIP_STORED)
+        for sidecar in sidecars:
+            zf.write(sidecar, arcname=sidecar.name,
+                     compress_type=zipfile.ZIP_DEFLATED, compresslevel=1)
+    return zip_path
 
 
 def _apply_dedupe(files: list[dict], label: str) -> list[dict]:
@@ -483,7 +542,14 @@ def cmd_bulk_import(client: ArcologyClient, args):
             log.info('  Collection: %s (%d file(s))', coll_name, len(files))
             if args.verbose:
                 for f in files:
-                    log.info('    %s', f['label'])
+                    sidecars = []
+                    if args.bundle_sidecars and _bundle_eligible(f['filename']):
+                        sidecars = _find_sidecars(f['path'], _image_base(f['filename']))
+                    if sidecars:
+                        log.info('    %s  (bundle +%d: %s)', f['label'], len(sidecars),
+                                 ', '.join(s.name for s in sidecars))
+                    else:
+                        log.info('    %s', f['label'])
         log.info('')
         log.info('Would create %d Item(s) with %d Artefact(s) total',
                  len(collections), total_files)
@@ -568,16 +634,40 @@ def cmd_bulk_import(client: ArcologyClient, args):
             filename = file_entry['filename']
             label = file_entry['label']
 
-            if args.resume and filename in existing_filenames:
-                log.debug('  [%d/%d] Skipping (exists): %s', j, len(files), filename)
+            # Decide whether this image is bundled with loose sidecars, and
+            # what filename the upload will actually carry (a bundle uploads as
+            # <base>.zip, which matters for the resume check below).
+            sidecars = []
+            if args.bundle_sidecars and _bundle_eligible(filename):
+                sidecars = _find_sidecars(filepath, _image_base(filename))
+            upload_name = f'{_image_base(filename)}.zip' if sidecars else filename
+
+            if args.resume and upload_name in existing_filenames:
+                log.debug('  [%d/%d] Skipping (exists): %s', j, len(files), upload_name)
                 skipped_files += 1
                 continue
 
-            log.info('  [%d/%d] %s', j, len(files), label)
-            result = client.upload_artefact_retry(
-                item_uuid, str(filepath), label,
-                auto_analyse=not args.no_auto_analyse,
-            )
+            tmp_ctx = None
+            upload_path = str(filepath)
+            if sidecars:
+                tmp_ctx = tempfile.TemporaryDirectory(dir=args.bundle_tmpdir or None)
+                bundle = _build_sidecar_bundle(filepath, sidecars,
+                                               _image_base(filename), tmp_ctx.name)
+                upload_path = str(bundle)
+                log.info('  [%d/%d] %s  (bundled with %d sidecar(s): %s)',
+                         j, len(files), label, len(sidecars),
+                         ', '.join(s.name for s in sidecars))
+            else:
+                log.info('  [%d/%d] %s', j, len(files), label)
+
+            try:
+                result = client.upload_artefact_retry(
+                    item_uuid, upload_path, label,
+                    auto_analyse=not args.no_auto_analyse,
+                )
+            finally:
+                if tmp_ctx is not None:
+                    tmp_ctx.cleanup()
             if result and result.get('duplicate'):
                 log.debug('    -> skipped (duplicate of %s)', result.get('uuid', '?')[:8])
                 skipped_files += 1
