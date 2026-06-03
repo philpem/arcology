@@ -323,6 +323,17 @@ def cmd_bulk_import(client: ArcologyClient, args):
                  len(collections), total_files)
         return
 
+    # Validate the parent item up front so we fail fast rather than on every
+    # collection.
+    if args.parent:
+        try:
+            parent = client.get_item(args.parent)
+        except ArcologyError as e:
+            print(f'Error: parent item "{args.parent}" not found: {e}', file=sys.stderr)
+            sys.exit(1)
+        log.info('Nesting created items under parent: %s (%s)',
+                 args.parent[:8], parent.get('name', '?'))
+
     # Look up platform (once)
     platform_id = client.lookup_platform(args.platform)
 
@@ -358,6 +369,8 @@ def cmd_bulk_import(client: ArcologyClient, args):
                 item_data['platform_id'] = platform_id
             if category_id:
                 item_data['category_id'] = category_id
+            if args.parent:
+                item_data['parent_uuid'] = args.parent
 
             try:
                 result = client.create_item(**item_data)

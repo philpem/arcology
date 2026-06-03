@@ -156,6 +156,8 @@ def main():
 	                         help='Platform name to assign')
 	bulk_parser.add_argument('--name-prefix', default=None,
 	                         help='Prefix for item names')
+	bulk_parser.add_argument('--parent', default=None,
+	                         help='Parent item UUID; created items are nested under it')
 	bulk_parser.add_argument('--category-map', default=None,
 	                         help='Directory-to-category mapping as K=V,...')
 	bulk_parser.add_argument('--no-auto-analyse', action='store_true',

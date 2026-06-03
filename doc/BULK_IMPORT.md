@@ -183,7 +183,22 @@ nested files use their relative path. Note that in default (non-flat) mode,
 `system-disc.adf` and `games-disc.adf` would be skipped because they are not
 inside a subdirectory.
 
-### 4. Arcarc preset with deep nesting and smart labels
+### 4. Nesting created Items under a parent
+
+Use `--parent` to group every imported Item as a child of an existing Item
+(for example, a collection or donor record). The parent must already exist;
+its UUID is validated before the import begins.
+
+```bash
+arco bulk-import --archive-dir ~/archive --tag myimport \
+    --parent 3f9c2a1b4d5e6f708192a3b4c5d6e7f8
+```
+
+Each created Item (`Apps`, `Games`, …) becomes a child of the given parent.
+The parent is only applied when an Item is created; Items reused via
+`--resume` (matched by name and tag) keep their existing parent.
+
+### 5. Arcarc preset with deep nesting and smart labels
 
 ```
 ~/arcarc/archive/
@@ -233,7 +248,7 @@ Deep nesting under `GCC (FR)/` preserves version directories so that
 `system.zip` from different GCC versions remains distinguishable.
 `!Compilations` is not a single character, so it is kept as context.
 
-### 5. Using `--categories` as a filter
+### 6. Using `--categories` as a filter
 
 Same arcarc structure, but only import Apps:
 
@@ -261,6 +276,7 @@ arco bulk-import --archive-dir ~/arcarc/archive --arcarc --categories Apps,Games
 | `--skip-ext LIST` | *(none)* | Skip files by extension (e.g. `.pdf,.txt`) |
 | `--platform NAME` | *(none)* | Platform to assign to all Items |
 | `--name-prefix PREFIX` | *(none)* | Prefix for Item names (e.g. `--name-prefix Source` gives "Source: Apps") |
+| `--parent UUID` | *(none)* | Nest all created Items under an existing parent Item |
 | `--category-map K=V,...` | *(none)* | Map directory names to Arcology categories |
 | `--flat` | off | Treat archive-dir as one collection (one Item, all files) |
 | `--smart-labels` | off | Use smart label heuristic (strip letter groups, detect self-describing filenames) |
