@@ -23,15 +23,17 @@
                 </select>
             </div>
             <div class="col-md-1"><button type="submit" class="btn btn-secondary w-100"><i class="bi bi-search"></i> Filter</button></div>
-            {% if not searching %}
             <div class="col-md-2">
-                {% if view_mode == 'tree' %}
+                {% if searching %}
+                <button class="btn btn-outline-secondary w-100" disabled title="Tree view is not available during search">
+                    <i class="bi bi-diagram-3"></i> Tree view
+                </button>
+                {% elif view_mode == 'tree' %}
                 <a href="{{ url_for('myapp_blueprints_items.index', q=request.args.get('q'), platform_id=request.args.get('platform_id'), category_id=request.args.get('category_id'), sort=request.args.get('sort'), per_page=request.args.get('per_page'), view='flat') }}" class="btn btn-outline-secondary w-100"><i class="bi bi-list-ul"></i> Flat view</a>
                 {% else %}
                 <a href="{{ url_for('myapp_blueprints_items.index', q=request.args.get('q'), platform_id=request.args.get('platform_id'), category_id=request.args.get('category_id'), sort=request.args.get('sort'), per_page=request.args.get('per_page'), view='tree') }}" class="btn btn-outline-secondary w-100"><i class="bi bi-diagram-3"></i> Tree view</a>
                 {% endif %}
             </div>
-            {% endif %}
         </form>
     </div>
 </div>

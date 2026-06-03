@@ -21,36 +21,44 @@
 
 <div class="row mb-4">
     <div class="col-md-3">
-        <div class="card text-bg-primary">
+        <a href="{{ url_for('myapp_blueprints_items.index') }}" class="text-decoration-none">
+        <div class="card text-bg-primary h-100">
             <div class="card-body">
                 <h5 class="card-title"><i class="bi bi-collection"></i> Items</h5>
                 <p class="card-text display-4" id="stat-items">{{ stats.total_items }}</p>
             </div>
         </div>
+        </a>
     </div>
     <div class="col-md-3">
-        <div class="card text-bg-success">
+        <a href="{{ url_for('myapp_blueprints_items.index') }}" class="text-decoration-none">
+        <div class="card text-bg-success h-100">
             <div class="card-body">
                 <h5 class="card-title"><i class="bi bi-disc"></i> Artefacts</h5>
                 <p class="card-text display-4" id="stat-artefacts">{{ stats.total_artefacts }}</p>
             </div>
         </div>
+        </a>
     </div>
     <div class="col-md-3">
-        <div class="card text-bg-warning">
+        <a href="{{ url_for('myapp_blueprints_analysis.queue') }}" class="text-decoration-none">
+        <div class="card text-bg-warning h-100">
             <div class="card-body">
                 <h5 class="card-title"><i class="bi bi-hourglass-split"></i> Pending</h5>
                 <p class="card-text display-4" id="stat-pending">{{ stats.pending_analyses }}</p>
             </div>
         </div>
+        </a>
     </div>
     <div class="col-md-3">
-        <div class="card text-bg-info">
+        <a href="{{ url_for('myapp_blueprints_analysis.queue') }}" class="text-decoration-none">
+        <div class="card text-bg-info h-100">
             <div class="card-body">
                 <h5 class="card-title"><i class="bi bi-gear-wide-connected"></i> Running</h5>
                 <p class="card-text display-4" id="stat-running">{{ stats.running_analyses }}</p>
             </div>
         </div>
+        </a>
     </div>
 </div>
 

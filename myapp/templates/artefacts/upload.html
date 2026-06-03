@@ -65,26 +65,28 @@
                         <div class="form-text">Return to this form after uploading to add another file</div>
                     </div>
 
+                    <div class="mb-3">
+                        {{ form.artefact_type.label(class="form-label") }}
+                        {{ form.artefact_type(class="form-select") }}
+                        <div class="form-text">{{ form.artefact_type.description }}</div>
+                    </div>
+
+                    <div class="mb-3">
+                        {{ form.platform_id.label(class="form-label") }}
+                        {{ form.platform_id(class="form-select") }}
+                        <div class="form-text">{{ form.platform_id.description }}</div>
+                    </div>
+
                     <div class="mb-2">
                         <button type="button" class="btn btn-sm btn-outline-secondary" id="hints-toggle"
                                 aria-expanded="false" aria-controls="hints-section">
-                            <i class="bi bi-sliders"></i> Analysis hints
+                            <i class="bi bi-sliders"></i> Format hints
                             <i class="bi bi-chevron-down ms-1" id="hints-chevron"></i>
                         </button>
                     </div>
                     <div class="collapse mb-3" id="hints-section">
                         <div class="card card-body bg-light">
-                            <p class="text-muted small mb-3">Rarely needed. Help the analysis tools identify the format more accurately.</p>
-                            <div class="mb-3">
-                                {{ form.artefact_type.label(class="form-label") }}
-                                {{ form.artefact_type(class="form-select") }}
-                                <div class="form-text">{{ form.artefact_type.description }}</div>
-                            </div>
-                            <div class="mb-3">
-                                {{ form.platform_id.label(class="form-label") }}
-                                {{ form.platform_id(class="form-select") }}
-                                <div class="form-text">{{ form.platform_id.description }}</div>
-                            </div>
+                            <p class="text-muted small mb-3">Rarely needed. Override the clock frequency for DFI flux images.</p>
                             <div class="mb-0 d-none" id="dfi-clock-group">
                                 {{ form.dfi_clock_mhz.label(class="form-label") }}
                                 {{ form.dfi_clock_mhz(class="form-control", type="number", min="1") }}
