@@ -381,6 +381,7 @@ def view(uuid):
     per_page, page, view_all = resolve_per_page('ARTEFACTS_PER_PAGE', 25)
 
     artefact_sort = resolve_sort('artefact_sort', _ARTEFACT_SORT_OPTIONS, 'artefacts_sort', 'label_asc')
+    artefact_q = request.args.get('artefact_q', '').strip()
 
     artefact_query = (
         Artefact.query
@@ -390,8 +391,11 @@ def view(uuid):
         .options(selectinload(Artefact.derived_artefacts))
     )
 
-    # Compute letter-to-page mapping for A-Z jump bar (only meaningful for label sorts)
-    if artefact_sort in ('label_asc', 'label_desc'):
+    if artefact_q:
+        artefact_query = artefact_query.filter(Artefact.label.ilike(f'%{artefact_q}%'))
+
+    # Compute letter-to-page mapping for A-Z jump bar (only meaningful for label sorts, not when filtering)
+    if artefact_sort in ('label_asc', 'label_desc') and not artefact_q:
         letter_pages, current_letter = compute_letter_pages(
             artefact_query, Artefact.label, per_page, current_page=page,
             descending=(artefact_sort == 'label_desc')
@@ -425,7 +429,7 @@ def view(uuid):
     return render_template('items/view.html', item=item, artefacts_page=artefacts_page,
                            letter_pages=letter_pages, current_letter=current_letter,
                            valid_per_page=VALID_PER_PAGE, view_all=view_all,
-                           artefact_sort=artefact_sort,
+                           artefact_sort=artefact_sort, artefact_q=artefact_q,
                            artefact_analysis_status=artefact_analysis_status,
                            shares=item.shares,
                            user_can_manage_shares=user_can_manage_shares,
