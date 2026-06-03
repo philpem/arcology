@@ -7,7 +7,7 @@ Hash databases, known products, and file recognition.
 import csv
 import io
 import json
-from flask import Blueprint, Response, flash, redirect, render_template, request, url_for
+from flask import Blueprint, Response, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import login_required
 from flask_wtf import FlaskForm
 from sqlalchemy import func, or_
@@ -228,6 +228,17 @@ def index():
     ).count()
     return render_template('hashdb/index.html', databases=databases,
                            rescan_job=rescan_job, pending_rescan=pending_rescan)
+
+
+@blueprint.route('/status.json')
+@login_required
+def status_json():
+    """Return pending hash-rescan count for the page poller."""
+    pending = Analysis.query.filter(
+        Analysis.analysis_type == AnalysisType.HASH_RESCAN,
+        Analysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.RUNNING]),
+    ).count()
+    return jsonify(pending=pending, running=0)
 
 
 # =============================================================================
