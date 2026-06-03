@@ -5,6 +5,7 @@ from flask import Flask, abort, flash, g, redirect, render_template, request, se
 from flask_login import current_user, login_required, login_user, logout_user
 from flask_wtf import FlaskForm
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
+from werkzeug.middleware.proxy_fix import ProxyFix
 from wtforms import PasswordField, StringField, SubmitField
 from wtforms.validators import DataRequired
 from .database import UserPermission
@@ -26,6 +27,9 @@ class AppClass(Flask):
 def create_app(config_name=None):
     # create and configure the application
     app = AppClass(__name__)
+    # Trust X-Forwarded-* headers from one upstream proxy (nginx, Caddy, Traefik, etc.)
+    # so that url_for(_external=True) and OIDC redirect URIs use the public hostname/scheme.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
     app.config.from_pyfile(config_name or 'myapp.cfg', silent=True)
 
     # Load settings from environment, overriding config file where set
