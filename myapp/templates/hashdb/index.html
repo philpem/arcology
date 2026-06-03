@@ -111,3 +111,14 @@
     </div>
 </div>
 {% endblock %}
+{% block scripts %}
+{{ super() }}
+{% if pending_rescan %}
+{% from '_polling.html' import analysis_status_poller %}
+{{ analysis_status_poller(
+    url_for('myapp_blueprints_hashdb.status_json'),
+    known_pending=pending_rescan,
+    known_running=0
+) }}
+{% endif %}
+{% endblock %}
