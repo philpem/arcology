@@ -8,13 +8,21 @@ class attribute at the bottom of this module so the function bodies
 (which already reference ``self``) work unchanged.
 """
 
+import contextlib
 import shutil
 import sys
 import tempfile
 import threading
 import time
 from pathlib import Path
-import sentry_sdk
+
+try:
+    import sentry_sdk
+except ImportError:
+    # Sentry is optional — only installed/initialised when SENTRY_DSN is set
+    # (see config.py).  Absence must not stop the worker from running.
+    sentry_sdk = None
+
 from . import analyses as _analyses
 from .api import ArcologyAPI
 from .compression import decompress_if_needed
@@ -24,6 +32,23 @@ from .tools.base import clear_cancel_event, set_cancel_event
 from .utils.text import make_latin1_fspath
 
 _COMPRESS_SUFFIXES = frozenset({'.gz', '.bz2', '.zst'})
+
+
+@contextlib.contextmanager
+def _analysis_transaction(analysis_type, artefact_uuid):
+    """Wrap one analysis job in a Sentry transaction; no-op when Sentry is absent.
+
+    sentry_sdk is an optional import (see top of module).  Even when it is
+    installed but not initialised (no SENTRY_DSN), start_transaction is itself a
+    no-op, so this only has to special-case the not-installed path.
+    """
+    if sentry_sdk is None:
+        yield
+        return
+    with sentry_sdk.start_transaction(op="arcology.analysis", name=analysis_type) as txn:
+        txn.set_tag("analysis_type", analysis_type)
+        txn.set_tag("artefact_uuid", artefact_uuid)
+        yield
 
 
 def _inner_format_extension(filename: str) -> str:
@@ -600,9 +625,7 @@ class AnalysisWorker:
                     handler_name = _analyses.HANDLERS.get(analysis_type)
                     handler = getattr(self, handler_name, None) if handler_name else None
                     if handler:
-                        with sentry_sdk.start_transaction(op="arcology.analysis", name=analysis_type) as txn:
-                            txn.set_tag("analysis_type", analysis_type)
-                            txn.set_tag("artefact_uuid", artefact.get('uuid', ''))
+                        with _analysis_transaction(analysis_type, artefact.get('uuid', '')):
                             handler(analysis, artefact, work_path)
                     else:
                         log.warning(f"Unknown analysis type: {analysis_type}")
@@ -616,7 +639,8 @@ class AnalysisWorker:
                         f"job was cancelled server-side"
                     )
                 except Exception as e:
-                    sentry_sdk.capture_exception(e)
+                    if sentry_sdk is not None:
+                        sentry_sdk.capture_exception(e)
                     log.exception(f"Analysis {analysis_id} ({analysis_uuid}) failed with exception")
                     try:
                         self.fail_analysis(analysis_id, str(e)[:1000])
