@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+import sentry_sdk
 from . import analyses as _analyses
 from .api import ArcologyAPI
 from .compression import decompress_if_needed
@@ -599,7 +600,10 @@ class AnalysisWorker:
                     handler_name = _analyses.HANDLERS.get(analysis_type)
                     handler = getattr(self, handler_name, None) if handler_name else None
                     if handler:
-                        handler(analysis, artefact, work_path)
+                        with sentry_sdk.start_transaction(op="arcology.analysis", name=analysis_type) as txn:
+                            txn.set_tag("analysis_type", analysis_type)
+                            txn.set_tag("artefact_uuid", artefact.get('uuid', ''))
+                            handler(analysis, artefact, work_path)
                     else:
                         log.warning(f"Unknown analysis type: {analysis_type}")
                         self.fail_analysis(analysis_id, f'Unknown analysis type: {analysis_type}')
@@ -612,6 +616,7 @@ class AnalysisWorker:
                         f"job was cancelled server-side"
                     )
                 except Exception as e:
+                    sentry_sdk.capture_exception(e)
                     log.exception(f"Analysis {analysis_id} ({analysis_uuid}) failed with exception")
                     try:
                         self.fail_analysis(analysis_id, str(e)[:1000])
