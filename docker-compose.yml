@@ -3,7 +3,7 @@
 # Runs the web application and analysis worker(s) together.
 #
 # Usage:
-#   mkdir -p data/uploads data/outputs data/db  # Create directories first
+#   mkdir -p data/uploads data/outputs data/db data/jinja_cache  # Create directories first
 #   docker-compose up -d                        # Start with 1 worker
 #   docker-compose up -d --scale worker=4       # Start with 4 workers
 #   docker-compose logs -f worker               # Watch worker logs
@@ -38,6 +38,10 @@ services:
       - ./data/uploads:/app/instance/uploads
       - ./data/outputs:/app/instance/outputs
       - ./data/db:/var/lib/myapp
+      # Persist compiled Jinja template bytecode across container recreation so
+      # workers never recompile templates after a redeploy (#447). This is the
+      # default JINJA_BYTECODE_CACHE_DIR (instance/jinja_cache).
+      - ./data/jinja_cache:/app/instance/jinja_cache
     env_file:
       - .env
     healthcheck:
