@@ -12,17 +12,34 @@ from ..client import ArcologyClient, ArcologyError
 
 log = logging.getLogger('arco.bulk-import')
 
-# File extensions recognised as importable artefacts
-IMPORTABLE_EXTENSIONS = {
-    '.adf', '.img', '.ima', '.dsk', '.dd',   # Sector images
-    '.scp',                                    # Flux images
-    '.imd', '.hfe',                            # Sector floppy images
-    '.iso',                                    # CD/DVD images
-    '.zip', '.rar',                            # PC archives
-    '.tar.gz', '.tgz',                         # Compressed tarballs
-    '.dd.zst', '.dd.gz', '.dd.bz2',           # Compressed sector images
-    '.pdf',                                    # Documents
+# Raw-sector / disk-image extensions.  Each of these may also appear with a
+# trailing compressor suffix (e.g. ``.dd.zst``, ``.img.gz``) — convention is to
+# compress the original image immediately after imaging the drive.
+RAW_SECTOR_EXTENSIONS = {
+    '.adf', '.img', '.ima', '.dsk', '.dd',   # Floppy / generic sector images
+    '.raw', '.bin', '.hdd', '.hdf', '.image',  # Hard-disk / generic raw dumps
 }
+
+# Compressor suffixes recognised on top of a raw-sector extension, in order of
+# preference when several compressed forms of the same image exist.
+COMPRESSORS = ('.zst', '.gz', '.bz2')
+
+# Archive containers.  A ``.zip`` / ``.7z`` of a dd image (which may also bundle
+# a ddrescue ``.map`` and a readme) is treated as the archived form of the image.
+ARCHIVE_EXTENSIONS = {'.zip', '.7z', '.rar', '.tgz'}  # '.tar.gz' handled specially
+
+# Other importable types that are NOT image duplicates (never deduplicated).
+OTHER_IMPORTABLE_EXTENSIONS = {
+    '.scp',            # Flux images
+    '.imd', '.hfe',    # Sector floppy images
+    '.iso',            # CD/DVD images
+    '.pdf',            # Documents
+}
+
+# Dedup ranks: archive beats compressed image beats raw image.
+_RANK_ARCHIVE = 3
+_RANK_COMPRESSED = 2
+_RANK_RAW = 1
 
 # arcarc.nl category name mapping (used by --arcarc preset)
 ARCARC_CATEGORY_MAP = {
@@ -78,25 +95,165 @@ def _make_label_arcarc(parts: tuple[str, ...]) -> str:
 # File discovery
 # ---------------------------------------------------------------------------
 
+def _matched_ext(name: str) -> str | None:
+    """Return the importable extension matched at the end of *name* (lowercased).
+
+    Recognises compressed raw-sector images (``foo.dd.zst``), multi-part
+    tarballs (``foo.tar.gz``) and any single-suffix importable type.  Returns
+    ``None`` if the file is not importable.
+    """
+    n = name.lower()
+    # Compressed raw-sector image: <raw-ext><compressor>
+    for raw in RAW_SECTOR_EXTENSIONS:
+        for comp in COMPRESSORS:
+            if n.endswith(raw + comp):
+                return raw + comp
+    if n.endswith('.tar.gz'):
+        return '.tar.gz'
+    suffix = Path(n).suffix
+    if (suffix in RAW_SECTOR_EXTENSIONS
+            or suffix in ARCHIVE_EXTENSIONS
+            or suffix in OTHER_IMPORTABLE_EXTENSIONS):
+        return suffix
+    return None
+
+
 def _is_importable(path: Path) -> bool:
     """Check if a file has an importable extension."""
-    name = path.name.lower()
-    for ext in ('.tar.gz', '.dd.zst', '.dd.gz', '.dd.bz2'):
-        if name.endswith(ext):
-            return True
-    return path.suffix.lower() in IMPORTABLE_EXTENSIONS
+    return _matched_ext(path.name) is not None
+
+
+# ---------------------------------------------------------------------------
+# Compressed / archived duplicate filtering
+# ---------------------------------------------------------------------------
+
+def _form_rank(name: str) -> int | None:
+    """Dedup rank for *name*, or ``None`` if it is not an image form.
+
+    Only raw-sector images (raw or compressed) and archive containers take part
+    in deduplication; flux/floppy/CD images and documents never do.
+    """
+    ext = _matched_ext(name)
+    if ext is None:
+        return None
+    if ext == '.tar.gz' or ext in ARCHIVE_EXTENSIONS:
+        return _RANK_ARCHIVE
+    for raw in RAW_SECTOR_EXTENSIONS:
+        for comp in COMPRESSORS:
+            if ext == raw + comp:
+                return _RANK_COMPRESSED
+    if ext in RAW_SECTOR_EXTENSIONS:
+        return _RANK_RAW
+    return None
+
+
+def _image_base(name: str) -> str:
+    """Filename with its importable extension stripped, lowercased."""
+    ext = _matched_ext(name)
+    return name[:len(name) - len(ext)].lower() if ext else name.lower()
+
+
+def _raw_type_of(name: str) -> str | None:
+    """The raw-sector extension of *name*, ignoring any compressor suffix.
+
+    ``foo.dd.zst`` and ``foo.dd`` both yield ``.dd``.
+    """
+    ext = _matched_ext(name)
+    if ext is None:
+        return None
+    for comp in COMPRESSORS:
+        if ext.endswith(comp) and ext != comp:
+            return ext[:-len(comp)]
+    return ext
+
+
+def _compression_pref(name: str) -> tuple[int, int]:
+    """Sort key preferring a compressed form, then zst > gz > bz2, over raw."""
+    ext = _matched_ext(name) or ''
+    for i, comp in enumerate(COMPRESSORS):
+        if ext.endswith(comp) and ext != comp:
+            return (0, i)   # compressed (preferred), best compressor first
+    return (1, 0)           # raw (least preferred)
+
+
+def _select_best_forms(group: list[dict]) -> list[dict]:
+    """Pick the form(s) to keep from a set of same-base image files.
+
+    Archive containers win over every loose image form.  Otherwise each
+    distinct raw-sector type is collapsed to its single best (compressed >
+    raw) form, so genuinely different images (e.g. a .dd and a .img) are both
+    kept while redundant compressions of one image are dropped.
+    """
+    archives = [f for f in group if _form_rank(f['filename']) == _RANK_ARCHIVE]
+    if archives:
+        return sorted(archives, key=lambda f: f['filename'])
+
+    by_type: dict[str, list[dict]] = {}
+    for f in group:
+        by_type.setdefault(_raw_type_of(f['filename']), []).append(f)
+    return [min(fs, key=lambda f: _compression_pref(f['filename']))
+            for fs in by_type.values()]
+
+
+def _dedupe_image_forms(files: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Filter redundant raw/compressed/archived forms of the same image.
+
+    Files are grouped by (containing directory, base name) so that different
+    drives that happen to share a base name in different folders are never
+    collapsed together.  Returns ``(kept, dropped)``.
+    """
+    groups: dict[tuple[str, str], list[dict]] = {}
+    passthrough: list[dict] = []
+    for f in files:
+        if _form_rank(f['filename']) is None:
+            passthrough.append(f)
+            continue
+        parent = str(Path(f['relative_path']).parent)
+        groups.setdefault((parent, _image_base(f['filename'])), []).append(f)
+
+    kept = list(passthrough)
+    dropped: list[dict] = []
+    for group in groups.values():
+        if len(group) == 1:
+            kept.append(group[0])
+            continue
+        survivors = _select_best_forms(group)
+        survivor_ids = {id(s) for s in survivors}
+        kept.extend(survivors)
+        dropped.extend(f for f in group if id(f) not in survivor_ids)
+    return kept, dropped
+
+
+def _apply_dedupe(files: list[dict], label: str) -> list[dict]:
+    """Filter redundant image forms from *files*, logging what was dropped."""
+    kept, dropped = _dedupe_image_forms(files)
+    kept.sort(key=lambda f: f['relative_path'])
+    for f in dropped:
+        log.debug('  Filtering redundant image form: %s', f['relative_path'])
+    if dropped:
+        log.info('  %s: dropped %d redundant image form(s) '
+                 '(use --keep-compressed-duplicates to keep them)',
+                 label, len(dropped))
+    return kept
 
 
 def discover_files(archive_dir: Path, categories: list[str] | None,
                    skip_dirs: set[str] | None,
                    skip_ext: set[str] | None = None,
-                   label_fn=_make_label_simple) -> dict[str, list[dict]]:
-    """Walk archive directory and find importable files grouped by top-level dir."""
+                   label_fn=_make_label_simple,
+                   dedupe: bool = True) -> dict[str, list[dict]]:
+    """Walk archive directory and find importable files grouped by top-level dir.
+
+    Files sitting directly in *archive_dir* (one level deep) are grouped into a
+    collection named after the archive directory itself rather than skipped.
+    """
     collections: dict[str, list[dict]] = {}
 
     if not archive_dir.is_dir():
         log.error('Archive directory does not exist: %s', archive_dir)
         return collections
+
+    root_name = archive_dir.resolve().name
 
     for file_path in sorted(archive_dir.rglob('*')):
         if not file_path.is_file():
@@ -113,35 +270,37 @@ def discover_files(archive_dir: Path, categories: list[str] | None,
 
         parts = rel.parts
         if len(parts) < 2:
-            log.debug('Skipping file in unexpected location: %s', rel)
-            continue
-
-        category = parts[0]
+            # Depth-1: file directly in the archive root.  Group it under a
+            # collection named after the archive directory itself.
+            category = root_name
+            label_path = parts[-1]
+        else:
+            category = parts[0]
+            if skip_dirs and any(part in skip_dirs for part in parts[:-1]):
+                continue
+            label_path = label_fn(parts)
 
         if categories and category not in categories:
             continue
 
-        if skip_dirs:
-            if any(part in skip_dirs for part in parts[:-1]):
-                continue
-
-        label_path = label_fn(parts)
-
-        if category not in collections:
-            collections[category] = []
-        collections[category].append({
+        collections.setdefault(category, []).append({
             'path': file_path,
             'relative_path': str(rel),
             'filename': file_path.name,
             'label': label_path,
         })
 
+    if dedupe:
+        for category in list(collections):
+            collections[category] = _apply_dedupe(collections[category], category)
+
     return collections
 
 
 def discover_files_flat(archive_dir: Path,
                         skip_dirs: set[str] | None,
-                        skip_ext: set[str] | None = None) -> list[dict]:
+                        skip_ext: set[str] | None = None,
+                        dedupe: bool = True) -> list[dict]:
     """Walk archive directory as a flat list (all files in one collection)."""
     files: list[dict] = []
 
@@ -176,6 +335,9 @@ def discover_files_flat(archive_dir: Path,
             'filename': file_path.name,
             'label': label,
         })
+
+    if dedupe:
+        files = _apply_dedupe(files, archive_dir.resolve().name)
 
     return files
 
@@ -285,16 +447,18 @@ def cmd_bulk_import(client: ArcologyClient, args):
     label_fn = _make_label_arcarc if args.smart_labels else _make_label_simple
 
     # Discover files
+    dedupe = not args.keep_compressed_duplicates
     log.info('Scanning %s ...', archive_dir)
     if args.flat:
         if categories:
             log.warning('--categories is ignored in --flat mode')
-        flat_files = discover_files_flat(archive_dir, skip_dirs, skip_ext)
+        flat_files = discover_files_flat(archive_dir, skip_dirs, skip_ext,
+                                         dedupe=dedupe)
         coll_key = archive_dir.resolve().name
         collections = {coll_key: flat_files} if flat_files else {}
     else:
         collections = discover_files(archive_dir, categories, skip_dirs,
-                                     skip_ext, label_fn=label_fn)
+                                     skip_ext, label_fn=label_fn, dedupe=dedupe)
 
     if not collections:
         log.error('No importable files found.')

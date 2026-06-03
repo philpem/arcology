@@ -164,6 +164,10 @@ def main():
 	                         help='Upload without triggering automatic analysis')
 	bulk_parser.add_argument('--smart-labels', action='store_true',
 	                         help='Strip single-char groupings and use filename alone when self-describing')
+	bulk_parser.add_argument('--keep-compressed-duplicates', action='store_true',
+	                         help='Upload every recognised image form; do not collapse '
+	                              'raw/compressed/archived duplicates of the same image '
+	                              '(default: keep only the best form, archive > compressed > raw)')
 	bulk_parser.add_argument('--flat', action='store_true',
 	                         help='Treat archive-dir as a single collection')
 	bulk_parser.add_argument('--arcarc', action='store_true',

@@ -48,8 +48,9 @@ arco bulk-import \
 The tool has two import modes:
 
 **Default (categorised) mode** groups files by top-level subdirectory. Each
-subdirectory becomes a separate Item. Files directly in the archive-dir (not
-in any subdirectory) are skipped.
+subdirectory becomes a separate Item. Files sitting directly in the archive-dir
+(one level deep, not in any subdirectory) are grouped into a single Item named
+after the archive directory itself.
 
 **Flat mode** (`--flat`) treats the entire archive-dir as a single Item. All
 files, including those in subdirectories, become Artefacts on that one Item.
@@ -62,14 +63,39 @@ Only files with recognised extensions are imported. Everything else (including
 
 | Extensions | Type |
 |------------|------|
-| `.adf`, `.img`, `.ima`, `.dsk`, `.dd` | Sector images |
+| `.adf`, `.img`, `.ima`, `.dsk`, `.dd`, `.raw`, `.bin`, `.hdd`, `.hdf`, `.image` | Raw-sector / disk images |
 | `.scp` | Flux images |
 | `.imd`, `.hfe` | Sector floppy images |
 | `.iso` | CD/DVD images |
-| `.zip`, `.rar` | PC archives |
+| `.zip`, `.7z`, `.rar` | Archives |
 | `.tar.gz`, `.tgz` | Compressed tarballs |
-| `.dd.zst`, `.dd.gz`, `.dd.bz2` | Compressed sector images |
+| *(any raw-sector ext)*`.zst` / `.gz` / `.bz2` | Compressed disk images (e.g. `.dd.zst`, `.img.gz`) |
 | `.pdf` | Documents |
+
+Any raw-sector / disk-image extension may carry a trailing `.zst`, `.gz` or
+`.bz2` compressor suffix — convention is to compress the original image
+immediately after imaging the drive.
+
+### Compressed-duplicate filtering
+
+When the same image appears in several forms in one directory — for example
+`drive.dd`, `drive.dd.zst` and `drive.zip` — only the **best** form is uploaded
+by default, in the order **archive > compressed > raw** (`.zip`/`.7z` beats
+`.dd.zst`/`.gz`/`.bz2`, which beats a bare `.dd`). Redundant compressions of the
+same image (e.g. both `.dd.zst` and `.dd.gz`) are collapsed to one (`.zst`
+preferred). Genuinely different images that share a base name are all kept:
+different raw types (`drive.dd` vs `drive.img`), and non-image artefacts of the
+same name (`drive.pdf`, `drive.iso`) are never dropped. Matching is scoped to a
+single directory, so two different drives that share a name in separate folders
+are never collapsed together.
+
+Pass `--keep-compressed-duplicates` to disable this and upload every recognised
+form. Dropped forms are reported during the scan (use `-v` for per-file detail).
+
+> A `.zip`/`.7z` of a dd image may also bundle sidecar files such as a ddrescue
+> `.map` and a readme — these are uploaded inside the archive and Arcology makes
+> the readme viewable. (Bundling *loose* sidecar files alongside an image into a
+> single upload is planned as a future enhancement.)
 
 ### Artefact labels
 
@@ -128,7 +154,7 @@ the lowercase collection-name tag. The tag is used for:
 ├── Games/
 │   └── Chess/
 │       └── Chess 1.5.adf
-└── top-level.zip                  ← SKIPPED (not in a subdirectory)
+└── top-level.zip                  ← grouped into an "archive" Item
 ```
 
 ```bash
@@ -140,9 +166,11 @@ arco bulk-import --archive-dir ~/archive --tag myimport
 | `Apps` | `Editor/Editor 1.0.zip` | `Apps/Editor/Editor 1.0.zip` |
 | `Apps` | `Viewer/Viewer 2.0.zip` | `Apps/Viewer/Viewer 2.0.zip` |
 | `Games` | `Chess/Chess 1.5.adf` | `Games/Chess/Chess 1.5.adf` |
+| `archive` | `top-level.zip` | `top-level.zip` |
 
-Two Items created. `top-level.zip` is skipped because it is not inside a
-subdirectory. No Arcology category is assigned (no `--category-map`).
+Three Items created. `top-level.zip` sits directly in the archive root, so it is
+grouped into an Item named after the archive directory (`archive`). No Arcology
+category is assigned (no `--category-map`).
 
 ### 2. With name prefix and category map
 
@@ -284,6 +312,7 @@ arco bulk-import --archive-dir ~/arcarc/archive --arcarc --categories Apps,Games
 | `--category-map K=V,...` | *(none)* | Map directory names to Arcology categories |
 | `--flat` | off | Treat archive-dir as one collection (one Item, all files) |
 | `--smart-labels` | off | Use smart label heuristic (strip letter groups, detect self-describing filenames) |
+| `--keep-compressed-duplicates` | off | Upload every recognised image form instead of collapsing raw/compressed/archived duplicates to the best one |
 | `--no-auto-analyse` | off | Upload without triggering automatic analysis |
 | `--arcarc` | off | Preset for arcarc.nl (see below) |
 | `--resume` | off | Skip already-uploaded Artefacts |
