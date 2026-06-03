@@ -1730,7 +1730,7 @@ def _render_viewer(artefact):
     # group['explicit'] must be set before the thumbnail bundling pass so that
     # explicit groups are not pulled into the unified thumbnail grid.
     explicit_type = RestrictionType.EXPLICIT
-    user_can_bypass_explicit = current_user.can_bypass_restriction(explicit_type)
+    user_can_bypass_explicit = current_user.is_authenticated and current_user.can_bypass_restriction(explicit_type)
 
     artefact_is_explicit = any(
         r.restriction_type == explicit_type for r in artefact.restrictions
