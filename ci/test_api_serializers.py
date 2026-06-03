@@ -200,6 +200,103 @@ class TestAnalysisToDictArtefactShape(unittest.TestCase):
         self.assertIn('slug', art)
 
 
+class TestOrphanEnumSerialization(unittest.TestCase):
+    """A row whose enum column holds a value absent from the Python enum
+    (left behind when a feature-branch migration is downgraded without
+    cleaning up its rows) is read back as None by the _TolerantEnum
+    crash-shield.  The serializers must tolerate that None rather than
+    raising AttributeError on `.value` — otherwise /api/analysis/pending
+    returns 500 on every poll and the worker can never drain the queue.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.app import create_app
+        from myapp.database import Analysis, Artefact, Item
+        from myapp.extensions import db
+        from shared.enums import AnalysisType, ArtefactType
+
+        cls.app = create_app()
+        cls.app.config['TESTING'] = True
+
+        with cls.app.app_context():
+            db.create_all()
+
+            item = Item(name='Orphan Enum Item')
+            item.slug = 'orphan-enum-item'
+            db.session.add(item)
+            db.session.commit()
+
+            artefact = Artefact(
+                item_id=item.id,
+                label='Orphan Side',
+                artefact_type=ArtefactType.SCP,
+                original_filename='orphan.scp',
+                storage_path='orphan.scp',
+            )
+            artefact.slug = 'orphan-side'
+            db.session.add(artefact)
+            db.session.commit()
+
+            analysis = Analysis(
+                artefact_id=artefact.id,
+                analysis_type=AnalysisType.METADATA_EXTRACT,
+            )
+            db.session.add(analysis)
+            db.session.commit()
+
+            # Simulate an orphan row: write enum values that no longer exist
+            # in the Python enums directly into the columns, bypassing the ORM.
+            db.session.execute(
+                db.text('UPDATE analyses SET analysis_type = :v WHERE id = :i'),
+                {'v': 'NSFW_SCAN', 'i': analysis.id},
+            )
+            db.session.execute(
+                db.text('UPDATE artefacts SET artefact_type = :v WHERE id = :i'),
+                {'v': 'GONE_TYPE', 'i': artefact.id},
+            )
+            db.session.commit()
+            db.session.expire_all()
+
+            cls.analysis_id = analysis.id
+            cls.artefact_id = artefact.id
+
+    def test_tolerant_enum_reads_back_as_none(self):
+        from myapp.database import Analysis, Artefact
+
+        with self.app.app_context():
+            analysis = Analysis.query.get(self.analysis_id)
+            artefact = Artefact.query.get(self.artefact_id)
+            self.assertIsNone(analysis.analysis_type)
+            self.assertIsNone(artefact.artefact_type)
+
+    def test_analysis_to_dict_survives_orphan_type(self):
+        import json
+        from myapp.database import Analysis
+        from myapp.utils.api_serializers import analysis_to_dict
+
+        with self.app.app_context():
+            analysis = Analysis.query.get(self.analysis_id)
+            d = analysis_to_dict(
+                analysis, include_artefact=True, include_artefact_storage=True
+            )
+
+        self.assertIsNone(d['analysis_type'])
+        self.assertIsNone(d['artefact']['artefact_type'])
+        # Must still be JSON-serialisable (this is what jsonify() does).
+        json.dumps(d)
+
+    def test_artefact_to_dict_survives_orphan_type(self):
+        from myapp.database import Artefact
+        from myapp.utils.api_serializers import artefact_to_dict
+
+        with self.app.app_context():
+            artefact = Artefact.query.get(self.artefact_id)
+            d = artefact_to_dict(artefact)
+
+        self.assertIsNone(d['artefact_type'])
+
+
 if __name__ == '__main__':
     unittest.main()
 

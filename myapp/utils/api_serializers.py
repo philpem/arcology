@@ -1,6 +1,20 @@
 """Shared API serializer helpers for Arcology models."""
 
 
+def _enum_value(member):
+    """Return an enum member's ``.value``, tolerating ``None``.
+
+    ``artefact_type`` and ``analysis_type`` use the ``_TolerantEnum`` column
+    type, which yields ``None`` for a DB value absent from the Python enum
+    (e.g. an orphan row left behind when a feature-branch migration was
+    downgraded without cleaning up its rows).  Without this guard,
+    ``member.value`` raises ``AttributeError`` and turns the whole response
+    into a 500 — which, on ``/analysis/pending``, stalls the worker poll
+    indefinitely because the offending row never leaves PENDING.
+    """
+    return member.value if member is not None else None
+
+
 def share_to_dict(share):
     """Serialise an ItemShare to a JSON-safe dict."""
     return {
@@ -46,7 +60,7 @@ def artefact_to_dict(artefact, include_partitions=False, include_storage=False):
         'item_uuid': artefact.item.uuid, 'item_name': artefact.item.name,
         'item_slug': artefact.item.slug,
         'label': artefact.label,
-        'artefact_type': artefact.artefact_type.value,
+        'artefact_type': _enum_value(artefact.artefact_type),
         'type_overridden': artefact.type_overridden,
         'original_filename': artefact.original_filename,
         'file_size': artefact.file_size, 'mime_type': artefact.mime_type,
@@ -71,7 +85,7 @@ def analysis_to_dict(analysis, include_artefact=False, include_artefact_storage=
     result = {
         'id': analysis.id, 'uuid': analysis.uuid, 'artefact_id': analysis.artefact_id,
         'artefact_uuid': analysis.artefact.uuid if analysis.artefact else None,
-        'analysis_type': analysis.analysis_type.value, 'status': analysis.status.value,
+        'analysis_type': _enum_value(analysis.analysis_type), 'status': analysis.status.value,
         'tool_name': analysis.tool_name, 'tool_version': analysis.tool_version, 'hints': analysis.hints,
         'output_url': analysis.output_url,
         'output_path': analysis.output_path,
@@ -143,7 +157,7 @@ def analysis_tree_node(artefact):
     from ..database import Analysis, Artefact
     node = {
         'uuid': artefact.uuid, 'slug': artefact.slug, 'label': artefact.label,
-        'artefact_type': artefact.artefact_type.value,
+        'artefact_type': _enum_value(artefact.artefact_type),
         'original_filename': artefact.original_filename,
         'parent_artefact_uuid': artefact.parent.uuid if artefact.parent_artefact_id else None,
         'derived_from_analysis_uuid': artefact.derived_from_analysis.uuid if artefact.derived_from_analysis_id else None,
@@ -201,7 +215,7 @@ def processing_tree_to_dict(root_artefact):
             'uuid': art.uuid,
             'slug': art.slug,
             'label': art.label,
-            'artefact_type': art.artefact_type.value,
+            'artefact_type': _enum_value(art.artefact_type),
             'original_filename': art.original_filename,
             'derived_from_analysis_uuid': (
                 art.derived_from_analysis.uuid if art.derived_from_analysis_id else None
