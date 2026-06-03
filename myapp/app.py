@@ -68,6 +68,7 @@ def create_app(config_name=None):
                     'OIDC_ROLE_STAFF', 'OIDC_ROLE_API_ACCESS', 'OIDC_REQUIRE_ROLE',
                     'OIDC_SINGLE_LOGOUT', 'OIDC_SYNC_INTERVAL', 'OIDC_AUTO_REDIRECT',
                     'PUBLIC_MODE', 'PUBLIC_DOWNLOADS',
+                    'JINJA_BYTECODE_CACHE', 'JINJA_BYTECODE_CACHE_DIR',
                     'SENTRY_DSN'):
         env_val = os.environ.get(env_key)
         if env_val:
@@ -169,6 +170,20 @@ def create_app(config_name=None):
     # tell jinja to remove extraneous whitespace
     app.jinja_env.trim_blocks = True
     app.jinja_env.lstrip_blocks = True
+
+    # Persist compiled template bytecode to disk so a freshly-started worker
+    # does not pay the lex/parse/codegen cost on the first render of each
+    # template (the dominant cost of cold-worker page loads — issue #447).
+    # Disable with JINJA_BYTECODE_CACHE=false.
+    if str(app.config.get('JINJA_BYTECODE_CACHE', True)).lower() not in ('false', '0', 'no'):
+        from jinja2 import FileSystemBytecodeCache
+        cache_dir = app.config.get('JINJA_BYTECODE_CACHE_DIR') or \
+            os.path.join(app.instance_path, 'jinja_cache')
+        try:
+            os.makedirs(cache_dir, exist_ok=True)
+            app.jinja_env.bytecode_cache = FileSystemBytecodeCache(cache_dir)
+        except OSError as e:
+            app.logger.warning(f'Could not enable Jinja bytecode cache at {cache_dir}: {e}')
 
     # Add custom Jinja2 filters
     import json
