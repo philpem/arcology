@@ -303,7 +303,7 @@ class TestSearchLogic(unittest.TestCase):
             # Regular file with RISC OS filetype
             f1 = ExtractedFile(
                 partition_id=part.id,
-                path='$.!Impression.!RunImage',
+                path='!Impression/!RunImage',
                 filename='!RunImage',
                 extension=None,
                 risc_os_filetype='ff8',
@@ -315,7 +315,7 @@ class TestSearchLogic(unittest.TestCase):
             # File with extension
             f2 = ExtractedFile(
                 partition_id=part.id,
-                path='$.Tools.Convert.bas',
+                path='Tools/Convert/bas',
                 filename='bas',
                 extension='bas',
                 risc_os_filetype=None,
@@ -327,7 +327,7 @@ class TestSearchLogic(unittest.TestCase):
             # Directory entry — must NOT appear in file search results
             d1 = ExtractedFile(
                 partition_id=part.id,
-                path='$.!Impression',
+                path='!Impression',
                 filename='!Impression',
                 extension=None,
                 is_directory=True,
@@ -335,7 +335,7 @@ class TestSearchLogic(unittest.TestCase):
             # Module files (matched by RiscosModule.file_path)
             f_wm = ExtractedFile(
                 partition_id=part.id,
-                path='$.Modules.WindowManager',
+                path='Modules/WindowManager',
                 filename='WindowManager',
                 extension=None,
                 risc_os_filetype='ffa',
@@ -346,7 +346,7 @@ class TestSearchLogic(unittest.TestCase):
             )
             f_adfs = ExtractedFile(
                 partition_id=part.id,
-                path='$.Modules.ADFS',
+                path='Modules/ADFS',
                 filename='ADFS',
                 extension=None,
                 risc_os_filetype='ffa',
@@ -398,7 +398,7 @@ class TestSearchLogic(unittest.TestCase):
                 version='2.05',
                 date='1990-01-31',
                 swi_chunk=0x400c0,
-                file_path='$.Modules.WindowManager',
+                file_path='Modules/WindowManager',
                 commands='["IconBar_SetPriority"]',
                 swi_names='["Wimp_Initialise", "Wimp_CreateWindow", "Wimp_OpenWindow"]',
             ))
@@ -408,7 +408,7 @@ class TestSearchLogic(unittest.TestCase):
                 help_title='ADFS',
                 version='2.30',
                 date='1990-02-15',
-                file_path='$.Modules.ADFS',
+                file_path='Modules/ADFS',
                 commands='["ADFS", "Back", "Bye", "Desktop_ADFS"]',
                 swi_names='["ADFS_DiscOp", "ADFS_HDC", "ADFS_Drives"]',
             ))
@@ -671,27 +671,27 @@ class TestSearchLogic(unittest.TestCase):
         results = self._search('module:WindowManager')
         # Module results now appear as file tuples in the files bucket
         file_paths = [ef.path for ef, _, _, _ in results['files']]
-        self.assertIn('$.Modules.WindowManager', file_paths)
+        self.assertIn('Modules/WindowManager', file_paths)
 
     def test_module_search_wildcard(self):
         results = self._search('module:Window*')
         file_paths = [ef.path for ef, _, _, _ in results['files']]
-        self.assertIn('$.Modules.WindowManager', file_paths)
+        self.assertIn('Modules/WindowManager', file_paths)
 
     def test_module_search_case_insensitive(self):
         results = self._search('module:windowmanager')
         file_paths = [ef.path for ef, _, _, _ in results['files']]
-        self.assertIn('$.Modules.WindowManager', file_paths)
+        self.assertIn('Modules/WindowManager', file_paths)
 
     def test_module_search_second_module(self):
         results = self._search('module:ADFS')
         file_paths = [ef.path for ef, _, _, _ in results['files']]
-        self.assertIn('$.Modules.ADFS', file_paths)
+        self.assertIn('Modules/ADFS', file_paths)
 
     def test_module_search_by_help_title(self):
         results = self._search('module:"Window Manager"')
         file_paths = [ef.path for ef, _, _, _ in results['files']]
-        self.assertIn('$.Modules.WindowManager', file_paths)
+        self.assertIn('Modules/WindowManager', file_paths)
 
     def test_module_search_no_match(self):
         results = self._search('module:NonExistentModule')
@@ -713,17 +713,17 @@ class TestSearchLogic(unittest.TestCase):
     def test_command_search_exact(self):
         results = self._search('command:Back')
         file_paths = [ef.path for ef, _, _, _ in results['files']]
-        self.assertIn('$.Modules.ADFS', file_paths)
+        self.assertIn('Modules/ADFS', file_paths)
 
     def test_command_search_wildcard(self):
         results = self._search('command:Desktop*')
         file_paths = [ef.path for ef, _, _, _ in results['files']]
-        self.assertIn('$.Modules.ADFS', file_paths)
+        self.assertIn('Modules/ADFS', file_paths)
 
     def test_command_search_case_insensitive(self):
         results = self._search('command:iconbar_setpriority')
         file_paths = [ef.path for ef, _, _, _ in results['files']]
-        self.assertIn('$.Modules.WindowManager', file_paths)
+        self.assertIn('Modules/WindowManager', file_paths)
 
     def test_command_search_no_match(self):
         results = self._search('command:NonExistentCommand')
@@ -737,17 +737,17 @@ class TestSearchLogic(unittest.TestCase):
     def test_swi_search_exact(self):
         results = self._search('swi:ADFS_DiscOp')
         file_paths = [ef.path for ef, _, _, _ in results['files']]
-        self.assertIn('$.Modules.ADFS', file_paths)
+        self.assertIn('Modules/ADFS', file_paths)
 
     def test_swi_search_wildcard(self):
         results = self._search('swi:Wimp_*')
         file_paths = [ef.path for ef, _, _, _ in results['files']]
-        self.assertIn('$.Modules.WindowManager', file_paths)
+        self.assertIn('Modules/WindowManager', file_paths)
 
     def test_swi_search_case_insensitive(self):
         results = self._search('swi:adfs_discop')
         file_paths = [ef.path for ef, _, _, _ in results['files']]
-        self.assertIn('$.Modules.ADFS', file_paths)
+        self.assertIn('Modules/ADFS', file_paths)
 
     def test_swi_search_no_match(self):
         results = self._search('swi:NonExistent_SWI')
@@ -758,7 +758,7 @@ class TestSearchLogic(unittest.TestCase):
         """Substring match: 'DiscOp' should match 'ADFS_DiscOp'."""
         results = self._search('swi:DiscOp')
         file_paths = [ef.path for ef, _, _, _ in results['files']]
-        self.assertIn('$.Modules.ADFS', file_paths)
+        self.assertIn('Modules/ADFS', file_paths)
 
     # ------------------------------------------------------------------
     # Tag searches
@@ -996,25 +996,25 @@ class TestHashDBSearch(unittest.TestCase):
 
             # File matching kf_a1
             ef1 = ExtractedFile(
-                partition_id=part.id, path='$.FileA1', filename='FileA1',
+                partition_id=part.id, path='FileA1', filename='FileA1',
                 md5='aa' * 16, is_directory=False,
                 known_file_id=kf_a1.id, is_known=True,
             )
             # File matching kf_b1
             ef2 = ExtractedFile(
-                partition_id=part.id, path='$.FileB1', filename='FileB1',
+                partition_id=part.id, path='FileB1', filename='FileB1',
                 md5='cc' * 16, is_directory=False,
                 known_file_id=kf_b1.id, is_known=True,
             )
             # File matching kf_other (different DB)
             ef3 = ExtractedFile(
-                partition_id=part.id, path='$.OtherFile', filename='OtherFile',
+                partition_id=part.id, path='OtherFile', filename='OtherFile',
                 md5='dd' * 16, is_directory=False,
                 known_file_id=kf_other.id, is_known=True,
             )
             # Unknown file (no match)
             ef4 = ExtractedFile(
-                partition_id=part.id, path='$.Unknown', filename='Unknown',
+                partition_id=part.id, path='Unknown', filename='Unknown',
                 md5='ee' * 16, is_directory=False,
                 is_known=False,
             )
