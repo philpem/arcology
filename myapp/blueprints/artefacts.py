@@ -2051,6 +2051,10 @@ def _render_artefact_view(artefact):
         _sil(ExtractedFile.partition),
         _sil(ExtractedFile.known_file).selectinload(KnownFile.product),
         _sil(ExtractedFile.known_file).selectinload(KnownFile.database),
+        # The file table reads file.restrictions on every row (download icon,
+        # restriction badges, manage button). Eager-load it here to avoid an
+        # N+1 of one extracted_file_restrictions query per file (issue #447).
+        _sil(ExtractedFile.restrictions),
     )
 
     # Filter by specific partition if requested.
