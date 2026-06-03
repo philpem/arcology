@@ -2969,8 +2969,10 @@ def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
 
     form = ArtefactEditForm(obj=artefact)
 
-    # Build type choices
-    type_choices = [(t.value, _type_display_name(t)) for t in ArtefactType]
+    # Build type choices with auto-detect as the first option so an override
+    # can be reverted back to filename-based detection.
+    type_choices = [('auto', '-- Auto-detect --')]
+    type_choices.extend([(t.value, _type_display_name(t)) for t in ArtefactType])
     form.artefact_type.choices = type_choices
 
     # Curators on the parent item can also toggle artefact privacy.
@@ -2986,7 +2988,9 @@ def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
         del form['owner_id']
 
     if request.method == 'GET':
-        form.artefact_type.data = artefact.artefact_type.value
+        form.artefact_type.data = (
+            artefact.artefact_type.value if artefact.type_overridden else 'auto'
+        )
         form.tags.data = ', '.join(t.name for t in artefact.tags)
         form.is_private.data = artefact.is_private
         if can_own:
@@ -2998,10 +3002,16 @@ def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
             generate_slug(artefact.label), Artefact,
             existing_id=artefact.id, scope_filter={'item_id': artefact.item_id},
         )
-        new_type = ArtefactType(form.artefact_type.data)
-        if new_type != artefact.artefact_type:
+        if form.artefact_type.data == 'auto':
+            # Revert to filename-based detection and clear the override flag.
+            new_type = detect_artefact_type(artefact.original_filename)
             artefact.artefact_type = new_type
-            artefact.type_overridden = True
+            artefact.type_overridden = False
+        else:
+            new_type = ArtefactType(form.artefact_type.data)
+            if new_type != artefact.artefact_type:
+                artefact.artefact_type = new_type
+                artefact.type_overridden = True
         artefact.description = form.description.data
 
         # Owner reassignment (owner or admin only), applied before the privacy

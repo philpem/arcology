@@ -37,7 +37,7 @@
                         {{ form.artefact_type.label(class="form-label") }}
                         {{ form.artefact_type(class="form-select") }}
                         {% if artefact.type_overridden %}
-                        <div class="form-text text-warning">Type was manually set (not auto-detected)</div>
+                        <div class="form-text text-warning">Type was manually set (not auto-detected). Select &ldquo;Auto-detect&rdquo; to revert to detection from the filename.</div>
                         {% endif %}
                     </div>
 
