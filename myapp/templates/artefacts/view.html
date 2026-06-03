@@ -153,7 +153,7 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
         {% if user_can_write %}
         <a href="{{ artefact_url(artefact, 'analyse') }}" class="btn btn-primary"><i class="bi bi-gear"></i> Re-analyse</a>
         <a href="{{ artefact_url(artefact, 'edit') }}" class="btn btn-outline-primary"><i class="bi bi-pencil"></i> Edit</a>
-        <form action="{{ artefact_url(artefact, 'delete') }}" method="post" class="d-inline" onsubmit="return confirm('Delete artefact \'{{ artefact.label }}\' and all related analyses? This cannot be undone.');">
+        <form action="{{ artefact_url(artefact, 'delete') }}" method="post" class="d-inline" onsubmit="return confirm('Delete artefact ' + {{ artefact.label | tojson }} + ' and all related analyses? This cannot be undone.');">
 
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-outline-danger" aria-label="Delete artefact"><i class="bi bi-trash"></i></button>

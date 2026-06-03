@@ -116,7 +116,7 @@
 					</td>
 					<td>
 						<form method="post" action="{{ url_for('myapp_blueprints_profile.revoke_key', key_id=key.id) }}"
-							  onsubmit="return confirm('Revoke key \'{{ key.name }}\'? Applications using it will stop working.')">
+							  onsubmit="return confirm('Revoke key ' + {{ key.name | tojson }} + '? Applications using it will stop working.')">
 							{{ pwd_form.hidden_tag() }}
 							<button type="submit" class="btn btn-sm btn-outline-danger">Revoke</button>
 						</form>

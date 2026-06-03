@@ -27,7 +27,7 @@
         <form action="{{ url_for('myapp_blueprints_hashdb.delete_known_product', db_id=database.id, pid=product.id) }}" method="post" class="d-inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-outline-danger btn-sm"
-                    onclick="return confirm('Delete product {{ product.title|e }} and all its files?')">
+                    onclick="return confirm('Delete product ' + {{ product.title | tojson }} + ' and all its files?')">
                 <i class="bi bi-trash"></i> Delete product
             </button>
         </form>
@@ -226,7 +226,7 @@
                     <form action="{{ url_for('myapp_blueprints_hashdb.delete_known_file', db_id=database.id, pid=product.id, fid=kf.id) }}" method="post" class="d-inline">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-outline-danger btn-sm py-0"
-                                onclick="return confirm('Delete {{ kf.filename|e }}?')"
+                                onclick="return confirm('Delete ' + {{ kf.filename | tojson }} + '?')"
                                 title="Delete this file"><i class="bi bi-trash"></i></button>
                     </form>
                 </td>
