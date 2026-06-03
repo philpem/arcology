@@ -97,10 +97,9 @@
 {% elif file_filter and '/' in file_filter %}
 {# Specific file opened from search: show path breadcrumb so the user can navigate up #}
 {% set _file_dir = file_filter.rsplit('/', 1)[0] + '/' %}
-{% set _dir_args = {k: v for k, v in pagination_args.items() if k != 'file'} %}
 <div class="card mb-3">
     <div class="card-header">
-        {{ render_path_breadcrumb(_file_dir, _dir_args) }}
+        {{ render_path_breadcrumb(_file_dir, file_dir_args) }}
     </div>
 </div>
 {% endif %}
