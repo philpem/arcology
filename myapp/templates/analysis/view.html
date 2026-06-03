@@ -99,7 +99,7 @@
                         {% if analysis.output_url %}<dt>Output</dt><dd><a href="{{ analysis.output_url }}" target="_blank">{{ analysis.output_url }}</a></dd>{% endif %}
                     </dl>
                 {% elif analysis.status.value == 'running' %}
-                    <div class="d-flex align-items-center"><div class="spinner-border spinner-border-sm me-2"></div> In progress...</div>
+                    <div class="d-flex align-items-center"><div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">In progress…</span></div> In progress...</div>
                 {% else %}
                     <p class="text-muted mb-0">Waiting in queue...</p>
                 {% endif %}

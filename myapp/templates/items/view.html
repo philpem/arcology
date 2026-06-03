@@ -142,23 +142,23 @@
                 <form method="post" action="{{ url_for('myapp_blueprints_items.add_share', uuid=item.url_id) }}" class="mt-2">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-2">
-                        <select name="share_type" class="form-select form-select-sm mb-1" id="shareTypeSelect" onchange="updateShareTarget()">
+                        <select name="share_type" class="form-select form-select-sm mb-1" id="shareTypeSelect" aria-label="Share with user or group" onchange="updateShareTarget()">
                             <option value="user">User</option>
                             <option value="group">Group</option>
                         </select>
-                        <select name="user_id" class="form-select form-select-sm" id="shareUserSelect">
+                        <select name="user_id" class="form-select form-select-sm" id="shareUserSelect" aria-label="Select user">
                             <option value="">-- Select user --</option>
                             {% for u in shareable_users %}
                             <option value="{{ u.id }}">{{ u.username }}</option>
                             {% endfor %}
                         </select>
-                        <select name="group_id" class="form-select form-select-sm d-none" id="shareGroupSelect" disabled>
+                        <select name="group_id" class="form-select form-select-sm d-none" id="shareGroupSelect" aria-label="Select group" disabled>
                             <option value="">-- Select group --</option>
                             {% for g in shareable_groups %}
                             <option value="{{ g.id }}">{{ g.name }}</option>
                             {% endfor %}
                         </select>
-                        <select name="permission" class="form-select form-select-sm mt-1">
+                        <select name="permission" class="form-select form-select-sm mt-1" aria-label="Share permission level">
                             <option value="viewer">Viewer</option>
                             <option value="curator">Curator</option>
                         </select>

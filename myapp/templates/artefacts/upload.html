@@ -66,7 +66,8 @@
                     </div>
 
                     <div class="mb-2">
-                        <button type="button" class="btn btn-sm btn-outline-secondary" id="hints-toggle">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="hints-toggle"
+                                aria-expanded="false" aria-controls="hints-section">
                             <i class="bi bi-sliders"></i> Analysis hints
                             <i class="bi bi-chevron-down ms-1" id="hints-chevron"></i>
                         </button>
@@ -324,10 +325,12 @@
     hintsEl.addEventListener('show.bs.collapse', function () {
         sessionStorage.setItem(HINTS_STORAGE_KEY, '1');
         setChevron(true);
+        hintsToggle.setAttribute('aria-expanded', 'true');
     });
     hintsEl.addEventListener('hide.bs.collapse', function () {
         sessionStorage.setItem(HINTS_STORAGE_KEY, '0');
         setChevron(false);
+        hintsToggle.setAttribute('aria-expanded', 'false');
     });
 
     hintsToggle.addEventListener('click', function () {
