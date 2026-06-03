@@ -1694,6 +1694,12 @@ def _render_viewer(artefact):
     # pagination_args is always populated so column/filter URLs preserve state
     # in non-paginated views (Mode 1 or ?file=) too.
     pagination_args = {k: v for k, v in request.args.items() if k != 'page'}
+    # Args for the "navigate up to the containing directory" breadcrumb shown
+    # when a specific file is opened: same as pagination_args but without the
+    # ?file= filter, so following the breadcrumb clears the single-file view.
+    # (Computed here rather than in the template — Jinja2 has no dict
+    # comprehension, so {k: v for ...} is a syntax error there.)
+    file_dir_args = {k: v for k, v in pagination_args.items() if k != 'file'}
     pagination = None
     view_all = False
 
@@ -1902,6 +1908,7 @@ def _render_viewer(artefact):
         user_can_bypass_explicit=user_can_bypass_explicit,
         pagination=pagination,
         pagination_args=pagination_args,
+        file_dir_args=file_dir_args,
         view_all=view_all,
         valid_per_page=VALID_PER_PAGE,
         total_counts=total_counts,
