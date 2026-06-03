@@ -351,6 +351,9 @@ ARG GREASEWEAZLE_VERSION=26690f89967d519e0106ab9566019a026b920bb4
 RUN python3 -m pip install --break-system-packages \
 	git+https://github.com/keirf/greaseweazle@${GREASEWEAZLE_VERSION}
 
+# Install Sentry SDK for error and performance reporting (optional; enabled by SENTRY_DSN env var).
+RUN python3 -m pip install --break-system-packages sentry-sdk
+
 # Install Acorn image conversion libraries.
 # drawfile_render (philpem fork with signed-coordinate fix) — not pip-installable; clone manually.
 # Pinned to a specific commit SHA — update when upgrading.

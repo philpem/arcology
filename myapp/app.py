@@ -67,7 +67,8 @@ def create_app(config_name=None):
                     'OIDC_ROLE_ADMIN', 'OIDC_ROLE_READ_WRITE', 'OIDC_ROLE_READ_ONLY',
                     'OIDC_ROLE_STAFF', 'OIDC_ROLE_API_ACCESS', 'OIDC_REQUIRE_ROLE',
                     'OIDC_SINGLE_LOGOUT', 'OIDC_SYNC_INTERVAL', 'OIDC_AUTO_REDIRECT',
-                    'PUBLIC_MODE', 'PUBLIC_DOWNLOADS'):
+                    'PUBLIC_MODE', 'PUBLIC_DOWNLOADS',
+                    'SENTRY_DSN'):
         env_val = os.environ.get(env_key)
         if env_val:
             app.config[env_key] = env_val
@@ -80,6 +81,15 @@ def create_app(config_name=None):
                 app.config[int_key] = int(env_val)
             except ValueError:
                 app.logger.warning(f'{int_key} env var is not an integer: {env_val!r}')
+
+    # Float env vars — loaded separately so they're stored as float, not str.
+    for float_key in ('SENTRY_TRACES_SAMPLE_RATE',):
+        env_val = os.environ.get(float_key)
+        if env_val is not None:
+            try:
+                app.config[float_key] = float(env_val)
+            except ValueError:
+                app.logger.warning(f'{float_key} env var is not a number: {env_val!r}')
 
     # Abort if no database URI is configured
     if not app.config.get('SQLALCHEMY_DATABASE_URI'):
@@ -117,6 +127,18 @@ def create_app(config_name=None):
             'pool_recycle': 1800,
             'pool_pre_ping': True,
         }
+
+    # Initialise Sentry
+    if 'SENTRY_DSN' in app.config:
+        import sentry_sdk
+        from sentry_sdk.integrations.flask import FlaskIntegration
+        from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+        sentry_sdk.init(
+                dsn=app.config['SENTRY_DSN'],
+                integrations=[FlaskIntegration(), SqlalchemyIntegration()],
+                traces_sample_rate=app.config.get('SENTRY_TRACES_SAMPLE_RATE', 1.0),
+                send_default_pii=True,
+                )
 
     # Initialise extensions
     db.init_app(app)

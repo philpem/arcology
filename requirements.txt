@@ -44,3 +44,6 @@ authlib
 
 # Test reporting (JUnit XML output for CI)
 unittest-xml-reporting
+
+# Sentry API (optional)
+sentry-sdk

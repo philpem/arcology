@@ -62,4 +62,21 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+SENTRY_DSN = os.environ.get('SENTRY_WORKER_DSN') or os.environ.get('SENTRY_DSN', '')
+SENTRY_TRACES_SAMPLE_RATE = float(
+    os.environ.get('SENTRY_WORKER_TRACES_SAMPLE_RATE')
+    or os.environ.get('SENTRY_TRACES_SAMPLE_RATE', '1.0')
+)
+
+if SENTRY_DSN:
+    import sentry_sdk
+    from sentry_sdk.integrations.logging import LoggingIntegration
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        traces_sample_rate=SENTRY_TRACES_SAMPLE_RATE,
+        integrations=[LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)],
+        send_default_pii=True,
+    )
+    log.info("Sentry initialised")
+
 # vim: ts=4 sw=4 et
