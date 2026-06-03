@@ -151,6 +151,12 @@ def create_app(config_name=None):
     import json
     app.jinja_env.filters['fromjson'] = lambda s: json.loads(s) if s else {}
 
+    # Safe enum value access — tolerant of None from _TolerantEnum (orphan rows).
+    # Used by templates that render artefact_type/analysis_type so an orphan row
+    # shows a fallback label instead of crashing the page with a 500.
+    from .utils.enum_display import enum_value
+    app.jinja_env.filters['enum_value'] = enum_value
+
     # RISC OS filetype formatting
     from .riscos_filetypes import format_filetype, get_filetype_name
     app.jinja_env.filters['format_filetype'] = format_filetype

@@ -1,18 +1,6 @@
 """Shared API serializer helpers for Arcology models."""
 
-
-def _enum_value(member):
-    """Return an enum member's ``.value``, tolerating ``None``.
-
-    ``artefact_type`` and ``analysis_type`` use the ``_TolerantEnum`` column
-    type, which yields ``None`` for a DB value absent from the Python enum
-    (e.g. an orphan row left behind when a feature-branch migration was
-    downgraded without cleaning up its rows).  Without this guard,
-    ``member.value`` raises ``AttributeError`` and turns the whole response
-    into a 500 — which, on ``/analysis/pending``, stalls the worker poll
-    indefinitely because the offending row never leaves PENDING.
-    """
-    return member.value if member is not None else None
+from .enum_display import enum_value as _enum_value
 
 
 def share_to_dict(share):

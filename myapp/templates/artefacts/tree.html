@@ -88,7 +88,7 @@
          aria-expanded="true"
          data-target="#{{ collapse_id }}">
         <i class="bi bi-chevron-right pt-chevron"></i>
-        <span class="badge bg-secondary">{{ art.artefact_type.value.upper().replace('_', ' ') }}</span>
+        <span class="badge bg-secondary">{{ (art.artefact_type | enum_value('unknown')).upper().replace('_', ' ') }}</span>
         <strong class="me-1">{{ art.label }}</strong>
         {% if art.derived_from_analysis %}
         <small class="text-muted fw-normal">via {{ art.derived_from_analysis.analysis_type|format_analysis_type }}</small>
@@ -116,7 +116,7 @@
                         {{ analysis.analysis_type|format_analysis_type }}
                     </a>
                     {# Top-level archive extract: show format name since no file path #}
-                    {% if analysis.analysis_type.value == 'archive_extract' and analysis.hints %}
+                    {% if (analysis.analysis_type | enum_value) == 'archive_extract' and analysis.hints %}
                     {% set h = analysis.hints | fromjson %}
                     {% if h.archive_format %}
                     <small class="text-muted text-nowrap"><i class="bi bi-file-zip"></i> {{ h.archive_format }}</small>

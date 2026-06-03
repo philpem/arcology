@@ -246,13 +246,14 @@
                                 {{ analysis_lozenge(artefact_analysis_status.get(artefact.id)) }}
                             </h5>
                             <p class="mb-1 text-muted">
-                                <span class="badge bg-secondary">{{ artefact.artefact_type.value.upper().replace('_', ' ') }}</span>
+                                <span class="badge bg-secondary">{{ (artefact.artefact_type | enum_value('unknown')).upper().replace('_', ' ') }}</span>
                                 <code>{{ artefact.original_filename }}</code>
                             </p>
                             {% if artefact.derived_artefacts %}
                             {% set ns = namespace(types=[]) %}
                             {% for d in artefact.derived_artefacts recursive %}
-                            {% if d.artefact_type.value not in ns.types %}{% set ns.types = ns.types + [d.artefact_type.value] %}{% endif %}
+                            {% set _dt = d.artefact_type | enum_value('unknown') %}
+                            {% if _dt not in ns.types %}{% set ns.types = ns.types + [_dt] %}{% endif %}
                             {% if d.derived_artefacts %}{{ loop(d.derived_artefacts) }}{% endif %}
                             {% endfor %}
                             <div class="ms-3 mt-1 small">

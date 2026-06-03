@@ -52,6 +52,7 @@ from ..database import (
 from ..extensions import db
 from ..permissions import public_downloadable, public_readable, require_permission
 from ..riscos_filetypes import lookup_filetype_hex
+from ..utils.enum_display import enum_value
 from ..utils.slugs import ensure_unique_slug, generate_slug, lookup_artefact_by_id, lookup_by_identifier
 from ..visibility import (
     can_change_owner,
@@ -2997,7 +2998,7 @@ def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
 
     if request.method == 'GET':
         form.artefact_type.data = (
-            artefact.artefact_type.value if artefact.type_overridden else 'auto'
+            enum_value(artefact.artefact_type, 'auto') if artefact.type_overridden else 'auto'
         )
         form.tags.data = ', '.join(t.name for t in artefact.tags)
         form.is_private.data = artefact.is_private

@@ -284,7 +284,7 @@
                     <span class="d-flex align-items-center gap-1 flex-shrink-0">
                         <span class="badge bg-secondary"
                               title="{{ entry.mime_type }}{% if entry.file_size is not none %}{% if entry.mime_type %} &bull; {% endif %}{{ entry.file_size | format_filesize }} ({{ entry.file_size }} bytes){% endif %}">
-                            {{ d.artefact_type.value.upper() }}
+                            {{ (d.artefact_type | enum_value('unknown')).upper() }}
                         </span>
                         {% if entry.viewer_url %}
                         <a href="{{ entry.viewer_url }}" class="btn btn-sm btn-outline-secondary py-0 px-1"
