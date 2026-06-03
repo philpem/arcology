@@ -86,13 +86,22 @@
     </a>
 </div>
 
-{# ── Subdirectory navigation: breadcrumb + direct children, same primitives as File Viewer ── #}
+{# ── Path context: breadcrumb when browsing a directory, or parent-dir link when viewing a specific file ── #}
 {% if current_path or subdirectories %}
 <div class="card mb-3">
     <div class="card-header">
         {{ render_path_breadcrumb(current_path, pagination_args) }}
     </div>
     {{ render_subdirectory_bar(subdirectories, current_path, pagination_args, archive_paths=archive_paths) }}
+</div>
+{% elif file_filter and '/' in file_filter %}
+{# Specific file opened from search: show path breadcrumb so the user can navigate up #}
+{% set _file_dir = file_filter.rsplit('/', 1)[0] + '/' %}
+{% set _dir_args = {k: v for k, v in pagination_args.items() if k != 'file'} %}
+<div class="card mb-3">
+    <div class="card-header">
+        {{ render_path_breadcrumb(_file_dir, _dir_args) }}
+    </div>
 </div>
 {% endif %}
 
