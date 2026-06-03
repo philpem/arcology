@@ -239,6 +239,17 @@ def _extract_top_level_archive(
             sniffed = ArchiveType.ZIP_RISCOS
         archive_type = sniffed
         archive_info = get_archive_info(archive_type)
+        # Correct the artefact type in the DB so the UI badge reflects
+        # the true format. ArchiveType and ArtefactType share string values
+        # for ARC (arcfs→arc) and ZIP; the mapping is explicit for ARC.
+        _ARCHIVE_TO_ARTEFACT = {
+            ArchiveType.ARCFS.value: ArtefactType.ARC.value,
+            ArchiveType.SPARK.value: ArtefactType.ARC.value,
+        }
+        corrected_artefact_type = _ARCHIVE_TO_ARTEFACT.get(
+            archive_type.value, archive_type.value
+        )
+        self.api.update_artefact_type(artefact['uuid'], corrected_artefact_type)
 
     # A plain .zip upload whose contents have RISC OS ,xxx filetype
     # suffixes should be treated as ZIP_RISCOS so the CP437→RISC OS

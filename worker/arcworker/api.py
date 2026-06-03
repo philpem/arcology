@@ -129,6 +129,13 @@ class ArcologyAPI:
             return None
         return result
 
+    def update_artefact_type(self, artefact_uuid: str, artefact_type: str):
+        """Correct the artefact type when magic-byte sniffing overrides the extension guess.
+
+        Skipped server-side if the type has been manually set (type_overridden=True).
+        """
+        self.patch(f"/artefacts/{artefact_uuid}", {'artefact_type': artefact_type})
+
     def update_artefact_hashes(self, artefact_uuid: str, md5: str, sha256: str):
         """Write computed MD5 and SHA256 hashes back to the artefact record."""
         self.patch(f"/artefacts/{artefact_uuid}", {'md5': md5, 'sha256': sha256})

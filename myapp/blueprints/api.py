@@ -689,6 +689,11 @@ def update_artefact(uuid):
         artefact.md5 = data['md5']
     if 'sha256' in data:
         artefact.sha256 = data['sha256']
+    if 'artefact_type' in data and not artefact.type_overridden:
+        try:
+            artefact.artefact_type = ArtefactType(data['artefact_type'])
+        except ValueError:
+            return error_response(f"Unknown artefact_type: {data['artefact_type']}", 400)
     if 'media_metadata' in data:
         incoming = data['media_metadata']
         if incoming is None:
