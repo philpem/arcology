@@ -145,7 +145,7 @@ def main():
 	bulk_parser.add_argument('--archive-dir', default=None,
 	                         help='Local mirror root (required unless --purge)')
 	bulk_parser.add_argument('--tag', default=None,
-	                         help='Tag for imported items (required unless --arcarc)')
+	                         help='Tag for imported items (optional; required with --purge)')
 	bulk_parser.add_argument('--categories', default=None,
 	                         help='Filter by top-level directory (comma-separated)')
 	bulk_parser.add_argument('--skip-dirs', default=None,
@@ -156,12 +156,18 @@ def main():
 	                         help='Platform name to assign')
 	bulk_parser.add_argument('--name-prefix', default=None,
 	                         help='Prefix for item names')
+	bulk_parser.add_argument('--parent', default=None,
+	                         help='Parent item UUID; created items are nested under it')
 	bulk_parser.add_argument('--category-map', default=None,
 	                         help='Directory-to-category mapping as K=V,...')
 	bulk_parser.add_argument('--no-auto-analyse', action='store_true',
 	                         help='Upload without triggering automatic analysis')
 	bulk_parser.add_argument('--smart-labels', action='store_true',
 	                         help='Strip single-char groupings and use filename alone when self-describing')
+	bulk_parser.add_argument('--keep-compressed-duplicates', action='store_true',
+	                         help='Upload every recognised image form; do not collapse '
+	                              'raw/compressed/archived duplicates of the same image '
+	                              '(default: keep only the best form, archive > compressed > raw)')
 	bulk_parser.add_argument('--flat', action='store_true',
 	                         help='Treat archive-dir as a single collection')
 	bulk_parser.add_argument('--arcarc', action='store_true',

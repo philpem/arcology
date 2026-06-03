@@ -48,8 +48,9 @@ arco bulk-import \
 The tool has two import modes:
 
 **Default (categorised) mode** groups files by top-level subdirectory. Each
-subdirectory becomes a separate Item. Files directly in the archive-dir (not
-in any subdirectory) are skipped.
+subdirectory becomes a separate Item. Files sitting directly in the archive-dir
+(one level deep, not in any subdirectory) are grouped into a single Item named
+after the archive directory itself.
 
 **Flat mode** (`--flat`) treats the entire archive-dir as a single Item. All
 files, including those in subdirectories, become Artefacts on that one Item.
@@ -62,14 +63,39 @@ Only files with recognised extensions are imported. Everything else (including
 
 | Extensions | Type |
 |------------|------|
-| `.adf`, `.img`, `.ima`, `.dsk`, `.dd` | Sector images |
+| `.adf`, `.img`, `.ima`, `.dsk`, `.dd`, `.raw`, `.bin`, `.hdd`, `.hdf`, `.image` | Raw-sector / disk images |
 | `.scp` | Flux images |
 | `.imd`, `.hfe` | Sector floppy images |
 | `.iso` | CD/DVD images |
-| `.zip`, `.rar` | PC archives |
+| `.zip`, `.7z`, `.rar` | Archives |
 | `.tar.gz`, `.tgz` | Compressed tarballs |
-| `.dd.zst`, `.dd.gz`, `.dd.bz2` | Compressed sector images |
+| *(any raw-sector ext)*`.zst` / `.gz` / `.bz2` | Compressed disk images (e.g. `.dd.zst`, `.img.gz`) |
 | `.pdf` | Documents |
+
+Any raw-sector / disk-image extension may carry a trailing `.zst`, `.gz` or
+`.bz2` compressor suffix — convention is to compress the original image
+immediately after imaging the drive.
+
+### Compressed-duplicate filtering
+
+When the same image appears in several forms in one directory — for example
+`drive.dd`, `drive.dd.zst` and `drive.zip` — only the **best** form is uploaded
+by default, in the order **archive > compressed > raw** (`.zip`/`.7z` beats
+`.dd.zst`/`.gz`/`.bz2`, which beats a bare `.dd`). Redundant compressions of the
+same image (e.g. both `.dd.zst` and `.dd.gz`) are collapsed to one (`.zst`
+preferred). Genuinely different images that share a base name are all kept:
+different raw types (`drive.dd` vs `drive.img`), and non-image artefacts of the
+same name (`drive.pdf`, `drive.iso`) are never dropped. Matching is scoped to a
+single directory, so two different drives that share a name in separate folders
+are never collapsed together.
+
+Pass `--keep-compressed-duplicates` to disable this and upload every recognised
+form. Dropped forms are reported during the scan (use `-v` for per-file detail).
+
+> A `.zip`/`.7z` of a dd image may also bundle sidecar files such as a ddrescue
+> `.map` and a readme — these are uploaded inside the archive and Arcology makes
+> the readme viewable. (Bundling *loose* sidecar files alongside an image into a
+> single upload is planned as a future enhancement.)
 
 ### Artefact labels
 
@@ -103,12 +129,16 @@ preset includes a built-in map (Apps=Applications, PD=Public Domain, etc.).
 
 ### Tagging and deduplication
 
-Every imported Item is tagged with `--tag` plus the lowercase collection name
-(e.g. `apps`, `games`). The tag is used for:
+`--tag` is optional. When supplied, every imported Item is tagged with it plus
+the lowercase collection name (e.g. `apps`, `games`); without it, Items get only
+the lowercase collection-name tag. The tag is used for:
 
 - **Resume mode** (`--resume`): matches existing Items by name + tag to avoid
-  creating duplicates, then skips Artefacts whose filename already exists
-- **Purge mode** (`--purge`): finds all Items with the tag for bulk deletion
+  creating duplicates, then skips Artefacts whose filename already exists.
+  Without `--tag`, matching falls back to name alone, which may match an
+  unrelated Item of the same name — pass `--tag` when resuming to be precise.
+- **Purge mode** (`--purge`): finds all Items with the tag for bulk deletion.
+  `--tag` is **required** with `--purge` (otherwise it would match every Item).
 
 ## Examples
 
@@ -124,7 +154,7 @@ Every imported Item is tagged with `--tag` plus the lowercase collection name
 ├── Games/
 │   └── Chess/
 │       └── Chess 1.5.adf
-└── top-level.zip                  ← SKIPPED (not in a subdirectory)
+└── top-level.zip                  ← grouped into an "archive" Item
 ```
 
 ```bash
@@ -136,9 +166,11 @@ arco bulk-import --archive-dir ~/archive --tag myimport
 | `Apps` | `Editor/Editor 1.0.zip` | `Apps/Editor/Editor 1.0.zip` |
 | `Apps` | `Viewer/Viewer 2.0.zip` | `Apps/Viewer/Viewer 2.0.zip` |
 | `Games` | `Chess/Chess 1.5.adf` | `Games/Chess/Chess 1.5.adf` |
+| `archive` | `top-level.zip` | `top-level.zip` |
 
-Two Items created. `top-level.zip` is skipped because it is not inside a
-subdirectory. No Arcology category is assigned (no `--category-map`).
+Three Items created. `top-level.zip` sits directly in the archive root, so it is
+grouped into an Item named after the archive directory (`archive`). No Arcology
+category is assigned (no `--category-map`).
 
 ### 2. With name prefix and category map
 
@@ -183,7 +215,22 @@ nested files use their relative path. Note that in default (non-flat) mode,
 `system-disc.adf` and `games-disc.adf` would be skipped because they are not
 inside a subdirectory.
 
-### 4. Arcarc preset with deep nesting and smart labels
+### 4. Nesting created Items under a parent
+
+Use `--parent` to group every imported Item as a child of an existing Item
+(for example, a collection or donor record). The parent must already exist;
+its UUID is validated before the import begins.
+
+```bash
+arco bulk-import --archive-dir ~/archive --tag myimport \
+    --parent 3f9c2a1b4d5e6f708192a3b4c5d6e7f8
+```
+
+Each created Item (`Apps`, `Games`, …) becomes a child of the given parent.
+The parent is only applied when an Item is created; Items reused via
+`--resume` (matched by name and tag) keep their existing parent.
+
+### 5. Arcarc preset with deep nesting and smart labels
 
 ```
 ~/arcarc/archive/
@@ -233,7 +280,7 @@ Deep nesting under `GCC (FR)/` preserves version directories so that
 `system.zip` from different GCC versions remains distinguishable.
 `!Compilations` is not a single character, so it is kept as context.
 
-### 5. Using `--categories` as a filter
+### 6. Using `--categories` as a filter
 
 Same arcarc structure, but only import Apps:
 
@@ -255,15 +302,17 @@ arco bulk-import --archive-dir ~/arcarc/archive --arcarc --categories Apps,Games
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--archive-dir PATH` | *(required)* | Local directory to import |
-| `--tag TAG` | *(required)* | Tag applied to all imported Items |
+| `--tag TAG` | *(none)* | Tag applied to all imported Items (required with `--purge`) |
 | `--categories LIST` | *(all)* | Filter by top-level directory, comma-separated |
 | `--skip-dirs LIST` | *(none)* | Skip directories by name at any level, comma-separated |
 | `--skip-ext LIST` | *(none)* | Skip files by extension (e.g. `.pdf,.txt`) |
 | `--platform NAME` | *(none)* | Platform to assign to all Items |
 | `--name-prefix PREFIX` | *(none)* | Prefix for Item names (e.g. `--name-prefix Source` gives "Source: Apps") |
+| `--parent UUID` | *(none)* | Nest all created Items under an existing parent Item |
 | `--category-map K=V,...` | *(none)* | Map directory names to Arcology categories |
 | `--flat` | off | Treat archive-dir as one collection (one Item, all files) |
 | `--smart-labels` | off | Use smart label heuristic (strip letter groups, detect self-describing filenames) |
+| `--keep-compressed-duplicates` | off | Upload every recognised image form instead of collapsing raw/compressed/archived duplicates to the best one |
 | `--no-auto-analyse` | off | Upload without triggering automatic analysis |
 | `--arcarc` | off | Preset for arcarc.nl (see below) |
 | `--resume` | off | Skip already-uploaded Artefacts |
