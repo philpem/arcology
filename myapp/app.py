@@ -260,6 +260,28 @@ def create_app(config_name=None):
         kw.update(kwargs)
         return url_for(route, **kw)
 
+    # Content-Security-Policy header.
+    # Allows Bootstrap CSS/JS/Icons fonts from cdn.jsdelivr.net plus inline
+    # styles and scripts used throughout the templates.  Set CSP_HEADER to an
+    # empty string in config to disable (e.g. when the reverse proxy sets it).
+    _DEFAULT_CSP = (
+        "default-src 'self'; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "font-src 'self' https://cdn.jsdelivr.net; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "object-src 'none'; "
+        "frame-ancestors 'none'"
+    )
+
+    @app.after_request
+    def set_csp(response):
+        csp = app.config.get('CSP_HEADER', _DEFAULT_CSP)
+        if csp:
+            response.headers['Content-Security-Policy'] = csp
+        return response
+
     # Register login handlers, error handlers, blueprints, and CLI commands
     _register_login_handlers(app)
     _register_error_handlers(app)
