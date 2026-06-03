@@ -2478,13 +2478,13 @@ def _render_artefact_view(artefact):
         if mod.file_path:
             module_info[mod.file_path] = mod
 
-    # "View" button: show if artefact is viewable type, or has any FORMAT_CONVERT
+    # "View" button: show if artefact is viewable type, or has any FORMAT_CONVERT.
+    # When not a viewable type we already fetched every FORMAT_CONVERT analysis
+    # into `convs` above (same guard), so reuse it rather than issuing another
+    # existence query (#447).
     has_converted_outputs = artefact.artefact_type in _viewable_types
     if not has_converted_outputs:
-        has_converted_outputs = Analysis.query.filter(
-            Analysis.artefact_id.in_(all_artefact_ids),
-            Analysis.analysis_type == AnalysisType.FORMAT_CONVERT,
-        ).first() is not None
+        has_converted_outputs = bool(convs)
 
     # Recognised products for all partitions of this artefact tree
     recognised_products = []
