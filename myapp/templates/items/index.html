@@ -52,13 +52,13 @@
 
 <div class="card">
     <div class="table-responsive">
-        <table class="table table-hover mb-0">
+        <table class="table table-hover mb-0" style="--depth-base: 1rem; --depth-step: 1.5rem;">
             <thead><tr><th>Name</th><th>Platform</th><th>Category</th><th>Children</th><th>Artefacts</th><th>Updated</th></tr></thead>
             <tbody>
                 {% if view_mode == 'tree' and tree_rows and not searching %}
                 {% for item, depth in tree_rows %}
                 <tr>
-                    <td class="depth-indent" style="--depth: {{ depth }}; --depth-base: 1rem; --depth-step: 1.5rem;">
+                    <td class="depth-indent" style="--depth: {{ depth }};">
                         {% if depth > 0 %}<i class="bi bi-arrow-return-right text-muted me-1"></i>{% endif %}
                         <a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a>
                         {% if item.private_effective %}<i class="bi bi-lock-fill text-warning ms-1" title="Private"></i>{% endif %}

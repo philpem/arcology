@@ -95,7 +95,7 @@
             <ul class="list-group list-group-flush">
                 {% for ref in item.external_references %}
                 <li class="list-group-item d-flex justify-content-between">
-                    <div><strong>{{ ref.system.name }}</strong><br>{% if ref.url %}<a href="{{ ref.url }}" target="_blank">{{ ref.external_id }}</a>{% else %}{{ ref.external_id }}{% endif %}</div>
+                    <div><strong>{{ ref.system.name }}</strong><br>{% if ref.url %}<a href="{{ ref.url }}" target="_blank" rel="noopener noreferrer">{{ ref.external_id }}</a>{% else %}{{ ref.external_id }}{% endif %}</div>
                     {% if user_can_contribute %}
                     <form action="{{ url_for('myapp_blueprints_items.delete_reference', item_uuid=item.url_id, ref_id=ref.id) }}" method="post" onsubmit="return confirm('Remove {{ ref.system.name }} reference \'{{ ref.external_id }}\'?');">
 
