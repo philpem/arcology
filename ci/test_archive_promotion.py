@@ -23,6 +23,7 @@ os.environ.setdefault('WORKER_API_KEY', 'test')
 
 from shared.enums import ArtefactType  # noqa: E402
 from worker.arcworker.analyses.extraction import (  # noqa: E402
+    _is_compressed_disk_image,
     _promotable_artefact_type,
 )
 
@@ -58,6 +59,27 @@ class TestPromotableArtefactType(unittest.TestCase):
     def test_unknown_extensions_not_promoted(self):
         for name in ('readme.txt', 'drive.map', 'foo', 'photo.jpg'):
             self.assertIsNone(_promotable_artefact_type(name), name)
+
+
+class TestCompressedDiskImageGuard(unittest.TestCase):
+    """Compressed disk images must be excluded from generic compressor
+    extraction (which would store a full uncompressed copy); they are handled
+    by disk-image promotion instead."""
+
+    def test_compressed_disk_images(self):
+        for name in ('syq220-01.dd.zst', 'disk.img.gz', 'floppy.adf.bz2',
+                     'DRIVE.DD.ZST'):
+            self.assertTrue(_is_compressed_disk_image(name), name)
+
+    def test_real_compressors_and_archives_excluded(self):
+        # Genuine compressors/archives must still extract normally.
+        for name in ('data.tar.gz', 'notes.txt.gz', 'archive.zst',
+                     'backup.gz', 'docs.bz2'):
+            self.assertFalse(_is_compressed_disk_image(name), name)
+
+    def test_uncompressed_images_excluded(self):
+        for name in ('drive.dd', 'image.iso', 'flux.scp'):
+            self.assertFalse(_is_compressed_disk_image(name), name)
 
 
 if __name__ == '__main__':

@@ -149,6 +149,17 @@ def _promotable_artefact_type(filename: str):
     return _PROMOTABLE_EXTENSIONS.get(p.suffix)
 
 
+def _is_compressed_disk_image(filename: str) -> bool:
+    """True for a compressed raw-sector image (``drive.dd.zst``, ``disk.img.gz``).
+
+    These are promoted to a disk-image artefact and decompressed transiently
+    during their own analysis, so archive detection must NOT also treat them as
+    a generic single-file compressor — doing so would extract a full,
+    uncompressed copy of the image into storage.
+    """
+    return _promotable_artefact_type(filename) in _PROMOTABLE_COMPRESSORS.values()
+
+
 def _sniff_archive_magic(file_path: Path):
     """Sniff the first bytes of a file to detect mis-labelled archives.
 
@@ -738,6 +749,13 @@ def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path)
     for file_data in files:
         filetype = file_data.get('risc_os_filetype')
         filename = file_data.get('filename', '')
+
+        # A compressed disk image (drive.dd.zst, disk.img.gz) is promoted to a
+        # disk-image artefact and decompressed transiently during its own
+        # analysis.  Skip it here so it is not also extracted as a generic
+        # compressor, which would store a full uncompressed copy of the image.
+        if _is_compressed_disk_image(filename):
+            continue
 
         # Try detecting by RISC OS filetype first
         archive_type = get_archive_by_filetype(filetype) if filetype else None
