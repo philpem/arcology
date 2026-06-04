@@ -153,11 +153,9 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
         {% if user_can_write %}
         <a href="{{ artefact_url(artefact, 'analyse') }}" class="btn btn-primary"><i class="bi bi-gear"></i> Re-analyse</a>
         <a href="{{ artefact_url(artefact, 'edit') }}" class="btn btn-outline-primary"><i class="bi bi-pencil"></i> Edit</a>
-        <form action="{{ artefact_url(artefact, 'delete') }}" method="post" class="d-inline" onsubmit="return confirm('Delete artefact ' + {{ artefact.label | tojson }} + ' and all related analyses? This cannot be undone.');">
-
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-outline-danger" aria-label="Delete artefact"><i class="bi bi-trash"></i></button>
-        </form>
+        <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteArtefactModal" aria-label="Delete artefact">
+            <i class="bi bi-trash"></i>
+        </button>
         {% endif %}
     </div>
 </div>
@@ -189,6 +187,41 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
 
     </div>
 </div>
+
+{% if user_can_write %}
+<div class="modal fade" id="deleteArtefactModal" tabindex="-1" aria-labelledby="deleteArtefactModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content border-danger">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title" id="deleteArtefactModalLabel"><i class="bi bi-trash"></i> Delete Artefact</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Permanently delete this artefact?</p>
+                <p class="fw-bold fs-5 text-break">{{ artefact.label }}</p>
+                <div class="alert alert-danger mb-0">
+                    <i class="bi bi-exclamation-triangle-fill"></i> This will also permanently delete:
+                    <ul class="mb-1 mt-1">
+                        {% if artefact.derived_artefacts %}
+                        <li>All derived artefacts (converted/extracted copies)</li>
+                        {% endif %}
+                        <li>The uploaded file</li>
+                        <li>All analysis results</li>
+                    </ul>
+                    <strong>This action cannot be undone.</strong>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form action="{{ artefact_url(artefact, 'delete') }}" method="post" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-danger"><i class="bi bi-trash"></i> Delete Permanently</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
