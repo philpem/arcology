@@ -200,7 +200,8 @@ arco upload ITEM_UUID f.scp # Upload artefact
 arco download ART_UUID     # Download artefact
 arco platforms             # List platforms
 
-# Bulk import a directory tree
+# Bulk import a directory tree (see doc/BULK_IMPORT.md for the full guide:
+# disk-image dedup, sidecar bundling for drive images, size limits, etc.)
 arco bulk-import --archive-dir ~/discs --tag myimport --platform "BBC Micro"
 
 # Hash database management
