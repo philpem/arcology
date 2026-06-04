@@ -113,6 +113,41 @@ _PROMOTABLE_EXTENSIONS = {
     '.iso': ArtefactType.ISO,
 }
 
+# Compressor suffixes wrapping a raw-sector image, mapped to the matching
+# compressed raw-sector ArtefactType.  This lets a compressed disk image
+# extracted from a ZIP/sidecar bundle (e.g. ``drive.dd.zst``) be promoted and
+# analysed exactly like a directly-uploaded one — the compressed type's
+# PARTITION_DETECT decompresses it transparently before analysis.
+_PROMOTABLE_COMPRESSORS = {
+    '.zst': ArtefactType.DD_ZST,
+    '.gz':  ArtefactType.DD_GZ,
+    '.bz2': ArtefactType.DD_BZ2,
+}
+
+# Raw-sector base extensions eligible for the compressed-image promotion above.
+_RAW_SECTOR_PROMOTABLE = frozenset(
+    ext for ext, atype in _PROMOTABLE_EXTENSIONS.items()
+    if atype == ArtefactType.RAW_SECTOR
+)
+
+
+def _promotable_artefact_type(filename: str):
+    """Resolve an extracted file's name to a promotable ArtefactType, or None.
+
+    Compound compressed disk-image names (``drive.dd.zst``, ``disk.img.gz`` …)
+    map to the matching compressed raw-sector type so they are decompressed and
+    analysed like a directly-uploaded compressed image.  A compressor suffix on
+    anything that is not a raw-sector image (``notes.txt.gz``, ``data.tar.gz``)
+    is ignored.  Plain extensions fall back to ``_PROMOTABLE_EXTENSIONS``.
+    """
+    p = Path(filename.lower())
+    compressor_type = _PROMOTABLE_COMPRESSORS.get(p.suffix)
+    if compressor_type is not None:
+        if Path(p.stem).suffix in _RAW_SECTOR_PROMOTABLE:
+            return compressor_type
+        return None
+    return _PROMOTABLE_EXTENSIONS.get(p.suffix)
+
 
 def _sniff_archive_magic(file_path: Path):
     """Sniff the first bytes of a file to detect mis-labelled archives.
@@ -329,8 +364,7 @@ def _extract_top_level_archive(
     for file_path in extract_dir.rglob('*'):
         if not file_path.is_file():
             continue
-        ext = file_path.suffix.lower()
-        artefact_type = self._PROMOTABLE_EXTENSIONS.get(ext)
+        artefact_type = _promotable_artefact_type(file_path.name)
         if artefact_type is None:
             continue
         resp = self.api.register_derived_artefact(
