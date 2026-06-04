@@ -345,8 +345,13 @@ class ArcologyClient:
 	                          artefact_type: str = None, description: str = None,
 	                          auto_analyse: bool = True,
 	                          hints: dict = None,
-	                          max_retries: int = 3) -> dict | None:
-		"""Upload with exponential-backoff retry. Returns None on persistent failure."""
+	                          max_retries: int = 3,
+	                          progress_cb=None) -> dict | None:
+		"""Upload with exponential-backoff retry. Returns None on persistent failure.
+
+		progress_cb(chunks_done, total_chunks) is forwarded to the chunked
+		uploader (files larger than CHUNKED_THRESHOLD only).
+		"""
 		for attempt in range(max_retries):
 			try:
 				return self.upload_artefact(
@@ -355,6 +360,7 @@ class ArcologyClient:
 					description=description,
 					auto_analyse=auto_analyse,
 					hints=hints,
+					progress_cb=progress_cb,
 				)
 			except (ArcologyError, requests.ConnectionError) as exc:
 				log.warning('Upload attempt %d failed: %s', attempt + 1, exc)

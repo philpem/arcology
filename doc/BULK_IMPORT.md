@@ -30,6 +30,11 @@ arco bulk-import \
     --archive-dir ~/my-discs --tag discs --flat \
     --api-key YOUR_KEY
 
+# Import hard-drive images, each zipped with its ddrescue map / readme / logs:
+arco bulk-import \
+    --archive-dir ~/hdd-images --tag hdd-archive --bundle-sidecars \
+    --api-key YOUR_KEY
+
 # Import the arcarc.nl archive (preset handles tag, prefix, categories):
 arco bulk-import \
     --archive-dir ~/arcarc/archive --arcarc \
@@ -92,10 +97,70 @@ are never collapsed together.
 Pass `--keep-compressed-duplicates` to disable this and upload every recognised
 form. Dropped forms are reported during the scan (use `-v` for per-file detail).
 
-> A `.zip`/`.7z` of a dd image may also bundle sidecar files such as a ddrescue
-> `.map` and a readme — these are uploaded inside the archive and Arcology makes
-> the readme viewable. (Bundling *loose* sidecar files alongside an image into a
-> single upload is planned as a future enhancement.)
+### Sidecar bundling (`--bundle-sidecars`)
+
+Imaging a drive often leaves loose companion files next to the image — a
+ddrescue `.map`, a readme, a `.log`, checksum files. With `--bundle-sidecars`,
+each disk image is zipped together with its sidecars and that single zip is
+uploaded in place of the bare image. Arcology extracts the archive, makes the
+readme viewable, and analyses the image inside; ddrescue `.map` support is
+planned.
+
+Sidecars are matched **within the image's own directory** and comprise:
+
+- any non-image file sharing the image's base name — e.g. for `drive.dd.zst`:
+  `drive.map`, `drive.log`, `drive.txt`, `drive.dd.txt`;
+- any `README*` / `CHANGELOG*` / `CHECKSUM*` file and any `.md5` / `.sha1` /
+  `.sha256` / `.sha512` checksum file in that directory, even if named
+  differently.
+
+Compressed-duplicate filtering runs **first**, so when both `drive.dd` and
+`drive.dd.zst` exist, the `.dd.zst` is the form placed in the zip. The bundle is
+uploaded as `<base>.zip`.
+
+**Compression inside the bundle.** The zip container itself only uses STORED or
+DEFLATE, so the worker's `unzip` can always extract it. How the image is added
+depends on whether it is already compressed:
+
+- An **already-compressed** image (`.dd.zst` / `.gz` / `.bz2`) or archive is
+  stored verbatim — no pointless recompression.
+- A **raw, uncompressed** image (`.dd`, `.img`, `.raw`, …) is compressed with
+  Zstandard (via the `zstandard` Python library — a CLI dependency — streamed
+  straight into the zip, no temporary `.zst` file) into a standalone `.zst`
+  member that is *stored* in the zip. The worker's `unzip` extracts the `.zst`,
+  then its existing `.zst` handling decompresses it — so a never-compressed
+  image still ends up compressed for transfer and storage. If `zstandard` is
+  somehow unavailable it falls back to fast Deflate (zlib level 1, the
+  `gzip --fast` equivalent).
+- Text sidecars are always lightly deflated.
+
+Notes:
+
+- Only raw-sector / disk images are bundled. A file that is already a `.zip` /
+  `.7z` archive, or a non-image type (`.iso`, `.scp`, `.pdf`), is uploaded as-is.
+- An image with no sidecars is uploaded directly (no pointless single-file zip).
+- In a folder holding several images, a *generic* readme/checksum (one not tied
+  to a base name) is copied into each image's bundle. In the common
+  one-folder-per-drive layout there is exactly one image, so no duplication.
+- Bundling writes a temporary zip on the order of the (compressed) image size —
+  for a raw image, the intermediate `.zst` plus the zip copy of it. Use
+  `--bundle-tmpdir` to place this on a filesystem with enough free space
+  (default: system temp).
+
+### Skipping over-large files (`--max-size`)
+
+`--max-size SIZE` skips any **source file** larger than the limit and logs that
+it happened, rather than uploading it. Useful when an archive contains the
+occasional multi-hundred-gigabyte raw image you do not want to transfer.
+
+```bash
+arco bulk-import --archive-dir ~/hdd-images --tag hdd --max-size 50G
+```
+
+`SIZE` accepts a plain byte count or a `K`/`M`/`G`/`T` suffix (1024-based; a
+trailing `B` is allowed, e.g. `50GB`). The limit is measured on the source file
+on disk, **before** any bundling or compression — so a raw `drive.dd` is judged
+by its uncompressed size. Skipped files are listed in the run summary.
 
 ### Artefact labels
 
@@ -313,6 +378,8 @@ arco bulk-import --archive-dir ~/arcarc/archive --arcarc --categories Apps,Games
 | `--flat` | off | Treat archive-dir as one collection (one Item, all files) |
 | `--smart-labels` | off | Use smart label heuristic (strip letter groups, detect self-describing filenames) |
 | `--keep-compressed-duplicates` | off | Upload every recognised image form instead of collapsing raw/compressed/archived duplicates to the best one |
+| `--bundle-sidecars` | off | Zip each disk image with its loose sidecars (`.map`, readme, `.log`, checksums) and upload that instead of the bare image |
+| `--bundle-tmpdir PATH` | *(system temp)* | Directory for temporary bundle zips; needs free space ≈ image size |
 | `--no-auto-analyse` | off | Upload without triggering automatic analysis |
 | `--arcarc` | off | Preset for arcarc.nl (see below) |
 | `--resume` | off | Skip already-uploaded Artefacts |
@@ -367,3 +434,15 @@ analysis results) via the API's cascading delete.
   Artefacts that already exist on each Item.
 - **Use `--smart-labels`** when your archive uses single-character alphabetical
   groupings (A/, B/, ...) or has filenames that repeat the parent directory name.
+- **Use `--bundle-sidecars` / `--max-size`** for hard-drive imaging output —
+  bundle each image with its ddrescue map/readme/logs, and skip the occasional
+  image too large to upload.
+
+### Progress during long uploads
+
+Large images (over 100 MB) upload in chunks. When running in an interactive
+terminal, a live percentage bar (`uploading <label>: 42.0% (n/m chunks)`) is
+shown so a slow transfer doesn't look like a hang; when output is redirected to
+a file the bar is suppressed. With `--bundle-sidecars`, the per-image line is
+printed *before* compression begins (and shows the image size), so the slow
+compress step is visible too.

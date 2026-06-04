@@ -7,8 +7,15 @@ Arcology Item, with all importable files as Artefacts.
 
 import logging
 import sys
+import tempfile
+import zipfile
 from pathlib import Path
 from ..client import ArcologyClient, ArcologyError
+
+try:
+    import zstandard
+except ImportError:  # pragma: no cover - zstandard is a declared dependency
+    zstandard = None
 
 log = logging.getLogger('arco.bulk-import')
 
@@ -222,6 +229,179 @@ def _dedupe_image_forms(files: list[dict]) -> tuple[list[dict], list[dict]]:
         kept.extend(survivors)
         dropped.extend(f for f in group if id(f) not in survivor_ids)
     return kept, dropped
+
+
+# ---------------------------------------------------------------------------
+# Sidecar bundling (--bundle-sidecars)
+# ---------------------------------------------------------------------------
+
+# Loose files in an image's directory that are bundled with it, even when they
+# do not share the image's base name.
+_SIDECAR_NAME_PREFIXES = ('readme', 'read.me', 'changelog', 'changes',
+                          'checksum', 'md5', 'sha1', 'sha256', 'sha512')
+_SIDECAR_EXTENSIONS = ('.md5', '.sha1', '.sha256', '.sha512')
+
+
+def _bundle_eligible(filename: str) -> bool:
+    """True for raw-sector images (raw or compressed) that may carry sidecars.
+
+    Archive containers and non-image types (iso/scp/pdf/…) are never bundled.
+    """
+    return _form_rank(filename) in (_RANK_RAW, _RANK_COMPRESSED)
+
+
+def _is_sidecar(entry: Path, base: str) -> bool:
+    """Whether *entry* should be bundled with an image whose base name is *base*."""
+    if not entry.is_file() or _is_importable(entry):
+        return False
+    name = entry.name.lower()
+    if name.startswith(base + '.'):
+        return True
+    if entry.suffix.lower() in _SIDECAR_EXTENSIONS:
+        return True
+    return any(name.startswith(p) for p in _SIDECAR_NAME_PREFIXES)
+
+
+def _find_sidecars(image_path: Path, base: str) -> list[Path]:
+    """Loose sidecar files in *image_path*'s directory to bundle with it."""
+    try:
+        siblings = sorted(image_path.parent.iterdir())
+    except OSError:
+        return []
+    return [e for e in siblings if e != image_path and _is_sidecar(e, base)]
+
+
+def _image_is_precompressed(filename: str) -> bool:
+    """True if the image is already a compressed/archived form not worth recompressing."""
+    ext = _matched_ext(filename) or ''
+    if _form_rank(filename) == _RANK_ARCHIVE:
+        return True
+    return any(ext.endswith(c) and ext != c for c in COMPRESSORS)
+
+
+# Fast zstd: level 3 (zstd's default — fast, good ratio).  The worker
+# decompresses any level with `zstd -d`, so this is a client-side speed/size
+# choice only.
+_ZSTD_LEVEL = 3
+
+# Errors that may be raised while building a bundle (file IO or compression).
+_BUNDLE_ERRORS = (OSError,) if zstandard is None else (OSError, zstandard.ZstdError)
+
+
+def _add_compressed_image(zf: zipfile.ZipFile, image_path: Path) -> None:
+    """Add a raw, uncompressed image to *zf*, compressing it for transfer.
+
+    Preferred path: stream a Zstandard-compressed ``.zst`` member, *stored* in
+    the zip — the worker's ``unzip`` extracts the `.zst` and its existing `.zst`
+    handling decompresses it.  Streaming avoids writing a separate scratch file.
+    Falls back to fast Deflate (zlib level 1, the ``gzip --fast`` equivalent)
+    when the ``zstandard`` library is unavailable.
+    """
+    if zstandard is None:
+        zf.write(image_path, arcname=image_path.name,
+                 compress_type=zipfile.ZIP_DEFLATED, compresslevel=1)
+        return
+    info = zipfile.ZipInfo(image_path.name + '.zst')
+    info.compress_type = zipfile.ZIP_STORED
+    cctx = zstandard.ZstdCompressor(level=_ZSTD_LEVEL, threads=-1)
+    # Pass the source size so the content size is written into the zstd frame
+    # header, making the frame self-describing for any decompressor.
+    size = image_path.stat().st_size
+    with open(image_path, 'rb') as src, zf.open(info, 'w') as dst:
+        cctx.copy_stream(src, dst, size=size)
+
+
+def _build_sidecar_bundle(image_path: Path, sidecars: list[Path],
+                          base: str, tmp_dir: str) -> Path:
+    """Write a zip of the image plus its text sidecars.
+
+    The zip container itself only ever uses STORED or DEFLATE so the worker's
+    Info-ZIP ``unzip`` can extract it.  An already-compressed image (`.dd.zst`,
+    archive) is stored verbatim; a raw uncompressed image is zstd-compressed (see
+    :func:`_add_compressed_image`).  Text sidecars are lightly deflated.  Returns
+    the path to the created zip.
+    """
+    zip_path = Path(tmp_dir) / f'{base}.zip'
+    with zipfile.ZipFile(zip_path, 'w') as zf:
+        if _image_is_precompressed(image_path.name):
+            zf.write(image_path, arcname=image_path.name,
+                     compress_type=zipfile.ZIP_STORED)
+        else:
+            _add_compressed_image(zf, image_path)
+        for sidecar in sidecars:
+            zf.write(sidecar, arcname=sidecar.name,
+                     compress_type=zipfile.ZIP_DEFLATED, compresslevel=1)
+    return zip_path
+
+
+# ---------------------------------------------------------------------------
+# Size limit (--max-size)
+# ---------------------------------------------------------------------------
+
+_SIZE_UNITS = {'': 1, 'K': 1024, 'M': 1024 ** 2, 'G': 1024 ** 3, 'T': 1024 ** 4}
+
+
+def _parse_size(text: str) -> int:
+    """Parse a human-readable size (e.g. '50G', '500M', '1048576') into bytes.
+
+    Suffixes K/M/G/T are binary multiples (1024-based); a trailing 'B' is
+    allowed (e.g. '50GB').  Raises ValueError on malformed input.
+    """
+    t = text.strip().upper()
+    if t.endswith('B'):
+        t = t[:-1]
+    if not t:
+        raise ValueError(f'invalid size: {text!r}')
+    unit = t[-1] if t[-1] in _SIZE_UNITS else ''
+    number = t[:-1] if unit else t
+    if not number:
+        raise ValueError(f'invalid size: {text!r}')
+    try:
+        value = float(number)
+    except ValueError:
+        raise ValueError(f'invalid size: {text!r}') from None
+    if value < 0:
+        raise ValueError(f'invalid size: {text!r}')
+    return int(value * _SIZE_UNITS[unit])
+
+
+def _file_size(path: Path) -> int:
+    """On-disk size of *path* in bytes, or 0 if it cannot be stat()ed."""
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def _human_size(n: int) -> str:
+    """Format a byte count as a human-readable string (e.g. '12.3 GiB')."""
+    size = float(n)
+    for unit in ('B', 'KiB', 'MiB', 'GiB', 'TiB'):
+        if size < 1024 or unit == 'TiB':
+            return f'{int(size)} {unit}' if unit == 'B' else f'{size:.1f} {unit}'
+        size /= 1024
+    return f'{n} B'
+
+
+def _upload_progress(label: str):
+    """Return a progress callback for chunked uploads, or None.
+
+    Only large files (> CHUNKED_THRESHOLD) report progress, and a live updating
+    bar is only drawn on an interactive terminal — when output is redirected we
+    stay silent to avoid flooding the log with carriage-return spam.
+    """
+    if not sys.stderr.isatty():
+        return None
+
+    def report(done: int, total: int):
+        pct = (done / total * 100) if total else 100.0
+        sys.stderr.write(f'\r      uploading {label}: {pct:5.1f}% '
+                         f'({done}/{total} chunks)')
+        if done >= total:
+            sys.stderr.write('\n')
+        sys.stderr.flush()
+
+    return report
 
 
 def _apply_dedupe(files: list[dict], label: str) -> list[dict]:
@@ -446,6 +626,15 @@ def cmd_bulk_import(client: ArcologyClient, args):
 
     label_fn = _make_label_arcarc if args.smart_labels else _make_label_simple
 
+    max_size = None
+    if args.max_size:
+        try:
+            max_size = _parse_size(args.max_size)
+        except ValueError:
+            print(f"Error: invalid --max-size value '{args.max_size}' "
+                  "(use e.g. 50G, 500M)", file=sys.stderr)
+            sys.exit(1)
+
     # Discover files
     dedupe = not args.keep_compressed_duplicates
     log.info('Scanning %s ...', archive_dir)
@@ -483,7 +672,17 @@ def cmd_bulk_import(client: ArcologyClient, args):
             log.info('  Collection: %s (%d file(s))', coll_name, len(files))
             if args.verbose:
                 for f in files:
-                    log.info('    %s', f['label'])
+                    if max_size is not None and _file_size(f['path']) > max_size:
+                        log.info('    %s  (TOO BIG — will skip)', f['label'])
+                        continue
+                    sidecars = []
+                    if args.bundle_sidecars and _bundle_eligible(f['filename']):
+                        sidecars = _find_sidecars(f['path'], _image_base(f['filename']))
+                    if sidecars:
+                        log.info('    %s  (bundle +%d: %s)', f['label'], len(sidecars),
+                                 ', '.join(s.name for s in sidecars))
+                    else:
+                        log.info('    %s', f['label'])
         log.info('')
         log.info('Would create %d Item(s) with %d Artefact(s) total',
                  len(collections), total_files)
@@ -512,6 +711,7 @@ def cmd_bulk_import(client: ArcologyClient, args):
     uploaded_files = 0
     skipped_files = 0
     failed_uploads = []
+    oversized_files = []
 
     for coll_name, files in sorted(collections.items()):
         if args.name_prefix:
@@ -568,16 +768,57 @@ def cmd_bulk_import(client: ArcologyClient, args):
             filename = file_entry['filename']
             label = file_entry['label']
 
-            if args.resume and filename in existing_filenames:
-                log.debug('  [%d/%d] Skipping (exists): %s', j, len(files), filename)
+            # Skip files larger than the configured limit (measured on the
+            # source file, before any bundling/compression).
+            source_size = _file_size(filepath)
+            if max_size is not None and source_size > max_size:
+                log.warning('  [%d/%d] SKIPPED — %s exceeds --max-size (%s): %s',
+                            j, len(files), _human_size(source_size),
+                            _human_size(max_size), label)
+                oversized_files.append(file_entry['relative_path'])
+                continue
+
+            # Decide whether this image is bundled with loose sidecars, and
+            # what filename the upload will actually carry (a bundle uploads as
+            # <base>.zip, which matters for the resume check below).
+            sidecars = []
+            if args.bundle_sidecars and _bundle_eligible(filename):
+                sidecars = _find_sidecars(filepath, _image_base(filename))
+            upload_name = f'{_image_base(filename)}.zip' if sidecars else filename
+
+            if args.resume and upload_name in existing_filenames:
+                log.debug('  [%d/%d] Skipping (exists): %s', j, len(files), upload_name)
                 skipped_files += 1
                 continue
 
-            log.info('  [%d/%d] %s', j, len(files), label)
-            result = client.upload_artefact_retry(
-                item_uuid, str(filepath), label,
-                auto_analyse=not args.no_auto_analyse,
-            )
+            tmp_ctx = None
+            upload_path = str(filepath)
+            try:
+                if sidecars:
+                    # Log before building — compressing a large image can take a
+                    # while, so the user sees activity rather than a silent hang.
+                    log.info('  [%d/%d] %s  (bundling %s image + %d sidecar(s): %s...)',
+                             j, len(files), label, _human_size(source_size),
+                             len(sidecars), ', '.join(s.name for s in sidecars))
+                    tmp_ctx = tempfile.TemporaryDirectory(dir=args.bundle_tmpdir or None)
+                    bundle = _build_sidecar_bundle(filepath, sidecars,
+                                                   _image_base(filename), tmp_ctx.name)
+                    upload_path = str(bundle)
+                else:
+                    log.info('  [%d/%d] %s', j, len(files), label)
+
+                result = client.upload_artefact_retry(
+                    item_uuid, upload_path, label,
+                    auto_analyse=not args.no_auto_analyse,
+                    progress_cb=_upload_progress(label),
+                )
+            except _BUNDLE_ERRORS as e:
+                log.error('    FAILED to bundle/upload %s: %s', filename, e)
+                failed_uploads.append(file_entry['relative_path'])
+                continue
+            finally:
+                if tmp_ctx is not None:
+                    tmp_ctx.cleanup()
             if result and result.get('duplicate'):
                 log.debug('    -> skipped (duplicate of %s)', result.get('uuid', '?')[:8])
                 skipped_files += 1
@@ -595,7 +836,14 @@ def cmd_bulk_import(client: ArcologyClient, args):
     log.info('Items created:   %d', created_items)
     log.info('Files uploaded:  %d', uploaded_files)
     log.info('Files skipped:   %d', skipped_files)
+    log.info('Files too big:   %d', len(oversized_files))
     log.info('Files failed:    %d', len(failed_uploads))
+
+    if oversized_files:
+        log.info('')
+        log.info('=== Skipped (exceeded --max-size) ===')
+        for path in oversized_files:
+            log.info('  %s', path)
 
     if failed_uploads:
         log.info('')

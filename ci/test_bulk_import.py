@@ -4,18 +4,26 @@ compressed-duplicate filtering logic (stdlib + cli package only).
 """
 
 import os
+import shutil
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+from cli.arccli.commands import bulk_import as bi  # noqa: E402
 from cli.arccli.commands.bulk_import import (  # noqa: E402
+    _build_sidecar_bundle,
+    _bundle_eligible,
     _dedupe_image_forms,
+    _find_sidecars,
     _image_base,
+    _image_is_precompressed,
     _is_importable,
     _matched_ext,
+    _parse_size,
     discover_files,
     discover_files_flat,
 )
@@ -122,7 +130,6 @@ class TestDiscoverFiles(unittest.TestCase):
 
     @staticmethod
     def _rmtree(d):
-        import shutil
         shutil.rmtree(d, ignore_errors=True)
 
     def test_depth_one_files_grouped_under_archive_dir(self):
@@ -151,6 +158,125 @@ class TestDiscoverFiles(unittest.TestCase):
         root = self._tree({'a/foo.dd': b'x', 'a/foo.zip': b'x', 'b/baz.img': b'x'})
         files = discover_files_flat(root, None)
         self.assertEqual(_names(files), ['baz.img', 'foo.zip'])
+
+
+class TestSidecarBundling(unittest.TestCase):
+    def _tree(self, files):
+        d = tempfile.mkdtemp()
+        self.addCleanup(self._rmtree, d)
+        for rel, data in files.items():
+            p = Path(d) / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(data)
+        return Path(d)
+
+    @staticmethod
+    def _rmtree(d):
+        shutil.rmtree(d, ignore_errors=True)
+
+    def test_bundle_eligible(self):
+        self.assertTrue(_bundle_eligible('foo.dd'))
+        self.assertTrue(_bundle_eligible('foo.dd.zst'))
+        self.assertTrue(_bundle_eligible('foo.img'))
+        self.assertFalse(_bundle_eligible('foo.zip'))   # archive
+        self.assertFalse(_bundle_eligible('foo.iso'))   # non-image
+        self.assertFalse(_bundle_eligible('foo.pdf'))
+
+    def test_find_sidecars_base_name_and_generic(self):
+        root = self._tree({
+            'foo.dd.zst': b'x', 'foo.map': b'x', 'foo.log': b'x',
+            'foo.txt': b'x',             # per-drive readme sharing the base name
+            'README.txt': b'x', 'SHA256SUMS': b'x', 'notes.md5': b'x',
+            'bar.dd.zst': b'x',          # a different image — not a sidecar
+            'foo.dd': b'x',              # importable — not a sidecar
+        })
+        img = root / 'foo.dd.zst'
+        names = sorted(p.name for p in _find_sidecars(img, 'foo'))
+        self.assertEqual(
+            names,
+            ['README.txt', 'SHA256SUMS', 'foo.log', 'foo.map', 'foo.txt', 'notes.md5'])
+
+    def test_find_sidecars_per_drive_readme_with_image_name(self):
+        # A readme named after the full image (harddrive.dd.txt) is bundled.
+        root = self._tree({'harddrive.dd.zst': b'x', 'harddrive.dd.txt': b'x'})
+        names = [p.name for p in _find_sidecars(root / 'harddrive.dd.zst', 'harddrive')]
+        self.assertEqual(names, ['harddrive.dd.txt'])
+
+    def test_find_sidecars_excludes_other_images(self):
+        root = self._tree({'foo.dd.zst': b'x', 'bar.img': b'x', 'foo.map': b'x'})
+        names = [p.name for p in _find_sidecars(root / 'foo.dd.zst', 'foo')]
+        self.assertEqual(names, ['foo.map'])
+
+    def test_find_sidecars_none(self):
+        root = self._tree({'foo.dd.zst': b'x'})
+        self.assertEqual(_find_sidecars(root / 'foo.dd.zst', 'foo'), [])
+
+    def test_build_bundle_stores_precompressed_image(self):
+        # An already-compressed .dd.zst image is stored verbatim, never recompressed.
+        root = self._tree({'foo.dd.zst': b'COMPRESSED' * 100,
+                           'foo.map': b'text ' * 100})
+        with tempfile.TemporaryDirectory() as tmp:
+            zip_path = _build_sidecar_bundle(
+                root / 'foo.dd.zst', [root / 'foo.map'], 'foo', tmp)
+            self.assertEqual(zip_path.name, 'foo.zip')
+            with zipfile.ZipFile(zip_path) as zf:
+                info = {zi.filename: zi for zi in zf.infolist()}
+                self.assertEqual(set(info), {'foo.dd.zst', 'foo.map'})
+                self.assertEqual(info['foo.dd.zst'].compress_type,
+                                 zipfile.ZIP_STORED)
+                self.assertEqual(info['foo.map'].compress_type,
+                                 zipfile.ZIP_DEFLATED)
+
+    def test_build_bundle_compresses_raw_image(self):
+        # A raw uncompressed .dd is compressed (zstd member if available, else
+        # deflated) — never stored at full size.
+        raw = b'\x00' * 50000          # highly compressible
+        root = self._tree({'foo.dd': raw, 'foo.map': b'm'})
+        with tempfile.TemporaryDirectory() as tmp:
+            zip_path = _build_sidecar_bundle(
+                root / 'foo.dd', [root / 'foo.map'], 'foo', tmp)
+            with zipfile.ZipFile(zip_path) as zf:
+                names = set(zf.namelist())
+                info = {zi.filename: zi for zi in zf.infolist()}
+                if bi.zstandard is not None:
+                    # zstd path: image becomes a stored .dd.zst member
+                    self.assertIn('foo.dd.zst', names)
+                    self.assertNotIn('foo.dd', names)
+                    self.assertEqual(info['foo.dd.zst'].compress_type,
+                                     zipfile.ZIP_STORED)
+                    self.assertLess(info['foo.dd.zst'].file_size, len(raw))
+                else:
+                    # fallback: raw image deflated inside the zip
+                    self.assertIn('foo.dd', names)
+                    self.assertEqual(info['foo.dd'].compress_type,
+                                     zipfile.ZIP_DEFLATED)
+                    self.assertLess(info['foo.dd'].compress_size, len(raw))
+
+    def test_image_is_precompressed(self):
+        self.assertTrue(_image_is_precompressed('foo.dd.zst'))
+        self.assertTrue(_image_is_precompressed('foo.img.gz'))
+        self.assertTrue(_image_is_precompressed('foo.zip'))    # archive
+        self.assertFalse(_image_is_precompressed('foo.dd'))
+        self.assertFalse(_image_is_precompressed('foo.img'))
+
+
+class TestParseSize(unittest.TestCase):
+    def test_units(self):
+        self.assertEqual(_parse_size('1024'), 1024)
+        self.assertEqual(_parse_size('1K'), 1024)
+        self.assertEqual(_parse_size('500M'), 500 * 1024 ** 2)
+        self.assertEqual(_parse_size('50G'), 50 * 1024 ** 3)
+        self.assertEqual(_parse_size('2T'), 2 * 1024 ** 4)
+
+    def test_suffix_b_and_case_and_fraction(self):
+        self.assertEqual(_parse_size('50GB'), 50 * 1024 ** 3)
+        self.assertEqual(_parse_size('50g'), 50 * 1024 ** 3)
+        self.assertEqual(_parse_size('1.5G'), int(1.5 * 1024 ** 3))
+
+    def test_invalid(self):
+        for bad in ('', 'abc', 'G', '-5G', '5X'):
+            with self.assertRaises(ValueError):
+                _parse_size(bad)
 
 
 if __name__ == '__main__':
