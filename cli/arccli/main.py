@@ -175,6 +175,9 @@ def main():
 	bulk_parser.add_argument('--bundle-tmpdir', default=None,
 	                         help='Directory for temporary bundle zips (default: system '
 	                              'temp). Needs free space roughly equal to the image size.')
+	bulk_parser.add_argument('--max-size', default=None, metavar='SIZE',
+	                         help='Skip (and log) any source file larger than SIZE, e.g. '
+	                              '50G, 500M. Suffixes K/M/G/T are 1024-based.')
 	bulk_parser.add_argument('--flat', action='store_true',
 	                         help='Treat archive-dir as a single collection')
 	bulk_parser.add_argument('--arcarc', action='store_true',
