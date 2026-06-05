@@ -253,13 +253,16 @@
                             {% set ns = namespace(types=[]) %}
                             {% for d in artefact.derived_artefacts recursive %}
                             {% set _dt = d.artefact_type | enum_value('unknown') %}
-                            {% if _dt not in ns.types %}{% set ns.types = ns.types + [_dt] %}{% endif %}
+                            {# Sidecar/companion files are shown on the artefact page, not summarised here. #}
+                            {% if _dt != 'sidecar' and _dt not in ns.types %}{% set ns.types = ns.types + [_dt] %}{% endif %}
                             {% if d.derived_artefacts %}{{ loop(d.derived_artefacts) }}{% endif %}
                             {% endfor %}
+                            {% if ns.types %}
                             <div class="ms-3 mt-1 small">
                                 <i class="bi bi-arrow-return-right text-muted me-1"></i>
                                 {% for t in ns.types %}<span class="badge bg-info text-dark">{{ t.upper().replace('_', ' ') }}</span>{% endfor %}
                             </div>
+                            {% endif %}
                             {% endif %}
                         </div>
                         <div class="text-end">

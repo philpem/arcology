@@ -51,8 +51,20 @@ class ArtefactType(enum.Enum):
     # Common image formats (raster and vector metafiles)
     IMAGE        = "image"           # JPEG, PNG, GIF, BMP, TIFF, WebP, PCX, TGA, WMF, EMF
 
+    # Companion/metadata files attached to another artefact (e.g. a disk image's
+    # ddrescue .map, readme, or checksum files bundled alongside it).
+    SIDECAR      = "sidecar"
+
     # Unknown - needs manual identification
     UNKNOWN    = "unknown"
+
+
+# Compressed raw-sector (whole-disk) image types — the forms a disk-image bundle
+# transforms into.  Single source of truth for "is this a compressed disk image"
+# so the worker detector and the web transform endpoint agree.
+COMPRESSED_RAW_SECTOR_TYPES = frozenset({
+    ArtefactType.DD_ZST, ArtefactType.DD_GZ, ArtefactType.DD_BZ2,
+})
 
 
 class AnalysisType(enum.Enum):

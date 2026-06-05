@@ -520,6 +520,7 @@ class AnalysisWorker:
     process_archive_detect        = _analyses.process_archive_detect
     process_archive_extract       = _analyses.process_archive_extract
     _extract_top_level_archive    = _analyses._extract_top_level_archive
+    _handle_disk_image_bundle     = _analyses._handle_disk_image_bundle
     _sniff_archive_magic          = staticmethod(_analyses._sniff_archive_magic)
     _is_riscos_zip                = staticmethod(_analyses._is_riscos_zip)
     _PROMOTABLE_EXTENSIONS        = _analyses._PROMOTABLE_EXTENSIONS

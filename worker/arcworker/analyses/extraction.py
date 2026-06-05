@@ -9,7 +9,8 @@ detected archive — at top level or nested).
 import json
 import shutil
 from pathlib import Path
-from shared.enums import AnalysisType, ArtefactType
+from shared.bundle import BUNDLE_MARKER, is_sidecar_name
+from shared.enums import COMPRESSED_RAW_SECTOR_TYPES, AnalysisType, ArtefactType
 from ..config import log
 from ..tools import (
     decompress_single_file,
@@ -26,8 +27,10 @@ from ..tools import (
     extract_zip,
     extract_zip_riscos,
     has_riscos_zip_metadata,
+    list_zip_member_names,
     parse_iso_riscos_filetypes,
     read_fat_volume_label,
+    read_zip_comment,
 )
 from ..tools.extraction import _parse_dim_report, convert_fcfs_to_raw
 from ..tools.iso9660 import parse_iso9660_pvd
@@ -158,6 +161,44 @@ def _is_compressed_disk_image(filename: str) -> bool:
     uncompressed copy of the image into storage.
     """
     return _promotable_artefact_type(filename) in _PROMOTABLE_COMPRESSORS.values()
+
+
+def _image_base_name(filename: str) -> str:
+    """Base name of a (compressed) disk image: ``drive.dd.zst`` → ``drive``."""
+    p = Path(filename.lower())
+    if p.suffix in _PROMOTABLE_COMPRESSORS:
+        p = Path(p.stem)
+    return p.stem
+
+
+def _disk_image_bundle_member(zip_path: Path) -> str | None:
+    """Return the disk-image member if *zip_path* is an Arcology bundle, else None.
+
+    The (destructive) bundle transform replaces the uploaded artefact's bytes and
+    drops the zip, so it only fires when the CLI-written archive-comment marker is
+    present — a zip the user did not explicitly mark is never transformed, even if
+    its shape happens to match.  Checking the marker first (a cheap EOCD read)
+    also avoids parsing the central directory of every non-bundle zip.
+
+    The marked zip must still have exactly one compressed disk-image member and
+    only sidecar files, so a corrupt or mis-marked zip is left to normal
+    extraction rather than mangled.
+    """
+    if read_zip_comment(zip_path) != BUNDLE_MARKER:
+        return None
+    names = list_zip_member_names(zip_path)
+    if not names:
+        return None
+    members = [n for n in names if not n.endswith('/')]
+    images = [n for n in members if _is_compressed_disk_image(n)]
+    if len(images) != 1:
+        return None
+    image = images[0]
+    base = _image_base_name(image)
+    others = [n for n in members if n != image]
+    if all(is_sidecar_name(Path(n).name, base) for n in others):
+        return image
+    return None
 
 
 def _sniff_archive_magic(file_path: Path):
@@ -305,6 +346,19 @@ def _extract_top_level_archive(
         archive_type = ArchiveType.ZIP_RISCOS
         archive_info = get_archive_info(archive_type)
 
+    # Disk-image bundle: a plain ZIP of exactly one compressed disk image plus
+    # sidecars (ddrescue .map, readme, checksums).  Store the image as a single
+    # disk-image artefact rather than extracting a generic archive tree.  (Our
+    # bundles are plain ZIPs, never upgraded to ZIP_RISCOS.)
+    if archive_type == ArchiveType.ZIP:
+        image_member = _disk_image_bundle_member(input_path)
+        if image_member:
+            log.info(f"Detected disk-image bundle; primary image: {image_member}")
+            self._handle_disk_image_bundle(
+                analysis, artefact, work_dir, input_path, image_member
+            )
+            return
+
     # Dispatch to the correct extraction tool
     from functools import partial
 
@@ -411,6 +465,77 @@ def _extract_top_level_archive(
             partition.get('uuid'),
             extraction_path=rel_output_path,
         )
+
+
+def _handle_disk_image_bundle(
+    self, analysis, artefact, work_dir, input_path, image_member
+):
+    """Store a disk-image bundle's image as the artefact; attach its sidecars.
+
+    Replaces the uploaded ZIP artefact's file with the (compressed) disk image it
+    wraps, then registers the remaining files (ddrescue .map, readme, checksums)
+    as small SIDECAR child artefacts of the image.  Nothing is duplicated — the
+    image is stored once, and each sidecar once.
+    """
+    analysis_id = analysis['id']
+
+    # Unpack the bundle into a scratch dir.  The image stays compressed; sidecars
+    # are tiny.  Nothing here is persisted directly — the image is uploaded to the
+    # artefact's own storage and each sidecar is registered as a child artefact.
+    scratch = work_dir / 'bundle'
+    result = extract_zip(input_path, scratch)
+    if not result.get('success'):
+        self.fail_analysis(
+            analysis_id,
+            result.get('error', 'Failed to unpack disk-image bundle'),
+            tool_name=result.get('tool'),
+        )
+        return
+
+    image_src = scratch / image_member
+    if not image_src.is_file():
+        self.fail_analysis(analysis_id, f'Bundle image member missing: {image_member}')
+        return
+
+    artefact_type = _promotable_artefact_type(image_member)
+
+    # Attach every other member as a SIDECAR child artefact, BEFORE the transform.
+    # The transform is the irreversible step (it drops the zip and makes any
+    # re-run a no-op via the idempotency guard), so the sidecars must be durably
+    # committed first — otherwise a crash between transform and this loop would
+    # lose them with no recovery.  Registration is idempotent on retry (the
+    # deterministic per-(analysis, file) key dedups server-side).
+    sidecar_count = 0
+    for path in sorted(scratch.rglob('*')):
+        if not path.is_file() or path == image_src:
+            continue
+        if self.api.register_derived_artefact(
+            analysis_id, label=path.name, source_path=path,
+            artefact_type=ArtefactType.SIDECAR, auto_analyse=False,
+        ):
+            sidecar_count += 1
+
+    # Transform the artefact in place: its stored file becomes the disk image,
+    # the old zip is dropped, and the disk-image analyses are queued server-side.
+    resp = self.api.transform_to_disk_image(
+        artefact['uuid'], analysis_id, image_src, artefact_type,
+        original_filename=Path(image_member).name,
+    )
+    if not resp:
+        self.fail_analysis(analysis_id, 'Failed to transform bundle into disk image')
+        return
+
+    self.complete_analysis(
+        analysis_id,
+        tool_name='bundle',
+        summary=f"Stored disk-image bundle as {artefact_type.value}"
+                + (f" with {sidecar_count} sidecar(s)" if sidecar_count else ""),
+        details=json.dumps({
+            'image_member': image_member,
+            'artefact_type': artefact_type.value,
+            'sidecar_count': sidecar_count,
+        }),
+    )
 
 
 @analysis_handler("file extraction")
@@ -864,6 +989,20 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
     # the shared extraction logic below after creating a partition.
     if not partition_uuid:
         artefact_type = artefact.get('artefact_type', '')
+        # Idempotency: a disk-image bundle transforms the artefact from ZIP to a
+        # compressed raw-sector type in place.  If the bundle ARCHIVE_EXTRACT is
+        # re-run after that transform already committed (e.g. the worker crashed
+        # between transform and complete_analysis, and the stale-job sweeper
+        # reset it to PENDING), the artefact is no longer an archive.  Treat the
+        # re-run as a successful no-op rather than failing on an unknown archive
+        # type.
+        if artefact_type in {t.value for t in COMPRESSED_RAW_SECTOR_TYPES}:
+            self.complete_analysis(
+                analysis_id,
+                tool_name='bundle',
+                summary='Disk-image bundle already transformed; nothing to extract',
+            )
+            return
         if not archive_type_str:
             # Map ArtefactType value → ArchiveType value.  Most share
             # the same string values (zip, tar_gz, rar).  ARC needs

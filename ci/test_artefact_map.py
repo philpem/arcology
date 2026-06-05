@@ -104,6 +104,15 @@ class TestDetectArtefactType(unittest.TestCase):
         self._check('DISC.DFI.GZ', ArtefactType.DFI)
 
 
+# Artefact types that intentionally have NO automatic analyses.  CHECKSUM_COMPUTE
+# is still queued for them on direct upload (it is added independent of
+# ANALYSIS_MAP), so an empty list is a deliberate "nothing else to do" — e.g.
+# SIDECAR companion files (ddrescue .map / readme / checksums attached to a disk
+# image).  Listing them here keeps the "every type is wired up on purpose" guard
+# while allowing a genuinely analysis-free type.
+_INTENTIONALLY_NO_ANALYSES = {ArtefactType.SIDECAR}
+
+
 class TestAnalysisMap(unittest.TestCase):
     """ANALYSIS_MAP maps ArtefactType → list[AnalysisType]."""
 
@@ -128,8 +137,14 @@ class TestAnalysisMap(unittest.TestCase):
         )
 
     def test_values_are_non_empty_lists(self):
-        """Every ArtefactType entry should map to at least one analysis."""
-        empty = [k for k, v in ANALYSIS_MAP.items() if not v]
+        """Every entry maps to ≥1 analysis, unless intentionally analysis-free.
+
+        An accidental empty list would silently drop a type's analyses, so the
+        only permitted empties are those explicitly declared in
+        _INTENTIONALLY_NO_ANALYSES.
+        """
+        empty = [k for k, v in ANALYSIS_MAP.items()
+                 if not v and k not in _INTENTIONALLY_NO_ANALYSES]
         self.assertFalse(empty, f'ANALYSIS_MAP entries with empty lists: {empty}')
 
     def test_all_artefact_types_covered(self):

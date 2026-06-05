@@ -20,6 +20,7 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import contains_eager, joinedload, selectinload
 from sqlalchemy.orm.exc import StaleDataError
+from shared.enums import COMPRESSED_RAW_SECTOR_TYPES
 from ..database import (
     _API_KEY_PERMISSION_ORDER,
     Analysis,
@@ -712,6 +713,89 @@ def update_artefact(uuid):
             artefact.media_metadata = json.dumps(existing)
         else:
             return error_response('media_metadata must be an object or null', 400)
+    db.session.commit()
+    return jsonify(artefact_to_dict(artefact))
+
+
+@blueprint.route('/artefacts/<string:uuid>/transform-to-disk-image', methods=['POST'])
+@require_auth('read_upload')
+def transform_to_disk_image(uuid):
+    """Replace a disk-image-bundle ZIP artefact's stored file with its image.
+
+    Worker-only.  The worker has already uploaded the extracted (compressed)
+    disk image to ``storage_path`` under ``uploads/``; this repoints the artefact
+    at it (type → compressed raw-sector), drops the old zip object from storage,
+    and queues the disk-image analyses.  The artefact stays top-level so its
+    UUID/URL are unchanged.  Idempotent: a retry that finds the artefact already
+    transformed returns the artefact unchanged.
+    """
+    if not _is_worker_request():
+        return error_response('Only the worker may transform artefacts', 403)
+    artefact = _get_artefact_or_404(uuid)
+    data, error = _json_object(required=True)
+    if error:
+        return error
+    missing = _require_fields(data, 'storage_path', 'original_filename', 'artefact_type')
+    if missing:
+        return missing
+    if not _validate_storage_path(data['storage_path']):
+        return error_response('Invalid storage_path')
+    try:
+        new_type = ArtefactType(data['artefact_type'])
+    except ValueError:
+        return error_response('Invalid artefact_type')
+    if new_type not in COMPRESSED_RAW_SECTOR_TYPES:
+        return error_response('transform target must be a compressed raw-sector type', 400)
+
+    # Idempotency: a worker retry after the row was already switched is a no-op.
+    if (artefact.storage_path == data['storage_path']
+            and artefact.storage_directory == StorageDirectory.UPLOADS):
+        return jsonify(artefact_to_dict(artefact))
+
+    old_key = get_artefact_storage_key(artefact)
+
+    artefact.storage_path = data['storage_path']
+    artefact.storage_directory = StorageDirectory.UPLOADS
+    artefact.original_filename = data['original_filename']
+    # Only overwrite size/hashes when supplied, so an omitted field never nulls
+    # out integrity metadata (used by dedup and hash-DB linking).
+    if 'file_size' in data:
+        artefact.file_size = data['file_size']
+    if 'mime_type' in data:
+        artefact.mime_type = data['mime_type']
+    if 'md5' in data:
+        artefact.md5 = data['md5']
+    if 'sha256' in data:
+        artefact.sha256 = data['sha256']
+    # The stored bytes are now a disk image, so the type MUST reflect that — even
+    # if a ZIP type was manually pinned, that pin described content that no longer
+    # exists, and leaving it would re-queue ARCHIVE_EXTRACT against a raw image.
+    artefact.artefact_type = new_type
+
+    try:
+        db.session.flush()
+    except IntegrityError:
+        # The image content already exists in this item (uq_artefact_item_sha256).
+        # Roll back (the old zip is untouched — it is deleted only after a
+        # successful flush) and report cleanly instead of 500ing.
+        db.session.rollback()
+        return error_response(
+            'An artefact with this image content already exists in the item', 409)
+
+    # Drop the old zip object.  Best-effort: an orphaned object is recoverable
+    # garbage, whereas losing the just-applied transform would be worse.
+    try:
+        current_app.storage.delete(old_key)
+    except Exception as e:
+        current_app.logger.warning(
+            f"transform_to_disk_image: failed to delete old object {old_key}: {e}"
+        )
+
+    # When the worker supplied the image's hashes, skip the redundant
+    # CHECKSUM_COMPUTE that would re-read the whole image just to recompute them;
+    # otherwise let it run so the hashes are correct.
+    skip = ['CHECKSUM_COMPUTE'] if ('md5' in data and 'sha256' in data) else []
+    queue_analyses_for_artefact(artefact, commit=False, skip_analyses=skip)
     db.session.commit()
     return jsonify(artefact_to_dict(artefact))
 

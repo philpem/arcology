@@ -15,6 +15,7 @@ from .archives import (
     extract_zip,
     extract_zip_riscos,
     has_riscos_zip_metadata,
+    list_zip_member_names,
     read_zip_comment,
 )
 from .base import (
@@ -94,6 +95,7 @@ __all__ = [
     'extract_zip',
     'extract_zip_riscos',
     'has_riscos_zip_metadata',
+    'list_zip_member_names',
     'read_zip_comment',
     'extract_tar',
     'extract_rar',

@@ -102,9 +102,13 @@ form. Dropped forms are reported during the scan (use `-v` for per-file detail).
 Imaging a drive often leaves loose companion files next to the image — a
 ddrescue `.map`, a readme, a `.log`, checksum files. With `--bundle-sidecars`,
 each disk image is zipped together with its sidecars and that single zip is
-uploaded in place of the bare image. Arcology extracts the archive, makes the
-readme viewable, and analyses the image inside; ddrescue `.map` support is
-planned.
+uploaded in place of the bare image. The bundle is marked so Arcology
+recognises it: rather than extracting it as a generic archive, it stores the
+**image itself as a single disk-image artefact** (one copy, no decompressed or
+duplicated copies) and attaches the sidecars as small **companion (SIDECAR)
+artefacts** of the image. The image is then analysed like a directly-uploaded
+compressed image, and the `.map`/readme remain downloadable alongside it
+(inline ddrescue `.map` viewing is planned).
 
 Sidecars are matched **within the image's own directory** and comprise:
 
