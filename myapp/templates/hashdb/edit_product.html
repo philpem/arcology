@@ -1,5 +1,5 @@
 {% extends "_base.html" %}
-{% from '_confirm_modal.html' import modal_trigger, danger_modal, delete_inline %}
+{% from '_confirm_modal.html' import modal_trigger, danger_modal, delete_trigger, delete_confirm_modal %}
 {% block page_title %}{{ product.title }} — {{ database.name }}{% endblock %}
 
 {% block content %}
@@ -218,9 +218,9 @@
                 </td>
                 {% if user_can_write %}
                 <td class="text-nowrap">
-                    {{ delete_inline('del-kf-'~kf.id,
+                    {{ delete_trigger(
                         url_for('myapp_blueprints_hashdb.delete_known_file', db_id=database.id, pid=product.id, fid=kf.id),
-                        csrf_token(), kf.filename, title='Delete File',
+                        kf.filename, title='Delete File',
                         trigger_size='btn-sm py-0', aria_label='Delete '~kf.filename) }}
                 </td>
                 {% endif %}
@@ -264,6 +264,10 @@
 </script>
 {% endif %}
 
+{% endblock %}
+
+{% block modals %}
+{{ super() }}
 {% if user_can_write %}
 {% call danger_modal('deleteProductModal', 'Delete Product',
     url_for('myapp_blueprints_hashdb.delete_known_product', db_id=database.id, pid=product.id), csrf_token()) %}
@@ -272,4 +276,5 @@
 <p class="mb-0 text-danger"><i class="bi bi-exclamation-triangle-fill"></i> This cannot be undone.</p>
 {% endcall %}
 {% endif %}
+{{ delete_confirm_modal(csrf_token()) }}
 {% endblock %}

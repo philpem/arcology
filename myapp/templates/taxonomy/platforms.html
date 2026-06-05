@@ -1,5 +1,5 @@
 {% extends "_base.html" %}
-{% from '_confirm_modal.html' import delete_inline %}
+{% from '_confirm_modal.html' import delete_trigger, delete_confirm_modal %}
 {% block page_title %}Platforms{% endblock %}
 
 {% block content %}
@@ -24,9 +24,9 @@
             <div>
                 <a href="{{ url_for('myapp_blueprints_taxonomy.edit_platform', id=platform.id) }}" class="btn btn-sm btn-outline-primary" aria-label="Edit {{ platform.name }}"><i class="bi bi-pencil"></i></a>
                 {% if not platform.items and not platform.children %}
-                {{ delete_inline('del-plat-'~platform.id,
+                {{ delete_trigger(
                     url_for('myapp_blueprints_taxonomy.delete_platform', id=platform.id),
-                    csrf_token(), platform.name, title='Delete Platform',
+                    platform.name, title='Delete Platform',
                     aria_label='Delete '~platform.name) }}
                 {% endif %}
             </div>
@@ -39,3 +39,5 @@
     </div>
 </div>
 {% endblock %}
+
+{% block modals %}{{ super() }}{{ delete_confirm_modal(csrf_token()) }}{% endblock %}

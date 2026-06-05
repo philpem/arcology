@@ -1,5 +1,5 @@
 {% extends "_base.html" %}
-{% from '_confirm_modal.html' import delete_inline %}
+{% from '_confirm_modal.html' import delete_trigger, delete_confirm_modal %}
 {% block page_title %}Profile{% endblock %}
 
 {% block content %}
@@ -131,9 +131,9 @@
 						</small>
 					</td>
 					<td>
-						{{ delete_inline('revoke-key-'~key.id,
+						{{ delete_trigger(
 							url_for('myapp_blueprints_profile.revoke_key', key_id=key.id),
-							csrf_token(), key.name, title='Revoke API Key',
+							key.name, title='Revoke API Key',
 							warning='Applications using this key will stop working immediately.',
 							trigger_label='Revoke', confirm_label='Revoke Key', confirm_icon='bi-key') }}
 					</td>
@@ -167,3 +167,5 @@
 </div>
 {% endif %}
 {% endblock %}
+
+{% block modals %}{{ super() }}{{ delete_confirm_modal(csrf_token()) }}{% endblock %}

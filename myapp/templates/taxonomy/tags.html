@@ -1,5 +1,5 @@
 {% extends "_base.html" %}
-{% from '_confirm_modal.html' import delete_inline %}
+{% from '_confirm_modal.html' import delete_trigger, delete_confirm_modal %}
 {% block page_title %}Tags{% endblock %}
 
 {% block content %}
@@ -39,9 +39,9 @@
                         <a href="{{ url_for('myapp_blueprints_taxonomy.edit_tag', id=tag.id) }}"
                            class="btn btn-sm btn-outline-primary me-1"
                            aria-label="Edit tag {{ tag.name }}"><i class="bi bi-pencil"></i></a>
-                        {{ delete_inline('del-tag-'~tag.id,
+                        {{ delete_trigger(
                             url_for('myapp_blueprints_taxonomy.delete_tag', id=tag.id),
-                            csrf_token(), tag.name, title='Delete Tag',
+                            tag.name, title='Delete Tag',
                             aria_label='Delete tag '~tag.name) }}
                     </td>
                     {% endif %}
@@ -54,3 +54,5 @@
     </div>
 </div>
 {% endblock %}
+
+{% block modals %}{{ super() }}{{ delete_confirm_modal(csrf_token()) }}{% endblock %}

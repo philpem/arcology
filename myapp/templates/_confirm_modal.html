@@ -1,35 +1,43 @@
 {#
   Bootstrap 5 confirmation modal helpers.
 
-  Usage — simple delete (trigger + modal together, good for list rows):
-    {% from '_confirm_modal.html' import delete_inline %}
-    {{ delete_inline('del-tag-'~tag.id, url_for('...', id=tag.id), csrf_token(), tag.name,
-                     title='Delete Tag', aria_label='Delete '~tag.name) }}
+  Shared confirm (lists/tables — single modal per page, each button supplies its own data):
+    {% from '_confirm_modal.html' import delete_trigger, delete_confirm_modal %}
 
-  Usage — custom body (trigger and modal placed separately, good for page headers):
+    (one per row)
+    {{ delete_trigger(url_for(...), item.name, title='Delete Tag') }}
+
+    (once per page, in {% block modals %})
+    {{ delete_confirm_modal(csrf_token()) }}
+
+  Custom body (page-level actions — trigger inline, modal in {% block modals %}):
     {% from '_confirm_modal.html' import modal_trigger, danger_modal %}
-    {{ modal_trigger('deleteItemModal', label='Delete') }}
-    ...elsewhere...
-    {% call danger_modal('deleteItemModal', 'Delete Item', url_for(...), csrf_token()) %}
+
+    {{ modal_trigger('myModal', label='Delete') }}
+
+    {% call danger_modal('myModal', 'Delete Item', url_for(...), csrf_token()) %}
         <p class="fw-bold">{{ item.name }}</p>
         <div class="alert alert-danger">...</div>
     {% endcall %}
 #}
 
-{# Render a trigger button that opens a modal by ID. #}
-{% macro modal_trigger(modal_id, label='', icon='bi-trash', btn_class='btn-outline-danger', btn_size='', aria_label=none) %}<button type="button" class="btn {% if btn_size %}{{ btn_size }} {% endif %}{{ btn_class }}" data-bs-toggle="modal" data-bs-target="#{{ modal_id }}"{% if aria_label %} aria-label="{{ aria_label }}"{% endif %}><i class="bi {{ icon }}"></i>{% if label %} {{ label }}{% endif %}</button>{% endmacro %}
+{# Trigger button that opens a custom modal by ID. #}
+{% macro modal_trigger(modal_id, label='', icon='bi-trash', btn_class='btn-outline-danger', btn_size='', aria_label=none) %}<button type="button" class="btn {% if btn_size %}{{ btn_size }} {% endif %}{{ btn_class }}" data-bs-toggle="modal" data-bs-target="#{{ modal_id }}"{% if aria_label %} aria-label="{{ aria_label }}" title="{{ aria_label }}"{% endif %}><i class="bi {{ icon }}"></i>{% if label %} {{ label }}{% endif %}</button>{% endmacro %}
 
 {#
-  Render a confirmation modal shell. Body comes from the {% call %} block.
-  header_class/border_class allow non-danger styles (e.g. 'bg-warning' for advisory actions).
+  Confirmation modal shell; body from {% call %} block.
+  close_btn_class auto-detects from header_class: white for dark headers ('text-white'),
+  dark (default Bootstrap) for light headers (bg-warning, etc.).
+  Place in {% block modals %}.
 #}
-{% macro danger_modal(modal_id, title, action, csrf_token_val, confirm_label='Delete Permanently', confirm_class='btn-danger', confirm_icon='bi-trash', header_class='bg-danger text-white', border_class='border-danger', close_btn_class='btn-close-white') %}
+{% macro danger_modal(modal_id, title, action, csrf_token_val, confirm_label='Delete Permanently', confirm_class='btn-danger', confirm_icon='bi-trash', header_class='bg-danger text-white', border_class='border-danger', close_btn_class=none) %}
+{% set _close = close_btn_class if close_btn_class is not none else ('btn-close-white' if 'text-white' in header_class else '') %}
 <div class="modal fade" id="{{ modal_id }}" tabindex="-1" aria-labelledby="{{ modal_id }}Label" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content {{ border_class }}">
             <div class="modal-header {{ header_class }}">
                 <h5 class="modal-title" id="{{ modal_id }}Label"><i class="bi {{ confirm_icon }}"></i> {{ title }}</h5>
-                <button type="button" class="btn-close {{ close_btn_class }}" data-bs-dismiss="modal" aria-label="Close"></button>
+                <button type="button" class="btn-close {{ _close }}" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
                 {{ caller() }}
@@ -47,32 +55,65 @@
 {% endmacro %}
 
 {#
-  All-in-one: trigger button + simple danger confirmation modal.
-  For list rows where the action is a straightforward delete of a named item.
-  extra_hidden: dict of additional hidden fields to include in the form, e.g. {'action': 'remove'}.
+  Trigger button for the shared delete confirmation modal.
+  Content is supplied via data attributes and populated at show-time by JS.
+  Pair with delete_confirm_modal() in {% block modals %}.
+
+  extra_hidden: dict of extra POST fields, e.g. {'action': 'remove', 'category': 'pii'}.
 #}
-{% macro delete_inline(modal_id, action, csrf_token_val, item_name, title='Confirm Delete', warning='This cannot be undone.', trigger_label='', trigger_class='btn-outline-danger', trigger_size='btn-sm', aria_label=none, confirm_label='Delete Permanently', confirm_icon='bi-trash', extra_hidden=none) %}
-{{ modal_trigger(modal_id, label=trigger_label, icon=confirm_icon, btn_class=trigger_class, btn_size=trigger_size, aria_label=aria_label) }}
+{% macro delete_trigger(action, item_name='', modal_id='deleteConfirmModal', title='Confirm Delete', warning='This cannot be undone.', confirm_label='Delete Permanently', confirm_icon='bi-trash', trigger_label='', trigger_class='btn-outline-danger', trigger_size='btn-sm', aria_label=none, extra_hidden=none) %}<button type="button" class="btn {% if trigger_size %}{{ trigger_size }} {% endif %}{{ trigger_class }}" data-bs-toggle="modal" data-bs-target="#{{ modal_id }}" data-confirm-action="{{ action }}" data-confirm-name="{{ item_name }}" data-confirm-title="{{ title }}" data-confirm-warning="{{ warning }}" data-confirm-label="{{ confirm_label }}" data-confirm-icon="{{ confirm_icon }}"{% if extra_hidden %} data-confirm-extra="{{ extra_hidden | tojson | forceescape }}"{% endif %} title="{{ aria_label or title }}"{% if aria_label %} aria-label="{{ aria_label }}"{% endif %}><i class="bi {{ confirm_icon }}"></i>{% if trigger_label %} {{ trigger_label }}{% endif %}</button>{% endmacro %}
+
+{#
+  Single shared danger confirmation modal, populated at runtime by delete_trigger buttons.
+  Place once per template in {% block modals %}.
+#}
+{% macro delete_confirm_modal(csrf_token_val, modal_id='deleteConfirmModal') %}
 <div class="modal fade" id="{{ modal_id }}" tabindex="-1" aria-labelledby="{{ modal_id }}Label" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content border-danger">
             <div class="modal-header bg-danger text-white">
-                <h5 class="modal-title" id="{{ modal_id }}Label"><i class="bi {{ confirm_icon }}"></i> {{ title }}</h5>
+                <h5 class="modal-title" id="{{ modal_id }}Label"></h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <p class="fw-bold text-break">{{ item_name }}</p>
-                <p class="mb-0 text-danger"><i class="bi bi-exclamation-triangle-fill"></i> {{ warning }}</p>
+                <p class="fw-bold text-break" id="{{ modal_id }}ItemName"></p>
+                <p class="mb-0 text-danger" id="{{ modal_id }}Warning"><i class="bi bi-exclamation-triangle-fill"></i> <span></span></p>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <form action="{{ action }}" method="post" class="d-inline">
+                <form id="{{ modal_id }}Form" method="post" class="d-inline">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token_val }}">
-                    {% if extra_hidden %}{% for name, value in extra_hidden.items() %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}{% endif %}
-                    <button type="submit" class="btn btn-danger"><i class="bi {{ confirm_icon }}"></i> {{ confirm_label }}</button>
+                    <div id="{{ modal_id }}Extra"></div>
+                    <button type="submit" id="{{ modal_id }}Btn" class="btn btn-danger"></button>
                 </form>
             </div>
         </div>
     </div>
 </div>
+<script>
+(function () {
+    var modal = document.getElementById({{ modal_id | tojson }});
+    if (!modal) return;
+    modal.addEventListener('show.bs.modal', function (event) {
+        var btn = event.relatedTarget;
+        var d = btn.dataset;
+        modal.querySelector('.modal-title').textContent = d.confirmTitle || 'Confirm';
+        document.getElementById({{ (modal_id ~ 'ItemName') | tojson }}).textContent = d.confirmName || '';
+        document.getElementById({{ (modal_id ~ 'Warning') | tojson }}).querySelector('span').textContent = d.confirmWarning || 'This cannot be undone.';
+        document.getElementById({{ (modal_id ~ 'Form') | tojson }}).action = d.confirmAction || '';
+        var submitBtn = document.getElementById({{ (modal_id ~ 'Btn') | tojson }});
+        submitBtn.innerHTML = '<i class="bi ' + (d.confirmIcon || 'bi-trash') + '"></i> ' + (d.confirmLabel || 'Delete Permanently');
+        var extraDiv = document.getElementById({{ (modal_id ~ 'Extra') | tojson }});
+        extraDiv.innerHTML = '';
+        if (d.confirmExtra) {
+            var fields = JSON.parse(d.confirmExtra);
+            Object.keys(fields).forEach(function (k) {
+                var inp = document.createElement('input');
+                inp.type = 'hidden'; inp.name = k; inp.value = fields[k];
+                extraDiv.appendChild(inp);
+            });
+        }
+    });
+})();
+</script>
 {% endmacro %}

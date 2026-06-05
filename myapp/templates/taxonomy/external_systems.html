@@ -1,5 +1,5 @@
 {% extends "_base.html" %}
-{% from '_confirm_modal.html' import delete_inline %}
+{% from '_confirm_modal.html' import delete_trigger, delete_confirm_modal %}
 {% block page_title %}External Systems{% endblock %}
 
 {% block content %}
@@ -29,9 +29,9 @@
             <div class="card-footer">
                 <a href="{{ url_for('myapp_blueprints_taxonomy.edit_external_system', id=system.id) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i> Edit</a>
                 {% if not system.references %}
-                {{ delete_inline('del-sys-'~system.id,
+                {{ delete_trigger(
                     url_for('myapp_blueprints_taxonomy.delete_external_system', id=system.id),
-                    csrf_token(), system.name, title='Delete External System',
+                    system.name, title='Delete External System',
                     aria_label='Delete '~system.name) }}
                 {% endif %}
             </div>
@@ -43,3 +43,5 @@
     {% endfor %}
 </div>
 {% endblock %}
+
+{% block modals %}{{ super() }}{{ delete_confirm_modal(csrf_token()) }}{% endblock %}

@@ -64,6 +64,8 @@
 			{% block content %}{% endblock %}
 		</main>
 
+		{% block modals %}{% endblock %}
+
 		<footer class="text-center py-3 mt-4 bg-light">
 			<small>
 				<a href="{{ url_for('myapp_blueprints_dashboard.about') }}" class="text-muted">Arcology {{ app_version }} &copy; {{ now.year }} Phil Pemberton, AGPL3</a>

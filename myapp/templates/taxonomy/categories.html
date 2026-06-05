@@ -1,5 +1,5 @@
 {% extends "_base.html" %}
-{% from '_confirm_modal.html' import delete_inline %}
+{% from '_confirm_modal.html' import delete_trigger, delete_confirm_modal %}
 {% block page_title %}Categories{% endblock %}
 
 {% block content %}
@@ -24,9 +24,9 @@
             <div>
                 <a href="{{ url_for('myapp_blueprints_taxonomy.edit_category', id=category.id) }}" class="btn btn-sm btn-outline-primary" aria-label="Edit {{ category.name }}"><i class="bi bi-pencil"></i></a>
                 {% if not category.items and not category.children %}
-                {{ delete_inline('del-cat-'~category.id,
+                {{ delete_trigger(
                     url_for('myapp_blueprints_taxonomy.delete_category', id=category.id),
-                    csrf_token(), category.name, title='Delete Category',
+                    category.name, title='Delete Category',
                     aria_label='Delete '~category.name) }}
                 {% endif %}
             </div>
@@ -39,3 +39,5 @@
     </div>
 </div>
 {% endblock %}
+
+{% block modals %}{{ super() }}{{ delete_confirm_modal(csrf_token()) }}{% endblock %}

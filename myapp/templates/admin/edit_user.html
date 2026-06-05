@@ -1,5 +1,5 @@
 {% extends "_base.html" %}
-{% from '_confirm_modal.html' import delete_inline %}
+{% from '_confirm_modal.html' import delete_trigger, delete_confirm_modal %}
 {% block page_title %}Edit User — {{ user.username }}{% endblock %}
 
 {% block content %}
@@ -180,9 +180,8 @@
 							<td>{{ bypass.reason or '—' }}</td>
 							<td>{{ bypass.created_at.strftime('%Y-%m-%d') if bypass.created_at else '—' }}</td>
 							<td>
-								{{ delete_inline('del-bypass-'~bypass.id,
+								{{ delete_trigger(
 									url_for('myapp_blueprints_admin.revoke_artefact_bypass', user_id=user.id, bypass_id=bypass.id),
-									csrf_token(),
 									bypass.artefact.label if bypass.artefact else '(deleted artefact)',
 									title='Revoke Per-Artefact Bypass',
 									warning='This cannot be undone.',
@@ -199,3 +198,5 @@
 	</div>
 </div>
 {% endblock %}
+
+{% block modals %}{{ super() }}{{ delete_confirm_modal(csrf_token()) }}{% endblock %}

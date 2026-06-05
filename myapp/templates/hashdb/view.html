@@ -1,5 +1,5 @@
 {% extends "_base.html" %}
-{% from '_confirm_modal.html' import modal_trigger, danger_modal %}
+{% from '_confirm_modal.html' import modal_trigger, danger_modal, delete_confirm_modal %}
 {% block page_title %}{{ database.name }}{% endblock %}
 
 {% block content %}
@@ -426,6 +426,10 @@
 })();
 </script>
 
+{% endblock %}
+
+{% block modals %}
+{{ super() }}
 {% if user_can_write %}
 {% call danger_modal('deleteHashDbModal', 'Delete Hash Database',
     url_for('myapp_blueprints_hashdb.delete', id=database.id), csrf_token()) %}

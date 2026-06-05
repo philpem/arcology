@@ -1,6 +1,6 @@
 {% extends "_base.html" %}
 {% import "_rollup_card.html" as rollup %}
-{% from '_confirm_modal.html' import modal_trigger, danger_modal %}
+{% from '_confirm_modal.html' import modal_trigger, danger_modal, delete_confirm_modal %}
 {% block page_title %}{{ artefact.label }}{% endblock %}
 
 {% block styles %}
@@ -187,6 +187,10 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
     </div>
 </div>
 
+{% endblock %}
+
+{% block modals %}
+{{ super() }}
 {% if user_can_write %}
 {% call danger_modal('deleteArtefactModal', 'Delete Artefact',
     artefact_url(artefact, 'delete'), csrf_token()) %}
@@ -205,6 +209,7 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
 </div>
 {% endcall %}
 {% endif %}
+{{ delete_confirm_modal(csrf_token()) }}
 {% endblock %}
 
 {% block scripts %}

@@ -1,6 +1,6 @@
 {% extends "_base.html" %}
 {% from '_pagination.html' import render_pagination, render_letter_bar %}
-{% from '_confirm_modal.html' import modal_trigger, danger_modal, delete_inline %}
+{% from '_confirm_modal.html' import modal_trigger, danger_modal, delete_trigger, delete_confirm_modal %}
 {% block page_title %}{{ item.name }}{% endblock %}
 
 {% macro analysis_lozenge(info) %}
@@ -98,9 +98,9 @@
                 <li class="list-group-item d-flex justify-content-between">
                     <div><strong>{{ ref.system.name }}</strong><br>{% if ref.url %}<a href="{{ ref.url }}" target="_blank" rel="noopener noreferrer">{{ ref.external_id }}</a>{% else %}{{ ref.external_id }}{% endif %}</div>
                     {% if user_can_contribute %}
-                    {{ delete_inline('del-ref-'~ref.id,
+                    {{ delete_trigger(
                         url_for('myapp_blueprints_items.delete_reference', item_uuid=item.url_id, ref_id=ref.id),
-                        csrf_token(), ref.system.name ~ ': ' ~ ref.external_id,
+                        ref.system.name ~ ': ' ~ ref.external_id,
                         title='Remove Reference',
                         warning='The external record is not affected.',
                         confirm_label='Remove', confirm_icon='bi-x-lg',
@@ -279,6 +279,10 @@
     </div>
 </div>
 
+{% endblock %}
+
+{% block modals %}
+{{ super() }}
 {% if user_can_delete %}
 {% call danger_modal('deleteItemModal', 'Delete Item',
     url_for('myapp_blueprints_items.delete', uuid=item.url_id), csrf_token()) %}
@@ -297,4 +301,5 @@
 </div>
 {% endcall %}
 {% endif %}
+{{ delete_confirm_modal(csrf_token()) }}
 {% endblock %}

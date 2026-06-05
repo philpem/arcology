@@ -1,14 +1,12 @@
 {% extends "_base.html" %}
+{% from '_confirm_modal.html' import modal_trigger, danger_modal %}
 {% block page_title %}Analysis Queue{% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h1><i class="bi bi-list-task"></i> Analysis Queue</h1>
     <div class="d-flex gap-2">
-        <button type="button" class="btn btn-outline-warning btn-sm"
-                data-bs-toggle="modal" data-bs-target="#resetStaleModal">
-            <i class="bi bi-arrow-counterclockwise"></i> Reset Stale Jobs
-        </button>
+        {{ modal_trigger('resetStaleModal', label='Reset Stale Jobs', icon='bi-arrow-counterclockwise', btn_class='btn-outline-warning') }}
         <a href="{{ url_for('myapp_blueprints_analysis.index') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> All Analyses</a>
     </div>
 </div>
@@ -63,27 +61,17 @@
     <div class="card-body text-muted">No analyses pending</div>
     {% endif %}
 </div>
-<div class="modal fade" id="resetStaleModal" tabindex="-1" aria-labelledby="resetStaleModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
-        <div class="modal-content border-warning">
-            <div class="modal-header bg-warning">
-                <h5 class="modal-title" id="resetStaleModalLabel"><i class="bi bi-arrow-counterclockwise"></i> Reset Stale Jobs</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body">
-                <p>Reset all stale running jobs back to pending?</p>
-                <p class="mb-0 text-muted small">Jobs that have been stuck in "running" state longer than the stale timeout will be requeued for retry.</p>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <form action="{{ url_for('myapp_blueprints_analysis.reset_stale') }}" method="post" class="d-inline">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-warning"><i class="bi bi-arrow-counterclockwise"></i> Reset Jobs</button>
-                </form>
-            </div>
-        </div>
-    </div>
-</div>
+{% endblock %}
+
+{% block modals %}
+{{ super() }}
+{% call danger_modal('resetStaleModal', 'Reset Stale Jobs',
+    url_for('myapp_blueprints_analysis.reset_stale'), csrf_token(),
+    confirm_label='Reset Jobs', confirm_class='btn-warning', confirm_icon='bi-arrow-counterclockwise',
+    header_class='bg-warning', border_class='border-warning') %}
+<p>Reset all stale running jobs back to pending?</p>
+<p class="mb-0 text-muted small">Jobs that have been stuck in "running" state longer than the stale timeout will be requeued for retry.</p>
+{% endcall %}
 {% endblock %}
 {% block scripts %}
 {{ super() }}
