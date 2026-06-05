@@ -153,6 +153,7 @@ EXTENSION_MAP = {
     
     # Hard drive raw images
     '.dd': ArtefactType.RAW_SECTOR,
+    '.hdf': ArtefactType.RAW_SECTOR,
     
     # Documents
     '.pdf': ArtefactType.PDF,
