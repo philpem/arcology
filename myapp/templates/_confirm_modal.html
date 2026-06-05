@@ -1,0 +1,78 @@
+{#
+  Bootstrap 5 confirmation modal helpers.
+
+  Usage — simple delete (trigger + modal together, good for list rows):
+    {% from '_confirm_modal.html' import delete_inline %}
+    {{ delete_inline('del-tag-'~tag.id, url_for('...', id=tag.id), csrf_token(), tag.name,
+                     title='Delete Tag', aria_label='Delete '~tag.name) }}
+
+  Usage — custom body (trigger and modal placed separately, good for page headers):
+    {% from '_confirm_modal.html' import modal_trigger, danger_modal %}
+    {{ modal_trigger('deleteItemModal', label='Delete') }}
+    ...elsewhere...
+    {% call danger_modal('deleteItemModal', 'Delete Item', url_for(...), csrf_token()) %}
+        <p class="fw-bold">{{ item.name }}</p>
+        <div class="alert alert-danger">...</div>
+    {% endcall %}
+#}
+
+{# Render a trigger button that opens a modal by ID. #}
+{% macro modal_trigger(modal_id, label='', icon='bi-trash', btn_class='btn-outline-danger', btn_size='', aria_label=none) %}<button type="button" class="btn {% if btn_size %}{{ btn_size }} {% endif %}{{ btn_class }}" data-bs-toggle="modal" data-bs-target="#{{ modal_id }}"{% if aria_label %} aria-label="{{ aria_label }}"{% endif %}><i class="bi {{ icon }}"></i>{% if label %} {{ label }}{% endif %}</button>{% endmacro %}
+
+{#
+  Render a confirmation modal shell. Body comes from the {% call %} block.
+  header_class/border_class allow non-danger styles (e.g. 'bg-warning' for advisory actions).
+#}
+{% macro danger_modal(modal_id, title, action, csrf_token_val, confirm_label='Delete Permanently', confirm_class='btn-danger', confirm_icon='bi-trash', header_class='bg-danger text-white', border_class='border-danger', close_btn_class='btn-close-white') %}
+<div class="modal fade" id="{{ modal_id }}" tabindex="-1" aria-labelledby="{{ modal_id }}Label" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content {{ border_class }}">
+            <div class="modal-header {{ header_class }}">
+                <h5 class="modal-title" id="{{ modal_id }}Label"><i class="bi {{ confirm_icon }}"></i> {{ title }}</h5>
+                <button type="button" class="btn-close {{ close_btn_class }}" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                {{ caller() }}
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form action="{{ action }}" method="post" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token_val }}">
+                    <button type="submit" class="btn {{ confirm_class }}"><i class="bi {{ confirm_icon }}"></i> {{ confirm_label }}</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endmacro %}
+
+{#
+  All-in-one: trigger button + simple danger confirmation modal.
+  For list rows where the action is a straightforward delete of a named item.
+  extra_hidden: dict of additional hidden fields to include in the form, e.g. {'action': 'remove'}.
+#}
+{% macro delete_inline(modal_id, action, csrf_token_val, item_name, title='Confirm Delete', warning='This cannot be undone.', trigger_label='', trigger_class='btn-outline-danger', trigger_size='btn-sm', aria_label=none, confirm_label='Delete Permanently', confirm_icon='bi-trash', extra_hidden=none) %}
+{{ modal_trigger(modal_id, label=trigger_label, icon=confirm_icon, btn_class=trigger_class, btn_size=trigger_size, aria_label=aria_label) }}
+<div class="modal fade" id="{{ modal_id }}" tabindex="-1" aria-labelledby="{{ modal_id }}Label" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content border-danger">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title" id="{{ modal_id }}Label"><i class="bi {{ confirm_icon }}"></i> {{ title }}</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="fw-bold text-break">{{ item_name }}</p>
+                <p class="mb-0 text-danger"><i class="bi bi-exclamation-triangle-fill"></i> {{ warning }}</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form action="{{ action }}" method="post" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token_val }}">
+                    {% if extra_hidden %}{% for name, value in extra_hidden.items() %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}{% endif %}
+                    <button type="submit" class="btn btn-danger"><i class="bi {{ confirm_icon }}"></i> {{ confirm_label }}</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endmacro %}

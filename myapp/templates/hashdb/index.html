@@ -1,4 +1,5 @@
 {% extends "_base.html" %}
+{% from '_confirm_modal.html' import delete_inline %}
 {% block page_title %}Hash Databases{% endblock %}
 
 {% block content %}
@@ -96,10 +97,11 @@
                     <td>{{ database.updated_at.strftime('%Y-%m-%d') }}</td>
                     <td>
                         {% if user_can_write %}
-                        <form action="{{ url_for('myapp_blueprints_hashdb.delete', id=database.id) }}" method="post" class="d-inline">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <button type="submit" class="btn btn-sm btn-outline-danger" aria-label="Delete {{ database.name }}" onclick="return confirm('Delete hash database ' + {{ database.name | tojson }} + '? This cannot be undone.');"><i class="bi bi-trash"></i></button>
-                        </form>
+                        {{ delete_inline('del-db-'~database.id,
+                            url_for('myapp_blueprints_hashdb.delete', id=database.id),
+                            csrf_token(), database.name, title='Delete Hash Database',
+                            warning='All product records and file hashes will also be deleted. This cannot be undone.',
+                            aria_label='Delete '~database.name) }}
                         {% endif %}
                     </td>
                 </tr>

@@ -1,4 +1,5 @@
 {% extends "_base.html" %}
+{% from '_confirm_modal.html' import delete_inline %}
 {% block page_title %}Categories{% endblock %}
 
 {% block content %}
@@ -23,10 +24,10 @@
             <div>
                 <a href="{{ url_for('myapp_blueprints_taxonomy.edit_category', id=category.id) }}" class="btn btn-sm btn-outline-primary" aria-label="Edit {{ category.name }}"><i class="bi bi-pencil"></i></a>
                 {% if not category.items and not category.children %}
-                <form action="{{ url_for('myapp_blueprints_taxonomy.delete_category', id=category.id) }}" method="post" class="d-inline">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-sm btn-outline-danger" aria-label="Delete {{ category.name }}" onclick="return confirm('Delete category ' + {{ category.name | tojson }} + '? This cannot be undone.');"><i class="bi bi-trash"></i></button>
-                </form>
+                {{ delete_inline('del-cat-'~category.id,
+                    url_for('myapp_blueprints_taxonomy.delete_category', id=category.id),
+                    csrf_token(), category.name, title='Delete Category',
+                    aria_label='Delete '~category.name) }}
                 {% endif %}
             </div>
             {% endif %}

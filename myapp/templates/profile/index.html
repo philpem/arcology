@@ -1,4 +1,5 @@
 {% extends "_base.html" %}
+{% from '_confirm_modal.html' import delete_inline %}
 {% block page_title %}Profile{% endblock %}
 
 {% block content %}
@@ -130,11 +131,11 @@
 						</small>
 					</td>
 					<td>
-						<form method="post" action="{{ url_for('myapp_blueprints_profile.revoke_key', key_id=key.id) }}"
-							  onsubmit="return confirm('Revoke key ' + {{ key.name | tojson }} + '? Applications using it will stop working.')">
-							{{ pwd_form.hidden_tag() }}
-							<button type="submit" class="btn btn-sm btn-outline-danger">Revoke</button>
-						</form>
+						{{ delete_inline('revoke-key-'~key.id,
+							url_for('myapp_blueprints_profile.revoke_key', key_id=key.id),
+							csrf_token(), key.name, title='Revoke API Key',
+							warning='Applications using this key will stop working immediately.',
+							trigger_label='Revoke', confirm_label='Revoke Key', confirm_icon='bi-key') }}
 					</td>
 				</tr>
 			{% endfor %}

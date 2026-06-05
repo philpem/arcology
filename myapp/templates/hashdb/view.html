@@ -1,4 +1,5 @@
 {% extends "_base.html" %}
+{% from '_confirm_modal.html' import modal_trigger, danger_modal %}
 {% block page_title %}{{ database.name }}{% endblock %}
 
 {% block content %}
@@ -45,10 +46,7 @@
             </ul>
         </div>
         {% if user_can_write %}
-        <form action="{{ url_for('myapp_blueprints_hashdb.delete', id=database.id) }}" method="post" class="d-inline">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-outline-danger btn-sm" onclick="return confirm('Delete this hash database and all its contents?')"><i class="bi bi-trash"></i> Delete</button>
-        </form>
+        {{ modal_trigger('deleteHashDbModal', label='Delete', btn_size='btn-sm') }}
         {% endif %}
     </div>
 </div>
@@ -428,4 +426,15 @@
 })();
 </script>
 
+{% if user_can_write %}
+{% call danger_modal('deleteHashDbModal', 'Delete Hash Database',
+    url_for('myapp_blueprints_hashdb.delete', id=database.id), csrf_token()) %}
+<p>Permanently delete this hash database?</p>
+<p class="fw-bold fs-5 text-break">{{ database.name }}</p>
+<div class="alert alert-danger mb-0">
+    <i class="bi bi-exclamation-triangle-fill"></i> This will also permanently delete all product records and file hashes.
+    <strong>This action cannot be undone.</strong>
+</div>
+{% endcall %}
+{% endif %}
 {% endblock %}
