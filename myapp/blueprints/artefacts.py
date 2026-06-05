@@ -117,6 +117,7 @@ _ARTEFACT_TYPE_DISPLAY_NAMES = {
     ArtefactType.ACORN_DRAW:   "Acorn Draw",
     ArtefactType.ACORN_TEXT:   "Acorn Text / Script",
     ArtefactType.IMAGE:        "Raster / Vector Image",
+    ArtefactType.SIDECAR:      "Sidecar / Companion File",
     ArtefactType.UNKNOWN:      "Unknown",
 }
 
@@ -261,6 +262,12 @@ ANALYSIS_MAP = {
     
     # Documents/images - just metadata/checksums
     ArtefactType.PDF: [AnalysisType.METADATA_EXTRACT],
+
+    # Sidecar/companion files (a disk image's ddrescue .map, readme, checksums)
+    # have NO automatic analyses — they exist to be viewed/downloaded alongside
+    # the image.  (CHECKSUM_COMPUTE is still queued on direct upload, as it is
+    # for every type, independent of this map.)
+    ArtefactType.SIDECAR: [],
     
     # Archives - extract contents via ARCHIVE_EXTRACT (same pipeline used
     # for archives found inside disc images).  The worker detects top-level
@@ -2610,7 +2617,13 @@ def _render_artefact_view(artefact):
         for fid in set(file_ancestor_restrictions) | set(file_descendant_restrictions)
     }
 
-    derived_entries = _build_derived_entries(artefact)
+    _all_derived = _build_derived_entries(artefact)
+    # Sidecar/companion files (a disk image's ddrescue .map, readme, checksums)
+    # are shown in their own section, not mixed into the derived-artefact tree.
+    sidecar_entries = [e for e in _all_derived
+                       if e['artefact'].artefact_type == ArtefactType.SIDECAR]
+    derived_entries = [e for e in _all_derived
+                       if e['artefact'].artefact_type != ArtefactType.SIDECAR]
 
     # Per-artefact bypass data: only loaded for admins to avoid unnecessary queries.
     if current_user.is_authenticated and current_user.is_admin:
@@ -2677,6 +2690,7 @@ def _render_artefact_view(artefact):
                            file_ancestor_restrictions=file_ancestor_restrictions,
                            file_descendant_restrictions=file_descendant_restrictions,
                            derived_entries=derived_entries,
+                           sidecar_entries=sidecar_entries,
                            artefact_user_bypasses=artefact_user_bypasses,
                            bypass_eligible_users=bypass_eligible_users,
                            bypass_grantable_rtypes=bypass_grantable_rtypes,

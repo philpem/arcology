@@ -228,29 +228,24 @@ class TestSidecarBundling(unittest.TestCase):
                                  zipfile.ZIP_DEFLATED)
 
     def test_build_bundle_compresses_raw_image(self):
-        # A raw uncompressed .dd is compressed (zstd member if available, else
-        # deflated) — never stored at full size.
+        # A raw uncompressed .dd is zstd-compressed into a stored .dd.zst member.
+        # Bundling a raw image requires the zstandard library.
         raw = b'\x00' * 50000          # highly compressible
         root = self._tree({'foo.dd': raw, 'foo.map': b'm'})
         with tempfile.TemporaryDirectory() as tmp:
+            if bi.zstandard is None:
+                with self.assertRaises(RuntimeError):
+                    _build_sidecar_bundle(root / 'foo.dd', [root / 'foo.map'], 'foo', tmp)
+                return
             zip_path = _build_sidecar_bundle(
                 root / 'foo.dd', [root / 'foo.map'], 'foo', tmp)
             with zipfile.ZipFile(zip_path) as zf:
                 names = set(zf.namelist())
                 info = {zi.filename: zi for zi in zf.infolist()}
-                if bi.zstandard is not None:
-                    # zstd path: image becomes a stored .dd.zst member
-                    self.assertIn('foo.dd.zst', names)
-                    self.assertNotIn('foo.dd', names)
-                    self.assertEqual(info['foo.dd.zst'].compress_type,
-                                     zipfile.ZIP_STORED)
-                    self.assertLess(info['foo.dd.zst'].file_size, len(raw))
-                else:
-                    # fallback: raw image deflated inside the zip
-                    self.assertIn('foo.dd', names)
-                    self.assertEqual(info['foo.dd'].compress_type,
-                                     zipfile.ZIP_DEFLATED)
-                    self.assertLess(info['foo.dd'].compress_size, len(raw))
+                self.assertIn('foo.dd.zst', names)
+                self.assertNotIn('foo.dd', names)
+                self.assertEqual(info['foo.dd.zst'].compress_type, zipfile.ZIP_STORED)
+                self.assertLess(info['foo.dd.zst'].file_size, len(raw))
 
     def test_image_is_precompressed(self):
         self.assertTrue(_image_is_precompressed('foo.dd.zst'))

@@ -17,6 +17,7 @@ from .extraction import (
     _PROMOTABLE_EXTENSIONS,
     _apply_pling_renames,
     _extract_top_level_archive,
+    _handle_disk_image_bundle,
     _is_riscos_zip,
     _sniff_archive_magic,
     process_archive_detect,
@@ -91,6 +92,7 @@ __all__ = [
     '_sniff_archive_magic',
     '_is_riscos_zip',
     '_extract_top_level_archive',
+    '_handle_disk_image_bundle',
     '_PROMOTABLE_EXTENSIONS',
     # Images
     'process_format_convert',

@@ -241,6 +241,12 @@ _SIDECAR_NAME_PREFIXES = ('readme', 'read.me', 'changelog', 'changes',
                           'checksum', 'md5', 'sha1', 'sha256', 'sha512')
 _SIDECAR_EXTENSIONS = ('.md5', '.sha1', '.sha256', '.sha512')
 
+# Written into the bundle ZIP's archive comment so the worker can recognise a
+# disk-image bundle and store the image as a single artefact.  The `arco`
+# package is installed standalone and cannot import `shared`, so this is a local
+# copy of shared.bundle.BUNDLE_MARKER; ci/test_bundle_marker.py asserts they match.
+_BUNDLE_MARKER = 'arcology:disk-image-bundle/v1'
+
 
 def _bundle_eligible(filename: str) -> bool:
     """True for raw-sector images (raw or compressed) that may carry sidecars.
@@ -298,9 +304,13 @@ def _add_compressed_image(zf: zipfile.ZipFile, image_path: Path) -> None:
     when the ``zstandard`` library is unavailable.
     """
     if zstandard is None:
-        zf.write(image_path, arcname=image_path.name,
-                 compress_type=zipfile.ZIP_DEFLATED, compresslevel=1)
-        return
+        # A bundle's image must end up as a recognised compressed disk image
+        # (e.g. .dd.zst); a plain DEFLATE of the raw .dd would not be detected as
+        # a bundle by the worker.  zstandard is a declared dependency, so this is
+        # a guard against a broken install rather than an expected path.
+        raise RuntimeError(
+            'the zstandard library is required for --bundle-sidecars '
+            '(pip install zstandard)')
     info = zipfile.ZipInfo(image_path.name + '.zst')
     info.compress_type = zipfile.ZIP_STORED
     cctx = zstandard.ZstdCompressor(level=_ZSTD_LEVEL, threads=-1)
@@ -323,6 +333,9 @@ def _build_sidecar_bundle(image_path: Path, sidecars: list[Path],
     """
     zip_path = Path(tmp_dir) / f'{base}.zip'
     with zipfile.ZipFile(zip_path, 'w') as zf:
+        # Mark this as an Arcology disk-image bundle so the worker stores the
+        # image as a single artefact instead of extracting a generic archive.
+        zf.comment = _BUNDLE_MARKER.encode('cp437')
         if _image_is_precompressed(image_path.name):
             zf.write(image_path, arcname=image_path.name,
                      compress_type=zipfile.ZIP_STORED)
@@ -583,6 +596,13 @@ def cmd_bulk_import(client: ArcologyClient, args):
     # the purge would match (and delete) every item in the catalogue.
     if args.purge and args.tag is None:
         print('Error: --tag is required with --purge', file=sys.stderr)
+        sys.exit(1)
+
+    # Bundling compresses raw images to .zst so the worker recognises them; fail
+    # fast (rather than per-file) if the zstandard dependency is missing.
+    if args.bundle_sidecars and zstandard is None:
+        print('Error: --bundle-sidecars requires the zstandard library '
+              '(pip install zstandard)', file=sys.stderr)
         sys.exit(1)
 
     if args.name_prefix is None:

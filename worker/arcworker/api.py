@@ -185,6 +185,20 @@ class ArcologyAPI:
                 f"(API returned no response — see worker log for details)"
             ) from e
 
+    def _put_and_hash(self, storage_name: str, directory: str, source_path: Path):
+        """Store *source_path* under *directory*/*storage_name* and hash it.
+
+        Returns ``(md5, sha256, file_size)``.  Falls back to a direct copy into
+        the matching local dir when no storage backend is configured.
+        """
+        if self.storage:
+            self.storage.put(self.storage.storage_key(directory, storage_name), source_path)
+            return compute_file_hash(source_path)
+        local_dir = self.uploads if directory == 'uploads' else self.outputs
+        dest = local_dir / storage_name
+        shutil.copy(source_path, dest)
+        return compute_file_hash(dest)
+
     def register_derived_artefact(
         self,
         analysis_id: int,
@@ -230,17 +244,7 @@ class ArcologyAPI:
         ).hexdigest()[:24]
         storage_name = f"{name_hash}{source_path.suffix}"
 
-        # Store file via storage backend
-        if self.storage:
-            key = self.storage.storage_key('outputs', storage_name)
-            self.storage.put(key, source_path)
-            # Compute hashes from source (already local)
-            md5, sha256, file_size = compute_file_hash(source_path)
-        else:
-            # Fallback: direct copy (legacy path without storage backend)
-            storage_path = self.outputs / storage_name
-            shutil.copy(source_path, storage_path)
-            md5, sha256, file_size = compute_file_hash(storage_path)
+        md5, sha256, file_size = self._put_and_hash(storage_name, 'outputs', source_path)
 
         payload = {
             'label': label,
@@ -260,6 +264,52 @@ class ArcologyAPI:
 
         # Register via API - derived artefacts use 'outputs' storage directory
         return self.post(f"/analysis/{analysis_id}/produce-artefact", payload)
+
+    def transform_to_disk_image(
+        self,
+        artefact_uuid: str,
+        analysis_id: int,
+        image_path: Path,
+        artefact_type: ArtefactType,
+        original_filename: str,
+    ) -> dict | None:
+        """Replace a disk-image-bundle ZIP artefact's stored file with its image.
+
+        Uploads the extracted image to a fresh uploads key, then asks the web app
+        to atomically repoint the artefact at it (type → compressed raw-sector),
+        drop the old zip object, and queue the disk-image analyses.  Returns the
+        API response, or None on error.
+        """
+        import mimetypes
+
+        # Deterministic name so a retry after a partial failure reuses the same
+        # key rather than orphaning a copy.  Only the trailing compression
+        # suffix is kept (mirroring direct uploads); the inner extension is
+        # recovered from original_filename during analysis.
+        #
+        # If the put() succeeds but the POST below fails, the image is left under
+        # this deterministic key: a retry overwrites it (no accumulation), and we
+        # deliberately do NOT delete on failure — a POST timeout can mask a
+        # success, and deleting then would destroy the artefact's new bytes.
+        name_hash = hashlib.sha256(
+            f"{analysis_id}:bundle-image".encode()
+        ).hexdigest()[:24]
+        storage_name = f"{name_hash}{Path(original_filename).suffix}"
+
+        md5, sha256, file_size = self._put_and_hash(storage_name, 'uploads', image_path)
+
+        mime_type, _ = mimetypes.guess_type(original_filename)
+        payload = {
+            'analysis_id': analysis_id,
+            'storage_path': storage_name,
+            'original_filename': original_filename,
+            'artefact_type': artefact_type.value,
+            'file_size': file_size,
+            'md5': md5,
+            'sha256': sha256,
+            'mime_type': mime_type,
+        }
+        return self.post(f"/artefacts/{artefact_uuid}/transform-to-disk-image", payload)
 
     def register_file_listing(
         self,

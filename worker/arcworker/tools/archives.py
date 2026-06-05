@@ -469,70 +469,85 @@ def extract_zip(input_path: Path, output_dir: Path) -> dict[str, Any]:
 _ACORN_EXTRA_FIELD_ID = b'\x41\x43'   # 0x4341 little-endian
 
 
+def _read_zip_central_directory(zip_path: Path) -> bytes | None:
+    """Return the raw central-directory bytes of a ZIP, or None on any error.
+
+    Locates the End-of-Central-Directory record (within the trailing 64 KiB)
+    and reads the central directory it points at.  Uses raw ``struct`` parsing
+    — **not** Python's ``zipfile``, which rejects RISC OS zips' Acorn
+    extra-field blocks with ``BadZipFile``.  Conservative: returns None rather
+    than raising on a malformed/truncated archive.
+    """
+    try:
+        with open(zip_path, 'rb') as fh:
+            fh.seek(0, 2)
+            file_size = fh.tell()
+            fh.seek(max(0, file_size - 65557))
+            tail = fh.read()
+
+            eocd_pos = tail.rfind(b'PK\x05\x06')
+            if eocd_pos < 0 or len(tail) - eocd_pos < 22:
+                return None
+            cd_size, cd_offset = struct.unpack_from('<II', tail, eocd_pos + 12)
+            if cd_offset + cd_size > file_size:
+                return None
+
+            fh.seek(cd_offset)
+            return fh.read(cd_size)
+    except OSError:
+        return None
+
+
+def _iter_zip_central_dir(cd_data: bytes):
+    """Yield ``(filename_bytes, flags, extra_bytes)`` for each central-dir entry."""
+    pos = 0
+    while pos + 46 <= len(cd_data):
+        if cd_data[pos:pos + 4] != b'PK\x01\x02':
+            break
+        flags = struct.unpack_from('<H', cd_data, pos + 8)[0]
+        fname_len, extra_len, comment_len = struct.unpack_from('<HHH', cd_data, pos + 28)
+        name = cd_data[pos + 46:pos + 46 + fname_len]
+        extra = cd_data[pos + 46 + fname_len:pos + 46 + fname_len + extra_len]
+        yield name, flags, extra
+        pos += 46 + fname_len + extra_len + comment_len
+
+
 def has_riscos_zip_metadata(zip_path: Path) -> bool:
     """Detect whether a ZIP archive contains RISC OS metadata.
 
     Parses the ZIP central directory and checks each entry's extra-field
     chain for the Acorn/SparkFS header ID (0x4341).  Returns ``True`` as
-    soon as one is found.
-
-    Uses raw binary parsing with ``struct`` — **not** Python's ``zipfile``
-    module, which rejects the Acorn extra-field blocks with ``BadZipFile``.
-
-    This function is intentionally conservative: it returns ``False`` on
-    any structural parse error rather than raising.
+    soon as one is found, ``False`` on any structural parse error.
     """
-    try:
-        with open(zip_path, 'rb') as fh:
-            # ── Locate End-of-Central-Directory (EOCD) record ──────
-            # EOCD is at most 22 + 65535 bytes from the end of the file
-            # (22-byte fixed record + up to 65535-byte comment).
-            fh.seek(0, 2)
-            file_size = fh.tell()
-            search_start = max(0, file_size - 65557)
-            fh.seek(search_start)
-            tail = fh.read()
-
-            eocd_pos = tail.rfind(b'PK\x05\x06')
-            if eocd_pos < 0:
-                return False
-
-            eocd = tail[eocd_pos:]
-            if len(eocd) < 22:
-                return False
-
-            cd_size, cd_offset = struct.unpack_from('<II', eocd, 12)
-            if cd_offset + cd_size > file_size:
-                return False
-
-            # ── Read and walk the central directory ────────────────
-            fh.seek(cd_offset)
-            cd_data = fh.read(cd_size)
-
-            pos = 0
-            while pos + 46 <= len(cd_data):
-                if cd_data[pos:pos + 4] != b'PK\x01\x02':
-                    break
-                fname_len, extra_len, comment_len = struct.unpack_from(
-                    '<HHH', cd_data, pos + 28
-                )
-                extra_start = pos + 46 + fname_len
-                extra_end = extra_start + extra_len
-
-                # Walk extra-field chain: each block is 2-byte ID + 2-byte size + data.
-                epos = extra_start
-                while epos + 4 <= extra_end:
-                    field_id = cd_data[epos:epos + 2]
-                    field_size = struct.unpack_from('<H', cd_data, epos + 2)[0]
-                    if field_id == _ACORN_EXTRA_FIELD_ID:
-                        return True
-                    epos += 4 + field_size
-
-                pos = extra_end + comment_len
-
-    except OSError:
-        pass
+    cd_data = _read_zip_central_directory(zip_path)
+    if cd_data is None:
+        return False
+    for _name, _flags, extra in _iter_zip_central_dir(cd_data):
+        # Walk extra-field chain: each block is 2-byte ID + 2-byte size + data.
+        epos = 0
+        while epos + 4 <= len(extra):
+            field_id = extra[epos:epos + 2]
+            field_size = struct.unpack_from('<H', extra, epos + 2)[0]
+            if field_id == _ACORN_EXTRA_FIELD_ID:
+                return True
+            epos += 4 + field_size
     return False
+
+
+def list_zip_member_names(zip_path: Path) -> list[str] | None:
+    """Return the ZIP's member filenames by parsing the central directory.
+
+    Cheap: reads only the central directory, not member contents.  Returns
+    ``None`` on any parse error so callers can fall back conservatively.
+    """
+    cd_data = _read_zip_central_directory(zip_path)
+    if cd_data is None:
+        return None
+    names: list[str] = []
+    for raw, flags, _extra in _iter_zip_central_dir(cd_data):
+        encoding = 'utf-8' if (flags & 0x800) else 'cp437'
+        names.append(raw.decode(encoding, errors='replace'))
+    return names
 
 
 def extract_zip_riscos(input_path: Path, output_dir: Path) -> dict[str, Any]:
