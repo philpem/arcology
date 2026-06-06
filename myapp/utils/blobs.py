@@ -55,6 +55,7 @@ def assign_blob(
     sha256,
     md5=None,
     logical_storage_path=None,
+    obsolete_storage_paths=None,
 ):
     """Assign canonical blob storage to an artefact.
 
@@ -83,13 +84,30 @@ def assign_blob(
             file_size=file_size, sha256=normalised_sha256
         ).first()
 
-    if (
+    correcting_current_blob = (
         isinstance(current_blob, model)
         and current_blob.storage_path == storage_path
         and file_size is not None
         and normalised_sha256
-        and (blob is None or blob is current_blob)
-    ):
+    )
+    if correcting_current_blob and blob is not None and blob is not current_blob:
+        # The corrected identity already has a canonical blob. Every artefact
+        # referencing the old blob points at the same physical bytes, so move
+        # the whole reference set and retire the obsolete blob together.
+        if normalised_md5:
+            blob.md5 = normalised_md5
+        for linked_artefact in list(current_blob.artefacts):
+            linked_artefact.file_size = file_size
+            linked_artefact.sha256 = normalised_sha256
+            linked_artefact.md5 = normalised_md5
+            if storage_directory == StorageDirectory.UPLOADS:
+                linked_artefact.upload_blob = blob
+            else:
+                linked_artefact.output_blob = blob
+        if obsolete_storage_paths is not None:
+            obsolete_storage_paths.append(current_blob.storage_path)
+        db.session.delete(current_blob)
+    elif correcting_current_blob:
         # A checksum correction describes the same physical object. Updating
         # the shared blob also keeps every reference to those bytes consistent.
         current_blob.file_size = file_size

@@ -86,6 +86,21 @@ def upgrade():
 
 
 def downgrade():
+    duplicate = op.get_bind().execute(sa.text("""
+        SELECT item_id, sha256, COUNT(*) AS duplicate_count
+        FROM artefacts
+        WHERE sha256 IS NOT NULL
+        GROUP BY item_id, sha256
+        HAVING COUNT(*) > 1
+        LIMIT 1
+    """)).first()
+    if duplicate is not None:
+        raise RuntimeError(
+            "Cannot downgrade global blob deduplication while duplicate artefacts "
+            f"exist in item {duplicate.item_id} for SHA-256 {duplicate.sha256}. "
+            "Move or remove same-item duplicates before retrying the downgrade."
+        )
+
     op.drop_index("ix_extracted_files_sha256_size", table_name="extracted_files")
     with op.batch_alter_table("artefacts") as batch:
         batch.create_unique_constraint(

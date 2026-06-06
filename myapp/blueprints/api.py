@@ -707,6 +707,7 @@ def update_artefact(uuid):
     data, error = _json_object()
     if error:
         return error
+    obsolete_storage_paths = []
     if 'md5' in data or 'sha256' in data:
         assign_blob(
             artefact,
@@ -716,6 +717,7 @@ def update_artefact(uuid):
             data.get('sha256', artefact.sha256),
             data.get('md5', artefact.md5),
             logical_storage_path=artefact.storage_path,
+            obsolete_storage_paths=obsolete_storage_paths,
         )
     if 'artefact_type' in data and not artefact.type_overridden:
         try:
@@ -740,6 +742,17 @@ def update_artefact(uuid):
         else:
             return error_response('media_metadata must be an object or null', 400)
     db.session.commit()
+    for storage_path in obsolete_storage_paths:
+        try:
+            current_app.storage.delete(current_app.storage.storage_key(
+                artefact.storage_directory.value, storage_path
+            ))
+        except Exception:
+            current_app.logger.warning(
+                "Failed to remove obsolete blob object %s/%s",
+                artefact.storage_directory.value,
+                storage_path,
+            )
     return jsonify(artefact_to_dict(artefact))
 
 

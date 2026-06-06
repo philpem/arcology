@@ -3968,6 +3968,7 @@ def compute_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None
 
     try:
         md5, sha256 = compute_file_hashes(key, use_storage=True)
+        obsolete_storage_paths = []
         assign_blob(
             artefact,
             artefact.storage_directory,
@@ -3976,8 +3977,20 @@ def compute_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None
             sha256,
             md5,
             logical_storage_path=artefact.storage_path,
+            obsolete_storage_paths=obsolete_storage_paths,
         )
         db.session.commit()
+        for storage_path in obsolete_storage_paths:
+            try:
+                current_app.storage.delete(current_app.storage.storage_key(
+                    artefact.storage_directory.value, storage_path
+                ))
+            except Exception:
+                current_app.logger.warning(
+                    "Failed to remove obsolete blob object %s/%s",
+                    artefact.storage_directory.value,
+                    storage_path,
+                )
         flash('Hashes computed successfully.', 'success')
     except Exception as e:
         flash(f'Error computing hashes: {e}', 'error')

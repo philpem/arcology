@@ -1093,16 +1093,16 @@ paths:
                   type: string
                 storage_path:
                   type: string
-                  description: Stable logical output key used for idempotency.
+                  description: >
+                    Stable logical output key used for idempotency. Must be a
+                    relative path without `..` traversal.
                 blob_storage_path:
                   type: string
                   description: >
                     Physical content-addressed key under the storage directory.
                     Defaults to `storage_path`; worker-generated artefacts use
                     this to separate lineage identity from shared blob storage.
-                  description: >
-                    Relative path within the storage directory. Must not be
-                    absolute or contain `..` path traversal.
+                    Must be a relative path without `..` traversal.
                 artefact_type:
                   $ref: '#/components/schemas/ArtefactType'
                 storage_directory:

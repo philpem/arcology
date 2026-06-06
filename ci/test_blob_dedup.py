@@ -250,6 +250,65 @@ class TestBlobDedup(unittest.TestCase):
             self.assertEqual(artefacts[1].sha256, new_sha256)
             self.assertEqual(artefacts[0].upload_blob_id, artefacts[1].upload_blob_id)
 
+    def test_rehashing_converges_on_existing_blob_and_removes_obsolete_object(self):
+        from myapp.database import Artefact, Item, Platform, StorageDirectory, UploadBlob
+        from myapp.utils.blobs import assign_blob
+        from shared.enums import ArtefactType
+
+        old_sha256 = hashlib.sha256(b"incorrect metadata").hexdigest()
+        canonical_sha256 = hashlib.sha256(b"canonical bytes").hexdigest()
+        with self.app.app_context():
+            item = Item(name="Convergence item", platform=Platform(name="Convergence"))
+            artefacts = []
+            for label, storage_path, sha256 in (
+                ("Canonical", "canonical.img", canonical_sha256),
+                ("Incorrect A", "obsolete.img", old_sha256),
+                ("Incorrect B", "obsolete.img", old_sha256),
+            ):
+                artefact = Artefact(
+                    item=item,
+                    label=label,
+                    artefact_type=ArtefactType.RAW_SECTOR,
+                    original_filename=f"{label}.img",
+                    storage_directory=StorageDirectory.UPLOADS,
+                )
+                self.db.session.add(artefact)
+                assign_blob(
+                    artefact,
+                    StorageDirectory.UPLOADS,
+                    storage_path,
+                    15,
+                    sha256,
+                    logical_storage_path=f"logical/{label}",
+                )
+                artefacts.append(artefact)
+            self.db.session.commit()
+            corrected_uuid = artefacts[1].uuid
+            artefact_ids = [artefact.id for artefact in artefacts]
+
+            for storage_path in ("canonical.img", "obsolete.img"):
+                source = os.path.join(self.tmpdir, storage_path)
+                with open(source, "wb") as stream:
+                    stream.write(b"canonical bytes")
+                self.app.storage.put(f"uploads/{storage_path}", source)
+
+        response = self.client.patch(
+            f"/api/artefacts/{corrected_uuid}",
+            headers={"X-API-Key": self.app.config["WORKER_API_KEY"]},
+            json={"sha256": canonical_sha256},
+        )
+        self.assertEqual(response.status_code, 200)
+
+        with self.app.app_context():
+            refreshed = [self.db.session.get(Artefact, artefact_id) for artefact_id in artefact_ids]
+            self.assertEqual(UploadBlob.query.count(), 1)
+            self.assertEqual(len({artefact.upload_blob_id for artefact in refreshed}), 1)
+            self.assertTrue(all(
+                artefact.sha256 == canonical_sha256 for artefact in refreshed
+            ))
+            self.assertFalse(self.app.storage.exists("uploads/obsolete.img"))
+            self.assertTrue(self.app.storage.exists("uploads/canonical.img"))
+
     def test_blob_object_is_deleted_only_after_last_reference(self):
         from myapp.blueprints.artefacts import _delete_artefact_files
         from myapp.database import Artefact, Item, Platform, StorageDirectory, UploadBlob
