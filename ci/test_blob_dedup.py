@@ -30,6 +30,7 @@ class TestBlobDedup(unittest.TestCase):
             "OUTPUT_FOLDER": os.path.join(self.tmpdir, "outputs"),
         })
         self.app.storage = create_storage(dict(self.app.config))
+        self.client = self.app.test_client()
         self.db = db
         with self.app.app_context():
             db.create_all()
@@ -39,7 +40,12 @@ class TestBlobDedup(unittest.TestCase):
 
     def test_identical_uploads_are_distinct_artefacts_sharing_one_blob(self):
         from myapp.database import (
-            Artefact, Item, Platform, StorageDirectory, UploadBlob, User,
+            Artefact,
+            Item,
+            Platform,
+            StorageDirectory,
+            UploadBlob,
+            User,
         )
         from myapp.utils.blobs import assign_blob
         from shared.enums import ArtefactType
@@ -154,6 +160,95 @@ class TestBlobDedup(unittest.TestCase):
                 serialised["storage_path"],
                 f"blobs/{sha256[:2]}/{sha256}.img",
             )
+
+    def test_rehashing_output_blob_preserves_physical_and_logical_paths(self):
+        from myapp.database import Artefact, Item, OutputBlob, Platform, StorageDirectory
+        from myapp.utils.blobs import assign_blob
+        from shared.enums import ArtefactType
+
+        old_sha256 = hashlib.sha256(b"incorrect hash").hexdigest()
+        new_sha256 = hashlib.sha256(b"actual content").hexdigest()
+        physical_path = f"blobs/{old_sha256[:2]}/{old_sha256}.img"
+        logical_path = "derived/7/result"
+        with self.app.app_context():
+            platform = Platform(name="Rehash test")
+            item = Item(name="Rehash item", platform=platform)
+            artefact = Artefact(
+                item=item,
+                label="Derived",
+                artefact_type=ArtefactType.RAW_SECTOR,
+                original_filename="derived.img",
+                storage_directory=StorageDirectory.OUTPUTS,
+            )
+            assign_blob(
+                artefact,
+                StorageDirectory.OUTPUTS,
+                physical_path,
+                14,
+                old_sha256,
+                logical_storage_path=logical_path,
+            )
+            self.db.session.add_all([platform, item, artefact])
+            self.db.session.commit()
+            artefact_uuid = artefact.uuid
+
+        response = self.client.patch(
+            f"/api/artefacts/{artefact_uuid}",
+            headers={"X-API-Key": self.app.config["WORKER_API_KEY"]},
+            json={"sha256": new_sha256},
+        )
+        self.assertEqual(response.status_code, 200)
+
+        with self.app.app_context():
+            artefact = Artefact.query.filter_by(uuid=artefact_uuid).one()
+            self.assertEqual(artefact.storage_path, logical_path)
+            self.assertEqual(artefact.output_blob.storage_path, physical_path)
+            self.assertEqual(artefact.output_blob.sha256, new_sha256)
+            self.assertEqual(OutputBlob.query.count(), 1)
+
+    def test_rehashing_shared_blob_updates_all_artefact_hashes(self):
+        from myapp.database import Artefact, Item, Platform, StorageDirectory
+        from myapp.utils.blobs import assign_blob
+        from shared.enums import ArtefactType
+
+        old_sha256 = hashlib.sha256(b"old metadata").hexdigest()
+        new_sha256 = hashlib.sha256(b"shared bytes").hexdigest()
+        with self.app.app_context():
+            item = Item(name="Shared rehash item", platform=Platform(name="Shared rehash"))
+            artefacts = []
+            for index in range(2):
+                artefact = Artefact(
+                    item=item,
+                    label=f"Copy {index}",
+                    artefact_type=ArtefactType.RAW_SECTOR,
+                    original_filename=f"copy-{index}.img",
+                    storage_directory=StorageDirectory.UPLOADS,
+                )
+                self.db.session.add(artefact)
+                assign_blob(
+                    artefact,
+                    StorageDirectory.UPLOADS,
+                    "shared.img",
+                    12,
+                    old_sha256,
+                    logical_storage_path=f"copy-{index}.img",
+                )
+                artefacts.append(artefact)
+            self.db.session.commit()
+
+            assign_blob(
+                artefacts[0],
+                StorageDirectory.UPLOADS,
+                "shared.img",
+                12,
+                new_sha256,
+                logical_storage_path=artefacts[0].storage_path,
+            )
+            self.db.session.commit()
+
+            self.assertEqual(artefacts[0].sha256, new_sha256)
+            self.assertEqual(artefacts[1].sha256, new_sha256)
+            self.assertEqual(artefacts[0].upload_blob_id, artefacts[1].upload_blob_id)
 
     def test_blob_object_is_deleted_only_after_last_reference(self):
         from myapp.blueprints.artefacts import _delete_artefact_files

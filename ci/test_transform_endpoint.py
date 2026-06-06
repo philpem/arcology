@@ -33,7 +33,12 @@ class TestTransformToDiskImage(unittest.TestCase):
 
     def setUp(self):
         from myapp.database import (
-            Artefact, Item, OutputBlob, Platform, StorageDirectory, UploadBlob,
+            Artefact,
+            Item,
+            OutputBlob,
+            Platform,
+            StorageDirectory,
+            UploadBlob,
         )
         from shared.enums import ArtefactType
         with self.app.app_context():

@@ -61,7 +61,7 @@ from ..utils.api_serializers import (
     partition_to_dict,
     share_to_dict,
 )
-from ..utils.blobs import artefact_blob, assign_blob
+from ..utils.blobs import artefact_blob, artefact_blob_storage_path, assign_blob
 from ..utils.db_helpers import get_by_id_or_404 as _get_by_id_or_404
 from ..utils.db_helpers import get_by_uuid_or_404 as _get_by_uuid_or_404
 from ..utils.enum_display import enum_value
@@ -711,10 +711,11 @@ def update_artefact(uuid):
         assign_blob(
             artefact,
             artefact.storage_directory,
-            artefact.storage_path,
+            artefact_blob_storage_path(artefact),
             artefact.file_size,
             data.get('sha256', artefact.sha256),
             data.get('md5', artefact.md5),
+            logical_storage_path=artefact.storage_path,
         )
     if 'artefact_type' in data and not artefact.type_overridden:
         try:

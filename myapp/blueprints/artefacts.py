@@ -52,8 +52,8 @@ from ..database import (
 from ..extensions import db
 from ..permissions import public_downloadable, public_readable, require_permission
 from ..riscos_filetypes import lookup_filetype_hex
+from ..utils.blobs import artefact_blob, artefact_blob_storage_path, assign_blob
 from ..utils.enum_display import enum_value
-from ..utils.blobs import artefact_blob, assign_blob
 from ..utils.slugs import ensure_unique_slug, generate_slug, lookup_artefact_by_id, lookup_by_identifier
 from ..visibility import (
     artefact_visibility_clause,
@@ -2208,7 +2208,8 @@ def _render_artefact_view(artefact):
         if not f.is_directory and f.file_size is not None and f.sha256
     }
     if duplicate_keys:
-        from sqlalchemy import and_ as _and, or_ as _or
+        from sqlalchemy import and_ as _and
+        from sqlalchemy import or_ as _or
         duplicate_rows = (
             db.session.query(
                 ExtractedFile.file_size,
@@ -3368,7 +3369,7 @@ def _collect_item_cleanup_keys(all_artefact_ids):
     deleting_ids = set(all_artefact_ids)
     upload_blob_ids = set()
     output_blob_ids = set()
-    for artefact_id, storage_dir, storage_path, artefact_uuid, upload_blob_id, output_blob_id in rows:
+    for _artefact_id, storage_dir, storage_path, artefact_uuid, upload_blob_id, output_blob_id in rows:
         blob_id = upload_blob_id or output_blob_id
         if upload_blob_id:
             upload_blob_ids.add(upload_blob_id)
@@ -3970,10 +3971,11 @@ def compute_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None
         assign_blob(
             artefact,
             artefact.storage_directory,
-            artefact.storage_path,
+            artefact_blob_storage_path(artefact),
             artefact.file_size,
             sha256,
             md5,
+            logical_storage_path=artefact.storage_path,
         )
         db.session.commit()
         flash('Hashes computed successfully.', 'success')

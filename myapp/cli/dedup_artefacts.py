@@ -1,7 +1,6 @@
 import click
 from flask import current_app
 from sqlalchemy import func
-
 from ..database import Artefact, OutputBlob, StorageDirectory, UploadBlob
 from ..extensions import db
 
@@ -53,7 +52,7 @@ def dedup_artefacts(apply):
         (Artefact.upload_blob_id.isnot(None))
         | (Artefact.output_blob_id.isnot(None))
     )
-    for directory, storage_path, upload_blob_id, output_blob_id in rows:
+    for directory, storage_path, _upload_blob_id, _output_blob_id in rows:
         domain = (
             "outputs" if directory == StorageDirectory.OUTPUTS else "uploads"
         )
