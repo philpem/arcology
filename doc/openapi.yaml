@@ -1093,6 +1093,13 @@ paths:
                   type: string
                 storage_path:
                   type: string
+                  description: Stable logical output key used for idempotency.
+                blob_storage_path:
+                  type: string
+                  description: >
+                    Physical content-addressed key under the storage directory.
+                    Defaults to `storage_path`; worker-generated artefacts use
+                    this to separate lineage identity from shared blob storage.
                   description: >
                     Relative path within the storage directory. Must not be
                     absolute or contain `..` path traversal.
@@ -2617,4 +2624,3 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
-

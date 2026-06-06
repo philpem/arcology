@@ -53,8 +53,10 @@ from ..extensions import db
 from ..permissions import public_downloadable, public_readable, require_permission
 from ..riscos_filetypes import lookup_filetype_hex
 from ..utils.enum_display import enum_value
+from ..utils.blobs import artefact_blob, assign_blob
 from ..utils.slugs import ensure_unique_slug, generate_slug, lookup_artefact_by_id, lookup_by_identifier
 from ..visibility import (
+    artefact_visibility_clause,
     can_change_owner,
     can_contribute_to_item,
     can_curate_item,
@@ -489,8 +491,10 @@ def get_artefact_storage_key(artefact: Artefact) -> str:
 
     Returns a key like 'uploads/abc123.img' or 'outputs/xyz789.png'.
     """
+    blob = artefact_blob(artefact)
+    storage_path = blob.storage_path if blob is not None else artefact.storage_path
     directory = 'outputs' if artefact.storage_directory == StorageDirectory.OUTPUTS else 'uploads'
-    return current_app.storage.storage_key(directory, artefact.storage_path)
+    return current_app.storage.storage_key(directory, storage_path)
 
 
 def get_artefact_path(artefact: Artefact) -> str:
@@ -503,10 +507,12 @@ def get_artefact_path(artefact: Artefact) -> str:
         folder = get_output_folder()
     else:
         folder = get_upload_folder()
+    blob = artefact_blob(artefact)
+    storage_path = blob.storage_path if blob is not None else artefact.storage_path
     base = os.path.realpath(folder)
-    full_path = os.path.realpath(os.path.join(folder, artefact.storage_path))
+    full_path = os.path.realpath(os.path.join(folder, storage_path))
     if not (full_path == base or full_path.startswith(base + os.sep)):
-        raise ValueError(f"storage_path escapes storage directory: {artefact.storage_path!r}")
+        raise ValueError(f"storage_path escapes storage directory: {storage_path!r}")
     return full_path
 
 
@@ -2193,6 +2199,41 @@ def _render_artefact_view(artefact):
         page=page, per_page=per_page, max_per_page=per_page
     )
 
+    # Count globally visible instances of each content key on this page.
+    # ``file_size is not None`` deliberately includes valid zero-length files.
+    duplicate_counts = {}
+    duplicate_keys = {
+        (f.file_size, f.sha256)
+        for f in files_pagination.items
+        if not f.is_directory and f.file_size is not None and f.sha256
+    }
+    if duplicate_keys:
+        from sqlalchemy import and_ as _and, or_ as _or
+        duplicate_rows = (
+            db.session.query(
+                ExtractedFile.file_size,
+                ExtractedFile.sha256,
+                _func.count(ExtractedFile.id),
+            )
+            .join(Partition)
+            .join(Artefact, Partition.artefact_id == Artefact.id)
+            .filter(artefact_visibility_clause(current_user))
+            .filter(_or(*[
+                _and(
+                    ExtractedFile.file_size == size,
+                    ExtractedFile.sha256 == sha256,
+                )
+                for size, sha256 in duplicate_keys
+            ]))
+            .group_by(ExtractedFile.file_size, ExtractedFile.sha256)
+            .all()
+        )
+        duplicate_counts = {
+            (size, sha256): count
+            for size, sha256, count in duplicate_rows
+            if count > 1
+        }
+
     # Batch-query all matching KnownFiles across active hash databases
     # for the current page of files, so the template can show multiple badges.
     from ..database import RestrictionType
@@ -2678,6 +2719,7 @@ def _render_artefact_view(artefact):
                            recognised_folder_paths=recognised_folder_paths,
                            hash_databases=hash_databases,
                            file_known_matches=file_known_matches,
+                           duplicate_counts=duplicate_counts,
                            RestrictionType=RestrictionType,
                            letter_pages=letter_pages,
                            current_letter=current_letter,
@@ -2938,16 +2980,6 @@ def upload(item_id):
         except OSError:
             md5, sha256 = None, None
 
-        if sha256:
-            existing = Artefact.query.filter_by(item_id=target_item.id, sha256=sha256).first()
-            if existing:
-                try:
-                    current_app.storage.delete(storage_key)
-                except Exception:
-                    pass
-                flash(f'Duplicate: a file with identical content already exists as "{existing.label}".', 'warning')
-                return redirect(url_for(f'{ROUTENAME}.upload', item_id=item.url_id))
-
         # Detect MIME type
         mime_type, _ = mimetypes.guess_type(original_filename)
 
@@ -2962,11 +2994,20 @@ def upload(item_id):
             storage_path=storage_path,
             file_size=file_size,
             mime_type=mime_type,
-            md5=md5,
-            sha256=sha256,
             owner_id=current_user.id,
             is_private=form.is_private.data,
         )
+
+        blob, blob_created = assign_blob(
+            artefact, StorageDirectory.UPLOADS, storage_path, file_size, sha256, md5
+        )
+        if blob is not None and not blob_created and blob.storage_path != storage_path:
+            try:
+                current_app.storage.delete(storage_key)
+            except Exception:
+                current_app.logger.warning(
+                    "Failed to remove duplicate uploaded object %s", storage_key
+                )
 
         db.session.add(artefact)
         db.session.commit()
@@ -3102,14 +3143,46 @@ def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
                            can_set_private=can_priv)
 
 
-def _delete_artefact_files(artefact):
+def _delete_artefact_files(artefact, deleting_ids=None, processed_blobs=None):
     """Recursively delete files for an artefact and all its derived artefacts."""
     storage = current_app.storage
+    if deleting_ids is None:
+        def _collect_ids(node):
+            ids = {node.id}
+            for child in node.derived_artefacts:
+                ids.update(_collect_ids(child))
+            return ids
+        deleting_ids = _collect_ids(artefact)
+    if processed_blobs is None:
+        processed_blobs = set()
+
     for derived in artefact.derived_artefacts:
-        _delete_artefact_files(derived)
+        _delete_artefact_files(derived, deleting_ids, processed_blobs)
+
+    blob = artefact_blob(artefact)
+    if blob is not None:
+        blob_key = (artefact.storage_directory, blob.id)
+        if blob_key in processed_blobs:
+            return
+        processed_blobs.add(blob_key)
+        external_reference = (
+            db.session.query(Artefact.id)
+            .filter(
+                (Artefact.upload_blob_id == blob.id)
+                if artefact.upload_blob_id is not None
+                else (Artefact.output_blob_id == blob.id),
+                ~Artefact.id.in_(deleting_ids),
+            )
+            .first()
+        )
+        if external_reference is not None:
+            return
+
     try:
         key = get_artefact_storage_key(artefact)
         storage.delete(key)
+        if blob is not None:
+            db.session.delete(blob)
     except Exception as e:
         current_app.logger.warning(f"Failed to delete file for artefact {artefact.uuid}: {e}")
 
@@ -3276,18 +3349,52 @@ def _collect_item_cleanup_keys(all_artefact_ids):
             'output_file_keys': output_file_keys,
             'output_dir_prefixes': output_dir_prefixes,
             'cache_prefixes': cache_prefixes,
+            'upload_blob_ids': [],
+            'output_blob_ids': [],
         }
 
     # Single query for artefact storage keys and cache prefixes
     rows = db.session.execute(
-        sa_select(Artefact.storage_directory, Artefact.storage_path, Artefact.uuid)
+        sa_select(
+            Artefact.id,
+            Artefact.storage_directory,
+            Artefact.storage_path,
+            Artefact.uuid,
+            Artefact.upload_blob_id,
+            Artefact.output_blob_id,
+        )
         .where(Artefact.id.in_(all_artefact_ids))
     ).all()
-    for storage_dir, storage_path, artefact_uuid in rows:
-        if storage_path:
+    deleting_ids = set(all_artefact_ids)
+    upload_blob_ids = set()
+    output_blob_ids = set()
+    for artefact_id, storage_dir, storage_path, artefact_uuid, upload_blob_id, output_blob_id in rows:
+        blob_id = upload_blob_id or output_blob_id
+        if upload_blob_id:
+            upload_blob_ids.add(upload_blob_id)
+        if output_blob_id:
+            output_blob_ids.add(output_blob_id)
+        if storage_path and blob_id is None:
             directory = 'outputs' if storage_dir == StorageDirectory.OUTPUTS else 'uploads'
             artefact_keys.append(f"{directory}/{storage_path}")
         cache_prefixes.append(f"outputs/.cache/{artefact_uuid}")
+
+    from ..database import OutputBlob, UploadBlob
+    orphan_upload_blob_ids = []
+    orphan_output_blob_ids = []
+    for model, ids, fk_column, directory, orphan_ids in (
+        (UploadBlob, upload_blob_ids, Artefact.upload_blob_id, "uploads", orphan_upload_blob_ids),
+        (OutputBlob, output_blob_ids, Artefact.output_blob_id, "outputs", orphan_output_blob_ids),
+    ):
+        for blob in model.query.filter(model.id.in_(ids)).all() if ids else []:
+            external_ref = (
+                db.session.query(Artefact.id)
+                .filter(fk_column == blob.id, ~Artefact.id.in_(deleting_ids))
+                .first()
+            )
+            if external_ref is None:
+                artefact_keys.append(f"{directory}/{blob.storage_path}")
+                orphan_ids.append(blob.id)
 
     # Analysis output dirs and named output files
     rows = db.session.execute(
@@ -3323,6 +3430,8 @@ def _collect_item_cleanup_keys(all_artefact_ids):
         'output_file_keys': output_file_keys,
         'output_dir_prefixes': output_dir_prefixes,
         'cache_prefixes': cache_prefixes,
+        'upload_blob_ids': orphan_upload_blob_ids,
+        'output_blob_ids': orphan_output_blob_ids,
     }
 
 
@@ -3405,6 +3514,15 @@ def bulk_delete_item(item):
 
         _bulk_delete_artefact_dependents(all_ids)
         _bulk_delete_artefacts(all_ids)
+        from ..database import OutputBlob, UploadBlob
+        if cleanup['upload_blob_ids']:
+            UploadBlob.query.filter(
+                UploadBlob.id.in_(cleanup['upload_blob_ids'])
+            ).delete(synchronize_session=False)
+        if cleanup['output_blob_ids']:
+            OutputBlob.query.filter(
+                OutputBlob.id.in_(cleanup['output_blob_ids'])
+            ).delete(synchronize_session=False)
 
     # Item-level children (external refs, tags for all items in hierarchy)
     ExternalReference.query.filter(
@@ -3848,13 +3966,55 @@ def compute_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None
     key = get_artefact_storage_key(artefact)
 
     try:
-        artefact.md5, artefact.sha256 = compute_file_hashes(key, use_storage=True)
+        md5, sha256 = compute_file_hashes(key, use_storage=True)
+        assign_blob(
+            artefact,
+            artefact.storage_directory,
+            artefact.storage_path,
+            artefact.file_size,
+            sha256,
+            md5,
+        )
         db.session.commit()
         flash('Hashes computed successfully.', 'success')
     except Exception as e:
         flash(f'Error computing hashes: {e}', 'error')
 
     return _redirect_to_artefact_view(artefact)
+
+
+@blueprint.route('/files/<string:uuid>/duplicates')
+def file_duplicates(uuid):
+    """List visible extracted-file instances with identical content."""
+    source = (
+        ExtractedFile.query
+        .join(Partition)
+        .join(Artefact, Partition.artefact_id == Artefact.id)
+        .filter(ExtractedFile.uuid == uuid)
+        .filter(artefact_visibility_clause(current_user))
+        .first_or_404()
+    )
+    if source.file_size is None or not source.sha256 or source.is_directory:
+        abort(404)
+
+    instances = (
+        db.session.query(ExtractedFile, Partition, Artefact, Item)
+        .join(Partition, ExtractedFile.partition_id == Partition.id)
+        .join(Artefact, Partition.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(
+            ExtractedFile.file_size == source.file_size,
+            ExtractedFile.sha256 == source.sha256,
+            artefact_visibility_clause(current_user),
+        )
+        .order_by(Item.name, Artefact.label, Partition.partition_index, ExtractedFile.path)
+        .all()
+    )
+    return render_template(
+        'artefacts/file_duplicates.html',
+        source=source,
+        instances=instances,
+    )
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/rescan-hashes', methods=['POST'])
 @blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/rescan-hashes', methods=['POST'], endpoint='rescan_hashes_route_nested')

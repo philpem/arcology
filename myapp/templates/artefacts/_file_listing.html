@@ -235,6 +235,14 @@
                                 <a href="{{ artefact_url(artefact, 'viewer') }}?file={{ file.path | urlencode }}{% if file_form.filename.data %}&amp;filename={{ file_form.filename.data | urlencode }}{% endif %}"
                                    class="text-muted ms-1" title="View"><i class="bi bi-search"></i></a>
                                 {% endif %}
+                                {% set duplicate_count = duplicate_counts.get((file.file_size, file.sha256), 0) %}
+                                {% if duplicate_count > 1 %}
+                                <a href="{{ url_for('myapp_blueprints_artefacts.file_duplicates', uuid=file.uuid) }}"
+                                   class="badge bg-secondary text-decoration-none ms-1"
+                                   title="List identical visible file instances">
+                                    <i class="bi bi-files"></i> {{ duplicate_count }}
+                                </a>
+                                {% endif %}
                                 {% if failed_conversion_info is defined and file.path in failed_conversion_info %}
                                 {% set _fc = failed_conversion_info[file.path] %}
                                 <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=_fc.analysis_uuid) }}"

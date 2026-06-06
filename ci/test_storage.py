@@ -14,6 +14,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
@@ -286,6 +287,56 @@ class TestStorageKey(unittest.TestCase):
             storage.storage_key('outputs', 'subdir/file.png'),
             'outputs/subdir/file.png'
         )
+
+
+class TestS3StorageBlobKeys(unittest.TestCase):
+    """S3 treats nested content-addressed blob keys as ordinary object keys."""
+
+    def setUp(self):
+        from shared.storage import S3Storage
+
+        self.storage = object.__new__(S3Storage)
+        self.storage.bucket = 'test-bucket'
+        self.storage._client = mock.Mock()
+        self.storage._public_client = mock.Mock()
+
+    def test_put_nested_blob_key_sets_content_type(self):
+        key = 'outputs/blobs/ab/' + ('a' * 64) + '.png'
+        self.storage.put(key, '/tmp/source.png')
+        self.storage._client.upload_file.assert_called_once_with(
+            '/tmp/source.png',
+            'test-bucket',
+            key,
+            ExtraArgs={'ContentType': 'image/png'},
+        )
+
+    def test_get_nested_blob_key_creates_local_parent(self):
+        tmpdir = tempfile.mkdtemp()
+        try:
+            destination = os.path.join(tmpdir, 'work', 'blobs', 'ab', 'file.img')
+            self.storage.get('outputs/blobs/ab/file.img', destination)
+            self.assertTrue(os.path.isdir(os.path.dirname(destination)))
+            self.storage._client.download_file.assert_called_once_with(
+                'test-bucket', 'outputs/blobs/ab/file.img', destination
+            )
+        finally:
+            shutil.rmtree(tmpdir)
+
+    def test_delete_nested_blob_key_is_idempotent_api_call(self):
+        key = 'uploads/blobs/00/' + ('0' * 64) + '.img'
+        self.storage.delete(key)
+        self.storage._client.delete_object.assert_called_once_with(
+            Bucket='test-bucket', Key=key
+        )
+
+    def test_presigned_blob_url_uses_blob_content_type(self):
+        key = 'outputs/blobs/ab/' + ('a' * 64) + '.svg'
+        self.storage._public_client.generate_presigned_url.return_value = 'signed'
+        result = self.storage.presigned_url(key, filename='diagram.svg')
+        self.assertEqual(result, 'signed')
+        params = self.storage._public_client.generate_presigned_url.call_args.kwargs['Params']
+        self.assertEqual(params['Key'], key)
+        self.assertEqual(params['ResponseContentType'], 'image/svg+xml')
 
 
 class TestCreateStorage(unittest.TestCase):

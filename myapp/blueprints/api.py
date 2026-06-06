@@ -61,6 +61,7 @@ from ..utils.api_serializers import (
     partition_to_dict,
     share_to_dict,
 )
+from ..utils.blobs import artefact_blob, assign_blob
 from ..utils.db_helpers import get_by_id_or_404 as _get_by_id_or_404
 from ..utils.db_helpers import get_by_uuid_or_404 as _get_by_uuid_or_404
 from ..utils.enum_display import enum_value
@@ -585,6 +586,9 @@ def add_artefact(item_uuid):
 
     if not _validate_storage_path(data['storage_path']):
         return error_response('Invalid storage_path')
+    blob_storage_path = data.get('blob_storage_path', data['storage_path'])
+    if not _validate_storage_path(blob_storage_path):
+        return error_response('Invalid blob_storage_path')
 
     api_user, sees_all = _api_viewer()
     if item.private_effective and not can_contribute_to_item(item, api_user, sees_all=sees_all):
@@ -592,9 +596,25 @@ def add_artefact(item_uuid):
     artefact = Artefact(item_id=item.id, label=data['label'], artefact_type=artefact_type,
                         description=data.get('description'), original_filename=data['original_filename'],
                         storage_path=data['storage_path'], storage_directory=storage_directory,
-                        file_size=data.get('file_size'), md5=data.get('md5'), sha256=data.get('sha256'),
+                        file_size=data.get('file_size'),
                         owner_id=(api_user.id if api_user is not None else item.owner_id),
                         is_private=bool(data.get('is_private', False)))
+    blob, blob_created = assign_blob(
+        artefact, storage_directory, blob_storage_path,
+        data.get('file_size'), data.get('sha256'), data.get('md5'),
+        logical_storage_path=data['storage_path'],
+    )
+    if (blob is not None and not blob_created
+            and blob.storage_path != blob_storage_path):
+        try:
+            current_app.storage.delete(current_app.storage.storage_key(
+                storage_directory.value, blob_storage_path
+            ))
+        except Exception:
+            current_app.logger.warning(
+                "Failed to remove duplicate registered object %s/%s",
+                storage_directory.value, blob_storage_path,
+            )
     db.session.add(artefact)
     db.session.commit()
     artefact.slug = ensure_unique_slug(generate_slug(artefact.label), Artefact, scope_filter={'item_id': item.id})
@@ -687,10 +707,15 @@ def update_artefact(uuid):
     data, error = _json_object()
     if error:
         return error
-    if 'md5' in data:
-        artefact.md5 = data['md5']
-    if 'sha256' in data:
-        artefact.sha256 = data['sha256']
+    if 'md5' in data or 'sha256' in data:
+        assign_blob(
+            artefact,
+            artefact.storage_directory,
+            artefact.storage_path,
+            artefact.file_size,
+            data.get('sha256', artefact.sha256),
+            data.get('md5', artefact.md5),
+        )
     if 'artefact_type' in data and not artefact.type_overridden:
         try:
             artefact.artefact_type = ArtefactType(data['artefact_type'])
@@ -752,44 +777,50 @@ def transform_to_disk_image(uuid):
             and artefact.storage_directory == StorageDirectory.UPLOADS):
         return jsonify(artefact_to_dict(artefact))
 
+    old_blob = artefact_blob(artefact)
     old_key = get_artefact_storage_key(artefact)
 
-    artefact.storage_path = data['storage_path']
-    artefact.storage_directory = StorageDirectory.UPLOADS
     artefact.original_filename = data['original_filename']
     # Only overwrite size/hashes when supplied, so an omitted field never nulls
     # out integrity metadata (used by dedup and hash-DB linking).
-    if 'file_size' in data:
-        artefact.file_size = data['file_size']
     if 'mime_type' in data:
         artefact.mime_type = data['mime_type']
-    if 'md5' in data:
-        artefact.md5 = data['md5']
-    if 'sha256' in data:
-        artefact.sha256 = data['sha256']
+    new_blob, new_blob_created = assign_blob(
+        artefact,
+        StorageDirectory.UPLOADS,
+        data['storage_path'],
+        data.get('file_size', artefact.file_size),
+        data.get('sha256', artefact.sha256),
+        data.get('md5', artefact.md5),
+    )
+    if (new_blob is not None and not new_blob_created
+            and new_blob.storage_path != data['storage_path']):
+        try:
+            current_app.storage.delete(current_app.storage.storage_key(
+                'uploads', data['storage_path']
+            ))
+        except Exception:
+            current_app.logger.warning(
+                "Failed to remove duplicate transformed object uploads/%s",
+                data["storage_path"],
+            )
     # The stored bytes are now a disk image, so the type MUST reflect that — even
     # if a ZIP type was manually pinned, that pin described content that no longer
     # exists, and leaving it would re-queue ARCHIVE_EXTRACT against a raw image.
     artefact.artefact_type = new_type
 
-    try:
-        db.session.flush()
-    except IntegrityError:
-        # The image content already exists in this item (uq_artefact_item_sha256).
-        # Roll back (the old zip is untouched — it is deleted only after a
-        # successful flush) and report cleanly instead of 500ing.
-        db.session.rollback()
-        return error_response(
-            'An artefact with this image content already exists in the item', 409)
+    db.session.flush()
 
-    # Drop the old zip object.  Best-effort: an orphaned object is recoverable
-    # garbage, whereas losing the just-applied transform would be worse.
-    try:
-        current_app.storage.delete(old_key)
-    except Exception as e:
-        current_app.logger.warning(
-            f"transform_to_disk_image: failed to delete old object {old_key}: {e}"
-        )
+    # Drop the old object only when this artefact held its final reference.
+    if old_blob is None or len(old_blob.artefacts) == 0:
+        try:
+            current_app.storage.delete(old_key)
+            if old_blob is not None:
+                db.session.delete(old_blob)
+        except Exception as e:
+            current_app.logger.warning(
+                f"transform_to_disk_image: failed to delete old object {old_key}: {e}"
+            )
 
     # When the worker supplied the image's hashes, skip the redundant
     # CHECKSUM_COMPUTE that would re-read the whole image just to recompute them;
@@ -1471,6 +1502,9 @@ def produce_artefact(id):
 
     if not _validate_storage_path(data['storage_path']):
         return error_response('Invalid storage_path')
+    blob_storage_path = data.get('blob_storage_path', data['storage_path'])
+    if not _validate_storage_path(blob_storage_path):
+        return error_response('Invalid blob_storage_path')
 
     try:
         artefact_type = ArtefactType(data['artefact_type'])
@@ -1556,8 +1590,6 @@ def produce_artefact(id):
         storage_directory=storage_directory,
         file_size=data.get('file_size'),
         mime_type=data.get('mime_type'),
-        md5=data.get('md5'),
-        sha256=data.get('sha256'),
         parent_artefact_id=analysis.artefact_id,
         derived_from_analysis_id=analysis.id,
         # Derived artefacts inherit the source artefact's owner and privacy flag.
@@ -1567,67 +1599,34 @@ def produce_artefact(id):
         owner_id=analysis.artefact.owner_id,
         is_private=analysis.artefact.is_private,
     )
+    blob, blob_created = assign_blob(
+        artefact, storage_directory, blob_storage_path,
+        data.get('file_size'), data.get('sha256'), data.get('md5'),
+        logical_storage_path=data['storage_path'],
+    )
+    if (blob is not None and not blob_created
+            and blob.storage_path != blob_storage_path):
+        try:
+            current_app.storage.delete(current_app.storage.storage_key(
+                storage_directory.value, blob_storage_path
+            ))
+        except Exception:
+            current_app.logger.warning(
+                "Failed to remove duplicate derived object %s/%s",
+                storage_directory.value, blob_storage_path,
+            )
     
     db.session.add(artefact)
     try:
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
-        # SHA-256 collision: another artefact in this item already has this content.
-        # This can happen when a directly-uploaded SCP and a DFI-derived SCP both
-        # produce the same HFE/RAW_SECTOR output (same bytes, different lineage), or
-        # when re-analysis leaves orphaned grandchildren whose cascade delete failed.
-        #
-        # Strategy: re-home the existing artefact under the current analysis so the
-        # UI shows it in the correct place.  We update parent_artefact_id,
-        # derived_from_analysis_id, label, and original_filename to match the current
-        # request.  The file in storage is kept as-is (same content); the new
-        # (orphaned) file the worker uploaded is deleted from storage.
-        sha256 = data.get('sha256')
-        existing = (
-            Artefact.query
-            .filter_by(item_id=analysis.artefact.item_id, sha256=sha256)
-            .first()
-        ) if sha256 else None
+        existing = Artefact.query.filter_by(
+            derived_from_analysis_id=analysis.id,
+            storage_path=data["storage_path"],
+        ).first()
         if not existing:
             return error_response('Failed to create derived artefact (integrity error)', 500)
-
-        current_app.logger.info(
-            f"produce_artefact: SHA-256 collision — re-homing artefact {existing.uuid} "
-            f"(was analysis {existing.derived_from_analysis_id}) under analysis {analysis.id}"
-        )
-
-        # Delete the orphaned new file the worker uploaded (if different from existing)
-        if data.get('storage_path') and data['storage_path'] != existing.storage_path:
-            try:
-                orphan_key = current_app.storage.storage_key(
-                    storage_directory.value, data['storage_path']
-                )
-                current_app.storage.delete(orphan_key)
-            except Exception as e:
-                current_app.logger.warning(
-                    f"produce_artefact: failed to delete orphaned file "
-                    f"{data['storage_path']}: {e}"
-                )
-
-        existing.parent_artefact_id = analysis.artefact_id
-        existing.derived_from_analysis_id = analysis.id
-        existing.label = data['label']
-        existing.original_filename = data['original_filename']
-        existing.slug = ensure_unique_slug(
-            generate_slug(existing.label), Artefact,
-            existing_id=existing.id, scope_filter={'item_id': existing.item_id},
-        )
-        try:
-            db.session.commit()
-        except Exception as e:
-            db.session.rollback()
-            current_app.logger.error(f"produce_artefact: re-home commit failed: {e}")
-            return error_response('Failed to re-home existing artefact', 500)
-
-        # Queue follow-on analyses on the re-homed artefact just like a freshly-
-        # created derived artefact.  Without this, the re-homed artefact retains
-        # only whatever analyses/partitions/files it had under the old lineage,
         # which may be missing (e.g. orphaned after a failed cascade) or stale.
         # queue_analyses_for_artefact skips PENDING/RUNNING duplicates, so this
         # is safe to call even if some analyses are already active.
@@ -2000,6 +1999,7 @@ def upload_artefact(item_uuid):
 	  - label: display label for the artefact (required)
 	  - artefact_type: override auto-detection (optional, default 'auto')
 	  - description: artefact description (optional)
+	  - is_private: whether the new artefact is private (optional, default false)
 	  - auto_analyse: queue automatic analyses (optional, default 'true')
 
 	Returns the created artefact JSON with 201 status.
@@ -2048,20 +2048,9 @@ def upload_artefact(item_uuid):
 	from werkzeug.utils import secure_filename
 	original_filename = secure_filename(file.filename) or 'unnamed'
 
-	# Check for duplicate: same item + same SHA-256
-	existing = Artefact.query.filter_by(item_id=item.id, sha256=sha256).first()
-	if existing:
-		# Clean up the uploaded file — it's a duplicate
-		try:
-			current_app.storage.delete(storage_key)
-		except Exception:
-			pass
-		result = artefact_to_dict(existing)
-		result['duplicate'] = True
-		return jsonify(result), 409
-
 	description = request.form.get('description')
 
+	api_user, _ = _api_viewer()
 	artefact = Artefact(
 		item_id=item.id,
 		label=label,
@@ -2072,27 +2061,21 @@ def upload_artefact(item_uuid):
 		storage_path=storage_name,
 		storage_directory=StorageDirectory.UPLOADS,
 		file_size=file_size,
-		md5=md5,
-		sha256=sha256,
+		owner_id=(api_user.id if api_user is not None else item.owner_id),
+		is_private=request.form.get('is_private', '').lower() in ('1', 'true', 'yes', 'on'),
 	)
-	db.session.add(artefact)
-	try:
-		db.session.commit()
-	except IntegrityError:
-		# Two concurrent uploads of the same file (same item + sha256) raced
-		# past the application-level duplicate check.  The DB constraint fired;
-		# roll back, clean up the orphaned file, and return the existing record.
-		db.session.rollback()
+	blob, blob_created = assign_blob(
+		artefact, StorageDirectory.UPLOADS, storage_name, file_size, sha256, md5
+	)
+	if blob is not None and not blob_created and blob.storage_path != storage_name:
 		try:
 			current_app.storage.delete(storage_key)
 		except Exception:
-			pass
-		existing = Artefact.query.filter_by(item_id=item.id, sha256=sha256).first()
-		if existing:
-			result = artefact_to_dict(existing)
-			result['duplicate'] = True
-			return jsonify(result), 409
-		raise  # unexpected — sha256 is None or constraint is on a different column
+			current_app.logger.warning(
+				"Failed to remove duplicate uploaded object %s", storage_key
+			)
+	db.session.add(artefact)
+	db.session.commit()
 
 	# Generate slug (unique within this item)
 	artefact.slug = ensure_unique_slug(generate_slug(artefact.label), Artefact, scope_filter={'item_id': item.id})
@@ -2229,6 +2212,7 @@ def chunked_upload_init():
 		'label': label,
 		'artefact_type': data.get('artefact_type', 'auto'),
 		'description': data.get('description'),
+		'is_private': bool(data.get('is_private', False)),
 		'auto_analyse': data.get('auto_analyse', True),
 		'hints': hints,
 		'created_at': datetime.now(timezone.utc).isoformat(),
@@ -2395,19 +2379,8 @@ def chunked_upload_complete(upload_uuid):
 	md5 = md5_hash.hexdigest()
 	sha256 = sha256_hash.hexdigest()
 
-	# Check for duplicate: same item + same SHA-256
-	existing = Artefact.query.filter_by(item_id=item.id, sha256=sha256).first()
-	if existing:
-		# Clean up the uploaded file — it's a duplicate
-		try:
-			current_app.storage.delete(storage_key)
-		except Exception:
-			pass
-		result = artefact_to_dict(existing)
-		result['duplicate'] = True
-		return jsonify(result), 409
-
 	# Create artefact record (identical logic to upload_artefact)
+	api_user, _ = _api_viewer()
 	artefact = Artefact(
 		item_id=item.id,
 		label=meta['label'],
@@ -2418,27 +2391,21 @@ def chunked_upload_complete(upload_uuid):
 		storage_path=storage_name,
 		storage_directory=StorageDirectory.UPLOADS,
 		file_size=file_size,
-		md5=md5,
-		sha256=sha256,
+		owner_id=(api_user.id if api_user is not None else item.owner_id),
+		is_private=bool(meta.get('is_private', False)),
 	)
-	db.session.add(artefact)
-	try:
-		db.session.commit()
-	except IntegrityError:
-		# Race: two concurrent chunked uploads of the same file reached the
-		# commit simultaneously.  Roll back, delete the orphaned file, and
-		# return the record that the other request created.
-		db.session.rollback()
+	blob, blob_created = assign_blob(
+		artefact, StorageDirectory.UPLOADS, storage_name, file_size, sha256, md5
+	)
+	if blob is not None and not blob_created and blob.storage_path != storage_name:
 		try:
 			current_app.storage.delete(storage_key)
 		except Exception:
-			pass
-		existing = Artefact.query.filter_by(item_id=item.id, sha256=sha256).first()
-		if existing:
-			result = artefact_to_dict(existing)
-			result['duplicate'] = True
-			return jsonify(result), 409
-		raise
+			current_app.logger.warning(
+				"Failed to remove duplicate uploaded object %s", storage_key
+			)
+	db.session.add(artefact)
+	db.session.commit()
 
 	artefact.slug = ensure_unique_slug(
 		generate_slug(artefact.label), Artefact, scope_filter={'item_id': item.id}

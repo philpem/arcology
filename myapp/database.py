@@ -139,6 +139,44 @@ class StorageDirectory(enum.Enum):
     OUTPUTS = "outputs"    # Derived/generated files (from analysis)
 
 
+class UploadBlob(db.Model):
+    """Globally deduplicated content stored under uploads/."""
+    __tablename__ = "upload_blobs"
+    __table_args__ = (
+        db.UniqueConstraint("file_size", "sha256", name="uq_upload_blob_size_sha256"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    md5: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    storage_path: Mapped[str] = mapped_column(String(1000), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+    artefacts: Mapped[list["Artefact"]] = relationship(back_populates="upload_blob")
+
+
+class OutputBlob(db.Model):
+    """Globally deduplicated content stored under outputs/."""
+    __tablename__ = "output_blobs"
+    __table_args__ = (
+        db.UniqueConstraint("file_size", "sha256", name="uq_output_blob_size_sha256"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    md5: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    storage_path: Mapped[str] = mapped_column(String(1000), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+    artefacts: Mapped[list["Artefact"]] = relationship(back_populates="output_blob")
+
+
 class RestrictionType(enum.Enum):
     """Restriction categories that can be applied to artefacts to block downloads."""
     MALWARE = "malware"
@@ -572,14 +610,9 @@ class Artefact(db.Model):
             'derived_from_analysis_id', 'storage_path',
             name='uq_artefact_analysis_storage_path',
         ),
-        # Prevent two concurrent uploads of the same file (by SHA-256) to the
-        # same item.  The application-level duplicate check is non-atomic, so
-        # without this constraint two simultaneous uploads can both pass the
-        # check and insert duplicate records.  NULL sha256 values (not yet
-        # computed) are never considered equal in SQL.
-        db.UniqueConstraint(
-            'item_id', 'sha256',
-            name='uq_artefact_item_sha256',
+        db.CheckConstraint(
+            "NOT (upload_blob_id IS NOT NULL AND output_blob_id IS NOT NULL)",
+            name="ck_artefact_at_most_one_blob",
         ),
     )
 
@@ -607,6 +640,12 @@ class Artefact(db.Model):
     storage_directory: Mapped[StorageDirectory] = mapped_column(
         SQLEnum(StorageDirectory), default=StorageDirectory.UPLOADS
     )  # Which folder: uploads (original) or outputs (derived)
+    upload_blob_id: Mapped[int | None] = mapped_column(
+        ForeignKey("upload_blobs.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    output_blob_id: Mapped[int | None] = mapped_column(
+        ForeignKey("output_blobs.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     file_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     mime_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     
@@ -666,6 +705,8 @@ class Artefact(db.Model):
         back_populates="artefact", cascade="all, delete-orphan"
     )
     owner: Mapped[Optional["User"]] = relationship("User", foreign_keys=[owner_id])
+    upload_blob: Mapped[Optional["UploadBlob"]] = relationship(back_populates="artefacts")
+    output_blob: Mapped[Optional["OutputBlob"]] = relationship(back_populates="artefacts")
 
     @property
     def effective_private(self) -> bool:
@@ -840,6 +881,7 @@ class ExtractedFile(db.Model):
         Index("ix_extracted_files_archive", "is_archive", "risc_os_filetype"),
         Index("ix_extracted_files_parent", "parent_file_id", "extraction_depth"),
         Index("ix_extracted_files_partition_path", "partition_id", "path"),
+        Index("ix_extracted_files_sha256_size", "sha256", "file_size"),
     )
 
     @property

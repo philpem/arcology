@@ -1,85 +1,78 @@
 import click
 from flask import current_app
 from sqlalchemy import func
-from ..database import Artefact
+
+from ..database import Artefact, OutputBlob, StorageDirectory, UploadBlob
 from ..extensions import db
 
 
-@click.command('dedup-artefacts')
-@click.option('--dry-run', is_flag=True, default=False,
-              help='Show duplicates without deleting them')
-def dedup_artefacts(dry_run):
-    """Remove duplicate artefacts (same item + same SHA-256).
+@click.command("dedup-artefacts")
+@click.option(
+    "--apply",
+    is_flag=True,
+    default=False,
+    help="Delete non-canonical legacy objects from the configured storage backend.",
+)
+def dedup_artefacts(apply):
+    """Report repeated content and optionally prune legacy duplicate objects.
 
-    Keeps the oldest artefact (lowest id) in each duplicate group and deletes
-    the rest, including their stored files and queued analyses.
+    Physical content is deduplicated globally by UploadBlob and OutputBlob.
+    Identical Artefact rows may intentionally have different owners, privacy,
+    labels, and lineage; this command never deletes Artefact rows.
     """
-    # Find (item_id, sha256) groups with more than one artefact.
-    # Exclude artefacts without sha256 (not yet hashed) and derived artefacts.
-    dupes = (
-        db.session.query(Artefact.item_id, Artefact.sha256)
-        .filter(Artefact.sha256.isnot(None))
-        .filter(Artefact.derived_from_analysis_id.is_(None))
-        .group_by(Artefact.item_id, Artefact.sha256)
+    groups = (
+        db.session.query(Artefact.file_size, Artefact.sha256, func.count(Artefact.id))
+        .filter(Artefact.file_size.isnot(None), Artefact.sha256.isnot(None))
+        .group_by(Artefact.file_size, Artefact.sha256)
         .having(func.count(Artefact.id) > 1)
+        .order_by(func.count(Artefact.id).desc())
         .all()
     )
 
-    if not dupes:
-        click.echo('No duplicate artefacts found.')
+    if groups:
+        click.echo(
+            "Logical artefacts are retained; physical bytes are deduplicated by blob."
+        )
+        for file_size, sha256, count in groups:
+            click.echo(f"{count:6d}  {file_size:12d}  {sha256}")
+    else:
+        click.echo("No repeated artefact content found.")
+
+    canonical = {
+        ("uploads", path) for (path,) in db.session.query(UploadBlob.storage_path)
+    } | {
+        ("outputs", path) for (path,) in db.session.query(OutputBlob.storage_path)
+    }
+    candidates = set()
+    rows = db.session.query(
+        Artefact.storage_directory,
+        Artefact.storage_path,
+        Artefact.upload_blob_id,
+        Artefact.output_blob_id,
+    ).filter(
+        (Artefact.upload_blob_id.isnot(None))
+        | (Artefact.output_blob_id.isnot(None))
+    )
+    for directory, storage_path, upload_blob_id, output_blob_id in rows:
+        domain = (
+            "outputs" if directory == StorageDirectory.OUTPUTS else "uploads"
+        )
+        if storage_path and (domain, storage_path) not in canonical:
+            candidates.add((domain, storage_path))
+
+    if not candidates:
+        click.echo("No non-canonical legacy objects found.")
         return
 
-    total_removed = 0
-    for item_id, sha256 in dupes:
-        artefacts = (
-            Artefact.query
-            .filter_by(item_id=item_id, sha256=sha256)
-            .filter(Artefact.derived_from_analysis_id.is_(None))
-            .order_by(Artefact.id)
-            .all()
-        )
-        keep = artefacts[0]
-        remove = artefacts[1:]
+    verb = "Deleting" if apply else "Would delete"
+    for domain, storage_path in sorted(candidates):
+        key = current_app.storage.storage_key(domain, storage_path)
+        click.echo(f"{verb}: {key}")
+        if apply:
+            current_app.storage.delete(key)
 
-        for art in remove:
-            click.echo(f'{"[DRY RUN] " if dry_run else ""}Removing duplicate: '
-                       f'{art.uuid[:8]} "{art.label}" '
-                       f'(keeping {keep.uuid[:8]} "{keep.label}") '
-                       f'on item {art.item.name if art.item else art.item_id}')
-            if not dry_run:
-                # Delete stored file
-                try:
-                    from ..blueprints.artefacts import (
-                        _cleanup_artefact_outputs,
-                        _cleanup_artefact_outputs_s3,
-                        _delete_artefact_files,
-                    )
-                    _delete_artefact_files(art)
-                    from shared.storage import S3Storage
-                    storage = current_app.storage
-                    if isinstance(storage, S3Storage):
-                        _cleanup_artefact_outputs_s3(art, storage)
-                    else:
-                        _cleanup_artefact_outputs(art, current_app.logger)
-                except Exception as e:
-                    click.echo(f'  Warning: file cleanup failed: {e}')
+    if not apply:
+        click.echo("Run again with --apply to remove these objects.")
 
-                db.session.delete(art)
-                total_removed += 1
-
-    if not dry_run:
-        db.session.commit()
-        click.echo(f'\nRemoved {total_removed} duplicate artefact(s).')
-    else:
-        click.echo(f'\n[DRY RUN] Would remove {len([a for _, _ in dupes for a in [1]])} duplicate group(s).')
-        # Count actual duplicates
-        total_would_remove = sum(
-            Artefact.query
-            .filter_by(item_id=item_id, sha256=sha256)
-            .filter(Artefact.derived_from_analysis_id.is_(None))
-            .count() - 1
-            for item_id, sha256 in dupes
-        )
-        click.echo(f'[DRY RUN] Would remove {total_would_remove} duplicate artefact(s).')
 
 # vim: ts=4 sw=4 et

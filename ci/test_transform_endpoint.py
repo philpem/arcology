@@ -32,12 +32,16 @@ class TestTransformToDiskImage(unittest.TestCase):
             _db.create_all()
 
     def setUp(self):
-        from myapp.database import Artefact, Item, Platform, StorageDirectory
+        from myapp.database import (
+            Artefact, Item, OutputBlob, Platform, StorageDirectory, UploadBlob,
+        )
         from shared.enums import ArtefactType
         with self.app.app_context():
             from myapp.database import Analysis
             Analysis.query.delete()
             Artefact.query.delete()
+            UploadBlob.query.delete()
+            OutputBlob.query.delete()
             Item.query.delete()
             Platform.query.delete()
             self.db.session.commit()
@@ -130,30 +134,34 @@ class TestTransformToDiskImage(unittest.TestCase):
             self.assertEqual(art.artefact_type, ArtefactType.DD_ZST)
             self.assertEqual(art.storage_path, 'newimage.zst')
 
-    def test_duplicate_image_content_is_clean_409_not_500(self):
-        # If the image content already exists in the item (uq_artefact_item_sha256),
-        # the transform must report cleanly and leave the artefact untouched —
-        # not 500 with the old zip half-deleted.
-        from myapp.database import Artefact, StorageDirectory
+    def test_duplicate_image_content_reuses_blob_without_merging_artefacts(self):
+        from myapp.database import Artefact, StorageDirectory, UploadBlob
+        from myapp.utils.blobs import assign_blob
         from shared.enums import ArtefactType
         dup_sha = 'c' * 64
         with self.app.app_context():
             art = Artefact.query.filter_by(uuid=self.artefact_uuid).one()
-            # A pre-existing artefact in the same item with the target sha256.
             other = Artefact(
                 item_id=art.item_id, label='pre-existing', artefact_type=ArtefactType.RAW_SECTOR,
                 original_filename='other.img', storage_path='other.img',
-                storage_directory=StorageDirectory.UPLOADS, sha256=dup_sha,
+                storage_directory=StorageDirectory.UPLOADS,
+            )
+            assign_blob(
+                other, StorageDirectory.UPLOADS, 'other.img',
+                123, dup_sha, 'd' * 32,
             )
             self.db.session.add(other)
             self.db.session.commit()
+            other_id = other.id
         resp = self._post(self._payload(sha256=dup_sha))
-        self.assertEqual(resp.status_code, 409, resp.data)
+        self.assertEqual(resp.status_code, 200, resp.data)
         with self.app.app_context():
             art = Artefact.query.filter_by(uuid=self.artefact_uuid).one()
-            # Rolled back: still the original ZIP, old storage_path intact.
-            self.assertEqual(art.artefact_type, ArtefactType.ZIP)
-            self.assertEqual(art.storage_path, 'oldzip.zip')
+            other = self.db.session.get(Artefact, other_id)
+            self.assertEqual(art.artefact_type, ArtefactType.DD_ZST)
+            self.assertNotEqual(art.id, other.id)
+            self.assertEqual(art.upload_blob_id, other.upload_blob_id)
+            self.assertEqual(UploadBlob.query.count(), 1)
 
 
 if __name__ == '__main__':

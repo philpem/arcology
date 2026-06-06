@@ -62,7 +62,10 @@ def artefact_to_dict(artefact, include_partitions=False, include_storage=False):
         'created_at': artefact.created_at.isoformat(), 'updated_at': artefact.updated_at.isoformat()
     }
     if include_storage:
-        result['storage_path'] = artefact.storage_path
+        blob = artefact.upload_blob or artefact.output_blob
+        result['storage_path'] = (
+            blob.storage_path if blob is not None else artefact.storage_path
+        )
         result['storage_directory'] = artefact.storage_directory.value
     if include_partitions:
         result['partitions'] = [partition_to_dict(p) for p in artefact.partitions]
