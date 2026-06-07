@@ -619,15 +619,29 @@
     var loading = false;
 
     function highlightActive() {
-        var path = new URLSearchParams(window.location.search).get('path') || '';
+        var params = new URLSearchParams(window.location.search);
+        var path = params.get('path') || '';
+        var partitionUuid = params.get('partition_uuid') || '';
         panel.querySelectorAll('.dir-tree-link.active').forEach(function (el) {
             el.classList.remove('active');
         });
-        // Use dataset equality rather than a CSS selector so paths containing
-        // characters that are special in CSS (e.g. '"') never cause SyntaxError.
-        var node = Array.from(panel.querySelectorAll('.dir-tree-link')).find(function (el) {
-            return el.dataset.path === path;
-        }) || null;
+        // Prefer highlighting a partition header when a partition filter is
+        // active and we are at the root of that partition (no path set).
+        // Partition headers carry data-partition but not data-path, so they
+        // cannot be matched by the path lookup below.
+        var node = null;
+        if (partitionUuid && !path) {
+            node = Array.from(panel.querySelectorAll('.dir-tree-link[data-partition]')).find(function (el) {
+                return el.dataset.partition === partitionUuid;
+            }) || null;
+        }
+        if (!node) {
+            // Use dataset equality rather than a CSS selector so paths containing
+            // characters that are special in CSS (e.g. '"') never cause SyntaxError.
+            node = Array.from(panel.querySelectorAll('.dir-tree-link')).find(function (el) {
+                return el.dataset.path === path;
+            }) || null;
+        }
         if (node) {
             node.classList.add('active');
             node.scrollIntoView({ block: 'nearest' });

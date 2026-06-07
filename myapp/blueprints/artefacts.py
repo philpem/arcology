@@ -1439,11 +1439,17 @@ def dirtree_html(uuid):
     # path string unbounded would exhaust worker memory under concurrent load.
     _TREE_PATH_LIMIT = 200_000
 
-    # Regular file rows give us the implied directory structure.
-    path_rows = _base_file_q().filter(ExtractedFile.is_directory == False).limit(_TREE_PATH_LIMIT).all()  # noqa: E712
+    # Fetch LIMIT+1 rows so we can tell whether the cap was actually hit
+    # (if we get exactly LIMIT+1 back, we truncated; exactly LIMIT means the
+    # DB is at or below the cap).  Mirrors the hashdb.py SEARCH_LIMIT pattern.
+    path_rows = _base_file_q().filter(ExtractedFile.is_directory == False).limit(_TREE_PATH_LIMIT + 1).all()  # noqa: E712
+    dir_rows  = _base_file_q().filter(ExtractedFile.is_directory == True).limit(_TREE_PATH_LIMIT + 1).all()  # noqa: E712
 
-    # Explicit is_directory rows catch empty directories.
-    dir_rows = _base_file_q().filter(ExtractedFile.is_directory == True).limit(_TREE_PATH_LIMIT).all()  # noqa: E712
+    is_truncated = len(path_rows) > _TREE_PATH_LIMIT or len(dir_rows) > _TREE_PATH_LIMIT
+    if len(path_rows) > _TREE_PATH_LIMIT:
+        path_rows = path_rows[:_TREE_PATH_LIMIT]
+    if len(dir_rows) > _TREE_PATH_LIMIT:
+        dir_rows = dir_rows[:_TREE_PATH_LIMIT]
 
     # Archive paths (for folder-vs-zip icons in the tree).
     # Apply the same partition filter so cross-partition paths don't bleed in.
@@ -1462,9 +1468,7 @@ def dirtree_html(uuid):
     # is_directory rows store the directory path itself (e.g. "dir1").
     # Append '/' so _extract_dir_set in build_directory_tree treats them as
     # directories rather than root-level files (which produce no implied dirs).
-    synthetic_dir_rows = [(p + '/', uuid) for p, uuid in dir_rows]
-
-    is_truncated = (len(path_rows) >= _TREE_PATH_LIMIT or len(dir_rows) >= _TREE_PATH_LIMIT)
+    synthetic_dir_rows = [(p + '/', p_uuid) for p, p_uuid in dir_rows]
 
     from ..utils.path_nav import build_directory_tree
     tree_data = build_directory_tree(
