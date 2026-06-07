@@ -618,17 +618,84 @@
     var loaded = false;
     var loading = false;
 
+    // ── Collapse / expand helpers ────────────────────────────────────────────
+
+    var SS_KEY = 'arcology_dirtree_expanded';
+
+    function getExpandedPaths() {
+        try { return new Set(JSON.parse(sessionStorage.getItem(SS_KEY) || '[]')); } catch (e) { return new Set(); }
+    }
+
+    function saveExpandedState() {
+        var expanded = [];
+        panel.querySelectorAll('.dir-tree-expand.expanded').forEach(function (btn) {
+            var link = btn.closest('li') && btn.closest('li').querySelector('.dir-tree-link[data-path]');
+            if (link) { expanded.push(link.dataset.path); }
+        });
+        try { sessionStorage.setItem(SS_KEY, JSON.stringify(expanded)); } catch (e) {}
+    }
+
+    function expandNode(btn) {
+        var li = btn.closest('li');
+        var ul = li && li.querySelector('.dir-tree-children');
+        if (!ul) { return; }
+        btn.classList.add('expanded');
+        ul.style.display = '';
+    }
+
+    function collapseNode(btn) {
+        var li = btn.closest('li');
+        var ul = li && li.querySelector('.dir-tree-children');
+        if (!ul) { return; }
+        btn.classList.remove('expanded');
+        ul.style.display = 'none';
+    }
+
+    function restoreExpandedState(expandedPaths) {
+        panel.querySelectorAll('.dir-tree-expand').forEach(function (btn) {
+            var link = btn.closest('li') && btn.closest('li').querySelector('.dir-tree-link[data-path]');
+            if (link && expandedPaths.has(link.dataset.path)) {
+                expandNode(btn);
+            }
+        });
+    }
+
+    // Expand all tree nodes that are ancestors of targetPath so that the
+    // target node (and its parent folder) is visible in the tree.
+    function expandToPath(targetPath) {
+        if (!targetPath) { return; }
+        var parts = targetPath.replace(/\/$/, '').split('/').filter(Boolean);
+        for (var i = 0; i < parts.length; i++) {
+            var ancestorPath = parts.slice(0, i + 1).join('/') + '/';
+            var links = Array.from(panel.querySelectorAll('.dir-tree-link[data-path]'));
+            var matchLink = links.find(function (el) { return el.dataset.path === ancestorPath; });
+            if (matchLink) {
+                var li = matchLink.closest('li');
+                var btn = li && li.querySelector('.dir-tree-expand');
+                if (btn && !btn.classList.contains('expanded')) { expandNode(btn); }
+            }
+        }
+    }
+
+    // ── Highlight active node ────────────────────────────────────────────────
+
     function highlightActive() {
         var params = new URLSearchParams(window.location.search);
         var path = params.get('path') || '';
         var partitionUuid = params.get('partition_uuid') || '';
+
+        // Restore saved expand/collapse state, then ensure ancestors of the
+        // current path are expanded (overrides any collapsed ancestors).
+        restoreExpandedState(getExpandedPaths());
+        expandToPath(path);
+
+        // Clear existing highlights.
         panel.querySelectorAll('.dir-tree-link.active').forEach(function (el) {
             el.classList.remove('active');
         });
+
         // Prefer highlighting a partition header when a partition filter is
         // active and we are at the root of that partition (no path set).
-        // Partition headers carry data-partition but not data-path, so they
-        // cannot be matched by the path lookup below.
         var node = null;
         if (partitionUuid && !path) {
             node = Array.from(panel.querySelectorAll('.dir-tree-link[data-partition]')).find(function (el) {
@@ -636,8 +703,7 @@
             }) || null;
         }
         if (!node) {
-            // Use dataset equality rather than a CSS selector so paths containing
-            // characters that are special in CSS (e.g. '"') never cause SyntaxError.
+            // Use dataset equality — avoids CSS SyntaxError for paths with '"'.
             node = Array.from(panel.querySelectorAll('.dir-tree-link')).find(function (el) {
                 return el.dataset.path === path;
             }) || null;
@@ -648,9 +714,25 @@
         }
     }
 
+    // ── Click handling ───────────────────────────────────────────────────────
+
     function handleTreeClick(e) {
+        // Expand/collapse chevron button — toggle subtree, don't navigate.
+        var expandBtn = e.target.closest('.dir-tree-expand');
+        if (expandBtn) {
+            e.preventDefault();
+            if (expandBtn.classList.contains('expanded')) {
+                collapseNode(expandBtn);
+            } else {
+                expandNode(expandBtn);
+            }
+            saveExpandedState();
+            return;
+        }
+
+        // Directory / partition link — navigate with params preserved.
         var link = e.target.closest('.dir-tree-link');
-        if (!link) return;
+        if (!link) { return; }
         e.preventDefault();
         var params = new URLSearchParams(window.location.search);
         params.delete('page');
@@ -659,8 +741,7 @@
             params.delete('path');
         } else {
             params.set('path', link.dataset.path);
-            // "All files" root link (data-path="") resets the partition filter
-            // too so all partitions become visible again.
+            // "All files" root link — also clear the partition filter.
             if (link.dataset.path === '') {
                 params.delete('partition_uuid');
             }

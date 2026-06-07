@@ -13,6 +13,7 @@
     border-radius: 3px;
     color: inherit;
     display: block;
+    min-width: 0;
     padding: 1px 4px;
     white-space: nowrap;
     overflow: hidden;
@@ -41,6 +42,25 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+#dir-tree-panel .dir-tree-expand {
+    background: none;
+    border: none;
+    color: var(--bs-secondary);
+    cursor: pointer;
+    flex-shrink: 0;
+    font-size: 0.65rem;
+    line-height: 1;
+    padding: 0;
+    width: 1rem;
+}
+#dir-tree-panel .dir-tree-expand:hover { color: var(--bs-body-color); }
+#dir-tree-panel .dir-tree-chevron {
+    display: inline-block;
+    transition: transform 0.15s ease;
+}
+#dir-tree-panel .dir-tree-expand.expanded .dir-tree-chevron {
+    transform: rotate(90deg);
 }
 </style>
 
@@ -79,15 +99,24 @@
     <ul class="dir-tree-children list-unstyled mb-0 mt-0">
         {% for node in entry.children recursive %}
         <li>
-            <a href="?path={{ node.path | urlencode }}"
-               data-path="{{ node.path }}"
-               class="dir-tree-link"
-               title="{{ node.path }}">
-                <i class="bi {{ 'bi-file-zip-fill text-info' if node.is_archive else 'bi-folder-fill text-warning' }}"></i>
-                {{ node.name }}
-            </a>
+            <div class="d-flex align-items-center">
+                {%- if node.children %}
+                <button type="button" class="dir-tree-expand" aria-label="Expand {{ node.name }}">
+                    <i class="bi bi-chevron-right dir-tree-chevron"></i>
+                </button>
+                {%- else %}
+                <span class="flex-shrink-0" style="width:1rem;"></span>
+                {%- endif %}
+                <a href="?path={{ node.path | urlencode }}"
+                   data-path="{{ node.path }}"
+                   class="dir-tree-link flex-grow-1"
+                   title="{{ node.path }}">
+                    <i class="bi {{ 'bi-file-zip-fill text-info' if node.is_archive else 'bi-folder-fill text-warning' }}"></i>
+                    {{ node.name }}
+                </a>
+            </div>
             {% if node.children %}
-            <ul class="dir-tree-children list-unstyled mb-0 mt-0">
+            <ul class="dir-tree-children list-unstyled mb-0 mt-0" style="display:none;">
                 {{ loop(node.children) }}
             </ul>
             {% endif %}
