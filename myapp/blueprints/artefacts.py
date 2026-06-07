@@ -3009,6 +3009,8 @@ def upload(item_id):
                 current_app.logger.warning(
                     "Failed to remove duplicate uploaded object %s", storage_key
                 )
+            # Sync compat column to canonical blob path; the fresh file was deleted.
+            artefact.storage_path = blob.storage_path
 
         db.session.add(artefact)
         db.session.commit()

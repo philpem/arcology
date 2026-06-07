@@ -437,6 +437,7 @@ def _extract_top_level_archive(
             label=file_path.name,
             source_path=file_path,
             artefact_type=artefact_type,
+            logical_name=str(file_path.relative_to(extract_dir)),
         )
         if resp:
             derived_count += 1

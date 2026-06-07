@@ -1581,13 +1581,25 @@ def produce_artefact(id):
         # Use no_autoflush to prevent SQLAlchemy from flushing pending deletes
         # mid-loop when lazy-loading derived_artefacts inside _delete_artefact_files.
         with db.session.no_autoflush:
+            # Pre-collect every ID being deleted (across all priors and their
+            # subtrees) so _delete_artefact_files treats siblings as "being
+            # deleted" and does not skip a shared blob because a sibling that
+            # hasn't been flushed yet appears as an external reference.
+            all_prior_ids: set[int] = set()
+            stack = list(prior_derived)
+            while stack:
+                node = stack.pop()
+                all_prior_ids.add(node.id)
+                stack.extend(node.derived_artefacts)
+            processed_blobs: set = set()
             for prior in prior_derived:
                 current_app.logger.info(
                     f"Removing prior derived artefact {prior.uuid} "
                     f"(from previous {enum_value(analysis.analysis_type)} analysis) "
                     f"before re-run"
                 )
-                _delete_artefact_files(prior)
+                _delete_artefact_files(prior, deleting_ids=all_prior_ids,
+                                       processed_blobs=processed_blobs)
                 db.session.delete(prior)
         if prior_derived:
             db.session.flush()
@@ -2088,6 +2100,8 @@ def upload_artefact(item_uuid):
 			current_app.logger.warning(
 				"Failed to remove duplicate uploaded object %s", storage_key
 			)
+		# Sync compat column to canonical blob path; the fresh UUID file was deleted.
+		artefact.storage_path = blob.storage_path
 	db.session.add(artefact)
 	db.session.commit()
 
@@ -2418,6 +2432,8 @@ def chunked_upload_complete(upload_uuid):
 			current_app.logger.warning(
 				"Failed to remove duplicate uploaded object %s", storage_key
 			)
+		# Sync compat column to canonical blob path; the fresh UUID file was deleted.
+		artefact.storage_path = blob.storage_path
 	db.session.add(artefact)
 	db.session.commit()
 

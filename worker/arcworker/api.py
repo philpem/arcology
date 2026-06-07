@@ -208,6 +208,7 @@ class ArcologyAPI:
         auto_analyse: bool = True,
         skip_analyses: list[str] | None = None,
         analysis_hints: dict | None = None,
+        logical_name: str | None = None,
     ) -> dict | None:
         """
         Register a derived artefact produced by an analysis.
@@ -252,7 +253,11 @@ class ArcologyAPI:
             if not dest.exists():
                 shutil.copy(source_path, dest)
 
-        derivation_hash = hashlib.sha256(source_path.name.encode()).hexdigest()[:24]
+        # Use logical_name (e.g. a subdir-relative path) when provided so that
+        # files sharing a basename in different subdirectories get distinct
+        # storage_names and do not collide on uq_artefact_analysis_storage_path.
+        name_for_hash = logical_name if logical_name is not None else source_path.name
+        derivation_hash = hashlib.sha256(name_for_hash.encode()).hexdigest()[:24]
         storage_name = f"derived/{analysis_id}/{derivation_hash}"
 
         payload = {
