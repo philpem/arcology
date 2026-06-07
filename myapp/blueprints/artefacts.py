@@ -53,6 +53,7 @@ from ..extensions import db
 from ..permissions import public_downloadable, public_readable, require_permission
 from ..riscos_filetypes import lookup_filetype_hex
 from ..utils.enum_display import enum_value
+from ..utils.path_nav import build_directory_tree
 from ..utils.slugs import ensure_unique_slug, generate_slug, lookup_artefact_by_id, lookup_by_identifier
 from ..visibility import (
     can_change_owner,
@@ -1391,6 +1392,98 @@ def analysis_status_json(uuid):
         counts[status.value] = n
     counts['total'] = sum(counts.values())
     return jsonify(counts)
+
+
+@blueprint.route('/artefacts/<string:uuid>/dirtree.html')
+@public_readable
+def dirtree_html(uuid):
+    """AJAX endpoint: returns an HTML fragment containing the full directory tree.
+
+    Called by the "Tree" toggle button in the file listing panel.  Accepts an
+    optional ``?partition_uuid=`` query param to restrict the tree to one
+    partition (used when the user has already selected a partition filter).
+    """
+    artefact = _get_artefact_or_404(uuid=uuid)
+    all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+
+    all_partitions = (
+        Partition.query
+        .filter(Partition.artefact_id.in_(all_ids))
+        .order_by(Partition.artefact_id, Partition.partition_index)
+        .all()
+    )
+    if not all_partitions:
+        return ('', 204)
+
+    # Optional single-partition filter (mirrors the main file listing filter)
+    partition_uuid_filter = request.args.get('partition_uuid') or None
+    if partition_uuid_filter == 'None':
+        partition_uuid_filter = None
+
+    visible_partitions = (
+        [p for p in all_partitions if p.uuid == partition_uuid_filter]
+        if partition_uuid_filter else all_partitions
+    )
+
+    def _base_file_q():
+        q = (
+            db.session.query(ExtractedFile.path, Partition.uuid)
+            .join(Partition)
+            .filter(Partition.artefact_id.in_(all_ids))
+        )
+        if partition_uuid_filter:
+            q = q.filter(Partition.uuid == partition_uuid_filter)
+        return q
+
+    # Safety cap: directory trees with more paths than this are truncated.
+    # Large disk images can have hundreds of thousands of files; loading every
+    # path string unbounded would exhaust worker memory under concurrent load.
+    _TREE_PATH_LIMIT = 200_000
+
+    # Fetch LIMIT+1 rows so we can tell whether the cap was actually hit
+    # (if we get exactly LIMIT+1 back, we truncated; exactly LIMIT means the
+    # DB is at or below the cap).  Mirrors the hashdb.py SEARCH_LIMIT pattern.
+    path_rows = _base_file_q().filter(ExtractedFile.is_directory == False).limit(_TREE_PATH_LIMIT + 1).all()  # noqa: E712
+    dir_rows  = _base_file_q().filter(ExtractedFile.is_directory == True).limit(_TREE_PATH_LIMIT + 1).all()  # noqa: E712
+
+    is_truncated = len(path_rows) > _TREE_PATH_LIMIT or len(dir_rows) > _TREE_PATH_LIMIT
+    if len(path_rows) > _TREE_PATH_LIMIT:
+        path_rows = path_rows[:_TREE_PATH_LIMIT]
+    if len(dir_rows) > _TREE_PATH_LIMIT:
+        dir_rows = dir_rows[:_TREE_PATH_LIMIT]
+
+    # Archive paths (for folder-vs-zip icons in the tree).
+    # Apply the same partition filter so cross-partition paths don't bleed in.
+    arc_base = (
+        db.session.query(ExtractedFile.path)
+        .join(Partition)
+        .filter(
+            Partition.artefact_id.in_(all_ids),
+            ExtractedFile.is_archive == True,  # noqa: E712
+        )
+    )
+    if partition_uuid_filter:
+        arc_base = arc_base.filter(Partition.uuid == partition_uuid_filter)
+    archive_paths = {row[0] for row in arc_base.limit(_TREE_PATH_LIMIT).all()}
+
+    # is_directory rows store the directory path itself (e.g. "dir1").
+    # Append '/' so _extract_dir_set in build_directory_tree treats them as
+    # directories rather than root-level files (which produce no implied dirs).
+    synthetic_dir_rows = [(p + '/', p_uuid) for p, p_uuid in dir_rows]
+
+    tree_data = build_directory_tree(
+        list(path_rows) + synthetic_dir_rows,
+        visible_partitions,
+        archive_paths=archive_paths,
+    )
+
+    return render_template(
+        'artefacts/_dir_tree_panel.html',
+        tree=tree_data,
+        all_partitions=all_partitions,
+        single_partition=len(visible_partitions) == 1,
+        is_truncated=is_truncated,
+    )
 
 
 @blueprint.route('/artefacts/<string:uuid>/tree')
