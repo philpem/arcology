@@ -57,14 +57,20 @@ def upgrade():
         ("UPLOADS", "upload_blobs", "upload_blob_id"),
         ("OUTPUTS", "output_blobs", "output_blob_id"),
     ):
+        # DISTINCT ON picks the row with the smallest id (oldest artefact) as the
+        # canonical blob, so the original upload wins over later re-uploads of the
+        # same content.  MIN(storage_path) would pick alphabetically, which is
+        # arbitrary.  DISTINCT ON is PostgreSQL-specific; this migration only runs
+        # against PostgreSQL (CI tests use db.create_all() and skip migrations).
         bind.execute(sa.text(f"""
             INSERT INTO {table} (file_size, sha256, md5, storage_path, created_at)
-            SELECT file_size, sha256, MIN(md5), MIN(storage_path), MIN(created_at)
+            SELECT DISTINCT ON (file_size, sha256)
+                file_size, sha256, md5, storage_path, created_at
             FROM artefacts
             WHERE storage_directory = :directory
               AND file_size IS NOT NULL
               AND sha256 IS NOT NULL
-            GROUP BY file_size, sha256
+            ORDER BY file_size, sha256, id ASC
         """), {"directory": directory})
         bind.execute(sa.text(f"""
             UPDATE artefacts
@@ -86,6 +92,12 @@ def upgrade():
 
 
 def downgrade():
+    # This downgrade is effectively one-way in production.  The new design
+    # intentionally allows multiple artefacts with the same SHA-256 on the same
+    # item (e.g. two curators independently uploading the same disk image).  Once
+    # any such pair exists the check below fires and the downgrade cannot proceed
+    # without manually removing the duplicates.  Treat this migration as permanent
+    # for any deployment where curators have been active since it was applied.
     duplicate = op.get_bind().execute(sa.text("""
         SELECT item_id, sha256, COUNT(*) AS duplicate_count
         FROM artefacts

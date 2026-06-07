@@ -5,6 +5,13 @@ from ..database import Artefact, OutputBlob, StorageDirectory, UploadBlob
 from ..extensions import db
 
 
+def _format_size(n):
+    for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
+        if n < 1024 or unit == 'TB':
+            return f"{n:.1f} {unit}" if unit != 'B' else f"{n} {unit}"
+        n /= 1024
+
+
 @click.command("dedup-artefacts")
 @click.option(
     "--apply",
@@ -13,11 +20,15 @@ from ..extensions import db
     help="Delete non-canonical legacy objects from the configured storage backend.",
 )
 def dedup_artefacts(apply):
-    """Report repeated content and optionally prune legacy duplicate objects.
+    """Report repeated content and optionally prune legacy duplicate storage objects.
 
     Physical content is deduplicated globally by UploadBlob and OutputBlob.
     Identical Artefact rows may intentionally have different owners, privacy,
     labels, and lineage; this command never deletes Artefact rows.
+
+    Non-canonical objects are storage paths on artefacts that do not match any
+    blob record -- typically left over from uploads that predated the blob
+    deduplication migration.  Removing them reclaims disk/object-store space.
     """
     groups = (
         db.session.query(Artefact.file_size, Artefact.sha256, func.count(Artefact.id))
@@ -62,6 +73,19 @@ def dedup_artefacts(apply):
     if not candidates:
         click.echo("No non-canonical legacy objects found.")
         return
+
+    # Compute estimated reclaimable size from artefact rows (blob.file_size is
+    # the authoritative size; fall back to artefact.file_size for legacy rows).
+    candidate_paths = {p for _, p in candidates}
+    size_rows = db.session.query(
+        Artefact.storage_path, Artefact.file_size
+    ).filter(Artefact.storage_path.in_(candidate_paths)).all()
+    total_bytes = sum(fs for _, fs in size_rows if fs is not None)
+    click.echo(
+        f"{len(candidates)} non-canonical object(s) found, "
+        f"~{_format_size(total_bytes)} reclaimable."
+    )
+    click.echo("(Artefact records are not modified -- only orphaned storage objects are removed.)")
 
     verb = "Deleting" if apply else "Would delete"
     for domain, storage_path in sorted(candidates):

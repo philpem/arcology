@@ -636,7 +636,10 @@ class Artefact(db.Model):
     
     # File storage
     original_filename: Mapped[str] = mapped_column(String(255))  # User's original filename
-    storage_path: Mapped[str] = mapped_column(String(1000))      # Filename in storage folder
+    # Upload artefacts: physical file path (equals upload_blob.storage_path).
+    # Derived artefacts: logical lineage key (derived/{analysis_id}/{hash});
+    # the physical path is output_blob.storage_path.
+    storage_path: Mapped[str] = mapped_column(String(1000))
     storage_directory: Mapped[StorageDirectory] = mapped_column(
         SQLEnum(StorageDirectory), default=StorageDirectory.UPLOADS
     )  # Which folder: uploads (original) or outputs (derived)

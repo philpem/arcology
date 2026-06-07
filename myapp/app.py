@@ -528,6 +528,7 @@ def _register_error_handlers(app):
 
 
 def _register_cli_commands(app):
+    from .cli.backfill_blobs import backfill_blobs
     from .cli.backfill_slugs import backfill_slugs
     from .cli.cancel_analysis import cancel_analysis
     from .cli.create_admin import create_admin
@@ -546,6 +547,7 @@ def _register_cli_commands(app):
     app.cli.add_command(dedup_artefacts)
     app.cli.add_command(reassign_ownership)
     app.cli.add_command(backfill_slugs)
+    app.cli.add_command(backfill_blobs)
     app.cli.add_command(set_password)
 
 

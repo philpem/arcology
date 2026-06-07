@@ -176,6 +176,16 @@ flask cancel-analysis --all --include-running  # also cancel running
 flask reassign-ownership --from alice --to bob
 flask reassign-ownership --from alice --to none  # release to unowned
 flask reassign-ownership --from alice --to bob --dry-run
+
+# After applying the global blob deduplication migration (00006a25a2c0):
+#   Artefacts whose SHA-256 was NULL at migration time have no blob record.
+#   Once the worker has computed their hashes, run this to fill in the gaps.
+flask backfill-blobs --dry-run   # preview
+flask backfill-blobs             # assign missing blob records
+#   Remove legacy duplicate storage objects left over from pre-migration uploads.
+#   This does NOT delete Artefact rows — only orphaned physical files.
+flask dedup-artefacts            # preview what would be removed
+flask dedup-artefacts --apply    # remove non-canonical objects from storage
 ```
 
 See `doc/ADMIN_COMMANDS.md` for the full reference including all flags.
