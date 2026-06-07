@@ -53,6 +53,7 @@ from ..extensions import db
 from ..permissions import public_downloadable, public_readable, require_permission
 from ..riscos_filetypes import lookup_filetype_hex
 from ..utils.enum_display import enum_value
+from ..utils.path_nav import build_directory_tree
 from ..utils.slugs import ensure_unique_slug, generate_slug, lookup_artefact_by_id, lookup_by_identifier
 from ..visibility import (
     can_change_owner,
@@ -1470,7 +1471,6 @@ def dirtree_html(uuid):
     # directories rather than root-level files (which produce no implied dirs).
     synthetic_dir_rows = [(p + '/', p_uuid) for p, p_uuid in dir_rows]
 
-    from ..utils.path_nav import build_directory_tree
     tree_data = build_directory_tree(
         list(path_rows) + synthetic_dir_rows,
         visible_partitions,
