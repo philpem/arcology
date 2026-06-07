@@ -7,13 +7,27 @@
                     {% if hashdb_mode %}<span class="badge bg-warning text-dark ms-2"><i class="bi bi-database-add"></i> Hash DB Mode</span>{% endif %}
                 </span>
                 {% if all_partitions %}
-                <a href="?{% if not hashdb_mode %}mode=hashdb&{% endif %}{{ hashdb_toggle_args | urlencode }}"
-                   class="btn btn-sm {{ 'btn-warning' if hashdb_mode else 'btn-outline-secondary' }}"
-                   title="{{ 'Exit Hash DB Mode' if hashdb_mode else 'Enter Hash DB Mode to add files to a hash database' }}">
-                    <i class="bi bi-database-add"></i> {{ 'Exit HashDB Mode' if hashdb_mode else 'Hash DB Mode' }}
-                </a>
+                <div class="d-flex gap-2">
+                    <button type="button" id="dir-tree-toggle"
+                            class="btn btn-sm btn-outline-secondary"
+                            title="Toggle directory tree">
+                        <i class="bi bi-diagram-3"></i> Tree
+                    </button>
+                    <a href="?{% if not hashdb_mode %}mode=hashdb&{% endif %}{{ hashdb_toggle_args | urlencode }}"
+                       class="btn btn-sm {{ 'btn-warning' if hashdb_mode else 'btn-outline-secondary' }}"
+                       title="{{ 'Exit Hash DB Mode' if hashdb_mode else 'Enter Hash DB Mode to add files to a hash database' }}">
+                        <i class="bi bi-database-add"></i> {{ 'Exit HashDB Mode' if hashdb_mode else 'Hash DB Mode' }}
+                    </a>
+                </div>
                 {% endif %}
+            </div>{# /card-header #}
+            <div class="row g-0" id="file-browser-row">
+            <div class="col-md-3 border-end d-none"
+                 id="dir-tree-panel"
+                 style="max-height:70vh; overflow-y:auto; position:sticky; top:0;">
+                {# directory tree injected here by JS #}
             </div>
+            <div class="col" id="file-listing-inner">
             <div class="card-body border-bottom">
                 <form method="get" class="d-flex flex-wrap align-items-end gap-2">
                 {% if hashdb_mode %}<input type="hidden" name="mode" value="hashdb">{% endif %}
@@ -275,7 +289,9 @@
             </div>
             {% if hashdb_mode %}</form>{% endif %}
             {{ render_pagination_compact(files_pagination, pagination_args, valid_per_page=valid_per_page, view_all=view_all) }}
-        </div>
+            </div>{# /file-listing-inner #}
+            </div>{# /file-browser-row #}
+        </div>{# /card #}
     </div>
 </div>
 
@@ -587,6 +603,101 @@
             });
         }
     });
+})();
+</script>
+{% endif %}
+
+{# ── Directory tree toggle ──────────────────────────────────────────────── #}
+{% if all_partitions %}
+<script>
+(function () {
+    var toggle = document.getElementById('dir-tree-toggle');
+    if (!toggle) return;
+    var panel  = document.getElementById('dir-tree-panel');
+    var TREE_URL = {{ url_for('myapp_blueprints_artefacts.dirtree_html', uuid=artefact.uuid) | tojson }};
+    var loaded = false;
+    var loading = false;
+
+    function highlightActive() {
+        var path = new URLSearchParams(window.location.search).get('path') || '';
+        panel.querySelectorAll('.dir-tree-link.active').forEach(function (el) {
+            el.classList.remove('active');
+        });
+        // Use dataset equality rather than a CSS selector so paths containing
+        // characters that are special in CSS (e.g. '"') never cause SyntaxError.
+        var node = Array.from(panel.querySelectorAll('.dir-tree-link')).find(function (el) {
+            return el.dataset.path === path;
+        }) || null;
+        if (node) {
+            node.classList.add('active');
+            node.scrollIntoView({ block: 'nearest' });
+        }
+    }
+
+    function handleTreeClick(e) {
+        var link = e.target.closest('.dir-tree-link');
+        if (!link) return;
+        e.preventDefault();
+        var params = new URLSearchParams(window.location.search);
+        params.delete('page');
+        if ('partition' in link.dataset) {
+            params.set('partition_uuid', link.dataset.partition);
+            params.delete('path');
+        } else {
+            params.set('path', link.dataset.path);
+            // "All files" root link (data-path="") resets the partition filter
+            // too so all partitions become visible again.
+            if (link.dataset.path === '') {
+                params.delete('partition_uuid');
+            }
+        }
+        window.location.search = params.toString();
+    }
+
+    // Register the click handler once at setup time, not inside the fetch
+    // callback, so it can never be registered more than once regardless of
+    // how many times the panel is opened and closed.
+    panel.addEventListener('click', handleTreeClick);
+
+    function openTree() {
+        // Guard with both `loaded` and `loading` so a rapid open→close→open
+        // sequence before the first fetch resolves does not dispatch a second
+        // request (which would previously register handleTreeClick twice).
+        if (!loaded && !loading) {
+            loading = true;
+            var params = new URLSearchParams(window.location.search);
+            fetch(TREE_URL + '?' + params.toString())
+                .then(function (r) { return r.ok ? r.text() : Promise.reject(r.status); })
+                .then(function (html) {
+                    panel.innerHTML = html;
+                    loaded = true;
+                    loading = false;
+                    highlightActive();
+                })
+                .catch(function (err) {
+                    loading = false;
+                    panel.innerHTML = '<p class="text-muted small px-2 py-1">Could not load tree (' + err + ').</p>';
+                });
+        }
+        panel.classList.remove('d-none');
+        toggle.classList.add('active');
+        try { localStorage.setItem('arcology_dirtree_open', '1'); } catch (e) {}
+    }
+
+    function closeTree() {
+        panel.classList.add('d-none');
+        toggle.classList.remove('active');
+        try { localStorage.removeItem('arcology_dirtree_open'); } catch (e) {}
+    }
+
+    toggle.addEventListener('click', function () {
+        if (panel.classList.contains('d-none')) { openTree(); } else { closeTree(); }
+    });
+
+    // Restore open state after navigation
+    try {
+        if (localStorage.getItem('arcology_dirtree_open') === '1') { openTree(); }
+    } catch (e) {}
 })();
 </script>
 {% endif %}
