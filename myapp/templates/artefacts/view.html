@@ -144,7 +144,7 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
         {% elif current_user.is_authenticated or public_downloads %}
         <a href="{{ artefact_url(artefact, 'download') }}" class="btn btn-success"><i class="bi bi-download"></i> Download</a>
         {% else %}
-        <a href="{{ url_for('login', next=request.url) }}" class="btn btn-outline-secondary">
+        <a href="{{ url_for('auth.login', next=request.url) }}" class="btn btn-outline-secondary">
             <i class="bi bi-box-arrow-in-right"></i> Log in to Download
         </a>
         {% endif %}
