@@ -121,11 +121,41 @@ class TestOutputRestrictionGate(unittest.TestCase):
                 {'type': 'text', 'name': 'conv.txt', 'filename': cls.output_path},
             ]})
             db.session.add(conv)
+
+            # ── Mode 2 aggregate scenario ────────────────────────────────────
+            # An UNRESTRICTED container artefact (ZIP) whose DERIVED child is
+            # COPYRIGHT-restricted and has an image FORMAT_CONVERT output.  The
+            # viewer aggregates the child's outputs; before the tidy-up the
+            # child's image rendered as a broken thumbnail (403) instead of a
+            # per-group restricted notice.
+            container = Artefact(item_id=item.id, label='archive',
+                                 artefact_type=ArtefactType.ZIP,
+                                 original_filename='archive.zip',
+                                 storage_path='uploads/archive.zip', owner_id=owner.id)
+            db.session.add(container)
+            db.session.flush()
+            child = Artefact(item_id=item.id, label='child', artefact_type=ArtefactType.ACORN_SPRITE,
+                             original_filename='pic.spr', storage_path='uploads/pic.spr',
+                             owner_id=owner.id, parent_artefact_id=container.id)
+            db.session.add(child)
+            db.session.flush()
+            db.session.add(ArtefactRestriction(
+                artefact_id=child.id, restriction_type=RestrictionType.COPYRIGHT, reason='test'))
+            cls.child_img_path = f'pub-item/{child.uuid}_child/pic.png'
+            child_conv = Analysis(artefact_id=child.id, analysis_type=AnalysisType.FORMAT_CONVERT,
+                                  status=AnalysisStatus.COMPLETED, success=True)
+            child_conv.details = json.dumps({'outputs': [
+                {'type': 'image', 'name': 'pic.png', 'source_file': 'pic.spr',
+                 'filename': cls.child_img_path},
+            ]})
+            db.session.add(child_conv)
+
             db.session.commit()
 
             cls.art_uuid = art.uuid
             cls.item_url = item.url_id
             cls.art_slug = art.url_slug
+            cls.container_slug = container.url_slug
 
     @classmethod
     def tearDownClass(cls):
@@ -174,6 +204,23 @@ class TestOutputRestrictionGate(unittest.TestCase):
         r = self.client.get(f'/items/{self.item_url}/artefacts/{self.art_slug}/viewer')
         self.assertEqual(r.status_code, 200, r.data)
         self.assertIn(_SECRET, r.data)
+
+    # ---- Mode 2 aggregate: restricted derived-artefact image output ----
+    def test_mode2_viewer_withholds_restricted_child_image(self):
+        # Viewing the UNRESTRICTED container as a non-bypass viewer must not
+        # emit an <img> pointing at the restricted child's output (it would
+        # 403 → broken thumbnail); instead a per-group notice is shown.
+        self._login(self.viewer_id)
+        r = self.client.get(f'/items/{self.item_url}/artefacts/{self.container_slug}/viewer')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertNotIn(self.child_img_path.encode(), r.data)
+        self.assertIn(b'download restriction', r.data)
+
+    def test_mode2_viewer_shows_child_image_for_admin(self):
+        self._login(self.admin_id)
+        r = self.client.get(f'/items/{self.item_url}/artefacts/{self.container_slug}/viewer')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIn(self.child_img_path.encode(), r.data)
 
 
 if __name__ == '__main__':

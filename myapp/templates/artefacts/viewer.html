@@ -300,7 +300,19 @@
     {% if img_out %}
     {% set preview_file = img_out.svg_filename if img_out.svg_filename else img_out.filename %}
     <div class="{{ viewer_col_class }}">
-        {% if item.explicit and not user_can_bypass_explicit %}
+        {% if item.restricted %}
+        {# Non-bypassable download restriction: show a locked placeholder — the
+           output's bytes are gated, so the image would 403. #}
+        <div class="card viewer-img-card h-100">
+            <div class="viewer-thumb-link bg-dark d-flex align-items-center justify-content-center"
+                 title="Download restricted">
+                <i class="bi bi-lock-fill text-secondary fs-3"></i>
+            </div>
+            <div class="card-footer p-1 text-center">
+                <span class="viewer-name font-monospace">{{ item.label }}</span>
+            </div>
+        </div>
+        {% elif item.explicit and not user_can_bypass_explicit %}
         {# No bypass: show a locked placeholder in place of the image. #}
         <div class="card viewer-img-card h-100">
             <div class="viewer-thumb-link bg-dark d-flex align-items-center justify-content-center">
@@ -360,6 +372,17 @@
 <section class="mb-5">
 <h5 class="font-monospace border-bottom pb-2 mb-3">{{ group.label }}</h5>
 {% endif %}
+
+{% if group.restricted %}
+{# Non-bypassable download restriction on this output's source artefact: its
+   converted outputs render the restricted content, so withhold them and show a
+   notice rather than broken images / 403 raw links. #}
+<div class="alert alert-warning">
+    <i class="bi bi-lock-fill"></i>
+    This file has a download restriction and you do not hold a bypass, so its
+    converted output is not available.
+</div>
+{% else %}
 
 {% if group.explicit %}
   {# ── Explicit content gate ── #}
@@ -442,6 +465,8 @@
   </div>{# closes explicit-gate-N #}
   {% endif %}
 {% endif %}
+
+{% endif %}{# end group.restricted else #}
 
 {% if output_groups | length > 1 or group.source_file %}
 </section>

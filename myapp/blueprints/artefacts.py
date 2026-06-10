@@ -915,6 +915,15 @@ def _render_viewer(artefact):
         group['explicit'] = (
             artefact_is_explicit or group.get('source_file') in explicit_file_paths
         )
+        # Generalise the per-group placeholder to all download restrictions: when
+        # a group's source artefact carries a restriction this user cannot bypass
+        # (only possible in Mode 2 for a derived artefact — the viewed artefact's
+        # own restriction short-circuits to viewer_status='restricted' above), its
+        # image/SVG outputs would 403.  Mark the group so the template renders a
+        # notice / locked placeholder instead of a broken thumbnail.
+        group['restricted'] = any(
+            _output_blocked(o.get('filename', '')) for o in group['outputs']
+        )
         # Stamp stable_id now so bundle_items (original group dicts pulled into
         # the thumbnail bundle below) carry it for per-thumbnail explicit gates.
         # Bundle wrapper groups receive their own stable_id when constructed.
@@ -990,6 +999,7 @@ def _render_viewer(artefact):
                         'bundle_items': singles,
                         'outputs': [],
                         'explicit': False,
+                        'restricted': False,
                         'stable_id': bundle_id,
                         'filetype': None,
                     })
