@@ -7,7 +7,6 @@ RESTful API for external integrations.
 import hashlib
 import hmac
 import json
-import mimetypes
 import os
 import re
 import shutil
@@ -15,7 +14,7 @@ import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from flask import Blueprint, abort, current_app, g, jsonify, redirect, request, send_file
+from flask import Blueprint, abort, current_app, g, jsonify, request
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import contains_eager, joinedload, selectinload
@@ -60,13 +59,17 @@ from ..services.artefact_lifecycle import (
 )
 from ..services.artefact_storage import (
     compute_file_hashes,
-    get_artefact_path,
     get_artefact_storage_key,
     get_storage_extension,
-    resolve_extracted_file_path,
     save_uploaded_file,
 )
 from ..services.artefact_types import detect_artefact_type, queue_analyses_for_artefact
+from ..services.downloads import (
+    resolve_output_artefact,
+    serve_artefact_file,
+    serve_extracted_file,
+    serve_output_file,
+)
 from ..services.hash_rescan import find_known_file
 from ..services.restrictions import (
     artefact_contained_file_restrictions,
@@ -821,19 +824,10 @@ def download_artefact(uuid):
         return error_response('Download restricted (artefact contains restricted files)', 403,
                               restrictions=list({r.restriction_type.value for r in contained}))
 
-    storage = current_app.storage
-    key = get_artefact_storage_key(artefact)
-
-    # S3 mode: redirect to pre-signed URL
-    url = storage.presigned_url(key, filename=artefact.original_filename)
-    if url:
-        return redirect(url)
-
-    # Local mode: serve file directly
-    full_path = get_artefact_path(artefact)
-    if not os.path.exists(full_path):
+    response = serve_artefact_file(artefact)
+    if response is None:
         return error_response('File not found', 404)
-    return send_file(full_path, as_attachment=True, download_name=artefact.original_filename)
+    return response
 
 
 @blueprint.route('/files/<string:uuid>/download', methods=['GET'])
@@ -863,10 +857,10 @@ def download_extracted_file(uuid):
         return error_response('File download restricted', 403,
                               restrictions=list({r.restriction_type.value for r in file_restrictions}))
 
-    file_path = resolve_extracted_file_path(ef)
-    if not file_path:
+    response = serve_extracted_file(ef)
+    if response is None:
         return error_response('Extracted file not found on disk', 404)
-    return send_file(file_path, as_attachment=True, download_name=ef.filename)
+    return response
 
 
 # =============================================================================
@@ -1267,48 +1261,26 @@ def reset_stale_analyses():
 @blueprint.route('/outputs/<path:filename>', methods=['GET'])
 @require_auth('read_only')
 def get_output_file(filename):
-    """Serve an output file (visualisation, etc.)."""
-    # Output paths follow {item_part}/{artefact_uuid}_{slug}/{file...}.
-    # Enforce artefact visibility so a low-privilege user API key cannot pull
-    # the outputs (visualisations, extracted text, file listings) of a private
-    # artefact just by knowing the path.  The worker authenticates with the
-    # pre-shared key and sees everything via _api_viewer()'s sees_all flag.
-    # Mirrors the web endpoint get_output_file() in blueprints/artefacts.py.
-    path_parts = filename.split('/', 2)
-    if len(path_parts) < 2:
-        return error_response('File not found', 404)
-    uuid_candidate = path_parts[1].split('_', 1)[0]
-    if len(uuid_candidate) != 32:
-        return error_response('File not found', 404)
-    artefact_for_check = Artefact.query.filter_by(uuid=uuid_candidate).first()
+    """Serve an output file (visualisation, etc.).
+
+    Enforces artefact visibility so a low-privilege user API key cannot pull
+    the outputs (visualisations, extracted text, file listings) of a private
+    artefact just by knowing the path.  The worker authenticates with the
+    pre-shared key and sees everything via _api_viewer()'s sees_all flag.
+    Serving is delegated to the shared downloads service (same code path as
+    the web endpoint).
+    """
+    artefact_for_check = resolve_output_artefact(filename)
     if artefact_for_check is None:
         return error_response('File not found', 404)
     user, sees_all = _api_viewer()
     if not can_view_artefact(artefact_for_check, user, sees_all=sees_all):
         return error_response('File not found', 404)
 
-    storage = current_app.storage
-    key = storage.storage_key('outputs', filename)
-
-    # S3 mode: redirect to pre-signed URL
-    url = storage.presigned_url(key)
-    if url:
-        return redirect(url)
-
-    # Local mode: serve file directly with path traversal protection
-    from shared.storage import LocalStorage
-    if isinstance(storage, LocalStorage):
-        local_path = str(storage.local_path(key))
-        output_dir = str(storage.outputs_dir)
-        real_path = os.path.realpath(local_path)
-        if not real_path.startswith(os.path.realpath(output_dir) + os.sep):
-            return error_response('File not found', 404)
-        if not os.path.exists(real_path):
-            return error_response('File not found', 404)
-        mime, _ = mimetypes.guess_type(real_path)
-        return send_file(real_path, mimetype=mime or 'application/octet-stream')
-
-    return error_response('File not found', 404)
+    response = serve_output_file(filename)
+    if response is None:
+        return error_response('File not found', 404)
+    return response
 
 
 # =============================================================================

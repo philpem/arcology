@@ -9,7 +9,7 @@ import json
 import mimetypes
 import os
 import threading
-from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, send_file, url_for
+from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
 from flask_wtf.file import FileField, FileRequired
@@ -55,7 +55,6 @@ from ..services.artefact_lifecycle import (
 )
 from ..services.artefact_storage import (
     compute_file_hashes,
-    get_artefact_path,
     get_artefact_storage_key,
     get_output_folder,
     resolve_extracted_file_path,
@@ -66,6 +65,12 @@ from ..services.artefact_types import (
     ANALYSIS_MAP,
     detect_artefact_type,
     queue_analyses_for_artefact,
+)
+from ..services.downloads import (
+    resolve_output_artefact,
+    serve_artefact_file,
+    serve_extracted_file,
+    serve_output_file,
 )
 from ..services.restrictions import (
     artefact_contained_file_restrictions,
@@ -2268,24 +2273,10 @@ def download(item_id=None, artefact_id=None, root_id=None, uuid=None):
     if restriction_redirect:
         return restriction_redirect
 
-    storage = current_app.storage
-    key = get_artefact_storage_key(artefact)
-
-    # S3 mode: redirect to pre-signed URL
-    url = storage.presigned_url(key, filename=artefact.original_filename)
-    if url:
-        return redirect(url)
-
-    # Local mode: serve file directly
-    full_path = get_artefact_path(artefact)
-    if not os.path.exists(full_path):
+    response = serve_artefact_file(artefact)
+    if response is None:
         abort(404, description='File not found')
-
-    return send_file(
-        full_path,
-        as_attachment=True,
-        download_name=artefact.original_filename
-    )
+    return response
 
 
 @blueprint.route('/files/<string:uuid>/download', endpoint='download_file')
@@ -2309,11 +2300,10 @@ def download_file(uuid):
     if restriction_redirect:
         return restriction_redirect
 
-    file_path = resolve_extracted_file_path(ef)
-    if not file_path:
+    response = serve_extracted_file(ef)
+    if response is None:
         abort(404, description='Extracted file not found on disk')
-
-    return send_file(file_path, as_attachment=True, download_name=ef.filename)
+    return response
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/bypass', methods=['POST'])
@@ -2699,36 +2689,19 @@ def rerun_product_recognition_route(uuid):
 @blueprint.route('/outputs/<path:filename>')
 @public_downloadable
 def get_output_file(filename):
-    """Serve an analysis output file (visualisation, etc.)."""
-    # Output paths follow {item_part}/{artefact_uuid}_{slug}/{file...}.
-    # Extract the artefact UUID from the second path component and enforce
-    # visibility so private artefacts' outputs are not exposed.
-    path_parts = filename.split('/', 2)
-    artefact_for_check = None
-    if len(path_parts) >= 2:
-        uuid_candidate = path_parts[1].split('_', 1)[0]
-        if len(uuid_candidate) == 32:
-            artefact_for_check = Artefact.query.filter_by(uuid=uuid_candidate).first()
+    """Serve an analysis output file (visualisation, etc.).
+
+    Enforces artefact visibility (private artefacts' outputs must not be
+    exposed) and delegates the serving to the shared downloads service.
+    """
+    artefact_for_check = resolve_output_artefact(filename)
     if artefact_for_check is None or not can_view_artefact(artefact_for_check, current_user):
         abort(404)
 
-    storage = current_app.storage
-    key = storage.storage_key('outputs', filename)
-
-    # S3 mode: redirect to pre-signed URL
-    url = storage.presigned_url(key)
-    if url:
-        return redirect(url)
-
-    # Local mode: serve directly with path traversal check
-    folder = get_output_folder()
-    file_path = os.path.realpath(os.path.join(folder, filename))
-    if not file_path.startswith(os.path.realpath(folder) + os.sep):
+    response = serve_output_file(filename)
+    if response is None:
         abort(404)
-    if not os.path.exists(file_path):
-        abort(404)
-    mime, _ = mimetypes.guess_type(file_path)
-    return send_file(file_path, mimetype=mime or 'application/octet-stream')
+    return response
 
 
 # vim: ts=4 sw=4 et
