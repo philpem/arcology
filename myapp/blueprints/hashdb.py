@@ -8,7 +8,7 @@ import csv
 import io
 import json
 from flask import Blueprint, Response, flash, jsonify, redirect, render_template, request, url_for
-from flask_login import login_required
+from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
 from sqlalchemy import func, or_
 from wtforms import BooleanField, SelectField, StringField, TextAreaField
@@ -33,6 +33,7 @@ from ..extensions import db
 from ..permissions import require_permission
 from ..utils.db_helpers import model_choice_list, normalize_hash
 from ..utils.web_forms import redirect_local
+from ..visibility import artefact_visibility_clause
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -357,6 +358,9 @@ def search(id):
         .join(Item, Artefact.item_id == Item.id)
         .join(KnownFile, ExtractedFile.known_file_id == KnownFile.id)
         .filter(kf_filter)
+        # Hide matches inside artefacts/items the caller may not view, so the
+        # hash search cannot be used to enumerate private collections.
+        .filter(artefact_visibility_clause(current_user))
         .filter(ExtractedFile.is_directory == False)
         .order_by(func.lower(KnownFile.filename), func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path))
         .limit(SEARCH_LIMIT + 1)
