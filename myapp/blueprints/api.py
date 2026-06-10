@@ -52,6 +52,7 @@ from ..database import (
     User,
 )
 from ..extensions import csrf, db
+from ..services.artefact_types import detect_artefact_type, queue_analyses_for_artefact
 from ..services.hash_rescan import find_known_file
 from ..services.upload_pipeline import QUEUE_FULL, QUEUE_NONE, ingest_uploaded_artefact
 from ..utils.api_serializers import (
@@ -92,11 +93,9 @@ from .artefacts import (
     _get_storage_extension,
     bulk_delete_item,
     compute_file_hashes,
-    detect_artefact_type,
     get_artefact_path,
     get_artefact_storage_key,
     move_artefact_to_item,
-    queue_analyses_for_artefact,
     save_uploaded_file,
 )
 
@@ -110,8 +109,17 @@ def init_app(app):
     csrf.exempt(blueprint)
 
 
-def error_response(message, status_code=400):
-    return jsonify({'error': message}), status_code
+def error_response(message, status_code=400, **extra):
+    """Return a JSON error response.
+
+    ``extra`` keyword arguments are merged into the response body alongside
+    ``'error'`` — used by restriction-gate endpoints to include the
+    ``'restrictions'`` list so callers can distinguish restriction types.
+    """
+    payload = {'error': message}
+    if extra:
+        payload.update(extra)
+    return jsonify(payload), status_code
 
 
 # =============================================================================
@@ -809,19 +817,15 @@ def download_artefact(uuid):
     # Enforce download restrictions, honouring the caller's bypass grants.
     user, _ = _api_viewer()
     if not can_download_despite_restrictions(user, artefact.restrictions, artefact):
-        return jsonify({
-            'error': 'Download restricted',
-            'restrictions': [r.restriction_type.value for r in artefact.restrictions],
-        }), 403
+        return error_response('Download restricted', 403,
+                              restrictions=[r.restriction_type.value for r in artefact.restrictions])
 
     # Block the original download when its extracted contents are restricted
     # (mirrors the website's _check_artefact_file_restrictions).
     contained = _artefact_contained_file_restrictions(artefact)
     if not can_download_despite_restrictions(user, contained, artefact):
-        return jsonify({
-            'error': 'Download restricted (artefact contains restricted files)',
-            'restrictions': list({r.restriction_type.value for r in contained}),
-        }), 403
+        return error_response('Download restricted (artefact contains restricted files)', 403,
+                              restrictions=list({r.restriction_type.value for r in contained}))
 
     storage = current_app.storage
     key = get_artefact_storage_key(artefact)
@@ -853,10 +857,8 @@ def download_extracted_file(uuid):
     # Restriction gate, honouring the caller's bypass grants (same policy as web).
     user, _ = _api_viewer()
     if not can_download_despite_restrictions(user, artefact.restrictions, artefact):
-        return jsonify({
-            'error': 'Download restricted',
-            'restrictions': [r.restriction_type.value for r in artefact.restrictions],
-        }), 403
+        return error_response('Download restricted', 403,
+                              restrictions=[r.restriction_type.value for r in artefact.restrictions])
 
     # Check file-level restrictions: own, descendants (archive contains restricted file),
     # and ancestors (file is inside a restricted archive).
@@ -864,10 +866,8 @@ def download_extracted_file(uuid):
         _collect_all_file_restrictions(ef) + _collect_ancestor_file_restrictions(ef)
     )
     if not can_download_despite_restrictions(user, file_restrictions, artefact):
-        return jsonify({
-            'error': 'File download restricted',
-            'restrictions': list({r.restriction_type.value for r in file_restrictions}),
-        }), 403
+        return error_response('File download restricted', 403,
+                              restrictions=list({r.restriction_type.value for r in file_restrictions}))
 
     from .artefacts import _resolve_extracted_file_path
     file_path = _resolve_extracted_file_path(ef)
@@ -1164,7 +1164,7 @@ def update_analysis(id):
         # between our query and the commit.  This is not a server error —
         # return 404 so the worker's existing 404 handler discards the result.
         db.session.rollback()
-        return jsonify({'error': 'Analysis was deleted during update'}), 404
+        return error_response('Analysis was deleted during update', 404)
     return jsonify(analysis_to_dict(analysis))
 
 
@@ -1653,7 +1653,7 @@ def produce_artefact(id):
         # is safe to call even if some analyses are already active.
         queued_analyses = []
         if data.get('auto_analyse', True):
-            from .artefacts import ANALYSIS_MAP
+            from ..services.artefact_types import ANALYSIS_MAP
             hints = _merge_produce_hints(analysis, data)
             skip_analyses = data.get('skip_analyses') or []
             queue_analyses_for_artefact(existing, hints, skip_analyses=skip_analyses)
@@ -1675,7 +1675,7 @@ def produce_artefact(id):
     # Queue follow-on analyses unless the caller will handle that explicitly
     queued_analyses = []
     if data.get('auto_analyse', True):
-        from .artefacts import ANALYSIS_MAP
+        from ..services.artefact_types import ANALYSIS_MAP
         hints = _merge_produce_hints(analysis, data)
         skip_analyses = data.get('skip_analyses') or []
         queue_analyses_for_artefact(artefact, hints, skip_analyses=skip_analyses)
@@ -1829,7 +1829,7 @@ def add_files(uuid):
         # pgcode '40P01' is DeadlockDetected — return 503 so the worker can
         # retry rather than waiting for the stale-job timeout to fire.
         if getattr(exc.orig, 'pgcode', None) == '40P01':
-            return jsonify({'error': 'Deadlock detected, please retry'}), 503
+            return error_response('Deadlock detected, please retry', 503)
         raise
 
     # Auto-apply restrictions from flagged hash databases

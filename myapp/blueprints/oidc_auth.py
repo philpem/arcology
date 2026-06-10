@@ -88,7 +88,7 @@ def sso_login():
     except Exception as exc:
         current_app.logger.warning('OIDC provider unreachable during login: %s', exc)
         flash('SSO provider is unavailable. Please try again or contact an administrator.', 'error')
-        return redirect(url_for('login'))
+        return redirect(url_for('auth.login'))
 
 
 @blueprint.route('/sso/callback')
@@ -101,7 +101,7 @@ def sso_callback():
     except Exception as exc:
         current_app.logger.warning('OIDC callback error: %s', exc)
         flash('SSO login failed. Please try again or contact an administrator.', 'error')
-        return redirect(url_for('login'))
+        return redirect(url_for('auth.login'))
 
     userinfo = token.get('userinfo') or {}
     if not userinfo:
@@ -110,7 +110,7 @@ def sso_callback():
         except Exception as exc:
             current_app.logger.warning('OIDC userinfo fetch failed: %s', exc)
             flash('SSO login failed: could not retrieve user information.', 'error')
-            return redirect(url_for('login'))
+            return redirect(url_for('auth.login'))
 
     user, error_msg = _get_or_create_user(userinfo)
     if user is None:
@@ -137,7 +137,7 @@ def sso_callback():
         except Exception:
             current_app.logger.warning('OIDC concurrent login race could not be resolved')
             flash('SSO login failed. Please try again.', 'error')
-            return redirect(url_for('login'))
+            return redirect(url_for('auth.login'))
 
     login_user(user)
     session.permanent = True
@@ -180,7 +180,7 @@ def sso_logout():
     flash('You have been logged out.', 'info')
 
     if _bool_cfg(current_app, 'OIDC_SINGLE_LOGOUT') and end_session_endpoint:
-        post_logout_uri = url_for('login', _external=True)
+        post_logout_uri = url_for('auth.login', _external=True)
         sep = '&' if '?' in end_session_endpoint else '?'
         target = (
             f'{end_session_endpoint}{sep}'
@@ -190,7 +190,7 @@ def sso_logout():
             target += f'&id_token_hint={urlquote(id_token, safe="")}'
         return redirect(target)
 
-    return redirect(url_for('login'))
+    return redirect(url_for('auth.login'))
 
 
 # =============================================================================
@@ -498,12 +498,12 @@ def _redirect_clearing_provider_session(token: dict):
     provider session would log the user out of unrelated applications.
     """
     if not _bool_cfg(current_app, 'OIDC_SINGLE_LOGOUT'):
-        return redirect(url_for('login'))
+        return redirect(url_for('auth.login'))
     try:
         metadata = _oauth.oidc.load_server_metadata()
         end_session = metadata.get('end_session_endpoint')
         if end_session:
-            post_logout_uri = url_for('login', _external=True)
+            post_logout_uri = url_for('auth.login', _external=True)
             sep = '&' if '?' in end_session else '?'
             target = (
                 f'{end_session}{sep}'
@@ -515,7 +515,7 @@ def _redirect_clearing_provider_session(token: dict):
             return redirect(target)
     except Exception:
         pass
-    return redirect(url_for('login'))
+    return redirect(url_for('auth.login'))
 
 
 def _sync_interval() -> int:
@@ -630,7 +630,7 @@ def _background_sync():
             )
             logout_user()
             flash('Your session has expired. Please sign in again.', 'info')
-            return redirect(url_for('login'))
+            return redirect(url_for('auth.login'))
 
     role_matched = _sync_permissions(current_user, userinfo)
     try:
@@ -648,7 +648,7 @@ def _background_sync():
         logout_user()
         flash('Your account is not authorised to access this application. '
               'Please contact your system administrator.', 'error')
-        return redirect(url_for('login'))
+        return redirect(url_for('auth.login'))
 
     return None
 

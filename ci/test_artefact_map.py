@@ -1,5 +1,5 @@
 """
-Unit tests for EXTENSION_MAP and ANALYSIS_MAP in myapp/blueprints/artefacts.py.
+Unit tests for EXTENSION_MAP and ANALYSIS_MAP in myapp/services/artefact_types.py.
 
 Checks that every enum value referenced in the maps actually exists in
 shared/enums.py, and that every ArtefactType has an ANALYSIS_MAP entry.
@@ -23,10 +23,10 @@ if _REPO_ROOT not in sys.path:
 
 # shared.enums has no external dependencies — import directly for the
 # canonical set of valid enum members.
-# myapp.blueprints.artefacts imports Flask/SQLAlchemy at module level.
+# myapp.services.artefact_types imports Flask/SQLAlchemy at module level.
 # Those packages are available in the app-tests CI job (pip install is done
 # before these tests run).
-from myapp.blueprints.artefacts import ANALYSIS_MAP, EXTENSION_MAP, detect_artefact_type
+from myapp.services.artefact_types import ANALYSIS_MAP, EXTENSION_MAP, detect_artefact_type
 from shared.enums import AnalysisType, ArtefactType
 
 _ALL_ARTEFACT_TYPES = set(ArtefactType)
