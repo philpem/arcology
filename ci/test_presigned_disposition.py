@@ -43,7 +43,7 @@ class TestUploadSanitiser(unittest.TestCase):
         os.environ.setdefault('SQLALCHEMY_DATABASE_URI', 'sqlite:///:memory:')
         os.environ.setdefault('SECRET_KEY', 'ci-presigned-test-key')
         os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
-        from myapp.blueprints.artefacts import safe_original_filename
+        from myapp.services.artefact_storage import safe_original_filename
         self.sanitise = safe_original_filename
 
     def test_strips_cr_lf_and_control_chars(self):

@@ -49,6 +49,14 @@ from ..database import (
     User,
 )
 from ..extensions import csrf, db
+from ..services.artefact_storage import (
+    compute_file_hashes,
+    get_artefact_path,
+    get_artefact_storage_key,
+    get_storage_extension,
+    resolve_extracted_file_path,
+    save_uploaded_file,
+)
 from ..services.artefact_types import detect_artefact_type, queue_analyses_for_artefact
 from ..services.hash_rescan import find_known_file
 from ..services.upload_pipeline import QUEUE_FULL, QUEUE_NONE, ingest_uploaded_artefact
@@ -87,13 +95,8 @@ from .artefacts import (
     _collect_all_file_restrictions,
     _collect_ancestor_file_restrictions,
     _delete_artefact_files,
-    _get_storage_extension,
     bulk_delete_item,
-    compute_file_hashes,
-    get_artefact_path,
-    get_artefact_storage_key,
     move_artefact_to_item,
-    save_uploaded_file,
 )
 
 ROUTENAME = __name__.replace('.', '_')
@@ -865,8 +868,7 @@ def download_extracted_file(uuid):
         return error_response('File download restricted', 403,
                               restrictions=list({r.restriction_type.value for r in file_restrictions}))
 
-    from .artefacts import _resolve_extracted_file_path
-    file_path = _resolve_extracted_file_path(ef)
+    file_path = resolve_extracted_file_path(ef)
     if not file_path:
         return error_response('Extracted file not found on disk', 404)
     return send_file(file_path, as_attachment=True, download_name=ef.filename)
@@ -2199,7 +2201,7 @@ def chunked_upload_complete(upload_uuid):
 		artefact_type = detect_artefact_type(meta['filename'])
 
 	# Generate storage name (same pattern as save_uploaded_file)
-	ext = _get_storage_extension(original_filename)
+	ext = get_storage_extension(original_filename)
 	storage_name = f'{uuid.uuid4().hex}{ext}'
 
 	# Assemble chunks into a temp file, computing hashes inline
