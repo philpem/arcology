@@ -290,9 +290,16 @@ def view(id):
     kf_ids = [kf.id for p in products for kf in p.known_files]
     match_counts = {}
     if kf_ids:
+        # Count only occurrences in artefacts the caller may view, so the match
+        # counts cannot reveal that a known file exists inside a private
+        # collection (mirrors the visibility filter in search()).
         rows = (
             db.session.query(ExtractedFile.known_file_id, func.count(ExtractedFile.id))
+            .join(Partition, ExtractedFile.partition_id == Partition.id)
+            .join(Artefact, Partition.artefact_id == Artefact.id)
+            .join(Item, Artefact.item_id == Item.id)
             .filter(ExtractedFile.known_file_id.in_(kf_ids))
+            .filter(artefact_visibility_clause(current_user))
             .group_by(ExtractedFile.known_file_id)
             .all()
         )
@@ -394,9 +401,15 @@ def view_product(id, pid):
     kf_ids = [kf.id for kf in product.known_files]
     match_counts = {}
     if kf_ids:
+        # Visibility-filtered like view()/search(): a count must not reveal that
+        # a known file exists inside a private artefact the caller cannot see.
         rows = (
             db.session.query(ExtractedFile.known_file_id, func.count(ExtractedFile.id))
+            .join(Partition, ExtractedFile.partition_id == Partition.id)
+            .join(Artefact, Partition.artefact_id == Artefact.id)
+            .join(Item, Artefact.item_id == Item.id)
             .filter(ExtractedFile.known_file_id.in_(kf_ids))
+            .filter(artefact_visibility_clause(current_user))
             .group_by(ExtractedFile.known_file_id)
             .all()
         )
