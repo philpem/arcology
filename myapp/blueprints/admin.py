@@ -35,9 +35,11 @@ def init_app(app):
     pass
 
 
-def _require_admin():
-    """Abort with 403 if the current user is not an admin."""
-    if not current_user.is_authenticated or not current_user.is_admin:
+@blueprint.before_request
+@login_required
+def _require_admin_for_all():
+    """Gate every admin route: unauthenticated → login redirect; non-admin → 403."""
+    if not current_user.is_admin:
         abort(403)
 
 
@@ -95,9 +97,7 @@ class GroupForm(FlaskForm):
 # =============================================================================
 
 @blueprint.route('/')
-@login_required
 def index():
-    _require_admin()
     users = User.query.order_by(User.username).all()
     user_ids = [u.id for u in users]
     # Count active API keys per user
@@ -133,9 +133,7 @@ def index():
 
 
 @blueprint.route('/users/create', methods=['GET', 'POST'])
-@login_required
 def create_user():
-    _require_admin()
     form = CreateUserForm()
     if form.validate_on_submit():
         # Check username uniqueness
@@ -181,9 +179,7 @@ def _render_edit_user(form, user, **kwargs):
 
 
 @blueprint.route('/users/<int:user_id>/edit', methods=['GET', 'POST'])
-@login_required
 def edit_user(user_id):
-    _require_admin()
     if user_id == current_user.id:
         flash('You cannot edit your own account. Use your profile page instead.', 'error')
         return _route_redirect('index')
@@ -250,9 +246,7 @@ def edit_user(user_id):
 
 
 @blueprint.route('/users/<int:user_id>/artefact-bypass/<int:bypass_id>/revoke', methods=['POST'])
-@login_required
 def revoke_artefact_bypass(user_id, bypass_id):
-    _require_admin()
     bypass = UserArtefactBypass.query.filter_by(id=bypass_id, user_id=user_id).first_or_404()
     db.session.delete(bypass)
     db.session.commit()
@@ -261,9 +255,7 @@ def revoke_artefact_bypass(user_id, bypass_id):
 
 
 @blueprint.route('/users/<int:user_id>/delete', methods=['POST'])
-@login_required
 def delete_user(user_id):
-    _require_admin()
     if user_id == current_user.id:
         flash('You cannot delete your own account.', 'error')
         return _route_redirect('index')
@@ -287,9 +279,7 @@ def delete_user(user_id):
 
 
 @blueprint.route('/users/<int:user_id>/set-permission', methods=['POST'])
-@login_required
 def set_permission(user_id):
-    _require_admin()
     user = User.query.get_or_404(user_id)
     if user.oidc_managed:
         flash(f'Permissions for "{user.username}" are managed by SSO and cannot be changed here.', 'error')
@@ -306,9 +296,7 @@ def set_permission(user_id):
 
 
 @blueprint.route('/users/<int:user_id>/toggle-api', methods=['POST'])
-@login_required
 def toggle_api(user_id):
-    _require_admin()
     user = User.query.get_or_404(user_id)
     if user.oidc_managed:
         flash(f'API access for "{user.username}" is managed by SSO and cannot be changed here.', 'error')
@@ -325,10 +313,8 @@ def toggle_api(user_id):
 # =============================================================================
 
 @blueprint.route('/groups')
-@login_required
 def groups():
     """List all groups with member counts."""
-    _require_admin()
     groups_list = (
         db.session.query(Group, func.count(group_memberships.c.user_id).label('member_count'))
         .outerjoin(group_memberships, Group.id == group_memberships.c.group_id)
@@ -341,10 +327,8 @@ def groups():
 
 
 @blueprint.route('/groups/create', methods=['GET', 'POST'])
-@login_required
 def create_group():
     """Create a new group."""
-    _require_admin()
     form = GroupForm()
     if form.validate_on_submit():
         name = form.name.data.strip().lower()
@@ -363,10 +347,8 @@ def create_group():
 
 
 @blueprint.route('/groups/<int:group_id>/edit', methods=['GET', 'POST'])
-@login_required
 def edit_group(group_id):
     """Edit a group's name and description."""
-    _require_admin()
     group = Group.query.get_or_404(group_id)
     if request.method == 'GET' and group.source == 'oidc':
         flash('This group is managed by the identity provider — its name cannot be changed here.', 'warning')
@@ -393,10 +375,8 @@ def edit_group(group_id):
 
 
 @blueprint.route('/groups/<int:group_id>/delete', methods=['POST'])
-@login_required
 def delete_group(group_id):
     """Delete a group."""
-    _require_admin()
     group = Group.query.get_or_404(group_id)
     name = group.name
     db.session.delete(group)
@@ -406,10 +386,8 @@ def delete_group(group_id):
 
 
 @blueprint.route('/groups/<int:group_id>/members/add', methods=['POST'])
-@login_required
 def add_group_member(group_id):
     """Add a user to a group."""
-    _require_admin()
     group = Group.query.get_or_404(group_id)
     if group.source == 'oidc':
         flash(f'Group "{group.name}" is managed by the identity provider. Membership is synced automatically on login.', 'error')
@@ -429,10 +407,8 @@ def add_group_member(group_id):
 
 
 @blueprint.route('/groups/<int:group_id>/members/<int:user_id>/remove', methods=['POST'])
-@login_required
 def remove_group_member(group_id, user_id):
     """Remove a user from a group."""
-    _require_admin()
     group = Group.query.get_or_404(group_id)
     if group.source == 'oidc':
         flash(f'Group "{group.name}" is managed by the identity provider. Membership is synced automatically on login.', 'error')
@@ -457,10 +433,8 @@ class ReassignOwnershipForm(FlaskForm):
 
 
 @blueprint.route('/reassign-ownership', methods=['GET', 'POST'])
-@login_required
 def reassign_ownership():
     """Bulk-transfer all items and artefacts from one user to another."""
-    _require_admin()
     users = User.query.order_by(User.username).all()
     user_choices = [(0, '— Unowned —')] + [(u.id, u.username) for u in users]
 
