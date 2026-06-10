@@ -9,7 +9,7 @@ Verifies that:
   - POST /api/analysis/<id>/produce-artefact rejects ../ traversal in storage_path (#2)
   - get_artefact_path() raises ValueError for absolute storage_path (#2 layer 1)
   - get_artefact_path() raises ValueError for ../ traversal storage_path (#2 layer 1)
-  - _resolve_extracted_file_path() returns None for ../ traversal in ef.path (#3)
+  - resolve_extracted_file_path() returns None for ../ traversal in ef.path (#3)
   - _delete_item_files() skips output files with ../ traversal in filename (#4)
 
 Run:
@@ -218,7 +218,7 @@ class TestGetArtefactPathConfinement(unittest.TestCase):
         return a
 
     def _call(self, storage_path):
-        from myapp.blueprints.artefacts import get_artefact_path
+        from myapp.services.artefact_storage import get_artefact_path
         with self.app.app_context():
             return get_artefact_path(self._make_artefact(storage_path))
 
@@ -244,11 +244,11 @@ class TestGetArtefactPathConfinement(unittest.TestCase):
 
 
 # =============================================================================
-# _resolve_extracted_file_path() confinement check (#3)
+# resolve_extracted_file_path() confinement check (#3)
 # =============================================================================
 
 class TestResolveExtractedFilePathConfinement(unittest.TestCase):
-    """_resolve_extracted_file_path() must return None for ../ in ef.path."""
+    """resolve_extracted_file_path() must return None for ../ in ef.path."""
 
     def setUp(self):
         from myapp.app import create_app
@@ -325,11 +325,11 @@ class TestResolveExtractedFilePathConfinement(unittest.TestCase):
             self.ef_id = self.ef.id
 
     def test_traversal_path_returns_none(self):
-        from myapp.blueprints.artefacts import _resolve_extracted_file_path
         from myapp.database import ExtractedFile
+        from myapp.services.artefact_storage import resolve_extracted_file_path
         with self.app.app_context():
             ef = ExtractedFile.query.get(self.ef_id)
-            result = _resolve_extracted_file_path(ef)
+            result = resolve_extracted_file_path(ef)
         self.assertIsNone(result, f"Expected None but got {result!r}")
 
     def test_secret_file_not_served(self):

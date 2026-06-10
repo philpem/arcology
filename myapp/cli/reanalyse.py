@@ -7,11 +7,11 @@ from ..blueprints.artefacts import (
     _cleanup_analysis_outputs,
     _delete_artefact_files,
     get_all_derived_artefact_ids,
-    get_output_folder,
     reset_artefact_for_reanalysis,
 )
 from ..database import Analysis, AnalysisStatus, Artefact
 from ..extensions import db
+from ..services.artefact_storage import get_output_folder
 from ..services.artefact_types import queue_analyses_for_artefact
 from ._selection import build_artefact_query
 
