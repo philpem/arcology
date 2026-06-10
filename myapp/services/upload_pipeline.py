@@ -25,6 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from shared.enums import AnalysisType
 from ..database import ANALYSIS_PRIORITY_NORMAL, Artefact, Item, StorageDirectory
 from ..extensions import db
+from ..services.artefact_types import queue_analyses_for_artefact
 from ..utils.slugs import ensure_unique_slug, generate_slug
 
 # Analysis queueing modes for ingest_uploaded_artefact()
@@ -84,11 +85,6 @@ def ingest_uploaded_artefact(item: Item, *,
     exception re-raised (except for the duplicate-race IntegrityError, which
     resolves to the winning artefact).
     """
-    # Imported here rather than at module level: artefacts.py imports this
-    # module, and ANALYSIS_MAP / queue_analyses_for_artefact still live in the
-    # blueprint.  Moving them out (planned follow-up) removes this import.
-    from ..blueprints.artefacts import queue_analyses_for_artefact
-
     storage_key = current_app.storage.storage_key('uploads', storage_name)
 
     if sha256:

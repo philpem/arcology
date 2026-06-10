@@ -52,6 +52,7 @@ from ..database import (
     User,
 )
 from ..extensions import csrf, db
+from ..services.artefact_types import detect_artefact_type, queue_analyses_for_artefact
 from ..services.upload_pipeline import QUEUE_FULL, QUEUE_NONE, ingest_uploaded_artefact
 from ..utils.api_serializers import (
     analysis_to_dict,
@@ -92,11 +93,9 @@ from .artefacts import (
     _get_storage_extension,
     bulk_delete_item,
     compute_file_hashes,
-    detect_artefact_type,
     get_artefact_path,
     get_artefact_storage_key,
     move_artefact_to_item,
-    queue_analyses_for_artefact,
     save_uploaded_file,
 )
 
@@ -1653,7 +1652,7 @@ def produce_artefact(id):
         # is safe to call even if some analyses are already active.
         queued_analyses = []
         if data.get('auto_analyse', True):
-            from .artefacts import ANALYSIS_MAP
+            from ..services.artefact_types import ANALYSIS_MAP
             hints = _merge_produce_hints(analysis, data)
             skip_analyses = data.get('skip_analyses') or []
             queue_analyses_for_artefact(existing, hints, skip_analyses=skip_analyses)
@@ -1675,7 +1674,7 @@ def produce_artefact(id):
     # Queue follow-on analyses unless the caller will handle that explicitly
     queued_analyses = []
     if data.get('auto_analyse', True):
-        from .artefacts import ANALYSIS_MAP
+        from ..services.artefact_types import ANALYSIS_MAP
         hints = _merge_produce_hints(analysis, data)
         skip_analyses = data.get('skip_analyses') or []
         queue_analyses_for_artefact(artefact, hints, skip_analyses=skip_analyses)
