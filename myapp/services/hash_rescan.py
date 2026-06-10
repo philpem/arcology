@@ -32,13 +32,24 @@ def _active_known_file_query():
 
 
 def _filter_known_files(query, *, md5=None, sha1=None, file_size=None):
-    """Apply optional md5/sha1/size filters to a KnownFile query."""
+    """Apply optional md5/sha1/size filters to a KnownFile query.
+
+    Size matching is lenient: a KnownFile with no recorded size (NULL)
+    matches any file size, since NULL means "size unknown" rather than
+    "size zero".  Only KnownFiles whose recorded size differs from the
+    given size are excluded.  This matches the in-memory predicates used
+    by _match_file_size() and _find_known_files_batch() so that the live
+    upload-time linking path and the rescan path agree on what counts as
+    a match.
+    """
     if md5:
         query = query.filter(KnownFile.md5 == md5.lower())
     if sha1:
         query = query.filter(KnownFile.sha1 == sha1.lower())
     if file_size is not None:
-        query = query.filter(KnownFile.file_size == file_size)
+        query = query.filter(
+            or_(KnownFile.file_size.is_(None), KnownFile.file_size == file_size)
+        )
     return query
 
 
@@ -257,8 +268,9 @@ def _find_known_files_batch(extracted_files):
 
     Returns a dict mapping extracted_file.id -> KnownFile (or absent if no
     match).  Uses a single query to fetch all candidate KnownFiles from
-    active databases, then matches in-memory using the same AND logic as
-    find_known_file().
+    active databases, then matches in-memory using the same logic as
+    find_known_file(): md5/sha1 must match, and size matches leniently
+    (a KnownFile with no recorded size matches any file size).
 
     This replaces calling find_known_file() per file (N+1 queries) with a
     single bulk query per batch.
@@ -302,8 +314,9 @@ def _find_known_files_batch(extracted_files):
         if kf.sha1:
             by_sha1.setdefault(kf.sha1.lower(), []).append(kf)
 
-    # Match each file using same AND logic as find_known_file:
-    # all provided fields (md5, sha1, file_size) must match.
+    # Match each file using the same logic as find_known_file: md5/sha1
+    # must match, and size matches leniently (a candidate with no recorded
+    # size matches any file size).
     result = {}
     for ef in files_to_match:
         pool = None
