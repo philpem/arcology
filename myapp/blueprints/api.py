@@ -1277,6 +1277,14 @@ def get_output_file(filename):
     if not can_view_artefact(artefact_for_check, user, sees_all=sees_all):
         return error_response('File not found', 404)
 
+    # Download restrictions gate the original bytes; analysis outputs render the
+    # same content, so a caller who cannot bypass the artefact's restrictions
+    # must not read its outputs either.  This mirrors download_artefact() — the
+    # worker key (user is None) is intentionally blocked from restricted bytes.
+    if artefact_for_check.restrictions and not can_download_despite_restrictions(
+            user, artefact_for_check.restrictions, artefact_for_check):
+        return error_response('Download restricted', 403)
+
     response = serve_output_file(filename)
     if response is None:
         return error_response('File not found', 404)

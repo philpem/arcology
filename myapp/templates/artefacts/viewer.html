@@ -104,7 +104,13 @@
 </div>
 {% endif %}
 
-{% if viewer_status == 'pending' %}
+{% if viewer_status == 'restricted' %}
+<div class="alert alert-danger">
+    <i class="bi bi-lock-fill"></i>
+    This artefact has a download restriction and you do not hold a bypass, so its
+    converted outputs are not available.
+</div>
+{% elif viewer_status == 'pending' %}
 <div class="alert alert-info">
     <i class="bi bi-hourglass-split"></i> Conversion in progress — please refresh in a moment.
 </div>
