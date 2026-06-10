@@ -216,13 +216,14 @@ def view(uuid):
     # before get_process_output started sanitising the command string.  Replace
     # \udcNN with \u00NN (the Latin-1 Unicode equivalent) so the template can
     # render them without triggering a UnicodeEncodeError in Werkzeug.
-    if analysis.details:
-        analysis.details = re.sub(
-            r'\\udc([0-9a-f]{2})',
-            lambda m: f'\\u00{m.group(1)}',
-            analysis.details
-        )
-    return render_template('analysis/view.html', analysis=analysis)
+    # Sanitised copy for display only — do not mutate the ORM object, which
+    # would cause the rewritten string to be flushed to the DB on any autoflush.
+    details = re.sub(
+        r'\\udc([0-9a-f]{2})',
+        lambda m: f'\\u00{m.group(1)}',
+        analysis.details,
+    ) if analysis.details else analysis.details
+    return render_template('analysis/view.html', analysis=analysis, details=details)
 
 
 @blueprint.route('/<string:uuid>/cancel', methods=['POST'])

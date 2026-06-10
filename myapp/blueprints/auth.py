@@ -31,7 +31,7 @@ def init_app(app):
             userrec = User.query.filter(User.id == int(userid)).one()
         except MultipleResultsFound:
             app.logger.error(
-                "USER LOGIN FAILURE: User '%s' has a doppelganger (duplicate username found)")
+                "USER LOGIN FAILURE: User id '%s' has a doppelganger (duplicate id found)", userid)
         except NoResultFound:
             pass
         return userrec
@@ -78,7 +78,8 @@ def login():
         except MultipleResultsFound:
             from flask import current_app as _app
             _app.logger.error(
-                "USER LOGIN FAILURE: User '%s' has a doppelganger (duplicate username found)")
+                "USER LOGIN FAILURE: User '%s' has a doppelganger (duplicate username found)",
+                form.username.data)
         except NoResultFound:
             pass
 

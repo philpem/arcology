@@ -2263,7 +2263,9 @@ def _render_artefact_view(artefact):
                     current_app.logger.warning(f"Failed to parse density detection details for {a.uuid}: {e}")
         if (mastering_analysis is not None and protection_analysis is not None
                 and partition_detect_details is not None
-                and flux_visualisation_analysis is not None):
+                and flux_visualisation_analysis is not None
+                and armlock_analysis is not None
+                and density_detect_analysis is not None):
             break
 
     # Parse format-specific metadata (populated by METADATA_EXTRACT for ISO
@@ -2676,9 +2678,13 @@ def add_to_hashdb(uuid):
     skipped_no_hash = []
     skipped_no_file = []
 
+    # Compute valid artefact IDs once with a single recursive CTE query instead
+    # of re-walking the derivation tree once per submitted file.
+    valid_artefact_ids = {artefact.id} | set(get_all_derived_artefact_ids(artefact))
+
     for file_id in file_ids:
         ef = ExtractedFile.query.get(file_id)
-        if ef is None or ef.partition.artefact_id not in _get_all_artefact_ids(artefact):
+        if ef is None or ef.partition.artefact_id not in valid_artefact_ids:
             continue
         if ef.is_directory:
             continue
