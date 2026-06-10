@@ -6,12 +6,15 @@ The download endpoints pass an artefact's *original_filename* to
 ``ResponseContentDisposition`` override.  S3 reproduces that value verbatim in
 the ``Content-Disposition`` response header when the object is fetched.
 
-The web upload sanitiser (``safe_original_filename``) deliberately preserves
-most characters — including double-quote and even CR/LF — so an unsanitised
-filename interpolated straight into ``attachment; filename="<name>"`` is a
-response-header-injection vector (CWE-113).  These tests prove the original
-filename can carry such characters and verify the disposition builder
-neutralises them.
+Two layers are tested:
+
+1. ``safe_original_filename`` (web upload) strips C0 control characters
+   (including CR/LF) at source — defence in depth — while preserving the
+   double-quote (a legitimate Linux filename character) and the top-bit-set
+   range 0x80-0xFF that RISC OS filenames rely on.
+2. ``_content_disposition_attachment`` (the sink in shared/storage.py)
+   neutralises any remaining header-injection characters, so a hostile
+   filename from any source cannot inject or split response headers (CWE-113).
 
 Run:
     python -m unittest ci.test_presigned_disposition -v
@@ -31,17 +34,40 @@ if _REPO_ROOT not in sys.path:
 _EVIL = 'pwn".pdf\r\nX-Injected: 1\r\nContent-Type: text/html'
 
 
-class TestUploadSanitiserPreservesUnsafeChars(unittest.TestCase):
-    """Establish the precondition: the upload sanitiser keeps " and CR/LF."""
+class TestUploadSanitiser(unittest.TestCase):
+    """safe_original_filename() strips control chars at source (defence in
+    depth), but still preserves the double-quote — which is a legitimate Linux
+    filename character — so the Content-Disposition sink must remain robust."""
 
-    def test_safe_original_filename_keeps_quote_and_crlf(self):
+    def setUp(self):
         os.environ.setdefault('SQLALCHEMY_DATABASE_URI', 'sqlite:///:memory:')
         os.environ.setdefault('SECRET_KEY', 'ci-presigned-test-key')
         os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
         from myapp.blueprints.artefacts import safe_original_filename
-        out = safe_original_filename(_EVIL)
-        self.assertIn('"', out)
-        self.assertTrue('\r' in out or '\n' in out)
+        self.sanitise = safe_original_filename
+
+    def test_strips_cr_lf_and_control_chars(self):
+        out = self.sanitise(_EVIL)
+        self.assertNotIn('\r', out)
+        self.assertNotIn('\n', out)
+        self.assertNotIn('\x00', out)
+
+    def test_preserves_quote_and_riscos_comma(self):
+        # Quote is valid on Linux and is preserved; RISC OS ,xxx suffix too.
+        self.assertIn('"', self.sanitise('weird".bin'))
+        self.assertEqual(self.sanitise('CF-D1,FCD'), 'CF-D1,FCD')
+
+    def test_preserves_riscos_c1_and_hard_space(self):
+        # RISC OS assigns printable glyphs to 0x80-0x9F (where ISO 8859-1 has
+        # C1 control codes); 0xA0 is the Acorn hard space.  None of these may
+        # be stripped — only the C0 controls (esp. CR/LF) matter for header
+        # injection, and these bytes cannot split an HTTP header.
+        for cp in (0x80, 0x8c, 0x9f, 0xa0, 0xff):
+            name = f'Disc{chr(cp)}Name'
+            self.assertEqual(self.sanitise(name), name,
+                             f'code point {cp:#x} must be preserved')
+        # The decoded Euro glyph (U+20AC) must also survive.
+        self.assertEqual(self.sanitise('Price' + chr(0x20ac)), 'Price' + chr(0x20ac))
 
 
 class TestContentDispositionBuilder(unittest.TestCase):
@@ -78,7 +104,7 @@ class TestContentDispositionBuilder(unittest.TestCase):
         # Pure non-ASCII name (no ASCII chars at all): the ASCII filename=
         # falls back to 'download', while filename* still carries the original
         # via RFC 5987 percent-encoding.
-        name = '日本語'
+        name = chr(0x65e5) + chr(0x672c) + chr(0x8a9e)  # '日本語'
         value = self.build(name)
         self.assertIn('filename="download"', value)
         self.assertIn("filename*=UTF-8''" + urllib.parse.quote(name, safe=''), value)

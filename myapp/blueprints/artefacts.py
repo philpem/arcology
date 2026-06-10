@@ -74,13 +74,26 @@ def safe_original_filename(filename: str) -> str:
     RISC OS filenames, notably the comma used for filetype suffixes
     (e.g. ``CF-D1,FCD`` where ``,FCD`` encodes RISC OS filetype &FCD).
 
-    Path separators and null bytes are stripped to prevent directory
-    traversal; everything else is kept as-is so the original name is
-    faithfully recorded.
+    Path separators, null bytes and the other C0 control characters (notably
+    CR and LF) plus DEL are stripped: they have no legitimate place in a
+    filename and, if preserved, would flow into HTTP response headers such as
+    Content-Disposition and enable header injection (CWE-113).  Every other
+    character — including the top-bit-set range 0x80-0xFF — is kept as-is so
+    the original name is faithfully recorded.
+
+    Crucially, code points 0x80-0x9F are NOT stripped: ISO 8859-1 treats them
+    as C1 control codes, but RISC OS assigns them printable glyphs (Euro,
+    ligatures, etc. — see shared RISC OS Latin-1 handling), and 0xA0 is the
+    Acorn hard space.  Removing them would corrupt RISC OS filenames.  These
+    bytes cannot split an HTTP header (only CR/LF do), and the
+    Content-Disposition sink encodes them safely via RFC 5987 filename*.
     """
-    # Strip null bytes and path separators (security-critical)
-    for ch in ('\x00', '/', '\\'):
-        filename = filename.replace(ch, '')
+    # Drop path separators and the C0 control range (0x00-0x1f, includes
+    # NUL/CR/LF) plus DEL (0x7f).  Preserve 0x80+ for RISC OS filenames.
+    filename = ''.join(
+        ch for ch in filename
+        if ch not in ('/', '\\') and ord(ch) >= 0x20 and ord(ch) != 0x7f
+    )
     filename = filename.strip()
     return filename or 'upload'
 
