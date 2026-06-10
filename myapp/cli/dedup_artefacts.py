@@ -49,18 +49,18 @@ def dedup_artefacts(dry_run):
             if not dry_run:
                 # Delete stored file
                 try:
-                    from ..blueprints.artefacts import (
-                        _cleanup_artefact_outputs,
-                        _cleanup_artefact_outputs_s3,
-                        _delete_artefact_files,
+                    from ..services.artefact_lifecycle import (
+                        cleanup_artefact_outputs,
+                        cleanup_artefact_outputs_s3,
+                        delete_artefact_files,
                     )
-                    _delete_artefact_files(art)
+                    delete_artefact_files(art)
                     from shared.storage import S3Storage
                     storage = current_app.storage
                     if isinstance(storage, S3Storage):
-                        _cleanup_artefact_outputs_s3(art, storage)
+                        cleanup_artefact_outputs_s3(art, storage)
                     else:
-                        _cleanup_artefact_outputs(art, current_app.logger)
+                        cleanup_artefact_outputs(art, current_app.logger)
                 except Exception as e:
                     click.echo(f'  Warning: file cleanup failed: {e}')
 

@@ -49,6 +49,12 @@ from ..database import (
     User,
 )
 from ..extensions import csrf, db
+from ..services.artefact_lifecycle import (
+    bulk_delete_item,
+    collect_all_analyses,
+    delete_artefact_files,
+    move_artefact_to_item,
+)
 from ..services.artefact_storage import (
     compute_file_hashes,
     get_artefact_path,
@@ -94,9 +100,6 @@ from .artefacts import (
     _artefact_contained_file_restrictions,
     _collect_all_file_restrictions,
     _collect_ancestor_file_restrictions,
-    _delete_artefact_files,
-    bulk_delete_item,
-    move_artefact_to_item,
 )
 
 ROUTENAME = __name__.replace('.', '_')
@@ -624,7 +627,7 @@ def delete_artefact(uuid):
     api_user, sees_all = _api_viewer()
     if artefact.item.private_effective and not (sees_all or can_change_owner(artefact.item, api_user)):
         return error_response('Not permitted to delete artefacts from this item', 403)
-    _delete_artefact_files(artefact)
+    delete_artefact_files(artefact)
     db.session.delete(artefact)
     db.session.commit()
     return '', 204
@@ -981,9 +984,8 @@ def get_artefact_analyses_recursive(uuid):
 
     Optional query param: ?status=failed to filter by status.
     """
-    from .artefacts import _collect_all_analyses
     artefact = _get_artefact_or_404(uuid)
-    analyses = _collect_all_analyses(artefact)
+    analyses = collect_all_analyses(artefact)
 
     status_filter = request.args.get('status')
     if status_filter:
@@ -1409,7 +1411,7 @@ def produce_artefact(id):
             .all()
         )
         # Use no_autoflush to prevent SQLAlchemy from flushing pending deletes
-        # mid-loop when lazy-loading derived_artefacts inside _delete_artefact_files.
+        # mid-loop when lazy-loading derived_artefacts inside delete_artefact_files.
         with db.session.no_autoflush:
             for prior in prior_derived:
                 current_app.logger.info(
@@ -1417,7 +1419,7 @@ def produce_artefact(id):
                     f"(from previous {enum_value(analysis.analysis_type)} analysis) "
                     f"before re-run"
                 )
-                _delete_artefact_files(prior)
+                delete_artefact_files(prior)
                 db.session.delete(prior)
         if prior_derived:
             db.session.flush()
