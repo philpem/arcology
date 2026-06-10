@@ -292,7 +292,7 @@ def _restrict_file(db, artefact, rtype, path='secret.bin'):
 
 
 class TestGrantableBypassTypes(unittest.TestCase):
-    """_grantable_bypass_rtypes() covers artefact-level and file-level types."""
+    """grantable_bypass_rtypes() covers artefact-level and file-level types."""
 
     @classmethod
     def setUpClass(cls):
@@ -300,21 +300,21 @@ class TestGrantableBypassTypes(unittest.TestCase):
 
     def test_artefact_level_only(self):
         with self.app.app_context():
-            from myapp.blueprints.artefacts import _grantable_bypass_rtypes
             from myapp.database import RestrictionType
+            from myapp.services.restrictions import grantable_bypass_rtypes
 
             artefact = _make_artefact(self.db, 'ArtOnly', 'artonly.img')
             _restrict(self.db, artefact, RestrictionType.COPYRIGHT)
             self.db.session.commit()
 
             self.assertEqual(
-                _grantable_bypass_rtypes(artefact), {RestrictionType.COPYRIGHT})
+                grantable_bypass_rtypes(artefact), {RestrictionType.COPYRIGHT})
 
     def test_file_level_restriction_is_grantable(self):
         """A type that only appears on an extracted file is still grantable."""
         with self.app.app_context():
-            from myapp.blueprints.artefacts import _grantable_bypass_rtypes
             from myapp.database import RestrictionType
+            from myapp.services.restrictions import grantable_bypass_rtypes
 
             artefact = _make_artefact(self.db, 'FileOnly', 'fileonly.img')
             _restrict_file(self.db, artefact, RestrictionType.EXPLICIT)
@@ -323,12 +323,12 @@ class TestGrantableBypassTypes(unittest.TestCase):
             # Artefact itself carries no restriction, but the file does.
             self.assertEqual(artefact.restrictions, [])
             self.assertEqual(
-                _grantable_bypass_rtypes(artefact), {RestrictionType.EXPLICIT})
+                grantable_bypass_rtypes(artefact), {RestrictionType.EXPLICIT})
 
     def test_union_of_artefact_and_file_types(self):
         with self.app.app_context():
-            from myapp.blueprints.artefacts import _grantable_bypass_rtypes
             from myapp.database import RestrictionType
+            from myapp.services.restrictions import grantable_bypass_rtypes
 
             artefact = _make_artefact(self.db, 'Both', 'both.img')
             _restrict(self.db, artefact, RestrictionType.COPYRIGHT)
@@ -336,27 +336,27 @@ class TestGrantableBypassTypes(unittest.TestCase):
             self.db.session.commit()
 
             self.assertEqual(
-                _grantable_bypass_rtypes(artefact),
+                grantable_bypass_rtypes(artefact),
                 {RestrictionType.COPYRIGHT, RestrictionType.EXPLICIT})
 
     def test_other_artefacts_file_restriction_not_included(self):
         """File restrictions on a different artefact must not leak in."""
         with self.app.app_context():
-            from myapp.blueprints.artefacts import _grantable_bypass_rtypes
             from myapp.database import RestrictionType
+            from myapp.services.restrictions import grantable_bypass_rtypes
 
             target = _make_artefact(self.db, 'Target', 'target.img')
             other = _make_artefact(self.db, 'OtherArt', 'otherart.img')
             _restrict_file(self.db, other, RestrictionType.EXPLICIT)
             self.db.session.commit()
 
-            self.assertEqual(_grantable_bypass_rtypes(target), set())
+            self.assertEqual(grantable_bypass_rtypes(target), set())
 
     def test_derived_artefact_file_restriction_is_grantable(self):
         """A file restriction on a derived child is grantable from the parent."""
         with self.app.app_context():
-            from myapp.blueprints.artefacts import _grantable_bypass_rtypes
             from myapp.database import RestrictionType
+            from myapp.services.restrictions import grantable_bypass_rtypes
 
             parent = _make_artefact(self.db, 'FluxParent', 'flux.scp')
             child = _make_artefact(self.db, 'DecodedChild', 'decoded.img', parent=parent)
@@ -367,13 +367,13 @@ class TestGrantableBypassTypes(unittest.TestCase):
             # child has a restricted file — the parent page must offer it.
             self.assertEqual(parent.restrictions, [])
             self.assertEqual(
-                _grantable_bypass_rtypes(parent), {RestrictionType.EXPLICIT})
+                grantable_bypass_rtypes(parent), {RestrictionType.EXPLICIT})
 
     def test_derived_artefact_level_restriction_is_grantable(self):
         """A whole-artefact restriction on a derived child is grantable from the parent."""
         with self.app.app_context():
-            from myapp.blueprints.artefacts import _grantable_bypass_rtypes
             from myapp.database import RestrictionType
+            from myapp.services.restrictions import grantable_bypass_rtypes
 
             parent = _make_artefact(self.db, 'AL-Parent', 'al-flux.scp')
             child = _make_artefact(self.db, 'AL-Child', 'al-decoded.img', parent=parent)
@@ -382,7 +382,7 @@ class TestGrantableBypassTypes(unittest.TestCase):
 
             self.assertEqual(parent.restrictions, [])
             self.assertEqual(
-                _grantable_bypass_rtypes(parent), {RestrictionType.COPYRIGHT})
+                grantable_bypass_rtypes(parent), {RestrictionType.COPYRIGHT})
 
 
 class TestAncestorBypass(unittest.TestCase):
