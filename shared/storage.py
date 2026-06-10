@@ -13,10 +13,12 @@ import abc
 import logging
 import mimetypes
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
 from typing import BinaryIO
+from urllib.parse import quote
 
 # Ensure SVG is always mapped correctly — some Linux systems omit it.
 mimetypes.add_type('image/svg+xml', '.svg')
@@ -26,6 +28,34 @@ def _mime_for_key(key: str) -> str:
     """Return the MIME type for a storage key based on its file extension."""
     mime, _ = mimetypes.guess_type(key)
     return mime or 'application/octet-stream'
+
+
+# Characters that must never appear raw in a Content-Disposition value:
+# control chars (incl. CR/LF), double-quote and backslash.  A user-supplied
+# original filename can legitimately contain '"' and — because the upload-time
+# sanitiser deliberately preserves most characters — even CR/LF.  Whatever
+# bytes land in ResponseContentDisposition are reproduced verbatim by S3 in the
+# response header, so an unsanitised filename is a header-injection vector
+# (CWE-113).  Neutralise them here.
+_CD_UNSAFE = re.compile(r'[\x00-\x1f\x7f"\\]')
+
+
+def _content_disposition_attachment(filename: str) -> str:
+    """Build a safe ``Content-Disposition: attachment`` value for *filename*.
+
+    Produces an ASCII ``filename="..."`` with all unsafe characters replaced,
+    plus an RFC 5987 ``filename*=UTF-8''...`` parameter (percent-encoded, so it
+    never contains raw control characters) that carries the original name with
+    full fidelity for browsers that support it.  The result is guaranteed to
+    contain no raw CR/LF, NUL, quote or backslash, so it cannot inject or split
+    HTTP response headers when echoed back by the storage backend.
+    """
+    ascii_name = _CD_UNSAFE.sub('_', filename)
+    ascii_name = ascii_name.encode('ascii', 'ignore').decode('ascii').strip()
+    if not ascii_name:
+        ascii_name = 'download'
+    encoded = quote(filename, safe='')
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{encoded}"
 
 # botocore exception base classes — imported here so the module loads even
 # when boto3 is absent (LocalStorage users never import these).
@@ -380,7 +410,7 @@ class S3Storage(StorageBackend):
             'ResponseContentType': _mime_for_key(key),
         }
         if filename:
-            params['ResponseContentDisposition'] = f'attachment; filename="{filename}"'
+            params['ResponseContentDisposition'] = _content_disposition_attachment(filename)
         return self._public_client.generate_presigned_url(
             'get_object',
             Params=params,
