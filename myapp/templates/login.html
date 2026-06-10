@@ -27,7 +27,7 @@
 					{% endif %}
 
 					{% if local_login_enabled %}
-					{{ render_form(form, action=url_for('login', next=request.args.get('next', '')), method='post') }}
+					{{ render_form(form, action=url_for('auth.login', next=request.args.get('next', '')), method='post') }}
 					{% endif %}
 				</div>
 			</div>

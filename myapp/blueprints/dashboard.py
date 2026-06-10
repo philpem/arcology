@@ -6,7 +6,7 @@ Homepage and dashboard views.
 
 from flask import Blueprint, jsonify, render_template
 from flask_login import current_user
-from sqlalchemy import case, func
+from sqlalchemy import case, func, true
 from sqlalchemy.orm import joinedload
 from ..database import Analysis, AnalysisStatus, Artefact, Item
 from ..extensions import db
@@ -27,6 +27,7 @@ def _get_stats(user):
     """Compute dashboard statistics, scoped to what *user* may see."""
     item_clause = item_visibility_clause(user)
     artefact_clause = artefact_visibility_clause(user)
+    active_analysis_statuses = (AnalysisStatus.PENDING, AnalysisStatus.RUNNING)
 
     total_items = db.session.query(func.count(Item.id)).filter(item_clause).scalar()
     total_artefacts = (
@@ -35,15 +36,23 @@ def _get_stats(user):
         .filter(artefact_clause)
         .scalar()
     )
-    analysis_counts = (
+    analysis_query = (
         db.session.query(
             func.count(case((Analysis.status == AnalysisStatus.PENDING, 1))).label('pending'),
             func.count(case((Analysis.status == AnalysisStatus.RUNNING, 1))).label('running'),
         )
         .select_from(Analysis)
-        .join(Artefact, Analysis.artefact_id == Artefact.id)
-        .join(Item, Artefact.item_id == Item.id)
-        .filter(artefact_clause)
+        .filter(Analysis.status.in_(active_analysis_statuses))
+    )
+    if not artefact_clause.compare(true()):
+        analysis_query = (
+            analysis_query
+            .join(Artefact, Analysis.artefact_id == Artefact.id)
+            .join(Item, Artefact.item_id == Item.id)
+            .filter(artefact_clause)
+        )
+    analysis_counts = (
+        analysis_query
         .one()
     )
 

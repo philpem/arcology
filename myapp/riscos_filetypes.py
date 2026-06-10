@@ -24,8 +24,13 @@ FILETYPE_MAP = {
     'fc8': 'DOSDisc',
     'fca': 'Squash',
 
+    # Communications
+    'cb7': '7BatCfg (ArcTerm7)',
+    'cb8': '7Script (ArcTerm7)',
+
     # Documents and DTP
     'b27': 'OvnPro (Ovation Pro)',
+    'bc5': 'ImpDoc (Impression)',
     'cdd': 'Ovation',
     'd01': 'EasiDoc (Easiwriter/Techwriter)',
     'd87': 'DocData (Impression)',

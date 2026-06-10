@@ -23,7 +23,6 @@ from wtforms import BooleanField, IntegerField, SelectField, StringField, TextAr
 from wtforms.validators import DataRequired, Optional
 from ..database import (
     ANALYSIS_PRIORITY_HIGH,
-    ANALYSIS_PRIORITY_NORMAL,
     Analysis,
     AnalysisStatus,
     AnalysisType,
@@ -52,8 +51,15 @@ from ..database import (
 from ..extensions import db
 from ..permissions import public_downloadable, public_readable, require_permission
 from ..riscos_filetypes import lookup_filetype_hex
+from ..services.artefact_types import (
+    ANALYSIS_MAP,
+    detect_artefact_type,
+    queue_analyses_for_artefact,
+)
+from ..services.upload_pipeline import QUEUE_CHECKSUM_ONLY, QUEUE_FULL, ingest_uploaded_artefact
 from ..utils.blobs import artefact_blob, artefact_blob_storage_path, assign_blob
 from ..utils.enum_display import enum_value
+from ..utils.path_nav import build_directory_tree
 from ..utils.slugs import ensure_unique_slug, generate_slug, lookup_artefact_by_id, lookup_by_identifier
 from ..visibility import (
     artefact_visibility_clause,
@@ -75,13 +81,26 @@ def safe_original_filename(filename: str) -> str:
     RISC OS filenames, notably the comma used for filetype suffixes
     (e.g. ``CF-D1,FCD`` where ``,FCD`` encodes RISC OS filetype &FCD).
 
-    Path separators and null bytes are stripped to prevent directory
-    traversal; everything else is kept as-is so the original name is
-    faithfully recorded.
+    Path separators, null bytes and the other C0 control characters (notably
+    CR and LF) plus DEL are stripped: they have no legitimate place in a
+    filename and, if preserved, would flow into HTTP response headers such as
+    Content-Disposition and enable header injection (CWE-113).  Every other
+    character — including the top-bit-set range 0x80-0xFF — is kept as-is so
+    the original name is faithfully recorded.
+
+    Crucially, code points 0x80-0x9F are NOT stripped: ISO 8859-1 treats them
+    as C1 control codes, but RISC OS assigns them printable glyphs (Euro,
+    ligatures, etc. — see shared RISC OS Latin-1 handling), and 0xA0 is the
+    Acorn hard space.  Removing them would corrupt RISC OS filenames.  These
+    bytes cannot split an HTTP header (only CR/LF do), and the
+    Content-Disposition sink encodes them safely via RFC 5987 filename*.
     """
-    # Strip null bytes and path separators (security-critical)
-    for ch in ('\x00', '/', '\\'):
-        filename = filename.replace(ch, '')
+    # Drop path separators and the C0 control range (0x00-0x1f, includes
+    # NUL/CR/LF) plus DEL (0x7f).  Preserve 0x80+ for RISC OS filenames.
+    filename = ''.join(
+        ch for ch in filename
+        if ch not in ('/', '\\') and ord(ch) >= 0x20 and ord(ch) != 0x7f
+    )
     filename = filename.strip()
     return filename or 'upload'
 
@@ -128,224 +147,6 @@ def _type_display_name(t: ArtefactType) -> str:
     """Return a human-readable display name for an ArtefactType."""
     return _ARTEFACT_TYPE_DISPLAY_NAMES.get(t, t.value.upper().replace('_', ' '))
 
-
-# =============================================================================
-# Type Detection
-# =============================================================================
-
-# Extension to ArtefactType mapping
-EXTENSION_MAP = {
-    # Flux-level
-    '.scp': ArtefactType.SCP,
-    '.dfi': ArtefactType.DFI,
-    '.a2r': ArtefactType.A2R,
-
-    # Cooked sector-level floppy or hard disc
-    '.imd': ArtefactType.IMD,   # needs conversion to sectors
-    '.hfe': ArtefactType.HFE,   # needs conversion to sectors
-
-    # Raw sector images
-    '.adf': ArtefactType.RAW_SECTOR,
-    '.img': ArtefactType.RAW_SECTOR,
-    '.ima': ArtefactType.RAW_SECTOR,
-    '.dsk': ArtefactType.RAW_SECTOR,
-    
-    # CD/DVD
-    '.iso': ArtefactType.ISO,
-    
-    # Hard drive raw images
-    '.dd': ArtefactType.RAW_SECTOR,
-    
-    # Documents
-    '.pdf': ArtefactType.PDF,
-        
-    # Archives
-    '.zip': ArtefactType.ZIP,
-    '.tar.gz': ArtefactType.TARGZ,
-    '.tgz': ArtefactType.TARGZ,
-    '.rar': ArtefactType.RAR,
-    '.arc': ArtefactType.ARC,
-    '.arcfs': ArtefactType.ARC,
-    '.spk': ArtefactType.ARC,
-    '.spark': ArtefactType.ARC,
-    '.b21':   ArtefactType.TBAFS,
-    '.tbafs': ArtefactType.TBAFS,
-    '.b23':   ArtefactType.XFILES,
-
-    # Acorn/RISC OS native viewable formats
-    '.spr':  ArtefactType.ACORN_SPRITE,
-    '.aff':  ArtefactType.ACORN_DRAW,
-    '.draw': ArtefactType.ACORN_DRAW,
-    '.txt':  ArtefactType.ACORN_TEXT,
-
-    # Common raster images (browser-native pass-through or Pillow-converted)
-    '.jpg':  ArtefactType.IMAGE,
-    '.jpeg': ArtefactType.IMAGE,
-    '.png':  ArtefactType.IMAGE,
-    '.gif':  ArtefactType.IMAGE,
-    '.webp': ArtefactType.IMAGE,
-    '.bmp':  ArtefactType.IMAGE,
-    '.tif':  ArtefactType.IMAGE,
-    '.tiff': ArtefactType.IMAGE,
-    '.pcx':  ArtefactType.IMAGE,
-    '.tga':  ArtefactType.IMAGE,
-
-    # Windows vector metafiles (converted to SVG)
-    '.wmf':  ArtefactType.IMAGE,
-    '.emf':  ArtefactType.IMAGE,
-}
-
-
-def detect_artefact_type(filename: str) -> ArtefactType:
-    """Detect artefact type from filename extension."""
-    filename_lower = filename.lower()
-
-    # Check compound extensions first (order matters)
-    if filename_lower.endswith('.dd.zst'):
-        return ArtefactType.DD_ZST
-    if filename_lower.endswith('.dd.gz'):
-        return ArtefactType.DD_GZ
-    if filename_lower.endswith('.dd.bz2'):
-        return ArtefactType.DD_BZ2
-    if filename_lower.endswith('.tar.gz'):
-        return ArtefactType.TARGZ
-
-    # Strip a trailing compression suffix and re-check, so e.g. .dfi.bz2 → .dfi
-    stem = filename_lower
-    for suffix in ('.gz', '.bz2', '.zst'):
-        if stem.endswith(suffix):
-            stem = stem[:-len(suffix)]
-            break
-
-    _, ext = os.path.splitext(stem)
-    return EXTENSION_MAP.get(ext, ArtefactType.UNKNOWN)
-
-
-# Analysis types appropriate for each artefact type
-ANALYSIS_MAP = {
-    # Flux images - visualisation and decode attempt.
-    # SCP: only DETECT_TRACK_DENSITY and METADATA_EXTRACT are queued at upload time.
-    # DETECT_TRACK_DENSITY queues FLUX_VISUALISATION and FLUX_DECODE on the correct
-    # target (original SCP if no mismatch; density-corrected SCP if 40-in-80 detected),
-    # preventing duplicate HFE/IMD/RAW_SECTOR artefacts from both images.
-    ArtefactType.SCP: [AnalysisType.DETECT_TRACK_DENSITY, AnalysisType.METADATA_EXTRACT],
-    ArtefactType.DFI: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
-    ArtefactType.A2R: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
-    #ArtefactType.KF: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT],
-    #ArtefactType.FLUX_RAW: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE],
-    
-    # Sector-level floppy - file extraction only works on raw sector images
-    # IMD is track-based format with metadata, HFE is an emulator container format
-    # These need conversion to IMG (raw sectors) before file extraction can work.
-    # FLUX_DECODE is included so that standalone HFE/IMD uploads trigger extraction
-    # (same pipeline as SCP, starting from wherever in the chain the source sits).
-    ArtefactType.IMD: [AnalysisType.METADATA_EXTRACT, AnalysisType.FLUX_DECODE],
-    ArtefactType.HFE: [AnalysisType.FLUX_VISUALISATION, AnalysisType.DISC_MASTERING_DETECT, AnalysisType.DISC_PROTECTION_DETECT, AnalysisType.FLUX_DECODE],
-    #ArtefactType.TD0: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_IDENTIFY],
-    #ArtefactType.D64: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_EXTRACTION],
-    #ArtefactType.ADF: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_EXTRACTION],
-    #ArtefactType.DSK: [AnalysisType.FORMAT_IDENTIFY, AnalysisType.FILE_EXTRACTION],
-    
-    # CD/DVD - file extraction
-    ArtefactType.ISO: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_EXTRACTION],
-    #ArtefactType.BIN_CUE: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_EXTRACTION],
-    #ArtefactType.MDF_MDS: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_EXTRACTION],
-    #ArtefactType.NRG: [AnalysisType.METADATA_EXTRACT, AnalysisType.FILE_EXTRACTION],
-    
-    # Raw sector images - run PARTITION_DETECT first; it queues FILE_EXTRACTION
-    # with the detected filesystem hint so the right tool (DIM vs 7z) is used.
-    # FILE_EXTRACTION must NOT be queued here directly, as it would race with
-    # PARTITION_DETECT and fall back to the wrong tool (7z for ADFS discs, etc.).
-    #ArtefactType.RAW_SECTOR: [AnalysisType.PARTITION_DETECT, AnalysisType.FORMAT_IDENTIFY],
-    ArtefactType.RAW_SECTOR: [AnalysisType.PARTITION_DETECT],
-    ArtefactType.DD_ZST: [AnalysisType.PARTITION_DETECT],
-    ArtefactType.DD_GZ: [AnalysisType.PARTITION_DETECT],
-    ArtefactType.DD_BZ2: [AnalysisType.PARTITION_DETECT],
-    
-    # Documents/images - just metadata/checksums
-    ArtefactType.PDF: [AnalysisType.METADATA_EXTRACT],
-
-    # Sidecar/companion files (a disk image's ddrescue .map, readme, checksums)
-    # have NO automatic analyses — they exist to be viewed/downloaded alongside
-    # the image.  (CHECKSUM_COMPUTE is still queued on direct upload, as it is
-    # for every type, independent of this map.)
-    ArtefactType.SIDECAR: [],
-    
-    # Archives - extract contents via ARCHIVE_EXTRACT (same pipeline used
-    # for archives found inside disc images).  The worker detects top-level
-    # artefact archives (no partition_uuid hint) and extracts them directly.
-    ArtefactType.ZIP: [AnalysisType.ARCHIVE_EXTRACT],
-    ArtefactType.TARGZ: [AnalysisType.ARCHIVE_EXTRACT],
-    ArtefactType.RAR: [AnalysisType.ARCHIVE_EXTRACT],
-    ArtefactType.ARC: [AnalysisType.ARCHIVE_EXTRACT],
-    ArtefactType.TBAFS:  [AnalysisType.ARCHIVE_EXTRACT],
-    ArtefactType.XFILES: [AnalysisType.ARCHIVE_EXTRACT],
-
-    # Acorn/RISC OS native viewable formats — convert to portable equivalents
-    ArtefactType.ACORN_SPRITE: [AnalysisType.FORMAT_CONVERT],
-    ArtefactType.ACORN_DRAW:   [AnalysisType.FORMAT_CONVERT],
-    ArtefactType.ACORN_TEXT:   [AnalysisType.FORMAT_CONVERT],
-
-    # Common image formats — pass through or convert to PNG/SVG
-    ArtefactType.IMAGE: [AnalysisType.FORMAT_CONVERT],
-
-    # Unknown - try to identify
-    ArtefactType.UNKNOWN: [AnalysisType.FORMAT_IDENTIFY],
-}
-
-
-def queue_analyses_for_artefact(artefact: Artefact, hints: dict = None,
-                                checksum_only: bool = False,
-                                skip_duplicate_check: bool = False,
-                                commit: bool = True,
-                                skip_analyses: list[str] | None = None,
-                                priority: int = ANALYSIS_PRIORITY_NORMAL):
-    """Queue appropriate analyses for an artefact based on its type.
-
-    CHECKSUM_COMPUTE is always prepended as the first job regardless of artefact
-    type; it does not need to appear in ANALYSIS_MAP.  Pass checksum_only=True
-    to skip the type-specific analyses (used when auto-analyse is off on upload).
-
-    When called after reset_artefact_for_reanalysis, pass skip_duplicate_check=True
-    to avoid redundant SELECT queries (the reset already deleted all analyses).
-
-    Pass commit=False to defer the commit to the caller (useful for batch operations).
-
-    skip_analyses: list of AnalysisType *names* (uppercase strings, e.g. 'FLUX_DECODE')
-    to suppress.  Used when registering siblings that must not re-trigger the
-    parent analysis (ping-pong prevention).
-
-    priority: queue priority (ANALYSIS_PRIORITY_HIGH for web UI, ANALYSIS_PRIORITY_NORMAL
-    for API/CLI).  Higher value = picked up sooner by workers.
-    """
-    skip_set = set(skip_analyses or [])
-    analysis_types = [AnalysisType.CHECKSUM_COMPUTE]
-    if not checksum_only:
-        analysis_types += ANALYSIS_MAP.get(artefact.artefact_type, [AnalysisType.FORMAT_IDENTIFY])
-    analysis_types = [t for t in analysis_types if t.name not in skip_set]
-    hints_json = json.dumps(hints) if hints else None
-
-    for analysis_type in analysis_types:
-        if not skip_duplicate_check:
-            # Check if this analysis is already queued/running
-            existing = Analysis.query.filter_by(
-                artefact_id=artefact.id,
-                analysis_type=analysis_type
-            ).filter(Analysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.RUNNING])).first()
-            if existing:
-                continue
-
-        analysis = Analysis(
-                artefact_id=artefact.id,
-                analysis_type=analysis_type,
-                status=AnalysisStatus.PENDING,
-                hints=hints_json,
-                priority=priority,
-            )
-        db.session.add(analysis)
-
-    if commit:
-        db.session.commit()
 
 
 # =============================================================================
@@ -1396,6 +1197,98 @@ def analysis_status_json(uuid):
         counts[status.value] = n
     counts['total'] = sum(counts.values())
     return jsonify(counts)
+
+
+@blueprint.route('/artefacts/<string:uuid>/dirtree.html')
+@public_readable
+def dirtree_html(uuid):
+    """AJAX endpoint: returns an HTML fragment containing the full directory tree.
+
+    Called by the "Tree" toggle button in the file listing panel.  Accepts an
+    optional ``?partition_uuid=`` query param to restrict the tree to one
+    partition (used when the user has already selected a partition filter).
+    """
+    artefact = _get_artefact_or_404(uuid=uuid)
+    all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+
+    all_partitions = (
+        Partition.query
+        .filter(Partition.artefact_id.in_(all_ids))
+        .order_by(Partition.artefact_id, Partition.partition_index)
+        .all()
+    )
+    if not all_partitions:
+        return ('', 204)
+
+    # Optional single-partition filter (mirrors the main file listing filter)
+    partition_uuid_filter = request.args.get('partition_uuid') or None
+    if partition_uuid_filter == 'None':
+        partition_uuid_filter = None
+
+    visible_partitions = (
+        [p for p in all_partitions if p.uuid == partition_uuid_filter]
+        if partition_uuid_filter else all_partitions
+    )
+
+    def _base_file_q():
+        q = (
+            db.session.query(ExtractedFile.path, Partition.uuid)
+            .join(Partition)
+            .filter(Partition.artefact_id.in_(all_ids))
+        )
+        if partition_uuid_filter:
+            q = q.filter(Partition.uuid == partition_uuid_filter)
+        return q
+
+    # Safety cap: directory trees with more paths than this are truncated.
+    # Large disk images can have hundreds of thousands of files; loading every
+    # path string unbounded would exhaust worker memory under concurrent load.
+    _TREE_PATH_LIMIT = 200_000
+
+    # Fetch LIMIT+1 rows so we can tell whether the cap was actually hit
+    # (if we get exactly LIMIT+1 back, we truncated; exactly LIMIT means the
+    # DB is at or below the cap).  Mirrors the hashdb.py SEARCH_LIMIT pattern.
+    path_rows = _base_file_q().filter(ExtractedFile.is_directory == False).limit(_TREE_PATH_LIMIT + 1).all()  # noqa: E712
+    dir_rows  = _base_file_q().filter(ExtractedFile.is_directory == True).limit(_TREE_PATH_LIMIT + 1).all()  # noqa: E712
+
+    is_truncated = len(path_rows) > _TREE_PATH_LIMIT or len(dir_rows) > _TREE_PATH_LIMIT
+    if len(path_rows) > _TREE_PATH_LIMIT:
+        path_rows = path_rows[:_TREE_PATH_LIMIT]
+    if len(dir_rows) > _TREE_PATH_LIMIT:
+        dir_rows = dir_rows[:_TREE_PATH_LIMIT]
+
+    # Archive paths (for folder-vs-zip icons in the tree).
+    # Apply the same partition filter so cross-partition paths don't bleed in.
+    arc_base = (
+        db.session.query(ExtractedFile.path)
+        .join(Partition)
+        .filter(
+            Partition.artefact_id.in_(all_ids),
+            ExtractedFile.is_archive == True,  # noqa: E712
+        )
+    )
+    if partition_uuid_filter:
+        arc_base = arc_base.filter(Partition.uuid == partition_uuid_filter)
+    archive_paths = {row[0] for row in arc_base.limit(_TREE_PATH_LIMIT).all()}
+
+    # is_directory rows store the directory path itself (e.g. "dir1").
+    # Append '/' so _extract_dir_set in build_directory_tree treats them as
+    # directories rather than root-level files (which produce no implied dirs).
+    synthetic_dir_rows = [(p + '/', p_uuid) for p, p_uuid in dir_rows]
+
+    tree_data = build_directory_tree(
+        list(path_rows) + synthetic_dir_rows,
+        visible_partitions,
+        archive_paths=archive_paths,
+    )
+
+    return render_template(
+        'artefacts/_dir_tree_panel.html',
+        tree=tree_data,
+        all_partitions=all_partitions,
+        single_partition=len(visible_partitions) == 1,
+        is_truncated=is_truncated,
+    )
 
 
 @blueprint.route('/artefacts/<string:uuid>/tree')
@@ -2984,44 +2877,7 @@ def upload(item_id):
         # Detect MIME type
         mime_type, _ = mimetypes.guess_type(original_filename)
 
-        # Create artefact record
-        artefact = Artefact(
-            item_id=target_item.id,
-            label=form.label.data,
-            artefact_type=artefact_type,
-            type_overridden=type_overridden,
-            description=form.description.data,
-            original_filename=original_filename,
-            storage_path=storage_path,
-            file_size=file_size,
-            mime_type=mime_type,
-            owner_id=current_user.id,
-            is_private=form.is_private.data,
-        )
-
-        blob, blob_created = assign_blob(
-            artefact, StorageDirectory.UPLOADS, storage_path, file_size, sha256, md5
-        )
-        if blob is not None and not blob_created and blob.storage_path != storage_path:
-            try:
-                current_app.storage.delete(storage_key)
-            except Exception:
-                current_app.logger.warning(
-                    "Failed to remove duplicate uploaded object %s", storage_key
-                )
-            # Sync compat column to canonical blob path; the fresh file was deleted.
-            artefact.storage_path = blob.storage_path
-
-        db.session.add(artefact)
-        db.session.commit()
-
-        # Generate slug (unique within the target item)
-        base_slug = generate_slug(artefact.label)
-        artefact.slug = ensure_unique_slug(base_slug, Artefact, scope_filter={'item_id': target_item.id})
-        db.session.commit()
-
-        # Always queue checksum computation via the worker; also queue type-specific
-        # analyses if the user requested auto-analyse.
+        # Analysis hints from the form fields
         hints = {}
         if form.platform_id.data and form.platform_id.data != 0:
             platform = Platform.query.get(form.platform_id.data)
@@ -3030,9 +2886,33 @@ def upload(item_id):
         if form.dfi_clock_mhz.data:
             hints['dfi_clock_mhz'] = form.dfi_clock_mhz.data
         web_priority = current_app.config.get('WEB_UI_ANALYSIS_PRIORITY', ANALYSIS_PRIORITY_HIGH)
-        queue_analyses_for_artefact(artefact, hints if hints else None,
-                                    checksum_only=not form.auto_analyse.data,
-                                    priority=web_priority)
+
+        # Create the artefact, slug, and analysis queue entries atomically.
+        # Checksum computation is always queued; type-specific analyses only
+        # when the user requested auto-analyse.
+        outcome = ingest_uploaded_artefact(
+            target_item,
+            label=form.label.data,
+            artefact_type=artefact_type,
+            type_overridden=type_overridden,
+            original_filename=original_filename,
+            storage_name=storage_path,
+            file_size=file_size,
+            md5=md5,
+            sha256=sha256,
+            description=form.description.data,
+            mime_type=mime_type,
+            owner_id=current_user.id,
+            is_private=form.is_private.data,
+            hints=hints if hints else None,
+            queue=QUEUE_FULL if form.auto_analyse.data else QUEUE_CHECKSUM_ONLY,
+            priority=web_priority,
+        )
+        if outcome.duplicate:
+            flash(f'Duplicate: a file with identical content already exists as "{outcome.duplicate.label}".', 'warning')
+            return redirect(url_for(f'{ROUTENAME}.upload', item_id=item.url_id))
+        artefact = outcome.artefact
+
         if form.auto_analyse.data:
             flash(f'Artefact "{artefact.label}" uploaded. Analysis queued.', 'success')
         else:

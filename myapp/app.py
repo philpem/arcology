@@ -2,13 +2,9 @@
 import os
 import secrets
 from urllib.parse import urlsplit
-from flask import Flask, abort, flash, g, redirect, render_template, request, session, url_for
-from flask_login import current_user, login_required, login_user, logout_user
-from flask_wtf import FlaskForm
-from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
+from flask import Flask, g, render_template, request, url_for
+from flask_login import current_user
 from werkzeug.middleware.proxy_fix import ProxyFix
-from wtforms import PasswordField, StringField, SubmitField
-from wtforms.validators import DataRequired
 from .database import UserPermission
 from .extensions import bootstrap, csrf, db, login_manager, migrate
 
@@ -163,8 +159,7 @@ def create_app(config_name=None):
     storage_config['OUTPUT_FOLDER'] = output_folder
     app.storage = create_storage(storage_config)
 
-    # Flask-Login configuration
-    login_manager.login_view = 'login'
+    # Flask-Login configuration (login_view is set by the auth blueprint init_app)
     login_manager.login_message = 'Please log in to access this page.'
 
     # tell jinja to remove extraneous whitespace
@@ -363,8 +358,7 @@ def create_app(config_name=None):
             response.headers['Content-Security-Policy'] = csp
         return response
 
-    # Register login handlers, error handlers, blueprints, and CLI commands
-    _register_login_handlers(app)
+    # Register error handlers, blueprints, and CLI commands
     _register_error_handlers(app)
     _register_blueprints(app)
     _register_cli_commands(app)
@@ -422,100 +416,6 @@ def _register_blueprints(app):
         except Exception as e:
             app.logger.error(f"Failed to load blueprint {modname}: {e}", exc_info=True)
             continue
-
-def _register_login_handlers(app):
-    # -- login management --
-
-    from .database import User
-
-    # TODO -- For 'fresh_login_required' to work, we need a "reauthenticate" handler.
-    #   See https://github.com/maxcountryman/flask-login/blob/master/example/login-example.py for a code example
-    #login_manager.refresh_view = 'reauth'
-    #login_manager.needs_refresh_message = u'To protect your account, please re-authenticate to access this page.'
-
-    @login_manager.user_loader
-    def load_user(userid):
-        userrec = None
-        try:
-            userrec = User.query.filter(User.id == int(userid)).one()
-        except MultipleResultsFound:
-            app.logger.error("USER LOGIN FAILURE: User '%s' has a doppelganger (duplicate username found)")
-        except NoResultFound:
-            app.logger.warning("Userloader: id '%d' returned no results", int(userid))
-            pass # with userrec = None
-        return userrec
-
-    @app.route("/login", methods=["GET","POST"])
-    def login():
-        class LoginForm(FlaskForm):
-            username=StringField("Username", validators=[DataRequired()])
-            password=PasswordField("Password", validators=[DataRequired()])
-            submit=SubmitField("Log in")
-
-        form = LoginForm()
-
-        # Enforce LOCAL_LOGIN_ENABLED server-side (the template merely hides the form).
-        local_login_on = app.config.get('LOCAL_LOGIN_ENABLED', True)
-        if isinstance(local_login_on, str):
-            local_login_on = local_login_on.lower() in ('1', 'true', 'yes')
-        if not local_login_on and form.is_submitted():
-            abort(403)
-
-        # Auto-redirect to SSO on GET when local login is disabled, OIDC is
-        # enabled, OIDC_AUTO_REDIRECT is on, and no flash messages are pending
-        # (flash messages must be shown before bouncing the user away).
-        if request.method == 'GET' and not local_login_on:
-            oidc_on = app.config.get('OIDC_ENABLED', False)
-            if isinstance(oidc_on, str):
-                oidc_on = oidc_on.lower() in ('1', 'true', 'yes')
-            auto_redir = app.config.get('OIDC_AUTO_REDIRECT', True)
-            if isinstance(auto_redir, str):
-                auto_redir = auto_redir.lower() in ('1', 'true', 'yes')
-            if oidc_on and auto_redir and not session.get('_flashes'):
-                next_url = request.args.get('next', '')
-                return redirect(url_for('myapp_blueprints_oidc_auth.sso_login', next=next_url))
-
-        if form.validate_on_submit():
-            # login and validate the user
-            userrec = None
-            try:
-                userrec = User.query.filter(User.username == form.username.data).one()
-            except MultipleResultsFound:
-                app.logger.error("USER LOGIN FAILURE: User '%s' has a doppelganger (duplicate username found)")
-            except NoResultFound:
-                pass # with userrec = None
-
-            if userrec is not None:
-                # check password
-                if userrec.checkPassword(form.password.data):
-                    login_user(userrec)
-                    #flash("Logged in successfully", "success")
-                    # Redirect to the page the user was trying to reach, or the dashboard.
-                    # SECURITY: reject any next= URL without an absolute same-origin path.
-                    # urlparse alone does not catch browser-normalised open-redirects like
-                    # /\evil.com, so require the URL to start with a single '/'.
-                    next_url = request.args.get("next")
-                    if next_url and (not next_url.startswith('/') or next_url.startswith('//')):
-                        next_url = None
-                    return redirect(next_url or url_for("myapp_blueprints_dashboard.index"))
-
-        if request.method == 'POST':
-            flash("Error logging in - please check your username and password and ensure that CAPS LOCK is turned off.", "error")
-        return render_template("login.html", form=form)
-
-    @app.route("/logout")
-    @login_required
-    def logout():
-        # Delegate to the SSO logout route when single-logout is configured,
-        # so the provider session is also terminated.
-        oidc_single_logout = app.config.get('OIDC_SINGLE_LOGOUT', False)
-        if isinstance(oidc_single_logout, str):
-            oidc_single_logout = oidc_single_logout.lower() in ('1', 'true', 'yes')
-        if oidc_single_logout and session.get('oidc_end_session_endpoint'):
-            return redirect(url_for('myapp_blueprints_oidc_auth.sso_logout'))
-        logout_user()
-        flash("You have now been logged out.", "info")
-        return redirect(url_for("login"))
 
 def _register_error_handlers(app):
     @app.errorhandler(404)

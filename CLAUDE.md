@@ -46,6 +46,7 @@ arcology/
 │   │   ├── search.py           # Global cross-item search (prefix query syntax)
 │   │   └── api.py              # REST API for workers and external tools
 │   ├── cli/                    # Flask CLI commands (create-admin, rebuild-search-index, rescan-hashes, reanalyse)
+│   ├── services/               # Service layer: business logic shared by blueprints, API, and CLI (upload ingest pipeline)
 │   ├── utils/                  # Utility modules
 │   ├── templates/              # Jinja2 templates (Bootstrap 5)
 │   └── static/                 # CSS
@@ -243,6 +244,30 @@ Routes decorated with `@public_readable` (from `myapp/permissions.py`) behave li
 `@public_downloadable` similarly gates download/stream routes, additionally checking `PUBLIC_DOWNLOADS`.
 
 Both decorators respect Flask-Login's `LOGIN_DISABLED` config flag (used by tests).
+
+### Item visibility: `@require_visible_item`
+
+Web routes with an item identifier in the URL should use `@require_visible_item`
+(from `myapp/permissions.py`) instead of hand-rolling the lookup + privacy check.
+It resolves the route parameter (slug or UUID), aborts 404 if the current user may
+not view the item (private items must be indistinguishable from nonexistent ones),
+optionally aborts 403 for non-contributors (`contribute=True`), and passes the
+resolved item to the view as an `item` keyword argument:
+
+```python
+@blueprint.route('/<string:uuid>/edit', methods=['GET', 'POST'])
+@login_required
+@require_permission('read_write')
+@require_visible_item(contribute=True)
+def edit(uuid, item):
+    ...
+```
+
+Apply it **below** the auth decorator. For secondary lookups inside a view body
+(e.g. a move target), use the `ensure_visible_item(item)` / `ensure_item_contribution(item)`
+helpers. List queries must additionally filter with `item_visibility_clause(current_user)`
+or `artefact_visibility_clause(current_user)` from `myapp/visibility.py` —
+see `_visible_analyses_query()` in `myapp/blueprints/analysis.py` for the pattern.
 
 ### OIDC role for STAFF tier
 

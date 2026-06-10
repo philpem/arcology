@@ -1,0 +1,128 @@
+{#
+  Directory tree panel — returned as an HTML fragment by the dirtree_html()
+  AJAX endpoint and injected into #dir-tree-panel by the file listing JS.
+
+  Variables:
+    tree             — list of {"partition": Partition, "children": [node, ...]}
+    all_partitions   — full unfiltered partition list (for context)
+    single_partition — True when the tree was filtered to a single partition
+    is_truncated     — True when file count exceeded _TREE_PATH_LIMIT
+#}
+<style>
+#dir-tree-panel .dir-tree-link {
+    border-radius: 3px;
+    color: inherit;
+    display: block;
+    min-width: 0;
+    padding: 1px 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-decoration: none;
+    font-size: 0.82rem;
+}
+#dir-tree-panel .dir-tree-link:hover { background: var(--bs-light); }
+#dir-tree-panel .dir-tree-link.active {
+    background: var(--bs-primary);
+    color: #fff !important;
+}
+#dir-tree-panel .dir-tree-link.active i { color: #fff !important; }
+#dir-tree-panel .dir-tree-children {
+    border-left: 1px solid var(--bs-border-color);
+    margin-left: 0.6rem;
+    padding-left: 0.4rem;
+    list-style: none;
+}
+#dir-tree-panel .dir-tree-partition-header {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--bs-secondary);
+    padding: 2px 4px;
+    margin-top: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+#dir-tree-panel .dir-tree-expand {
+    background: none;
+    border: none;
+    color: var(--bs-secondary);
+    cursor: pointer;
+    flex-shrink: 0;
+    font-size: 0.65rem;
+    line-height: 1;
+    padding: 0;
+    width: 1rem;
+}
+#dir-tree-panel .dir-tree-expand:hover { color: var(--bs-body-color); }
+#dir-tree-panel .dir-tree-chevron {
+    display: inline-block;
+    transition: transform 0.15s ease;
+}
+#dir-tree-panel .dir-tree-expand.expanded .dir-tree-chevron {
+    transform: rotate(90deg);
+}
+</style>
+
+{% if is_truncated %}
+<div class="alert alert-warning small py-1 px-2 mb-1 rounded-2" role="alert">
+    <i class="bi bi-exclamation-triangle-fill"></i> Tree truncated — too many files to display all directories.
+</div>
+{% endif %}
+
+{# "All files" root link — clears both path and partition_uuid filters.
+   href="?" clears all query params in the no-JS / keyboard / right-click path.
+   The JS click handler (handleTreeClick) mirrors this by deleting both params. #}
+<a href="?" data-path=""
+   class="dir-tree-link dir-tree-root fw-semibold mb-1">
+    <i class="bi bi-hdd text-secondary"></i> All files
+</a>
+
+{% for entry in tree %}
+{%- set p = entry.partition %}
+<div class="dir-tree-partition-block">
+    {#
+      Partition header — clicking it filters the file listing to this partition.
+      The data-partition attribute tells the JS click handler to set partition_uuid.
+    #}
+    {% if not single_partition or tree|length > 1 %}
+    <a href="?partition_uuid={{ p.uuid }}&amp;path="
+       data-partition="{{ p.uuid }}"
+       class="dir-tree-link dir-tree-partition-root fw-semibold"
+       title="Filter to this partition">
+        <i class="bi bi-layers-fill text-primary"></i>
+        Partition {{ p.partition_index }}{% if p.label %}: {{ p.label }}{% endif %}
+        <small class="text-muted">({{ p.filesystem.value }})</small>
+    </a>
+    {% endif %}
+    {%- if entry.children %}
+    <ul class="dir-tree-children list-unstyled mb-0 mt-0">
+        {% for node in entry.children recursive %}
+        <li>
+            <div class="d-flex align-items-center">
+                {%- if node.children %}
+                <button type="button" class="dir-tree-expand" aria-label="Expand {{ node.name }}">
+                    <i class="bi bi-chevron-right dir-tree-chevron"></i>
+                </button>
+                {%- else %}
+                <span class="flex-shrink-0" style="width:1rem;"></span>
+                {%- endif %}
+                <a href="?path={{ node.path | urlencode }}"
+                   data-path="{{ node.path }}"
+                   class="dir-tree-link flex-grow-1"
+                   title="{{ node.path }}">
+                    <i class="bi {{ 'bi-file-zip-fill text-info' if node.is_archive else 'bi-folder-fill text-warning' }}"></i>
+                    {{ node.name }}
+                </a>
+            </div>
+            {% if node.children %}
+            <ul class="dir-tree-children list-unstyled mb-0 mt-0" style="display:none;">
+                {{ loop(node.children) }}
+            </ul>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {%- endif %}
+</div>
+{% endfor %}

@@ -28,7 +28,7 @@ from ..database import (
     UserPermission,
 )
 from ..extensions import db
-from ..permissions import public_readable, require_permission
+from ..permissions import public_readable, require_permission, require_visible_item
 from ..utils.item_helpers import (
     assign_item_fields,
     assign_item_tags,
@@ -38,7 +38,7 @@ from ..utils.item_helpers import (
 )
 from ..utils.pagination import VALID_PER_PAGE, compute_letter_pages, resolve_per_page, resolve_sort
 from ..utils.privacy import recompute_item_privacy
-from ..utils.slugs import ensure_unique_slug, generate_slug, get_or_create_slug, lookup_by_identifier
+from ..utils.slugs import ensure_unique_slug, generate_slug, get_or_create_slug
 from ..visibility import (
     SHARE_PERMISSIONS,
     artefact_visibility_clause,
@@ -367,11 +367,9 @@ def new():
 
 @blueprint.route('/<string:uuid>')
 @public_readable
-def view(uuid):
+@require_visible_item()
+def view(uuid, item):
     """View an item and its artefacts."""
-    item = lookup_by_identifier(Item, uuid)
-    if not can_view_item(item, current_user):
-        abort(404)
     if uuid != item.url_id:
         loc = url_for(f'{ROUTENAME}.view', uuid=item.url_id)
         if request.query_string:
@@ -443,16 +441,12 @@ def view(uuid):
 @blueprint.route('/<string:uuid>/edit', methods=['GET', 'POST'])
 @login_required
 @require_permission('read_write')
-def edit(uuid):
+# View-only share recipients may view private items but must not edit them
+# (contribute=True). Curator shares may edit item metadata without changing
+# owner/privacy. Public items remain editable by any read_write user.
+@require_visible_item(contribute=True)
+def edit(uuid, item):
     """Edit an item (including moving it to a different parent)."""
-    item = lookup_by_identifier(Item, uuid)
-    if not can_view_item(item, current_user):
-        abort(404)
-    # View-only share recipients may view private items but must not edit them.
-    # Curator shares may edit item metadata without changing owner/privacy.
-    # Public items remain editable by any read_write user (pre-existing behaviour).
-    if item.private_effective and not can_contribute_to_item(item, current_user):
-        abort(403)
     if request.method == 'GET' and uuid != item.url_id:
         return redirect(url_for(f'{ROUTENAME}.edit', uuid=item.url_id), 301)
     form = ItemForm(obj=item)
@@ -545,11 +539,9 @@ def edit(uuid):
 @blueprint.route('/<string:uuid>/delete', methods=['POST'])
 @login_required
 @require_permission('read_write')
-def delete(uuid):
+@require_visible_item()
+def delete(uuid, item):
     """Delete an item and all its descendants (cascade)."""
-    item = lookup_by_identifier(Item, uuid)
-    if not can_view_item(item, current_user):
-        abort(404)
     # Share recipients may view private items but must not delete them.
     # Public items remain deletable by any read_write user (pre-existing behaviour).
     if item.private_effective and not can_change_owner(item, current_user):
@@ -569,13 +561,9 @@ def delete(uuid):
 @blueprint.route('/<string:uuid>/references/add', methods=['GET', 'POST'])
 @login_required
 @require_permission('read_write')
-def add_reference(uuid):
+@require_visible_item(contribute=True)
+def add_reference(uuid, item):
     """Add an external reference to an item."""
-    item = lookup_by_identifier(Item, uuid)
-    if not can_view_item(item, current_user):
-        abort(404)
-    if item.private_effective and not can_contribute_to_item(item, current_user):
-        abort(403)
     form = ExternalReferenceForm()
     
     form.system_id.choices = [
@@ -607,13 +595,9 @@ def add_reference(uuid):
 @blueprint.route('/<string:item_uuid>/references/<int:ref_id>/delete', methods=['POST'])
 @login_required
 @require_permission('read_write')
-def delete_reference(item_uuid, ref_id):
+@require_visible_item('item_uuid', contribute=True)
+def delete_reference(item_uuid, ref_id, item):
     """Delete an external reference."""
-    item = lookup_by_identifier(Item, item_uuid)
-    if not can_view_item(item, current_user):
-        abort(404)
-    if item.private_effective and not can_contribute_to_item(item, current_user):
-        abort(403)
     ref = ExternalReference.query.get_or_404(ref_id)
 
     if ref.item_id != item.id:
@@ -638,11 +622,9 @@ def choices_json():
 @blueprint.route('/<string:uuid>/shares/add', methods=['POST'])
 @login_required
 @require_permission('read_write')
-def add_share(uuid):
+@require_visible_item()
+def add_share(uuid, item):
     """Add a user or group share to a private item."""
-    item = lookup_by_identifier(Item, uuid)
-    if not can_view_item(item, current_user):
-        abort(404)
     if not can_manage_shares(item, current_user):
         abort(403)
     if not item.private_effective:
@@ -699,11 +681,9 @@ def add_share(uuid):
 @blueprint.route('/<string:uuid>/shares/<int:share_id>/remove', methods=['POST'])
 @login_required
 @require_permission('read_write')
-def remove_share(uuid, share_id):
+@require_visible_item()
+def remove_share(uuid, share_id, item):
     """Remove a share from an item."""
-    item = lookup_by_identifier(Item, uuid)
-    if not can_view_item(item, current_user):
-        abort(404)
     if not can_manage_shares(item, current_user):
         abort(403)
     share = ItemShare.query.filter_by(id=share_id, item_id=item.id).first_or_404()

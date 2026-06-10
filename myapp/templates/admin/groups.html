@@ -1,4 +1,5 @@
 {% extends "_base.html" %}
+{% from '_confirm_modal.html' import delete_trigger, delete_confirm_modal %}
 {% block page_title %}Groups{% endblock %}
 
 {% block content %}
@@ -73,10 +74,11 @@
                 <!-- Group actions -->
                 <div class="mt-3 pt-3 border-top d-flex gap-2">
                     <a href="{{ url_for('myapp_blueprints_admin.edit_group', group_id=group.id) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i> Edit</a>
-                    <form method="post" action="{{ url_for('myapp_blueprints_admin.delete_group', group_id=group.id) }}" class="d-inline" onsubmit="return confirm('Delete group ' + {{ group.name | tojson }} + '? This cannot be undone.');">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i> Delete</button>
-                    </form>
+                    {{ delete_trigger(
+                        url_for('myapp_blueprints_admin.delete_group', group_id=group.id),
+                        group.name, title='Delete Group',
+                        warning='Members will lose any access granted through this group. This cannot be undone.',
+                        trigger_label='Delete') }}
                 </div>
 
             </div>
@@ -92,3 +94,5 @@
     <a href="{{ url_for('myapp_blueprints_admin.index') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Back to Admin</a>
 </div>
 {% endblock %}
+
+{% block modals %}{{ super() }}{{ delete_confirm_modal(csrf_token()) }}{% endblock %}

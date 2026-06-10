@@ -29,8 +29,6 @@ from ..database import (
     ApiKey,
     ApiKeyPermission,
     Artefact,
-    ArtefactMastering,
-    ArtefactProtection,
     ArtefactType,
     Category,
     ExternalReference,
@@ -46,12 +44,13 @@ from ..database import (
     Partition,
     Platform,
     RecognisedProduct,
-    RiscosModule,
     StorageDirectory,
     Tag,
     User,
 )
 from ..extensions import csrf, db
+from ..services.artefact_types import detect_artefact_type, queue_analyses_for_artefact
+from ..services.upload_pipeline import QUEUE_FULL, QUEUE_NONE, ingest_uploaded_artefact
 from ..utils.api_serializers import (
     analysis_to_dict,
     artefact_to_dict,
@@ -92,11 +91,9 @@ from .artefacts import (
     _get_storage_extension,
     bulk_delete_item,
     compute_file_hashes,
-    detect_artefact_type,
     get_artefact_path,
     get_artefact_storage_key,
     move_artefact_to_item,
-    queue_analyses_for_artefact,
     save_uploaded_file,
 )
 
@@ -110,8 +107,17 @@ def init_app(app):
     csrf.exempt(blueprint)
 
 
-def error_response(message, status_code=400):
-    return jsonify({'error': message}), status_code
+def error_response(message, status_code=400, **extra):
+    """Return a JSON error response.
+
+    ``extra`` keyword arguments are merged into the response body alongside
+    ``'error'`` — used by restriction-gate endpoints to include the
+    ``'restrictions'`` list so callers can distinguish restriction types.
+    """
+    payload = {'error': message}
+    if extra:
+        payload.update(extra)
+    return jsonify(payload), status_code
 
 
 # =============================================================================
@@ -853,19 +859,15 @@ def download_artefact(uuid):
     # Enforce download restrictions, honouring the caller's bypass grants.
     user, _ = _api_viewer()
     if not can_download_despite_restrictions(user, artefact.restrictions, artefact):
-        return jsonify({
-            'error': 'Download restricted',
-            'restrictions': [r.restriction_type.value for r in artefact.restrictions],
-        }), 403
+        return error_response('Download restricted', 403,
+                              restrictions=[r.restriction_type.value for r in artefact.restrictions])
 
     # Block the original download when its extracted contents are restricted
     # (mirrors the website's _check_artefact_file_restrictions).
     contained = _artefact_contained_file_restrictions(artefact)
     if not can_download_despite_restrictions(user, contained, artefact):
-        return jsonify({
-            'error': 'Download restricted (artefact contains restricted files)',
-            'restrictions': list({r.restriction_type.value for r in contained}),
-        }), 403
+        return error_response('Download restricted (artefact contains restricted files)', 403,
+                              restrictions=list({r.restriction_type.value for r in contained}))
 
     storage = current_app.storage
     key = get_artefact_storage_key(artefact)
@@ -897,10 +899,8 @@ def download_extracted_file(uuid):
     # Restriction gate, honouring the caller's bypass grants (same policy as web).
     user, _ = _api_viewer()
     if not can_download_despite_restrictions(user, artefact.restrictions, artefact):
-        return jsonify({
-            'error': 'Download restricted',
-            'restrictions': [r.restriction_type.value for r in artefact.restrictions],
-        }), 403
+        return error_response('Download restricted', 403,
+                              restrictions=[r.restriction_type.value for r in artefact.restrictions])
 
     # Check file-level restrictions: own, descendants (archive contains restricted file),
     # and ancestors (file is inside a restricted archive).
@@ -908,10 +908,8 @@ def download_extracted_file(uuid):
         _collect_all_file_restrictions(ef) + _collect_ancestor_file_restrictions(ef)
     )
     if not can_download_despite_restrictions(user, file_restrictions, artefact):
-        return jsonify({
-            'error': 'File download restricted',
-            'restrictions': list({r.restriction_type.value for r in file_restrictions}),
-        }), 403
+        return error_response('File download restricted', 403,
+                              restrictions=list({r.restriction_type.value for r in file_restrictions}))
 
     from .artefacts import _resolve_extracted_file_path
     file_path = _resolve_extracted_file_path(ef)
@@ -1208,161 +1206,13 @@ def update_analysis(id):
         # between our query and the commit.  This is not a server error —
         # return 404 so the worker's existing 404 handler discards the result.
         db.session.rollback()
-        return jsonify({'error': 'Analysis was deleted during update'}), 404
+        return error_response('Analysis was deleted during update', 404)
     return jsonify(analysis_to_dict(analysis))
 
 
 def _populate_search_index(analysis):
-    """Extract structured search data from a completed analysis's JSON details blob.
-
-    Called after update_analysis() marks a job as completed+successful.
-    Handles DISC_PROTECTION_DETECT, DISC_MASTERING_DETECT, PARTITION_DETECT,
-    and RISCOS_MODULE_PARSE.
-    Errors are logged but never propagated — the analysis update itself must
-    still succeed even if index population fails.
-    """
-    import json
-
-    if not analysis.details:
-        return
-
-    try:
-        details = json.loads(analysis.details)
-    except (ValueError, TypeError):
-        current_app.logger.warning(
-            f"Could not parse details JSON for analysis {analysis.uuid} "
-            f"({enum_value(analysis.analysis_type)}) — skipping search index update"
-        )
-        return
-
-    # Use a savepoint so that a DB error during search-index insertion (e.g. a
-    # value that's too long for a varchar column) is caught here and rolled back
-    # cleanly, without aborting the outer transaction that contains the analysis
-    # status update.  Without the savepoint, db.session.add() defers the INSERT
-    # until the outer commit, so a constraint violation would surface there as an
-    # unhandled exception — causing a 500 and leaving Sentry without context.
-    #
-    # Flush the analysis-status changes BEFORE creating the savepoint.  The
-    # flush sends the UPDATE to Postgres outside the savepoint scope, so a
-    # savepoint rollback cannot undo it — the analysis status always commits
-    # even when search-index population fails.
-    try:
-        db.session.flush()
-        with db.session.begin_nested():
-            # Serialise concurrent completions of the same analysis type for the
-            # same artefact (e.g. two workers completing re-analysis jobs at the
-            # same time).  Without this lock, both workers delete each other's
-            # freshly-inserted search-index rows in the delete-then-insert pattern
-            # below.  The lock is released when the outer transaction commits.
-            db.session.execute(
-                select(Artefact).where(Artefact.id == analysis.artefact_id).with_for_update()
-            )
-
-            if analysis.analysis_type == AnalysisType.DISC_PROTECTION_DETECT:
-                # Delete any previous rows for this artefact so re-runs stay clean.
-                ArtefactProtection.query.filter_by(artefact_id=analysis.artefact_id).delete()
-                for ind in details.get('indicators', []):
-                    db.session.add(ArtefactProtection(
-                        artefact_id=analysis.artefact_id,
-                        protection_type=ind.get('type', 'unknown'),
-                        track=ind.get('track'),
-                        side=ind.get('side'),
-                        details=ind.get('sector_id') or ind.get('details'),
-                    ))
-
-            elif analysis.analysis_type == AnalysisType.DISC_MASTERING_DETECT:
-                ArtefactMastering.query.filter_by(artefact_id=analysis.artefact_id).delete()
-                for ind in details.get('indicators', []):
-                    _mtype = ind.get('type', 'unknown')
-                    if _mtype == 'bcd_timestamp':
-                        _mtype = 'formaster'
-                    db.session.add(ArtefactMastering(
-                        artefact_id=analysis.artefact_id,
-                        mastering_type=_mtype,
-                        track=ind.get('track'),
-                        decoded=ind.get('decoded') or ind.get('data'),
-                    ))
-
-            elif analysis.analysis_type == AnalysisType.PARTITION_DETECT:
-                gnu_file_type = details.get('file', {}).get('file_type')
-                if gnu_file_type:
-                    # Apply to all partitions belonging to this artefact.
-                    Partition.query.filter_by(artefact_id=analysis.artefact_id).update(
-                        {'gnu_file_type': gnu_file_type}
-                    )
-
-            elif analysis.analysis_type == AnalysisType.RISCOS_MODULE_PARSE:
-                path_prefix = details.get('path_prefix', '')
-                if path_prefix:
-                    # Scoped deletion: only remove modules from this archive's
-                    # path prefix so concurrent nested-archive jobs don't clobber
-                    # each other's results.
-                    RiscosModule.query.filter(
-                        RiscosModule.artefact_id == analysis.artefact_id,
-                        RiscosModule.file_path.like(path_prefix + '/%'),
-                    ).delete(synchronize_session=False)
-                elif details.get('modules'):
-                    # Only clear all when top-level scan actually found modules
-                    # (disc image case). If 0 modules found with no prefix, preserve
-                    # rows from nested-archive scans to avoid a race where a
-                    # re-analysis top-level job runs before nested archives are
-                    # re-extracted and wipes all previously stored module data.
-                    RiscosModule.query.filter_by(artefact_id=analysis.artefact_id).delete()
-                _title_max = RiscosModule.__table__.c.title_string.type.length
-                _help_max = RiscosModule.__table__.c.help_title.type.length
-                _path_max = RiscosModule.__table__.c.file_path.type.length
-                for mod in details.get('modules', []):
-                    title = mod.get('title_string', '')
-                    if not title:
-                        continue
-                    help_title = mod.get('help_title')
-                    file_path = mod.get('file_path', '')
-                    # Validate varchar column lengths before inserting so that a
-                    # single corrupt module (e.g. a binary blob read as a title
-                    # string) doesn't abort the whole batch.  Log clearly so the
-                    # offending file is identifiable in Sentry / app logs.
-                    if (len(title) > _title_max
-                            or (help_title and len(help_title) > _help_max)
-                            or len(file_path) > _path_max):
-                        current_app.logger.warning(
-                            f"Skipping module with oversized string fields "
-                            f"(title={len(title)}, "
-                            f"help_title={len(help_title) if help_title is not None else 'None'}, "
-                            f"file_path={len(file_path)}): {file_path}"
-                        )
-                        continue
-                    commands = mod.get('commands', [])
-                    commands_json = json.dumps([c['name'] for c in commands]) if commands else None
-                    raw_swis = mod.get('swi_names')
-                    if raw_swis and len(raw_swis) > 1:
-                        swi_names_json = json.dumps([f"{raw_swis[0]}_{s}" for s in raw_swis[1:]])
-                    else:
-                        swi_names_json = None
-                    db.session.add(RiscosModule(
-                        artefact_id=analysis.artefact_id,
-                        title_string=title,
-                        help_title=help_title,
-                        version=mod.get('version'),
-                        date=mod.get('date'),
-                        swi_chunk=mod.get('swi_chunk'),
-                        file_path=file_path,
-                        module_hash=mod.get('hash'),
-                        commands=commands_json,
-                        swi_names=swi_names_json,
-                    ))
-
-            db.session.flush()
-
-    except Exception:
-        try:
-            import sentry_sdk
-            sentry_sdk.capture_exception()
-        except ImportError:
-            pass
-        current_app.logger.exception(
-            f"Error populating search index for analysis {analysis.uuid} "
-            f"({enum_value(analysis.analysis_type)})"
-        )
+    from ..services.search_index import populate_search_index_from_analysis
+    populate_search_index_from_analysis(analysis)
 
 
 @blueprint.route('/analysis/pending', methods=['GET'])
@@ -1449,6 +1299,25 @@ def reset_stale_analyses():
 @require_auth('read_only')
 def get_output_file(filename):
     """Serve an output file (visualisation, etc.)."""
+    # Output paths follow {item_part}/{artefact_uuid}_{slug}/{file...}.
+    # Enforce artefact visibility so a low-privilege user API key cannot pull
+    # the outputs (visualisations, extracted text, file listings) of a private
+    # artefact just by knowing the path.  The worker authenticates with the
+    # pre-shared key and sees everything via _api_viewer()'s sees_all flag.
+    # Mirrors the web endpoint get_output_file() in blueprints/artefacts.py.
+    path_parts = filename.split('/', 2)
+    if len(path_parts) < 2:
+        return error_response('File not found', 404)
+    uuid_candidate = path_parts[1].split('_', 1)[0]
+    if len(uuid_candidate) != 32:
+        return error_response('File not found', 404)
+    artefact_for_check = Artefact.query.filter_by(uuid=uuid_candidate).first()
+    if artefact_for_check is None:
+        return error_response('File not found', 404)
+    user, sees_all = _api_viewer()
+    if not can_view_artefact(artefact_for_check, user, sees_all=sees_all):
+        return error_response('File not found', 404)
+
     storage = current_app.storage
     key = storage.storage_key('outputs', filename)
 
@@ -1658,7 +1527,7 @@ def produce_artefact(id):
         # is safe to call even if some analyses are already active.
         queued_analyses = []
         if data.get('auto_analyse', True):
-            from .artefacts import ANALYSIS_MAP
+            from ..services.artefact_types import ANALYSIS_MAP
             hints = _merge_produce_hints(analysis, data)
             skip_analyses = data.get('skip_analyses') or []
             queue_analyses_for_artefact(existing, hints, skip_analyses=skip_analyses)
@@ -1680,7 +1549,7 @@ def produce_artefact(id):
     # Queue follow-on analyses unless the caller will handle that explicitly
     queued_analyses = []
     if data.get('auto_analyse', True):
-        from .artefacts import ANALYSIS_MAP
+        from ..services.artefact_types import ANALYSIS_MAP
         hints = _merge_produce_hints(analysis, data)
         skip_analyses = data.get('skip_analyses') or []
         queue_analyses_for_artefact(artefact, hints, skip_analyses=skip_analyses)
@@ -1834,7 +1703,7 @@ def add_files(uuid):
         # pgcode '40P01' is DeadlockDetected — return 503 so the worker can
         # retry rather than waiting for the stale-job timeout to fire.
         if getattr(exc.orig, 'pgcode', None) == '40P01':
-            return jsonify({'error': 'Deadlock detected, please retry'}), 503
+            return error_response('Deadlock detected, please retry', 503)
         raise
 
     # Auto-apply restrictions from flagged hash databases
@@ -2074,42 +1943,8 @@ def upload_artefact(item_uuid):
 	from werkzeug.utils import secure_filename
 	original_filename = secure_filename(file.filename) or 'unnamed'
 
-	description = request.form.get('description')
-
-	api_user, _ = _api_viewer()
-	artefact = Artefact(
-		item_id=item.id,
-		label=label,
-		artefact_type=artefact_type,
-		type_overridden=type_overridden,
-		description=description,
-		original_filename=original_filename,
-		storage_path=storage_name,
-		storage_directory=StorageDirectory.UPLOADS,
-		file_size=file_size,
-		owner_id=(api_user.id if api_user is not None else item.owner_id),
-		is_private=request.form.get('is_private', '').lower() in ('1', 'true', 'yes', 'on'),
-	)
-	blob, blob_created = assign_blob(
-		artefact, StorageDirectory.UPLOADS, storage_name, file_size, sha256, md5
-	)
-	if blob is not None and not blob_created and blob.storage_path != storage_name:
-		try:
-			current_app.storage.delete(storage_key)
-		except Exception:
-			current_app.logger.warning(
-				"Failed to remove duplicate uploaded object %s", storage_key
-			)
-		# Sync compat column to canonical blob path; the fresh UUID file was deleted.
-		artefact.storage_path = blob.storage_path
-	db.session.add(artefact)
-	db.session.commit()
-
-	# Generate slug (unique within this item)
-	artefact.slug = ensure_unique_slug(generate_slug(artefact.label), Artefact, scope_filter={'item_id': item.id})
-	db.session.commit()
-
-	# Parse optional hints (JSON string from form field)
+	# Parse optional hints (JSON string from form field) before creating
+	# anything, so an invalid request leaves no artefact behind.
 	hints = None
 	hints_raw = request.form.get('hints')
 	if hints_raw:
@@ -2120,16 +1955,34 @@ def upload_artefact(item_uuid):
 		except json.JSONDecodeError:
 			return error_response('hints must be valid JSON')
 
-	# Optionally queue analyses
-	queued_analyses = []
 	auto_analyse = request.form.get('auto_analyse', 'true').lower() != 'false'
-	if auto_analyse:
-		from .artefacts import ANALYSIS_MAP
-		queue_analyses_for_artefact(artefact, hints)
-		queued_analyses = [t.value for t in ANALYSIS_MAP.get(artefact_type, [])]
 
-	result = artefact_to_dict(artefact)
-	result['queued_analyses'] = queued_analyses
+	# Duplicate check, artefact + slug + analysis queue (single transaction),
+	# and orphan-file cleanup on failure all happen in the shared pipeline.
+	outcome = ingest_uploaded_artefact(
+		item,
+		label=label,
+		artefact_type=artefact_type,
+		type_overridden=type_overridden,
+		original_filename=original_filename,
+		storage_name=storage_name,
+		file_size=file_size,
+		md5=md5,
+		sha256=sha256,
+		description=request.form.get('description'),
+		hints=hints,
+		queue=QUEUE_FULL if auto_analyse else QUEUE_NONE,
+	)
+	if outcome.duplicate:
+		result = artefact_to_dict(outcome.duplicate)
+		result['duplicate'] = True
+		return jsonify(result), 409
+
+	result = artefact_to_dict(outcome.artefact)
+	result['queued_analyses'] = [
+		t.value for t in outcome.queued_analyses
+		if t != AnalysisType.CHECKSUM_COMPUTE
+	]
 	return jsonify(result), 201
 
 
@@ -2407,53 +2260,37 @@ def chunked_upload_complete(upload_uuid):
 	md5 = md5_hash.hexdigest()
 	sha256 = sha256_hash.hexdigest()
 
-	# Create artefact record (identical logic to upload_artefact)
-	api_user, _ = _api_viewer()
-	artefact = Artefact(
-		item_id=item.id,
-		label=meta['label'],
-		artefact_type=artefact_type,
-		type_overridden=type_overridden,
-		description=meta.get('description'),
-		original_filename=original_filename,
-		storage_path=storage_name,
-		storage_directory=StorageDirectory.UPLOADS,
-		file_size=file_size,
-		owner_id=(api_user.id if api_user is not None else item.owner_id),
-		is_private=bool(meta.get('is_private', False)),
-	)
-	blob, blob_created = assign_blob(
-		artefact, StorageDirectory.UPLOADS, storage_name, file_size, sha256, md5
-	)
-	if blob is not None and not blob_created and blob.storage_path != storage_name:
-		try:
-			current_app.storage.delete(storage_key)
-		except Exception:
-			current_app.logger.warning(
-				"Failed to remove duplicate uploaded object %s", storage_key
-			)
-		# Sync compat column to canonical blob path; the fresh UUID file was deleted.
-		artefact.storage_path = blob.storage_path
-	db.session.add(artefact)
-	db.session.commit()
-
-	artefact.slug = ensure_unique_slug(
-		generate_slug(artefact.label), Artefact, scope_filter={'item_id': item.id}
-	)
-	db.session.commit()
-
-	queued_analyses = []
 	auto_analyse = meta.get('auto_analyse', True)
 	if isinstance(auto_analyse, str):
 		auto_analyse = auto_analyse.lower() != 'false'
-	if auto_analyse:
-		from .artefacts import ANALYSIS_MAP
-		hints = meta.get('hints') or None
-		queue_analyses_for_artefact(artefact, hints)
-		queued_analyses = [t.value for t in ANALYSIS_MAP.get(artefact_type, [])]
 
-	result = artefact_to_dict(artefact)
-	result['queued_analyses'] = queued_analyses
+	# Duplicate check, artefact + slug + analysis queue (single transaction),
+	# and orphan-file cleanup on failure all happen in the shared pipeline
+	# (identical behaviour to upload_artefact).
+	outcome = ingest_uploaded_artefact(
+		item,
+		label=meta['label'],
+		artefact_type=artefact_type,
+		type_overridden=type_overridden,
+		original_filename=original_filename,
+		storage_name=storage_name,
+		file_size=file_size,
+		md5=md5,
+		sha256=sha256,
+		description=meta.get('description'),
+		hints=meta.get('hints') or None,
+		queue=QUEUE_FULL if auto_analyse else QUEUE_NONE,
+	)
+	if outcome.duplicate:
+		result = artefact_to_dict(outcome.duplicate)
+		result['duplicate'] = True
+		return jsonify(result), 409
+
+	result = artefact_to_dict(outcome.artefact)
+	result['queued_analyses'] = [
+		t.value for t in outcome.queued_analyses
+		if t != AnalysisType.CHECKSUM_COMPUTE
+	]
 	return jsonify(result), 201
 
 

@@ -11,7 +11,7 @@ os.environ.setdefault('SQLALCHEMY_DATABASE_URI', 'sqlite:///:memory:')
 os.environ.setdefault('SECRET_KEY', 'test')
 os.environ.setdefault('WORKER_API_KEY', 'test')
 
-from myapp.utils.path_nav import compute_subdirectories, split_path_segments
+from myapp.utils.path_nav import build_directory_tree, compute_subdirectories, split_path_segments
 
 
 class TestComputeSubdirectories(unittest.TestCase):
@@ -92,6 +92,131 @@ class TestSplitPathSegments(unittest.TestCase):
 
     def test_slash_only(self):
         self.assertEqual(split_path_segments('/'), [])
+
+
+class _FakePartition:
+    """Minimal stand-in for the Partition ORM object used by build_directory_tree."""
+    def __init__(self, uuid, index=0):
+        self.uuid = uuid
+        self.partition_index = index
+
+
+class TestBuildDirectoryTree(unittest.TestCase):
+    """build_directory_tree constructs a partition-rooted nested directory tree."""
+
+    def _tree(self, path_rows, partitions, archive_paths=None):
+        return build_directory_tree(path_rows, partitions, archive_paths=archive_paths)
+
+    # ── Basic single-partition cases ──────────────────────────────────────────
+
+    def test_empty_partition_omitted(self):
+        p = _FakePartition('p1')
+        result = self._tree([], [p])
+        self.assertEqual(result, [])
+
+    def test_flat_root_files_no_dirs(self):
+        p = _FakePartition('p1')
+        rows = [('readme.txt', 'p1'), ('setup.py', 'p1')]
+        result = self._tree(rows, [p])
+        # No subdirectories — root-level files only
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['children'], [])
+
+    def test_single_level_dirs(self):
+        p = _FakePartition('p1')
+        rows = [('a/file1', 'p1'), ('b/file2', 'p1'), ('b/file3', 'p1')]
+        result = self._tree(rows, [p])
+        children = result[0]['children']
+        names = [c['name'] for c in children]
+        self.assertEqual(names, ['a', 'b'])
+
+    def test_nested_dirs(self):
+        p = _FakePartition('p1')
+        rows = [('a/b/c/file', 'p1')]
+        result = self._tree(rows, [p])
+        a = result[0]['children']
+        self.assertEqual(len(a), 1)
+        self.assertEqual(a[0]['name'], 'a')
+        self.assertEqual(a[0]['path'], 'a/')
+        b = a[0]['children']
+        self.assertEqual(b[0]['name'], 'b')
+        c = b[0]['children']
+        self.assertEqual(c[0]['name'], 'c')
+        self.assertEqual(c[0]['children'], [])
+
+    def test_natural_sort_order(self):
+        p = _FakePartition('p1')
+        rows = [('item10/f', 'p1'), ('item2/f', 'p1'), ('Item1/f', 'p1')]
+        result = self._tree(rows, [p])
+        names = [c['name'] for c in result[0]['children']]
+        self.assertEqual(names, ['Item1', 'item2', 'item10'])
+
+    # ── Archive flag ──────────────────────────────────────────────────────────
+
+    def test_archive_path_flagged(self):
+        p = _FakePartition('p1')
+        rows = [('arch.zip/inner.txt', 'p1'), ('plain/readme', 'p1')]
+        archive_paths = {'arch.zip'}
+        result = self._tree(rows, [p], archive_paths=archive_paths)
+        children = {c['name']: c for c in result[0]['children']}
+        self.assertTrue(children['arch.zip']['is_archive'])
+        self.assertFalse(children['plain']['is_archive'])
+
+    # ── Multi-partition ───────────────────────────────────────────────────────
+
+    def test_multi_partition_separate_entries(self):
+        p1 = _FakePartition('p1', index=0)
+        p2 = _FakePartition('p2', index=1)
+        rows = [('a/f', 'p1'), ('b/f', 'p2')]
+        result = self._tree(rows, [p1, p2])
+        self.assertEqual(len(result), 2)
+        self.assertIs(result[0]['partition'], p1)
+        self.assertIs(result[1]['partition'], p2)
+        self.assertEqual(result[0]['children'][0]['name'], 'a')
+        self.assertEqual(result[1]['children'][0]['name'], 'b')
+
+    def test_multi_partition_empty_partition_skipped(self):
+        p1 = _FakePartition('p1')
+        p2 = _FakePartition('p2')
+        rows = [('a/f', 'p1')]  # p2 gets no rows
+        result = self._tree(rows, [p1, p2])
+        self.assertEqual(len(result), 1)
+        self.assertIs(result[0]['partition'], p1)
+
+    def test_partition_order_preserved(self):
+        p1 = _FakePartition('p1', index=0)
+        p2 = _FakePartition('p2', index=1)
+        p3 = _FakePartition('p3', index=2)
+        rows = [('x/f', 'p3'), ('y/f', 'p1'), ('z/f', 'p2')]
+        result = self._tree(rows, [p1, p2, p3])
+        uuids = [e['partition'].uuid for e in result]
+        self.assertEqual(uuids, ['p1', 'p2', 'p3'])
+
+    # ── Node structure ────────────────────────────────────────────────────────
+
+    def test_node_path_ends_with_slash(self):
+        p = _FakePartition('p1')
+        rows = [('dir/file', 'p1')]
+        result = self._tree(rows, [p])
+        node = result[0]['children'][0]
+        self.assertTrue(node['path'].endswith('/'))
+
+    def test_node_is_archive_false_by_default(self):
+        p = _FakePartition('p1')
+        rows = [('dir/file', 'p1')]
+        result = self._tree(rows, [p])
+        node = result[0]['children'][0]
+        self.assertFalse(node['is_archive'])
+
+    def test_empty_dir_via_synthetic_slash_suffix(self):
+        # Simulates the dirtree_html transform: is_directory rows have '/'
+        # appended before being passed to build_directory_tree so that
+        # _extract_dir_set creates the directory entry even with no files.
+        p = _FakePartition('p1')
+        rows = [('emptydir/', 'p1')]  # synthetic: path + '/'
+        result = self._tree(rows, [p])
+        names = [c['name'] for c in result[0]['children']]
+        self.assertIn('emptydir', names)
 
 
 if __name__ == '__main__':

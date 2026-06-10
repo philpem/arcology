@@ -6,14 +6,15 @@ View and manage analysis jobs.
 
 import re
 from datetime import datetime, timedelta, timezone
-from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, url_for
-from flask_login import login_required
+from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, url_for
+from flask_login import current_user, login_required
 from sqlalchemy import case, func
 from sqlalchemy.orm import joinedload
-from ..database import Analysis, AnalysisStatus, Artefact
+from ..database import Analysis, AnalysisStatus, Artefact, Item
 from ..extensions import db
 from ..permissions import require_permission
 from ..utils.pagination import VALID_PER_PAGE, resolve_per_page
+from ..visibility import artefact_visibility_clause, can_view_artefact
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -26,8 +27,32 @@ def init_app(app):
 
 
 def _get_analysis_or_404(uuid):
-    """Load an analysis by UUID."""
-    return Analysis.query.filter_by(uuid=uuid).first_or_404()
+    """Load an analysis by UUID, hiding analyses on artefacts the caller may not view."""
+    analysis = Analysis.query.filter_by(uuid=uuid).first_or_404()
+    if analysis.artefact is not None and not can_view_artefact(analysis.artefact, current_user):
+        abort(404)
+    return analysis
+
+
+def _require_manage_analysis(analysis):
+    """Abort 403 if the caller may not mutate (cancel/retry) *analysis*.
+
+    Reuses the artefact-content gate so analyses inherit the same write rules
+    as the artefact they belong to.
+    """
+    from .artefacts import _require_manage_artefact_content
+    if analysis.artefact is not None:
+        _require_manage_artefact_content(analysis.artefact)
+
+
+def _visible_analyses_query():
+    """Base Analysis query filtered to artefacts the current user may view."""
+    return (
+        Analysis.query
+        .join(Artefact, Analysis.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(artefact_visibility_clause(current_user))
+    )
 
 
 def _view_redirect(analysis):
@@ -82,7 +107,7 @@ def index():
     status_filter = request.args.get('status')
     artefact_filter = request.args.get('artefact', '').strip() or None
 
-    query = Analysis.query
+    query = _visible_analyses_query()
 
     if status_filter:
         try:
@@ -92,9 +117,7 @@ def index():
             pass
 
     if artefact_filter:
-        query = query.join(Artefact, Analysis.artefact_id == Artefact.id).filter(
-            Artefact.label.ilike(f'%{artefact_filter}%')
-        )
+        query = query.filter(Artefact.label.ilike(f'%{artefact_filter}%'))
 
     per_page, page, view_all = resolve_per_page('ANALYSES_PER_PAGE', 50)
 
@@ -103,13 +126,18 @@ def index():
         joinedload(Analysis.artefact)
     ).order_by(_status_sort_order(), Analysis.created_at.desc()).paginate(page=page, per_page=per_page)
 
-    # Single query for all status counts using conditional aggregation
+    # Single query for all status counts using conditional aggregation,
+    # restricted to analyses on artefacts the caller may view.
     counts_row = db.session.query(
         func.count(case((Analysis.status == AnalysisStatus.PENDING, 1))).label('pending'),
         func.count(case((Analysis.status == AnalysisStatus.RUNNING, 1))).label('running'),
         func.count(case((Analysis.status == AnalysisStatus.COMPLETED, 1))).label('completed'),
         func.count(case((Analysis.status == AnalysisStatus.FAILED, 1))).label('failed'),
-    ).one()
+    ).select_from(Analysis).join(
+        Artefact, Analysis.artefact_id == Artefact.id
+    ).join(
+        Item, Artefact.item_id == Item.id
+    ).filter(artefact_visibility_clause(current_user)).one()
     status_counts = {
         'pending': counts_row.pending,
         'running': counts_row.running,
@@ -134,6 +162,8 @@ def artefact_analyses(uuid):
     from .artefacts import get_all_derived_artefact_ids
 
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    if not can_view_artefact(artefact, current_user):
+        abort(404)
     all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
 
     query = Analysis.query.filter(
@@ -201,6 +231,7 @@ def view(uuid):
 def cancel(uuid):
     """Cancel a pending analysis."""
     analysis = _get_analysis_or_404(uuid)
+    _require_manage_analysis(analysis)
     wrong_status = _require_analysis_status(
         analysis,
         AnalysisStatus.PENDING,
@@ -239,6 +270,7 @@ def reset_stale():
 def retry(uuid):
     """Retry a failed analysis."""
     analysis = _get_analysis_or_404(uuid)
+    _require_manage_analysis(analysis)
     wrong_status = _require_analysis_status(
         analysis,
         AnalysisStatus.FAILED,
@@ -269,11 +301,13 @@ def queue():
         Analysis.status == AnalysisStatus.RUNNING
     ).count()
 
-    pending = Analysis.query.filter(
+    # Totals stay global (queue load is operational information); the listed
+    # entries are filtered to artefacts the caller may view.
+    pending = _visible_analyses_query().filter(
         Analysis.status == AnalysisStatus.PENDING
     ).options(joinedload(Analysis.artefact)).order_by(Analysis.created_at).limit(QUEUE_DISPLAY_LIMIT).all()
 
-    running = Analysis.query.filter(
+    running = _visible_analyses_query().filter(
         Analysis.status == AnalysisStatus.RUNNING
     ).options(joinedload(Analysis.artefact)).order_by(Analysis.started_at).limit(QUEUE_DISPLAY_LIMIT).all()
 

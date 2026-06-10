@@ -25,6 +25,7 @@
     </span>
 </li>
 {% endmacro %}
+{% from '_confirm_modal.html' import delete_trigger %}
 
         <div class="card mb-4">
             <div class="card-header"><i class="bi bi-info-circle"></i> Details</div>
@@ -133,15 +134,14 @@
                                 <button type="button" class="btn btn-sm btn-outline-secondary me-1"
                                         onclick="toggleRestrEdit('restr-edit-{{ r.restriction_type.value }}')"
                                         title="Edit restriction"><i class="bi bi-pencil"></i></button>
-                                <form action="{{ artefact_url(artefact, 'manage_restrictions') }}" method="post" class="d-inline">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <input type="hidden" name="action" value="remove">
-                                    <input type="hidden" name="category" value="{{ r.restriction_type.value }}">
-                                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove restriction"
-                                            onclick="return confirm('Remove this restriction?')">
-                                        <i class="bi bi-x-lg"></i>
-                                    </button>
-                                </form>
+                                {{ delete_trigger(
+                                    artefact_url(artefact, 'manage_restrictions'),
+                                    r.restriction_type.label,
+                                    title='Remove Restriction',
+                                    warning='This cannot be undone.',
+                                    confirm_label='Remove', confirm_icon='bi-x-lg',
+                                    aria_label='Remove '~r.restriction_type.label~' restriction',
+                                    extra_hidden={'action': 'remove', 'category': r.restriction_type.value}) }}
                                 {% endif %}
                             </td>
                         </tr>
@@ -193,8 +193,7 @@
                         <tbody>
                         {% for r in artefact_file_restrictions %}
                         <tr>
-                            <td class="text-truncate" style="max-width:140px"
-                                title="{{ r.extracted_file.path }}"><code>{{ r.extracted_file.filename }}</code></td>
+                            <td class="text-truncate" title="{{ r.extracted_file.path }}"><code>{{ r.extracted_file.filename }}</code></td>
                             <td><span class="badge bg-danger">{{ r.restriction_type.label }}</span></td>
                             <td class="small">{{ r.reason or '-' }}</td>
                         </tr>
@@ -246,14 +245,13 @@
                             <td><span class="badge bg-warning text-dark">{{ bp.restriction_type.label }}</span></td>
                             <td class="small text-muted">{{ bp.reason or '—' }}</td>
                             <td class="text-end">
-                                <form action="{{ artefact_url(artefact, 'revoke_bypass', bypass_id=bp.id) }}" method="post" class="d-inline">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <button type="submit" class="btn btn-sm btn-outline-danger"
-                                            onclick="return confirm('Revoke access for ' + {{ bp.user.username | tojson }} + '?')"
-                                            aria-label="Revoke access for {{ bp.user.username }}">
-                                        <i class="bi bi-x-lg"></i>
-                                    </button>
-                                </form>
+                                {{ delete_trigger(
+                                    artefact_url(artefact, 'revoke_bypass', bypass_id=bp.id),
+                                    bp.user.username,
+                                    title='Revoke Access',
+                                    warning="The user's bypass access will be revoked immediately.",
+                                    confirm_label='Revoke', confirm_icon='bi-x-lg',
+                                    aria_label='Revoke access for '~bp.user.username) }}
                             </td>
                         </tr>
                         {% endfor %}

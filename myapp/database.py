@@ -4,7 +4,6 @@ Arcology Database Models
 Models for the digital artefact catalogue system.
 """
 
-import enum
 import secrets
 import uuid as uuid_module
 from datetime import datetime, timezone
@@ -29,6 +28,16 @@ from sqlalchemy import false as sa_false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
 from shared.enums import AnalysisType, ArtefactType
+from .enums import (  # noqa: F401 — re-exported for backward-compat call sites
+    _API_KEY_PERMISSION_ORDER,
+    AnalysisStatus,
+    ApiKeyPermission,
+    FilesystemType,
+    HashRescanStatus,
+    RestrictionType,
+    StorageDirectory,
+    UserPermission,
+)
 from .extensions import db
 
 
@@ -80,64 +89,8 @@ ANALYSIS_PRIORITY_NORMAL = 0
 ANALYSIS_PRIORITY_HIGH = 10
 
 # =============================================================================
-# Enums
+# Blob deduplication tables (defined before Artefact for FK references)
 # =============================================================================
-
-class UserPermission(enum.Enum):
-    """Permission level for a web UI user. Controls all actions in both the web UI and the API."""
-    READ_ONLY  = "read_only"   # View everything; no modifications
-    READ_WRITE = "read_write"  # Full CRUD access
-    STAFF      = "staff"       # READ_WRITE + taxonomy/hash-DB management; below admin
-
-
-class ApiKeyPermission(enum.Enum):
-    """Permission level for an application API key."""
-    READ_ONLY   = "read_only"    # GET requests only
-    READ_UPLOAD = "read_upload"  # GET + create items/artefacts/analysis (no DELETE or PUT-to-update)
-    READ_WRITE  = "read_write"   # Full access (GET + POST + PUT + DELETE)
-
-
-_API_KEY_PERMISSION_ORDER = [
-    ApiKeyPermission.READ_ONLY,
-    ApiKeyPermission.READ_UPLOAD,
-    ApiKeyPermission.READ_WRITE,
-]
-
-
-class AnalysisStatus(enum.Enum):
-    """Status of an analysis job."""
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
-
-class FilesystemType(enum.Enum):
-    """Known filesystem types."""
-    FAT12 = "fat12"
-    FAT16 = "fat16"
-    FAT32 = "fat32"
-    NTFS = "ntfs"
-    HPFS = "hpfs"
-    HFS = "hfs"
-    HFS_PLUS = "hfs_plus"
-    ADFS = "adfs"
-    DFS = "dfs"
-    AMIGA_OFS = "amiga_ofs"
-    AMIGA_FFS = "amiga_ffs"
-    ISO9660 = "iso9660"
-    CDFS = "cdfs"
-    CPM = "cpm"
-    ARCHIVE = "archive"
-    UNKNOWN = "unknown"
-    OTHER = "other"
-
-
-class StorageDirectory(enum.Enum):
-    """Where an artefact file is stored."""
-    UPLOADS = "uploads"    # Original user-uploaded files
-    OUTPUTS = "outputs"    # Derived/generated files (from analysis)
-
 
 class UploadBlob(db.Model):
     """Globally deduplicated content stored under uploads/."""
@@ -175,29 +128,6 @@ class OutputBlob(db.Model):
     )
 
     artefacts: Mapped[list["Artefact"]] = relationship(back_populates="output_blob")
-
-
-class RestrictionType(enum.Enum):
-    """Restriction categories that can be applied to artefacts to block downloads."""
-    MALWARE = "malware"
-    PII = "pii"
-    COPYRIGHT = "copyright"
-    LEGAL_HOLD = "legal_hold"
-    EXPLICIT = "explicit"
-    CORRUPTED = "corrupted"
-
-    @property
-    def label(self):
-        """Human-readable display label, handling acronyms correctly."""
-        _LABELS = {
-            'malware': 'Malware',
-            'pii': 'PII',
-            'copyright': 'Copyright',
-            'legal_hold': 'Legal Hold',
-            'explicit': 'Explicit',
-            'corrupted': 'Corrupted',
-        }
-        return _LABELS.get(self.value, self.value.replace('_', ' ').title())
 
 
 # =============================================================================
@@ -1142,12 +1072,6 @@ class KnownFile(db.Model):
         Index("ix_known_files_md5_size", "md5", "file_size"),
         Index("ix_known_files_sha1_size", "sha1", "file_size"),
     )
-
-
-class HashRescanStatus(enum.Enum):
-    RUNNING   = "running"
-    COMPLETED = "completed"
-    FAILED    = "failed"
 
 
 class HashRescanJob(db.Model):

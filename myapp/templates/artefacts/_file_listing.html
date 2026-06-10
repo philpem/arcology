@@ -7,13 +7,27 @@
                     {% if hashdb_mode %}<span class="badge bg-warning text-dark ms-2"><i class="bi bi-database-add"></i> Hash DB Mode</span>{% endif %}
                 </span>
                 {% if all_partitions %}
-                <a href="?{% if not hashdb_mode %}mode=hashdb&{% endif %}{{ hashdb_toggle_args | urlencode }}"
-                   class="btn btn-sm {{ 'btn-warning' if hashdb_mode else 'btn-outline-secondary' }}"
-                   title="{{ 'Exit Hash DB Mode' if hashdb_mode else 'Enter Hash DB Mode to add files to a hash database' }}">
-                    <i class="bi bi-database-add"></i> {{ 'Exit HashDB Mode' if hashdb_mode else 'Hash DB Mode' }}
-                </a>
+                <div class="d-flex gap-2">
+                    <button type="button" id="dir-tree-toggle"
+                            class="btn btn-sm btn-outline-secondary d-none d-md-block"
+                            title="Toggle directory tree">
+                        <i class="bi bi-diagram-3"></i> Tree
+                    </button>
+                    <a href="?{% if not hashdb_mode %}mode=hashdb&{% endif %}{{ hashdb_toggle_args | urlencode }}"
+                       class="btn btn-sm {{ 'btn-warning' if hashdb_mode else 'btn-outline-secondary' }}"
+                       title="{{ 'Exit Hash DB Mode' if hashdb_mode else 'Enter Hash DB Mode to add files to a hash database' }}">
+                        <i class="bi bi-database-add"></i> {{ 'Exit HashDB Mode' if hashdb_mode else 'Hash DB Mode' }}
+                    </a>
+                </div>
                 {% endif %}
+            </div>{# /card-header #}
+            <div class="row g-0" id="file-browser-row">
+            <div class="col-md-3 border-end d-none"
+                 id="dir-tree-panel"
+                 style="max-height:100vh; overflow-y:auto; position:sticky; top:0;">
+                {# directory tree injected here by JS #}
             </div>
+            <div class="col" id="file-listing-inner">
             <div class="card-body border-bottom">
                 <form method="get" class="d-flex flex-wrap align-items-end gap-2">
                 {% if hashdb_mode %}<input type="hidden" name="mode" value="hashdb">{% endif %}
@@ -283,7 +297,9 @@
             </div>
             {% if hashdb_mode %}</form>{% endif %}
             {{ render_pagination_compact(files_pagination, pagination_args, valid_per_page=valid_per_page, view_all=view_all) }}
-        </div>
+            </div>{# /file-listing-inner #}
+            </div>{# /file-browser-row #}
+        </div>{# /card #}
     </div>
 </div>
 
@@ -595,6 +611,196 @@
             });
         }
     });
+})();
+</script>
+{% endif %}
+
+{# ── Directory tree toggle ──────────────────────────────────────────────── #}
+{% if all_partitions %}
+<script>
+(function () {
+    var toggle = document.getElementById('dir-tree-toggle');
+    if (!toggle) return;
+    var panel  = document.getElementById('dir-tree-panel');
+    var TREE_URL = {{ url_for('myapp_blueprints_artefacts.dirtree_html', uuid=artefact.uuid) | tojson }};
+    var loaded = false;
+    var loading = false;
+
+    // ── Collapse / expand helpers ────────────────────────────────────────────
+
+    var SS_KEY = 'arcology_dirtree_expanded';
+
+    function getExpandedPaths() {
+        try { return new Set(JSON.parse(sessionStorage.getItem(SS_KEY) || '[]')); } catch (e) { return new Set(); }
+    }
+
+    function saveExpandedState() {
+        var expanded = [];
+        panel.querySelectorAll('.dir-tree-expand.expanded').forEach(function (btn) {
+            var link = btn.closest('li') && btn.closest('li').querySelector('.dir-tree-link[data-path]');
+            if (link) { expanded.push(link.dataset.path); }
+        });
+        try { sessionStorage.setItem(SS_KEY, JSON.stringify(expanded)); } catch (e) {}
+    }
+
+    function expandNode(btn) {
+        var li = btn.closest('li');
+        var ul = li && li.querySelector('.dir-tree-children');
+        if (!ul) { return; }
+        btn.classList.add('expanded');
+        ul.style.display = '';
+    }
+
+    function collapseNode(btn) {
+        var li = btn.closest('li');
+        var ul = li && li.querySelector('.dir-tree-children');
+        if (!ul) { return; }
+        btn.classList.remove('expanded');
+        ul.style.display = 'none';
+    }
+
+    function restoreExpandedState(expandedPaths) {
+        panel.querySelectorAll('.dir-tree-expand').forEach(function (btn) {
+            var link = btn.closest('li') && btn.closest('li').querySelector('.dir-tree-link[data-path]');
+            if (link && expandedPaths.has(link.dataset.path)) {
+                expandNode(btn);
+            }
+        });
+    }
+
+    // Expand all tree nodes that are ancestors of targetPath so that the
+    // target node (and its parent folder) is visible in the tree.
+    function expandToPath(targetPath) {
+        if (!targetPath) { return; }
+        var parts = targetPath.replace(/\/$/, '').split('/').filter(Boolean);
+        for (var i = 0; i < parts.length; i++) {
+            var ancestorPath = parts.slice(0, i + 1).join('/') + '/';
+            var links = Array.from(panel.querySelectorAll('.dir-tree-link[data-path]'));
+            var matchLink = links.find(function (el) { return el.dataset.path === ancestorPath; });
+            if (matchLink) {
+                var li = matchLink.closest('li');
+                var btn = li && li.querySelector('.dir-tree-expand');
+                if (btn && !btn.classList.contains('expanded')) { expandNode(btn); }
+            }
+        }
+    }
+
+    // ── Highlight active node ────────────────────────────────────────────────
+
+    function highlightActive() {
+        var params = new URLSearchParams(window.location.search);
+        var path = params.get('path') || '';
+        var partitionUuid = params.get('partition_uuid') || '';
+
+        // Restore saved expand/collapse state, then ensure ancestors of the
+        // current path are expanded (overrides any collapsed ancestors).
+        restoreExpandedState(getExpandedPaths());
+        expandToPath(path);
+
+        // Clear existing highlights.
+        panel.querySelectorAll('.dir-tree-link.active').forEach(function (el) {
+            el.classList.remove('active');
+        });
+
+        // Prefer highlighting a partition header when a partition filter is
+        // active and we are at the root of that partition (no path set).
+        var node = null;
+        if (partitionUuid && !path) {
+            node = Array.from(panel.querySelectorAll('.dir-tree-link[data-partition]')).find(function (el) {
+                return el.dataset.partition === partitionUuid;
+            }) || null;
+        }
+        if (!node) {
+            // Use dataset equality — avoids CSS SyntaxError for paths with '"'.
+            node = Array.from(panel.querySelectorAll('.dir-tree-link')).find(function (el) {
+                return el.dataset.path === path;
+            }) || null;
+        }
+        if (node) {
+            node.classList.add('active');
+            node.scrollIntoView({ block: 'nearest' });
+        }
+    }
+
+    // ── Click handling ───────────────────────────────────────────────────────
+
+    function handleTreeClick(e) {
+        // Expand/collapse chevron button — toggle subtree, don't navigate.
+        var expandBtn = e.target.closest('.dir-tree-expand');
+        if (expandBtn) {
+            e.preventDefault();
+            if (expandBtn.classList.contains('expanded')) {
+                collapseNode(expandBtn);
+            } else {
+                expandNode(expandBtn);
+            }
+            saveExpandedState();
+            return;
+        }
+
+        // Directory / partition link — navigate with params preserved.
+        var link = e.target.closest('.dir-tree-link');
+        if (!link) { return; }
+        e.preventDefault();
+        var params = new URLSearchParams(window.location.search);
+        params.delete('page');
+        if ('partition' in link.dataset) {
+            params.set('partition_uuid', link.dataset.partition);
+            params.delete('path');
+        } else {
+            params.set('path', link.dataset.path);
+            // "All files" root link — also clear the partition filter.
+            if (link.dataset.path === '') {
+                params.delete('partition_uuid');
+            }
+        }
+        window.location.search = params.toString();
+    }
+
+    // Register the click handler once at setup time, not inside the fetch
+    // callback, so it can never be registered more than once regardless of
+    // how many times the panel is opened and closed.
+    panel.addEventListener('click', handleTreeClick);
+
+    function openTree() {
+        // Guard with both `loaded` and `loading` so a rapid open→close→open
+        // sequence before the first fetch resolves does not dispatch a second
+        // request (which would previously register handleTreeClick twice).
+        if (!loaded && !loading) {
+            loading = true;
+            var params = new URLSearchParams(window.location.search);
+            fetch(TREE_URL + '?' + params.toString())
+                .then(function (r) { return r.ok ? r.text() : Promise.reject(r.status); })
+                .then(function (html) {
+                    panel.innerHTML = html;
+                    loaded = true;
+                    loading = false;
+                    highlightActive();
+                })
+                .catch(function (err) {
+                    loading = false;
+                    panel.innerHTML = '<p class="text-muted small px-2 py-1">Could not load tree (' + err + ').</p>';
+                });
+        }
+        panel.classList.remove('d-none');
+        toggle.classList.add('active');
+        try { localStorage.setItem('arcology_dirtree_open', '1'); } catch (e) {}
+    }
+
+    function closeTree() {
+        panel.classList.add('d-none');
+        toggle.classList.remove('active');
+        try { localStorage.removeItem('arcology_dirtree_open'); } catch (e) {}
+    }
+
+    toggle.addEventListener('click', function () {
+        if (panel.classList.contains('d-none')) { openTree(); } else { closeTree(); }
+    });
+
+    // Restore open state after navigation
+    try {
+        if (localStorage.getItem('arcology_dirtree_open') === '1') { openTree(); }
+    } catch (e) {}
 })();
 </script>
 {% endif %}

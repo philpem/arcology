@@ -8,11 +8,11 @@ from ..blueprints.artefacts import (
     _delete_artefact_files,
     get_all_derived_artefact_ids,
     get_output_folder,
-    queue_analyses_for_artefact,
     reset_artefact_for_reanalysis,
 )
 from ..database import Analysis, AnalysisStatus, Artefact
 from ..extensions import db
+from ..services.artefact_types import queue_analyses_for_artefact
 from ._selection import build_artefact_query
 
 

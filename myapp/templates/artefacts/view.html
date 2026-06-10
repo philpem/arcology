@@ -1,5 +1,6 @@
 {% extends "_base.html" %}
 {% import "_rollup_card.html" as rollup %}
+{% from '_confirm_modal.html' import modal_trigger, danger_modal, delete_confirm_modal %}
 {% block page_title %}{{ artefact.label }}{% endblock %}
 
 {% block styles %}
@@ -143,7 +144,7 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
         {% elif current_user.is_authenticated or public_downloads %}
         <a href="{{ artefact_url(artefact, 'download') }}" class="btn btn-success"><i class="bi bi-download"></i> Download</a>
         {% else %}
-        <a href="{{ url_for('login', next=request.url) }}" class="btn btn-outline-secondary">
+        <a href="{{ url_for('auth.login', next=request.url) }}" class="btn btn-outline-secondary">
             <i class="bi bi-box-arrow-in-right"></i> Log in to Download
         </a>
         {% endif %}
@@ -153,21 +154,17 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
         {% if user_can_write %}
         <a href="{{ artefact_url(artefact, 'analyse') }}" class="btn btn-primary"><i class="bi bi-gear"></i> Re-analyse</a>
         <a href="{{ artefact_url(artefact, 'edit') }}" class="btn btn-outline-primary"><i class="bi bi-pencil"></i> Edit</a>
-        <form action="{{ artefact_url(artefact, 'delete') }}" method="post" class="d-inline" onsubmit="return confirm('Delete artefact ' + {{ artefact.label | tojson }} + ' and all related analyses? This cannot be undone.');">
-
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-outline-danger" aria-label="Delete artefact"><i class="bi bi-trash"></i></button>
-        </form>
+        {{ modal_trigger('deleteArtefactModal', aria_label='Delete artefact') }}
         {% endif %}
     </div>
 </div>
 
 <div class="row">
-    <div class="col-md-4">
+    <div class="col-md-3">
         {% include "artefacts/_sidebar.html" %}
     </div>
 
-    <div class="col-md-8">
+    <div class="col-md-9">
 
         {% include "artefacts/_mastering.html" %}
 
@@ -189,6 +186,30 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
 
     </div>
 </div>
+
+{% endblock %}
+
+{% block modals %}
+{{ super() }}
+{% if user_can_write %}
+{% call danger_modal('deleteArtefactModal', 'Delete Artefact',
+    artefact_url(artefact, 'delete'), csrf_token()) %}
+<p>Permanently delete this artefact?</p>
+<p class="fw-bold fs-5 text-break">{{ artefact.label }}</p>
+<div class="alert alert-danger mb-0">
+    <i class="bi bi-exclamation-triangle-fill"></i> This will also permanently delete:
+    <ul class="mb-1 mt-1">
+        {% if artefact.derived_artefacts %}
+        <li>All derived artefacts (converted/extracted copies)</li>
+        {% endif %}
+        <li>The uploaded file</li>
+        <li>All analysis results</li>
+    </ul>
+    <strong>This action cannot be undone.</strong>
+</div>
+{% endcall %}
+{% endif %}
+{{ delete_confirm_modal(csrf_token()) }}
 {% endblock %}
 
 {% block scripts %}
