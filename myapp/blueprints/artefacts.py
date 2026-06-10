@@ -2611,7 +2611,8 @@ def _move_item_choices(artefact):
 @require_permission('read_write')
 def add_to_hashdb(uuid):
     """Add selected extracted files to a hash database."""
-    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    artefact = _get_artefact_or_404(uuid=uuid)
+    _require_manage_artefact_content(artefact)
 
     file_ids = request.form.getlist('file_ids', type=int)
     raw_db_id = request.form.get('database_id', '').strip()

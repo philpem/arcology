@@ -249,7 +249,7 @@ def cancel(uuid):
 
 @blueprint.route('/reset-stale', methods=['POST'])
 @login_required
-@require_permission('read_write')
+@require_permission('staff')
 def reset_stale():
     """Reset RUNNING jobs that have been stuck longer than the stale timeout back to PENDING."""
     cutoff = _stale_cutoff()

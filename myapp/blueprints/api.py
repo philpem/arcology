@@ -2284,7 +2284,7 @@ def run_hash_rescan(uuid):
         queue_product_recognition_for_partitions,
         rescan_hashes_for_artefact,
     )
-    artefact = _get_by_uuid_or_404(Artefact, uuid)
+    artefact = _get_artefact_or_404(uuid)
     updated, total = rescan_hashes_for_artefact(artefact)
 
     recognition_queued = 0
