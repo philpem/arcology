@@ -65,6 +65,11 @@ from ..services.artefact_storage import (
 )
 from ..services.artefact_types import detect_artefact_type, queue_analyses_for_artefact
 from ..services.hash_rescan import find_known_file
+from ..services.restrictions import (
+    artefact_contained_file_restrictions,
+    collect_all_file_restrictions,
+    collect_ancestor_file_restrictions,
+)
 from ..services.upload_pipeline import QUEUE_FULL, QUEUE_NONE, ingest_uploaded_artefact
 from ..utils.api_serializers import (
     analysis_to_dict,
@@ -95,11 +100,6 @@ from ..visibility import (
     can_view_artefact,
     can_view_item,
     item_visibility_clause,
-)
-from .artefacts import (
-    _artefact_contained_file_restrictions,
-    _collect_all_file_restrictions,
-    _collect_ancestor_file_restrictions,
 )
 
 ROUTENAME = __name__.replace('.', '_')
@@ -824,7 +824,7 @@ def download_artefact(uuid):
 
     # Block the original download when its extracted contents are restricted
     # (mirrors the website's _check_artefact_file_restrictions).
-    contained = _artefact_contained_file_restrictions(artefact)
+    contained = artefact_contained_file_restrictions(artefact)
     if not can_download_despite_restrictions(user, contained, artefact):
         return error_response('Download restricted (artefact contains restricted files)', 403,
                               restrictions=list({r.restriction_type.value for r in contained}))
@@ -865,7 +865,7 @@ def download_extracted_file(uuid):
     # Check file-level restrictions: own, descendants (archive contains restricted file),
     # and ancestors (file is inside a restricted archive).
     file_restrictions = (
-        _collect_all_file_restrictions(ef) + _collect_ancestor_file_restrictions(ef)
+        collect_all_file_restrictions(ef) + collect_ancestor_file_restrictions(ef)
     )
     if not can_download_despite_restrictions(user, file_restrictions, artefact):
         return error_response('File download restricted', 403,
