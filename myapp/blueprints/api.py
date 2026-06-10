@@ -1179,6 +1179,14 @@ def get_pending_analyses():
                (e.g. ``?types=FLUX_VISUALISATION,FLUX_DECODE``).
                Unknown names are silently ignored.
     """
+    # Worker-only: this is the worker's job-polling endpoint and returns
+    # storage paths plus metadata for *every* pending analysis system-wide,
+    # with no per-artefact visibility filter.  An ordinary user API key must
+    # not be able to enumerate private artefacts (uuids, item slugs, storage
+    # locations) through it.  The worker authenticates with the pre-shared key.
+    if not _is_worker_request():
+        return error_response('Only the worker may poll pending analyses', 403)
+
     query = (
         Analysis.query
         .filter(Analysis.status == AnalysisStatus.PENDING)
