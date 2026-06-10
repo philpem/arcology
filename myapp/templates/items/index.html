@@ -65,8 +65,8 @@
                         <a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a>
                         {% if item.private_effective %}<i class="bi bi-lock-fill text-warning ms-1" title="Private"></i>{% endif %}
                     </td>
-                    <td>{{ item.platform.name if item.platform else ('<span class="text-muted fst-italic">' ~ (item.effective_platform.name if item.effective_platform else '-') ~ '</span>')|safe }}</td>
-                    <td>{{ item.category.name if item.category else ('<span class="text-muted fst-italic">' ~ (item.effective_category.name if item.effective_category else '-') ~ '</span>')|safe }}</td>
+                    <td>{% if item.platform %}{{ item.platform.name }}{% else %}<span class="text-muted fst-italic">{{ item.effective_platform.name if item.effective_platform else '-' }}</span>{% endif %}</td>
+                    <td>{% if item.category %}{{ item.category.name }}{% else %}<span class="text-muted fst-italic">{{ item.effective_category.name if item.effective_category else '-' }}</span>{% endif %}</td>
                     <td><span class="badge bg-secondary">{{ child_counts.get(item.id, 0) }}</span></td>
                     <td><span class="badge bg-secondary">{{ artefact_counts.get(item.id, 0) }}</span></td>
                     <td>{{ item.updated_at.strftime('%Y-%m-%d') }}</td>
@@ -84,8 +84,8 @@
                         <a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a>
                         {% if item.private_effective %}<i class="bi bi-lock-fill text-warning ms-1" title="Private"></i>{% endif %}
                     </td>
-                    <td>{{ item.platform.name if item.platform else ('<span class="text-muted fst-italic">' ~ (item.effective_platform.name if item.effective_platform else '-') ~ '</span>')|safe }}</td>
-                    <td>{{ item.category.name if item.category else ('<span class="text-muted fst-italic">' ~ (item.effective_category.name if item.effective_category else '-') ~ '</span>')|safe }}</td>
+                    <td>{% if item.platform %}{{ item.platform.name }}{% else %}<span class="text-muted fst-italic">{{ item.effective_platform.name if item.effective_platform else '-' }}</span>{% endif %}</td>
+                    <td>{% if item.category %}{{ item.category.name }}{% else %}<span class="text-muted fst-italic">{{ item.effective_category.name if item.effective_category else '-' }}</span>{% endif %}</td>
                     <td><span class="badge bg-secondary">{{ child_counts.get(item.id, 0) }}</span></td>
                     <td><span class="badge bg-secondary">{{ artefact_counts.get(item.id, 0) }}</span></td>
                     <td>{{ item.updated_at.strftime('%Y-%m-%d') }}</td>
