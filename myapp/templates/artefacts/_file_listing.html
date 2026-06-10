@@ -240,7 +240,7 @@
                                 {%- endfor %}
                                 <button type="button" class="btn btn-link btn-sm p-0 ms-1 {% if file.restrictions %}text-danger{% else %}text-muted{% endif %}"
                                         data-bs-toggle="modal" data-bs-target="#fileRestrictModal"
-                                        data-file-uuid="{{ file.uuid }}"
+                                        data-restrictions-url="{{ url_for('myapp_blueprints_artefacts.manage_file_restrictions', uuid=file.uuid) }}"
                                         data-file-name="{{ file.filename }}"
                                         data-restrictions="{{ _rd.items | tojson | forceescape }}"
                                         title="Manage file restrictions"><i class="bi bi-shield{% if file.restrictions %}-fill{% endif %}"></i></button>
@@ -535,11 +535,6 @@
         return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
-    // URL template for file restriction routes — built via url_for so it
-    // respects any SCRIPT_NAME/APPLICATION_ROOT prefix.
-    var FILE_RESTR_URL = {{ url_for('myapp_blueprints_artefacts.manage_file_restrictions', uuid='__UUID__') | tojson }};
-    function fileRestrUrl(uuid) { return FILE_RESTR_URL.replace('__UUID__', uuid); }
-
     var modal = document.getElementById('fileRestrictModal');
     if (!modal) return;
 
@@ -556,13 +551,14 @@
 
     modal.addEventListener('show.bs.modal', function(event) {
         var btn = event.relatedTarget;
-        var uuid = btn.getAttribute('data-file-uuid');
+        // Server-rendered url_for() URL — no client-side URL construction.
+        var restrUrl = btn.getAttribute('data-restrictions-url');
         var name = btn.getAttribute('data-file-name');
         var restrictions = JSON.parse(btn.getAttribute('data-restrictions') || '[]');
 
         document.getElementById('frm-filename').textContent = name;
-        document.getElementById('frm-add-form').action = fileRestrUrl(uuid);
-        editForm.action = fileRestrUrl(uuid);
+        document.getElementById('frm-add-form').action = restrUrl;
+        editForm.action = restrUrl;
         editSection.style.display = 'none';
 
         var listEl = document.getElementById('frm-current-list');
@@ -574,7 +570,7 @@
                 var rval = r.v, rlabel = r.l, rreason = r.r, rcanEdit = r.e;
                 var reasonAttr = rreason ? ' title="' + htmlEsc(rreason) + '"' : '';
                 html += '<div class="d-flex align-items-center gap-1 mb-1">'
-                      + '<form method="POST" action="' + fileRestrUrl(uuid) + '" class="d-inline">'
+                      + '<form method="POST" action="' + htmlEsc(restrUrl) + '" class="d-inline">'
                       + '<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">'
                       + '<input type="hidden" name="action" value="remove">'
                       + '<input type="hidden" name="category" value="' + htmlEsc(rval) + '">'
