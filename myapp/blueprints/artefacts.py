@@ -2089,7 +2089,7 @@ def _render_artefact_view(artefact):
     # Batch-query all matching KnownFiles across active hash databases
     # for the current page of files, so the template can show multiple badges.
     from ..database import RestrictionType
-    from ..utils.hash_rescan import find_all_known_files_batch
+    from ..services.hash_rescan import find_all_known_files_batch
     file_known_matches = find_all_known_files_batch(files_pagination.items)
 
     # Build query args for pagination links, preserving all active filters
@@ -2738,7 +2738,7 @@ def add_to_hashdb(uuid):
     # matching the behaviour of the per-file add_known_file route in hashdb.py.
     if new_kfs and database.is_active:
         from sqlalchemy import or_ as _or
-        from ..utils.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_new_known_files
+        from ..services.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_new_known_files
         rescan_hashes_for_new_known_files(new_kfs)
         if database.enable_product_recognition:
             conditions = []
@@ -3744,7 +3744,7 @@ def compute_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None
 @require_permission('read_write')
 def rescan_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Re-link extracted files to active hash databases without re-analysing."""
-    from ..utils.hash_rescan import rescan_hashes_for_artefact
+    from ..services.hash_rescan import rescan_hashes_for_artefact
     artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
     _require_manage_artefact_content(artefact)
     updated, total = rescan_hashes_for_artefact(artefact)
@@ -3765,7 +3765,7 @@ def rescan_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None)
 @require_permission('read_write')
 def rerun_product_recognition_route(uuid):
     """Queue PRODUCT_RECOGNITION for all partitions of an artefact without re-analysing."""
-    from ..utils.hash_rescan import queue_product_recognition_for_partitions
+    from ..services.hash_rescan import queue_product_recognition_for_partitions
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     if not can_view_artefact(artefact, current_user):
         abort(404)

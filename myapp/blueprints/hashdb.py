@@ -106,7 +106,7 @@ def _post_known_file_changes(database: HashDatabase, new_kf_list: list[KnownFile
     if not database.is_active or not new_kf_list:
         return
 
-    from ..utils.hash_rescan import (
+    from ..services.hash_rescan import (
         queue_product_recognition_for_partitions,
         rescan_hashes_for_new_known_files,
     )
@@ -461,7 +461,7 @@ def delete(id):
 
     # Re-evaluate unlinked files so they may link to another active database.
     if is_active and affected_ef_ids:
-        from ..utils.hash_rescan import rescan_hashes_for_queryset
+        from ..services.hash_rescan import rescan_hashes_for_queryset
         rescan_hashes_for_queryset(ExtractedFile.query.filter(ExtractedFile.id.in_(affected_ef_ids)))
 
     return _route_redirect('index')
@@ -484,7 +484,7 @@ def toggle_recognition(id):
         # Newly enabled: queue PRODUCT_RECOGNITION for every partition
         # that has extracted files so the worker can produce results.
         from ..database import Partition
-        from ..utils.hash_rescan import queue_product_recognition_for_partitions
+        from ..services.hash_rescan import queue_product_recognition_for_partitions
         partition_ids = {
             row[0] for row in
             Partition.query
@@ -835,7 +835,7 @@ def save_all_files(db_id, pid):
     Only files whose hash/size/metadata actually changed are rescanned.
     Rejects the whole submission if any file would end up with no hashes.
     """
-    from ..utils.hash_rescan import (
+    from ..services.hash_rescan import (
         queue_product_recognition_for_partitions,
         rescan_hashes_for_known_file,
         rescan_links_for_known_file_id,
@@ -948,7 +948,7 @@ def delete_known_product(db_id, pid):
     flash(f'Product "{title}" deleted.', 'success')
 
     if is_active and affected_ef_ids:
-        from ..utils.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_queryset
+        from ..services.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_queryset
         # Re-evaluate the unlinked files; they may match another active database.
         rescan_hashes_for_queryset(ExtractedFile.query.filter(ExtractedFile.id.in_(affected_ef_ids)))
         if enable_recognition and pre_delete_partition_ids:
@@ -997,7 +997,7 @@ def add_known_file(db_id, pid):
     db.session.commit()
     flash(f'File "{filename}" added to "{product.title}".', 'success')
     if product.database.is_active:
-        from ..utils.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_known_file
+        from ..services.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_known_file
         rescan_hashes_for_known_file(kf)
         if product.database.enable_product_recognition:
             partition_ids = _partition_ids_for_hashes(kf.md5, kf.sha1, kf.file_size)
@@ -1030,7 +1030,7 @@ def edit_known_file(db_id, pid, fid):
     db.session.commit()
     flash(f'File "{kf.filename}" updated.', 'success')
     if is_active:
-        from ..utils.hash_rescan import (
+        from ..services.hash_rescan import (
             queue_product_recognition_for_partitions,
             rescan_hashes_for_known_file,
             rescan_links_for_known_file_id,
@@ -1089,7 +1089,7 @@ def delete_known_file(db_id, pid, fid):
     flash(f'File "{filename}" deleted.', 'success')
 
     if is_active and affected_ef_ids:
-        from ..utils.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_queryset
+        from ..services.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_queryset
         # Re-evaluate unlinked files; they may match another active database.
         rescan_hashes_for_queryset(ExtractedFile.query.filter(ExtractedFile.id.in_(affected_ef_ids)))
         if enable_recognition and pre_delete_partition_ids:

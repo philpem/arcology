@@ -50,6 +50,7 @@ from ..database import (
 )
 from ..extensions import csrf, db
 from ..services.artefact_types import detect_artefact_type, queue_analyses_for_artefact
+from ..services.hash_rescan import find_known_file
 from ..services.upload_pipeline import QUEUE_FULL, QUEUE_NONE, ingest_uploaded_artefact
 from ..utils.api_serializers import (
     analysis_to_dict,
@@ -63,7 +64,6 @@ from ..utils.api_serializers import (
 from ..utils.db_helpers import get_by_id_or_404 as _get_by_id_or_404
 from ..utils.db_helpers import get_by_uuid_or_404 as _get_by_uuid_or_404
 from ..utils.enum_display import enum_value
-from ..utils.hash_rescan import find_known_file
 from ..utils.item_helpers import assign_item_fields, assign_item_tags
 from ..utils.privacy import recompute_item_privacy
 from ..utils.slugs import ensure_unique_slug, generate_slug
@@ -1683,7 +1683,7 @@ def add_files(uuid):
 
     # Auto-apply restrictions from flagged hash databases
     if added > 0:
-        from ..utils.hash_rescan import apply_database_restrictions
+        from ..services.hash_rescan import apply_database_restrictions
         apply_database_restrictions(partition.artefact)
 
     response = {'added': added}
@@ -2280,7 +2280,7 @@ def run_hash_rescan(uuid):
     Runs rescan_hashes_for_artefact(), optionally queues product recognition,
     and returns {updated, total, recognition_queued}.
     """
-    from ..utils.hash_rescan import (
+    from ..services.hash_rescan import (
         queue_product_recognition_for_partitions,
         rescan_hashes_for_artefact,
     )

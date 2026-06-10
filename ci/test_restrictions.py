@@ -514,7 +514,7 @@ class TestFindAllKnownFilesBatch(unittest.TestCase):
                 KnownFile,
                 Partition,
             )
-            from myapp.utils.hash_rescan import find_all_known_files_batch
+            from myapp.services.hash_rescan import find_all_known_files_batch
 
             _, artefact = _make_item_and_artefact(self.db)
 
@@ -561,7 +561,7 @@ class TestFindAllKnownFilesBatch(unittest.TestCase):
 
     def test_empty_list_returns_empty(self):
         with self.app.app_context():
-            from myapp.utils.hash_rescan import find_all_known_files_batch
+            from myapp.services.hash_rescan import find_all_known_files_batch
             self.assertEqual(find_all_known_files_batch([]), {})
 
 
@@ -587,7 +587,7 @@ class TestApplyDatabaseRestrictions(unittest.TestCase):
                 Partition,
                 RestrictionType,
             )
-            from myapp.utils.hash_rescan import apply_database_restrictions
+            from myapp.services.hash_rescan import apply_database_restrictions
 
             _, artefact = _make_item_and_artefact(self.db)
 
@@ -642,7 +642,7 @@ class TestApplyDatabaseRestrictions(unittest.TestCase):
                 KnownFile,
                 Partition,
             )
-            from myapp.utils.hash_rescan import apply_database_restrictions
+            from myapp.services.hash_rescan import apply_database_restrictions
 
             _, artefact = _make_item_and_artefact(self.db)
 
@@ -692,7 +692,7 @@ class TestApplyDatabaseRestrictions(unittest.TestCase):
                 Partition,
                 RestrictionType,
             )
-            from myapp.utils.hash_rescan import apply_database_restrictions
+            from myapp.services.hash_rescan import apply_database_restrictions
 
             _, artefact = _make_item_and_artefact(self.db)
 
@@ -750,7 +750,7 @@ class TestApplyDatabaseRestrictions(unittest.TestCase):
                 Partition,
                 RestrictionType,
             )
-            from myapp.utils.hash_rescan import apply_database_restrictions
+            from myapp.services.hash_rescan import apply_database_restrictions
 
             _, artefact = _make_item_and_artefact(self.db)
 
