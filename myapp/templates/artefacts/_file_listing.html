@@ -240,7 +240,7 @@
                                 {%- endfor %}
                                 <button type="button" class="btn btn-link btn-sm p-0 ms-1 {% if file.restrictions %}text-danger{% else %}text-muted{% endif %}"
                                         data-bs-toggle="modal" data-bs-target="#fileRestrictModal"
-                                        data-file-uuid="{{ file.uuid }}"
+                                        data-restrictions-url="{{ url_for('myapp_blueprints_artefacts.manage_file_restrictions', uuid=file.uuid) }}"
                                         data-file-name="{{ file.filename }}"
                                         data-restrictions="{{ _rd.items | tojson | forceescape }}"
                                         title="Manage file restrictions"><i class="bi bi-shield{% if file.restrictions %}-fill{% endif %}"></i></button>
@@ -292,8 +292,6 @@
             </div>{# /file-listing-inner #}
             </div>{# /file-browser-row #}
         </div>{# /card #}
-    </div>
-</div>
 
 {% if hashdb_mode %}
 <!-- Floating action bar for Hash DB mode -->
@@ -553,13 +551,14 @@
 
     modal.addEventListener('show.bs.modal', function(event) {
         var btn = event.relatedTarget;
-        var uuid = btn.getAttribute('data-file-uuid');
+        // Server-rendered url_for() URL — no client-side URL construction.
+        var restrUrl = btn.getAttribute('data-restrictions-url');
         var name = btn.getAttribute('data-file-name');
         var restrictions = JSON.parse(btn.getAttribute('data-restrictions') || '[]');
 
         document.getElementById('frm-filename').textContent = name;
-        document.getElementById('frm-add-form').action = '/files/' + uuid + '/restrictions';
-        editForm.action = '/files/' + uuid + '/restrictions';
+        document.getElementById('frm-add-form').action = restrUrl;
+        editForm.action = restrUrl;
         editSection.style.display = 'none';
 
         var listEl = document.getElementById('frm-current-list');
@@ -571,7 +570,7 @@
                 var rval = r.v, rlabel = r.l, rreason = r.r, rcanEdit = r.e;
                 var reasonAttr = rreason ? ' title="' + htmlEsc(rreason) + '"' : '';
                 html += '<div class="d-flex align-items-center gap-1 mb-1">'
-                      + '<form method="POST" action="/files/' + uuid + '/restrictions" class="d-inline">'
+                      + '<form method="POST" action="' + htmlEsc(restrUrl) + '" class="d-inline">'
                       + '<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">'
                       + '<input type="hidden" name="action" value="remove">'
                       + '<input type="hidden" name="category" value="' + htmlEsc(rval) + '">'
