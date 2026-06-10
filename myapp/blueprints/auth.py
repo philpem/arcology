@@ -11,6 +11,7 @@ from flask_wtf import FlaskForm
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 from wtforms import PasswordField, StringField, SubmitField
 from wtforms.validators import DataRequired
+from ..utils.safe_redirect import safe_redirect_path
 
 ROUTENAME = 'auth'
 
@@ -87,13 +88,15 @@ def login():
             if userrec.checkPassword(form.password.data):
                 login_user(userrec)
                 # Redirect to the page the user was trying to reach, or the dashboard.
-                # SECURITY: reject any next= URL without an absolute same-origin path.
-                # urlparse alone does not catch browser-normalised open-redirects like
-                # /\evil.com, so require the URL to start with a single '/'.
-                next_url = request.args.get("next")
-                if next_url and (not next_url.startswith('/') or next_url.startswith('//')):
-                    next_url = None
-                return redirect(next_url or url_for("myapp_blueprints_dashboard.index"))
+                # SECURITY: confine next= to a same-origin relative path.  A naive
+                # startswith('/') check is bypassable via browser normalisation
+                # (e.g. /\evil.com -> //evil.com, /%09/evil.com -> //evil.com);
+                # is_safe_redirect_path handles control chars and backslashes.
+                next_url = safe_redirect_path(
+                    request.args.get("next"),
+                    url_for("myapp_blueprints_dashboard.index"),
+                )
+                return redirect(next_url)
 
     if request.method == 'POST':
         flash("Error logging in - please check your username and password and ensure that CAPS LOCK is turned off.", "error")

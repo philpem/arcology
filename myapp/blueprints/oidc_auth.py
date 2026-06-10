@@ -20,6 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 from ..database import Group, User, UserPermission
 from ..extensions import db
+from ..utils.safe_redirect import is_safe_redirect_path
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -79,8 +80,11 @@ def init_app(app):
 def sso_login():
     if not _bool_cfg(current_app, 'OIDC_ENABLED'):
         abort(404)
+    # SECURITY: only persist a same-origin relative path.  A naive
+    # startswith('/') check is bypassable via browser normalisation
+    # (e.g. /\evil.com -> //evil.com); is_safe_redirect_path handles it.
     next_url = request.args.get('next', '')
-    if next_url and next_url.startswith('/') and not next_url.startswith('//'):
+    if is_safe_redirect_path(next_url):
         session['oidc_next'] = next_url
     redirect_uri = url_for('.sso_callback', _external=True)
     try:
