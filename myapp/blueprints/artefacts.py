@@ -2366,6 +2366,80 @@ def revoke_bypass(item_id=None, artefact_id=None, root_id=None, bypass_id=None):
     return _redirect_to_artefact_view(artefact)
 
 
+def _apply_restriction_action(model, fk_filter: dict, noun: str) -> None:
+    """Apply an add/remove/update restriction action from the submitted form.
+
+    Shared state machine for artefact-level (ArtefactRestriction) and
+    file-level (ExtractedFileRestriction) restrictions: *model* is the
+    restriction class, *fk_filter* the owning-row filter (e.g.
+    ``{'artefact_id': artefact.id}``), and *noun* the flash-message prefix
+    ('Restriction' / 'File restriction').
+
+    Policy enforced here, in one place for both kinds: non-admins may only
+    remove or edit restrictions they added themselves, and a duplicate
+    restriction type on the same owner is rejected.
+
+    Flashes the outcome; the caller is responsible for the redirect.
+    """
+    action = request.form.get('action', '')
+    category = request.form.get('category', '')
+    reason = request.form.get('reason', '').strip() or None
+
+    try:
+        rtype = RestrictionType(category)
+    except (ValueError, KeyError):
+        flash(f'Invalid restriction type: {category}', 'danger')
+        return
+
+    existing = model.query.filter_by(restriction_type=rtype, **fk_filter).first()
+
+    if action == 'add':
+        if not existing:
+            db.session.add(model(
+                restriction_type=rtype,
+                reason=reason,
+                added_by_id=current_user.id,
+                **fk_filter,
+            ))
+            db.session.commit()
+            flash(f'{noun} added: {rtype.label}', 'success')
+        else:
+            flash(f'{noun} already exists: {rtype.label}', 'info')
+    elif action == 'remove':
+        if existing:
+            # Non-admins can only remove restrictions they added themselves
+            if not current_user.is_admin and existing.added_by_id != current_user.id:
+                flash('Only administrators can remove restrictions added by other users.', 'danger')
+            else:
+                db.session.delete(existing)
+                db.session.commit()
+                flash(f'{noun} removed: {rtype.label}', 'success')
+        else:
+            flash(f'{noun} not found: {rtype.label}', 'warning')
+    elif action == 'update':
+        new_category = request.form.get('new_category', '').strip()
+        try:
+            new_rtype = RestrictionType(new_category) if new_category else rtype
+        except (ValueError, KeyError):
+            flash(f'Invalid restriction type: {new_category}', 'danger')
+            return
+        if not existing:
+            flash(f'{noun} not found: {rtype.label}', 'warning')
+        elif not current_user.is_admin and existing.added_by_id != current_user.id:
+            flash('Only administrators can edit restrictions added by other users.', 'danger')
+        elif new_rtype != rtype and model.query.filter_by(
+            restriction_type=new_rtype, **fk_filter
+        ).first():
+            flash(f'A {new_rtype.label} restriction already exists.', 'danger')
+        else:
+            existing.restriction_type = new_rtype
+            existing.reason = reason
+            db.session.commit()
+            flash(f'{noun} updated.', 'success')
+    else:
+        flash(f'Invalid action: {action}', 'danger')
+
+
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/restrictions', methods=['POST'])
 @blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/restrictions', methods=['POST'], endpoint='manage_restrictions_nested')
 @login_required
@@ -2375,72 +2449,8 @@ def manage_restrictions(item_id=None, artefact_id=None, root_id=None):
     artefact = _get_artefact_or_404(item_id, artefact_id, root_id)
     _require_manage_artefact_content(artefact)
 
-    action = request.form.get('action', '')
-    category = request.form.get('category', '')
-    reason = request.form.get('reason', '').strip() or None
-
-    from ..database import RestrictionType
-    try:
-        rtype = RestrictionType(category)
-    except (ValueError, KeyError):
-        flash(f'Invalid restriction type: {category}', 'danger')
-        return _redirect_to_artefact_view(artefact)
-
-    if action == 'add':
-        existing = ArtefactRestriction.query.filter_by(
-            artefact_id=artefact.id, restriction_type=rtype
-        ).first()
-        if not existing:
-            db.session.add(ArtefactRestriction(
-                artefact_id=artefact.id,
-                restriction_type=rtype,
-                reason=reason,
-                added_by_id=current_user.id,
-            ))
-            db.session.commit()
-            flash(f'Restriction added: {rtype.label}', 'success')
-        else:
-            flash(f'Restriction already exists: {rtype.label}', 'info')
-    elif action == 'remove':
-        existing = ArtefactRestriction.query.filter_by(
-            artefact_id=artefact.id, restriction_type=rtype
-        ).first()
-        if existing:
-            # Non-admins can only remove restrictions they added themselves
-            if not current_user.is_admin and existing.added_by_id != current_user.id:
-                flash('Only administrators can remove restrictions added by other users.', 'danger')
-            else:
-                db.session.delete(existing)
-                db.session.commit()
-                flash(f'Restriction removed: {rtype.label}', 'success')
-        else:
-            flash(f'Restriction not found: {rtype.label}', 'warning')
-    elif action == 'update':
-        new_category = request.form.get('new_category', '').strip()
-        try:
-            new_rtype = RestrictionType(new_category) if new_category else rtype
-        except (ValueError, KeyError):
-            flash(f'Invalid restriction type: {new_category}', 'danger')
-            return _redirect_to_artefact_view(artefact)
-        existing = ArtefactRestriction.query.filter_by(
-            artefact_id=artefact.id, restriction_type=rtype
-        ).first()
-        if not existing:
-            flash(f'Restriction not found: {rtype.label}', 'warning')
-        elif not current_user.is_admin and existing.added_by_id != current_user.id:
-            flash('Only administrators can edit restrictions added by other users.', 'danger')
-        elif new_rtype != rtype and ArtefactRestriction.query.filter_by(
-            artefact_id=artefact.id, restriction_type=new_rtype
-        ).first():
-            flash(f'A {new_rtype.label} restriction already exists.', 'danger')
-        else:
-            existing.restriction_type = new_rtype
-            existing.reason = reason
-            db.session.commit()
-            flash('Restriction updated.', 'success')
-    else:
-        flash(f'Invalid action: {action}', 'danger')
-
+    _apply_restriction_action(
+        ArtefactRestriction, {'artefact_id': artefact.id}, 'Restriction')
     return _redirect_to_artefact_view(artefact)
 
 
@@ -2454,77 +2464,13 @@ def manage_file_restrictions(uuid):
     if not can_view_artefact(artefact, current_user):
         abort(404)
     _require_manage_artefact_content(artefact)
+
+    _apply_restriction_action(
+        ExtractedFileRestriction, {'extracted_file_id': ef.id}, 'File restriction')
     # Always redirect to the root artefact so the user lands on the page that
     # shows the global restriction, even when the file belongs to a derived
     # artefact whose partition is displayed inline on the root's view.
-    root_artefact = artefact.root_artefact
-
-    action   = request.form.get('action', '')
-    category = request.form.get('category', '')
-    reason   = request.form.get('reason', '').strip() or None
-
-    from ..database import RestrictionType
-    try:
-        rtype = RestrictionType(category)
-    except (ValueError, KeyError):
-        flash(f'Invalid restriction type: {category}', 'danger')
-        return _redirect_to_artefact_view(root_artefact)
-
-    if action == 'add':
-        existing = ExtractedFileRestriction.query.filter_by(
-            extracted_file_id=ef.id, restriction_type=rtype
-        ).first()
-        if not existing:
-            db.session.add(ExtractedFileRestriction(
-                extracted_file_id=ef.id,
-                restriction_type=rtype,
-                reason=reason,
-                added_by_id=current_user.id,
-            ))
-            db.session.commit()
-            flash(f'File restriction added: {rtype.label}', 'success')
-        else:
-            flash(f'File restriction already exists: {rtype.label}', 'info')
-    elif action == 'remove':
-        existing = ExtractedFileRestriction.query.filter_by(
-            extracted_file_id=ef.id, restriction_type=rtype
-        ).first()
-        if existing:
-            if not current_user.is_admin and existing.added_by_id != current_user.id:
-                flash('Only administrators can remove restrictions added by other users.', 'danger')
-            else:
-                db.session.delete(existing)
-                db.session.commit()
-                flash(f'File restriction removed: {rtype.label}', 'success')
-        else:
-            flash(f'File restriction not found: {rtype.label}', 'warning')
-    elif action == 'update':
-        new_category = request.form.get('new_category', '').strip()
-        try:
-            new_rtype = RestrictionType(new_category) if new_category else rtype
-        except (ValueError, KeyError):
-            flash(f'Invalid restriction type: {new_category}', 'danger')
-            return _redirect_to_artefact_view(artefact)
-        existing = ExtractedFileRestriction.query.filter_by(
-            extracted_file_id=ef.id, restriction_type=rtype
-        ).first()
-        if not existing:
-            flash(f'File restriction not found: {rtype.label}', 'warning')
-        elif not current_user.is_admin and existing.added_by_id != current_user.id:
-            flash('Only administrators can edit restrictions added by other users.', 'danger')
-        elif new_rtype != rtype and ExtractedFileRestriction.query.filter_by(
-            extracted_file_id=ef.id, restriction_type=new_rtype
-        ).first():
-            flash(f'A {new_rtype.label} restriction already exists.', 'danger')
-        else:
-            existing.restriction_type = new_rtype
-            existing.reason = reason
-            db.session.commit()
-            flash('File restriction updated.', 'success')
-    else:
-        flash(f'Invalid action: {action}', 'danger')
-
-    return _redirect_to_artefact_view(root_artefact)
+    return _redirect_to_artefact_view(artefact.root_artefact)
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/analyse', methods=['GET', 'POST'])
