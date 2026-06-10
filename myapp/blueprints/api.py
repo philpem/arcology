@@ -29,8 +29,6 @@ from ..database import (
     ApiKey,
     ApiKeyPermission,
     Artefact,
-    ArtefactMastering,
-    ArtefactProtection,
     ArtefactType,
     Category,
     ExternalReference,
@@ -46,7 +44,6 @@ from ..database import (
     Partition,
     Platform,
     RecognisedProduct,
-    RiscosModule,
     StorageDirectory,
     Tag,
     User,
@@ -1169,156 +1166,8 @@ def update_analysis(id):
 
 
 def _populate_search_index(analysis):
-    """Extract structured search data from a completed analysis's JSON details blob.
-
-    Called after update_analysis() marks a job as completed+successful.
-    Handles DISC_PROTECTION_DETECT, DISC_MASTERING_DETECT, PARTITION_DETECT,
-    and RISCOS_MODULE_PARSE.
-    Errors are logged but never propagated — the analysis update itself must
-    still succeed even if index population fails.
-    """
-    import json
-
-    if not analysis.details:
-        return
-
-    try:
-        details = json.loads(analysis.details)
-    except (ValueError, TypeError):
-        current_app.logger.warning(
-            f"Could not parse details JSON for analysis {analysis.uuid} "
-            f"({enum_value(analysis.analysis_type)}) — skipping search index update"
-        )
-        return
-
-    # Use a savepoint so that a DB error during search-index insertion (e.g. a
-    # value that's too long for a varchar column) is caught here and rolled back
-    # cleanly, without aborting the outer transaction that contains the analysis
-    # status update.  Without the savepoint, db.session.add() defers the INSERT
-    # until the outer commit, so a constraint violation would surface there as an
-    # unhandled exception — causing a 500 and leaving Sentry without context.
-    #
-    # Flush the analysis-status changes BEFORE creating the savepoint.  The
-    # flush sends the UPDATE to Postgres outside the savepoint scope, so a
-    # savepoint rollback cannot undo it — the analysis status always commits
-    # even when search-index population fails.
-    try:
-        db.session.flush()
-        with db.session.begin_nested():
-            # Serialise concurrent completions of the same analysis type for the
-            # same artefact (e.g. two workers completing re-analysis jobs at the
-            # same time).  Without this lock, both workers delete each other's
-            # freshly-inserted search-index rows in the delete-then-insert pattern
-            # below.  The lock is released when the outer transaction commits.
-            db.session.execute(
-                select(Artefact).where(Artefact.id == analysis.artefact_id).with_for_update()
-            )
-
-            if analysis.analysis_type == AnalysisType.DISC_PROTECTION_DETECT:
-                # Delete any previous rows for this artefact so re-runs stay clean.
-                ArtefactProtection.query.filter_by(artefact_id=analysis.artefact_id).delete()
-                for ind in details.get('indicators', []):
-                    db.session.add(ArtefactProtection(
-                        artefact_id=analysis.artefact_id,
-                        protection_type=ind.get('type', 'unknown'),
-                        track=ind.get('track'),
-                        side=ind.get('side'),
-                        details=ind.get('sector_id') or ind.get('details'),
-                    ))
-
-            elif analysis.analysis_type == AnalysisType.DISC_MASTERING_DETECT:
-                ArtefactMastering.query.filter_by(artefact_id=analysis.artefact_id).delete()
-                for ind in details.get('indicators', []):
-                    _mtype = ind.get('type', 'unknown')
-                    if _mtype == 'bcd_timestamp':
-                        _mtype = 'formaster'
-                    db.session.add(ArtefactMastering(
-                        artefact_id=analysis.artefact_id,
-                        mastering_type=_mtype,
-                        track=ind.get('track'),
-                        decoded=ind.get('decoded') or ind.get('data'),
-                    ))
-
-            elif analysis.analysis_type == AnalysisType.PARTITION_DETECT:
-                gnu_file_type = details.get('file', {}).get('file_type')
-                if gnu_file_type:
-                    # Apply to all partitions belonging to this artefact.
-                    Partition.query.filter_by(artefact_id=analysis.artefact_id).update(
-                        {'gnu_file_type': gnu_file_type}
-                    )
-
-            elif analysis.analysis_type == AnalysisType.RISCOS_MODULE_PARSE:
-                path_prefix = details.get('path_prefix', '')
-                if path_prefix:
-                    # Scoped deletion: only remove modules from this archive's
-                    # path prefix so concurrent nested-archive jobs don't clobber
-                    # each other's results.
-                    RiscosModule.query.filter(
-                        RiscosModule.artefact_id == analysis.artefact_id,
-                        RiscosModule.file_path.like(path_prefix + '/%'),
-                    ).delete(synchronize_session=False)
-                elif details.get('modules'):
-                    # Only clear all when top-level scan actually found modules
-                    # (disc image case). If 0 modules found with no prefix, preserve
-                    # rows from nested-archive scans to avoid a race where a
-                    # re-analysis top-level job runs before nested archives are
-                    # re-extracted and wipes all previously stored module data.
-                    RiscosModule.query.filter_by(artefact_id=analysis.artefact_id).delete()
-                _title_max = RiscosModule.__table__.c.title_string.type.length
-                _help_max = RiscosModule.__table__.c.help_title.type.length
-                _path_max = RiscosModule.__table__.c.file_path.type.length
-                for mod in details.get('modules', []):
-                    title = mod.get('title_string', '')
-                    if not title:
-                        continue
-                    help_title = mod.get('help_title')
-                    file_path = mod.get('file_path', '')
-                    # Validate varchar column lengths before inserting so that a
-                    # single corrupt module (e.g. a binary blob read as a title
-                    # string) doesn't abort the whole batch.  Log clearly so the
-                    # offending file is identifiable in Sentry / app logs.
-                    if (len(title) > _title_max
-                            or (help_title and len(help_title) > _help_max)
-                            or len(file_path) > _path_max):
-                        current_app.logger.warning(
-                            f"Skipping module with oversized string fields "
-                            f"(title={len(title)}, "
-                            f"help_title={len(help_title) if help_title is not None else 'None'}, "
-                            f"file_path={len(file_path)}): {file_path}"
-                        )
-                        continue
-                    commands = mod.get('commands', [])
-                    commands_json = json.dumps([c['name'] for c in commands]) if commands else None
-                    raw_swis = mod.get('swi_names')
-                    if raw_swis and len(raw_swis) > 1:
-                        swi_names_json = json.dumps([f"{raw_swis[0]}_{s}" for s in raw_swis[1:]])
-                    else:
-                        swi_names_json = None
-                    db.session.add(RiscosModule(
-                        artefact_id=analysis.artefact_id,
-                        title_string=title,
-                        help_title=help_title,
-                        version=mod.get('version'),
-                        date=mod.get('date'),
-                        swi_chunk=mod.get('swi_chunk'),
-                        file_path=file_path,
-                        module_hash=mod.get('hash'),
-                        commands=commands_json,
-                        swi_names=swi_names_json,
-                    ))
-
-            db.session.flush()
-
-    except Exception:
-        try:
-            import sentry_sdk
-            sentry_sdk.capture_exception()
-        except ImportError:
-            pass
-        current_app.logger.exception(
-            f"Error populating search index for analysis {analysis.uuid} "
-            f"({enum_value(analysis.analysis_type)})"
-        )
+    from ..services.search_index import populate_search_index_from_analysis
+    populate_search_index_from_analysis(analysis)
 
 
 @blueprint.route('/analysis/pending', methods=['GET'])
