@@ -42,6 +42,7 @@ from ..extensions import db
 from ..permissions import public_downloadable, public_readable, require_permission
 from ..riscos_filetypes import lookup_filetype_hex
 from ..services.artefact_lifecycle import (
+    ArtefactMoveError,
     build_processing_tree,
     cleanup_analysis_outputs,
     cleanup_artefact_outputs,
@@ -50,6 +51,7 @@ from ..services.artefact_lifecycle import (
     get_all_derived_artefact_ids,
     move_artefact_to_item,
     reset_artefact_for_reanalysis,
+    validate_artefact_move,
 )
 from ..services.artefact_storage import (
     compute_file_hashes,
@@ -2191,12 +2193,6 @@ def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
 def move(item_id=None, artefact_id=None):
     """Move a root artefact to a different item."""
     artefact = _get_artefact_or_404(item_id, artefact_id)
-    if artefact.item.private_effective and not can_contribute_to_item(artefact.item, current_user):
-        abort(403)
-
-    if artefact.parent_artefact_id is not None:
-        flash('Only root artefacts can be moved.', 'danger')
-        return _redirect_to_artefact_view(artefact)
 
     target_uuid = request.form.get('target_item_uuid')
     if not target_uuid:
@@ -2207,17 +2203,13 @@ def move(item_id=None, artefact_id=None):
     if not can_view_item(target_item, current_user):
         flash('Target item not found.', 'danger')
         return _redirect_to_artefact_view(artefact)
-    # Prevent curators from publishing private artefacts by moving them into a
-    # public item (same logic as the API move route).
-    curator_on_source = (artefact.item.private_effective
-                         and not can_change_owner(artefact.item, current_user))
-    if (curator_on_source or target_item.private_effective) and \
-            not can_contribute_to_item(target_item, current_user):
-        flash('Not permitted to move artefacts into that item.', 'danger')
-        return _redirect_to_artefact_view(artefact)
 
-    if target_item.id == artefact.item_id:
-        flash('Artefact is already in that item.', 'warning')
+    try:
+        validate_artefact_move(artefact, target_item, current_user)
+    except ArtefactMoveError as e:
+        if e.code == 'source_forbidden':
+            abort(403)
+        flash(str(e), 'warning' if e.code == 'same_item' else 'danger')
         return _redirect_to_artefact_view(artefact)
 
     old_item_name = artefact.item.name

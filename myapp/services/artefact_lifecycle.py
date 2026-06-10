@@ -35,6 +35,7 @@ from ..database import (
 )
 from ..extensions import db
 from ..utils.slugs import ensure_unique_slug
+from ..visibility import can_change_owner, can_contribute_to_item
 from .artefact_storage import (
     get_artefact_storage_key,
     get_output_folder,
@@ -478,6 +479,60 @@ def delete_item_files(item):
             cleanup_artefact_outputs_s3(artefact, storage)
         else:
             cleanup_artefact_outputs(artefact, current_app.logger)
+
+
+class ArtefactMoveError(ValueError):
+    """An artefact move is not permitted or not possible.
+
+    ``code`` identifies the failed precondition so callers can map it to
+    their own presentation (flash category + redirect for the web route,
+    HTTP status for the API route):
+
+      - ``'source_forbidden'`` — caller may not move artefacts out of the
+        (private) source item.
+      - ``'not_root'``         — only root artefacts can be moved.
+      - ``'target_forbidden'`` — caller may not move artefacts into the
+        target item (includes the curator publish-prevention rule).
+      - ``'same_item'``        — artefact is already in the target item.
+    """
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+def validate_artefact_move(artefact, target_item, user, *, sees_all: bool = False):
+    """Raise ArtefactMoveError unless *user* may move *artefact* into *target_item*.
+
+    Single source of truth for the move preconditions shared by the web and
+    API move routes.  The caller is responsible for resolving and
+    visibility-checking *target_item* first (a non-visible target must be
+    indistinguishable from a nonexistent one, which is presentation-specific).
+
+    The curator publish-prevention rule lives here: a curator on a private
+    source item (someone with contribute access but not owner/admin) must not
+    be able to move artefacts into a public item, as that would silently
+    publish private content.  Whenever the source is private and the caller is
+    acting as a curator — or the target itself is private — write access on
+    the target is required.
+    """
+    if artefact.item.private_effective and not can_contribute_to_item(
+            artefact.item, user, sees_all=sees_all):
+        raise ArtefactMoveError(
+            'source_forbidden', 'Not permitted to move artefacts from this item')
+
+    if artefact.parent_artefact_id is not None:
+        raise ArtefactMoveError('not_root', 'Only root artefacts can be moved')
+
+    curator_on_source = (artefact.item.private_effective
+                         and not can_change_owner(artefact.item, user))
+    if (curator_on_source or target_item.private_effective) and \
+            not can_contribute_to_item(target_item, user, sees_all=sees_all):
+        raise ArtefactMoveError(
+            'target_forbidden', 'Not permitted to move artefacts into this item')
+
+    if target_item.id == artefact.item_id:
+        raise ArtefactMoveError('same_item', 'Artefact is already in that item')
 
 
 def move_artefact_to_item(artefact, new_item):

@@ -51,10 +51,12 @@ from ..database import (
 )
 from ..extensions import csrf, db
 from ..services.artefact_lifecycle import (
+    ArtefactMoveError,
     bulk_delete_item,
     collect_all_analyses,
     delete_artefact_files,
     move_artefact_to_item,
+    validate_artefact_move,
 )
 from ..services.artefact_storage import (
     compute_file_hashes,
@@ -640,8 +642,6 @@ def move_artefact(uuid):
     """Move a root artefact (and its derived artefacts) to a different item."""
     artefact = _get_artefact_or_404(uuid)
     api_user, sees_all = _api_viewer()
-    if artefact.item.private_effective and not can_contribute_to_item(artefact.item, api_user, sees_all=sees_all):
-        return error_response('Not permitted to move artefacts from this item', 403)
     data, error = _json_object()
     if error:
         return error
@@ -650,26 +650,17 @@ def move_artefact(uuid):
     if not target_uuid:
         return error_response('target_item_uuid is required', 400)
 
-    if artefact.parent_artefact_id is not None:
-        return error_response('Only root artefacts can be moved', 400)
-
     target_item = Item.query.filter_by(uuid=target_uuid).first()
     if not target_item:
         return error_response('Target item not found', 404)
     if not can_view_item(target_item, api_user, sees_all=sees_all):
         return error_response('Target item not found', 404)
-    # A curator on the source (not the owner/admin) must not be able to move
-    # artefacts into a public item — that would silently publish private content.
-    # Require write access on the target whenever the source is private and the
-    # caller is acting as a curator rather than as owner/admin.
-    curator_on_source = (artefact.item.private_effective
-                         and not can_change_owner(artefact.item, api_user))
-    if (curator_on_source or target_item.private_effective) and \
-            not can_contribute_to_item(target_item, api_user, sees_all=sees_all):
-        return error_response('Not permitted to move artefacts into this item', 403)
 
-    if target_item.id == artefact.item_id:
-        return error_response('Artefact is already in that item', 400)
+    try:
+        validate_artefact_move(artefact, target_item, api_user, sees_all=sees_all)
+    except ArtefactMoveError as e:
+        status = 403 if e.code in ('source_forbidden', 'target_forbidden') else 400
+        return error_response(str(e), status)
 
     try:
         move_artefact_to_item(artefact, target_item)
