@@ -2480,6 +2480,15 @@ def hash_database_recognition_config():
 @require_auth('read_write')
 def report_recognised_products(uuid):
     """Worker reports product recognition results for a partition."""
+    # Worker-only: this callback overwrites a partition's product-recognition
+    # results (it deletes the existing rows and inserts the supplied ones).  It
+    # is gated only on view-visibility of the partition, not on content-
+    # management permission, so without this check any read_write user could
+    # wipe or falsify recognition results on artefacts they do not own.
+    # Matches the worker-only gate on add_partition / add_files.
+    if not _is_worker_request():
+        return error_response('Only the worker may report recognised products', 403)
+
     partition = _get_partition_or_404(uuid)
     data, error = _json_array(force=True)
     if error:
