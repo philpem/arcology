@@ -29,6 +29,7 @@ from ..database import (
 )
 from ..extensions import db
 from ..permissions import public_readable, require_permission, require_visible_item
+from ..services.artefact_lifecycle import bulk_delete_item
 from ..utils.item_helpers import (
     assign_item_fields,
     assign_item_tags,
@@ -51,7 +52,6 @@ from ..visibility import (
     can_view_item,
     item_visibility_clause,
 )
-from .artefacts import bulk_delete_item
 
 _ITEM_SORT_OPTIONS = {
     'name_asc':      func.lower(Item.name).asc(),

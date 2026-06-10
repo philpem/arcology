@@ -10,7 +10,7 @@ Verifies that:
   - get_artefact_path() raises ValueError for absolute storage_path (#2 layer 1)
   - get_artefact_path() raises ValueError for ../ traversal storage_path (#2 layer 1)
   - resolve_extracted_file_path() returns None for ../ traversal in ef.path (#3)
-  - _delete_item_files() skips output files with ../ traversal in filename (#4)
+  - delete_item_files() skips output files with ../ traversal in filename (#4)
 
 Run:
     SQLALCHEMY_DATABASE_URI=sqlite:///:memory: SECRET_KEY=test WORKER_API_KEY=test \\
@@ -338,11 +338,11 @@ class TestResolveExtractedFilePathConfinement(unittest.TestCase):
 
 
 # =============================================================================
-# _delete_item_files() output file confinement (#4)
+# delete_item_files() output file confinement (#4)
 # =============================================================================
 
 class TestDeleteItemFilesConfinement(unittest.TestCase):
-    """_delete_item_files() must not delete files outside output_folder."""
+    """delete_item_files() must not delete files outside output_folder."""
 
     def setUp(self):
         from myapp.app import create_app
@@ -400,11 +400,11 @@ class TestDeleteItemFilesConfinement(unittest.TestCase):
             self.item_id = item.id
 
     def test_outside_file_not_deleted(self):
-        from myapp.blueprints.artefacts import _delete_item_files
         from myapp.database import Item
+        from myapp.services.artefact_lifecycle import delete_item_files
         with self.app.app_context():
             item = Item.query.get(self.item_id)
-            _delete_item_files(item)
+            delete_item_files(item)
         self.assertTrue(
             os.path.exists(self.outside_file),
             'File outside output_folder was deleted — path traversal not blocked',

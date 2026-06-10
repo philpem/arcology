@@ -159,7 +159,7 @@ def index():
 @login_required
 def artefact_analyses(uuid):
     """List all analyses for an artefact and its derived artefacts."""
-    from .artefacts import get_all_derived_artefact_ids
+    from ..services.artefact_lifecycle import get_all_derived_artefact_ids
 
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     if not can_view_artefact(artefact, current_user):
