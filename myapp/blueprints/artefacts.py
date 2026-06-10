@@ -52,6 +52,7 @@ from ..database import (
 from ..extensions import db
 from ..permissions import public_downloadable, public_readable, require_permission
 from ..riscos_filetypes import lookup_filetype_hex
+from ..services.upload_pipeline import QUEUE_CHECKSUM_ONLY, QUEUE_FULL, ingest_uploaded_artefact
 from ..utils.enum_display import enum_value
 from ..utils.path_nav import build_directory_tree
 from ..utils.slugs import ensure_unique_slug, generate_slug, lookup_artefact_by_id, lookup_by_identifier
@@ -330,6 +331,9 @@ def queue_analyses_for_artefact(artefact: Artefact, hints: dict = None,
 
     priority: queue priority (ANALYSIS_PRIORITY_HIGH for web UI, ANALYSIS_PRIORITY_NORMAL
     for API/CLI).  Higher value = picked up sooner by workers.
+
+    Returns the list of AnalysisType members actually queued (duplicates that
+    were skipped are not included).
     """
     skip_set = set(skip_analyses or [])
     analysis_types = [AnalysisType.CHECKSUM_COMPUTE]
@@ -338,6 +342,7 @@ def queue_analyses_for_artefact(artefact: Artefact, hints: dict = None,
     analysis_types = [t for t in analysis_types if t.name not in skip_set]
     hints_json = json.dumps(hints) if hints else None
 
+    queued = []
     for analysis_type in analysis_types:
         if not skip_duplicate_check:
             # Check if this analysis is already queued/running
@@ -356,9 +361,11 @@ def queue_analyses_for_artefact(artefact: Artefact, hints: dict = None,
                 priority=priority,
             )
         db.session.add(analysis)
+        queued.append(analysis_type)
 
     if commit:
         db.session.commit()
+    return queued
 
 
 # =============================================================================
@@ -3045,46 +3052,10 @@ def upload(item_id):
         except OSError:
             md5, sha256 = None, None
 
-        if sha256:
-            existing = Artefact.query.filter_by(item_id=target_item.id, sha256=sha256).first()
-            if existing:
-                try:
-                    current_app.storage.delete(storage_key)
-                except Exception:
-                    pass
-                flash(f'Duplicate: a file with identical content already exists as "{existing.label}".', 'warning')
-                return redirect(url_for(f'{ROUTENAME}.upload', item_id=item.url_id))
-
         # Detect MIME type
         mime_type, _ = mimetypes.guess_type(original_filename)
 
-        # Create artefact record
-        artefact = Artefact(
-            item_id=target_item.id,
-            label=form.label.data,
-            artefact_type=artefact_type,
-            type_overridden=type_overridden,
-            description=form.description.data,
-            original_filename=original_filename,
-            storage_path=storage_path,
-            file_size=file_size,
-            mime_type=mime_type,
-            md5=md5,
-            sha256=sha256,
-            owner_id=current_user.id,
-            is_private=form.is_private.data,
-        )
-
-        db.session.add(artefact)
-        db.session.commit()
-
-        # Generate slug (unique within the target item)
-        base_slug = generate_slug(artefact.label)
-        artefact.slug = ensure_unique_slug(base_slug, Artefact, scope_filter={'item_id': target_item.id})
-        db.session.commit()
-
-        # Always queue checksum computation via the worker; also queue type-specific
-        # analyses if the user requested auto-analyse.
+        # Analysis hints from the form fields
         hints = {}
         if form.platform_id.data and form.platform_id.data != 0:
             platform = Platform.query.get(form.platform_id.data)
@@ -3093,9 +3064,33 @@ def upload(item_id):
         if form.dfi_clock_mhz.data:
             hints['dfi_clock_mhz'] = form.dfi_clock_mhz.data
         web_priority = current_app.config.get('WEB_UI_ANALYSIS_PRIORITY', ANALYSIS_PRIORITY_HIGH)
-        queue_analyses_for_artefact(artefact, hints if hints else None,
-                                    checksum_only=not form.auto_analyse.data,
-                                    priority=web_priority)
+
+        # Create the artefact, slug, and analysis queue entries atomically.
+        # Checksum computation is always queued; type-specific analyses only
+        # when the user requested auto-analyse.
+        outcome = ingest_uploaded_artefact(
+            target_item,
+            label=form.label.data,
+            artefact_type=artefact_type,
+            type_overridden=type_overridden,
+            original_filename=original_filename,
+            storage_name=storage_path,
+            file_size=file_size,
+            md5=md5,
+            sha256=sha256,
+            description=form.description.data,
+            mime_type=mime_type,
+            owner_id=current_user.id,
+            is_private=form.is_private.data,
+            hints=hints if hints else None,
+            queue=QUEUE_FULL if form.auto_analyse.data else QUEUE_CHECKSUM_ONLY,
+            priority=web_priority,
+        )
+        if outcome.duplicate:
+            flash(f'Duplicate: a file with identical content already exists as "{outcome.duplicate.label}".', 'warning')
+            return redirect(url_for(f'{ROUTENAME}.upload', item_id=item.url_id))
+        artefact = outcome.artefact
+
         if form.auto_analyse.data:
             flash(f'Artefact "{artefact.label}" uploaded. Analysis queued.', 'success')
         else:

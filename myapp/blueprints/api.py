@@ -52,6 +52,7 @@ from ..database import (
     User,
 )
 from ..extensions import csrf, db
+from ..services.upload_pipeline import QUEUE_FULL, QUEUE_NONE, ingest_uploaded_artefact
 from ..utils.api_serializers import (
     analysis_to_dict,
     artefact_to_dict,
@@ -2067,57 +2068,8 @@ def upload_artefact(item_uuid):
 	from werkzeug.utils import secure_filename
 	original_filename = secure_filename(file.filename) or 'unnamed'
 
-	# Check for duplicate: same item + same SHA-256
-	existing = Artefact.query.filter_by(item_id=item.id, sha256=sha256).first()
-	if existing:
-		# Clean up the uploaded file — it's a duplicate
-		try:
-			current_app.storage.delete(storage_key)
-		except Exception:
-			pass
-		result = artefact_to_dict(existing)
-		result['duplicate'] = True
-		return jsonify(result), 409
-
-	description = request.form.get('description')
-
-	artefact = Artefact(
-		item_id=item.id,
-		label=label,
-		artefact_type=artefact_type,
-		type_overridden=type_overridden,
-		description=description,
-		original_filename=original_filename,
-		storage_path=storage_name,
-		storage_directory=StorageDirectory.UPLOADS,
-		file_size=file_size,
-		md5=md5,
-		sha256=sha256,
-	)
-	db.session.add(artefact)
-	try:
-		db.session.commit()
-	except IntegrityError:
-		# Two concurrent uploads of the same file (same item + sha256) raced
-		# past the application-level duplicate check.  The DB constraint fired;
-		# roll back, clean up the orphaned file, and return the existing record.
-		db.session.rollback()
-		try:
-			current_app.storage.delete(storage_key)
-		except Exception:
-			pass
-		existing = Artefact.query.filter_by(item_id=item.id, sha256=sha256).first()
-		if existing:
-			result = artefact_to_dict(existing)
-			result['duplicate'] = True
-			return jsonify(result), 409
-		raise  # unexpected — sha256 is None or constraint is on a different column
-
-	# Generate slug (unique within this item)
-	artefact.slug = ensure_unique_slug(generate_slug(artefact.label), Artefact, scope_filter={'item_id': item.id})
-	db.session.commit()
-
-	# Parse optional hints (JSON string from form field)
+	# Parse optional hints (JSON string from form field) before creating
+	# anything, so an invalid request leaves no artefact behind.
 	hints = None
 	hints_raw = request.form.get('hints')
 	if hints_raw:
@@ -2128,16 +2080,34 @@ def upload_artefact(item_uuid):
 		except json.JSONDecodeError:
 			return error_response('hints must be valid JSON')
 
-	# Optionally queue analyses
-	queued_analyses = []
 	auto_analyse = request.form.get('auto_analyse', 'true').lower() != 'false'
-	if auto_analyse:
-		from .artefacts import ANALYSIS_MAP
-		queue_analyses_for_artefact(artefact, hints)
-		queued_analyses = [t.value for t in ANALYSIS_MAP.get(artefact_type, [])]
 
-	result = artefact_to_dict(artefact)
-	result['queued_analyses'] = queued_analyses
+	# Duplicate check, artefact + slug + analysis queue (single transaction),
+	# and orphan-file cleanup on failure all happen in the shared pipeline.
+	outcome = ingest_uploaded_artefact(
+		item,
+		label=label,
+		artefact_type=artefact_type,
+		type_overridden=type_overridden,
+		original_filename=original_filename,
+		storage_name=storage_name,
+		file_size=file_size,
+		md5=md5,
+		sha256=sha256,
+		description=request.form.get('description'),
+		hints=hints,
+		queue=QUEUE_FULL if auto_analyse else QUEUE_NONE,
+	)
+	if outcome.duplicate:
+		result = artefact_to_dict(outcome.duplicate)
+		result['duplicate'] = True
+		return jsonify(result), 409
+
+	result = artefact_to_dict(outcome.artefact)
+	result['queued_analyses'] = [
+		t.value for t in outcome.queued_analyses
+		if t != AnalysisType.CHECKSUM_COMPUTE
+	]
 	return jsonify(result), 201
 
 
@@ -2414,68 +2384,37 @@ def chunked_upload_complete(upload_uuid):
 	md5 = md5_hash.hexdigest()
 	sha256 = sha256_hash.hexdigest()
 
-	# Check for duplicate: same item + same SHA-256
-	existing = Artefact.query.filter_by(item_id=item.id, sha256=sha256).first()
-	if existing:
-		# Clean up the uploaded file — it's a duplicate
-		try:
-			current_app.storage.delete(storage_key)
-		except Exception:
-			pass
-		result = artefact_to_dict(existing)
-		result['duplicate'] = True
-		return jsonify(result), 409
-
-	# Create artefact record (identical logic to upload_artefact)
-	artefact = Artefact(
-		item_id=item.id,
-		label=meta['label'],
-		artefact_type=artefact_type,
-		type_overridden=type_overridden,
-		description=meta.get('description'),
-		original_filename=original_filename,
-		storage_path=storage_name,
-		storage_directory=StorageDirectory.UPLOADS,
-		file_size=file_size,
-		md5=md5,
-		sha256=sha256,
-	)
-	db.session.add(artefact)
-	try:
-		db.session.commit()
-	except IntegrityError:
-		# Race: two concurrent chunked uploads of the same file reached the
-		# commit simultaneously.  Roll back, delete the orphaned file, and
-		# return the record that the other request created.
-		db.session.rollback()
-		try:
-			current_app.storage.delete(storage_key)
-		except Exception:
-			pass
-		existing = Artefact.query.filter_by(item_id=item.id, sha256=sha256).first()
-		if existing:
-			result = artefact_to_dict(existing)
-			result['duplicate'] = True
-			return jsonify(result), 409
-		raise
-
-	artefact.slug = ensure_unique_slug(
-		generate_slug(artefact.label), Artefact, scope_filter={'item_id': item.id}
-	)
-	db.session.commit()
-
-	queued_analyses = []
 	auto_analyse = meta.get('auto_analyse', True)
 	if isinstance(auto_analyse, str):
 		auto_analyse = auto_analyse.lower() != 'false'
-	if auto_analyse:
-		from .artefacts import ANALYSIS_MAP
-		hints = meta.get('hints') or None
-		queue_analyses_for_artefact(artefact, hints)
-		queued_analyses = [t.value for t in ANALYSIS_MAP.get(artefact_type, [])]
 
-	result = artefact_to_dict(artefact)
-	result['queued_analyses'] = queued_analyses
+	# Duplicate check, artefact + slug + analysis queue (single transaction),
+	# and orphan-file cleanup on failure all happen in the shared pipeline
+	# (identical behaviour to upload_artefact).
+	outcome = ingest_uploaded_artefact(
+		item,
+		label=meta['label'],
+		artefact_type=artefact_type,
+		type_overridden=type_overridden,
+		original_filename=original_filename,
+		storage_name=storage_name,
+		file_size=file_size,
+		md5=md5,
+		sha256=sha256,
+		description=meta.get('description'),
+		hints=meta.get('hints') or None,
+		queue=QUEUE_FULL if auto_analyse else QUEUE_NONE,
+	)
+	if outcome.duplicate:
+		result = artefact_to_dict(outcome.duplicate)
+		result['duplicate'] = True
+		return jsonify(result), 409
+
+	result = artefact_to_dict(outcome.artefact)
+	result['queued_analyses'] = [
+		t.value for t in outcome.queued_analyses
+		if t != AnalysisType.CHECKSUM_COMPUTE
+	]
 	return jsonify(result), 201
 
 
