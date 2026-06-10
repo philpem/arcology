@@ -47,6 +47,7 @@ from ..database import (
     StorageDirectory,
     Tag,
     User,
+    UserPermission,
 )
 from ..extensions import csrf, db
 from ..services.artefact_types import detect_artefact_type, queue_analyses_for_artefact
@@ -1212,6 +1213,17 @@ def reset_stale_analyses():
     Called by the worker on startup to recover any jobs left in RUNNING state
     by a previous worker crash.  Also callable by operators via the UI.
     """
+    # This re-queues every stale RUNNING job system-wide, including jobs on
+    # private artefacts the caller cannot see.  Restrict to the worker (startup
+    # crash recovery) or a staff+ operator — an ordinary read_write user must
+    # not be able to disrupt the global analysis queue.  Mirrors the staff gate
+    # on the UI route (blueprints/analysis.py reset_stale).
+    if not _is_worker_request():
+        user = getattr(g, 'api_user', None)
+        if user is None or not (
+                getattr(user, 'is_admin', False) or user.has_permission(UserPermission.STAFF)):
+            return error_response('Staff permission required', 403)
+
     timeout_seconds = current_app.config.get('STALE_JOB_TIMEOUT_SECONDS', 3600)
     # started_at is stored as naive UTC
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=timeout_seconds)
