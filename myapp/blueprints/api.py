@@ -1404,6 +1404,25 @@ def reset_stale_analyses():
 @require_auth('read_only')
 def get_output_file(filename):
     """Serve an output file (visualisation, etc.)."""
+    # Output paths follow {item_part}/{artefact_uuid}_{slug}/{file...}.
+    # Enforce artefact visibility so a low-privilege user API key cannot pull
+    # the outputs (visualisations, extracted text, file listings) of a private
+    # artefact just by knowing the path.  The worker authenticates with the
+    # pre-shared key and sees everything via _api_viewer()'s sees_all flag.
+    # Mirrors the web endpoint get_output_file() in blueprints/artefacts.py.
+    path_parts = filename.split('/', 2)
+    if len(path_parts) < 2:
+        return error_response('File not found', 404)
+    uuid_candidate = path_parts[1].split('_', 1)[0]
+    if len(uuid_candidate) != 32:
+        return error_response('File not found', 404)
+    artefact_for_check = Artefact.query.filter_by(uuid=uuid_candidate).first()
+    if artefact_for_check is None:
+        return error_response('File not found', 404)
+    user, sees_all = _api_viewer()
+    if not can_view_artefact(artefact_for_check, user, sees_all=sees_all):
+        return error_response('File not found', 404)
+
     storage = current_app.storage
     key = storage.storage_key('outputs', filename)
 
