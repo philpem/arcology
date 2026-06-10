@@ -472,7 +472,6 @@ def create_item():
     db.session.flush()  # assigns item.id so tag back-references work correctly
     assign_item_tags(item, data.get('tags'))
     recompute_item_privacy(item)
-    db.session.commit()
     item.slug = ensure_unique_slug(generate_slug(item.name), Item)
     db.session.commit()
     return jsonify(item_to_dict(item)), 201
@@ -602,7 +601,7 @@ def add_artefact(item_uuid):
                         owner_id=(api_user.id if api_user is not None else item.owner_id),
                         is_private=bool(data.get('is_private', False)))
     db.session.add(artefact)
-    db.session.commit()
+    db.session.flush()  # assigns artefact.id before slug generation
     artefact.slug = ensure_unique_slug(generate_slug(artefact.label), Artefact, scope_filter={'item_id': item.id})
     db.session.commit()
     return jsonify(artefact_to_dict(artefact)), 201
@@ -1439,7 +1438,7 @@ def produce_artefact(id):
     
     db.session.add(artefact)
     try:
-        db.session.commit()
+        db.session.flush()  # assigns artefact.id before slug generation
     except IntegrityError:
         db.session.rollback()
         # SHA-256 collision: another artefact in this item already has this content.
@@ -1517,7 +1516,7 @@ def produce_artefact(id):
             'queued_analyses': queued_analyses,
         }), 200
 
-    # Generate slug (unique within this item)
+    # Generate slug and commit artefact atomically.
     artefact.slug = ensure_unique_slug(generate_slug(artefact.label), Artefact, scope_filter={'item_id': analysis.artefact.item_id})
     db.session.commit()
 

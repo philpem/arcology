@@ -218,7 +218,7 @@ def create_app(config_name=None):
             return '-'
         size = float(size_bytes)
         for unit in ('B', 'KiB', 'MiB', 'GiB', 'TiB'):
-            if abs(size) < 1024.0 or unit == 'TB':
+            if abs(size) < 1024.0 or unit == 'TiB':
                 return f'{int(size)} {unit}' if unit == 'B' else f'{size:.1f} {unit}'
             size /= 1024.0
     app.jinja_env.filters['format_filesize'] = _format_filesize

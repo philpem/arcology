@@ -109,7 +109,7 @@
     
     <div class="col-md-8">
         {% if analysis.status.value in ('completed', 'failed') and analysis.details %}
-        {% set details = analysis.details | fromjson %}
+        {% set details = details | fromjson %}
 
         {# Display output images (flux visualisations, etc.) #}
         {% set image_outputs = details.outputs | selectattr('type', 'equalto', 'image') | list %}
