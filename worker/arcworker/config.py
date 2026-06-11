@@ -25,6 +25,14 @@ if not WORKER_API_KEY:
 # Subprocess timeout for tool execution and decompression (seconds)
 TOOL_TIMEOUT = int(os.environ.get('TOOL_TIMEOUT', '3600'))
 
+# Per-request timeout for calls to the web API (seconds)
+API_TIMEOUT = int(os.environ.get('API_TIMEOUT', '30'))
+
+# Transparent retries for idempotent (GET) API requests on connection
+# errors and 5xx responses.  Mutating requests are never retried at this
+# layer — duplicate-side-effect protection belongs to the caller/server.
+API_RETRIES = int(os.environ.get('API_RETRIES', '3'))
+
 # How often (in seconds) the worker polls the API to detect mid-job cancellation.
 # Lower values detect cancellation sooner; higher values reduce API load.
 CANCEL_CHECK_INTERVAL = int(os.environ.get('CANCEL_CHECK_INTERVAL', '30'))
