@@ -255,12 +255,13 @@ def output_blocked_for(user, artefact) -> bool:
 
     Analysis outputs (image renders, text conversions, visualisations) are a
     rendering of the artefact's restricted bytes, so they are gated by the same
-    download restrictions.  Returns ``True`` when *artefact* carries a
-    restriction *user* cannot bypass.  Encapsulates the
-    ``can_download_despite_restrictions`` inversion shared by the output-serving
-    routes and the viewer.
+    download restrictions.  Returns ``True`` when *artefact* — or any ancestor
+    it was derived from — carries a restriction *user* cannot bypass.
+    Encapsulates the ``can_download_despite_restrictions`` inversion shared by
+    the output-serving routes and the viewer.
     """
-    return not can_download_despite_restrictions(user, artefact.restrictions, artefact)
+    return not can_download_despite_restrictions(
+        user, artefact.effective_restrictions, artefact)
 
 
 def item_visibility_clause(user, *, sees_all: bool = False):

@@ -88,9 +88,10 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
             <i class="bi bi-unlock-fill"></i> ARMlock Removed
         </span>
         {% endif %}
-        {% if artefact.restrictions %}
+        {% set _restrictions = artefact.effective_restrictions %}
+        {% if _restrictions %}
         <p class="mb-1">
-            {% for r in artefact.restrictions %}
+            {% for r in _restrictions %}
             <span class="badge bg-danger me-1" title="{{ r.reason or '' }}">
                 <i class="bi bi-exclamation-triangle-fill"></i> {{ r.restriction_type.label }}
             </span>
@@ -98,7 +99,7 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
         </p>
         {% endif %}
         {% if artefact_file_restrictions %}
-        {% set _artefact_rtypes = artefact.restrictions | map(attribute='restriction_type') | list %}
+        {% set _artefact_rtypes = _restrictions | map(attribute='restriction_type') | list %}
         {% set _seen = namespace(types=[]) %}
         {% for r in artefact_file_restrictions %}
           {% if r.restriction_type not in _seen.types and r.restriction_type not in _artefact_rtypes %}{% set _seen.types = _seen.types + [r.restriction_type] %}{% endif %}
@@ -119,8 +120,8 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
         {% endif %}
     </div>
     <div>
-        {% if artefact.restrictions %}
-            {% if current_user.is_authenticated and current_user.can_bypass_all_restrictions(artefact.restrictions, artefact.ancestor_ids) %}
+        {% if _restrictions %}
+            {% if current_user.is_authenticated and current_user.can_bypass_all_restrictions(_restrictions, artefact.ancestor_ids) %}
             <a href="{{ artefact_url(artefact, 'download', confirm_bypass='1') }}" class="btn btn-outline-danger"
                onclick="return confirm('This artefact has download restrictions. Are you sure you want to download it?')">
                 <i class="bi bi-download"></i> Download (Override)

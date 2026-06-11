@@ -813,10 +813,12 @@ def download_artefact(uuid):
     artefact = _get_artefact_or_404(uuid, selectinload(Artefact.restrictions))
 
     # Enforce download restrictions, honouring the caller's bypass grants.
+    # Restrictions on a container artefact cascade to artefacts derived from it.
     user, _ = _api_viewer()
-    if not can_download_despite_restrictions(user, artefact.restrictions, artefact):
+    restrictions = artefact.effective_restrictions
+    if not can_download_despite_restrictions(user, restrictions, artefact):
         return error_response('Download restricted', 403,
-                              restrictions=[r.restriction_type.value for r in artefact.restrictions])
+                              restrictions=list({r.restriction_type.value for r in restrictions}))
 
     # Block the original download when its extracted contents are restricted
     # (mirrors the website's _check_artefact_file_restrictions).
@@ -844,10 +846,12 @@ def download_extracted_file(uuid):
     _require_view_artefact(artefact)
 
     # Restriction gate, honouring the caller's bypass grants (same policy as web).
+    # Restrictions on a container artefact cascade to artefacts derived from it.
     user, _ = _api_viewer()
-    if not can_download_despite_restrictions(user, artefact.restrictions, artefact):
+    restrictions = artefact.effective_restrictions
+    if not can_download_despite_restrictions(user, restrictions, artefact):
         return error_response('Download restricted', 403,
-                              restrictions=[r.restriction_type.value for r in artefact.restrictions])
+                              restrictions=list({r.restriction_type.value for r in restrictions}))
 
     # Check file-level restrictions: own, descendants (archive contains restricted file),
     # and ancestors (file is inside a restricted archive).
