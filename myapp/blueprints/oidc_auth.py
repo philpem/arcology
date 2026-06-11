@@ -20,6 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 from ..database import Group, User, UserPermission
 from ..extensions import db
+from ..utils.config import bool_config
 from ..utils.safe_redirect import is_safe_redirect_path
 
 ROUTENAME = __name__.replace('.', '_')
@@ -41,12 +42,12 @@ def init_app(app):
     @app.context_processor
     def _inject_oidc():
         return dict(
-            oidc_enabled=_bool_cfg(app, 'OIDC_ENABLED'),
+            oidc_enabled=bool_config('OIDC_ENABLED', app=app),
             oidc_provider_name=app.config.get('OIDC_PROVIDER_NAME', 'SSO'),
-            local_login_enabled=_bool_cfg(app, 'LOCAL_LOGIN_ENABLED', default=True),
+            local_login_enabled=bool_config('LOCAL_LOGIN_ENABLED', default=True, app=app),
         )
 
-    if not _bool_cfg(app, 'OIDC_ENABLED'):
+    if not bool_config('OIDC_ENABLED', app=app):
         return
 
     discovery_url = app.config.get('OIDC_DISCOVERY_URL', '')
@@ -78,7 +79,7 @@ def init_app(app):
 
 @blueprint.route('/sso/login')
 def sso_login():
-    if not _bool_cfg(current_app, 'OIDC_ENABLED'):
+    if not bool_config('OIDC_ENABLED'):
         abort(404)
     # SECURITY: only persist a same-origin relative path.  A naive
     # startswith('/') check is bypassable via browser normalisation
@@ -97,7 +98,7 @@ def sso_login():
 
 @blueprint.route('/sso/callback')
 def sso_callback():
-    if not _bool_cfg(current_app, 'OIDC_ENABLED'):
+    if not bool_config('OIDC_ENABLED'):
         abort(404)
 
     try:
@@ -123,7 +124,7 @@ def sso_callback():
         return _redirect_clearing_provider_session(token)
 
     role_matched = _sync_permissions(user, userinfo)
-    if not role_matched and _bool_cfg(current_app, 'OIDC_REQUIRE_ROLE'):
+    if not role_matched and bool_config('OIDC_REQUIRE_ROLE'):
         db.session.rollback()
         flash('Your account is not authorised to access this application. '
               'Please contact your system administrator.',
@@ -157,7 +158,7 @@ def sso_callback():
 
     # Cache provider end-session endpoint and ID token only when single logout is
     # enabled — the ID token can be sizeable and is not needed otherwise.
-    if _bool_cfg(current_app, 'OIDC_SINGLE_LOGOUT'):
+    if bool_config('OIDC_SINGLE_LOGOUT'):
         try:
             metadata = _oauth.oidc.load_server_metadata()
             end_session = metadata.get('end_session_endpoint')
@@ -183,7 +184,7 @@ def sso_logout():
     logout_user()
     flash('You have been logged out.', 'info')
 
-    if _bool_cfg(current_app, 'OIDC_SINGLE_LOGOUT') and end_session_endpoint:
+    if bool_config('OIDC_SINGLE_LOGOUT') and end_session_endpoint:
         post_logout_uri = url_for('auth.login', _external=True)
         sep = '&' if '?' in end_session_endpoint else '?'
         target = (
@@ -200,14 +201,6 @@ def sso_logout():
 # =============================================================================
 # Internal helpers
 # =============================================================================
-
-def _bool_cfg(app_or_current_app, key: str, default: bool = False) -> bool:
-    """Read a config key that may be a Python bool or an env-var string."""
-    val = app_or_current_app.config.get(key, default)
-    if isinstance(val, bool):
-        return val
-    return str(val).lower() in ('1', 'true', 'yes')
-
 
 def _get_or_create_user(userinfo: dict) -> tuple['User | None', 'str | None']:
     """Resolve a User record from OIDC userinfo, creating one if needed.
@@ -332,7 +325,7 @@ def _sync_groups(user: User, userinfo: dict) -> None:
 
     Group names starting with 'arcology-' are reserved and skipped.
     """
-    if not _bool_cfg(current_app, 'OIDC_GROUP_SYNC_ENABLED'):
+    if not bool_config('OIDC_GROUP_SYNC_ENABLED'):
         return
 
     claim_name = current_app.config.get('OIDC_GROUP_SYNC_CLAIM', 'groups')
@@ -358,7 +351,7 @@ def _sync_groups(user: User, userinfo: dict) -> None:
         and not name.lower().startswith('arcology-')
     }
 
-    link_local = _bool_cfg(current_app, 'OIDC_GROUP_LINK_LOCAL', default=True)
+    link_local = bool_config('OIDC_GROUP_LINK_LOCAL', default=True)
 
     # Ensure Group records exist for each desired name
     desired_groups = []
@@ -501,7 +494,7 @@ def _redirect_clearing_provider_session(token: dict):
     realm is dedicated to Arcology; in a shared corporate SSO realm, clearing the
     provider session would log the user out of unrelated applications.
     """
-    if not _bool_cfg(current_app, 'OIDC_SINGLE_LOGOUT'):
+    if not bool_config('OIDC_SINGLE_LOGOUT'):
         return redirect(url_for('auth.login'))
     try:
         metadata = _oauth.oidc.load_server_metadata()
@@ -644,7 +637,7 @@ def _background_sync():
 
     session['oidc_sync_after'] = time.time() + interval
 
-    if not role_matched and _bool_cfg(current_app, 'OIDC_REQUIRE_ROLE'):
+    if not role_matched and bool_config('OIDC_REQUIRE_ROLE'):
         current_app.logger.info(
             'OIDC background sync: %r no longer has a permission role, revoking session',
             current_user.username,
