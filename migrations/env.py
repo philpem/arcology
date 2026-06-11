@@ -98,6 +98,11 @@ def run_migrations_online():
         context.configure(
             connection=connection,
             target_metadata=get_metadata(),
+            # transaction_per_migration=True gives each migration its own
+            # BEGIN/COMMIT, which is required for op.get_context().autocommit_block()
+            # to work correctly: it commits the current per-migration transaction
+            # before switching to AUTOCOMMIT for DDL that cannot run in a
+            # transaction (e.g. PostgreSQL ALTER TYPE ... ADD VALUE).
             transaction_per_migration=True,
             **conf_args
         )

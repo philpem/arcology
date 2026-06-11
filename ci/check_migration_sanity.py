@@ -3,8 +3,9 @@
 
 Checks:
 1. Autocommit: Migrations using ALTER TYPE ADD VALUE or RENAME VALUE must
-   set autocommit = True at module level (PostgreSQL cannot run these inside
-   a transaction, and env.py uses transaction_per_migration=True).
+   wrap that DDL in ``with op.get_context().autocommit_block():`` (PostgreSQL
+   cannot run these inside a transaction, and env.py uses
+   transaction_per_migration=True which makes autocommit_block() work correctly).
 
 2. Chain integrity: The down_revision chain must be linear and unbroken
    from the initial migration (down_revision=None) to head.
@@ -30,11 +31,14 @@ MIGRATIONS_DIR = os.path.join(
     'migrations', 'versions'
 )
 
-# Patterns that require autocommit = True
+# Patterns that require autocommit_block()
 NEEDS_AUTOCOMMIT_PATTERNS = [
     re.compile(r'ALTER\s+TYPE\s+\w+\s+ADD\s+VALUE', re.IGNORECASE),
     re.compile(r'ALTER\s+TYPE\s+\w+\s+RENAME\s+VALUE', re.IGNORECASE),
 ]
+
+# Presence of autocommit_block() satisfies the check.
+AUTOCOMMIT_BLOCK_PATTERN = re.compile(r'autocommit_block\s*\(\s*\)')
 
 # Migrations that add enum values MUST have a real downgrade() so orphan rows
 # don't survive a branch switch and cause LookupError at query time.
@@ -86,8 +90,7 @@ def parse_migration(filepath):
         'down_revision': None,
         'header_revision': None,
         'header_down_revision': None,
-        'has_autocommit': False,
-        'autocommit_value': None,
+        'has_autocommit_block': bool(AUTOCOMMIT_BLOCK_PATTERN.search(source)),
         'has_empty_downgrade': False,
         'has_add_value': bool(ADD_VALUE_PATTERN.search(source)),
     }
@@ -102,10 +105,6 @@ def parse_migration(filepath):
                     elif target.id == 'down_revision':
                         if isinstance(node.value, ast.Constant):
                             info['down_revision'] = node.value.value
-                    elif target.id == 'autocommit':
-                        info['has_autocommit'] = True
-                        if isinstance(node.value, ast.Constant):
-                            info['autocommit_value'] = node.value.value
 
         elif isinstance(node, ast.FunctionDef) and node.name == 'downgrade':
             # Check if body is just 'pass' or empty
@@ -126,24 +125,21 @@ def format_migration(migration):
 
 
 def check_autocommit(migrations):
-    """Check that migrations using ALTER TYPE have autocommit = True."""
+    """Check that migrations using ALTER TYPE wrap DDL in autocommit_block()."""
     errors = []
     for m in migrations:
         needs_autocommit = any(
             p.search(m['source']) for p in NEEDS_AUTOCOMMIT_PATTERNS
         )
-        if needs_autocommit and not m['has_autocommit']:
+        if needs_autocommit and not m['has_autocommit_block']:
             errors.append(
                 f"  {m['filename']}: Contains ALTER TYPE ADD/RENAME VALUE "
-                f"but is missing 'autocommit = True' at module level.\n"
+                f"but does not use op.get_context().autocommit_block().\n"
                 f"    PostgreSQL cannot run ALTER TYPE ADD/RENAME VALUE "
                 f"inside a transaction.\n"
-                f"    Add 'autocommit = True' after depends_on."
-            )
-        elif needs_autocommit and m['autocommit_value'] is not True:
-            errors.append(
-                f"  {m['filename']}: Has 'autocommit' but it is not set "
-                f"to True (found: {m['autocommit_value']!r})."
+                f"    Wrap the op.execute() call:\n"
+                f"        with op.get_context().autocommit_block():\n"
+                f"            op.execute(sa.text(\"ALTER TYPE ...\"))"
             )
     return errors
 

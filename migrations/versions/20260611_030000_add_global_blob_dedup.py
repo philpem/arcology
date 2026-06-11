@@ -22,7 +22,7 @@ def _create_blob_table(name, unique_name):
         sa.Column("sha256", sa.String(length=64), nullable=False),
         sa.Column("md5", sa.String(length=32), nullable=True),
         sa.Column("storage_path", sa.String(length=1000), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=True),
+        sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("storage_path", name=f"uq_{name}_storage_path"),
         sa.UniqueConstraint("file_size", "sha256", name=unique_name),
@@ -57,20 +57,21 @@ def upgrade():
         ("UPLOADS", "upload_blobs", "upload_blob_id"),
         ("OUTPUTS", "output_blobs", "output_blob_id"),
     ):
-        # DISTINCT ON picks the row with the smallest id (oldest artefact) as the
-        # canonical blob, so the original upload wins over later re-uploads of the
-        # same content.  MIN(storage_path) would pick alphabetically, which is
-        # arbitrary.  DISTINCT ON is PostgreSQL-specific; this migration only runs
-        # against PostgreSQL (CI tests use db.create_all() and skip migrations).
+        # The row with the smallest id (oldest artefact) per (file_size, sha256)
+        # becomes the canonical blob, so the original upload wins over later
+        # re-uploads of the same content.  MIN(id) per group is portable SQL
+        # (works on both PostgreSQL and SQLite dev databases).
         bind.execute(sa.text(f"""
             INSERT INTO {table} (file_size, sha256, md5, storage_path, created_at)
-            SELECT DISTINCT ON (file_size, sha256)
-                file_size, sha256, md5, storage_path, created_at
+            SELECT file_size, sha256, md5, storage_path, created_at
             FROM artefacts
-            WHERE storage_directory = :directory
-              AND file_size IS NOT NULL
-              AND sha256 IS NOT NULL
-            ORDER BY file_size, sha256, id ASC
+            WHERE id IN (
+                SELECT MIN(id) FROM artefacts
+                WHERE storage_directory = :directory
+                  AND file_size IS NOT NULL
+                  AND sha256 IS NOT NULL
+                GROUP BY file_size, sha256
+            )
         """), {"directory": directory})
         bind.execute(sa.text(f"""
             UPDATE artefacts

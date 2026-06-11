@@ -17,17 +17,20 @@ down_revision = '00006a21fc7c'
 branch_labels = None
 depends_on = None
 
-# ALTER TYPE ... ADD VALUE cannot run inside a transaction in PostgreSQL.
-autocommit = True
-
 
 def upgrade():
     bind = op.get_bind()
     if bind.dialect.name == 'postgresql':
-        op.execute(sa.text("ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'CLEANUP'"))
-    op.alter_column('analyses', 'artefact_id',
-                    existing_type=sa.Integer(),
-                    nullable=True)
+        # ALTER TYPE ADD VALUE cannot run inside a transaction; autocommit_block()
+        # commits the current per-migration transaction, switches to AUTOCOMMIT,
+        # executes the DDL, then restores the original isolation level.
+        with op.get_context().autocommit_block():
+            op.execute(sa.text("ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'CLEANUP'"))
+    # batch mode: SQLite cannot ALTER COLUMN in place (no-op wrapper on PG)
+    with op.batch_alter_table('analyses') as batch:
+        batch.alter_column('artefact_id',
+                           existing_type=sa.Integer(),
+                           nullable=True)
 
 
 def downgrade():
@@ -46,8 +49,9 @@ def downgrade():
         op.execute(sa.text("DELETE FROM analyses WHERE analysis_type = 'CLEANUP'"))
     else:
         op.execute(sa.text("DELETE FROM analyses WHERE analysis_type = 'CLEANUP'"))
-    op.alter_column('analyses', 'artefact_id',
-                    existing_type=sa.Integer(),
-                    nullable=False)
+    with op.batch_alter_table('analyses') as batch:
+        batch.alter_column('artefact_id',
+                           existing_type=sa.Integer(),
+                           nullable=False)
 
 # vim: ts=4 sw=4 et
