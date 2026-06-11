@@ -1,0 +1,53 @@
+{% extends "_base.html" %}
+{% from '_confirm_modal.html' import delete_trigger, delete_confirm_modal %}
+{# Shared list page for hierarchical taxonomies (Platforms, Categories).
+
+   Context supplied by the view:
+     nodes          — root-level taxonomy rows (each with .name/.items/.children)
+     noun           — singular display name, e.g. 'Platform'
+     noun_plural    — plural display name, e.g. 'Platforms'
+     icon           — bootstrap-icons name for the heading, e.g. 'pc-display'
+     preposition    — how items relate to a node: 'on' (platform) / 'in' (category)
+     new_endpoint / edit_endpoint / delete_endpoint — taxonomy blueprint endpoints
+#}
+{% block page_title %}{{ noun_plural }}{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_taxonomy.index') }}">Taxonomy</a></li>
+        <li class="breadcrumb-item active">{{ noun_plural }}</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1><i class="bi bi-{{ icon }}"></i> {{ noun_plural }}</h1>
+    {% if user_can_write %}<a href="{{ url_for(new_endpoint) }}" class="btn btn-primary"><i class="bi bi-plus-lg"></i> New {{ noun }}</a>{% endif %}
+</div>
+
+<div class="card">
+    <div class="list-group list-group-flush" style="--depth-base: 0rem; --depth-step: 1.5rem;">
+        {% for node in nodes recursive %}
+        <div class="list-group-item d-flex justify-content-between depth-indent" style="--depth: {{ loop.depth }};">
+            <div><strong>{{ node.name }}</strong> <span class="badge bg-secondary" title="{{ node.items|length }} item(s) directly {{ preposition }} this {{ noun|lower }}{% if node.children %} &mdash; child {{ noun_plural|lower }} may have additional items{% endif %}">{{ node.items|length }}</span></div>
+            {% if user_can_write %}
+            <div>
+                <a href="{{ url_for(edit_endpoint, id=node.id) }}" class="btn btn-sm btn-outline-primary" aria-label="Edit {{ node.name }}"><i class="bi bi-pencil"></i></a>
+                {% if not node.items and not node.children %}
+                {{ delete_trigger(
+                    url_for(delete_endpoint, id=node.id),
+                    node.name, title='Delete '~noun,
+                    aria_label='Delete '~node.name) }}
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+        {% if node.children %}{{ loop(node.children) }}{% endif %}
+        {% else %}
+        <div class="list-group-item text-muted text-center">No {{ noun_plural|lower }} defined</div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+
+{% block modals %}{{ super() }}{{ delete_confirm_modal(csrf_token()) }}{% endblock %}

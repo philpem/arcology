@@ -286,6 +286,11 @@ def view(id):
         .order_by(HashRescanJob.id.desc())
         .first()
     )
+    # Seed for the status poller (only polled while a rescan is running).
+    pending_rescan = Analysis.query.filter(
+        Analysis.analysis_type == AnalysisType.HASH_RESCAN,
+        Analysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.RUNNING]),
+    ).count()
 
     kf_ids = [kf.id for p in products for kf in p.known_files]
     match_counts = {}
@@ -316,6 +321,7 @@ def view(id):
                            platforms=platforms,
                            RestrictionType=RestrictionType,
                            rescan_job=rescan_job,
+                           pending_rescan=pending_rescan,
                            match_counts=match_counts,
                            product_match_counts=product_match_counts)
 
