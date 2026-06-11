@@ -16,7 +16,6 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-os.environ.setdefault('WORKER_API_KEY', 'test')
 
 import shared.bundle as shared_bundle  # noqa: E402
 from cli.arccli.commands import bulk_import as cli  # noqa: E402
