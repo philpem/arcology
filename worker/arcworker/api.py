@@ -377,7 +377,14 @@ class ArcologyAPI:
             partition_index: Partition index within the parent disc image
 
         Returns:
-            Partition dict if successful, None otherwise
+            Partition dict.
+
+        Raises:
+            RuntimeError: If the partition cannot be created or any file-record
+                batch fails to post.  An extraction analysis must not complete
+                "successfully" with a missing or partial file listing — handlers
+                rely on the @analysis_handler decorator to convert this into a
+                clean, retryable job failure.
         """
         # First create partition
         partition_data = {
@@ -395,8 +402,9 @@ class ArcologyAPI:
         partition_resp = self.post(f"/artefacts/{artefact_uuid}/partitions", partition_data)
 
         if not partition_resp:
-            log.error("Failed to create partition")
-            return None
+            raise RuntimeError(
+                f"Failed to create partition for artefact {artefact_uuid}"
+            )
 
         partition_uuid = partition_resp.get('uuid')
 
@@ -421,6 +429,11 @@ class ArcologyAPI:
 
         Returns:
             Total number of file records submitted.
+
+        Raises:
+            RuntimeError: If any batch fails to post.  A silently dropped batch
+                would leave the partition's listing permanently incomplete while
+                the analysis reports success.
         """
         total = 0
         for i in range(0, len(files), batch_size):
@@ -445,7 +458,12 @@ class ArcologyAPI:
                     'parent_file_id': f.get('parent_file_id'),
                     'extraction_depth': f.get('extraction_depth', 0),
                 })
-            self.post(f"/partitions/{partition_uuid}/files", {'files': file_records})
+            resp = self.post(f"/partitions/{partition_uuid}/files", {'files': file_records})
+            if resp is None:
+                raise RuntimeError(
+                    f"Failed to post file records to partition {partition_uuid} "
+                    f"(batch starting at record {i}, {len(batch)} records)"
+                )
             total += len(batch)
         return total
 
