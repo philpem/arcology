@@ -390,6 +390,28 @@ def extract_tbafs(input_path: Path, output_dir: Path) -> dict[str, Any]:
     )
 
 
+def _find_eocd(fh) -> tuple[bytes, int] | None:
+    """Locate a ZIP End-of-Central-Directory record.
+
+    Scans the trailing 64 KiB (max EOCD + comment size) for the EOCD
+    signature.  Returns ``(eocd_bytes, file_size)`` where ``eocd_bytes``
+    runs from the signature to end-of-file (at least the fixed 22-byte
+    record), or None if no well-formed EOCD is present.
+
+    Uses raw struct parsing — Python's :mod:`zipfile` rejects RISC OS
+    ZIPs with the Acorn 0x4341 extra-field as ``BadZipFile`` even when
+    the EOCD itself is well-formed.
+    """
+    fh.seek(0, 2)
+    file_size = fh.tell()
+    fh.seek(max(0, file_size - 65557))
+    tail = fh.read()
+    eocd_pos = tail.rfind(b'PK\x05\x06')
+    if eocd_pos < 0 or len(tail) - eocd_pos < 22:
+        return None
+    return tail[eocd_pos:], file_size
+
+
 def read_zip_comment(zip_path: Path) -> str | None:
     """Return the ZIP archive-wide comment, or None if absent.
 
@@ -407,18 +429,10 @@ def read_zip_comment(zip_path: Path) -> str | None:
     """
     try:
         with open(zip_path, 'rb') as fh:
-            fh.seek(0, 2)
-            file_size = fh.tell()
-            search_start = max(0, file_size - 65557)
-            fh.seek(search_start)
-            tail = fh.read()
-
-            eocd_pos = tail.rfind(b'PK\x05\x06')
-            if eocd_pos < 0:
+            found = _find_eocd(fh)
+            if found is None:
                 return None
-            eocd = tail[eocd_pos:]
-            if len(eocd) < 22:
-                return None
+            eocd, _file_size = found
 
             comment_len = struct.unpack_from('<H', eocd, 20)[0]
             if comment_len == 0:
@@ -487,15 +501,11 @@ def _read_zip_central_directory(zip_path: Path) -> bytes | None:
     """
     try:
         with open(zip_path, 'rb') as fh:
-            fh.seek(0, 2)
-            file_size = fh.tell()
-            fh.seek(max(0, file_size - 65557))
-            tail = fh.read()
-
-            eocd_pos = tail.rfind(b'PK\x05\x06')
-            if eocd_pos < 0 or len(tail) - eocd_pos < 22:
+            found = _find_eocd(fh)
+            if found is None:
                 return None
-            cd_size, cd_offset = struct.unpack_from('<II', tail, eocd_pos + 12)
+            eocd, file_size = found
+            cd_size, cd_offset = struct.unpack_from('<II', eocd, 12)
             if cd_offset + cd_size > file_size:
                 return None
 

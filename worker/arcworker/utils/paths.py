@@ -13,6 +13,25 @@ from pathlib import Path
 from typing import Any
 
 
+def artefact_output_subdir(artefact: dict[str, Any]) -> str | None:
+    """Relative output subdirectory for an artefact's saved outputs.
+
+    Format: ``{item_uuid}_{item_slug}/{artefact_uuid}_{artefact_slug}``
+    (slug parts omitted when missing).  Returns None when either UUID is
+    unavailable.  This is the string-relative twin of the Path-returning
+    helpers above, used by handlers that pass ``subdir=`` to
+    ``save_output_file()``.
+    """
+    item = artefact.get('item', {})
+    item_uuid = item.get('uuid', '')
+    item_slug = item.get('slug', '')
+    artefact_uuid = artefact.get('uuid', '')
+    artefact_slug = artefact.get('slug', '')
+    item_part = f"{item_uuid}_{item_slug}" if item_slug else item_uuid
+    artefact_part = f"{artefact_uuid}_{artefact_slug}" if artefact_slug else artefact_uuid
+    return f"{item_part}/{artefact_part}" if (item_part and artefact_part) else None
+
+
 def _slug(value: dict[str, Any], default: str = 'untitled') -> str:
     """Return a safe slug fallback for a path segment dict."""
     return value.get('slug') or default
