@@ -218,20 +218,8 @@ def process_product_recognition(self, analysis: dict, artefact: dict, work_dir: 
         self.complete_analysis(analysis_id, summary='No recognition-enabled hash databases configured')
         return
 
-    # Fetch all files in this partition (may be large; page through them)
-    page = 1
-    all_files = []
-    while True:
-        resp = self.api.get(
-            f'/partitions/{partition_uuid}/files?per_page=10000&page={page}&show_known=true'
-        )
-        if not resp:
-            break
-        batch = resp.get('files', [])
-        all_files.extend(batch)
-        if page >= resp.get('pages', 1):
-            break
-        page += 1
+    # Fetch all files in this partition (may be large; paginated internally)
+    all_files = self.api.get_partition_files(partition_uuid, show_known='true')
 
     if not all_files:
         self.complete_analysis(analysis_id, summary='No extracted files in partition')
@@ -385,27 +373,14 @@ def process_riscos_module_parse(self, analysis: dict, artefact: dict, work_dir: 
         return
 
     # Fetch files with RISC OS filetype ffa (Module).
-    # Push the extraction-context filter to the API and paginate.
-    from urllib.parse import urlencode
+    # Push the extraction-context filter to the API.
     base_params = {'show_known': 'true'}
     if path_prefix:
         base_params['path_prefix'] = path_prefix
     else:
         base_params['extraction_depth'] = 0
 
-    all_files = []
-    page = 1
-    while True:
-        resp = self.api.get(
-            f"/partitions/{partition_uuid}/files?{urlencode({**base_params, 'per_page': 10000, 'page': page})}"
-        )
-        if not resp:
-            self.fail_analysis(analysis_id, 'Failed to get partition files')
-            return
-        all_files.extend(resp.get('files', []))
-        if page >= resp.get('pages', 1):
-            break
-        page += 1
+    all_files = self.api.get_partition_files(partition_uuid, **base_params)
 
     module_files = [
         f for f in all_files
