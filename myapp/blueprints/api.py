@@ -2000,6 +2000,41 @@ def upload_artefact(item_uuid):
 _UPLOAD_UUID_RE = re.compile(r'^[0-9a-f]{32}$')
 _CHUNK_STALE_SECONDS = 86400  # purge abandoned chunk dirs after 24 h
 
+# Hard cap on the number of chunks a single session may declare.  This bounds
+# the work/memory of /complete (which builds a per-chunk path list) so a caller
+# cannot trigger memory exhaustion by declaring a huge total_chunks.  At the
+# CLI's 50 MB chunk size this still allows multi-terabyte uploads.
+_MAX_TOTAL_CHUNKS = 100_000
+
+# Default ceiling on the assembled artefact size for chunked uploads (the only
+# path that can exceed the single-request MAX_CONTENT_LENGTH).  Override with the
+# MAX_UPLOAD_SIZE config key / env var.
+_DEFAULT_MAX_UPLOAD_SIZE = 16 * 1024 * 1024 * 1024  # 16 GiB
+
+
+def _max_upload_size() -> int:
+    """Return the configured maximum assembled chunked-upload size, in bytes."""
+    try:
+        return int(current_app.config.get('MAX_UPLOAD_SIZE', _DEFAULT_MAX_UPLOAD_SIZE))
+    except (TypeError, ValueError):
+        return _DEFAULT_MAX_UPLOAD_SIZE
+
+
+def _chunk_session_owner_error(meta):
+    """Return a 403 response if the current caller did not create this session.
+
+    Chunked-upload sessions are bound to their creating user (stored in meta as
+    ``creator_user_id``).  The worker key never creates these sessions, so a
+    session with no recorded creator imposes no extra constraint.
+    """
+    creator_id = meta.get('creator_user_id')
+    if creator_id is None:
+        return None
+    user = getattr(g, 'api_user', None)
+    if user is None or user.id != creator_id:
+        return error_response('Upload session not found', 404)
+    return None
+
 
 def _chunks_base() -> str:
 	"""Return (and create) the base directory for in-progress chunk uploads."""
@@ -2060,6 +2095,21 @@ def chunked_upload_init():
 			raise ValueError
 	except (KeyError, ValueError, TypeError):
 		return error_response('total_chunks must be a positive integer')
+	if total_chunks > _MAX_TOTAL_CHUNKS:
+		return error_response(
+			f'total_chunks exceeds the maximum of {_MAX_TOTAL_CHUNKS}')
+
+	# Reject up front when the client already declares an over-size upload.
+	# The assembled size is re-checked authoritatively in /complete.
+	max_size = _max_upload_size()
+	total_size = data.get('total_size')
+	if total_size is not None:
+		try:
+			if int(total_size) > max_size:
+				return error_response(
+					f'Upload exceeds the maximum size of {max_size} bytes', 413)
+		except (ValueError, TypeError):
+			return error_response('total_size must be an integer')
 
 	item_uuid = data.get('item_uuid', '')
 	if not item_uuid:
@@ -2082,6 +2132,7 @@ def chunked_upload_init():
 	if hints is not None and not isinstance(hints, dict):
 		return error_response('hints must be a JSON object')
 
+	creator = getattr(g, 'api_user', None)
 	meta = {
 		'filename': filename,
 		'total_chunks': total_chunks,
@@ -2092,6 +2143,7 @@ def chunked_upload_init():
 		'description': data.get('description'),
 		'auto_analyse': data.get('auto_analyse', True),
 		'hints': hints,
+		'creator_user_id': creator.id if creator is not None else None,
 		'created_at': datetime.now(timezone.utc).isoformat(),
 	}
 	with open(os.path.join(chunk_dir, 'meta.json'), 'w') as f:
@@ -2118,8 +2170,20 @@ def chunked_upload_chunk(upload_uuid, chunk_index):
 	if not os.path.isdir(chunk_dir):
 		return error_response('Upload session not found', 404)
 
-	if chunk_index < 0:
-		return error_response('chunk_index must be non-negative')
+	try:
+		with open(os.path.join(chunk_dir, 'meta.json')) as f:
+			meta = json.load(f)
+	except (OSError, json.JSONDecodeError):
+		return error_response('Upload session corrupt', 500)
+
+	owner_error = _chunk_session_owner_error(meta)
+	if owner_error:
+		return owner_error
+
+	# chunk_index is a non-negative int (route converter); reject out-of-range
+	# indices so a caller cannot scatter junk chunk files that never assemble.
+	if chunk_index < 0 or chunk_index >= meta['total_chunks']:
+		return error_response('chunk_index out of range', 400)
 
 	chunk_path = os.path.join(chunk_dir, f'{chunk_index:06d}')
 	with open(chunk_path, 'wb') as f:
@@ -2150,6 +2214,10 @@ def chunked_upload_status(upload_uuid):
 			meta = json.load(f)
 	except (OSError, json.JSONDecodeError):
 		return error_response('Upload session corrupt', 500)
+
+	owner_error = _chunk_session_owner_error(meta)
+	if owner_error:
+		return owner_error
 
 	received = sorted(
 		int(name) for name in os.listdir(chunk_dir)
@@ -2189,7 +2257,15 @@ def chunked_upload_complete(upload_uuid):
 	except (OSError, json.JSONDecodeError):
 		return error_response('Upload session corrupt', 500)
 
+	owner_error = _chunk_session_owner_error(meta)
+	if owner_error:
+		return owner_error
+
+	# Defence in depth: reject an over-size total_chunks before materialising the
+	# per-chunk path list, so a tampered/old meta cannot exhaust memory here.
 	total_chunks = meta['total_chunks']
+	if not isinstance(total_chunks, int) or total_chunks < 1 or total_chunks > _MAX_TOTAL_CHUNKS:
+		return error_response('Upload session corrupt', 400)
 	chunk_files = [os.path.join(chunk_dir, f'{i:06d}') for i in range(total_chunks)]
 	missing = [i for i, p in enumerate(chunk_files) if not os.path.exists(p)]
 	if missing:
@@ -2222,6 +2298,8 @@ def chunked_upload_complete(upload_uuid):
 	md5_hash = hashlib.md5()
 	sha256_hash = hashlib.sha256()
 	file_size = 0
+	max_size = _max_upload_size()
+	oversize = False
 
 	try:
 		with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
@@ -2236,6 +2314,19 @@ def chunked_upload_complete(upload_uuid):
 						md5_hash.update(buf)
 						sha256_hash.update(buf)
 						file_size += len(buf)
+						# Authoritative size cap (the declared total_size is only
+						# advisory).  Stop reading rather than spool an unbounded
+						# file to disk.
+						if file_size > max_size:
+							oversize = True
+							break
+				if oversize:
+					break
+
+		if oversize:
+			shutil.rmtree(chunk_dir, ignore_errors=True)
+			return error_response(
+				f'Upload exceeds the maximum size of {max_size} bytes', 413)
 
 		# Push assembled file to storage backend
 		storage_key = current_app.storage.storage_key('uploads', storage_name)

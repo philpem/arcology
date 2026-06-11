@@ -48,7 +48,11 @@ SQLALCHEMY_TRACK_MODIFICATIONS = False
 # =============================================================================
 UPLOAD_FOLDER = "uploads"           # Relative to instance folder, or absolute path
 OUTPUT_FOLDER = "outputs"           # For analysis outputs (visualisations, etc.)
-MAX_CONTENT_LENGTH = 4 * 1024 * 1024 * 1024  # 4GB max upload
+MAX_CONTENT_LENGTH = 4 * 1024 * 1024 * 1024  # 4GB max single-request upload
+# Ceiling on the assembled size of a chunked upload (the CLI's large-file path,
+# which is the only way to exceed MAX_CONTENT_LENGTH). Raise it for very large
+# hard-disk images (e.g. 60-100GB); such images are best uploaded zstd-compressed.
+MAX_UPLOAD_SIZE = 16 * 1024 * 1024 * 1024  # 16GB max assembled chunked upload
 ITEMS_PER_PAGE = 25
 FILES_PER_PAGE = 100
 ANALYSES_SHOWN = 5      # Max completed analyses shown per artefact before "Show All" appears
