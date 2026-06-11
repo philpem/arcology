@@ -51,6 +51,7 @@ FILETYPE_MAP = {
     'ff0': 'TIFF',
 
     # Generic RISC OS data formats
+    'faf': 'HTML',
     'fe1': 'Makefile',
     'fe4': 'DOS',
     'fea': 'Desktop',
