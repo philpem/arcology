@@ -7,11 +7,14 @@ status updates, and artefact registration.
 
 import hashlib
 import shutil
+import threading
 from pathlib import Path
 from urllib.parse import urlencode
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from shared.enums import ArtefactType
-from .config import log
+from .config import API_RETRIES, API_TIMEOUT, log
 from .tools import compute_file_hash
 
 
@@ -35,6 +38,37 @@ class ArcologyAPI:
         self.outputs = output_dir
         self.storage = storage
         self._auth = {'Authorization': f'Bearer {api_key}'} if api_key else {}
+        # requests.Session is not guaranteed thread-safe and the cancellation
+        # monitor thread uses this client concurrently with the job thread,
+        # so each thread gets its own session.
+        self._local = threading.local()
+
+    @property
+    def _session(self) -> requests.Session:
+        """Per-thread Session for connection reuse.
+
+        The worker makes many short requests to the same host, so a Session
+        avoids a TCP/TLS handshake per call.  Transparent retries with
+        backoff are restricted to GET: it is the only method this client
+        uses that is safe to repeat blindly.  Mutating requests (PUT claim,
+        POST queue, PATCH) are not retried here — their duplicate-side-effect
+        handling belongs to the caller and the server's idempotency guards.
+        """
+        session = getattr(self._local, 'session', None)
+        if session is None:
+            session = requests.Session()
+            retry = Retry(
+                total=API_RETRIES,
+                backoff_factor=1,           # 0s, 2s, 4s between attempts
+                status_forcelist=(502, 503, 504),
+                allowed_methods=frozenset({'GET'}),
+                raise_on_status=False,      # let raise_for_status() report 5xx
+            )
+            adapter = HTTPAdapter(max_retries=retry)
+            session.mount('http://', adapter)
+            session.mount('https://', adapter)
+            self._local.session = session
+        return session
 
     def _request(
         self,
@@ -59,12 +93,12 @@ class ArcologyAPI:
 
     def _request_response(self, method: str, endpoint: str, *, data: dict | list | None = None):
         """Perform a worker API request and return the raw response object."""
-        return requests.request(
+        return self._session.request(
             method,
             f"{self.api}{endpoint}",
             json=data,
             headers=self._auth,
-            timeout=30,
+            timeout=API_TIMEOUT,
         )
 
     def get(self, endpoint: str) -> dict | None:
