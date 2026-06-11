@@ -6,46 +6,70 @@ Loads settings from environment variables with sensible defaults.
 
 import logging
 import os
-import sys
 from pathlib import Path
+
+
+def _int_env(name: str, default: str) -> int:
+    """Parse an integer environment variable with an actionable error.
+
+    A bare int() raises ``ValueError: invalid literal ...`` with no hint
+    of which variable was malformed.
+    """
+    raw = os.environ.get(name, default)
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(
+            f"Environment variable {name} must be an integer, got {raw!r}"
+        ) from None
+
+
+def validate_config() -> None:
+    """Validate required settings; called from the worker entry point.
+
+    Kept out of module import so that importing arcworker (e.g. from
+    tests or tools that only want a submodule) does not kill the process
+    when WORKER_API_KEY is unset.
+    """
+    if not WORKER_API_KEY:
+        raise SystemExit("WORKER_API_KEY is not set. Exiting.")
+
 
 # API and directory configuration
 ARCOLOGY_API = os.environ.get('ARCOLOGY_API', 'http://host.docker.internal:5000/api')
 UPLOAD_DIR = Path(os.environ.get('UPLOAD_DIR', '/data/uploads'))
 OUTPUT_DIR = Path(os.environ.get('OUTPUT_DIR', '/data/outputs'))
-MAX_POLL = int(os.environ.get('POLL_INTERVAL', '10'))
+MAX_POLL = _int_env('POLL_INTERVAL', '10')
 LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
 
-# Worker API key for authenticating with the web application
+# Worker API key for authenticating with the web application.
+# Checked by validate_config() at worker startup, not at import time.
 WORKER_API_KEY = os.environ.get('WORKER_API_KEY', '')
-if not WORKER_API_KEY:
-    logging.critical("WORKER_API_KEY is not set. Exiting.")
-    sys.exit(1)
 
 # Subprocess timeout for tool execution and decompression (seconds)
-TOOL_TIMEOUT = int(os.environ.get('TOOL_TIMEOUT', '3600'))
+TOOL_TIMEOUT = _int_env('TOOL_TIMEOUT', '3600')
 
 # Per-request timeout for calls to the web API (seconds)
-API_TIMEOUT = int(os.environ.get('API_TIMEOUT', '30'))
+API_TIMEOUT = _int_env('API_TIMEOUT', '30')
 
 # Transparent retries for idempotent (GET) API requests on connection
 # errors and 5xx responses.  Mutating requests are never retried at this
 # layer — duplicate-side-effect protection belongs to the caller/server.
-API_RETRIES = int(os.environ.get('API_RETRIES', '3'))
+API_RETRIES = _int_env('API_RETRIES', '3')
 
 # How often (in seconds) the worker polls the API to detect mid-job cancellation.
 # Lower values detect cancellation sooner; higher values reduce API load.
-CANCEL_CHECK_INTERVAL = int(os.environ.get('CANCEL_CHECK_INTERVAL', '30'))
+CANCEL_CHECK_INTERVAL = _int_env('CANCEL_CHECK_INTERVAL', '30')
 
 # Archive extraction configuration
-MAX_ARCHIVE_DEPTH = int(os.environ.get('MAX_ARCHIVE_DEPTH', '10'))
+MAX_ARCHIVE_DEPTH = _int_env('MAX_ARCHIVE_DEPTH', '10')
 
 # Maximum size of a decompressed file in bytes (default: 10 GiB).
 # Prevents decompression-bomb inputs from exhausting disk space.
-MAX_DECOMPRESSED_BYTES = int(os.environ.get('MAX_DECOMPRESSED_BYTES', str(10 * 1024 ** 3)))
+MAX_DECOMPRESSED_BYTES = _int_env('MAX_DECOMPRESSED_BYTES', str(10 * 1024 ** 3))
 
 # Mastering detection: number of trailing tracks to scan
-MASTERING_TRACK_SCAN_COUNT = int(os.environ.get('MASTERING_TRACK_SCAN_COUNT', '5'))
+MASTERING_TRACK_SCAN_COUNT = _int_env('MASTERING_TRACK_SCAN_COUNT', '5')
 
 # Job-type filter: comma-separated AnalysisType *names* this worker will accept.
 # e.g. "FLUX_VISUALISATION,FLUX_DECODE"  — empty string (default) accepts all types.
