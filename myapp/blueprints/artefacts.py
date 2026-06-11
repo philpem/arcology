@@ -1659,7 +1659,10 @@ def _render_artefact_view(artefact):
     # Build a set of folder paths that have a recognised product (for directory row badges)
     recognised_folder_paths = {rp.folder_path: rp for rp in recognised_products}
 
-    # Hash databases for the "Add to Hash DB" modal (with products pre-loaded)
+    # Hash databases for the "Add to Hash DB" modal (with products pre-loaded).
+    # hashdb_product_cache is the JSON payload for the modal's product
+    # dropdown: {database_id: [{id, title}, ...]} sorted by title.
+    hashdb_product_cache = {}
     if hashdb_mode:
         from sqlalchemy.orm import joinedload as _jl2
         hash_databases = (
@@ -1668,6 +1671,13 @@ def _render_artefact_view(artefact):
             .order_by(HashDatabase.name)
             .all()
         )
+        hashdb_product_cache = {
+            hdb.id: [
+                {'id': p.id, 'title': p.title}
+                for p in sorted(hdb.known_products, key=lambda p: p.title.lower())
+            ]
+            for hdb in hash_databases
+        }
     else:
         hash_databases = []
 
@@ -1826,6 +1836,7 @@ def _render_artefact_view(artefact):
                            recognised_products=recognised_products,
                            recognised_folder_paths=recognised_folder_paths,
                            hash_databases=hash_databases,
+                           hashdb_product_cache=hashdb_product_cache,
                            file_known_matches=file_known_matches,
                            RestrictionType=RestrictionType,
                            letter_pages=letter_pages,
