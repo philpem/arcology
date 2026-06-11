@@ -66,7 +66,7 @@ def create_app(config_name=None):
                     'OIDC_SINGLE_LOGOUT', 'OIDC_SYNC_INTERVAL', 'OIDC_AUTO_REDIRECT',
                     'PUBLIC_MODE', 'PUBLIC_DOWNLOADS',
                     'JINJA_BYTECODE_CACHE', 'JINJA_BYTECODE_CACHE_DIR', 'JINJA_PREWARM',
-                    'SENTRY_DSN'):
+                    'SENTRY_DSN', 'SESSION_COOKIE_SAMESITE'):
         env_val = os.environ.get(env_key)
         if env_val:
             app.config[env_key] = env_val
@@ -114,6 +114,23 @@ def create_app(config_name=None):
         app.logger.warning("!!! SECRET_KEY not set, left at default, or too short - generating random key for this session")
         app.logger.warning("!!! Sessions will be lost on server restart - set SECRET_KEY in myapp.cfg or as an environment variable")
         app.config['SECRET_KEY'] = secrets.token_urlsafe(32)
+
+    # Session cookie hardening.  HttpOnly and SameSite=Lax close cookie
+    # theft/CSRF vectors.  Secure is enabled by default in production so the
+    # session cookie is never sent over plain HTTP, but disabled under DEBUG so
+    # local HTTP development still works.  Flask pre-populates these keys with
+    # its own defaults (Secure=False, SameSite=None), so setdefault() is a
+    # no-op — assign explicitly while letting an env var / myapp.cfg value win.
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
+    if app.config.get('SESSION_COOKIE_SAMESITE') is None:
+        app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+    # Truthy in config means it was explicitly enabled (Flask's default is
+    # False); otherwise derive the default from DEBUG.  An env var always wins.
+    if not app.config.get('SESSION_COOKIE_SECURE'):
+        app.config['SESSION_COOKIE_SECURE'] = not bool_config('DEBUG', default=False, app=app)
+    _secure_env = os.environ.get('SESSION_COOKIE_SECURE')
+    if _secure_env is not None:
+        app.config['SESSION_COOKIE_SECURE'] = _secure_env.lower() in ('1', 'true', 'yes')
 
     # Connection pool tuning: allow enough connections for Gunicorn workers
     # under concurrent load.  Defaults can be overridden in myapp.cfg or env.

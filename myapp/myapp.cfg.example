@@ -10,6 +10,13 @@ DEBUG_DB_LOG = False
 # Cookie encryption key - this needs to be set uniquely for each installation
 SECRET_KEY = "0123456789ABCDEF"
 
+# Session cookie security. HttpOnly and SameSite=Lax are set automatically.
+# SESSION_COOKIE_SECURE (only send the cookie over HTTPS) defaults to True in
+# production and False when DEBUG is on, so local HTTP development still works.
+# Override any of these if needed (e.g. force Secure off behind a non-TLS proxy):
+#SESSION_COOKIE_SECURE = True
+#SESSION_COOKIE_SAMESITE = "Lax"
+
 # Database connection string
 # Example for SQLite (default)
 #SQLALCHEMY_DATABASE_URI = "sqlite:////var/lib/myapp/arcology.db"
