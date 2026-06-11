@@ -15,7 +15,6 @@ import binascii
 import os
 import sys
 import unittest
-
 import numpy as np
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
