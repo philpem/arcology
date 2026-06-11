@@ -214,8 +214,10 @@ def sanitize_extracted_tree(output_dir: Path) -> int:
                 # Device node, FIFO, socket, etc.
                 entry.unlink()
                 removed += 1
-        except OSError:
-            pass
+        except OSError as e:
+            # Security-motivated removal failed: the unsafe entry stays in
+            # place, so make sure that is visible in the logs.
+            log.warning(f"sanitize_extracted_tree: could not remove {entry}: {e}")
     return removed
 
 

@@ -107,13 +107,14 @@ def _convert_file_to_outputs(
     output_subdir: str | None,
     analysis_uuid: str,
     file_index: int = 0,
-) -> tuple[list[dict] | None, str | None]:
+) -> tuple[list[dict] | None, str | None, list[str]]:
     """
-    Convert a single viewable file and return ``(outputs, error)``.
+    Convert a single viewable file and return ``(outputs, error, warnings)``.
 
-    On success: ``(list_of_output_dicts, None)``.
-    On failure: ``(None, error_message)`` — caller should call
+    On success: ``(list_of_output_dicts, None, warnings)``.
+    On failure: ``(None, error_message, warnings)`` — caller should call
     ``fail_analysis`` (Mode 1) or record the failure and continue (Mode 2).
+    ``warnings`` collects non-fatal conversion warnings in both cases.
 
     ``file_index`` is used to make temporary subdirectory names unique when
     converting multiple files within one analysis run.
@@ -290,11 +291,14 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
     if artefact_type_str in _direct_types:
         input_path = self.get_input_path(artefact, work_dir)
         artefact_type = ArtefactType(artefact_type_str)
-        outputs, _, file_warnings = self._convert_file_to_outputs(
+        outputs, error, file_warnings = self._convert_file_to_outputs(
             input_path, artefact_type, work_dir, output_subdir, analysis_uuid,
         )
         if outputs is None:
-            self.fail_analysis(analysis_id, f'Conversion failed for {artefact_type_str}')
+            self.fail_analysis(
+                analysis_id,
+                f'Conversion failed for {artefact_type_str}: {error or "unknown error"}',
+            )
             return
         self.complete_analysis(
             analysis_id,

@@ -170,6 +170,7 @@ def extract_dos_7z(input_path: Path, output_dir: Path) -> dict:
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    process_output = None
     try:
         cmd = [
             '7z', 'x',
@@ -215,7 +216,7 @@ def extract_dos_7z(input_path: Path, output_dir: Path) -> dict:
         # Ensure process output is logged even when extraction fails
         return exception_result(
             '7z', 'Error extracting from DOS image',
-            process_output=process_output if 'process_output' in locals() else None,
+            process_output=process_output,
         )
 
 
@@ -375,8 +376,10 @@ def enumerate_extracted_files(
             file_entry['md5'] = md5_h.hexdigest()
             file_entry['sha1'] = sha1_h.hexdigest()
             file_entry['sha256'] = sha256_h.hexdigest()
-        except OSError:
-            pass
+        except OSError as e:
+            # The record is still registered, just without hashes — log it so
+            # a transient I/O error is distinguishable from "never hashed".
+            _log.warning(f"Could not hash extracted file {file_path}: {e}")
 
         files.append(file_entry)
 
@@ -593,9 +596,8 @@ def process_inf_sidecars(output_dir: Path) -> dict[str, dict]:
         # The data file has the same path minus the .inf extension.
         data_path = inf_path.with_suffix('')
         if not data_path.exists():
-            # Also try without case sensitivity on the data filename -
-            # the INF might be uppercase while the data file isn't, or
-            # vice versa.  But the primary check is exact match.
+            # No matching data file (exact-case match only) — leave the
+            # orphan INF in place rather than guessing.
             continue
 
         # Parse the INF
@@ -628,12 +630,6 @@ def process_inf_sidecars(output_dir: Path) -> dict[str, dict]:
         new_name = current_name
         if current_stem != bbc_filename and (current_stem == bbc_as_dos or current_name == bbc_as_dos):
             # The on-disk name is the DOS-encoded version; rename to BBC
-            if current_suffix_type is not None:
-                new_name = bbc_filename + ',' + current_suffix_type
-            else:
-                new_name = bbc_filename
-        elif current_stem == bbc_as_dos and current_stem != bbc_filename:
-            # Same case as above but stem matched
             if current_suffix_type is not None:
                 new_name = bbc_filename + ',' + current_suffix_type
             else:
@@ -717,6 +713,7 @@ def convert_fcfs_to_raw(input_path: Path, output_path: Path) -> dict:
     Returns:
         Result dict with success status
     """
+    process_output = None
     try:
         cmd = ['fcfs2raw', '-v', str(input_path), str(output_path)]
         result, process_output = run_tool_with_output(cmd)
@@ -739,7 +736,7 @@ def convert_fcfs_to_raw(input_path: Path, output_path: Path) -> dict:
         # Ensure process output is logged even when conversion fails
         return exception_result(
             'fcfs2raw', 'Error converting FCFS image',
-            process_output=process_output if 'process_output' in locals() else None,
+            process_output=process_output,
         )
 
 # vim: ts=4 sw=4 et
