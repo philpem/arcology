@@ -3,10 +3,6 @@
 {% block page_title %}{{ database.name }}{% endblock %}
 
 {% block content %}
-{% if rescan_job and rescan_job.status.value == 'running' %}
-<meta http-equiv="refresh" content="5">
-{% endif %}
-
 <nav aria-label="breadcrumb" class="mb-3">
     <ol class="breadcrumb">
         <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_hashdb.index') }}">Hash Databases</a></li>
@@ -440,5 +436,18 @@
     <strong>This action cannot be undone.</strong>
 </div>
 {% endcall %}
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+{% if rescan_job and rescan_job.status.value == 'running' %}
+{% from '_polling.html' import analysis_status_poller %}
+{{ analysis_status_poller(
+    url_for('myapp_blueprints_hashdb.status_json'),
+    interval=5000,
+    known_pending=pending_rescan,
+    known_running=0
+) }}
 {% endif %}
 {% endblock %}
