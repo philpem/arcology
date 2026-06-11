@@ -17,7 +17,7 @@ from ..compression import stream_to_file
 from ..config import MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT, log
 from ..exceptions import JobCancelledException
 from ..utils.text import decode_riscos_latin1, fix_riscos_c1_filenames, normalize_extracted_filenames
-from .base import run_tool_with_output, tool_result
+from .base import run_tool, run_tool_with_output, tool_result
 
 
 def _validate_entry_path(name: str, fmt: str) -> None:
@@ -90,10 +90,9 @@ def _check_7z_paths(input_path: Path) -> None:
                     listing timeout is detected.
     """
     try:
-        result = subprocess.run(
-            ['7z', 'l', '-slt', str(input_path)],
-            capture_output=True, timeout=60,
-        )
+        # run_tool (not bare subprocess.run) so the listing honours job
+        # cancellation and shows up in the command debug log.
+        result = run_tool(['7z', 'l', '-slt', str(input_path)], timeout=60)
     except subprocess.TimeoutExpired as e:
         raise ValueError('7z listing timed out — archive rejected') from e
 
@@ -146,10 +145,9 @@ def _check_rar_paths(input_path: Path) -> None:
                     found, or if the listing times out.
     """
     try:
-        result = subprocess.run(
-            ['unrar', 'lt', str(input_path)],
-            capture_output=True, timeout=60,
-        )
+        # run_tool (not bare subprocess.run) so the listing honours job
+        # cancellation and shows up in the command debug log.
+        result = run_tool(['unrar', 'lt', str(input_path)], timeout=60)
     except subprocess.TimeoutExpired as e:
         raise ValueError('unrar listing timed out — archive rejected') from e
 

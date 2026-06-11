@@ -35,7 +35,7 @@ def is_cancelled() -> bool:
     return _cancel_event.is_set()
 
 
-def run_tool(cmd: list[str], timeout: int = None, cwd: str = None) -> subprocess.CompletedProcess:
+def run_tool(cmd: list[str], timeout: int | None = None, cwd: str | None = None) -> subprocess.CompletedProcess:
     """
     Run a tool command with logging.
 
@@ -145,7 +145,7 @@ def get_process_output(result: subprocess.CompletedProcess, cmd: list[str],
     return output
 
 
-def run_tool_with_output(cmd: list[str], timeout: int = None, cwd: str = None) -> tuple[subprocess.CompletedProcess, dict]:
+def run_tool_with_output(cmd: list[str], timeout: int | None = None, cwd: str | None = None) -> tuple[subprocess.CompletedProcess, dict]:
     """
     Run a tool command and return both the result and structured output info.
 
