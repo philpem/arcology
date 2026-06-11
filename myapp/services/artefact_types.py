@@ -1,13 +1,12 @@
 """
-Arcology - Artefact type registry
+Arcology - Artefact analysis scheduling
 
-Centralised definitions consumed by the web blueprints, REST API, worker,
-and CLI commands:
-
-  EXTENSION_MAP   — filename extension → ArtefactType
   ANALYSIS_MAP    — ArtefactType → list of AnalysisType auto-analyses
-  detect_artefact_type()      — extension-based type detection
   queue_analyses_for_artefact() — schedule Analysis rows for an artefact
+
+The extension registry (EXTENSION_MAP, detect_artefact_type) lives in
+``arcology_shared/artefact_types.py`` — the single source of truth shared
+with the worker and CLI — and is re-exported here for existing importers.
 
 Nothing here may import from a Flask blueprint or touch request context.
 current_app and db.session are fine (they are available in any app context,
@@ -15,99 +14,13 @@ including CLI commands and background jobs).
 """
 
 import json
-import os
+from arcology_shared.artefact_types import (  # noqa: F401  (re-exports)
+    EXTENSION_MAP,
+    detect_artefact_type,
+)
 from arcology_shared.enums import AnalysisType, ArtefactType
 from ..database import ANALYSIS_PRIORITY_NORMAL, Analysis, AnalysisStatus, Artefact
 from ..extensions import db
-
-# Extension to ArtefactType mapping
-EXTENSION_MAP = {
-    # Flux-level
-    '.scp': ArtefactType.SCP,
-    '.dfi': ArtefactType.DFI,
-    '.a2r': ArtefactType.A2R,
-
-    # Cooked sector-level floppy or hard disc
-    '.imd': ArtefactType.IMD,   # needs conversion to sectors
-    '.hfe': ArtefactType.HFE,   # needs conversion to sectors
-
-    # Raw sector images
-    '.adf': ArtefactType.RAW_SECTOR,
-    '.img': ArtefactType.RAW_SECTOR,
-    '.ima': ArtefactType.RAW_SECTOR,
-    '.dsk': ArtefactType.RAW_SECTOR,
-
-    # CD/DVD
-    '.iso': ArtefactType.ISO,
-
-    # Hard drive raw images
-    '.dd': ArtefactType.RAW_SECTOR,
-    '.hdf': ArtefactType.RAW_SECTOR,
-
-    # Documents
-    '.pdf': ArtefactType.PDF,
-
-    # Archives
-    '.zip': ArtefactType.ZIP,
-    '.tar.gz': ArtefactType.TARGZ,
-    '.tgz': ArtefactType.TARGZ,
-    '.rar': ArtefactType.RAR,
-    '.arc': ArtefactType.ARC,
-    '.arcfs': ArtefactType.ARC,
-    '.spk': ArtefactType.ARC,
-    '.spark': ArtefactType.ARC,
-    '.b21':   ArtefactType.TBAFS,
-    '.tbafs': ArtefactType.TBAFS,
-    '.b23':   ArtefactType.XFILES,
-
-    # Acorn/RISC OS native viewable formats
-    '.spr':  ArtefactType.ACORN_SPRITE,
-    '.aff':  ArtefactType.ACORN_DRAW,
-    '.draw': ArtefactType.ACORN_DRAW,
-    '.txt':  ArtefactType.ACORN_TEXT,
-
-    # Common raster images (browser-native pass-through or Pillow-converted)
-    '.jpg':  ArtefactType.IMAGE,
-    '.jpeg': ArtefactType.IMAGE,
-    '.png':  ArtefactType.IMAGE,
-    '.gif':  ArtefactType.IMAGE,
-    '.webp': ArtefactType.IMAGE,
-    '.bmp':  ArtefactType.IMAGE,
-    '.tif':  ArtefactType.IMAGE,
-    '.tiff': ArtefactType.IMAGE,
-    '.pcx':  ArtefactType.IMAGE,
-    '.tga':  ArtefactType.IMAGE,
-
-    # Windows vector metafiles (converted to SVG)
-    '.wmf':  ArtefactType.IMAGE,
-    '.emf':  ArtefactType.IMAGE,
-}
-
-
-def detect_artefact_type(filename: str) -> ArtefactType:
-    """Detect artefact type from filename extension."""
-    filename_lower = filename.lower()
-
-    # Check compound extensions first (order matters)
-    if filename_lower.endswith('.dd.zst'):
-        return ArtefactType.DD_ZST
-    if filename_lower.endswith('.dd.gz'):
-        return ArtefactType.DD_GZ
-    if filename_lower.endswith('.dd.bz2'):
-        return ArtefactType.DD_BZ2
-    if filename_lower.endswith('.tar.gz'):
-        return ArtefactType.TARGZ
-
-    # Strip a trailing compression suffix and re-check, so e.g. .dfi.bz2 → .dfi
-    stem = filename_lower
-    for suffix in ('.gz', '.bz2', '.zst'):
-        if stem.endswith(suffix):
-            stem = stem[:-len(suffix)]
-            break
-
-    _, ext = os.path.splitext(stem)
-    return EXTENSION_MAP.get(ext, ArtefactType.UNKNOWN)
-
 
 # Analysis types queued automatically when an artefact of each type is uploaded.
 # CHECKSUM_COMPUTE is always prepended unconditionally; it need not appear here.
@@ -156,6 +69,7 @@ ANALYSIS_MAP = {
     ArtefactType.ZIP: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.TARGZ: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.RAR: [AnalysisType.ARCHIVE_EXTRACT],
+    ArtefactType.SEVENZ: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.ARC: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.TBAFS:  [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.XFILES: [AnalysisType.ARCHIVE_EXTRACT],

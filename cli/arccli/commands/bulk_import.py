@@ -11,7 +11,9 @@ import tempfile
 import zipfile
 from pathlib import Path
 import requests
+from arcology_shared import artefact_types as shared_types
 from arcology_shared.bundle import BUNDLE_MARKER, is_sidecar_name
+from arcology_shared.enums import ArtefactType
 from ..client import ArcologyClient, ArcologyError
 from ..formatting import format_size
 
@@ -22,29 +24,38 @@ except ImportError:  # pragma: no cover - zstandard is a declared dependency
 
 log = logging.getLogger('arco.bulk-import')
 
+# Importable extension sets, derived from the shared registry
+# (arcology_shared/artefact_types.py) so the CLI and server agree on what an
+# extension means.  Viewable types (images, Acorn Sprite/Draw/Text) are
+# deliberately NOT bulk-importable — they would hoover up every screenshot
+# and readme as an artefact; upload those individually with `arco upload`.
+
 # Raw-sector / disk-image extensions.  Each of these may also appear with a
 # trailing compressor suffix (e.g. ``.dd.zst``, ``.img.gz``) — convention is to
 # compress the original image immediately after imaging the drive.
-RAW_SECTOR_EXTENSIONS = {
-    '.adf', '.img', '.ima', '.dsk', '.dd',   # Floppy / generic sector images
-    '.raw', '.bin', '.hdd', '.hdf', '.image',  # Hard-disk / generic raw dumps
-}
+# The extras are extensions too ambiguous for the server's EXTENSION_MAP
+# (a ``.bin`` upload should not blindly schedule PARTITION_DETECT) but safe
+# for bulk-import to treat as raw dumps: the server's FORMAT_IDENTIFY
+# magic-sniff classifies them properly after upload.
+_EXTRA_RAW_EXTENSIONS = {'.raw', '.bin', '.hdd', '.image'}
+RAW_SECTOR_EXTENSIONS = shared_types.RAW_SECTOR_EXTENSIONS | _EXTRA_RAW_EXTENSIONS
 
 # Compressor suffixes recognised on top of a raw-sector extension, in order of
 # preference when several compressed forms of the same image exist.
-COMPRESSORS = ('.zst', '.gz', '.bz2')
+COMPRESSORS = shared_types.COMPRESSOR_SUFFIXES
 
 # Archive containers.  A ``.zip`` / ``.7z`` of a dd image (which may also bundle
 # a ddrescue ``.map`` and a readme) is treated as the archived form of the image.
-ARCHIVE_EXTENSIONS = {'.zip', '.7z', '.rar', '.tgz'}  # '.tar.gz' handled specially
+ARCHIVE_EXTENSIONS = shared_types.ARCHIVE_EXTENSIONS
 
-# Other importable types that are NOT image duplicates (never deduplicated).
-OTHER_IMPORTABLE_EXTENSIONS = {
-    '.scp',            # Flux images
-    '.imd', '.hfe',    # Sector floppy images
-    '.iso',            # CD/DVD images
-    '.pdf',            # Documents
-}
+# Other importable types that are NOT image duplicates (never deduplicated):
+# flux images, cooked sector floppies, CD/DVD images, documents.
+OTHER_IMPORTABLE_EXTENSIONS = frozenset(
+    ext for ext, atype in shared_types.EXTENSION_MAP.items()
+    if atype in (ArtefactType.SCP, ArtefactType.DFI, ArtefactType.A2R,
+                 ArtefactType.IMD, ArtefactType.HFE,
+                 ArtefactType.ISO, ArtefactType.PDF)
+)
 
 # Dedup ranks: archive beats compressed image beats raw image.
 _RANK_ARCHIVE = 3

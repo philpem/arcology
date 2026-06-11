@@ -102,7 +102,7 @@ def _apply_pling_renames(extract_dir: Path, rename_map: dict[str, str]) -> None:
 # Extracted files with these extensions are promoted to derived artefacts
 # so they get their own analysis pipeline (e.g. an ISO inside a ZIP gets
 # FILE_EXTRACTION queued automatically).  Keep in sync with EXTENSION_MAP
-# in myapp/blueprints/artefacts.py.  Bound to AnalysisWorker as a class
+# in arcology_shared/artefact_types.py.  Bound to AnalysisWorker as a class
 # attribute so handler bodies can reference self._PROMOTABLE_EXTENSIONS.
 _PROMOTABLE_EXTENSIONS = {
     '.scp': ArtefactType.SCP,

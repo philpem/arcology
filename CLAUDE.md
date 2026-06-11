@@ -371,7 +371,7 @@ Python `enum.Enum` class in this project.
 ### Adding a new artefact type
 
 1. Add to `ArtefactType` enum in `arcology_shared/enums.py`
-2. Add extension mapping in `EXTENSION_MAP` in `myapp/services/artefact_types.py`
+2. Add extension mapping in `EXTENSION_MAP` in `arcology_shared/artefact_types.py`
 3. Add entries to `ANALYSIS_MAP` for auto-queued analyses
 
 ### Adding a new flux format that converts to SCP
@@ -658,7 +658,8 @@ Upload triggers auto-analysis based on `ANALYSIS_MAP` -> worker claims job atomi
 | `arcology_shared/storage.py` | Storage backend abstraction (`LocalStorage` and `S3Storage`); selected via `STORAGE_BACKEND` env var |
 | `myapp/database.py` | All SQLAlchemy models (web enums re-exported from `myapp/enums.py`) |
 | `myapp/enums.py` | Web-specific enums (`AnalysisStatus`, `FilesystemType`, `RestrictionType`, `UserPermission`, …) |
-| `myapp/services/artefact_types.py` | `EXTENSION_MAP` (type detection) and `ANALYSIS_MAP` (auto-analysis rules) |
+| `arcology_shared/artefact_types.py` | `EXTENSION_MAP` (type detection) — single source of truth for web, worker, and CLI |
+| `myapp/services/artefact_types.py` | `ANALYSIS_MAP` (auto-analysis rules) and analysis scheduling |
 | `myapp/visibility.py` | Access-control helpers (`can_view_*`, `*_visibility_clause`, share/restriction gates) |
 | `myapp/blueprints/search.py` | Global search: `parse_query()`, `_run_search()`, prefix query syntax |
 | `myapp/blueprints/api.py` | REST API consumed by workers and CLI |

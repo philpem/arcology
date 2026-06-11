@@ -39,6 +39,7 @@ class ArtefactType(enum.Enum):
     ZIP        = "zip"
     TARGZ      = "tar_gz"
     RAR        = "rar"
+    SEVENZ     = "7z"                # 7-Zip archive
     ARC        = "arc"               # ArcFS / Spark (RISC OS archive)
     TBAFS      = "tbafs"             # TBAFS archive (RISC OS filetype &B21)
     XFILES     = "xfiles"            # X-Files archive (RISC OS filetype &B23)
