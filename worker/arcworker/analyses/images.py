@@ -23,7 +23,7 @@ from ..tools import (
     parse_acorn_filename,
 )
 from ..utils.paths import artefact_output_subdir
-from ._common import analysis_handler
+from ._common import analysis_handler, resolve_extraction_file
 
 # Per-file timeout (seconds) for pure-Python conversion calls (spritefile,
 # DrawFileRender, PIL).  These libraries have no internal timeout; a
@@ -356,25 +356,11 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
     for file_data, viewable_type in viewable_files:
         db_path = file_data['path']
 
-        # Strip the archive path prefix to get the on-disk relative path
-        if path_prefix and db_path.startswith(path_prefix + '/'):
-            disk_path = db_path[len(path_prefix) + 1:]
-        else:
-            disk_path = db_path
-
-        file_path = self._resolve_single_extraction_file(
-            extraction_path, disk_path, work_dir,
+        file_path, _disk_path = resolve_extraction_file(
+            self, extraction_path, db_path, work_dir,
+            path_prefix=path_prefix,
             risc_os_filetype=file_data.get('risc_os_filetype') or None,
         )
-        if file_path is None and disk_path != db_path:
-            # Fallback: the archive may contain a top-level directory
-            # whose name matches the archive filename (common in RISC OS).
-            # In that case the on-disk path retains the prefix, so try
-            # the full DB path without stripping.
-            file_path = self._resolve_single_extraction_file(
-                extraction_path, db_path, work_dir,
-                risc_os_filetype=file_data.get('risc_os_filetype') or None,
-            )
         if file_path is None:
             log.warning(f"Viewable file not found: {db_path}")
             continue

@@ -36,7 +36,7 @@ from ..tools import (
 )
 from ..tools.extraction import _parse_dim_report, convert_fcfs_to_raw
 from ..tools.iso9660 import parse_iso9660_pvd
-from ._common import analysis_handler
+from ._common import analysis_handler, find_extraction_path, resolve_extraction_file
 
 
 def _apply_pling_renames(extract_dir: Path, rename_map: dict[str, str]) -> None:
@@ -1090,47 +1090,20 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
     # Fall back to searching analyses only for jobs created before this fix.
     extraction_path = hinted_extraction_path
     if not extraction_path:
-        artefact_uuid = artefact.get('uuid')
-        analyses_resp = self.api.get(f"/artefacts/{artefact_uuid}/analysis")
-        # Prefer file_extraction (always the disc-level extraction root);
-        # only fall through to archive_extract entries if there is no
-        # file_extraction with an output_path.
-        file_extraction_path = None
-        archive_extract_path = None
-        for a in analyses_resp.get('analyses', []):
-            atype = a.get('analysis_type')
-            opath = a.get('output_path')
-            if not opath:
-                continue
-            if atype == 'file_extraction' and not file_extraction_path:
-                file_extraction_path = opath
-            elif atype == 'archive_extract' and not archive_extract_path:
-                archive_extract_path = opath
-        extraction_path = file_extraction_path or archive_extract_path
+        extraction_path = find_extraction_path(self, artefact.get('uuid'))
 
     if not extraction_path:
         self.fail_analysis(analysis_id, 'Could not determine extraction path for files')
         return
 
-    # Construct full path to archive file.
-    # For nested archives, the DB path includes parent archive prefixes
-    # (e.g. "OuterArchive/InnerArchive.zip") but on disk the file is
-    # relative to the extraction directory without those prefixes.
-    # Strip the path_prefix to get the on-disk relative path.
+    # Construct full path to archive file.  Downloads only the single file
+    # needed — not the entire extraction tree.  In S3 mode this avoids
+    # downloading thousands of files just to read one archive.
     db_path = target_file['path']
-    if path_prefix and db_path.startswith(path_prefix + '/'):
-        disk_relative_path = db_path[len(path_prefix) + 1:]
-    else:
-        disk_relative_path = db_path
-
-    risc_os_filetype = target_file.get('risc_os_filetype')
-
-    # Download only the single file needed — not the entire extraction
-    # tree.  In S3 mode this avoids downloading thousands of files just
-    # to read one archive.
-    archive_path = self._resolve_single_extraction_file(
-        extraction_path, disk_relative_path, work_dir,
-        risc_os_filetype=risc_os_filetype,
+    archive_path, disk_relative_path = resolve_extraction_file(
+        self, extraction_path, db_path, work_dir,
+        path_prefix=path_prefix,
+        risc_os_filetype=target_file.get('risc_os_filetype'),
     )
     if not archive_path:
         self.fail_analysis(

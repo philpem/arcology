@@ -22,7 +22,7 @@ from ..tools import (
 )
 from ..tools.extraction import convert_fcfs_to_raw
 from ..tools.iso9660 import parse_iso9660_pvd
-from ._common import analysis_handler
+from ._common import analysis_handler, find_extraction_path, resolve_extraction_file
 
 
 @analysis_handler("checksum computation", AnalysisType.CHECKSUM_COMPUTE)
@@ -396,14 +396,9 @@ def process_riscos_module_parse(self, analysis: dict, artefact: dict, work_dir: 
         )
         return
 
-    # Determine extraction path (same logic as ARCHIVE_EXTRACT)
+    # Determine extraction path (same fallback logic as ARCHIVE_EXTRACT)
     if not extraction_path:
-        artefact_uuid = artefact.get('uuid')
-        analyses_resp = self.api.get(f"/artefacts/{artefact_uuid}/analysis")
-        for a in analyses_resp.get('analyses', []):
-            if a.get('analysis_type') == 'file_extraction' and a.get('output_path'):
-                extraction_path = a['output_path']
-                break
+        extraction_path = find_extraction_path(self, artefact.get('uuid'))
 
     if not extraction_path:
         self.fail_analysis(analysis_id, 'Could not determine extraction path')
@@ -416,26 +411,11 @@ def process_riscos_module_parse(self, analysis: dict, artefact: dict, work_dir: 
         db_path = file_data['path']
         risc_os_filetype = file_data.get('risc_os_filetype', '')
 
-        # Strip the archive path prefix to get the path relative to
-        # extract_dir.  DB paths for archive-extracted files include the
-        # archive's own display path as a prefix (e.g.
-        # "z80Em/!Z80Em/Resources/AYSound") but on disk the file is at
-        # "{extract_dir}/!Z80Em/Resources/AYSound".
-        if path_prefix and db_path.startswith(path_prefix + '/'):
-            disk_path = db_path[len(path_prefix) + 1:]
-        else:
-            disk_path = db_path
-
-        file_path = self._resolve_single_extraction_file(
-            extraction_path, disk_path, work_dir,
+        file_path, _disk_path = resolve_extraction_file(
+            self, extraction_path, db_path, work_dir,
+            path_prefix=path_prefix,
             risc_os_filetype=risc_os_filetype or None,
         )
-        if file_path is None and disk_path != db_path:
-            # Fallback: archive contains top-level dir matching archive name
-            file_path = self._resolve_single_extraction_file(
-                extraction_path, db_path, work_dir,
-                risc_os_filetype=risc_os_filetype or None,
-            )
 
         if file_path is None:
             log.warning(f"Module file not found on disk: {db_path}")
