@@ -100,8 +100,10 @@ def reanalyse(analysis_uuid, item_uuid, tag_name, platform_name, category_name,
                 pass
 
         # Delete storage files for all produced artefacts before DB cleanup.
+        deleting_ids: set = set(all_produced_ids)
+        processed_blobs: set = set()
         for pa in produced_direct:
-            delete_artefact_files(pa)
+            delete_artefact_files(pa, deleting_ids=deleting_ids, processed_blobs=processed_blobs)
 
         if all_produced_ids:
             # Null FK back-references before deleting analyses on produced artefacts.

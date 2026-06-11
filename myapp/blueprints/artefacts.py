@@ -2170,9 +2170,6 @@ def upload(item_id):
             queue=QUEUE_FULL if form.auto_analyse.data else QUEUE_CHECKSUM_ONLY,
             priority=web_priority,
         )
-        if outcome.duplicate:
-            flash(f'Duplicate: a file with identical content already exists as "{outcome.duplicate.label}".', 'warning')
-            return redirect(url_for(f'{ROUTENAME}.upload', item_id=item.url_id))
         artefact = outcome.artefact
 
         if form.auto_analyse.data:

@@ -281,13 +281,16 @@ def reset_artefact_for_reanalysis(artefact: Artefact, commit: bool = True):
     """
     cleanup = _collect_cleanup_paths_for_artefact(artefact, 'reset')
 
+    # Collect all derived artefact IDs first so blob ref-counting is accurate
+    # when sibling artefacts share the same blob object.
+    all_derived_ids = get_all_derived_artefact_ids(artefact)
+
     # Delete storage files for all derived artefacts (recursively).
     # Must happen before the DB delete so we can still walk the ORM tree.
+    deleting_ids: set = set(all_derived_ids)
+    processed_blobs: set = set()
     for derived in artefact.derived_artefacts:
-        delete_artefact_files(derived)
-
-    # Collect all derived artefact IDs (including nested) for bulk deletion.
-    all_derived_ids = get_all_derived_artefact_ids(artefact)
+        delete_artefact_files(derived, deleting_ids=deleting_ids, processed_blobs=processed_blobs)
 
     # Collect all artefact IDs to clean (derived + root) for bulk operations.
     all_ids = all_derived_ids + [artefact.id]

@@ -310,8 +310,8 @@ class TestBlobDedup(unittest.TestCase):
             self.assertTrue(self.app.storage.exists("uploads/canonical.img"))
 
     def test_blob_object_is_deleted_only_after_last_reference(self):
-        from myapp.services.artefact_lifecycle import delete_artefact_files as _delete_artefact_files
         from myapp.database import Artefact, Item, Platform, StorageDirectory, UploadBlob
+        from myapp.services.artefact_lifecycle import delete_artefact_files as _delete_artefact_files
         from myapp.utils.blobs import assign_blob
         from shared.enums import ArtefactType
 
@@ -356,6 +356,67 @@ class TestBlobDedup(unittest.TestCase):
             _delete_artefact_files(remaining)
             self.db.session.delete(remaining)
             self.db.session.commit()
+            self.assertFalse(self.app.storage.exists(f"uploads/{canonical}"))
+            self.assertEqual(UploadBlob.query.count(), 0)
+
+
+    def test_shared_blob_deleted_when_all_referencing_artefacts_deleted_in_batch(self):
+        """Batch deletion of all artefacts sharing a blob correctly removes the blob.
+
+        Regression for the sibling blob leak: without a shared deleting_ids set,
+        each delete_artefact_files call saw the other sibling as an external
+        reference and neither call deleted the blob or the physical file.
+        """
+        from myapp.database import Artefact, Item, Platform, StorageDirectory, UploadBlob
+        from myapp.services.artefact_lifecycle import delete_artefact_files as _delete_artefact_files
+        from myapp.utils.blobs import assign_blob
+        from shared.enums import ArtefactType
+
+        payload = b"batch deletion content"
+        sha256 = hashlib.sha256(payload).hexdigest()
+        canonical = "batch-canonical.img"
+        with self.app.app_context():
+            source = os.path.join(self.tmpdir, canonical)
+            with open(source, "wb") as stream:
+                stream.write(payload)
+            self.app.storage.put(f"uploads/{canonical}", source)
+
+            platform = Platform(name="Batch deletion test")
+            item = Item(name="Batch deletion item", platform=platform)
+            artefacts = []
+            for index in range(2):
+                artefact = Artefact(
+                    item=item,
+                    label=f"Batch {index}",
+                    artefact_type=ArtefactType.RAW_SECTOR,
+                    original_filename=f"batch-{index}.img",
+                    storage_path=f"batch-{index}.img",
+                    storage_directory=StorageDirectory.UPLOADS,
+                )
+                self.db.session.add(artefact)
+                assign_blob(
+                    artefact, StorageDirectory.UPLOADS, canonical,
+                    len(payload), sha256,
+                    logical_storage_path=f"batch-{index}.img",
+                )
+                artefacts.append(artefact)
+            self.db.session.add_all([platform, item])
+            self.db.session.commit()
+
+            self.assertEqual(artefacts[0].upload_blob_id, artefacts[1].upload_blob_id)
+
+            # Delete both together using the shared-set pattern that
+            # reset_artefact_for_reanalysis and reanalyse CLI now use.
+            deleting_ids = {a.id for a in artefacts}
+            processed_blobs: set = set()
+            for artefact in artefacts:
+                _delete_artefact_files(
+                    artefact, deleting_ids=deleting_ids, processed_blobs=processed_blobs
+                )
+            for artefact in artefacts:
+                self.db.session.delete(artefact)
+            self.db.session.commit()
+
             self.assertFalse(self.app.storage.exists(f"uploads/{canonical}"))
             self.assertEqual(UploadBlob.query.count(), 0)
 

@@ -1971,11 +1971,6 @@ def upload_artefact(item_uuid):
 		hints=hints,
 		queue=QUEUE_FULL if auto_analyse else QUEUE_NONE,
 	)
-	if outcome.duplicate:
-		result = artefact_to_dict(outcome.duplicate)
-		result['duplicate'] = True
-		return jsonify(result), 409
-
 	result = artefact_to_dict(outcome.artefact)
 	result['queued_analyses'] = [
 		t.value for t in outcome.queued_analyses
@@ -2370,11 +2365,6 @@ def chunked_upload_complete(upload_uuid):
 		hints=meta.get('hints') or None,
 		queue=QUEUE_FULL if auto_analyse else QUEUE_NONE,
 	)
-	if outcome.duplicate:
-		result = artefact_to_dict(outcome.duplicate)
-		result['duplicate'] = True
-		return jsonify(result), 409
-
 	result = artefact_to_dict(outcome.artefact)
 	result['queued_analyses'] = [
 		t.value for t in outcome.queued_analyses

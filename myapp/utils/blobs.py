@@ -99,7 +99,8 @@ def assign_blob(
         for linked_artefact in list(current_blob.artefacts):
             linked_artefact.file_size = file_size
             linked_artefact.sha256 = normalised_sha256
-            linked_artefact.md5 = normalised_md5
+            if normalised_md5:
+                linked_artefact.md5 = normalised_md5
             if storage_directory == StorageDirectory.UPLOADS:
                 linked_artefact.upload_blob = blob
             else:
@@ -112,11 +113,13 @@ def assign_blob(
         # the shared blob also keeps every reference to those bytes consistent.
         current_blob.file_size = file_size
         current_blob.sha256 = normalised_sha256
-        current_blob.md5 = normalised_md5
+        if normalised_md5:
+            current_blob.md5 = normalised_md5
         for linked_artefact in current_blob.artefacts:
             linked_artefact.file_size = file_size
             linked_artefact.sha256 = normalised_sha256
-            linked_artefact.md5 = normalised_md5
+            if normalised_md5:
+                linked_artefact.md5 = normalised_md5
         blob = current_blob
     elif blob is None:
         blob, created = get_or_create_blob(
