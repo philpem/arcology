@@ -37,14 +37,14 @@ def print_table(headers: list[str], rows: list[list[str]], file=sys.stdout):
 
 
 def format_size(size_bytes):
-	"""Format file size in human-readable form."""
+	"""Format a byte count in human-readable binary units (e.g. '12.3 GiB')."""
 	if size_bytes is None:
 		return '-'
-	for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
+	for unit in ('B', 'KiB', 'MiB', 'GiB', 'TiB'):
 		if abs(size_bytes) < 1024:
 			return f"{size_bytes:.1f} {unit}" if unit != 'B' else f"{size_bytes} {unit}"
 		size_bytes /= 1024
-	return f"{size_bytes:.1f} PB"
+	return f"{size_bytes:.1f} PiB"
 
 
 def truncate(s: str, maxlen: int = 40) -> str:

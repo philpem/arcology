@@ -22,12 +22,20 @@ def cmd_hashdb_list(client: ArcologyClient, args):
         print('No hash databases found.')
         return
 
-    print(f'{"ID":>4}  {"Name":<40}  {"Files":>6}  {"Recognition":<12}  Version')
-    print('-' * 80)
-    for db in databases:
-        recognition = 'enabled' if db.get('enable_product_recognition') else '-'
-        print(f'{db["id"]:>4}  {db["name"]:<40}  {db.get("file_count", 0):>6}  '
-              f'{recognition:<12}  {db.get("version") or ""}')
+    from ..formatting import print_table
+    print_table(
+        ['ID', 'Name', 'Files', 'Recognition', 'Version'],
+        [
+            [
+                db['id'],
+                db['name'],
+                db.get('file_count', 0),
+                'enabled' if db.get('enable_product_recognition') else '-',
+                db.get('version') or '',
+            ]
+            for db in databases
+        ],
+    )
 
 
 def cmd_hashdb_export(client: ArcologyClient, args):

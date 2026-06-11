@@ -1,7 +1,7 @@
 """Item management commands: list, create, view, update, delete."""
 
 import sys
-from ..formatting import print_json, print_table, truncate
+from ..formatting import format_size, print_json, print_table, truncate
 
 
 def cmd_items_list(client, args):
@@ -117,7 +117,6 @@ def cmd_items_view(client, args):
 		for a in artefacts:
 			size = a.get('file_size', '')
 			if isinstance(size, int):
-				from ..formatting import format_size
 				size = format_size(size)
 			print(f"    {a['uuid'][:12]}  {a['label']}  [{a['artefact_type']}]  {size}")
 

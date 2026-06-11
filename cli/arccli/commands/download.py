@@ -2,6 +2,7 @@
 
 import os
 import sys
+from ..formatting import format_size
 
 
 def cmd_download(client, args):
@@ -23,7 +24,6 @@ def cmd_download(client, args):
 	print(f"Downloading {original_name}...", end=' ', flush=True)
 	client.download_artefact(uuid, output_path)
 	size = os.path.getsize(output_path)
-	from ..formatting import format_size
 	print(f"done ({format_size(size)})")
 	print(f"  Saved to: {output_path}")
 

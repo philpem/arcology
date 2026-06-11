@@ -153,6 +153,25 @@ def cmd_debug_tree(client, args):
 	_print_tree_node(data['artefact'], indent=0)
 
 
+def _status_icon(analysis) -> str:
+	"""Single-character marker for an analysis status line."""
+	status = analysis['status']
+	if status == 'completed' and analysis['success'] is not False:
+		return '+'
+	if status == 'failed':
+		return 'X'
+	if status in ('pending', 'running'):
+		return '~'
+	return '?'
+
+
+def _error_suffix(analysis) -> str:
+	"""Quoted, truncated error message for an analysis line, or ''."""
+	if analysis['error_message']:
+		return f'  "{truncate(analysis["error_message"], 60)}"'
+	return ''
+
+
 def _print_tree_node(artefact, indent):
 	"""Recursively print a derivation tree node."""
 	prefix = '  ' * indent
@@ -162,18 +181,8 @@ def _print_tree_node(artefact, indent):
 		status = analysis['status']
 		tool = _format_tool(analysis)
 
-		if status == 'completed' and analysis['success'] is not False:
-			icon = '+'
-		elif status == 'failed':
-			icon = 'X'
-		elif status in ('pending', 'running'):
-			icon = '~'
-		else:
-			icon = '?'
-
-		error_suffix = ''
-		if analysis['error_message']:
-			error_suffix = f'  "{truncate(analysis["error_message"], 60)}"'
+		icon = _status_icon(analysis)
+		error_suffix = _error_suffix(analysis)
 
 		print(f"{prefix}  {icon} {analysis['analysis_type']}  {status}  {tool}{error_suffix}")
 
@@ -220,17 +229,8 @@ def _print_processing_node(node, indent):
 def _print_processing_analysis(analysis, prefix):
 	"""Print a single analysis line."""
 	status = analysis['status']
-	if status == 'completed' and analysis['success'] is not False:
-		icon = '+'
-	elif status == 'failed':
-		icon = 'X'
-	elif status in ('pending', 'running'):
-		icon = '~'
-	else:
-		icon = '?'
-	error_suffix = ''
-	if analysis['error_message']:
-		error_suffix = f'  "{truncate(analysis["error_message"], 60)}"'
+	icon = _status_icon(analysis)
+	error_suffix = _error_suffix(analysis)
 	print(f"{prefix}{icon} {analysis['analysis_type']}  {status}{error_suffix}")
 
 
