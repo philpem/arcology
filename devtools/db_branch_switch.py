@@ -118,6 +118,24 @@ def main():
     target_arg = target_rev if target_rev else 'base'
 
     print(f"\nDowngrade target: {target_arg}")
+
+    if target_arg == 'base':
+        # 'base' means the new-on-this-branch chain starts from scratch
+        # (down_revision=None).  This most commonly occurs when switching
+        # across a migration-squash boundary: the squash replaced many
+        # individual revisions with a single consolidated migration whose
+        # down_revision is None.  If your DB is already stamped at a
+        # revision that exists on the target branch, you may NOT need to
+        # downgrade at all.
+        print()
+        print("WARNING: downgrading to 'base' will DROP the entire schema.")
+        print("  Check your current revision before running this command:")
+        print("    flask db current")
+        print("  If the reported revision ID appears in the target branch's")
+        print("  migration chain, no downgrade is needed — just switch branches")
+        print("  and run 'flask db upgrade' as usual.")
+        print()
+
     print("\nRun ONE of the following before switching branches:")
     print("\n  Local venv:")
     print(f"    flask db downgrade {target_arg}")

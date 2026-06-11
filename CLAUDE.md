@@ -402,11 +402,11 @@ minimal, self-contained example of every step below.
    `YYYYMMDD_HHMM_add_newtype_artefact_type.py`, revision ID from
    `python3 -c "import time; print(hex(int(time.time()))[2:].zfill(12))"`):
    ```python
-   autocommit = True
    def upgrade():
        bind = op.get_bind()
        if bind.dialect.name == 'postgresql':
-           op.execute(sa.text("ALTER TYPE artefacttype ADD VALUE IF NOT EXISTS 'NEWTYPE'"))
+           with op.get_context().autocommit_block():
+               op.execute(sa.text("ALTER TYPE artefacttype ADD VALUE IF NOT EXISTS 'NEWTYPE'"))
    ```
    `down_revision` should point at the current head.
 
@@ -440,19 +440,24 @@ minimal, self-contained example of every step below.
 
 `ALTER TYPE ... ADD VALUE` **cannot run inside a transaction** in PostgreSQL.
 
-`env.py` uses `transaction_per_migration=True`, so each migration runs in its
-own transaction. Migrations that need non-transactional DDL (like enum value
-additions) can opt out by setting `autocommit = True` at module level:
+`env.py` uses `transaction_per_migration=True` so each migration runs in its
+own transaction. For DDL that cannot run in a transaction, wrap it in Alembic's
+`op.get_context().autocommit_block()`:
 
 ```python
-# At module level, after depends_on:
-autocommit = True
-
 def upgrade():
     bind = op.get_bind()
     if bind.dialect.name == 'postgresql':
-        op.execute(sa.text("ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'NEW_TYPE_NAME'"))
+        with op.get_context().autocommit_block():
+            op.execute(sa.text("ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'NEW_TYPE_NAME'"))
+    # Any remaining transactional DDL goes here (runs in a fresh transaction)
 ```
+
+`autocommit_block()` commits the current per-migration transaction, executes
+the block under `AUTOCOMMIT` isolation, then restores the original isolation
+level and starts a new transaction. CI enforces this via
+`ci/check_migration_sanity.py` — any migration that contains
+`ALTER TYPE ... ADD VALUE` without an `autocommit_block()` call is a hard error.
 
 > **Case warning:** SQLAlchemy stores enum members by their `.name` (uppercase Python
 > identifier), not their `.value`. The DB enum must contain `'FILE_EXTRACTION'` not
@@ -691,7 +696,8 @@ Worker external tools (compiled in worker Dockerfile): Fluxfox (Rust), HxCFE (C)
 - `myapp.cfg` is optional — environment variables take precedence and suffice for Docker deployments. `SQLALCHEMY_DATABASE_URI`, `SECRET_KEY`, and `WORKER_API_KEY` are all read from the environment if not set in `myapp.cfg`
 - `SECRET_KEY` auto-generates with a warning if missing, left at the default placeholder, or too short — set it explicitly in `.env` or `myapp.cfg` for persistent sessions
 - Alembic auto-generated migrations need manual review for renames and enum changes
-- **PostgreSQL enum pitfall**: `ALTER TYPE ... ADD VALUE` cannot run inside a transaction — set `autocommit = True` at module level. Also, downgrade() **must** delete/remap rows using the new value, or a branch switch leaves orphan rows that crash the ORM with `LookupError`. CI enforces this. See "Adding values to a PostgreSQL enum" above for the exact patterns.
+- **PostgreSQL enum pitfall**: `ALTER TYPE ... ADD VALUE` cannot run inside a transaction — wrap it in `with op.get_context().autocommit_block():` inside `upgrade()`. Also, `downgrade()` **must** delete/remap rows using the new value, or a branch switch leaves orphan rows that crash the ORM with `LookupError`. CI enforces both rules via `ci/check_migration_sanity.py`. See "Adding values to a PostgreSQL enum" above for the exact patterns.
+- **Migration squash watermark**: The 47 pre-squash migration files were consolidated into `20260604_223020_initial_migration.py` (revision `00006a21fc7c`). Any instance whose `alembic_version` contains an older individual revision ID (rather than `00006a21fc7c`) cannot run `flask db upgrade` with the current code — Alembic will report an unknown revision. Those instances must first be brought to `00006a21fc7c` using the original code, then upgraded further.
 - Docker entrypoint (`Dentrypoint.sh`) runs `flask db upgrade` and `flask create-admin` on every start (both are idempotent)
 - `flask create-admin` reads `ADMIN_USERNAME`/`ADMIN_PASSWORD` env vars non-interactively; prompts if a TTY is available; warns and exits cleanly if neither. Passwords must be at least 12 characters
 - **Do NOT use Python's `zipfile` module on RISC OS ZIPs.** RISC OS ZIP archives contain Acorn-specific extra-field blocks (ID `0x4341` / "AC") that `zipfile.ZipFile` rejects with `BadZipFile`. Any code that needs to read RISC OS ZIP metadata (filenames, structure) must parse the ZIP central directory manually with `struct`, or shell out to `unzip`. The worker's `_is_riscos_zip()` and `extract_zip_riscos()` both avoid `zipfile` for this reason.
