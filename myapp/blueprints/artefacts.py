@@ -612,6 +612,13 @@ def _render_viewer(artefact):
     # Filename glob filter — applied to the source file's basename in Mode 2.
     filename_filter = request.args.get('filename', '').strip()
     all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    # Partition IDs across the whole artefact tree, fetched once — the
+    # archive-path, filetype-facet, and explicit-content sections below all
+    # need the same set (previously three identical queries per request).
+    all_partition_ids = [
+        row[0] for row in db.session.query(Partition.id)
+        .filter(Partition.artefact_id.in_(all_artefact_ids)).all()
+    ]
     use_pagination = False  # only paginate Mode 2 aggregate view without ?file=
 
     # If the viewed artefact itself carries a restriction this user cannot
@@ -731,24 +738,18 @@ def _render_viewer(artefact):
             g.get('source_file') for g in output_groups if g.get('source_file')
         ]
         subdirectories = compute_subdirectories(source_files_in_scope, current_path)
-        if subdirectories:
-            partition_ids_arc = [
-                p.id for p in Partition.query.filter(
-                    Partition.artefact_id.in_(all_artefact_ids)
-                ).all()
-            ]
-            if partition_ids_arc:
-                archive_paths = {
-                    row.path for row in (
-                        ExtractedFile.query
-                        .filter(
-                            ExtractedFile.partition_id.in_(partition_ids_arc),
-                            ExtractedFile.is_archive == True,
-                        )
-                        .with_entities(ExtractedFile.path)
-                        .all()
+        if subdirectories and all_partition_ids:
+            archive_paths = {
+                row.path for row in (
+                    ExtractedFile.query
+                    .filter(
+                        ExtractedFile.partition_id.in_(all_partition_ids),
+                        ExtractedFile.is_archive == True,
                     )
-                }
+                    .with_entities(ExtractedFile.path)
+                    .all()
+                )
+            }
 
     # ── Filename glob filter (Mode 2 only, applied before facet build) ──────
     if filename_filter and not file_filter:
@@ -773,16 +774,11 @@ def _render_viewer(artefact):
 
     source_paths = [g['source_file'] for g in output_groups if g.get('source_file')]
     if source_paths:
-        partition_ids = [
-            p.id for p in Partition.query.filter(
-                Partition.artefact_id.in_(all_artefact_ids)
-            ).all()
-        ]
-        if partition_ids:
+        if all_partition_ids:
             filetype_rows = (
                 ExtractedFile.query
                 .filter(
-                    ExtractedFile.partition_id.in_(partition_ids),
+                    ExtractedFile.partition_id.in_(all_partition_ids),
                     ExtractedFile.path.in_(source_paths),
                 )
                 .with_entities(ExtractedFile.path, ExtractedFile.risc_os_filetype,
@@ -863,13 +859,17 @@ def _render_viewer(artefact):
             _enrich_outputs(group['outputs'])
 
     # ── Configurable columns ─────────────────────────────────────────────────
+    # Preference writes are batched: set_preference marks the session dirty
+    # and prefs_dirty triggers ONE commit at the end of the function, instead
+    # of a commit per preference inside this GET render path.
+    prefs_dirty = False
     columns_param = request.args.get('columns', None, type=int)
     if columns_param in _VALID_VIEWER_COLUMNS:
         viewer_columns = columns_param
         if (current_user.is_authenticated
                 and current_user.get_preference('viewer_columns') != columns_param):
             current_user.set_preference('viewer_columns', columns_param)
-            db.session.commit()
+            prefs_dirty = True
     else:
         saved = None
         if current_user.is_authenticated:
@@ -891,19 +891,14 @@ def _render_viewer(artefact):
 
     explicit_file_paths: set[str] = set()
     if not artefact_is_explicit:
-        partition_ids_expl = [
-            p.id for p in Partition.query.filter(
-                Partition.artefact_id.in_(all_artefact_ids)
-            ).all()
-        ]
-        if partition_ids_expl:
+        if all_partition_ids:
             explicit_efs = (
                 ExtractedFile.query
                 .join(ExtractedFileRestriction,
                       ExtractedFileRestriction.extracted_file_id == ExtractedFile.id)
                 .filter(
                     ExtractedFileRestriction.restriction_type == explicit_type,
-                    ExtractedFile.partition_id.in_(partition_ids_expl),
+                    ExtractedFile.partition_id.in_(all_partition_ids),
                 )
                 .with_entities(ExtractedFile.path)
                 .all()
@@ -945,7 +940,7 @@ def _render_viewer(artefact):
             saved_thumb = current_user.get_preference('viewer_thumb')
             if saved_thumb != viewer_thumbnail_mode:
                 current_user.set_preference('viewer_thumb', viewer_thumbnail_mode)
-                db.session.commit()
+                prefs_dirty = True
     else:
         viewer_thumbnail_mode = False
         if current_user.is_authenticated:
@@ -1054,6 +1049,10 @@ def _render_viewer(artefact):
             group['stable_id'] = hashlib.md5(
                 f"{artefact.uuid}:{key_source}".encode()
             ).hexdigest()[:12]
+
+    # Persist any viewer preference changes in one commit (see prefs_dirty above).
+    if prefs_dirty:
+        db.session.commit()
 
     return render_template(
         'artefacts/viewer.html',
