@@ -9,6 +9,7 @@ import threading
 import time
 import traceback
 from pathlib import Path
+from typing import TypedDict
 from ..config import TOOL_TIMEOUT, log
 from ..exceptions import JobCancelledException
 from ..utils.text import sanitize_filename
@@ -168,6 +169,33 @@ def run_tool_with_output(cmd: list[str], timeout: int = None, cwd: str = None) -
     return result, output
 
 
+class ToolResult(TypedDict, total=False):
+    """Shape of every tool-wrapper result dict in the worker.
+
+    ``success`` and ``tool`` are always present (see :func:`tool_result`,
+    which is the only sanctioned way to build one).  The optional keys are
+    included when relevant:
+
+    - ``error``: failure message (failures only)
+    - ``process_output``: structured subprocess output
+    - ``output_path`` / ``output_dir``: produced file or tree
+    - ``output_type``: ArtefactType value of a produced file
+    - ``summary``: one-line human-readable outcome
+    - ``file_count``: number of files an extractor produced
+    - plus tool-specific extras (``inf_metadata``, ``archive_comment``,
+      ``format``, ``warnings``, ``exception_trace``, ...)
+    """
+    success: bool
+    tool: str
+    error: str
+    process_output: dict | str
+    output_path: str
+    output_dir: str
+    output_type: str
+    summary: str
+    file_count: int
+
+
 def tool_result(
     success: bool,
     *,
@@ -175,7 +203,7 @@ def tool_result(
     error: str | None = None,
     process_output: dict | str | None = None,
     **extra,
-) -> dict:
+) -> ToolResult:
     """
     Build a standard tool-wrapper result dict.
 
@@ -193,7 +221,7 @@ def tool_result(
             :func:`get_process_output`, or a plain string.
         **extra: Any additional caller-specific keys.
     """
-    result: dict = {'success': success, 'tool': tool}
+    result: ToolResult = {'success': success, 'tool': tool}
     if error is not None:
         result['error'] = error
     if process_output is not None:

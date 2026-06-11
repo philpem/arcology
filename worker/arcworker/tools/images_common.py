@@ -12,7 +12,7 @@ import sys
 import tempfile
 from pathlib import Path
 from ..config import log
-from .base import run_tool_with_output
+from .base import run_tool_with_output, tool_result
 from .svg_utils import postprocess_svg
 
 # Extensions passed through unchanged (browser-native formats)
@@ -60,24 +60,6 @@ _VECTOR_EXTS: dict[str, tuple[tuple[str, object], ...]] = {
     # EMF files are sometimes renamed WMF files
     '.emf': (('emf2svg', _emf_cmd), ('wmf2svg', _wmf_cmd)),
 }
-
-
-def _result(success: bool, *, output_path: str | None, fmt: str | None,
-            tool: str, error: str | None, **extra) -> dict:
-    """Build an image-conversion result dict.
-
-    Always emits the ``output_path``, ``format`` and ``error`` keys
-    (including when they are ``None``) so downstream consumers can rely
-    on their presence.
-    """
-    return {
-        'success': success,
-        'output_path': output_path,
-        'format': fmt,
-        'tool': tool,
-        'error': error,
-        **extra,
-    }
 
 
 def convert_image(input_path: Path, output_dir: Path, analysis_uuid: str) -> dict:
@@ -128,21 +110,19 @@ def convert_image(input_path: Path, output_dir: Path, analysis_uuid: str) -> dic
                 exception_trace = traceback.format_exc()
                 log.warning(f'Error cleaning up SVG "{input_path}", bypassing: {exception_trace}')
 
-            return _result(
+            return tool_result(
                 True,
-                output_path=str(out_svg),
-                fmt=ext.lstrip('.').upper(),
                 tool=tool_name,
-                error=None,
+                output_path=str(out_svg),
+                format=ext.lstrip('.').upper(),
                 exception_trace=exception_trace,
             )
 
-        return _result(
+        return tool_result(
             False,
-            output_path=None,
-            fmt=ext.lstrip('.').upper(),
             tool=_VECTOR_EXTS[ext][0][0],
             error='; '.join(errors) if errors else 'No vector converter succeeded',
+            format=ext.lstrip('.').upper(),
         )
 
     # --- Pass-through raster ---
@@ -154,22 +134,19 @@ def convert_image(input_path: Path, output_dir: Path, analysis_uuid: str) -> dic
     if passthrough_ext:
         out_path = output_dir / f'{analysis_uuid}_image{passthrough_ext}'
         shutil.copy2(input_path, out_path)
-        return _result(
+        return tool_result(
             True,
-            output_path=str(out_path),
-            fmt=passthrough_ext.lstrip('.').upper(),
             tool='passthrough',
-            error=None,
+            output_path=str(out_path),
+            format=passthrough_ext.lstrip('.').upper(),
         )
 
     # --- Pillow-converted raster ---
     try:
         from PIL import Image, UnidentifiedImageError
     except ImportError:
-        return _result(
+        return tool_result(
             False,
-            output_path=None,
-            fmt=None,
             tool='pillow-convert',
             error='Pillow not installed',
         )
@@ -201,21 +178,18 @@ def convert_image(input_path: Path, output_dir: Path, analysis_uuid: str) -> dic
         _stderr_tmp.close()
 
     if _exc is None:
-        return _result(
+        return tool_result(
             True,
-            output_path=str(out_path),
-            fmt=_fmt,
             tool='pillow-convert',
-            error=None,
+            output_path=str(out_path),
+            format=_fmt,
         )
 
     if isinstance(_exc, UnidentifiedImageError):
         log.warning('Image conversion failed for %s (unidentified format): %s',
                     input_path, _exc)
-        return _result(
+        return tool_result(
             False,
-            output_path=None,
-            fmt=None,
             tool='pillow-convert',
             error=str(_exc),
         )
@@ -235,10 +209,8 @@ def convert_image(input_path: Path, output_dir: Path, analysis_uuid: str) -> dic
         if _libtiff_detail:
             msg += f' — {_libtiff_detail}'
     log.warning('Image conversion failed for %s: %s', input_path, msg)
-    return _result(
+    return tool_result(
         False,
-        output_path=None,
-        fmt=None,
         tool='pillow-convert',
         error=msg,
     )
