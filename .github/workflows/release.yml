@@ -1,0 +1,61 @@
+name: Release CLI
+
+# Builds the arco CLI wheel + sdist and attaches them to a GitHub Release
+# whenever a tag like cli-v0.2.0 is pushed:
+#
+#   git tag cli-v0.2.0 && git push origin cli-v0.2.0
+#
+# Clients then install without a repo checkout:
+#
+#   pip install https://github.com/philpem/arcology/releases/download/cli-v0.2.0/arcology_cli-0.2.0-py3-none-any.whl
+#
+# The tag version should match [project].version in cli/pyproject.toml;
+# the check step below fails the release if they disagree.
+
+on:
+  push:
+    tags:
+      - 'cli-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build and attach CLI package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Check tag matches pyproject version
+        run: |
+          tag_version="${GITHUB_REF_NAME#cli-v}"
+          proj_version=$(python -c "import tomllib; print(tomllib.load(open('cli/pyproject.toml','rb'))['project']['version'])")
+          if [ "$tag_version" != "$proj_version" ]; then
+            echo "Tag cli-v$tag_version does not match cli/pyproject.toml version $proj_version" >&2
+            exit 1
+          fi
+
+      - name: Install build tooling
+        run: pip install build
+
+      - name: Build wheel and sdist
+        # Built from the repo checkout so the force-include of ../shared
+        # in cli/pyproject.toml resolves.
+        run: python -m build --outdir dist cli/
+
+      - name: Smoke-test the wheel
+        run: |
+          pip install dist/*.whl
+          arco --help > /dev/null
+          python -c "import shared.bundle, arccli.main; print('wheel imports OK')"
+
+      - name: Create GitHub Release with artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

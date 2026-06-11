@@ -11,6 +11,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 import requests
+from shared.bundle import BUNDLE_MARKER, is_sidecar_name
 from ..client import ArcologyClient, ArcologyError
 from ..formatting import format_size
 
@@ -237,19 +238,6 @@ def _dedupe_image_forms(files: list[dict]) -> tuple[list[dict], list[dict]]:
 # Sidecar bundling (--bundle-sidecars)
 # ---------------------------------------------------------------------------
 
-# Loose files in an image's directory that are bundled with it, even when they
-# do not share the image's base name.
-_SIDECAR_NAME_PREFIXES = ('readme', 'read.me', 'changelog', 'changes',
-                          'checksum', 'md5', 'sha1', 'sha256', 'sha512')
-_SIDECAR_EXTENSIONS = ('.md5', '.sha1', '.sha256', '.sha512')
-
-# Written into the bundle ZIP's archive comment so the worker can recognise a
-# disk-image bundle and store the image as a single artefact.  The `arco`
-# package is installed standalone and cannot import `shared`, so this is a local
-# copy of shared.bundle.BUNDLE_MARKER; ci/test_bundle_marker.py asserts they match.
-_BUNDLE_MARKER = 'arcology:disk-image-bundle/v1'
-
-
 def _bundle_eligible(filename: str) -> bool:
     """True for raw-sector images (raw or compressed) that may carry sidecars.
 
@@ -262,12 +250,7 @@ def _is_sidecar(entry: Path, base: str) -> bool:
     """Whether *entry* should be bundled with an image whose base name is *base*."""
     if not entry.is_file() or _is_importable(entry):
         return False
-    name = entry.name.lower()
-    if name.startswith(base + '.'):
-        return True
-    if entry.suffix.lower() in _SIDECAR_EXTENSIONS:
-        return True
-    return any(name.startswith(p) for p in _SIDECAR_NAME_PREFIXES)
+    return is_sidecar_name(entry.name, base)
 
 
 def _find_sidecars(image_path: Path, base: str) -> list[Path]:
@@ -337,7 +320,7 @@ def _build_sidecar_bundle(image_path: Path, sidecars: list[Path],
     with zipfile.ZipFile(zip_path, 'w') as zf:
         # Mark this as an Arcology disk-image bundle so the worker stores the
         # image as a single artefact instead of extracting a generic archive.
-        zf.comment = _BUNDLE_MARKER.encode('cp437')
+        zf.comment = BUNDLE_MARKER.encode('cp437')
         if _image_is_precompressed(image_path.name):
             zf.write(image_path, arcname=image_path.name,
                      compress_type=zipfile.ZIP_STORED)
