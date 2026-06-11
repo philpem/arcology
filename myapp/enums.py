@@ -12,6 +12,7 @@ unchanged.  New code should import directly from this module.
 """
 
 import enum
+from arcology_shared.enums import AnalysisStatus  # noqa: F401  (re-export)
 
 
 class UserPermission(enum.Enum):
@@ -35,12 +36,6 @@ _API_KEY_PERMISSION_ORDER = [
 ]
 
 
-class AnalysisStatus(enum.Enum):
-    """Status of an analysis job."""
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
 
 
 class FilesystemType(enum.Enum):

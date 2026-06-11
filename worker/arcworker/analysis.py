@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from arcology_shared.enums import AnalysisStatus
 
 try:
     import sentry_sdk
@@ -217,7 +218,7 @@ class AnalysisWorker:
         """Report a failed analysis to the API."""
         self.api.update_analysis(
             analysis_id,
-            status='failed',
+            status=AnalysisStatus.FAILED.value,
             success=False,
             error_message=error_message,
             **kwargs,
@@ -275,7 +276,7 @@ class AnalysisWorker:
     def complete_analysis(self, analysis_id: int, summary: str | None = None, **kwargs):
         """Report a completed successful analysis to the API."""
         payload = {
-            'status': 'completed',
+            'status': AnalysisStatus.COMPLETED.value,
             'success': True,
             **kwargs,
         }
@@ -479,7 +480,7 @@ class AnalysisWorker:
             if resp and 'analyses' in resp:
                 active = [
                     a for a in resp['analyses']
-                    if a.get('status') in ('pending', 'running')
+                    if a.get('status') in (AnalysisStatus.PENDING.value, AnalysisStatus.RUNNING.value)
                 ]
                 if active:
                     log.debug(
@@ -560,7 +561,7 @@ class AnalysisWorker:
                     status = resp.json().get('status', '')
                 except ValueError:
                     continue  # non-JSON body, treat as transient
-                if status not in ('running',):
+                if status not in (AnalysisStatus.RUNNING.value,):
                     log.info(
                         f"Analysis {analysis_uuid} status changed to "
                         f"{status!r} — signalling cancellation"

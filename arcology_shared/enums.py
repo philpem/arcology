@@ -68,6 +68,19 @@ COMPRESSED_RAW_SECTOR_TYPES = frozenset({
 })
 
 
+class AnalysisStatus(enum.Enum):
+    """Status of an analysis job.
+
+    Stored in the web database (by member NAME, like every enum column)
+    and exchanged over the worker REST API (by member VALUE).  Shared so
+    the worker's state checks cannot drift from the server's states.
+    """
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class AnalysisType(enum.Enum):
     """Types of analysis - automatically determined by artefact type."""
     # Flux-level analyses
