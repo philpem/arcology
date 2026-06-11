@@ -11,6 +11,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 from ..client import ArcologyClient, ArcologyError
+from ..formatting import format_size
 
 try:
     import zstandard
@@ -384,16 +385,6 @@ def _file_size(path: Path) -> int:
         return path.stat().st_size
     except OSError:
         return 0
-
-
-def _human_size(n: int) -> str:
-    """Format a byte count as a human-readable string (e.g. '12.3 GiB')."""
-    size = float(n)
-    for unit in ('B', 'KiB', 'MiB', 'GiB', 'TiB'):
-        if size < 1024 or unit == 'TiB':
-            return f'{int(size)} {unit}' if unit == 'B' else f'{size:.1f} {unit}'
-        size /= 1024
-    return f'{n} B'
 
 
 def _upload_progress(label: str):
@@ -793,8 +784,8 @@ def cmd_bulk_import(client: ArcologyClient, args):
             source_size = _file_size(filepath)
             if max_size is not None and source_size > max_size:
                 log.warning('  [%d/%d] SKIPPED — %s exceeds --max-size (%s): %s',
-                            j, len(files), _human_size(source_size),
-                            _human_size(max_size), label)
+                            j, len(files), format_size(source_size),
+                            format_size(max_size), label)
                 oversized_files.append(file_entry['relative_path'])
                 continue
 
@@ -818,7 +809,7 @@ def cmd_bulk_import(client: ArcologyClient, args):
                     # Log before building — compressing a large image can take a
                     # while, so the user sees activity rather than a silent hang.
                     log.info('  [%d/%d] %s  (bundling %s image + %d sidecar(s): %s...)',
-                             j, len(files), label, _human_size(source_size),
+                             j, len(files), label, format_size(source_size),
                              len(sidecars), ', '.join(s.name for s in sidecars))
                     tmp_ctx = tempfile.TemporaryDirectory(dir=args.bundle_tmpdir or None)
                     bundle = _build_sidecar_bundle(filepath, sidecars,
