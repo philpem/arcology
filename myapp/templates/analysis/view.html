@@ -6,6 +6,7 @@
 <nav aria-label="breadcrumb" class="mb-3">
     <ol class="breadcrumb">
         <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.index') }}">Items</a></li>
+        {% if analysis.artefact %}
         {% for ancestor in analysis.artefact.item.ancestors %}
         <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=ancestor.url_id) }}">{{ ancestor.name }}</a></li>
         {% endfor %}
@@ -14,6 +15,7 @@
         <li class="breadcrumb-item"><a href="{{ artefact_url(analysis.artefact.root_artefact) }}">{{ analysis.artefact.root_artefact.label }}</a></li>
         {% endif %}
         <li class="breadcrumb-item"><a href="{{ artefact_url(analysis.artefact) }}">{{ analysis.artefact.label }}</a></li>
+        {% endif %}
         <li class="breadcrumb-item active">{{ analysis.analysis_type|format_analysis_type }} (#{{ analysis.id }})</li>
     </ol>
 </nav>
@@ -44,7 +46,7 @@
             <div class="card-body">
                 <dl class="mb-0">
                     <dt>Type</dt><dd>{{ analysis.analysis_type|format_analysis_type }}</dd>
-                    <dt>Artefact</dt><dd><a href="{{ artefact_url(analysis.artefact) }}">{{ analysis.artefact.label }}</a></dd>
+                    <dt>Artefact</dt><dd>{% if analysis.artefact %}<a href="{{ artefact_url(analysis.artefact) }}">{{ analysis.artefact.label }}</a>{% else %}<span class="text-muted fst-italic">none (system job)</span>{% endif %}</dd>
                     <dt>Tool</dt><dd>{{ analysis.tool_name or '-' }}{% if analysis.tool_version %} v{{ analysis.tool_version }}{% endif %}</dd>
                     <dt>Created</dt><dd>{{ analysis.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</dd>
                     <dt>Started</dt><dd>{{ analysis.started_at.strftime('%Y-%m-%d %H:%M:%S') if analysis.started_at else '-' }}</dd>

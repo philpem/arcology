@@ -546,6 +546,7 @@ class AnalysisWorker:
 
     # Maintenance
     process_hash_rescan           = _analyses.process_hash_rescan
+    process_cleanup               = _analyses.process_cleanup
 
     # =========================================================================
     # Job Processing
@@ -598,7 +599,9 @@ class AnalysisWorker:
         analysis_id = analysis['id']
         analysis_uuid = analysis.get('uuid', '?')
         analysis_type = analysis['analysis_type']
-        artefact = analysis.get('artefact', {})
+        # CLEANUP jobs have no artefact; the API serialises the key as
+        # null, so coerce None (not just a missing key) to an empty dict.
+        artefact = analysis.get('artefact') or {}
 
         log.info(f"Processing analysis {analysis_id} ({analysis_uuid}): {analysis_type} for {artefact.get('label', 'unknown')}")
 

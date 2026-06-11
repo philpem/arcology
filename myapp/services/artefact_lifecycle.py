@@ -12,12 +12,12 @@ Moved verbatim from myapp/blueprints/artefacts.py.
 import json
 import os
 import shutil
-import threading
 from flask import current_app
 from sqlalchemy import select
 from ..database import (
     Analysis,
     AnalysisStatus,
+    AnalysisType,
     Artefact,
     ArtefactMastering,
     ArtefactProtection,
@@ -646,40 +646,6 @@ def _collect_item_cleanup_keys(all_artefact_ids):
     }
 
 
-def _background_cleanup_item_files(cleanup, storage, logger_name):
-    """Delete item files in a background thread using the storage backend.
-
-    Works with both LocalStorage and S3Storage since all paths are expressed
-    as storage keys.  No ORM/app context needed.
-    """
-    import logging
-    logger = logging.getLogger(logger_name)
-
-    for key in cleanup['artefact_keys']:
-        try:
-            storage.delete(key)
-        except Exception as e:
-            logger.warning(f"Failed to delete artefact file {key}: {e}")
-
-    for key in cleanup['output_file_keys']:
-        try:
-            storage.delete(key)
-        except Exception as e:
-            logger.warning(f"Failed to delete output file {key}: {e}")
-
-    for prefix in cleanup['output_dir_prefixes']:
-        try:
-            storage.delete_prefix(prefix)
-        except Exception as e:
-            logger.warning(f"Failed to delete output directory {prefix}: {e}")
-
-    for prefix in cleanup['cache_prefixes']:
-        try:
-            storage.delete_prefix(prefix)
-        except Exception as e:
-            logger.warning(f"Failed to delete cache {prefix}: {e}")
-
-
 def _collect_all_item_ids(item):
     """Collect the item's ID and all descendant item IDs via recursive CTE."""
     base = select(Item.id).where(Item.parent_id == item.id)
@@ -688,6 +654,56 @@ def _collect_all_item_ids(item):
     cte = cte.union_all(recursive)
     descendant_ids = [r[0] for r in db.session.execute(select(cte.c.id)).all()]
     return [item.id] + descendant_ids
+
+
+def queue_storage_cleanup(cleanup_keys: dict, artefact_id: int | None = None,
+                          commit: bool = False):
+    """Queue a CLEANUP analysis job that deletes the given storage keys.
+
+    *cleanup_keys* is the dict produced by _collect_item_cleanup_keys():
+    {'artefact_keys': [...], 'output_file_keys': [...],
+     'output_dir_prefixes': [...], 'cache_prefixes': [...]}.
+
+    The worker's process_cleanup handler deletes each key/prefix via its
+    storage backend, so the cleanup works for both local and S3 deployments,
+    survives web-container restarts (unlike the previous daemon threads), and
+    is retryable through the normal analysis queue machinery.
+
+    Returns the Analysis row, or None when there is nothing to delete.
+    The caller commits (pass commit=True to commit here) — for deletions this
+    lets the job row become part of the same transaction as the DB deletes,
+    so a job exists if and only if the deletion committed.
+    """
+    if not any(cleanup_keys.get(k) for k in (
+            'artefact_keys', 'output_file_keys',
+            'output_dir_prefixes', 'cache_prefixes')):
+        return None
+
+    job = Analysis(
+        artefact_id=artefact_id,
+        analysis_type=AnalysisType.CLEANUP,
+        status=AnalysisStatus.PENDING,
+        hints=json.dumps(cleanup_keys),
+    )
+    db.session.add(job)
+    if commit:
+        db.session.commit()
+    return job
+
+
+def collect_output_cleanup_keys(artefact: Artefact) -> dict:
+    """Storage keys for an artefact tree's analysis outputs (not its uploads).
+
+    Used before reset_artefact_for_reanalysis() — which deletes the Analysis
+    rows the keys are derived from — to queue a CLEANUP job for the previous
+    run's outputs.  artefact_keys is emptied: a re-analyse must never delete
+    the uploaded originals (the derived artefacts' stored files are deleted
+    synchronously inside the reset).
+    """
+    all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    keys = _collect_item_cleanup_keys(all_ids)
+    keys['artefact_keys'] = []
+    return keys
 
 
 def bulk_delete_item(item):
@@ -700,7 +716,8 @@ def bulk_delete_item(item):
     related object into memory and emitted individual DELETEs — too slow for
     items with thousands of artefacts.
 
-    File cleanup runs in a background daemon thread after the DB commit.
+    File cleanup is queued as a CLEANUP job in the same transaction as the
+    deletes; the worker performs the storage deletions.
     """
     # Phase 1: Collect all item IDs (this item + all descendants)
     all_item_ids = _collect_all_item_ids(item)
@@ -710,8 +727,6 @@ def bulk_delete_item(item):
 
     # Phase 3: Collect storage keys before deleting DB records
     cleanup = _collect_item_cleanup_keys(all_ids)
-    storage = current_app.storage
-    logger_name = current_app.logger.name
 
     # Phase 4: Bulk SQL deletes in FK-safe order
     if all_ids:
@@ -735,14 +750,12 @@ def bulk_delete_item(item):
     Item.query.filter(Item.id.in_(all_item_ids)).delete(
         synchronize_session=False)
 
+    # Phase 5: Queue worker-side file cleanup atomically with the deletes —
+    # the job commits with them, so a web restart can no longer orphan the
+    # stored files the way the previous fire-and-forget daemon thread could.
+    queue_storage_cleanup(cleanup)
+
     db.session.commit()
 
     # Phase 5: Background file cleanup via storage backend (no ORM needed)
-    t = threading.Thread(
-        target=_background_cleanup_item_files,
-        args=(cleanup, storage, logger_name),
-        daemon=True,
-    )
-    t.start()
-
 # vim: ts=4 sw=4 et
