@@ -306,7 +306,17 @@ def _require_view_artefact(artefact):
 
 
 def _require_view_analysis(analysis):
-    """Abort with 404 if the API caller may not view an analysis' artefact."""
+    """Abort with 404 if the API caller may not view an analysis' artefact.
+
+    Analyses with no artefact (CLEANUP jobs queued by bulk item deletion)
+    are system-internal: their hints contain storage keys, so only the
+    worker may see them.
+    """
+    if analysis.artefact is None:
+        _, sees_all = _api_viewer()
+        if not sees_all:
+            abort(404)
+        return
     _require_view_artefact(analysis.artefact)
 
 

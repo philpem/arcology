@@ -63,6 +63,11 @@ def reanalyse(analysis_uuid, item_uuid, tag_name, platform_name, category_name,
             raise SystemExit(1)
 
         artefact = analysis.artefact
+        if artefact is None:
+            click.echo("ERROR: this is a system job (no artefact) — it cannot be "
+                       "retried via reanalyse. Use cancel-analysis to remove it.",
+                       err=True)
+            raise SystemExit(1)
         analysis_type = analysis.analysis_type
         hints = analysis.hints
 

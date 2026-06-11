@@ -13,6 +13,7 @@ handler attribute name on ``AnalysisWorker``; the dispatch loop in
 
 from shared.enums import AnalysisType
 from .armlock import process_armlock_remove
+from .cleanup import process_cleanup
 from .extraction import (
     _PROMOTABLE_EXTENSIONS,
     _apply_pling_renames,
@@ -72,11 +73,13 @@ HANDLERS: dict[str, str] = {
     AnalysisType.FORMAT_CONVERT.value:          'process_format_convert',
     AnalysisType.RISCOS_MODULE_PARSE.value:     'process_riscos_module_parse',
     AnalysisType.HASH_RESCAN.value:             'process_hash_rescan',
+    AnalysisType.CLEANUP.value:                 'process_cleanup',
 }
 
 
 __all__ = [
     'HANDLERS',
+    'process_cleanup',
     # Flux
     'process_flux_visualisation',
     'process_detect_track_density',

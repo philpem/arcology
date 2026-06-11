@@ -705,7 +705,9 @@ class Analysis(db.Model):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     uuid: Mapped[str] = mapped_column(String(32), unique=True, index=True, default=generate_uuid)
-    artefact_id: Mapped[int] = mapped_column(ForeignKey("artefacts.id"), index=True)
+    # Nullable: CLEANUP jobs queued by bulk item deletion outlive their
+    # artefacts and carry storage keys in hints instead.
+    artefact_id: Mapped[int | None] = mapped_column(ForeignKey("artefacts.id"), index=True, nullable=True)
     analysis_type: Mapped[AnalysisType] = mapped_column(_TolerantEnum(AnalysisType))
     slug: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
     status: Mapped[AnalysisStatus] = mapped_column(SQLEnum(AnalysisStatus), default=AnalysisStatus.PENDING, index=True)

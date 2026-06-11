@@ -7,6 +7,7 @@ from flask_login import current_user
 from werkzeug.middleware.proxy_fix import ProxyFix
 from .database import UserPermission
 from .extensions import bootstrap, csrf, db, login_manager, migrate
+from .utils.config import bool_config
 
 
 def _s3_public_origin(config):
@@ -171,7 +172,7 @@ def create_app(config_name=None):
     # does not pay the lex/parse/codegen cost on the first render of each
     # template (the dominant cost of cold-worker page loads — issue #447).
     # Disable with JINJA_BYTECODE_CACHE=false.
-    if str(app.config.get('JINJA_BYTECODE_CACHE', True)).lower() not in ('false', '0', 'no'):
+    if bool_config('JINJA_BYTECODE_CACHE', default=True, app=app):
         from jinja2 import FileSystemBytecodeCache
         cache_dir = app.config.get('JINJA_BYTECODE_CACHE_DIR') or \
             os.path.join(app.instance_path, 'jinja_cache')
@@ -277,11 +278,10 @@ def create_app(config_name=None):
     @app.context_processor
     def inject_user_permissions():
         """Inject user_can_write, public_mode, and public_downloads into every template context."""
-        from .permissions import _bool_config
         can_write = (current_user.is_authenticated and
                      current_user.has_permission(UserPermission.READ_WRITE))
-        pm = _bool_config('PUBLIC_MODE')
-        pd = _bool_config('PUBLIC_DOWNLOADS', default=True)
+        pm = bool_config('PUBLIC_MODE')
+        pd = bool_config('PUBLIC_DOWNLOADS', default=True)
         return dict(user_can_write=can_write, public_mode=pm, public_downloads=pd)
 
     # -- version context processor --
@@ -368,7 +368,7 @@ def create_app(config_name=None):
     # folders) so the lex/parse/codegen cost is paid once during worker boot
     # rather than on the first user request to hit each template — the dominant
     # cost of cold-worker page loads (#447). Disable with JINJA_PREWARM=false.
-    if str(app.config.get('JINJA_PREWARM', True)).lower() not in ('false', '0', 'no'):
+    if bool_config('JINJA_PREWARM', default=True, app=app):
         _prewarm_templates(app)
 
     return app

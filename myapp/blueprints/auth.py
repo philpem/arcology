@@ -11,6 +11,7 @@ from flask_wtf import FlaskForm
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 from wtforms import PasswordField, StringField, SubmitField
 from wtforms.validators import DataRequired
+from ..utils.config import bool_config
 from ..utils.safe_redirect import safe_redirect_path
 
 ROUTENAME = 'auth'
@@ -51,10 +52,7 @@ def login():
     form = LoginForm()
 
     # Enforce LOCAL_LOGIN_ENABLED server-side (the template merely hides the form).
-    from flask import current_app
-    local_login_on = current_app.config.get('LOCAL_LOGIN_ENABLED', True)
-    if isinstance(local_login_on, str):
-        local_login_on = local_login_on.lower() in ('1', 'true', 'yes')
+    local_login_on = bool_config('LOCAL_LOGIN_ENABLED', default=True)
     if not local_login_on and form.is_submitted():
         abort(403)
 
@@ -62,12 +60,8 @@ def login():
     # enabled, OIDC_AUTO_REDIRECT is on, and no flash messages are pending
     # (flash messages must be shown before bouncing the user away).
     if request.method == 'GET' and not local_login_on:
-        oidc_on = current_app.config.get('OIDC_ENABLED', False)
-        if isinstance(oidc_on, str):
-            oidc_on = oidc_on.lower() in ('1', 'true', 'yes')
-        auto_redir = current_app.config.get('OIDC_AUTO_REDIRECT', True)
-        if isinstance(auto_redir, str):
-            auto_redir = auto_redir.lower() in ('1', 'true', 'yes')
+        oidc_on = bool_config('OIDC_ENABLED')
+        auto_redir = bool_config('OIDC_AUTO_REDIRECT', default=True)
         if oidc_on and auto_redir and not session.get('_flashes'):
             next_url = request.args.get('next', '')
             return redirect(url_for('myapp_blueprints_oidc_auth.sso_login', next=next_url))
@@ -106,13 +100,9 @@ def login():
 @blueprint.route("/logout")
 @login_required
 def logout():
-    from flask import current_app
     # Delegate to the SSO logout route when single-logout is configured,
     # so the provider session is also terminated.
-    oidc_single_logout = current_app.config.get('OIDC_SINGLE_LOGOUT', False)
-    if isinstance(oidc_single_logout, str):
-        oidc_single_logout = oidc_single_logout.lower() in ('1', 'true', 'yes')
-    if oidc_single_logout and session.get('oidc_end_session_endpoint'):
+    if bool_config('OIDC_SINGLE_LOGOUT') and session.get('oidc_end_session_endpoint'):
         return redirect(url_for('myapp_blueprints_oidc_auth.sso_logout'))
     logout_user()
     flash("You have now been logged out.", "info")

@@ -1,15 +1,15 @@
 """Add global upload and output blob deduplication
 
 Revision ID: 00006a25a2c0
-Revises: 00006a21fc7c
-Create Date: 2026-06-06
+Revises: 00006a2a2054
+Create Date: 2026-06-11
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "00006a25a2c0"
-down_revision = "00006a21fc7c"
+down_revision = "00006a2a2054"
 branch_labels = None
 depends_on = None
 
