@@ -10,7 +10,7 @@ ARMlock-protected ADFS discs) on the resulting partitions.
 import json
 import shutil
 from pathlib import Path
-from shared.enums import ArtefactType
+from shared.enums import AnalysisType, ArtefactType
 from ..compression import extract_partition_range, is_region_uniform
 from ..config import log
 from ..tools import (
@@ -24,7 +24,7 @@ from ._common import analysis_handler
 from ._protections import queue_extraction_or_protection_remove
 
 
-@analysis_handler("partition detection")
+@analysis_handler("partition detection", AnalysisType.PARTITION_DETECT)
 def process_partition_detect(self, analysis: dict, artefact: dict, work_dir: Path):
     """
     Process PARTITION_DETECT analysis.

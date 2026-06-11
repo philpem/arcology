@@ -539,7 +539,7 @@ def _handle_disk_image_bundle(
     )
 
 
-@analysis_handler("file extraction")
+@analysis_handler("file extraction", AnalysisType.FILE_EXTRACTION)
 def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path):
     """
     Process FILE_EXTRACTION analysis.
@@ -815,7 +815,7 @@ def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path
         )
 
 
-@analysis_handler("archive detection")
+@analysis_handler("archive detection", AnalysisType.ARCHIVE_DETECT)
 def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path):
     """
     Process ARCHIVE_DETECT analysis.
@@ -940,7 +940,7 @@ def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path)
     )
 
 
-@analysis_handler("archive extraction")
+@analysis_handler("archive extraction", AnalysisType.ARCHIVE_EXTRACT)
 def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path):
     """
     Process ARCHIVE_EXTRACT analysis.

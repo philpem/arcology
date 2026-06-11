@@ -498,27 +498,18 @@ class AnalysisWorker:
     # Analysis Handlers
     # =========================================================================
     #
-    # The handler functions live in ``worker.arcworker.analyses.*`` so each
-    # category (flux, extraction, images, metadata, partition, armlock) has
-    # its own module.  They are bound here as class attributes — Python turns
-    # plain functions assigned to a class into bound methods on access, so
-    # the bodies (which already reference ``self``) work unchanged.
+    # The handler functions live in ``worker.arcworker.analyses.*`` and are
+    # dispatched via the ``_analyses.HANDLERS`` registry, populated by the
+    # ``@analysis_handler(description, AnalysisType.X)`` decorator — no
+    # per-handler wiring is needed here.
     #
-    # Static helpers (``_sniff_archive_magic``, ``_is_riscos_zip``) are wrapped
-    # in ``staticmethod`` so callsites like ``self._sniff_archive_magic(p)``
-    # don't try to pass ``self`` as the first argument.
-
-    # Flux pipeline
-    process_flux_visualisation    = _analyses.process_flux_visualisation
-    process_detect_track_density  = _analyses.process_detect_track_density
-    process_flux_decode           = _analyses.process_flux_decode
-    process_disc_mastering_detect = _analyses.process_disc_mastering_detect
-    process_disc_protection_detect = _analyses.process_disc_protection_detect
+    # The private helpers and data tables below are bound as class
+    # attributes because handler bodies reference them via ``self.``.
+    # Static helpers (``_sniff_archive_magic``, ``_is_riscos_zip``) are
+    # wrapped in ``staticmethod`` so callsites like
+    # ``self._sniff_archive_magic(p)`` don't pass ``self`` to them.
 
     # File / archive extraction
-    process_file_extraction       = _analyses.process_file_extraction
-    process_archive_detect        = _analyses.process_archive_detect
-    process_archive_extract       = _analyses.process_archive_extract
     _extract_top_level_archive    = _analyses._extract_top_level_archive
     _handle_disk_image_bundle     = _analyses._handle_disk_image_bundle
     _sniff_archive_magic          = staticmethod(_analyses._sniff_archive_magic)
@@ -526,27 +517,11 @@ class AnalysisWorker:
     _PROMOTABLE_EXTENSIONS        = _analyses._PROMOTABLE_EXTENSIONS
 
     # Format conversion (Sprite / Draw / Text / images)
-    process_format_convert        = _analyses.process_format_convert
     _convert_file_to_outputs      = _analyses._convert_file_to_outputs
     _detect_viewable_type         = _analyses._detect_viewable_type
     _RISCOS_VIEWABLE_SUFFIXES     = _analyses._RISCOS_VIEWABLE_SUFFIXES
     _EXT_VIEWABLE                 = _analyses._EXT_VIEWABLE
     _RISCOS_HEX_VIEWABLE          = _analyses._RISCOS_HEX_VIEWABLE
-
-    # Metadata-style handlers
-    process_checksum_compute      = _analyses.process_checksum_compute
-    process_metadata_extract      = _analyses.process_metadata_extract
-    process_format_identify       = _analyses.process_format_identify
-    process_product_recognition   = _analyses.process_product_recognition
-    process_riscos_module_parse   = _analyses.process_riscos_module_parse
-
-    # Partition / armlock
-    process_partition_detect      = _analyses.process_partition_detect
-    process_armlock_remove        = _analyses.process_armlock_remove
-
-    # Maintenance
-    process_hash_rescan           = _analyses.process_hash_rescan
-    process_cleanup               = _analyses.process_cleanup
 
     # =========================================================================
     # Job Processing
@@ -625,12 +600,13 @@ class AnalysisWorker:
                 work_path = Path(work_dir)
 
                 try:
-                    # Dispatch to appropriate handler
-                    handler_name = _analyses.HANDLERS.get(analysis_type)
-                    handler = getattr(self, handler_name, None) if handler_name else None
+                    # Dispatch to appropriate handler (registered by the
+                    # @analysis_handler decorator; called with this worker
+                    # as ``self``)
+                    handler = _analyses.HANDLERS.get(analysis_type)
                     if handler:
                         with _analysis_transaction(analysis_type, artefact.get('uuid', '')):
-                            handler(analysis, artefact, work_path)
+                            handler(self, analysis, artefact, work_path)
                     else:
                         log.warning(f"Unknown analysis type: {analysis_type}")
                         self.fail_analysis(analysis_id, f'Unknown analysis type: {analysis_type}')

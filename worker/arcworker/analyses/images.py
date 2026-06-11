@@ -15,7 +15,7 @@ import json
 import signal
 from contextlib import contextmanager
 from pathlib import Path
-from shared.enums import ArtefactType
+from shared.enums import AnalysisType, ArtefactType
 from ..config import log
 from ..tools import (
     convert_draw,
@@ -250,7 +250,7 @@ def _detect_viewable_type(self, path: Path) -> 'ArtefactType | None':
     return self._EXT_VIEWABLE.get(path.suffix.lower())
 
 
-@analysis_handler("format conversion")
+@analysis_handler("format conversion", AnalysisType.FORMAT_CONVERT)
 def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path):
     """
     Process FORMAT_CONVERT analysis.  Supports two modes:

@@ -8,10 +8,11 @@ the worker simply triggers it via the API and records the result.
 
 import json
 from pathlib import Path
+from shared.enums import AnalysisType
 from ._common import analysis_handler
 
 
-@analysis_handler("hash rescan")
+@analysis_handler("hash rescan", AnalysisType.HASH_RESCAN)
 def process_hash_rescan(self, analysis: dict, artefact: dict, work_dir: Path):
     """Trigger a server-side hash rescan for this artefact."""
     analysis_id = analysis['id']
