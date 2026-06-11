@@ -57,13 +57,18 @@ def _check_archive_paths(input_path: Path, fmt: str) -> None:
             # these legitimate archives are not silently rejected.
             _check_7z_paths(input_path)
     elif fmt == 'tar':
-        with tarfile.open(input_path) as tf:
-            for m in tf.getmembers():
-                _validate_entry_path(m.name, 'TAR')
-                # Also validate symlink and hardlink targets so that a relative link
-                # like '../../etc/passwd' cannot escape the extraction directory.
-                if m.issym() or m.islnk():
-                    _validate_entry_path(m.linkname, 'TAR link target')
+        try:
+            with tarfile.open(input_path) as tf:
+                for m in tf.getmembers():
+                    _validate_entry_path(m.name, 'TAR')
+                    # Also validate symlink and hardlink targets so that a relative link
+                    # like '../../etc/passwd' cannot escape the extraction directory.
+                    if m.issym() or m.islnk():
+                        _validate_entry_path(m.linkname, 'TAR link target')
+        except tarfile.TarError as e:
+            # A corrupt/truncated tarball must produce a failure result, not an
+            # unhandled exception that crashes the whole analysis job.
+            raise ValueError(f'Cannot read TAR archive: {e}') from e
 
 
 # Matches symlink-mode Unix permission strings (e.g. 'lrwxrwxrwx') or a
