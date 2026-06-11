@@ -8,7 +8,6 @@ import hashlib
 import json
 import mimetypes
 import os
-import threading
 from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
@@ -44,19 +43,19 @@ from ..riscos_filetypes import lookup_filetype_hex
 from ..services.artefact_lifecycle import (
     ArtefactMoveError,
     build_processing_tree,
-    cleanup_analysis_outputs,
     cleanup_artefact_outputs,
     cleanup_artefact_outputs_s3,
+    collect_output_cleanup_keys,
     delete_artefact_files,
     get_all_derived_artefact_ids,
     move_artefact_to_item,
+    queue_storage_cleanup,
     reset_artefact_for_reanalysis,
     validate_artefact_move,
 )
 from ..services.artefact_storage import (
     compute_file_hashes,
     get_artefact_storage_key,
-    get_output_folder,
     resolve_extracted_file_path,
     safe_original_filename,
     save_uploaded_file,
@@ -2559,24 +2558,16 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
         if form.notes.data:
             hints['notes'] = form.notes.data
 
-        cleanup = reset_artefact_for_reanalysis(artefact)
+        # Collect the previous run's output keys BEFORE the reset deletes the
+        # Analysis rows they are derived from, then queue a worker-side
+        # CLEANUP job for them (replaces the old fire-and-forget daemon
+        # thread, which died silently on web-container restart and only
+        # handled local storage).
+        cleanup_keys = collect_output_cleanup_keys(artefact)
+        reset_artefact_for_reanalysis(artefact)
+        queue_storage_cleanup(cleanup_keys, artefact_id=artefact.id, commit=True)
         web_priority = current_app.config.get('WEB_UI_ANALYSIS_PRIORITY', ANALYSIS_PRIORITY_HIGH)
         queue_analyses_for_artefact(artefact, hints if hints else None, priority=web_priority)
-
-        # Run filesystem cleanup in background so the redirect happens immediately.
-        app = current_app._get_current_object()
-        t = threading.Thread(
-            target=cleanup_analysis_outputs,
-            args=(
-                get_output_folder(),
-                cleanup['output_files'],
-                cleanup['output_dirs'],
-                cleanup['cache_dir'],
-                app.logger,
-            ),
-            daemon=True,
-        )
-        t.start()
 
         flash('Re-analysis queued. Previous results have been cleared.', 'success')
         return _redirect_to_artefact_view(artefact)

@@ -180,7 +180,7 @@ def cancel_analysis(analysis_uuid, artefact_uuid, item_uuid, tag_name, platform_
         for a in analyses:
             click.echo(
                 f"  {a.uuid}  {a.analysis_type.name:30s}  {a.status.name}"
-                f"  artefact={a.artefact.uuid}"
+                f"  artefact={a.artefact.uuid if a.artefact else '(none — system job)'}"
             )
         return
 

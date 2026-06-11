@@ -108,5 +108,6 @@ class AnalysisType(enum.Enum):
 
     # Maintenance
     HASH_RESCAN            = "hash_rescan"             # Re-link extracted files against active hash databases
+    CLEANUP                = "cleanup"                 # Delete orphaned storage keys after item deletion or re-analysis
 
 # vim: ts=4 sw=4 et

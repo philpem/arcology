@@ -8,7 +8,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
-from sqlalchemy import case, func
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import joinedload
 from ..database import Analysis, AnalysisStatus, Artefact, Item
 from ..extensions import db
@@ -27,9 +27,16 @@ def init_app(app):
 
 
 def _get_analysis_or_404(uuid):
-    """Load an analysis by UUID, hiding analyses on artefacts the caller may not view."""
+    """Load an analysis by UUID, hiding analyses on artefacts the caller may not view.
+
+    Analyses with no artefact (system CLEANUP jobs) are admin-only: their
+    hints contain storage keys, which ordinary users have no business seeing.
+    """
     analysis = Analysis.query.filter_by(uuid=uuid).first_or_404()
-    if analysis.artefact is not None and not can_view_artefact(analysis.artefact, current_user):
+    if analysis.artefact is None:
+        if not current_user.is_admin:
+            abort(404)
+    elif not can_view_artefact(analysis.artefact, current_user):
         abort(404)
     return analysis
 
@@ -46,13 +53,21 @@ def _require_manage_analysis(analysis):
 
 
 def _visible_analyses_query():
-    """Base Analysis query filtered to artefacts the current user may view."""
-    return (
+    """Base Analysis query filtered to artefacts the current user may view.
+
+    Admins additionally see artefact-less system jobs (CLEANUP) so stuck
+    cleanup work is visible in the queue; for everyone else the outer join
+    plus the visibility clause excludes them.
+    """
+    query = (
         Analysis.query
-        .join(Artefact, Analysis.artefact_id == Artefact.id)
-        .join(Item, Artefact.item_id == Item.id)
-        .filter(artefact_visibility_clause(current_user))
+        .outerjoin(Artefact, Analysis.artefact_id == Artefact.id)
+        .outerjoin(Item, Artefact.item_id == Item.id)
     )
+    visible = artefact_visibility_clause(current_user)
+    if getattr(current_user, 'is_admin', False):
+        visible = or_(visible, Analysis.artefact_id.is_(None))
+    return query.filter(visible)
 
 
 def _view_redirect(analysis):
