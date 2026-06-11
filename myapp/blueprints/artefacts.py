@@ -90,6 +90,7 @@ from ..visibility import (
     can_manage_privacy,
     can_view_artefact,
     can_view_item,
+    output_blocked_for,
 )
 
 ROUTENAME = __name__.replace('.', '_')
@@ -559,11 +560,37 @@ def _render_viewer(artefact):
     _viewable_types = VIEWER_ARTEFACT_TYPES
     output_groups = []
 
+    # Download restrictions gate the original bytes; an analysis output renders
+    # the same content, so withhold any output whose source artefact carries a
+    # restriction the current user cannot bypass.  Outputs may come from the
+    # viewed artefact or any derived artefact (Mode 2), so resolve per output by
+    # the artefact UUID embedded in its path (see resolve_output_artefact).
+    _restriction_cache: dict[str, bool] = {}
+
+    def _output_blocked(filename) -> bool:
+        # Cache by the artefact directory component ({uuid}_{slug}) so many
+        # outputs from one source artefact resolve with a single query.
+        parts = (filename or '').split('/', 2)
+        cache_key = parts[1] if len(parts) >= 2 else filename
+        if cache_key not in _restriction_cache:
+            src = resolve_output_artefact(filename)
+            _restriction_cache[cache_key] = bool(src) and output_blocked_for(current_user, src)
+        return _restriction_cache[cache_key]
+
     def _enrich_outputs(outputs):
-        """For text outputs, read file content for inline rendering."""
+        """For text outputs, read file content for inline rendering.
+
+        Skips content whose source artefact has a non-bypassable download
+        restriction — the inline text is the restricted content itself.  This is
+        defence-in-depth: the per-group ``group['restricted']`` gate (set below)
+        is the primary control and stops the template rendering the text at all.
+        """
         storage = current_app.storage
         for out in outputs:
             if out.get('type') == 'text':
+                if _output_blocked(out.get('filename', '')):
+                    out['text_content'] = None
+                    continue
                 try:
                     key = storage.storage_key('outputs', out['filename'])
                     with storage.open_read(key) as f:
@@ -585,7 +612,14 @@ def _render_viewer(artefact):
     all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
     use_pagination = False  # only paginate Mode 2 aggregate view without ?file=
 
-    if artefact.artefact_type in _viewable_types:
+    # If the viewed artefact itself carries a restriction this user cannot
+    # bypass, don't render any outputs (they are renderings of the restricted
+    # content) — show a restricted notice instead of broken images.
+    viewer_outputs_blocked = output_blocked_for(current_user, artefact)
+
+    if viewer_outputs_blocked:
+        viewer_status = 'restricted'
+    elif artefact.artefact_type in _viewable_types:
         # Mode 1: Artefact is itself a viewable type — show its own FORMAT_CONVERT output
         conv = Analysis.query.filter_by(
             artefact_id=artefact.id,
@@ -878,6 +912,15 @@ def _render_viewer(artefact):
         group['explicit'] = (
             artefact_is_explicit or group.get('source_file') in explicit_file_paths
         )
+        # Generalise the per-group placeholder to all download restrictions: when
+        # a group's source artefact carries a restriction this user cannot bypass
+        # (only possible in Mode 2 for a derived artefact — the viewed artefact's
+        # own restriction short-circuits to viewer_status='restricted' above), its
+        # image/SVG outputs would 403.  Mark the group so the template renders a
+        # notice / locked placeholder instead of a broken thumbnail.
+        group['restricted'] = any(
+            _output_blocked(o.get('filename', '')) for o in group['outputs']
+        )
         # Stamp stable_id now so bundle_items (original group dicts pulled into
         # the thumbnail bundle below) carry it for per-thumbnail explicit gates.
         # Bundle wrapper groups receive their own stable_id when constructed.
@@ -953,6 +996,7 @@ def _render_viewer(artefact):
                         'bundle_items': singles,
                         'outputs': [],
                         'explicit': False,
+                        'restricted': False,
                         'stable_id': bundle_id,
                         'filetype': None,
                     })
@@ -2643,6 +2687,13 @@ def get_output_file(filename):
     artefact_for_check = resolve_output_artefact(filename)
     if artefact_for_check is None or not can_view_artefact(artefact_for_check, current_user):
         abort(404)
+
+    # Download restrictions gate the original bytes; analysis outputs are a
+    # rendering of the same content (e.g. a Sprite/Draw image, a text
+    # conversion), so a caller who cannot bypass the artefact's restrictions
+    # must not be able to read its outputs either.
+    if output_blocked_for(current_user, artefact_for_check):
+        abort(403)
 
     response = serve_output_file(filename)
     if response is None:
