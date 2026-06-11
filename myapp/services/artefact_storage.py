@@ -23,6 +23,7 @@ from ..database import (
     Artefact,
     StorageDirectory,
 )
+from ..utils.blobs import artefact_blob
 
 
 def safe_original_filename(filename: str) -> str:
@@ -128,9 +129,13 @@ def get_artefact_storage_key(artefact: Artefact) -> str:
     """Get the storage key for an artefact.
 
     Returns a key like 'uploads/abc123.img' or 'outputs/xyz789.png'.
+    Uses the blob's physical storage path when a blob record exists; falls
+    back to artefact.storage_path for legacy (pre-blob) artefacts.
     """
+    blob = artefact_blob(artefact)
+    storage_path = blob.storage_path if blob is not None else artefact.storage_path
     directory = 'outputs' if artefact.storage_directory == StorageDirectory.OUTPUTS else 'uploads'
-    return current_app.storage.storage_key(directory, artefact.storage_path)
+    return current_app.storage.storage_key(directory, storage_path)
 
 
 def get_artefact_path(artefact: Artefact) -> str:

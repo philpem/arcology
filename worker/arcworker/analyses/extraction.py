@@ -437,6 +437,7 @@ def _extract_top_level_archive(
             label=file_path.name,
             source_path=file_path,
             artefact_type=artefact_type,
+            logical_name=str(file_path.relative_to(extract_dir)),
         )
         if resp:
             derived_count += 1
@@ -844,27 +845,14 @@ def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path)
     # Must include known files (show_known=true) because archive files
     # can match the known-files database and would otherwise be hidden.
     # Push the extraction-context filter to the API so only the relevant
-    # subset is fetched; paginate to handle partitions larger than 10 000 files.
-    from urllib.parse import urlencode
+    # subset is fetched.
     base_params = {'is_archive': 'false', 'show_known': 'true'}
     if path_prefix:
         base_params['path_prefix'] = path_prefix
     else:
         base_params['extraction_depth'] = 0
 
-    files = []
-    page = 1
-    while True:
-        resp = self.api.get(
-            f"/partitions/{partition_uuid}/files?{urlencode({**base_params, 'per_page': 10000, 'page': page})}"
-        )
-        if not resp:
-            self.fail_analysis(analysis_id, 'Failed to get partition files')
-            return
-        files.extend(resp.get('files', []))
-        if page >= resp.get('pages', 1):
-            break
-        page += 1
+    files = self.api.get_partition_files(partition_uuid, **base_params)
 
     archive_count = 0
     queued_count = 0

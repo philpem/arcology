@@ -207,3 +207,45 @@ Options:
 | `--to USERNAME\|none` | Receiving user, or `none` to leave items unowned (required) |
 | `--dry-run` | Show counts without making any changes |
 | `--yes` | Skip the interactive confirmation prompt |
+
+## backfill-blobs
+
+Assigns blob records to hashed artefacts that have none. After the global
+blob deduplication migration (`00006a25a2c0`), artefacts whose SHA-256 was
+NULL at migration time (not yet computed by CHECKSUM_COMPUTE) have no blob
+record. Once the worker fills in their hashes, run this to create the
+missing records without a full re-analysis. Safe to re-run — artefacts that
+already have a blob are skipped.
+
+```bash
+flask backfill-blobs                  # assign missing blob records
+flask backfill-blobs --dry-run        # preview without changes
+flask backfill-blobs --batch-size 200 # tune commit batch size
+```
+
+Options:
+
+| Flag | Description |
+|------|-------------|
+| `--batch-size N` | Number of rows to commit per batch (default: 500) |
+| `--dry-run` | Show what would be updated without making changes |
+
+## dedup-artefacts
+
+Reports repeated artefact content and optionally prunes legacy duplicate
+storage objects left over from uploads that predated the blob deduplication
+migration. Artefact rows are never deleted — identical content may
+intentionally exist as separate artefacts with different owners, privacy,
+labels, and lineage. Only orphaned physical files (storage paths that do not
+match any blob record) are removed.
+
+```bash
+flask dedup-artefacts          # report duplicates and preview removals
+flask dedup-artefacts --apply  # delete non-canonical objects from storage
+```
+
+Options:
+
+| Flag | Description |
+|------|-------------|
+| `--apply` | Delete non-canonical legacy objects from the storage backend |

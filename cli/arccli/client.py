@@ -56,24 +56,14 @@ class ArcologyClient:
 	def _url(self, endpoint: str) -> str:
 		return f"{self.api_url}/{endpoint.lstrip('/')}"
 
-	def _handle_response(self, resp: requests.Response, duplicate_ok: bool = False) -> dict:
-		"""Check response status and return JSON, or raise ArcologyError.
-
-		duplicate_ok: treat a 409 as success and return its body (the artefact
-		upload endpoints respond 409 with the existing artefact record and
-		``duplicate: true`` when the same content already exists).  All other
-		endpoints use 409 for genuine conflicts, which must raise.
-		"""
+	def _handle_response(self, resp: requests.Response) -> dict:
+		"""Check response status and return JSON, or raise ArcologyError."""
 		if resp.status_code == 401:
 			raise ArcologyError("Authentication failed. Check your API key.", 401, resp)
 		if resp.status_code == 403:
 			raise ArcologyError("Insufficient permissions.", 403, resp)
 		if resp.status_code == 404:
 			raise ArcologyError("Not found.", 404, resp)
-		if resp.status_code == 409 and duplicate_ok:
-			result = resp.json()
-			result.setdefault('duplicate', True)
-			return result
 		if resp.status_code == 413:
 			raise ArcologyError("File too large for server.", 413, resp)
 		if resp.status_code >= 400:
@@ -96,14 +86,13 @@ class ArcologyClient:
 		resp = self.session.post(self._url(endpoint), json=data, timeout=self.timeout)
 		return self._handle_response(resp)
 
-	def post_file(self, endpoint: str, filepath: str, fields: dict,
-	              duplicate_ok: bool = False) -> dict:
+	def post_file(self, endpoint: str, filepath: str, fields: dict) -> dict:
 		"""POST multipart file upload to API endpoint."""
 		with open(filepath, 'rb') as f:
 			files = {'file': (os.path.basename(filepath), f)}
 			resp = self.session.post(self._url(endpoint), files=files, data=fields,
 			                         timeout=self.timeout)
-		return self._handle_response(resp, duplicate_ok=duplicate_ok)
+		return self._handle_response(resp)
 
 	def put(self, endpoint: str, data: dict) -> dict:
 		"""PUT JSON data to API endpoint."""
@@ -192,8 +181,7 @@ class ArcologyClient:
 			fields['auto_analyse'] = 'false'
 		if hints:
 			fields['hints'] = json.dumps(hints)
-		return self.post_file(f'items/{item_uuid}/artefacts/upload', filepath, fields,
-		                      duplicate_ok=True)
+		return self.post_file(f'items/{item_uuid}/artefacts/upload', filepath, fields)
 
 	def _upload_chunk(self, upload_uuid: str, chunk_index: int, data: bytes) -> dict:
 		"""POST a single raw binary chunk."""
@@ -268,7 +256,7 @@ class ArcologyClient:
 		# Assemble and create artefact
 		resp = self.session.post(self._url(f'uploads/chunked/{upload_uuid}/complete'),
 		                         timeout=self.timeout)
-		return self._handle_response(resp, duplicate_ok=True)
+		return self._handle_response(resp)
 
 	def download_artefact(self, uuid: str, output_path: str):
 		self.download(f'artefacts/{uuid}/download', output_path)

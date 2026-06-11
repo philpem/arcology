@@ -4,13 +4,13 @@ Tests for the shared upload ingest pipeline (myapp/services/upload_pipeline.py).
 Verifies that:
   - ingest_uploaded_artefact() creates the artefact, its slug, and its queued
     analyses atomically, honouring the three queue modes.
-  - A duplicate upload (same item + SHA-256) returns the existing artefact and
-    deletes the newly stored file.
+  - A duplicate upload (same SHA-256) creates a second artefact sharing the
+    existing blob; the newly uploaded physical file is deleted (dedup).
   - A failure mid-transaction rolls back the artefact row AND deletes the
     stored file (no orphans in DB or storage).
   - The API upload endpoints (single and chunked) drive the same pipeline:
-    201 with slug + queued_analyses, 409 on duplicate, and no artefact row is
-    left behind when the request is rejected (invalid hints).
+    201 with slug + queued_analyses on every upload (no 409 on duplicate),
+    and no artefact row is left behind when the request is rejected (invalid hints).
 
 Run:
     SQLALCHEMY_DATABASE_URI=sqlite:///:memory: SECRET_KEY=test WORKER_API_KEY=test \\
@@ -80,9 +80,11 @@ class UploadPipelineTestBase(unittest.TestCase):
         self.storage = FakeStorage()
         self.app.storage = self.storage
         with self.app.app_context():
-            from myapp.database import Analysis, Artefact
+            from myapp.database import Analysis, Artefact, OutputBlob, UploadBlob
             Analysis.query.delete()
             Artefact.query.delete()
+            UploadBlob.query.delete()
+            OutputBlob.query.delete()
             self.db.session.commit()
 
     def _item(self):
@@ -144,16 +146,22 @@ class TestIngestService(UploadPipelineTestBase):
             self.assertEqual(outcome.queued_analyses, [])
             self.assertEqual(Analysis.query.count(), 0)
 
-    def test_duplicate_returns_existing_and_deletes_file(self):
-        from myapp.database import Artefact
+    def test_blob_dedup_creates_second_artefact_and_deletes_dup_file(self):
+        """Identical content uploaded twice → two artefacts sharing one blob."""
+        from myapp.database import Artefact, UploadBlob
 
         with self.app.app_context():
-            first = self._ingest().artefact
+            first = self._ingest(storage_name='original.adf').artefact
             outcome = self._ingest(storage_name='second-copy.adf')
-            self.assertIsNone(outcome.artefact)
-            self.assertEqual(outcome.duplicate.id, first.id)
-            self.assertEqual(Artefact.query.count(), 1)
+            self.assertIsNone(outcome.duplicate)
+            self.assertIsNotNone(outcome.artefact)
+            self.assertNotEqual(outcome.artefact.id, first.id)
+            self.assertEqual(Artefact.query.count(), 2)
+            # Duplicate physical file deleted; only one blob record
             self.assertIn('uploads/second-copy.adf', self.storage.deleted)
+            self.assertEqual(UploadBlob.query.count(), 1)
+            # Both artefacts reference the canonical blob storage path
+            self.assertEqual(first.storage_path, outcome.artefact.storage_path)
 
     def test_failure_rolls_back_artefact_and_deletes_file(self):
         from myapp.database import Analysis, Artefact
@@ -210,18 +218,19 @@ class TestApiUploadEndpoint(UploadPipelineTestBase):
             db_types = {a.analysis_type for a in Analysis.query.all()}
             self.assertEqual(db_types, {AnalysisType.CHECKSUM_COMPUTE} | set(expected_map))
 
-    def test_duplicate_upload_returns_409(self):
+    def test_second_upload_of_same_content_creates_new_artefact(self):
+        """Identical content uploaded twice creates two artefacts; blob dedup removes dup file."""
         from myapp.database import Artefact
 
         resp1 = self._post_upload()
         self.assertEqual(resp1.status_code, 201, resp1.data)
         resp2 = self._post_upload()
-        self.assertEqual(resp2.status_code, 409, resp2.data)
-        self.assertTrue(resp2.get_json()['duplicate'])
-        self.assertEqual(resp2.get_json()['uuid'], resp1.get_json()['uuid'])
+        self.assertEqual(resp2.status_code, 201, resp2.data)
+        # Two distinct artefact rows
+        self.assertNotEqual(resp1.get_json()['uuid'], resp2.get_json()['uuid'])
         with self.app.app_context():
-            self.assertEqual(Artefact.query.count(), 1)
-        # The duplicate's stored file must have been cleaned up
+            self.assertEqual(Artefact.query.count(), 2)
+        # The duplicate physical file must have been cleaned up (blob dedup)
         self.assertEqual(len(self.storage.deleted), 1)
 
     def test_auto_analyse_false_queues_nothing(self):

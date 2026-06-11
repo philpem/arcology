@@ -839,10 +839,7 @@ def cmd_bulk_import(client: ArcologyClient, args):
             finally:
                 if tmp_ctx is not None:
                     tmp_ctx.cleanup()
-            if result and result.get('duplicate'):
-                log.debug('    -> skipped (duplicate of %s)', result.get('uuid', '?')[:8])
-                skipped_files += 1
-            elif result:
+            if result:
                 uploaded_files += 1
                 artefact_type = result.get('artefact_type', '?')
                 log.debug('    -> %s (type: %s)', result.get('uuid', '?')[:8], artefact_type)

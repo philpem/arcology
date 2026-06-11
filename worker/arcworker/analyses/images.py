@@ -334,8 +334,7 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
     # Query file list from the database via API instead of scanning the
     # filesystem.  This avoids downloading the entire extraction tree
     # in S3 mode — only the viewable files will be fetched individually.
-    # Push the extraction-context filter to the API and paginate.
-    from urllib.parse import urlencode
+    # Push the extraction-context filter to the API.
     viewable_files: list[tuple[dict, ArtefactType]] = []
     if partition_uuid:
         base_params = {'show_known': 'true'}
@@ -344,18 +343,7 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
         else:
             base_params['extraction_depth'] = 0
 
-        all_files = []
-        page = 1
-        while True:
-            files_resp = self.api.get(
-                f"/partitions/{partition_uuid}/files?{urlencode({**base_params, 'per_page': 10000, 'page': page})}"
-            )
-            if not files_resp:
-                break
-            all_files.extend(files_resp.get('files', []))
-            if page >= files_resp.get('pages', 1):
-                break
-            page += 1
+        all_files = self.api.get_partition_files(partition_uuid, **base_params)
 
         for file_data in all_files:
             if file_data.get('is_directory', False):
