@@ -7,6 +7,7 @@ Hash databases, known products, and file recognition.
 import csv
 import io
 import json
+import re
 from flask import Blueprint, Response, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
@@ -537,6 +538,32 @@ def toggle_active(id):
 # Export
 # =============================================================================
 
+# Leading characters that make Excel / LibreOffice interpret a CSV cell as a
+# formula.  Known-product fields (title, filename, description, path) are
+# free-text supplied by read_write users, so a value like ``=cmd|'/c calc'!A1``
+# would execute when another user opens the exported CSV (CWE-1236).
+_CSV_FORMULA_TRIGGERS = ('=', '+', '-', '@', '\t', '\r')
+
+
+def _csv_safe(value):
+    """Neutralise spreadsheet formula injection in a CSV cell.
+
+    Prefixes a single quote to any string whose first character would otherwise
+    trigger formula evaluation, so the value is read as literal text.  Numbers,
+    hashes and booleans (which never start with a trigger character) pass
+    through unchanged.
+    """
+    if isinstance(value, str) and value[:1] in _CSV_FORMULA_TRIGGERS:
+        return "'" + value
+    return value
+
+
+def _safe_download_name(name: str, suffix: str) -> str:
+    """Build a Content-Disposition filename safe from header/quote injection."""
+    cleaned = re.sub(r'[^A-Za-z0-9._-]+', '_', name).strip('_')
+    return f'{cleaned or "hashdb"}{suffix}'
+
+
 @blueprint.route('/<int:id>/export')
 @login_required
 def export(id):
@@ -551,20 +578,20 @@ def export(id):
                          'crc32', 'is_required', 'relative_path', 'description'])
         for product in products:
             for kf in product.known_files:
-                writer.writerow([
+                writer.writerow([_csv_safe(c) for c in (
                     product.title, kf.filename, kf.file_size or '',
                     kf.md5 or '', kf.sha1 or '', kf.sha256 or '', kf.crc32 or '',
                     '1' if kf.is_required else '0',
                     kf.relative_path or '', kf.description or '',
-                ])
+                )])
         for kf in KnownFile.query.filter_by(database_id=id, product_id=None).all():
-            writer.writerow([
+            writer.writerow([_csv_safe(c) for c in (
                 '', kf.filename, kf.file_size or '',
                 kf.md5 or '', kf.sha1 or '', kf.sha256 or '', kf.crc32 or '',
                 '1' if kf.is_required else '0',
                 kf.relative_path or '', kf.description or '',
-            ])
-        filename = f"{database.name.replace(' ', '_')}.csv"
+            )])
+        filename = _safe_download_name(database.name, '.csv')
         return Response(output.getvalue(), mimetype='text/csv',
                         headers={'Content-Disposition': f'attachment; filename="{filename}"'})
 
@@ -601,7 +628,7 @@ def export(id):
             for p in products
         ],
     }
-    filename = f"{database.name.replace(' ', '_')}.json"
+    filename = _safe_download_name(database.name, '.json')
     return Response(json.dumps(data, indent=2), mimetype='application/json',
                     headers={'Content-Disposition': f'attachment; filename="{filename}"'})
 
