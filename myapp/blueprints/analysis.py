@@ -166,6 +166,18 @@ def artefact_analyses(uuid):
         abort(404)
     all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
 
+    # A derived artefact may be independently marked private even when the root
+    # is public, so restrict to the artefacts the caller may actually view —
+    # otherwise their analyses (and the status counts below) would leak via the
+    # parent's analysis page.
+    visible_ids = {
+        row[0] for row in db.session.query(Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(Artefact.id.in_(all_artefact_ids), artefact_visibility_clause(current_user))
+        .all()
+    }
+    all_artefact_ids = [aid for aid in all_artefact_ids if aid in visible_ids]
+
     query = Analysis.query.filter(
         Analysis.artefact_id.in_(all_artefact_ids)
     ).options(joinedload(Analysis.artefact))
