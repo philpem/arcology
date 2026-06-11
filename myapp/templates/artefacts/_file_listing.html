@@ -1,5 +1,6 @@
 {% from '_pagination.html' import render_pagination_compact, render_letter_bar_compact %}
 {% from '_path_nav.html' import render_path_breadcrumb, render_subdirectory_bar %}
+{% from '_macros.html' import file_download_icon with context %}
         <div class="card" id="files">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span>
@@ -195,25 +196,7 @@
                                 {% if not file.is_directory %}
                                 {# Effective restrictions = direct on this file + inherited from ancestor archives #}
                                 {% set _eff_restr = file.restrictions + file_inherited_restrictions.get(file.id, []) %}
-                                {# ── Download icon — artefact-level restrictions take priority ── #}
-                                {% if artefact.restrictions and current_user.is_authenticated and current_user.can_bypass_all_restrictions(artefact.restrictions) %}
-                                <a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=file.uuid, confirm_bypass='1') }}"
-                                   class="text-danger ms-1" title="Download file (restricted — bypass active)"
-                                   onclick="return confirm('This artefact has download restrictions. Download anyway?')"><i class="bi bi-download"></i></a>
-                                {% elif artefact.restrictions %}
-                                <span class="text-muted ms-1 opacity-50" title="Download restricted"><i class="bi bi-lock-fill"></i></span>
-                                {% elif _eff_restr %}
-                                  {% if current_user.is_authenticated and current_user.can_bypass_all_restrictions(_eff_restr) %}
-                                <a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=file.uuid, confirm_bypass='1') }}"
-                                   class="text-danger ms-1" title="Download file (file restricted — bypass active)"
-                                   onclick="return confirm('This file has download restrictions. Download anyway?')"><i class="bi bi-download"></i></a>
-                                  {% else %}
-                                <span class="text-muted ms-1 opacity-50" title="File download restricted"><i class="bi bi-lock-fill"></i></span>
-                                  {% endif %}
-                                {% else %}
-                                <a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=file.uuid) }}"
-                                   class="text-muted ms-1" title="Download file"><i class="bi bi-download"></i></a>
-                                {% endif %}
+                                {{ file_download_icon(file.uuid, artefact.restrictions, _eff_restr) }}
                                 {# ── Restriction badges (direct only; inherited shown via ancestor's own badge) ── #}
                                 {% if file.restrictions %}
                                   {% for r in file.restrictions %}

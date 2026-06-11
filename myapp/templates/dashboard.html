@@ -1,4 +1,5 @@
 {% extends "_base.html" %}
+{% from '_macros.html' import status_badge with context %}
 {% block page_title %}Dashboard{% endblock %}
 
 {% block content %}
@@ -90,7 +91,7 @@
                 {% for analysis in recent_analyses %}
                 <li class="list-group-item d-flex justify-content-between">
                     <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=analysis.uuid) }}">{{ analysis.analysis_type|format_analysis_type }} - {{ analysis.artefact.label }}</a>
-                    <span class="badge {{ analysis.status.value | status_badge_class }}">{{ analysis.status.value }}</span>
+                    {{ status_badge(analysis.status) }}
                 </li>
                 {% else %}
                 <li class="list-group-item text-muted">No analyses yet</li>
