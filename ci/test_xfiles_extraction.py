@@ -379,6 +379,36 @@ class TestXFilesExtraction(unittest.TestCase):
         result, _files = self._run_extract(img)
         self.assertFalse(result['success'])
 
+    def test_decompressed_size_cap_enforced(self):
+        """Cumulative extracted bytes are capped at MAX_DECOMPRESSED_BYTES.
+
+        Chunk sizes come from the untrusted chunk table, so a crafted archive
+        must not be able to exhaust worker memory/disk.
+        """
+        from unittest import mock
+        from worker.arcworker.tools import archives
+
+        content_a = b'A' * 64
+        content_b = b'B' * 64
+        entries = [
+            (b'FileA', 0, 0, len(content_a), _XFILES_ATTR_OWNER_RW, 2),
+            (b'FileB', 0, 0, len(content_b), _XFILES_ATTR_OWNER_RW, 3),
+        ]
+        img = _build_xfiles_image(entries, {2: content_a, 3: content_b})
+
+        # Cap below the combined payload size (but above the directory chunk,
+        # which is also counted against the budget).
+        with mock.patch.object(archives, 'MAX_DECOMPRESSED_BYTES', 150):
+            result, _files = self._run_extract(img)
+        self.assertFalse(result['success'])
+        self.assertIn('limit', result['error'].lower())
+
+        # The same archive extracts fine with the real (large) cap.
+        result, files = self._run_extract(img)
+        self.assertTrue(result['success'], result.get('error'))
+        self.assertEqual(files['FileA'], content_a)
+        self.assertEqual(files['FileB'], content_b)
+
 
 if __name__ == '__main__':
     unittest.main()

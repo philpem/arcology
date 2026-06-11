@@ -804,10 +804,16 @@ _XFILES_ATTR_ISDIR = 0x100
 _XFILES_MAX_DEPTH = 200
 
 
-def _xfiles_read_chunk(fh, chunk_table: list, chunk_num: int) -> bytes:
+def _xfiles_read_chunk(fh, chunk_table: list, chunk_num: int,
+                       budget: dict | None = None) -> bytes:
     """Return the payload bytes of chunk *chunk_num*.
 
-    Raises ValueError for out-of-range, free, or truncated chunks.
+    budget: optional ``{'remaining': int}`` counter shared across the whole
+    extraction.  Chunk sizes come straight from the (untrusted) chunk table,
+    so a cumulative cap is enforced here — before any bytes are read — to
+    stop a crafted archive exhausting worker memory/disk.
+
+    Raises ValueError for out-of-range, free, truncated, or over-budget chunks.
     """
     if chunk_num >= len(chunk_table):
         raise ValueError(
@@ -819,6 +825,13 @@ def _xfiles_read_chunk(fh, chunk_table: list, chunk_num: int) -> bytes:
         raise ValueError(f'X-Files: chunk {chunk_num} is marked free')
     if size == 0:
         return b''
+    if budget is not None:
+        budget['remaining'] -= size
+        if budget['remaining'] < 0:
+            raise ValueError(
+                f'X-Files: extracted size exceeds '
+                f'{MAX_DECOMPRESSED_BYTES:,} byte limit'
+            )
     fh.seek(offset)
     data = fh.read(size)
     if len(data) != size:
@@ -843,6 +856,7 @@ def _xfiles_extract_dir(
     rel_parts: list,
     inf_metadata: dict,
     depth: int,
+    budget: dict,
 ) -> None:
     """Recursively extract a directory chunk to *out_dir*.
 
@@ -854,6 +868,7 @@ def _xfiles_extract_dir(
         rel_parts:    path components relative to *out_dir* for this directory
         inf_metadata: dict populated with per-file RISC OS metadata
         depth:        current recursion depth (guards against malformed images)
+        budget:       shared ``{'remaining': int}`` extracted-bytes budget
     """
     from .extraction import _get_riscos_filetype, _riscos_timestamp_to_datetime
 
@@ -862,7 +877,7 @@ def _xfiles_extract_dir(
             f'X-Files: directory depth limit ({_XFILES_MAX_DEPTH}) exceeded'
         )
 
-    data = _xfiles_read_chunk(fh, chunk_table, chunk_num)
+    data = _xfiles_read_chunk(fh, chunk_table, chunk_num, budget)
 
     if len(data) < 16:
         raise ValueError(
@@ -924,12 +939,12 @@ def _xfiles_extract_dir(
             item_path.mkdir(parents=True, exist_ok=True)
             _xfiles_extract_dir(
                 fh, chunk_table, node,
-                out_dir, item_parts, inf_metadata, depth + 1,
+                out_dir, item_parts, inf_metadata, depth + 1, budget,
             )
         else:
             item_path = out_dir.joinpath(*item_parts)
             item_path.parent.mkdir(parents=True, exist_ok=True)
-            file_data = _xfiles_read_chunk(fh, chunk_table, node)
+            file_data = _xfiles_read_chunk(fh, chunk_table, node, budget)
             item_path.write_bytes(file_data)
 
             # Build inf_metadata keyed by display path (matching what
@@ -1022,9 +1037,10 @@ def extract_xfiles(input_path: Path, output_dir: Path) -> dict[str, Any]:
 
             # ── Recursively extract from the root directory ───────────────────
             inf_metadata: dict[str, dict] = {}
+            budget = {'remaining': MAX_DECOMPRESSED_BYTES}
             _xfiles_extract_dir(
                 fh, chunk_table, root_chunk,
-                output_dir, [], inf_metadata, 0,
+                output_dir, [], inf_metadata, 0, budget,
             )
 
     except ValueError as exc:
