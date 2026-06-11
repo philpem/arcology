@@ -633,7 +633,7 @@ def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path
         result = extract_dos_7z(input_path, extract_dir)
         all_results['7z'] = result
     else:
-        log.info(f"CHECKPOINT: FS is '{fs_type}', I dunno, falling back!")
+        log.info(f"file_extraction: no usable filesystem hint ('{fs_type}'), probing")
         # No filesystem hint — read the boot-sector BPB first.  If the
         # image is FAT12/16/32, skip DIM entirely and go straight to 7z:
         # DIM can read DOS FAT images but produces double-extension names.

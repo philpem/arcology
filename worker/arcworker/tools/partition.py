@@ -1164,6 +1164,9 @@ def detect_acorn_adfs(input_path: Path) -> dict:
         }
 
     except Exception as e:
+        # Don't let a probe failure crash the caller, but log it: a bug in
+        # the detection logic must not silently read as "not ADFS".
+        log.warning(f"detect_acorn_adfs: probe failed for {input_path}: {e}")
         return {
             'adfs_detected': False,
             'error': str(e),
