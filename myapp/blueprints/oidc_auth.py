@@ -8,7 +8,7 @@ in myapp.cfg or via the OIDC_ENABLED environment variable.
 Routes:
   GET /auth/sso/login     — redirect to the identity provider
   GET /auth/sso/callback  — handle the authorisation code exchange
-  GET /auth/sso/logout    — local logout (+ provider single-logout if configured)
+  POST /auth/sso/logout   — local logout (+ provider single-logout if configured)
 """
 
 import time
@@ -174,10 +174,14 @@ def sso_callback():
     return redirect(next_url or url_for('myapp_blueprints_dashboard.index'))
 
 
-@blueprint.route('/sso/logout')
+@blueprint.route('/sso/logout', methods=['POST'])
 @login_required
 def sso_logout():
-    """Log out of Arcology, and optionally terminate the provider session too."""
+    """Log out of Arcology, and optionally terminate the provider session too.
+
+    POST-only (reached via the CSRF-protected logout form, or called directly by
+    auth.logout) so it cannot be triggered by a cross-site GET.
+    """
     end_session_endpoint = session.get('oidc_end_session_endpoint')
     id_token = session.get('oidc_id_token')
 
