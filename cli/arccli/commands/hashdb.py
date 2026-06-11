@@ -4,6 +4,7 @@ arco hashdb — Import, export, and manage Arcology hash databases.
 
 import csv
 import json
+import os
 import sys
 from io import StringIO
 from ..client import ArcologyClient, ArcologyError
@@ -132,8 +133,8 @@ def cmd_hashdb_import(client: ArcologyClient, args):
                 'description': row.get('description') or None,
             })
         import_data = {
-            'database': {'name': args.name or __import__('os').path.splitext(
-                __import__('os').path.basename(input_file))[0]},
+            'database': {'name': args.name or os.path.splitext(
+                os.path.basename(input_file))[0]},
             'products': [
                 {'title': title, 'files': files}
                 for title, files in products_by_title.items()
