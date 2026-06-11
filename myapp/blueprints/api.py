@@ -106,6 +106,7 @@ from ..visibility import (
     can_view_artefact,
     can_view_item,
     item_visibility_clause,
+    output_blocked_for,
 )
 
 ROUTENAME = __name__.replace('.', '_')
@@ -1281,8 +1282,7 @@ def get_output_file(filename):
     # same content, so a caller who cannot bypass the artefact's restrictions
     # must not read its outputs either.  This mirrors download_artefact() — the
     # worker key (user is None) is intentionally blocked from restricted bytes.
-    if artefact_for_check.restrictions and not can_download_despite_restrictions(
-            user, artefact_for_check.restrictions, artefact_for_check):
+    if output_blocked_for(user, artefact_for_check):
         return error_response('Download restricted', 403)
 
     response = serve_output_file(filename)
