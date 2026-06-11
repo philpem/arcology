@@ -10,7 +10,7 @@ ARMlock-protected ADFS discs) on the resulting partitions.
 import json
 import shutil
 from pathlib import Path
-from shared.enums import AnalysisType, ArtefactType
+from arcology_shared.enums import AnalysisType, ArtefactType
 from ..compression import extract_partition_range, is_region_uniform
 from ..config import log
 from ..tools import (

@@ -35,8 +35,8 @@ def _make_item(db, name, slug=None):
 
 
 def _make_artefact(db, item, label, slug=None):
+    from arcology_shared.enums import ArtefactType
     from myapp.database import Artefact
-    from shared.enums import ArtefactType
     art = Artefact(
         item_id=item.id,
         label=label,

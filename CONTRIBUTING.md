@@ -32,7 +32,7 @@ The web app is a Flask application using the application factory pattern. It ser
 
 - `myapp/app.py` -- Application factory (`create_app()`). Creates the Flask app, initialises extensions, registers blueprints, and sets up login/error handlers.
 - `myapp/extensions.py` -- Flask extension instances (SQLAlchemy, Migrate, LoginManager, Bootstrap5, CSRF). Created without being bound to an app; initialised later in the factory.
-- `myapp/database.py` -- All SQLAlchemy models and the web-specific enums (`AnalysisStatus`, `FilesystemType`, etc.). `ArtefactType` and `AnalysisType` are imported from `shared/enums.py`.
+- `myapp/database.py` -- All SQLAlchemy models and the web-specific enums (`AnalysisStatus`, `FilesystemType`, etc.). `ArtefactType` and `AnalysisType` are imported from `arcology_shared/enums.py`.
 - `myapp/myapp.cfg` -- Runtime configuration (database URI, secret key, upload paths, etc.). Copied from `myapp.cfg.example`.
 
 **Blueprints** (`myapp/blueprints/`) -- each feature area is a separate Flask blueprint:
@@ -87,8 +87,8 @@ The worker is a standalone Python process that polls the web app's REST API for 
 - `worker/arcworker/compression.py` -- Decompression utilities for compressed artefacts.
 - `worker/arcworker/tools/` -- Wrappers for external analysis tools (HxCFE, Fluxfox, 7z, etc.).
 - `worker/Dockerfile` -- Multi-stage build that compiles all analysis tools from source.
-- `shared/enums.py` -- Canonical `ArtefactType` and `AnalysisType` enum definitions, imported by both web app and worker.
-- `shared/archive_formats.py` -- Canonical archive format definitions (`ArchiveType`, `ARCHIVE_FORMATS`, helpers), imported by the worker.
+- `arcology_shared/enums.py` -- Canonical `ArtefactType` and `AnalysisType` enum definitions, imported by both web app and worker.
+- `arcology_shared/archive_formats.py` -- Canonical archive format definitions (`ArchiveType`, `ARCHIVE_FORMATS`, helpers), imported by the worker.
 
 **How workers process jobs:**
 
@@ -236,7 +236,7 @@ docker compose down
 
 ### Running the Worker Outside Docker
 
-The worker uses a `shared/` package that lives in the repo root. When running
+The worker uses a `arcology_shared/` package that lives in the repo root. When running
 the worker locally (outside Docker) you must ensure the repo root is on the
 Python path. The entry point (`worker/worker.py`) handles this automatically,
 but you must run it from the **repo root** or use `PYTHONPATH`:
@@ -249,7 +249,7 @@ python worker/worker.py
 PYTHONPATH=/path/to/arcology python worker/worker.py
 ```
 
-Inside Docker the `shared/` directory is copied into the container at build
+Inside Docker the `arcology_shared/` directory is copied into the container at build
 time, so no special path setup is needed.
 
 ### Debug Tools
@@ -272,7 +272,7 @@ arcology/
 │   ├── blueprints/             # Feature modules (auto-discovered)
 │   ├── templates/              # Jinja2 HTML templates
 │   └── static/                 # CSS, JS, images
-├── shared/                     # Shared definitions (used by web app and worker)
+├── arcology_shared/            # Shared definitions (used by web app and worker)
 │   ├── enums.py                # ArtefactType and AnalysisType (single source of truth)
 │   └── archive_formats.py      # Archive format definitions
 ├── worker/                     # Analysis worker
@@ -300,7 +300,7 @@ arcology/
 
 ### Adding a New Analysis Type
 
-1. Add the new type to `AnalysisType` in `shared/enums.py`.
+1. Add the new type to `AnalysisType` in `arcology_shared/enums.py`.
 2. Add it to the `ANALYSIS_MAP` in `myapp/blueprints/artefacts.py` so it gets auto-queued for the appropriate artefact types.
 3. Implement a `process_<type>` handler method in `worker/arcworker/analysis.py`.
 4. Register the handler in the `handlers` dict inside `AnalysisWorker.process_analysis()`.
@@ -332,7 +332,7 @@ This applies to every `SQLEnum(SomePythonEnum)` column in the project: `analysis
 #### Rollback pitfall: stale enum-backed rows
 
 Adding a PostgreSQL enum value is effectively one-way here. Reverting the code
-can remove an `AnalysisType` member from `shared/enums.py`, but any existing
+can remove an `AnalysisType` member from `arcology_shared/enums.py`, but any existing
 rows in `analyses` that still use that enum name will remain in the database.
 Once that happens, ORM queries can fail at row-materialisation time with errors
 like:
@@ -349,15 +349,15 @@ means deleting stale rows from `analyses` before switching the code back.
 
 ### Adding a New Artefact Type
 
-1. Add the type to `ArtefactType` in `shared/enums.py`.
+1. Add the type to `ArtefactType` in `arcology_shared/enums.py`.
 2. Update the file extension detection logic in `myapp/blueprints/artefacts.py`.
 3. Add entries to `ANALYSIS_MAP` to specify which analyses should auto-run.
 
 ### Adding a New Archive Format
 
-Archive format definitions live in `shared/archive_formats.py`.
+Archive format definitions live in `arcology_shared/archive_formats.py`.
 
-1. Add the new type to the `ArchiveType` enum in `shared/archive_formats.py`.
+1. Add the new type to the `ArchiveType` enum in `arcology_shared/archive_formats.py`.
 2. Add an entry to `ARCHIVE_FORMATS` in the same file, including:
    - `name` -- display string shown in the GUI (e.g. `"ZIP (RISC OS)"`)
    - `category` -- `ArchiveCategory.ARCHIVE`, `.COMPRESS`, or `.DISK_IMAGE`

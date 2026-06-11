@@ -13,8 +13,8 @@ import sys
 
 # Modules to import — covers the main app, shared definitions, and worker
 MODULES_TO_CHECK = [
-    'shared.enums',
-    'shared.archive_formats',
+    'arcology_shared.enums',
+    'arcology_shared.archive_formats',
     'myapp.extensions',
     'myapp.database',
     'myapp.app',

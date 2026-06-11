@@ -385,7 +385,7 @@ RUN apt -y remove python3-dev git && apt -y autoremove
 WORKDIR /app
 COPY worker/worker.py .
 COPY worker/arcworker/ ./arcworker/
-COPY shared/ ./shared/
+COPY arcology_shared/ ./arcology_shared/
 
 # Environment variables (override at runtime)
 ENV ARCOLOGY_API=http://host.docker.internal:5000/api

@@ -32,6 +32,7 @@ class TestPendingAnalysesAuth(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        from arcology_shared.enums import ArtefactType
         from myapp.app import create_app
         from myapp.database import (
             Analysis,
@@ -45,7 +46,6 @@ class TestPendingAnalysesAuth(unittest.TestCase):
             UserPermission,
         )
         from myapp.extensions import db
-        from shared.enums import ArtefactType
 
         cls.app = create_app()
         cls.app.config['TESTING'] = True

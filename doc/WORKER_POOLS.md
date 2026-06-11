@@ -44,7 +44,7 @@ a comma-separated list of `AnalysisType` **names** (uppercase).  That worker
 will only claim jobs whose `analysis_type` is in the list.  Unset or empty
 means "accept any job type" — the original default.
 
-Valid names are defined in [`shared/enums.py`](../shared/enums.py); common
+Valid names are defined in [`arcology_shared/enums.py`](../arcology_shared/enums.py); common
 examples:
 
 ```

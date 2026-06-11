@@ -128,7 +128,7 @@ def _analysis_file_path(analysis, hint_file_map: dict) -> str | None:
                          (empty → top-level scan, returns None)
     """
     import json as _json
-    from shared.enums import AnalysisType as _AT
+    from arcology_shared.enums import AnalysisType as _AT
 
     if not analysis.hints:
         return None
@@ -189,7 +189,7 @@ def build_processing_tree(root: Artefact) -> tuple[dict, bool, dict, int]:
     """
     import json as _json
     from collections import defaultdict
-    from shared.enums import AnalysisType as _AT
+    from arcology_shared.enums import AnalysisType as _AT
 
     all_ids = [root.id] + get_all_derived_artefact_ids(root)
 
@@ -517,7 +517,7 @@ def delete_item_files(item):
     Must be called while the ORM relationships are still intact (before db.session.delete).
     """
     storage = current_app.storage
-    from shared.storage import S3Storage
+    from arcology_shared.storage import S3Storage
 
     for artefact in item.artefacts:
         # Delete stored files for this artefact and all its derived artefacts.

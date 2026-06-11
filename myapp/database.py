@@ -27,7 +27,7 @@ from sqlalchemy import Enum as SQLEnum
 from sqlalchemy import false as sa_false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
-from shared.enums import AnalysisType, ArtefactType
+from arcology_shared.enums import AnalysisType, ArtefactType
 from .enums import (  # noqa: F401 — re-exported for backward-compat call sites
     _API_KEY_PERMISSION_ORDER,
     AnalysisStatus,

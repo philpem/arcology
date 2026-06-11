@@ -21,7 +21,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from shared.enums import AnalysisType
+from arcology_shared.enums import AnalysisType
 
 
 @dataclass(frozen=True)

@@ -57,6 +57,8 @@ class TestOutputRestrictionGate(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        from arcology_shared.enums import ArtefactType
+        from arcology_shared.storage import LocalStorage
         from myapp.app import create_app
         from myapp.database import (
             Analysis,
@@ -69,8 +71,6 @@ class TestOutputRestrictionGate(unittest.TestCase):
             RestrictionType,
         )
         from myapp.extensions import db
-        from shared.enums import ArtefactType
-        from shared.storage import LocalStorage
 
         cls.app = create_app()
         cls.app.config['TESTING'] = True

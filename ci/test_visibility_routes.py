@@ -48,6 +48,7 @@ class VisibilityRouteTestBase(unittest.TestCase):
         with cls.app.app_context():
             _db.create_all()
 
+            from arcology_shared.enums import AnalysisType, ArtefactType
             from myapp.database import (
                 Analysis,
                 AnalysisStatus,
@@ -63,7 +64,6 @@ class VisibilityRouteTestBase(unittest.TestCase):
                 UserPermission,
             )
             from myapp.utils.privacy import recompute_item_privacy
-            from shared.enums import AnalysisType, ArtefactType
 
             pw = bcrypt.hashpw(_PASSWORD.encode(), bcrypt.gensalt()).decode()
 

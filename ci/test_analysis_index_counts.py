@@ -29,6 +29,7 @@ class TestAnalysisIndexCounts(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        from arcology_shared.enums import ArtefactType
         from myapp.app import create_app
         from myapp.database import (
             Analysis,
@@ -41,7 +42,6 @@ class TestAnalysisIndexCounts(unittest.TestCase):
         )
         from myapp.extensions import db
         from myapp.utils.privacy import recompute_item_privacy
-        from shared.enums import ArtefactType
 
         cls.app = create_app()
         cls.app.config['TESTING'] = True

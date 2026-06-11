@@ -11,7 +11,7 @@ import functools
 import json
 import traceback
 from collections.abc import Callable
-from shared.enums import AnalysisType
+from arcology_shared.enums import AnalysisType
 from ..config import log
 from ..exceptions import JobCancelledException
 

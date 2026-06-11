@@ -35,8 +35,8 @@ class TestEnumValueHelper(unittest.TestCase):
     """The shared enum_value() helper tolerates None."""
 
     def test_returns_value_for_member(self):
+        from arcology_shared.enums import ArtefactType
         from myapp.utils.enum_display import enum_value
-        from shared.enums import ArtefactType
         self.assertEqual(enum_value(ArtefactType.SCP), 'scp')
 
     def test_returns_default_for_none(self):
@@ -51,10 +51,10 @@ class TestOrphanEnumRendering(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        from arcology_shared.enums import AnalysisType, ArtefactType
         from myapp.app import create_app
         from myapp.database import Analysis, AnalysisStatus, Artefact, Item
         from myapp.extensions import db
-        from shared.enums import AnalysisType, ArtefactType
 
         # PUBLIC_MODE lets the test client GET read-only views without a login.
         cls.app = create_app()

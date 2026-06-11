@@ -92,8 +92,8 @@ class UploadPipelineTestBase(unittest.TestCase):
         return self.db.session.get(Item, self.item_id)
 
     def _ingest(self, **overrides):
+        from arcology_shared.enums import ArtefactType
         from myapp.services.upload_pipeline import ingest_uploaded_artefact
-        from shared.enums import ArtefactType
         kwargs = dict(
             label='Test Disc',
             artefact_type=ArtefactType.RAW_SECTOR,
@@ -112,9 +112,9 @@ class TestIngestService(UploadPipelineTestBase):
     """Direct tests of ingest_uploaded_artefact()."""
 
     def test_creates_artefact_with_slug_and_analyses(self):
+        from arcology_shared.enums import AnalysisType
         from myapp.blueprints.artefacts import ANALYSIS_MAP
         from myapp.database import Analysis, Artefact
-        from shared.enums import AnalysisType
 
         with self.app.app_context():
             outcome = self._ingest()
@@ -130,8 +130,8 @@ class TestIngestService(UploadPipelineTestBase):
             self.assertEqual(Artefact.query.count(), 1)
 
     def test_checksum_only_mode(self):
+        from arcology_shared.enums import AnalysisType
         from myapp.services.upload_pipeline import QUEUE_CHECKSUM_ONLY
-        from shared.enums import AnalysisType
 
         with self.app.app_context():
             outcome = self._ingest(queue=QUEUE_CHECKSUM_ONLY)
@@ -203,9 +203,9 @@ class TestApiUploadEndpoint(UploadPipelineTestBase):
         )
 
     def test_upload_creates_artefact(self):
+        from arcology_shared.enums import AnalysisType
         from myapp.blueprints.artefacts import ANALYSIS_MAP
         from myapp.database import Analysis, Artefact
-        from shared.enums import AnalysisType
 
         resp = self._post_upload()
         self.assertEqual(resp.status_code, 201, resp.data)

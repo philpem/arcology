@@ -98,7 +98,7 @@ class TestEditTypeOverride(unittest.TestCase):
         )
 
     def test_setting_concrete_type_marks_overridden(self):
-        from shared.enums import ArtefactType
+        from arcology_shared.enums import ArtefactType
         with self.app.app_context():
             art = _make_artefact(self.db, ArtefactType.SCP, filename='disk.scp')
             self.db.session.commit()
@@ -114,7 +114,7 @@ class TestEditTypeOverride(unittest.TestCase):
             self.assertTrue(art.type_overridden)
 
     def test_auto_reverts_to_detected_type_and_clears_flag(self):
-        from shared.enums import ArtefactType
+        from arcology_shared.enums import ArtefactType
         # Filename is .scp but type was manually overridden to IMD.
         with self.app.app_context():
             art = _make_artefact(self.db, ArtefactType.IMD,
@@ -133,7 +133,7 @@ class TestEditTypeOverride(unittest.TestCase):
             self.assertFalse(art.type_overridden)
 
     def test_get_form_preselects_auto_when_not_overridden(self):
-        from shared.enums import ArtefactType
+        from arcology_shared.enums import ArtefactType
         with self.app.app_context():
             art = _make_artefact(self.db, ArtefactType.SCP,
                                  filename='disk2.scp', overridden=False)
@@ -148,7 +148,7 @@ class TestEditTypeOverride(unittest.TestCase):
         self.assertIn('<option selected value="auto">', body)
 
     def test_get_form_preselects_concrete_type_when_overridden(self):
-        from shared.enums import ArtefactType
+        from arcology_shared.enums import ArtefactType
         with self.app.app_context():
             art = _make_artefact(self.db, ArtefactType.IMD,
                                  filename='disk3.scp', overridden=True)

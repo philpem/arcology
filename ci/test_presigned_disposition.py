@@ -12,7 +12,7 @@ Two layers are tested:
    (including CR/LF) at source — defence in depth — while preserving the
    double-quote (a legitimate Linux filename character) and the top-bit-set
    range 0x80-0xFF that RISC OS filenames rely on.
-2. ``_content_disposition_attachment`` (the sink in shared/storage.py)
+2. ``_content_disposition_attachment`` (the sink in arcology_shared/storage.py)
    neutralises any remaining header-injection characters, so a hostile
    filename from any source cannot inject or split response headers (CWE-113).
 
@@ -74,7 +74,7 @@ class TestContentDispositionBuilder(unittest.TestCase):
     """The disposition builder must neutralise header-injection characters."""
 
     def setUp(self):
-        from shared.storage import _content_disposition_attachment
+        from arcology_shared.storage import _content_disposition_attachment
         self.build = _content_disposition_attachment
 
     def test_no_raw_control_chars_or_unescaped_quote(self):
@@ -118,7 +118,7 @@ class TestPresignedUrlNoInjection(unittest.TestCase):
             import boto3  # noqa: F401
         except ImportError:
             self.skipTest('boto3 not installed')
-        from shared.storage import S3Storage
+        from arcology_shared.storage import S3Storage
         # generate_presigned_url signs locally; no network call is made.
         self.storage = S3Storage(
             endpoint_url='http://s3.local:9000', bucket='b',

@@ -52,8 +52,8 @@ class _CleanupBase(unittest.TestCase):
 
     def _make_item_tree(self, suffix):
         """Item with one artefact, one completed analysis with output_path."""
+        from arcology_shared.enums import AnalysisType, ArtefactType
         from myapp.database import Analysis, AnalysisStatus, Artefact, Item, StorageDirectory
-        from shared.enums import AnalysisType, ArtefactType
 
         item = Item(name=f'Cleanup Item {suffix}')
         self.db.session.add(item)
@@ -78,9 +78,9 @@ class _CleanupBase(unittest.TestCase):
 
 class TestQueueStorageCleanup(_CleanupBase):
     def test_creates_pending_cleanup_job_with_hints(self):
+        from arcology_shared.enums import AnalysisType
         from myapp.database import Analysis, AnalysisStatus
         from myapp.services.artefact_lifecycle import queue_storage_cleanup
-        from shared.enums import AnalysisType
 
         with self.app.app_context():
             keys = {
@@ -125,9 +125,9 @@ class TestCollectOutputCleanupKeys(_CleanupBase):
 
 class TestBulkDeleteItemQueuesCleanup(_CleanupBase):
     def test_bulk_delete_queues_cleanup_job(self):
+        from arcology_shared.enums import AnalysisType
         from myapp.database import Analysis, AnalysisStatus, Artefact, Item
         from myapp.services.artefact_lifecycle import bulk_delete_item
-        from shared.enums import AnalysisType
 
         with self.app.app_context():
             item, art = self._make_item_tree('bulkdel')

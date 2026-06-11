@@ -48,8 +48,8 @@ class TestDashboardStats(unittest.TestCase):
 
     def _create_analysis(self):
         """Create a minimal analysis in PENDING state and return its id."""
+        from arcology_shared.enums import AnalysisType, ArtefactType
         from myapp.database import Analysis, AnalysisStatus, Artefact, Item, Platform
-        from shared.enums import AnalysisType, ArtefactType
 
         with self.app.app_context():
             # Reuse existing platform/item or create new ones

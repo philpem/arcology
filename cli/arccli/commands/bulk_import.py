@@ -11,7 +11,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 import requests
-from shared.bundle import BUNDLE_MARKER, is_sidecar_name
+from arcology_shared.bundle import BUNDLE_MARKER, is_sidecar_name
 from ..client import ArcologyClient, ArcologyError
 from ..formatting import format_size
 

@@ -1,5 +1,5 @@
 """
-Tests for the storage backend abstraction (shared/storage.py).
+Tests for the storage backend abstraction (arcology_shared/storage.py).
 
 Covers LocalStorage operations, path traversal protection, create_storage
 factory, and storage_key building.
@@ -28,7 +28,7 @@ class TestLocalStorageBasicOps(unittest.TestCase):
         self.tmpdir = tempfile.mkdtemp()
         self.uploads = os.path.join(self.tmpdir, 'uploads')
         self.outputs = os.path.join(self.tmpdir, 'outputs')
-        from shared.storage import LocalStorage
+        from arcology_shared.storage import LocalStorage
         self.storage = LocalStorage(self.uploads, self.outputs)
 
     def tearDown(self):
@@ -147,7 +147,7 @@ class TestLocalStorageTreeOps(unittest.TestCase):
         self.tmpdir = tempfile.mkdtemp()
         self.uploads = os.path.join(self.tmpdir, 'uploads')
         self.outputs = os.path.join(self.tmpdir, 'outputs')
-        from shared.storage import LocalStorage
+        from arcology_shared.storage import LocalStorage
         self.storage = LocalStorage(self.uploads, self.outputs)
 
     def tearDown(self):
@@ -216,7 +216,7 @@ class TestLocalStoragePathTraversal(unittest.TestCase):
         self.tmpdir = tempfile.mkdtemp()
         self.uploads = os.path.join(self.tmpdir, 'uploads')
         self.outputs = os.path.join(self.tmpdir, 'outputs')
-        from shared.storage import LocalStorage
+        from arcology_shared.storage import LocalStorage
         self.storage = LocalStorage(self.uploads, self.outputs)
 
     def tearDown(self):
@@ -273,7 +273,7 @@ class TestStorageKey(unittest.TestCase):
     """Test storage_key method on StorageBackend."""
 
     def test_uploads_key(self):
-        from shared.storage import LocalStorage
+        from arcology_shared.storage import LocalStorage
         storage = LocalStorage(tempfile.mkdtemp(), tempfile.mkdtemp())
         self.assertEqual(
             storage.storage_key('uploads', 'abc123.img'),
@@ -281,7 +281,7 @@ class TestStorageKey(unittest.TestCase):
         )
 
     def test_outputs_key(self):
-        from shared.storage import LocalStorage
+        from arcology_shared.storage import LocalStorage
         storage = LocalStorage(tempfile.mkdtemp(), tempfile.mkdtemp())
         self.assertEqual(
             storage.storage_key('outputs', 'subdir/file.png'),
@@ -293,7 +293,7 @@ class TestS3StorageBlobKeys(unittest.TestCase):
     """S3 treats nested content-addressed blob keys as ordinary object keys."""
 
     def setUp(self):
-        from shared.storage import S3Storage
+        from arcology_shared.storage import S3Storage
 
         self.storage = object.__new__(S3Storage)
         self.storage.bucket = 'test-bucket'
@@ -343,7 +343,7 @@ class TestCreateStorage(unittest.TestCase):
     """Test the create_storage factory function."""
 
     def test_default_creates_local(self):
-        from shared.storage import LocalStorage, create_storage
+        from arcology_shared.storage import LocalStorage, create_storage
         tmpdir = tempfile.mkdtemp()
         try:
             storage = create_storage({
@@ -355,7 +355,7 @@ class TestCreateStorage(unittest.TestCase):
             shutil.rmtree(tmpdir)
 
     def test_explicit_local_creates_local(self):
-        from shared.storage import LocalStorage, create_storage
+        from arcology_shared.storage import LocalStorage, create_storage
         tmpdir = tempfile.mkdtemp()
         try:
             storage = create_storage({
@@ -368,13 +368,13 @@ class TestCreateStorage(unittest.TestCase):
             shutil.rmtree(tmpdir)
 
     def test_invalid_backend_raises(self):
-        from shared.storage import create_storage
+        from arcology_shared.storage import create_storage
         with self.assertRaises(ValueError) as ctx:
             create_storage({'STORAGE_BACKEND': 'gcs'})
         self.assertIn('gcs', str(ctx.exception))
 
     def test_s3_missing_credentials_raises(self):
-        from shared.storage import create_storage
+        from arcology_shared.storage import create_storage
         with self.assertRaises(RuntimeError) as ctx:
             create_storage({
                 'STORAGE_BACKEND': 's3',
@@ -384,7 +384,7 @@ class TestCreateStorage(unittest.TestCase):
         self.assertIn('S3_ACCESS_KEY', str(ctx.exception))
 
     def test_case_insensitive_backend(self):
-        from shared.storage import LocalStorage, create_storage
+        from arcology_shared.storage import LocalStorage, create_storage
         tmpdir = tempfile.mkdtemp()
         try:
             storage = create_storage({
@@ -407,18 +407,18 @@ class TestStorageIntegrationWithApp(unittest.TestCase):
         os.environ.setdefault('WORKER_API_KEY', 'test')
 
     def test_app_has_storage_attribute(self):
+        from arcology_shared.storage import LocalStorage
         from myapp.app import create_app
-        from shared.storage import LocalStorage
         app = create_app()
         self.assertTrue(hasattr(app, 'storage'))
         self.assertIsInstance(app.storage, LocalStorage)
 
     def test_get_artefact_storage_key(self):
         """get_artefact_storage_key builds the correct storage key."""
+        from arcology_shared.enums import ArtefactType
         from myapp.app import create_app
         from myapp.database import Artefact, Item, Platform, StorageDirectory
         from myapp.extensions import db
-        from shared.enums import ArtefactType
 
         app = create_app()
         app.config['TESTING'] = True
@@ -477,7 +477,7 @@ class TestStorageIntegrationWithApp(unittest.TestCase):
         app.config['UPLOAD_FOLDER'] = os.path.join(tmpdir, 'uploads')
         app.config['OUTPUT_FOLDER'] = os.path.join(tmpdir, 'outputs')
 
-        from shared.storage import create_storage
+        from arcology_shared.storage import create_storage
         app.storage = create_storage({
             'UPLOAD_FOLDER': app.config['UPLOAD_FOLDER'],
             'OUTPUT_FOLDER': app.config['OUTPUT_FOLDER'],

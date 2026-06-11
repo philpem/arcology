@@ -89,7 +89,7 @@ class AnalysisWorker:
         self.outputs.mkdir(parents=True, exist_ok=True)
 
         if storage is None:
-            from shared.storage import create_storage
+            from arcology_shared.storage import create_storage
             from .config import (
                 S3_ACCESS_KEY,
                 S3_BUCKET,
@@ -141,7 +141,7 @@ class AnalysisWorker:
 
         key = self.storage.storage_key(storage_directory, storage_path)
 
-        from shared.storage import LocalStorage
+        from arcology_shared.storage import LocalStorage
         if isinstance(self.storage, LocalStorage):
             # Local mode: use direct filesystem path
             input_path = self.storage.local_path(key)
@@ -255,7 +255,7 @@ class AnalysisWorker:
                 log.info(f"Using cached partition image: {local_path}")
                 return local_path
             # S3 mode or different worker: try to download from storage cache
-            from shared.storage import S3Storage
+            from arcology_shared.storage import S3Storage
             if isinstance(self.storage, S3Storage):
                 try:
                     rel = local_path.relative_to(self.outputs)
@@ -293,7 +293,7 @@ class AnalysisWorker:
         container_format: str | None = None,
     ):
         """Queue FILE_EXTRACTION with the standard hint structure."""
-        from shared.enums import AnalysisType
+        from arcology_shared.enums import AnalysisType
         hints = {
             'filesystem': filesystem,
             'partition_index': partition_index,
@@ -317,7 +317,7 @@ class AnalysisWorker:
         path_prefix: str | None = None,
     ):
         """Queue the standard archive-detect, product-recognition, and format-convert follow-ups."""
-        from shared.enums import AnalysisType
+        from arcology_shared.enums import AnalysisType
         archive_hints = {'partition_uuid': partition_uuid}
         if extraction_path:
             archive_hints['extraction_path'] = extraction_path
@@ -371,7 +371,7 @@ class AnalysisWorker:
         In local mode this is a no-op since the files are already in place.
         In S3 mode, uploads the tree then removes the local copy.
         """
-        from shared.storage import LocalStorage
+        from arcology_shared.storage import LocalStorage
         if isinstance(self.storage, LocalStorage):
             return
         rel = self._relative_output_path(extract_dir)
@@ -403,7 +403,7 @@ class AnalysisWorker:
 
         Returns the local path to the file, or None if not found.
         """
-        from shared.storage import LocalStorage
+        from arcology_shared.storage import LocalStorage
 
         if isinstance(self.storage, LocalStorage):
             path = Path(extraction_path)
@@ -465,7 +465,7 @@ class AnalysisWorker:
 
         In local mode this is a no-op — the cache is the permanent copy.
         """
-        from shared.storage import LocalStorage
+        from arcology_shared.storage import LocalStorage
         if isinstance(self.storage, LocalStorage):
             return
 
@@ -683,13 +683,13 @@ class AnalysisWorker:
         log.info(f"Outputs: {self.outputs}")
         if self.analysis_types:
             log.info(f"Job type filter: {', '.join(self.analysis_types)}")
-            from shared.enums import AnalysisType
+            from arcology_shared.enums import AnalysisType
             valid_names = set(AnalysisType.__members__)
             unknown = [t for t in self.analysis_types if t not in valid_names]
             if unknown:
                 log.error(
                     "WORKER_ANALYSIS_TYPES contains unknown AnalysisType name(s): %s — "
-                    "check spelling against shared/enums.py",
+                    "check spelling against arcology_shared/enums.py",
                     ', '.join(unknown),
                 )
                 sys.exit(1)

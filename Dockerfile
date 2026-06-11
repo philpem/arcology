@@ -18,7 +18,7 @@ RUN set -e; \
 #RUN pip install sqltap
 
 COPY myapp/ /app/myapp/
-COPY shared/ /app/shared/
+COPY arcology_shared/ /app/arcology_shared/
 COPY migrations/ /app/migrations/
 COPY doc/ /app/doc/
 COPY .flaskenv /app/

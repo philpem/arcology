@@ -2,7 +2,7 @@
 Unit tests for EXTENSION_MAP and ANALYSIS_MAP in myapp/services/artefact_types.py.
 
 Checks that every enum value referenced in the maps actually exists in
-shared/enums.py, and that every ArtefactType has an ANALYSIS_MAP entry.
+arcology_shared/enums.py, and that every ArtefactType has an ANALYSIS_MAP entry.
 Catches the common mistake of adding a new type to the enum but forgetting
 to update one of the maps.
 
@@ -16,18 +16,18 @@ import os
 import sys
 import unittest
 
-# Ensure the repo root is on sys.path so ``myapp`` and ``shared`` are importable
+# Ensure the repo root is on sys.path so ``myapp`` and ``arcology_shared`` are importable
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-# shared.enums has no external dependencies — import directly for the
+# arcology_shared.enums has no external dependencies — import directly for the
 # canonical set of valid enum members.
 # myapp.services.artefact_types imports Flask/SQLAlchemy at module level.
 # Those packages are available in the app-tests CI job (pip install is done
 # before these tests run).
+from arcology_shared.enums import AnalysisType, ArtefactType
 from myapp.services.artefact_types import ANALYSIS_MAP, EXTENSION_MAP, detect_artefact_type
-from shared.enums import AnalysisType, ArtefactType
 
 _ALL_ARTEFACT_TYPES = set(ArtefactType)
 _ALL_ANALYSIS_TYPES = set(AnalysisType)
@@ -162,7 +162,7 @@ class TestAnalysisMap(unittest.TestCase):
 
     def test_image_extensions_present(self):
         """Common image extensions must all map to ArtefactType.IMAGE."""
-        from shared.enums import ArtefactType
+        from arcology_shared.enums import ArtefactType
         for ext in ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tif', '.tiff',
                     '.wmf', '.emf'):
             self.assertEqual(

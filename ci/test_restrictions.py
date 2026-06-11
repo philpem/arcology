@@ -56,8 +56,8 @@ def _make_item_and_artefact(db):
     """Create a minimal Item + Artefact for testing (unique names each call)."""
     global _counter
     _counter += 1
+    from arcology_shared.enums import ArtefactType
     from myapp.database import Artefact, Item, Platform
-    from shared.enums import ArtefactType
 
     platform = Platform(name=f'Test Platform {_counter}')
     db.session.add(platform)

@@ -22,7 +22,7 @@ From a development checkout:
 pip install -e cli/
 ```
 
-The wheel bundles the repo's `shared/` package (enums, bundle marker), so no
+The wheel bundles the repo's `arcology_shared/` package (enums, bundle marker), so no
 other Arcology code is needed on the client: `arco` communicates with the
 server entirely over HTTP.  Releases are produced by the `Release CLI`
 workflow when a `cli-v*` tag is pushed (the tag must match the version in

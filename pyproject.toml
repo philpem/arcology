@@ -42,6 +42,6 @@ no-lines-before = ["future", "standard-library", "third-party", "first-party", "
 # Tests prepend the repo root to sys.path before importing, which forces
 # imports below the path setup.
 "ci/test_*.py" = ["E402"]
-# Worker entry-point sets sys.path so `shared/` is importable when the
+# Worker entry-point sets sys.path so `arcology_shared/` is importable when the
 # worker is run outside Docker.
 "worker/worker.py" = ["E402"]

@@ -13,7 +13,7 @@ from urllib.parse import urlencode
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from shared.enums import ArtefactType
+from arcology_shared.enums import ArtefactType
 from .config import API_RETRIES, API_TIMEOUT, log
 from .tools import compute_file_hash
 

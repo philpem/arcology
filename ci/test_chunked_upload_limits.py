@@ -48,10 +48,10 @@ class TestChunkedUploadLimits(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        from arcology_shared.storage import LocalStorage
         from myapp.app import create_app
         from myapp.database import Item
         from myapp.extensions import db
-        from shared.storage import LocalStorage
 
         cls.app = create_app()
         cls.app.config['TESTING'] = True

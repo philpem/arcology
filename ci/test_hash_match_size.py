@@ -158,6 +158,7 @@ class TestRescanLinksNullSize(_HashMatchBase):
     """End-to-end: a rescan links a sized file to a NULL-size KnownFile."""
 
     def test_rescan_links_sized_file_to_null_size_known_file(self):
+        from arcology_shared.enums import ArtefactType
         from myapp.database import (
             Artefact,
             ExtractedFile,
@@ -166,7 +167,6 @@ class TestRescanLinksNullSize(_HashMatchBase):
             Partition,
         )
         from myapp.services.hash_rescan import rescan_hashes_for_queryset
-        from shared.enums import ArtefactType
 
         with self.app.app_context():
             md5 = _unique_md5()

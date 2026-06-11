@@ -201,7 +201,7 @@ def resolve_extracted_file_path(ef):
 
     Returns the full filesystem path as a string, or None if not found.
     """
-    from shared.storage import S3Storage
+    from arcology_shared.storage import S3Storage
 
     storage = current_app.storage
 

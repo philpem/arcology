@@ -43,10 +43,10 @@ arco = "arccli.main:main"
 packages = ["arccli"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"../shared" = "shared"
+"../arcology_shared" = "arcology_shared"
 
 [tool.hatch.build.targets.sdist]
 include = ["arccli", "pyproject.toml"]
 
 [tool.hatch.build.targets.sdist.force-include]
-"../shared" = "shared"
+"../arcology_shared" = "arcology_shared"

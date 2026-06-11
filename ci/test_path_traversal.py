@@ -37,8 +37,8 @@ _AUTH = {'X-API-Key': _WORKER_KEY}
 
 def _make_fixtures(db):
     """Create Platform -> Item -> Artefact fixture. Returns (item, artefact)."""
+    from arcology_shared.enums import ArtefactType
     from myapp.database import Artefact, Item, Platform
-    from shared.enums import ArtefactType
 
     platform = Platform(name='Test Platform')
     db.session.add(platform)
@@ -138,8 +138,8 @@ class TestProduceArtefactStoragePathValidation(unittest.TestCase):
 
         with cls.app.app_context():
             _db.create_all()
+            from arcology_shared.enums import AnalysisType, ArtefactType
             from myapp.database import Analysis, AnalysisStatus, Artefact, Item, Platform
-            from shared.enums import AnalysisType, ArtefactType
 
             platform = Platform(name='Test Platform 2')
             _db.session.add(platform)
@@ -269,6 +269,7 @@ class TestResolveExtractedFilePathConfinement(unittest.TestCase):
 
         with self.app.app_context():
             _db.create_all()
+            from arcology_shared.enums import AnalysisType, ArtefactType
             from myapp.database import (
                 Analysis,
                 AnalysisStatus,
@@ -280,7 +281,6 @@ class TestResolveExtractedFilePathConfinement(unittest.TestCase):
                 Platform,
                 StorageDirectory,
             )
-            from shared.enums import AnalysisType, ArtefactType
 
             platform = Platform(name='Traverse Platform')
             _db.session.add(platform)
@@ -364,8 +364,8 @@ class TestDeleteItemFilesConfinement(unittest.TestCase):
 
         with self.app.app_context():
             _db.create_all()
+            from arcology_shared.enums import AnalysisType, ArtefactType
             from myapp.database import Analysis, AnalysisStatus, Artefact, Item, Platform, StorageDirectory
-            from shared.enums import AnalysisType, ArtefactType
 
             platform = Platform(name='Delete Platform')
             _db.session.add(platform)

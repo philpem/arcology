@@ -57,7 +57,7 @@ class TestChunkedUpload(unittest.TestCase):
             'OUTPUT_FOLDER': output_dir,
         })
         # Re-initialise storage with the updated paths so LocalStorage picks them up
-        from shared.storage import create_storage
+        from arcology_shared.storage import create_storage
         storage_cfg = dict(cls.app.config)
         storage_cfg['UPLOAD_FOLDER'] = upload_dir
         storage_cfg['OUTPUT_FOLDER'] = output_dir

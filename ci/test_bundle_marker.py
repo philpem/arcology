@@ -1,6 +1,6 @@
 """
 Tests that the CLI uses the bundle-marker / sidecar definitions from
-``shared/bundle.py`` (the ``arco`` wheel bundles the shared package, so the
+``arcology_shared/bundle.py`` (the ``arco`` wheel bundles the shared package, so the
 CLI imports it directly — no drift-checked copies), and that the marker the
 CLI writes into a bundle zip round-trips through the worker's
 ``read_zip_comment``.
@@ -17,14 +17,14 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 
-import shared.bundle as shared_bundle  # noqa: E402
+import arcology_shared.bundle as shared_bundle  # noqa: E402
 from cli.arccli.commands import bulk_import as cli  # noqa: E402
 from worker.arcworker.tools.archives import read_zip_comment  # noqa: E402
 
 
 class TestCliUsesShared(unittest.TestCase):
     def test_cli_imports_shared_marker(self):
-        # The CLI must use shared.bundle directly, not a local copy.
+        # The CLI must use arcology_shared.bundle directly, not a local copy.
         self.assertIs(cli.BUNDLE_MARKER, shared_bundle.BUNDLE_MARKER)
         self.assertIs(cli.is_sidecar_name, shared_bundle.is_sidecar_name)
 
