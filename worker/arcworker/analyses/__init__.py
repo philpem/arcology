@@ -2,16 +2,27 @@
 Analysis-handler subpackage.
 
 Each handler is a free function with the signature
-``(self, analysis, artefact, work_dir)`` — they are bound onto
-:class:`worker.arcworker.analysis.AnalysisWorker` as methods so the
-function bodies (which already reference ``self``) work unchanged.
+``(self, analysis, artefact, work_dir)`` decorated with
+``@analysis_handler(description, AnalysisType.X)``.  The decorator (in
+``_common``) wraps the function with standard error reporting and
+registers it in :data:`HANDLERS` keyed by ``AnalysisType.value`` — that
+decorator argument is the single wiring point for dispatch.
 
-``HANDLERS`` maps :class:`shared.enums.AnalysisType` values to the
-handler attribute name on ``AnalysisWorker``; the dispatch loop in
-``process_analysis`` looks up the bound method via ``getattr``.
+``AnalysisWorker.process_analysis()`` looks the handler up in
+``HANDLERS`` and calls it with itself as ``self``.  Adding a new
+analysis type therefore needs only the decorated function in one of the
+modules imported below (plus the usual enum/migration steps in
+CLAUDE.md).
+
+A few private helpers and data tables are additionally bound onto
+``AnalysisWorker`` as class attributes (see analysis.py) because handler
+bodies reference them via ``self.``.
 """
 
-from shared.enums import AnalysisType
+from ._common import HANDLERS  # noqa: F401  (re-export)
+
+# Importing the handler modules is what populates HANDLERS — keep every
+# handler module listed here.
 from .armlock import process_armlock_remove
 from .cleanup import process_cleanup
 from .extraction import (
@@ -50,32 +61,6 @@ from .metadata import (
     process_riscos_module_parse,
 )
 from .partition import process_partition_detect
-
-# AnalysisType.value → method name on AnalysisWorker.  Looked up via
-# getattr() in process_analysis().  Kept here (rather than as a dict of
-# function refs) so that the dispatch survives any future swap of the
-# bound methods on the class.
-HANDLERS: dict[str, str] = {
-    AnalysisType.CHECKSUM_COMPUTE.value:        'process_checksum_compute',
-    AnalysisType.DETECT_TRACK_DENSITY.value:    'process_detect_track_density',
-    AnalysisType.FLUX_VISUALISATION.value:      'process_flux_visualisation',
-    AnalysisType.FLUX_DECODE.value:             'process_flux_decode',
-    AnalysisType.FILE_EXTRACTION.value:         'process_file_extraction',
-    AnalysisType.METADATA_EXTRACT.value:        'process_metadata_extract',
-    AnalysisType.FORMAT_IDENTIFY.value:         'process_format_identify',
-    AnalysisType.PARTITION_DETECT.value:        'process_partition_detect',
-    AnalysisType.ARCHIVE_DETECT.value:          'process_archive_detect',
-    AnalysisType.ARCHIVE_EXTRACT.value:         'process_archive_extract',
-    AnalysisType.PRODUCT_RECOGNITION.value:     'process_product_recognition',
-    AnalysisType.DISC_MASTERING_DETECT.value:   'process_disc_mastering_detect',
-    AnalysisType.DISC_PROTECTION_DETECT.value:  'process_disc_protection_detect',
-    AnalysisType.ARMLOCK_REMOVE.value:          'process_armlock_remove',
-    AnalysisType.FORMAT_CONVERT.value:          'process_format_convert',
-    AnalysisType.RISCOS_MODULE_PARSE.value:     'process_riscos_module_parse',
-    AnalysisType.HASH_RESCAN.value:             'process_hash_rescan',
-    AnalysisType.CLEANUP.value:                 'process_cleanup',
-}
-
 
 __all__ = [
     'HANDLERS',

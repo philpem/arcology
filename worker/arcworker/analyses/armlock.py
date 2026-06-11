@@ -24,7 +24,7 @@ SCHEME = ProtectionScheme(
 PROTECTION_SCHEMES.append(SCHEME)
 
 
-@analysis_handler("ARMlock removal")
+@analysis_handler("ARMlock removal", AnalysisType.ARMLOCK_REMOVE)
 def process_armlock_remove(self, analysis: dict, artefact: dict, work_dir: Path):
     """Remove ARMlock disc security from a confirmed-protected ADFS disc image.
 

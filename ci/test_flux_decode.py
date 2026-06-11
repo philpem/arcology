@@ -28,6 +28,7 @@ if _REPO_ROOT not in sys.path:
 os.environ.setdefault('WORKER_API_KEY', 'test')
 
 from shared.enums import AnalysisType, ArtefactType
+from worker.arcworker.analyses.flux import process_detect_track_density, process_flux_decode
 from worker.arcworker.analysis import AnalysisWorker
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -87,7 +88,7 @@ def _run_flux_decode(artefact_type: ArtefactType, work_dir: Path,
          patch('worker.arcworker.analyses.flux.detect_geometry_from_boot_data', return_value=None), \
          patch('worker.arcworker.analyses.flux.detect_independent_sides', return_value=_NOT_INDEPENDENT):
 
-        AnalysisWorker.process_flux_decode(worker, _analysis(), artefact, work_dir)
+        process_flux_decode(worker, _analysis(), artefact, work_dir)
 
     return worker, mock_imd, mock_hfe, mock_gw
 
@@ -319,7 +320,7 @@ def _run_flux_decode_via_scp(
          patch('worker.arcworker.analyses.flux.flux_to_hfe_hxcfe', return_value={'success': True}) as mock_hfe, \
          patch('worker.arcworker.analyses.flux.sector_image_to_raw_greaseweazle', return_value={'success': True}) as mock_gw:
 
-        AnalysisWorker.process_flux_decode(worker, analysis, artefact, work_dir)
+        process_flux_decode(worker, analysis, artefact, work_dir)
 
     return worker, mock_conv, mock_imd, mock_hfe, mock_gw
 
@@ -616,7 +617,7 @@ def _run_detect_track_density(work_dir: Path, *, mismatch_detected: bool,
          patch('worker.arcworker.analyses.flux.detect_track_density_mismatch',
                return_value=detection_result), \
          patch('worker.arcworker.analyses.flux.scp_fix_track_density', return_value=fix_result):
-        AnalysisWorker.process_detect_track_density(worker, analysis, artefact, work_dir)
+        process_detect_track_density(worker, analysis, artefact, work_dir)
 
     return worker
 
@@ -859,7 +860,7 @@ def _run_flux_decode_independent_sides(work_dir: Path, independent_sides_detecte
          patch('worker.arcworker.analyses.flux.detect_geometry_from_boot_data', return_value=geometry), \
          patch('worker.arcworker.analyses.flux.detect_independent_sides', return_value=per_side):
 
-        AnalysisWorker.process_flux_decode(worker, _analysis(), artefact, work_dir)
+        process_flux_decode(worker, _analysis(), artefact, work_dir)
 
     return worker, mock_merged_gw, mock_side_gw
 

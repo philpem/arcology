@@ -21,11 +21,12 @@ a missing key just means there is nothing left to delete.
 
 import json
 from pathlib import Path
+from shared.enums import AnalysisType
 from ..config import log
 from ._common import analysis_handler
 
 
-@analysis_handler("storage cleanup")
+@analysis_handler("storage cleanup", AnalysisType.CLEANUP)
 def process_cleanup(self, analysis: dict, artefact: dict, work_dir: Path):
     """Delete the storage keys/prefixes listed in the job's hints."""
     analysis_id = analysis['id']

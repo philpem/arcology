@@ -25,7 +25,7 @@ from ..tools.iso9660 import parse_iso9660_pvd
 from ._common import analysis_handler
 
 
-@analysis_handler("checksum computation")
+@analysis_handler("checksum computation", AnalysisType.CHECKSUM_COMPUTE)
 def process_checksum_compute(self, analysis: dict, artefact: dict, work_dir: Path):
     """Compute MD5 and SHA256 hashes for the artefact file and store them."""
     analysis_id = analysis['id']
@@ -41,7 +41,7 @@ def process_checksum_compute(self, analysis: dict, artefact: dict, work_dir: Pat
     )
 
 
-@analysis_handler("metadata extraction")
+@analysis_handler("metadata extraction", AnalysisType.METADATA_EXTRACT)
 def process_metadata_extract(self, analysis: dict, artefact: dict, work_dir: Path):
     """
     Process METADATA_EXTRACT analysis.
@@ -91,7 +91,7 @@ def process_metadata_extract(self, analysis: dict, artefact: dict, work_dir: Pat
     )
 
 
-@analysis_handler("file format identification")
+@analysis_handler("file format identification", AnalysisType.FORMAT_IDENTIFY)
 def process_format_identify(self, analysis: dict, artefact: dict, work_dir: Path):
     """
     Process FORMAT_IDENTIFY analysis.
@@ -186,7 +186,7 @@ def process_format_identify(self, analysis: dict, artefact: dict, work_dir: Path
     )
 
 
-@analysis_handler("product recognition")
+@analysis_handler("product recognition", AnalysisType.PRODUCT_RECOGNITION)
 def process_product_recognition(self, analysis: dict, artefact: dict, work_dir: Path):
     """
     Process PRODUCT_RECOGNITION analysis.
@@ -354,7 +354,7 @@ def process_product_recognition(self, analysis: dict, artefact: dict, work_dir: 
     )
 
 
-@analysis_handler("RISC OS module parse")
+@analysis_handler("RISC OS module parse", AnalysisType.RISCOS_MODULE_PARSE)
 def process_riscos_module_parse(self, analysis: dict, artefact: dict, work_dir: Path):
     """Parse RISC OS relocatable modules found in an extraction.
 

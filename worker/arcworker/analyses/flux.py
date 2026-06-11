@@ -45,7 +45,7 @@ _SCP_VIA_CONVERSION_TYPES = frozenset({
 })
 
 
-@analysis_handler("flux visualisation")
+@analysis_handler("flux visualisation", AnalysisType.FLUX_VISUALISATION)
 def process_flux_visualisation(self, analysis: dict, artefact: dict, work_dir: Path):
     """Process FLUX_VISUALISATION analysis."""
     analysis_id = analysis['id']
@@ -120,7 +120,7 @@ def process_flux_visualisation(self, analysis: dict, artefact: dict, work_dir: P
         )
 
 
-@analysis_handler("track density detection")
+@analysis_handler("track density detection", AnalysisType.DETECT_TRACK_DENSITY)
 def process_detect_track_density(self, analysis: dict, artefact: dict, work_dir: Path):
     """
     Detect 40-track disc captured in 80-track drive and produce corrected SCP.
@@ -228,7 +228,7 @@ def process_detect_track_density(self, analysis: dict, artefact: dict, work_dir:
     )
 
 
-@analysis_handler("flux decode")
+@analysis_handler("flux decode", AnalysisType.FLUX_DECODE)
 def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
     """
     Process FLUX_DECODE analysis.
@@ -526,7 +526,7 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
         )
 
 
-@analysis_handler("disc mastering data detection")
+@analysis_handler("disc mastering data detection", AnalysisType.DISC_MASTERING_DETECT)
 def process_disc_mastering_detect(self, analysis: dict, artefact: dict, work_dir: Path):
     """Process DISC_MASTERING_DETECT analysis.
 
@@ -551,7 +551,7 @@ def process_disc_mastering_detect(self, analysis: dict, artefact: dict, work_dir
     )
 
 
-@analysis_handler("disc copy protection detection")
+@analysis_handler("disc copy protection detection", AnalysisType.DISC_PROTECTION_DETECT)
 def process_disc_protection_detect(self, analysis: dict, artefact: dict, work_dir: Path):
     """Process DISC_PROTECTION_DETECT analysis.
 

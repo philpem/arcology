@@ -156,12 +156,13 @@ class TestWorkerProcessCleanup(unittest.TestCase):
     """Worker-side handler, exercised with a mocked AnalysisWorker."""
 
     def _run(self, hints):
+        from worker.arcworker.analyses.cleanup import process_cleanup
         from worker.arcworker.analysis import AnalysisWorker
 
         worker = MagicMock(spec=AnalysisWorker)
         worker.storage = MagicMock()
         analysis = {'id': 42, 'uuid': 'job-uuid', 'hints': json.dumps(hints)}
-        AnalysisWorker.process_cleanup(worker, analysis, {}, Path('/tmp'))
+        process_cleanup(worker, analysis, {}, Path('/tmp'))
         return worker
 
     def test_deletes_keys_and_prefixes(self):
@@ -182,6 +183,7 @@ class TestWorkerProcessCleanup(unittest.TestCase):
         worker.fail_analysis.assert_not_called()
 
     def test_missing_keys_are_tolerated(self):
+        from worker.arcworker.analyses.cleanup import process_cleanup
         from worker.arcworker.analysis import AnalysisWorker
 
         worker = MagicMock(spec=AnalysisWorker)
@@ -190,17 +192,18 @@ class TestWorkerProcessCleanup(unittest.TestCase):
         analysis = {'id': 7, 'uuid': 'j', 'hints': json.dumps({
             'artefact_keys': ['uploads/gone.img'],
         })}
-        AnalysisWorker.process_cleanup(worker, analysis, {}, Path('/tmp'))
+        process_cleanup(worker, analysis, {}, Path('/tmp'))
         worker.complete_analysis.assert_called_once()
         worker.fail_analysis.assert_not_called()
 
     def test_invalid_hints_fail_the_job(self):
+        from worker.arcworker.analyses.cleanup import process_cleanup
         from worker.arcworker.analysis import AnalysisWorker
 
         worker = MagicMock(spec=AnalysisWorker)
         worker.storage = MagicMock()
         analysis = {'id': 9, 'uuid': 'j', 'hints': '{not json'}
-        AnalysisWorker.process_cleanup(worker, analysis, {}, Path('/tmp'))
+        process_cleanup(worker, analysis, {}, Path('/tmp'))
         worker.fail_analysis.assert_called_once()
         worker.complete_analysis.assert_not_called()
 
