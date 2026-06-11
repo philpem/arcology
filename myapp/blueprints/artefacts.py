@@ -552,15 +552,8 @@ _COLUMN_CLASSES = {
 
 
 
-def _render_viewer(artefact):
-    """Build and render the viewer page for an artefact's converted outputs."""
-    from collections import Counter, defaultdict
-    from ..database import RestrictionType
-    from ..utils.pagination import VALID_PER_PAGE, ListPagination, resolve_per_page
-
-    _viewable_types = VIEWER_ARTEFACT_TYPES
-    output_groups = []
-
+def _viewer_make_output_helpers():
+    """Shared per-request closures: output restriction gate and text-content enrichment."""
     # Download restrictions gate the original bytes; an analysis output renders
     # the same content, so withhold any output whose source artefact carries a
     # restriction the current user cannot bypass.  Outputs may come from the
@@ -599,25 +592,17 @@ def _render_viewer(artefact):
                 except Exception:
                     out['text_content'] = None
         return outputs
+    return _output_blocked, _enrich_outputs
 
+
+def _viewer_collect_groups(artefact, all_artefact_ids, file_filter, current_path, _enrich_outputs):
+    """Output groups for the viewer grid (Mode 1 own outputs / Mode 2 aggregate)."""
+    from collections import defaultdict
+
+    _viewable_types = VIEWER_ARTEFACT_TYPES
+    output_groups = []
     viewer_status = None  # 'pending', 'failed', 'partial', or None (ready)
     failed_conversion_list = []  # [{source_file, error, analysis_uuid}, ...]
-    file_filter = request.args.get('file')
-    # Subdirectory browse filter — matches the File Viewer's ?path=<dir>/ scheme
-    # so selecting a subdirectory there carries through to the Viewer.
-    current_path = request.args.get('path', '').strip()
-    if current_path and not current_path.endswith('/'):
-        current_path += '/'
-    # Filename glob filter — applied to the source file's basename in Mode 2.
-    filename_filter = request.args.get('filename', '').strip()
-    all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
-    # Partition IDs across the whole artefact tree, fetched once — the
-    # archive-path, filetype-facet, and explicit-content sections below all
-    # need the same set (previously three identical queries per request).
-    all_partition_ids = [
-        row[0] for row in db.session.query(Partition.id)
-        .filter(Partition.artefact_id.in_(all_artefact_ids)).all()
-    ]
     use_pagination = False  # only paginate Mode 2 aggregate view without ?file=
 
     # If the viewed artefact itself carries a restriction this user cannot
@@ -726,6 +711,12 @@ def _render_viewer(artefact):
         if not file_filter:
             use_pagination = True
 
+    return output_groups, viewer_status, failed_conversion_list, use_pagination
+
+
+def _viewer_subdirectories(artefact, output_groups, file_filter, current_path, all_partition_ids):
+    """Subdirectory navigation chips above the viewer grid (Mode 2)."""
+    _viewable_types = VIEWER_ARTEFACT_TYPES
     # ── Subdirectory navigation (Mode 2) ─────────────────────────────────────
     # Compute before the filetype filter so subdirectories stay visible even
     # when the current filetype filter empties the grid.
@@ -749,7 +740,11 @@ def _render_viewer(artefact):
                     .all()
                 )
             }
+    return subdirectories, archive_paths
 
+
+def _viewer_filename_filter(output_groups, filename_filter, file_filter):
+    """?filename= glob filter applied to the viewer grid (Mode 2)."""
     # ── Filename glob filter (Mode 2 only, applied before facet build) ──────
     if filename_filter and not file_filter:
         import fnmatch as _fnmatch
@@ -762,6 +757,12 @@ def _render_viewer(artefact):
             if not g.get('source_file') or
                _fnmatch.fnmatch(_basename(g['source_file']).lower(), pat)
         ]
+    return output_groups
+
+
+def _viewer_filetype_facet(output_groups, all_partition_ids):
+    """Filetype facet panel: counts, active filters, and toggle URLs."""
+    from collections import Counter
 
     # ── Filetype facet (Mode 2 only, when there are source_file paths) ───────
     # Type keys: RISC OS hex codes (e.g. 'fff') or '.ext' for extension-based
@@ -824,6 +825,17 @@ def _render_viewer(artefact):
                     args['filetype'] = ','.join(sorted(toggled))
                 filetype_toggle_urls[ft] = args
             clear_filter_args = dict(base_args)
+    return output_groups, dict(
+        filetype_facet=filetype_facet,
+        active_filetypes=active_filetypes,
+        filetype_toggle_urls=filetype_toggle_urls,
+        clear_filter_args=clear_filter_args,
+    )
+
+
+def _viewer_summary_counts(output_groups):
+    """Per-type output counts for the viewer summary line."""
+    from collections import Counter
 
     # ── Summary counts (post-filter, pre-pagination) ─────────────────────────
     total_counts = Counter()
@@ -831,6 +843,12 @@ def _render_viewer(artefact):
         for out in g['outputs']:
             total_counts[out.get('type', 'unknown')] += 1
     total_groups = len(output_groups)
+    return total_counts, total_groups
+
+
+def _viewer_paginate(output_groups, use_pagination, _enrich_outputs):
+    """Pagination panel for the Mode 2 aggregate grid (and arg preservation)."""
+    from ..utils.pagination import VALID_PER_PAGE, ListPagination, resolve_per_page
 
     # ── Pagination (Mode 2 aggregate only, without ?file=) ───────────────────
     # pagination_args is always populated so column/filter URLs preserve state
@@ -857,6 +875,17 @@ def _render_viewer(artefact):
         for group in output_groups:
             _enrich_outputs(group['outputs'])
 
+    return output_groups, dict(
+        pagination=pagination,
+        pagination_args=pagination_args,
+        file_dir_args=file_dir_args,
+        view_all=view_all,
+        valid_per_page=VALID_PER_PAGE,
+    )
+
+
+def _viewer_preferences():
+    """Configurable column-count preference for the viewer grid."""
     # ── Configurable columns ─────────────────────────────────────────────────
     # Preference writes are batched: set_preference marks the session dirty
     # and prefs_dirty triggers ONE commit at the end of the function, instead
@@ -876,8 +905,11 @@ def _render_viewer(artefact):
         viewer_columns = saved if saved in _VALID_VIEWER_COLUMNS else 4
 
     viewer_col_class = _COLUMN_CLASSES[viewer_columns]
+    return viewer_columns, viewer_col_class, prefs_dirty
 
 
+def _viewer_explicit_gate(artefact, output_groups, all_partition_ids, _output_blocked):
+    """Explicit/restricted gates and stable IDs stamped onto each group."""
     # ── Explicit-content gate (must run before thumbnail bundling) ───────────
     # group['explicit'] must be set before the thumbnail bundling pass so that
     # explicit groups are not pulled into the unified thumbnail grid.
@@ -924,7 +956,13 @@ def _render_viewer(artefact):
         group['stable_id'] = hashlib.md5(
             f"{artefact.uuid}:{key_source}".encode()
         ).hexdigest()[:12]
+    return user_can_bypass_explicit
 
+
+def _viewer_thumbnail_bundle(artefact, output_groups, file_filter):
+    """Thumbnail-mode bundling of single-image groups (Mode 2 aggregate)."""
+    _viewable_types = VIEWER_ARTEFACT_TYPES
+    prefs_dirty = False
     # ── Thumbnail mode (Mode 2 aggregate only) ────────────────────────────────
     # Collects all single-image groups from the current page (including
     # explicit ones, which the template wraps in per-thumbnail gates) into a
@@ -1000,7 +1038,11 @@ def _render_viewer(artefact):
                     if _posix_dirname(g.get('source_file') or '') == d:
                         new_groups.append(g)
             output_groups = new_groups
+    return output_groups, viewer_thumbnail_mode, is_aggregate_mode, prefs_dirty
 
+
+def _viewer_module_detail(file_filter, all_artefact_ids):
+    """RISC OS module detail card when ?file= matches a module path."""
     # ── Look up RISC OS module detail when ?file= matches a module path ──────
     module_detail = None
     if file_filter:
@@ -1037,7 +1079,11 @@ def _render_viewer(artefact):
                         module_detail['module_flags'] = m.get('module_flags')
                         module_detail['commands'] = m.get('commands', [])
                         break
+    return module_detail
 
+
+def _viewer_stamp_stable_ids(artefact, output_groups):
+    """Defensive stable-ID stamping for groups missed upstream."""
     # ── Stable IDs for any group that didn't get one upstream ───────────────
     # Most groups are stamped before thumbnail bundling so bundle_items keep
     # their IDs; bundle wrapper groups already receive a bundle_id at
@@ -1049,33 +1095,71 @@ def _render_viewer(artefact):
                 f"{artefact.uuid}:{key_source}".encode()
             ).hexdigest()[:12]
 
+
+def _render_viewer(artefact):
+    """Build and render the viewer page for an artefact's converted outputs."""
+    _output_blocked, _enrich_outputs = _viewer_make_output_helpers()
+
+    file_filter = request.args.get('file')
+    # Subdirectory browse filter — matches the File Viewer's ?path=<dir>/ scheme
+    # so selecting a subdirectory there carries through to the Viewer.
+    current_path = request.args.get('path', '').strip()
+    if current_path and not current_path.endswith('/'):
+        current_path += '/'
+    # Filename glob filter — applied to the source file's basename in Mode 2.
+    filename_filter = request.args.get('filename', '').strip()
+    all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    # Partition IDs across the whole artefact tree, fetched once — the
+    # archive-path, filetype-facet, and explicit-content sections below all
+    # need the same set (previously three identical queries per request).
+    all_partition_ids = [
+        row[0] for row in db.session.query(Partition.id)
+        .filter(Partition.artefact_id.in_(all_artefact_ids)).all()
+    ]
+
+    output_groups, viewer_status, failed_conversion_list, use_pagination = \
+        _viewer_collect_groups(artefact, all_artefact_ids, file_filter, current_path, _enrich_outputs)
+
+    subdirectories, archive_paths = _viewer_subdirectories(
+        artefact, output_groups, file_filter, current_path, all_partition_ids)
+
+    output_groups = _viewer_filename_filter(output_groups, filename_filter, file_filter)
+
+    output_groups, facet_ctx = _viewer_filetype_facet(output_groups, all_partition_ids)
+
+    total_counts, total_groups = _viewer_summary_counts(output_groups)
+
+    output_groups, page_ctx = _viewer_paginate(output_groups, use_pagination, _enrich_outputs)
+
+    viewer_columns, viewer_col_class, prefs_dirty = _viewer_preferences()
+
+    user_can_bypass_explicit = _viewer_explicit_gate(
+        artefact, output_groups, all_partition_ids, _output_blocked)
+
+    output_groups, viewer_thumbnail_mode, is_aggregate_mode, thumb_dirty = \
+        _viewer_thumbnail_bundle(artefact, output_groups, file_filter)
+    prefs_dirty = prefs_dirty or thumb_dirty
+
+    module_detail = _viewer_module_detail(file_filter, all_artefact_ids)
+
+    _viewer_stamp_stable_ids(artefact, output_groups)
+
     # Persist any viewer preference changes in one commit (see prefs_dirty above).
     if prefs_dirty:
         db.session.commit()
 
-    return render_template(
-        'artefacts/viewer.html',
+    ctx = dict(
         artefact=artefact,
         output_groups=output_groups,
         viewer_status=viewer_status,
         failed_conversion_list=failed_conversion_list,
         module_detail=module_detail,
         user_can_bypass_explicit=user_can_bypass_explicit,
-        pagination=pagination,
-        pagination_args=pagination_args,
-        file_dir_args=file_dir_args,
-        view_all=view_all,
-        valid_per_page=VALID_PER_PAGE,
         total_counts=total_counts,
         total_groups=total_groups,
-        filetype_facet=filetype_facet,
-        active_filetypes=active_filetypes,
-        filetype_toggle_urls=filetype_toggle_urls,
-        clear_filter_args=clear_filter_args,
         viewer_columns=viewer_columns,
         viewer_col_class=viewer_col_class,
         valid_viewer_columns=_VALID_VIEWER_COLUMNS,
-
         viewer_thumbnail_mode=viewer_thumbnail_mode,
         is_aggregate_mode=is_aggregate_mode,
         current_path=current_path,
@@ -1090,6 +1174,9 @@ def _render_viewer(artefact):
         clear_filename_args={k: v for k, v in request.args.items()
                               if k not in ('filename', 'page')},
     )
+    ctx.update(facet_ctx)
+    ctx.update(page_ctx)
+    return render_template('artefacts/viewer.html', **ctx)
 
 
 def _derived_artefact_url(artefact, endpoint):
@@ -1141,8 +1228,8 @@ def _build_derived_entries(artefact):
     return entries
 
 
-def _render_artefact_view(artefact):
-
+def _view_file_form():
+    """File-listing filter form bound to request.args."""
     # Only bind to request.args when the user has actively submitted a filter,
     # so that BooleanField defaults (e.g. recursive=True) apply on first load.
     # Without this, WTForms treats missing checkbox keys as False.
@@ -1152,14 +1239,13 @@ def _render_artefact_view(artefact):
         file_form = FileSearchForm(request.args)
     else:
         file_form = FileSearchForm()
+    return file_form
 
+
+def _view_analysis_summaries(all_artefact_ids):
+    """Analyses card: status counts and the recent/active analysis list."""
     # Check if user wants to see all analyses or just the most recent N successful
     show_all_analyses = request.args.get('show_all_analyses', 'false').lower() == 'true'
-
-    # Collect all artefact IDs: current + all derived (recursively).
-    # Used for both partitions/files and analyses so that follow-on jobs
-    # queued against derived partition artefacts are visible here.
-    all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
 
     # How many recent successful analyses to show in the default (non-show-all) view.
     # Configurable via ANALYSES_SHOWN in myapp.cfg (default: 5).
@@ -1197,11 +1283,17 @@ def _render_artefact_view(artefact):
 
     has_hidden_analyses = not show_all_analyses and total_analyses_count > len(analyses)
 
-    # Query partitions from all artefacts (for display)
-    all_partitions = Partition.query.filter(
-        Partition.artefact_id.in_(all_artefact_ids)
-    ).order_by(Partition.artefact_id, Partition.partition_index).all()
+    return dict(
+        analyses=analyses,
+        show_all_analyses=show_all_analyses,
+        has_hidden_analyses=has_hidden_analyses,
+        total_analyses_count=total_analyses_count,
+        status_counts=status_counts,
+    )
 
+
+def _view_file_listing(file_form, all_artefact_ids):
+    """File listing table: filtered query, sorting, pagination, hash matches."""
     from sqlalchemy.orm import selectinload as _sil
     files_query = ExtractedFile.query.join(Partition).filter(
         Partition.artefact_id.in_(all_artefact_ids)
@@ -1342,7 +1434,6 @@ def _render_artefact_view(artefact):
 
     # Batch-query all matching KnownFiles across active hash databases
     # for the current page of files, so the template can show multiple badges.
-    from ..database import RestrictionType
     from ..services.hash_rescan import find_all_known_files_batch
     file_known_matches = find_all_known_files_batch(files_pagination.items)
 
@@ -1355,6 +1446,22 @@ def _render_artefact_view(artefact):
     hashdb_toggle_args = {k: v for k, v in pagination_args.items() if k != 'mode'}
     current_sort = sort_param
 
+    return files_query, files_pagination, dict(
+        files=files_pagination.items,
+        files_pagination=files_pagination,
+        pagination_args=pagination_args,
+        hashdb_toggle_args=hashdb_toggle_args,
+        valid_per_page=VALID_PER_PAGE,
+        view_all=view_all,
+        current_sort=current_sort,
+        letter_pages=letter_pages,
+        current_letter=current_letter,
+        file_known_matches=file_known_matches,
+    )
+
+
+def _view_subdirectories(file_form, files_query, all_partitions, all_artefact_ids):
+    """Directory-browse chips and archive-path icons for the file listing."""
     # Extract subdirectories at the current path level for directory browsing
     current_path = file_form.path.data.strip() if file_form.path.data else ''
     subdirectories: list = []
@@ -1412,7 +1519,11 @@ def _render_artefact_view(artefact):
 
         from natsort import natsorted, ns
         subdirectories = natsorted(subdir_set, alg=ns.IGNORECASE)
+    return current_path, subdirectories, archive_paths
 
+
+def _view_archive_banner(artefact, current_path, all_partitions, all_artefact_ids):
+    """Archive comment banner above the file listing."""
     # Header banner: when browsing inside an archive (or at the root of a
     # top-level archive), surface its archive_comment above the file list.
     # - At the root, a Partition with filesystem='archive' may carry the
@@ -1452,7 +1563,14 @@ def _render_artefact_view(artefact):
                     f"{artefact.label} ({p.container_format})" if p.container_format else artefact.label
                 )
                 break
+    return dict(
+        archive_comment_banner=archive_comment_banner,
+        archive_comment_label=archive_comment_label,
+    )
 
+
+def _view_analysis_detail_cards(all_artefact_ids):
+    """Detail cards/badges: mastering, protection, partitions, ARMlock, flux, density."""
     # Extract completed analysis results for display.
     # These are surfaced as badges + cards directly on the artefact view page.
     mastering_analysis = None
@@ -1522,6 +1640,18 @@ def _render_artefact_view(artefact):
                 and density_detect_analysis is not None):
             break
 
+    return dict(
+        mastering_analysis=mastering_analysis,
+        protection_analysis=protection_analysis,
+        partition_detect_details=partition_detect_details,
+        armlock_analysis=armlock_analysis,
+        flux_visualisation_analysis=flux_visualisation_analysis,
+        density_detect_analysis=density_detect_analysis,
+    )
+
+
+def _view_iso_metadata(artefact):
+    """ISO 9660 metadata card parsed from artefact.media_metadata."""
     # Parse format-specific metadata (populated by METADATA_EXTRACT for ISO
     # images and potentially other formats).  Only the ``iso9660`` section is
     # surfaced today; the template hides its card when the section is absent.
@@ -1538,7 +1668,11 @@ def _render_artefact_view(artefact):
             iso9660 = _mm.get('iso9660')
             if isinstance(iso9660, dict) and iso9660:
                 iso9660_metadata = iso9660
+    return iso9660_metadata
 
+
+def _view_partition_metadata(partition_detect_details):
+    """Per-partition metadata shown inline in the Partitions table."""
     # Build a lookup of per-partition metadata from PARTITION_DETECT, keyed by
     # partition index, so the template can display disc names, passwords,
     # protection levels, and flags inline in the Partitions table.
@@ -1548,9 +1682,11 @@ def _render_artefact_view(artefact):
             idx = p.get('index')
             if idx is not None:
                 partition_metadata[idx] = p
+    return partition_metadata
 
-    hashdb_mode = request.args.get('mode') == 'hashdb'
 
+def _view_conversion_status(artefact, all_artefact_ids):
+    """Viewable/failed-conversion markers for file rows and the View button state."""
     # Build viewable_filenames and failed_conversion_info by scanning all
     # FORMAT_CONVERT analyses for this artefact tree.
     #   viewable_filenames    — set of file.path strings with completed outputs
@@ -1560,6 +1696,7 @@ def _render_artefact_view(artefact):
     _viewable_types = VIEWER_ARTEFACT_TYPES
     viewable_filenames = set()
     failed_conversion_info = {}
+    has_converted_outputs = artefact.artefact_type in _viewable_types
     if artefact.artefact_type not in _viewable_types:
         convs = (
             Analysis.query
@@ -1621,6 +1758,17 @@ def _render_artefact_view(artefact):
                 for ef in efs:
                     failed_conversion_info[ef.path] = failed_file_ids[ef.id]
 
+        # "View" button: show if artefact is viewable type, or has any FORMAT_CONVERT.
+        # When not a viewable type we already fetched every FORMAT_CONVERT analysis
+        # into `convs` above (same guard), so reuse it rather than issuing another
+        # existence query (#447).
+        has_converted_outputs = bool(convs)
+
+    return viewable_filenames, failed_conversion_info, has_converted_outputs
+
+
+def _view_module_info(all_artefact_ids):
+    """RISC OS module tooltips for ffa files in the listing."""
     # Build module_info: dict mapping ExtractedFile.path → module metadata for
     # files with filetype ffa.  Used by the file listing template to show a
     # tooltip with the module's internal name, version, and date.
@@ -1633,15 +1781,11 @@ def _render_artefact_view(artefact):
     for mod in all_modules:
         if mod.file_path:
             module_info[mod.file_path] = mod
+    return module_info
 
-    # "View" button: show if artefact is viewable type, or has any FORMAT_CONVERT.
-    # When not a viewable type we already fetched every FORMAT_CONVERT analysis
-    # into `convs` above (same guard), so reuse it rather than issuing another
-    # existence query (#447).
-    has_converted_outputs = artefact.artefact_type in _viewable_types
-    if not has_converted_outputs:
-        has_converted_outputs = bool(convs)
 
+def _view_recognised_products(all_partitions):
+    """Recognised products card and folder badges."""
     # Recognised products for all partitions of this artefact tree
     recognised_products = []
     if all_partitions:
@@ -1659,6 +1803,11 @@ def _render_artefact_view(artefact):
     # Build a set of folder paths that have a recognised product (for directory row badges)
     recognised_folder_paths = {rp.folder_path: rp for rp in recognised_products}
 
+    return recognised_products, recognised_folder_paths
+
+
+def _view_hashdb_context(hashdb_mode):
+    """Hash-database list and product cache for the Add to Hash DB modal."""
     # Hash databases for the "Add to Hash DB" modal (with products pre-loaded).
     # hashdb_product_cache is the JSON payload for the modal's product
     # dropdown: {database_id: [{id, title}, ...]} sorted by title.
@@ -1681,6 +1830,14 @@ def _render_artefact_view(artefact):
     else:
         hash_databases = []
 
+    return dict(
+        hash_databases=hash_databases,
+        hashdb_product_cache=hashdb_product_cache,
+    )
+
+
+def _view_restriction_maps(all_artefact_ids, files_pagination):
+    """Direct/ancestor/descendant restriction maps for the file listing."""
     # File-level restrictions on any extracted file within this artefact tree.
     # Used to adjust the download button state when the artefact itself is
     # unrestricted but contains restricted extracted files.
@@ -1776,6 +1933,16 @@ def _render_artefact_view(artefact):
         for fid in set(file_ancestor_restrictions) | set(file_descendant_restrictions)
     }
 
+    return dict(
+        artefact_file_restrictions=artefact_file_restrictions,
+        file_inherited_restrictions=file_inherited_restrictions,
+        file_ancestor_restrictions=file_ancestor_restrictions,
+        file_descendant_restrictions=file_descendant_restrictions,
+    )
+
+
+def _view_derived_entries(artefact):
+    """Derived-artefact and sidecar sections in the sidebar."""
     _all_derived = _build_derived_entries(artefact)
     # Sidecar/companion files (a disk image's ddrescue .map, readme, checksums)
     # are shown in their own section, not mixed into the derived-artefact tree.
@@ -1783,7 +1950,11 @@ def _render_artefact_view(artefact):
                        if e['artefact'].artefact_type == ArtefactType.SIDECAR]
     derived_entries = [e for e in _all_derived
                        if e['artefact'].artefact_type != ArtefactType.SIDECAR]
+    return derived_entries, sidecar_entries
 
+
+def _view_admin_bypass(artefact):
+    """Per-artefact restriction-bypass admin panel data."""
     # Per-artefact bypass data: only loaded for admins to avoid unnecessary queries.
     if current_user.is_authenticated and current_user.is_admin:
         artefact_user_bypasses = (
@@ -1803,58 +1974,77 @@ def _render_artefact_view(artefact):
         bypass_eligible_users = []
         bypass_grantable_rtypes = []
 
-    return render_template('artefacts/view.html',
-                           artefact=artefact,
-                           analyses=analyses,
-                           show_all_analyses=show_all_analyses,
-                           has_hidden_analyses=has_hidden_analyses,
-                           total_analyses_count=total_analyses_count,
-                           status_counts=status_counts,
-                           file_form=file_form,
-                           files=files_pagination.items,
-                           files_pagination=files_pagination,
-                           pagination_args=pagination_args,
-                           hashdb_toggle_args=hashdb_toggle_args,
-                           valid_per_page=VALID_PER_PAGE,
-                           view_all=view_all,
-                           all_partitions=all_partitions,
-                           subdirectories=subdirectories,
-                           current_path=current_path,
-                           archive_paths=archive_paths,
-                           archive_comment_banner=archive_comment_banner,
-                           archive_comment_label=archive_comment_label,
-                           current_sort=current_sort,
-                           mastering_analysis=mastering_analysis,
-                           protection_analysis=protection_analysis,
-                           density_detect_analysis=density_detect_analysis,
-                           armlock_analysis=armlock_analysis,
-                           flux_visualisation_analysis=flux_visualisation_analysis,
-                           partition_detect_details=partition_detect_details,
-                           partition_metadata=partition_metadata,
-                           iso9660_metadata=iso9660_metadata,
-                           hashdb_mode=hashdb_mode,
-                           recognised_products=recognised_products,
-                           recognised_folder_paths=recognised_folder_paths,
-                           hash_databases=hash_databases,
-                           hashdb_product_cache=hashdb_product_cache,
-                           file_known_matches=file_known_matches,
-                           RestrictionType=RestrictionType,
-                           letter_pages=letter_pages,
-                           current_letter=current_letter,
-                           viewable_filenames=viewable_filenames,
-                           failed_conversion_info=failed_conversion_info,
-                           has_converted_outputs=has_converted_outputs,
-                           module_info=module_info,
-                           artefact_file_restrictions=artefact_file_restrictions,
-                           file_inherited_restrictions=file_inherited_restrictions,
-                           file_ancestor_restrictions=file_ancestor_restrictions,
-                           file_descendant_restrictions=file_descendant_restrictions,
-                           derived_entries=derived_entries,
-                           sidecar_entries=sidecar_entries,
-                           artefact_user_bypasses=artefact_user_bypasses,
-                           bypass_eligible_users=bypass_eligible_users,
-                           bypass_grantable_rtypes=bypass_grantable_rtypes,
-                           move_item_choices=_move_item_choices(artefact))
+    return dict(
+        artefact_user_bypasses=artefact_user_bypasses,
+        bypass_eligible_users=bypass_eligible_users,
+        bypass_grantable_rtypes=bypass_grantable_rtypes,
+    )
+
+
+def _render_artefact_view(artefact):
+    """Render the artefact detail page from per-panel helper contexts."""
+    file_form = _view_file_form()
+
+    # Collect all artefact IDs: current + all derived (recursively).
+    # Used for both partitions/files and analyses so that follow-on jobs
+    # queued against derived partition artefacts are visible here.
+    all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+
+    analyses_ctx = _view_analysis_summaries(all_artefact_ids)
+
+    # Query partitions from all artefacts (for display)
+    all_partitions = Partition.query.filter(
+        Partition.artefact_id.in_(all_artefact_ids)
+    ).order_by(Partition.artefact_id, Partition.partition_index).all()
+
+    files_query, files_pagination, files_ctx = _view_file_listing(file_form, all_artefact_ids)
+    current_path, subdirectories, archive_paths = _view_subdirectories(
+        file_form, files_query, all_partitions, all_artefact_ids)
+    banner_ctx = _view_archive_banner(artefact, current_path, all_partitions, all_artefact_ids)
+    detail_ctx = _view_analysis_detail_cards(all_artefact_ids)
+    iso9660_metadata = _view_iso_metadata(artefact)
+    partition_metadata = _view_partition_metadata(detail_ctx['partition_detect_details'])
+
+    hashdb_mode = request.args.get('mode') == 'hashdb'
+
+    viewable_filenames, failed_conversion_info, has_converted_outputs = \
+        _view_conversion_status(artefact, all_artefact_ids)
+    module_info = _view_module_info(all_artefact_ids)
+    recognised_products, recognised_folder_paths = _view_recognised_products(all_partitions)
+    hashdb_ctx = _view_hashdb_context(hashdb_mode)
+    restriction_ctx = _view_restriction_maps(all_artefact_ids, files_pagination)
+    derived_entries, sidecar_entries = _view_derived_entries(artefact)
+    bypass_ctx = _view_admin_bypass(artefact)
+
+    ctx = dict(
+        artefact=artefact,
+        file_form=file_form,
+        all_partitions=all_partitions,
+        subdirectories=subdirectories,
+        current_path=current_path,
+        archive_paths=archive_paths,
+        partition_metadata=partition_metadata,
+        iso9660_metadata=iso9660_metadata,
+        hashdb_mode=hashdb_mode,
+        RestrictionType=RestrictionType,
+        viewable_filenames=viewable_filenames,
+        failed_conversion_info=failed_conversion_info,
+        has_converted_outputs=has_converted_outputs,
+        module_info=module_info,
+        recognised_products=recognised_products,
+        recognised_folder_paths=recognised_folder_paths,
+        derived_entries=derived_entries,
+        sidecar_entries=sidecar_entries,
+        move_item_choices=_move_item_choices(artefact),
+    )
+    ctx.update(analyses_ctx)
+    ctx.update(files_ctx)
+    ctx.update(banner_ctx)
+    ctx.update(detail_ctx)
+    ctx.update(hashdb_ctx)
+    ctx.update(restriction_ctx)
+    ctx.update(bypass_ctx)
+    return render_template('artefacts/view.html', **ctx)
 
 
 def _move_item_choices(artefact):
