@@ -1,0 +1,46 @@
+{# Shared small-element macros.
+
+   Import what you need:
+       {% from '_macros.html' import status_badge, file_download_icon, taxonomy_name_cell %}
+#}
+
+{# Analysis status badge — single source of truth for colour + capitalisation. #}
+{% macro status_badge(status) -%}
+<span class="badge {{ status.value | status_badge_class }}">{{ status.value | capitalize }}</span>
+{%- endmacro %}
+
+{# Download icon for an extracted-file row, honouring restrictions.
+
+   Renders one of:
+     - red download link with bypass confirm (user can bypass the restriction)
+     - greyed lock icon (restricted, no bypass)
+     - plain download link (unrestricted)
+
+   Artefact-level restrictions take priority over file-level ones.
+   file_restrictions should include inherited (ancestor-archive) restrictions
+   where the caller has them available.
+#}
+{% macro file_download_icon(file_uuid, artefact_restrictions, file_restrictions) -%}
+{%- if artefact_restrictions and current_user.is_authenticated and current_user.can_bypass_all_restrictions(artefact_restrictions) -%}
+<a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=file_uuid, confirm_bypass='1') }}"
+   class="text-danger ms-1" title="Download file (restricted &mdash; bypass active)"
+   onclick="return confirm('This artefact has download restrictions. Download anyway?')"><i class="bi bi-download"></i></a>
+{%- elif artefact_restrictions -%}
+<span class="text-muted ms-1 opacity-50" title="Download restricted"><i class="bi bi-lock-fill"></i></span>
+{%- elif file_restrictions and current_user.is_authenticated and current_user.can_bypass_all_restrictions(file_restrictions) -%}
+<a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=file_uuid, confirm_bypass='1') }}"
+   class="text-danger ms-1" title="Download file (file restricted &mdash; bypass active)"
+   onclick="return confirm('This file has download restrictions. Download anyway?')"><i class="bi bi-download"></i></a>
+{%- elif file_restrictions -%}
+<span class="text-muted ms-1 opacity-50" title="File download restricted"><i class="bi bi-lock-fill"></i></span>
+{%- else -%}
+<a href="{{ url_for('myapp_blueprints_artefacts.download_file', uuid=file_uuid) }}"
+   class="text-muted ms-1" title="Download file"><i class="bi bi-download"></i></a>
+{%- endif -%}
+{%- endmacro %}
+
+{# Item-list platform/category cell: the direct value, or the inherited
+   (effective) value in muted italics, or '-'. #}
+{% macro taxonomy_name_cell(direct, effective) -%}
+{%- if direct %}{{ direct.name }}{% else %}<span class="text-muted fst-italic">{{ effective.name if effective else '-' }}</span>{% endif -%}
+{%- endmacro %}

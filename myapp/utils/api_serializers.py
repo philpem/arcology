@@ -1,5 +1,6 @@
 """Shared API serializer helpers for Arcology models."""
 
+from ..services.artefact_lifecycle import build_processing_tree
 from .enum_display import enum_value as _enum_value
 
 
@@ -187,9 +188,7 @@ def processing_tree_to_dict(root_artefact):
           'total_count': n
         }
     """
-    from ..blueprints.artefacts import _build_processing_tree
-
-    tree_node, _has_active, status_counts, total_count = _build_processing_tree(root_artefact)
+    tree_node, _has_active, status_counts, total_count = build_processing_tree(root_artefact)
 
     def _path_tree_to_dict(node):
         return {

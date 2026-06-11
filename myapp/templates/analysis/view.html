@@ -1,4 +1,5 @@
 {% extends "_base.html" %}
+{% from '_macros.html' import status_badge with context %}
 {% block page_title %}{{ analysis.analysis_type|format_analysis_type }} (#{{ analysis.id }}){% endblock %}
 
 {% block content %}
@@ -18,7 +19,7 @@
 </nav>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h1>Analysis #{{ analysis.id }} <span class="badge {{ analysis.status.value | status_badge_class }}">{{ analysis.status.value | capitalize }}</span></h1>
+    <h1>Analysis #{{ analysis.id }} {{ status_badge(analysis.status) }}</h1>
     <div>
         {% if user_can_write %}
         {% if analysis.status.value == 'pending' %}
@@ -109,7 +110,7 @@
     
     <div class="col-md-8">
         {% if analysis.status.value in ('completed', 'failed') and analysis.details %}
-        {% set details = analysis.details | fromjson %}
+        {% set details = details | fromjson %}
 
         {# Display output images (flux visualisations, etc.) #}
         {% set image_outputs = details.outputs | selectattr('type', 'equalto', 'image') | list %}

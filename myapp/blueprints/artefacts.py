@@ -4,21 +4,15 @@ Arcology - Artefacts Blueprint
 CRUD operations for digital artefacts with file upload and auto-analysis.
 """
 
-import glob
 import hashlib
 import json
 import mimetypes
 import os
-import re
-import shutil
-import tempfile
 import threading
-import uuid
-from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, send_file, url_for
+from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
 from flask_wtf.file import FileField, FileRequired
-from werkzeug.utils import secure_filename
 from wtforms import BooleanField, IntegerField, SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Optional
 from ..database import (
@@ -27,8 +21,6 @@ from ..database import (
     AnalysisStatus,
     AnalysisType,
     Artefact,
-    ArtefactMastering,
-    ArtefactProtection,
     ArtefactRestriction,
     ArtefactType,
     ExtractedFile,
@@ -42,22 +34,52 @@ from ..database import (
     RecognisedProduct,
     RestrictionType,
     RiscosModule,
-    StorageDirectory,
     Tag,
     User,
     UserArtefactBypass,
-    artefact_tags,
 )
 from ..extensions import db
 from ..permissions import public_downloadable, public_readable, require_permission
 from ..riscos_filetypes import lookup_filetype_hex
+from ..services.artefact_lifecycle import (
+    ArtefactMoveError,
+    build_processing_tree,
+    cleanup_analysis_outputs,
+    cleanup_artefact_outputs,
+    cleanup_artefact_outputs_s3,
+    delete_artefact_files,
+    get_all_derived_artefact_ids,
+    move_artefact_to_item,
+    reset_artefact_for_reanalysis,
+    validate_artefact_move,
+)
+from ..services.artefact_storage import (
+    compute_file_hashes,
+    get_artefact_storage_key,
+    get_output_folder,
+    resolve_extracted_file_path,
+    safe_original_filename,
+    save_uploaded_file,
+)
 from ..services.artefact_types import (
     ANALYSIS_MAP,
     detect_artefact_type,
     queue_analyses_for_artefact,
 )
+from ..services.downloads import (
+    resolve_output_artefact,
+    serve_artefact_file,
+    serve_extracted_file,
+    serve_output_file,
+)
+from ..services.restrictions import (
+    artefact_contained_file_restrictions,
+    collect_all_file_restrictions,
+    collect_ancestor_file_restrictions,
+    grantable_bypass_rtypes,
+)
 from ..services.upload_pipeline import QUEUE_CHECKSUM_ONLY, QUEUE_FULL, ingest_uploaded_artefact
-from ..utils.blobs import artefact_blob, artefact_blob_storage_path, assign_blob
+from ..utils.blobs import artefact_blob_storage_path, assign_blob
 from ..utils.enum_display import enum_value
 from ..utils.path_nav import build_directory_tree
 from ..utils.slugs import ensure_unique_slug, generate_slug, lookup_artefact_by_id, lookup_by_identifier
@@ -70,40 +92,8 @@ from ..visibility import (
     can_manage_privacy,
     can_view_artefact,
     can_view_item,
+    output_blocked_for,
 )
-
-
-def safe_original_filename(filename: str) -> str:
-    """
-    Sanitize a filename for safe storage as original_filename.
-
-    Unlike Werkzeug's secure_filename(), this preserves characters found in
-    RISC OS filenames, notably the comma used for filetype suffixes
-    (e.g. ``CF-D1,FCD`` where ``,FCD`` encodes RISC OS filetype &FCD).
-
-    Path separators, null bytes and the other C0 control characters (notably
-    CR and LF) plus DEL are stripped: they have no legitimate place in a
-    filename and, if preserved, would flow into HTTP response headers such as
-    Content-Disposition and enable header injection (CWE-113).  Every other
-    character — including the top-bit-set range 0x80-0xFF — is kept as-is so
-    the original name is faithfully recorded.
-
-    Crucially, code points 0x80-0x9F are NOT stripped: ISO 8859-1 treats them
-    as C1 control codes, but RISC OS assigns them printable glyphs (Euro,
-    ligatures, etc. — see shared RISC OS Latin-1 handling), and 0xA0 is the
-    Acorn hard space.  Removing them would corrupt RISC OS filenames.  These
-    bytes cannot split an HTTP header (only CR/LF do), and the
-    Content-Disposition sink encodes them safely via RFC 5987 filename*.
-    """
-    # Drop path separators and the C0 control range (0x00-0x1f, includes
-    # NUL/CR/LF) plus DEL (0x7f).  Preserve 0x80+ for RISC OS filenames.
-    filename = ''.join(
-        ch for ch in filename
-        if ch not in ('/', '\\') and ord(ch) >= 0x20 and ord(ch) != 0x7f
-    )
-    filename = filename.strip()
-    return filename or 'upload'
-
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -217,719 +207,8 @@ class FileSearchForm(FlaskForm):
 
 
 # =============================================================================
-# Helper Functions
-# =============================================================================
-
-def get_upload_folder():
-    """Get the upload folder path, creating it if necessary."""
-    folder = current_app.config.get('UPLOAD_FOLDER', 'uploads')
-    if not os.path.isabs(folder):
-        folder = os.path.join(current_app.instance_path, folder)
-    os.makedirs(folder, exist_ok=True)
-    return folder
-
-
-def get_output_folder():
-    """Get the output folder path, creating it if necessary."""
-    folder = current_app.config.get('OUTPUT_FOLDER', 'outputs')
-    if not os.path.isabs(folder):
-        folder = os.path.join(current_app.instance_path, folder)
-    os.makedirs(folder, exist_ok=True)
-    return folder
-
-
-def _get_storage_extension(filename: str) -> str:
-    """
-    Get the full extension for storage, preserving compound extensions.
-
-    For compound extensions like .dd.zst, .dd.gz, .dd.bz2, .tar.gz,
-    returns the full compound extension instead of just the last part.
-    E.g., 'drive.dd.zst' -> '.dd.zst' (not '.zst').
-    """
-    filename_lower = filename.lower()
-    for compound_ext in ('.dd.zst', '.dd.gz', '.dd.bz2', '.tar.gz'):
-        if filename_lower.endswith(compound_ext):
-            return filename[-len(compound_ext):]
-    _, ext = os.path.splitext(filename)
-    return ext
-
-
-def save_uploaded_file(file) -> tuple[str, int]:
-    """
-    Save an uploaded file and return (storage_path, file_size).
-    Files are stored via the storage backend with a UUID-based name to avoid conflicts.
-    """
-    storage = current_app.storage
-
-    # Generate unique storage name while preserving extension
-    # Uses compound extension detection so drive.dd.zst -> <uuid>.dd.zst
-    original_name = secure_filename(file.filename)
-    ext = _get_storage_extension(original_name)
-    storage_name = f"{uuid.uuid4().hex}{ext}"
-
-    # Save to a temp file first, then put into storage
-    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-        file.save(tmp)
-        tmp_path = tmp.name
-
-    try:
-        file_size = os.path.getsize(tmp_path)
-        key = storage.storage_key('uploads', storage_name)
-        storage.put(key, tmp_path)
-    finally:
-        # Clean up temp file (if storage backend copied it elsewhere)
-        try:
-            os.unlink(tmp_path)
-        except FileNotFoundError:
-            pass
-
-    # Return relative path for storage in DB
-    return storage_name, file_size
-
-
-def get_artefact_storage_key(artefact: Artefact) -> str:
-    """Get the storage key for an artefact.
-
-    Returns a key like 'uploads/abc123.img' or 'outputs/xyz789.png'.
-    """
-    blob = artefact_blob(artefact)
-    storage_path = blob.storage_path if blob is not None else artefact.storage_path
-    directory = 'outputs' if artefact.storage_directory == StorageDirectory.OUTPUTS else 'uploads'
-    return current_app.storage.storage_key(directory, storage_path)
-
-
-def get_artefact_path(artefact: Artefact) -> str:
-    """Get the full filesystem path for an artefact based on its storage directory.
-
-    Raises ValueError if storage_path would escape the storage directory
-    (absolute path override or directory traversal).
-    """
-    if artefact.storage_directory == StorageDirectory.OUTPUTS:
-        folder = get_output_folder()
-    else:
-        folder = get_upload_folder()
-    blob = artefact_blob(artefact)
-    storage_path = blob.storage_path if blob is not None else artefact.storage_path
-    base = os.path.realpath(folder)
-    full_path = os.path.realpath(os.path.join(folder, storage_path))
-    if not (full_path == base or full_path.startswith(base + os.sep)):
-        raise ValueError(f"storage_path escapes storage directory: {storage_path!r}")
-    return full_path
-
-
-def compute_file_hashes(filepath_or_key: str, use_storage: bool = False) -> tuple[str, str]:
-    """Compute MD5 and SHA256 hashes for a file.
-
-    Args:
-        filepath_or_key: Either a local filesystem path or a storage key.
-        use_storage: If True, read from the storage backend using key.
-    """
-    md5_hash = hashlib.md5()
-    sha256_hash = hashlib.sha256()
-
-    if use_storage:
-        f = current_app.storage.open_read(filepath_or_key)
-    else:
-        f = open(filepath_or_key, 'rb')
-
-    try:
-        for chunk in iter(lambda: f.read(8192), b''):
-            md5_hash.update(chunk)
-            sha256_hash.update(chunk)
-    finally:
-        f.close()
-
-    return md5_hash.hexdigest(), sha256_hash.hexdigest()
-
-
-def _resolve_extracted_file_path(ef):
-    """Resolve an ExtractedFile to its actual path on disk.
-
-    Looks up completed FILE_EXTRACTION and ARCHIVE_EXTRACT analyses for the
-    file's partition's artefact, then joins their output_path with the
-    file's on-disk relative path.  Handles RISC OS filetype suffix fallback
-    via glob.
-
-    For files extracted from a nested archive (e.g. a zip inside a disc
-    image), the API prepends the parent archive's display path to ef.path so
-    the file appears nested in the UI.  That prefix is stripped here before
-    joining, because the actual files live in a separate ARCHIVE_EXTRACT
-    output directory, not under the disc's FILE_EXTRACTION tree.
-
-    When the worker runs in a different container, the stored output_path
-    may be an absolute path that doesn't exist on the web host (e.g.
-    /data/outputs/... vs /app/instance/outputs/...).  As a fallback, the
-    relative directory structure is resolved under OUTPUT_FOLDER.
-
-    Returns the full filesystem path as a string, or None if not found.
-    """
-    from shared.storage import S3Storage
-
-    storage = current_app.storage
-
-    # For files nested inside an archive-within-a-disc, the DB path has the
-    # parent archive's display path prepended (e.g. "Archives/Emulators.zip/
-    # Docs/file.txt").  The actual files are in the ARCHIVE_EXTRACT output
-    # for that inner zip, so we strip the prefix to get the real disk path.
-    #
-    # However, RISC OS archives often contain a single top-level directory
-    # whose name matches the archive filename (e.g. archive "QRT" contains
-    # "QRT/Documents/!ReadMe" internally).  In that case the extractor
-    # preserves the "QRT/" subdirectory, so the on-disk path relative to the
-    # ARCHIVE_EXTRACT output is still "QRT/Documents/!ReadMe" — stripping
-    # "QRT/" produces the wrong path.  We therefore try both the stripped
-    # and the original (unstripped) DB path so both layouts are handled.
-    original_disk_path = ef.path
-    disk_path = ef.path
-    if ef.parent_file_id:
-        parent = ef.parent_file
-        if parent and parent.is_archive:
-            strip_prefix = parent.path + '/'
-            if disk_path.startswith(strip_prefix):
-                disk_path = disk_path[len(strip_prefix):]
-
-    # Stripped form first (handles extractors that put files directly in
-    # output_dir); unstripped fallback for archives with a matching top-level
-    # directory (the coincidence case described above).
-    disk_paths_to_try = [disk_path]
-    if disk_path != original_disk_path:
-        disk_paths_to_try.append(original_disk_path)
-
-    for analysis_type in (AnalysisType.FILE_EXTRACTION, AnalysisType.ARCHIVE_EXTRACT):
-        # Use .all() so we try every extraction output for this artefact.
-        # A disc image may have multiple nested archives, each with its own
-        # ARCHIVE_EXTRACT and output_path; .first() would pick an arbitrary
-        # one that may not contain this particular file.
-        extractions = (
-            Analysis.query
-            .filter_by(artefact_id=ef.partition.artefact_id, analysis_type=analysis_type)
-            .filter(Analysis.output_path.isnot(None), Analysis.status == AnalysisStatus.COMPLETED)
-            .all()
-        )
-        for extraction in extractions:
-            base = extraction.output_path
-
-            # --- S3 storage mode ---
-            if isinstance(storage, S3Storage):
-                from botocore.exceptions import ClientError
-
-                # output_path should be a relative path (or S3 key prefix)
-                if os.path.isabs(base):
-                    # Legacy absolute path — strip to relative
-                    # e.g. /data/outputs/item/art/analysis -> item/art/analysis
-                    parts = base.rstrip('/').split('/')
-                    # Find 'outputs' in the path and take everything after
-                    try:
-                        idx = parts.index('outputs')
-                        base = '/'.join(parts[idx + 1:])
-                    except ValueError:
-                        # No 'outputs' segment, use the last 3 parts as best guess
-                        base = '/'.join(parts[-3:]) if len(parts) >= 3 else parts[-1]
-
-                s3_prefix = f"outputs/{base.strip('/')}"
-
-                # Build candidate keys.  If the file has a known RISC OS
-                # filetype, try ,xxx suffix variants (both cases) before
-                # the plain key.  This avoids an expensive list_prefix()
-                # call — each HEAD/GET is ~12x cheaper than a LIST on AWS.
-                # Try each disk_path variant in order (stripped first, then
-                # unstripped fallback for archives with matching top-level dir).
-                s3_candidates = []
-                for dp in disk_paths_to_try:
-                    file_key = f"{s3_prefix}/{dp.lstrip('/')}"
-                    if ef.risc_os_filetype:
-                        s3_candidates.append(file_key + ',' + ef.risc_os_filetype.lower())
-                        s3_candidates.append(file_key + ',' + ef.risc_os_filetype.upper())
-                    s3_candidates.append(file_key)
-
-                for key in s3_candidates:
-                    try:
-                        tmp_dir = tempfile.mkdtemp(prefix='arcology_ef_')
-                        dest = os.path.join(tmp_dir, key.rsplit('/', 1)[-1])
-                        storage.get(key, dest)
-                        return dest
-                    except (FileNotFoundError, ClientError) as e:
-                        # storage.get() raises FileNotFoundError for S3 404s;
-                        # catch ClientError too for direct botocore errors.
-                        if isinstance(e, ClientError) and e.response['Error']['Code'] not in ('404', 'NoSuchKey'):
-                            raise
-                        # Clean up empty temp dir
-                        try:
-                            os.unlink(dest)
-                        except OSError:
-                            pass
-                        try:
-                            os.rmdir(tmp_dir)
-                        except OSError:
-                            pass
-                        continue
-
-                continue
-
-            # --- Local storage mode ---
-            output_folder = get_output_folder()
-            real_output = os.path.realpath(output_folder)
-
-            # Build candidate base directories to try
-            bases_to_try = []
-            if os.path.isabs(base):
-                bases_to_try.append(base)
-                # Cross-container fallback: try relative subpath under OUTPUT_FOLDER.
-                # Worker stores e.g. "/data/outputs/item/art/analysis/" but the web
-                # app sees the same files at "/app/instance/outputs/item/art/analysis/".
-                # Walk up the stored path to find the deepest suffix that exists
-                # under our output_folder.
-                parts = base.rstrip('/').split('/')
-                for i in range(1, len(parts)):
-                    candidate = os.path.join(output_folder, *parts[i:])
-                    if os.path.isdir(candidate):
-                        bases_to_try.append(candidate)
-                        break
-            else:
-                bases_to_try.append(os.path.join(output_folder, base))
-
-            for resolved_base in bases_to_try:
-                real_base = os.path.realpath(resolved_base)
-                # Ensure the base directory itself lies within OUTPUT_FOLDER.
-                # Without this check, a malicious output_path (e.g. /etc) would
-                # pass the inner confinement test and expose arbitrary host files.
-                if not real_base.startswith(real_output + os.sep):
-                    continue
-                for dp in disk_paths_to_try:
-                    raw_path = os.path.join(resolved_base, dp.lstrip('/'))
-                    file_path = os.path.realpath(raw_path)
-                    if not file_path.startswith(real_base + os.sep):
-                        continue
-                    if os.path.isfile(file_path):
-                        return file_path
-                    # RISC OS filetype suffix fallback — re-check confinement on
-                    # each candidate so a glob match cannot escape real_base.
-                    # Restrict to files whose comma-suffix is 1–3 hex digits so
-                    # that DIM sidecar files (e.g. filename,INF) are never served
-                    # in place of the actual data file.
-                    candidates = [
-                        f for f in glob.glob(raw_path + ',*')
-                        if os.path.isfile(f)
-                        and os.path.realpath(f).startswith(real_base + os.sep)
-                        and re.search(r',[0-9a-fA-F]{1,3}$', os.path.basename(f))
-                    ]
-                    if candidates:
-                        return candidates[0]
-
-    return None
-
-
-def _map_output_path_to_local_root(path: str, output_folder: str) -> str:
-    """Map a stored output path into the local OUTPUT_FOLDER namespace.
-
-    Worker analyses may store absolute paths rooted at the worker container's
-    OUTPUT_DIR (for example ``/data/outputs/...``), while the web app sees the
-    same files under its own mount point (for example
-    ``/app/instance/outputs/...``). This helper rewrites the absolute path onto
-    the local output root before cleanup-time safety checks.
-
-    Relative paths (used in S3 mode) are joined with output_folder directly.
-    """
-    real_output = os.path.realpath(output_folder)
-
-    # Relative paths: join directly with output_folder
-    if not os.path.isabs(path):
-        return os.path.realpath(os.path.join(real_output, path))
-
-    real_path = os.path.realpath(path)
-
-    if real_path == real_output or real_path.startswith(real_output + os.sep):
-        return real_path
-
-    # Cross-container fallback: re-root the path under our local OUTPUT_FOLDER
-    # using the suffix after the worker's output-root basename ("outputs").
-    output_root_name = os.path.basename(real_output.rstrip(os.sep))
-    parts = [part for part in path.rstrip(os.sep).split(os.sep) if part]
-    if output_root_name in parts:
-        suffix = parts[parts.index(output_root_name) + 1:]
-        if suffix:
-            return os.path.realpath(os.path.join(real_output, *suffix))
-
-    return real_path
-
-
-# =============================================================================
 # Routes
 # =============================================================================
-
-def get_all_derived_artefact_ids(artefact: Artefact) -> list[int]:
-    """Collect all derived artefact IDs using a single recursive CTE query.
-
-    Replaces the previous recursive ORM walk which triggered N+1 queries
-    (one per level of the derivation tree).
-    """
-    from sqlalchemy import select
-    from ..extensions import db
-
-    base = select(Artefact.id).where(Artefact.parent_artefact_id == artefact.id)
-    cte = base.cte(name='derived', recursive=True)
-    recursive = select(Artefact.id).where(Artefact.parent_artefact_id == cte.c.id)
-    cte = cte.union_all(recursive)
-    rows = db.session.execute(select(cte.c.id)).all()
-    return [r[0] for r in rows]
-
-
-def _collect_all_analyses(artefact: Artefact) -> list:
-    """Collect all analyses for an artefact and its derived artefacts.
-
-    Uses the CTE-based get_all_derived_artefact_ids to avoid N+1 queries,
-    then fetches all analyses in a single query.
-    """
-    all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
-    return Analysis.query.filter(Analysis.artefact_id.in_(all_ids)).order_by(Analysis.id.desc()).all()
-
-
-def _bulk_delete_artefact_dependents(artefact_ids: list[int]):
-    """Bulk-delete all referencing rows across every FK table for the given artefact IDs.
-
-    Deletes analyses, extracted file restrictions, recognised products,
-    extracted files, partitions, protection/mastering/module records,
-    artefact restrictions, and tag associations.  Does NOT delete the
-    artefacts themselves — call ``_bulk_delete_artefacts`` for that.
-    """
-    Analysis.query.filter(Analysis.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
-    partition_subq = db.session.query(Partition.id).filter(
-        Partition.artefact_id.in_(artefact_ids)).subquery()
-    ef_subq = db.session.query(ExtractedFile.id).filter(
-        ExtractedFile.partition_id.in_(db.session.query(partition_subq.c.id))).subquery()
-    ExtractedFileRestriction.query.filter(
-        ExtractedFileRestriction.extracted_file_id.in_(
-            db.session.query(ef_subq.c.id)
-        )).delete(synchronize_session=False)
-    RecognisedProduct.query.filter(
-        RecognisedProduct.partition_id.in_(
-            db.session.query(partition_subq.c.id)
-        )).delete(synchronize_session=False)
-    ExtractedFile.query.filter(
-        ExtractedFile.partition_id.in_(
-            db.session.query(partition_subq.c.id)
-        )).delete(synchronize_session=False)
-    Partition.query.filter(Partition.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
-    ArtefactProtection.query.filter(ArtefactProtection.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
-    ArtefactMastering.query.filter(ArtefactMastering.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
-    RiscosModule.query.filter(RiscosModule.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
-    ArtefactRestriction.query.filter(ArtefactRestriction.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
-    db.session.execute(artefact_tags.delete().where(artefact_tags.c.artefact_id.in_(artefact_ids)))
-
-
-def _bulk_delete_artefacts(artefact_ids: list[int]):
-    """Delete artefact rows after their dependents have been removed.
-
-    Breaks the self-referential parent FK before deleting.
-    """
-    Artefact.query.filter(Artefact.id.in_(artefact_ids)).update(
-        {Artefact.parent_artefact_id: None}, synchronize_session=False)
-    Artefact.query.filter(Artefact.id.in_(artefact_ids)).delete(synchronize_session=False)
-
-
-def _analysis_file_path(analysis, hint_file_map: dict) -> str | None:
-    """Return the file/dir path for an analysis that operates on a specific
-    extracted file, or None for analyses that have no path context.
-
-    Path-bearing analyses:
-      ARCHIVE_EXTRACT  — path of the archive file being extracted
-                         (from hint file_id → ExtractedFile.path)
-      ARCHIVE_DETECT   — path_prefix of the archive being scanned for
-                         nested archives (empty → top-level, returns None)
-      FORMAT_CONVERT   — path_prefix of the archive being converted
-                         (empty → direct artefact convert, returns None)
-      RISCOS_MODULE_PARSE — path_prefix of the archive context
-                         (empty → top-level scan, returns None)
-    """
-    import json as _json
-    from shared.enums import AnalysisType as _AT
-
-    if not analysis.hints:
-        return None
-    try:
-        h = _json.loads(analysis.hints)
-    except Exception:
-        return None
-
-    atype = analysis.analysis_type
-    if atype == _AT.ARCHIVE_EXTRACT:
-        fid = h.get('file_id')
-        if fid and fid in hint_file_map:
-            return hint_file_map[fid]['path']
-        return None
-    if atype in (_AT.ARCHIVE_DETECT, _AT.FORMAT_CONVERT, _AT.RISCOS_MODULE_PARSE):
-        prefix = h.get('path_prefix', '')
-        return prefix if prefix else None
-    return None
-
-
-def _build_file_path_tree(path_analyses: list[tuple[str, object]]) -> dict:
-    """Build a nested dict tree from [(path, analysis), ...].
-
-    Each node: {'children': {name: node, ...}, 'analyses': [Analysis, ...]}
-    The root node's children are the top-level path components.  Children
-    dicts preserve insertion order and are later sorted by the template.
-    """
-    root: dict = {'children': {}, 'analyses': []}
-    for path, analysis in path_analyses:
-        parts = [p for p in path.split('/') if p]
-        node = root
-        for part in parts:
-            if part not in node['children']:
-                node['children'][part] = {'children': {}, 'analyses': []}
-            node = node['children'][part]
-        node['analyses'].append(analysis)
-    return root
-
-
-def _build_processing_tree(root: Artefact) -> tuple[dict, bool, dict, int]:
-    """Build a nested tree structure for the processing tree view.
-
-    Returns (tree_node, has_active_analyses, status_counts, total_count).
-    Each tree_node is a dict:
-      {
-        'artefact':   Artefact,
-        'analyses':   [Analysis, ...],   # non-path analyses (flat list)
-        'path_tree':  dict | None,       # nested path tree (see _build_file_path_tree)
-        'children':   [node, ...],       # derived artefact child nodes
-      }
-
-    Analyses that have a file-path context (ARCHIVE_EXTRACT with a file_id,
-    ARCHIVE_DETECT / FORMAT_CONVERT with a path_prefix) are separated out of
-    the flat 'analyses' list and placed in 'path_tree' so the template can
-    render them as a hierarchical file-path tree.
-
-    All data is fetched in flat queries (no N+1) and assembled in Python.
-    """
-    import json as _json
-    from collections import defaultdict
-    from shared.enums import AnalysisType as _AT
-
-    all_ids = [root.id] + get_all_derived_artefact_ids(root)
-
-    all_artefacts = Artefact.query.filter(Artefact.id.in_(all_ids)).all()
-    artefact_map = {a.id: a for a in all_artefacts}
-
-    children_map: dict[int, list] = defaultdict(list)
-    for a in all_artefacts:
-        if a.parent_artefact_id is not None:
-            children_map[a.parent_artefact_id].append(a)
-
-    all_analyses = (
-        Analysis.query
-        .filter(Analysis.artefact_id.in_(all_ids))
-        .order_by(Analysis.id)
-        .all()
-    )
-
-    analyses_map: dict[int, list] = defaultdict(list)
-    for analysis in all_analyses:
-        analyses_map[analysis.artefact_id].append(analysis)
-
-    has_active = any(
-        a.status in (AnalysisStatus.PENDING, AnalysisStatus.RUNNING)
-        for a in all_analyses
-    )
-
-    status_counts = {s.value: 0 for s in AnalysisStatus}
-    for a in all_analyses:
-        status_counts[a.status.value] += 1
-    total_count = len(all_analyses)
-
-    # Resolve ARCHIVE_EXTRACT file_ids → ExtractedFile paths in one query.
-    file_ids = []
-    for analysis in all_analyses:
-        if analysis.analysis_type == _AT.ARCHIVE_EXTRACT and analysis.hints:
-            try:
-                fid = _json.loads(analysis.hints).get('file_id')
-                if fid:
-                    file_ids.append(fid)
-            except Exception:
-                pass
-
-    hint_file_map: dict[int, dict] = {}
-    if file_ids:
-        rows = (
-            ExtractedFile.query
-            .filter(ExtractedFile.id.in_(file_ids))
-            .with_entities(ExtractedFile.id, ExtractedFile.path, ExtractedFile.filename)
-            .all()
-        )
-        hint_file_map = {r.id: {'path': r.path, 'filename': r.filename} for r in rows}
-
-    def _build(aid: int) -> dict:
-        plain: list = []
-        path_items: list[tuple[str, object]] = []
-        for a in analyses_map.get(aid, []):
-            p = _analysis_file_path(a, hint_file_map)
-            if p is not None:
-                path_items.append((p, a))
-            else:
-                plain.append(a)
-        return {
-            'artefact': artefact_map[aid],
-            'analyses': plain,
-            'path_tree': _build_file_path_tree(path_items) if path_items else None,
-            'children': [
-                _build(c.id)
-                for c in sorted(children_map.get(aid, []), key=lambda x: x.id)
-            ],
-        }
-
-    return _build(root.id), has_active, status_counts, total_count
-
-
-def reset_artefact_for_reanalysis(artefact: Artefact, commit: bool = True):
-    """
-    Reset an artefact to its just-uploaded state ready for re-analysis.
-
-    Deletes all analyses, derived artefacts, and partitions (with their
-    extracted file listings) for this artefact, then removes the associated
-    files from disk.  The artefact's own uploaded file is preserved.
-
-    This must be called before queueing new analyses when the user triggers
-    a re-analyse, so that stale results from previous runs are fully cleared.
-
-    Pass commit=False to defer the commit to the caller (useful for batch
-    operations).  The caller must call db.session.commit() afterwards.
-    """
-    cleanup = _collect_cleanup_paths_for_artefact(artefact, 'reset')
-
-    # Delete storage files for all derived artefacts (recursively).
-    # Must happen before the DB delete so we can still walk the ORM tree.
-    for derived in artefact.derived_artefacts:
-        _delete_artefact_files(derived)
-
-    # Collect all derived artefact IDs (including nested) for bulk deletion.
-    all_derived_ids = get_all_derived_artefact_ids(artefact)
-
-    # Collect all artefact IDs to clean (derived + root) for bulk operations.
-    all_ids = all_derived_ids + [artefact.id]
-
-    # Null out derived_from_analysis_id before deleting analyses, to avoid
-    # FK violations from artefacts -> analyses.
-    if all_derived_ids:
-        Artefact.query.filter(Artefact.id.in_(all_derived_ids)).update(
-            {Artefact.derived_from_analysis_id: None}, synchronize_session=False)
-
-    _bulk_delete_artefact_dependents(all_ids)
-
-    # Clear analysis-derived metadata on the root artefact (e.g. the
-    # ISO 9660 Primary Volume Descriptor written by METADATA_EXTRACT).
-    # Without this, stale volume info survives a reset and is shown
-    # alongside the freshly queued analyses until they finish — and
-    # persists indefinitely if METADATA_EXTRACT is no longer queued
-    # (e.g. the artefact type was changed away from ISO).
-    Artefact.query.filter(Artefact.id == artefact.id).update(
-        {Artefact.media_metadata: None}, synchronize_session=False)
-
-    # Delete derived artefacts: break self-referential FK, then delete.
-    if all_derived_ids:
-        _bulk_delete_artefacts(all_derived_ids)
-
-    if commit:
-        db.session.commit()
-
-    return cleanup
-
-
-def _cleanup_analysis_outputs(output_folder, output_files, output_dirs, cache_dir, logger):
-    """Delete analysis output files and directories.
-
-    Designed to run in a background daemon thread; all paths are passed as
-    plain strings so no ORM session or Flask app context is required.
-    """
-    real_output = os.path.realpath(output_folder)
-
-    def _is_safe(p: str) -> bool:
-        """Return True only if p resolves to a path inside output_folder."""
-        return os.path.realpath(p).startswith(real_output + os.sep)
-
-    def _prune_empty_parents(path: str) -> None:
-        """Remove empty parent directories up to, but not including, output_folder."""
-        current = os.path.dirname(os.path.realpath(path))
-        while current.startswith(real_output + os.sep):
-            try:
-                os.rmdir(current)
-                logger.info(f"Deleted empty parent directory: {current}")
-            except OSError:
-                break
-            current = os.path.dirname(current)
-
-    # Remove named output files (e.g., flux visualisation PNGs).
-    for filename in output_files:
-        path = os.path.join(output_folder, filename)
-        if not _is_safe(path):
-            logger.warning(f"Skipping out-of-bounds output file: {filename!r}")
-            continue
-        if os.path.exists(path):
-            try:
-                os.remove(path)
-                logger.info(f"Deleted output file: {filename}")
-            except Exception as e:
-                logger.warning(f"Failed to delete output file {filename}: {e}")
-
-    # Remove extraction output directories (e.g., extracted disc file trees).
-    for path in output_dirs:
-        local_path = _map_output_path_to_local_root(path, output_folder)
-        if not _is_safe(local_path):
-            logger.warning(f"Skipping out-of-bounds output directory: {path!r}")
-            continue
-        if os.path.exists(local_path):
-            try:
-                shutil.rmtree(local_path)
-                logger.info(f"Deleted output directory: {local_path}")
-                _prune_empty_parents(local_path)
-            except Exception as e:
-                logger.warning(f"Failed to delete output directory {path}: {e}")
-
-    # Remove cached decompressed partition images created by PARTITION_DETECT.
-    if os.path.exists(cache_dir):
-        try:
-            shutil.rmtree(cache_dir)
-            logger.info(f"Deleted partition cache: {cache_dir}")
-        except Exception as e:
-            logger.warning(f"Failed to delete partition cache {cache_dir}: {e}")
-
-
-def _collect_cleanup_paths_for_artefact(artefact: Artefact, context: str = 'cleanup') -> dict[str, list[str] | str]:
-    """Collect output files/directories/cache paths for an artefact tree."""
-    output_folder = get_output_folder()
-    all_analyses = _collect_all_analyses(artefact)
-    output_dirs = [a.output_path for a in all_analyses if a.output_path]
-    output_files = []
-
-    for analysis in all_analyses:
-        if analysis.details:
-            try:
-                details = json.loads(analysis.details)
-                if 'outputs' in details and isinstance(details['outputs'], list):
-                    for output in details['outputs']:
-                        if 'filename' in output:
-                            output_files.append(output['filename'])
-            except (json.JSONDecodeError, KeyError, TypeError) as e:
-                current_app.logger.warning(f"Failed to parse analysis details during {context}: {e}")
-
-    cache_dir = os.path.join(output_folder, '.cache', artefact.uuid)
-    return {
-        'output_folder': output_folder,
-        'output_files': output_files,
-        'output_dirs': output_dirs,
-        'cache_dir': cache_dir,
-    }
-
-
-def _cleanup_artefact_outputs(artefact: Artefact, logger) -> None:
-    """Delete derived output files/directories for an artefact tree."""
-    cleanup = _collect_cleanup_paths_for_artefact(artefact)
-    _cleanup_analysis_outputs(
-        cleanup['output_folder'],
-        cleanup['output_files'],
-        cleanup['output_dirs'],
-        cleanup['cache_dir'],
-        logger,
-    )
-
 
 def _resolve_artefact(item_id, artefact_id, root_id=None):
     """Lookup helper: resolve item + artefact, validate root_id if nested URL.
@@ -1015,11 +294,13 @@ def _redirect_to_artefact_view(artefact):
 
 def _check_download_restrictions(artefact):
     """Return a redirect response when download restrictions block access."""
-    if not artefact.restrictions:
+    # Restrictions on a container artefact cascade to artefacts derived from it.
+    restrictions = artefact.effective_restrictions
+    if not restrictions:
         return None
 
-    if not can_download_despite_restrictions(current_user, artefact.restrictions, artefact):
-        categories = ', '.join(r.restriction_type.label for r in artefact.restrictions)
+    if not can_download_despite_restrictions(current_user, restrictions, artefact):
+        categories = ', '.join({r.restriction_type.label for r in restrictions})
         flash(f'Download restricted: {categories}', 'danger')
         return _redirect_to_artefact_view(artefact)
 
@@ -1028,32 +309,6 @@ def _check_download_restrictions(artefact):
         return _redirect_to_artefact_view(artefact)
 
     return None
-
-
-def _collect_ancestor_file_restrictions(ef):
-    """Return all ExtractedFileRestriction objects on any ancestor of ef.
-
-    Walks up the parent_file chain.  If an archive is restricted, every file
-    inside it is also effectively restricted.
-    """
-    restrictions = []
-    current = ef.parent_file
-    while current is not None:
-        restrictions.extend(current.restrictions)
-        current = current.parent_file
-    return restrictions
-
-
-def _collect_all_file_restrictions(ef):
-    """Return all ExtractedFileRestriction objects on ef and every descendant.
-
-    For non-archive files this is O(1).  For archives the child_files tree is
-    walked recursively; SQLAlchemy loads each level on access via the backref.
-    """
-    restrictions = list(ef.restrictions)
-    for child in ef.child_files:
-        restrictions.extend(_collect_all_file_restrictions(child))
-    return restrictions
 
 
 def _check_file_download_restrictions(ef):
@@ -1066,8 +321,8 @@ def _check_file_download_restrictions(ef):
     is also blocked).
     """
     all_restrictions = (
-        _collect_all_file_restrictions(ef) +
-        _collect_ancestor_file_restrictions(ef)
+        collect_all_file_restrictions(ef) +
+        collect_ancestor_file_restrictions(ef)
     )
     if not all_restrictions:
         return None
@@ -1084,22 +339,6 @@ def _check_file_download_restrictions(ef):
     return None
 
 
-def _artefact_contained_file_restrictions(artefact):
-    """All ExtractedFileRestriction objects on the artefact's own extracted files.
-
-    A single query over every partition of this artefact.  Shared by the web
-    download gate and the REST API so both block downloading an artefact whose
-    extracted contents are restricted.
-    """
-    return (
-        ExtractedFileRestriction.query
-        .join(ExtractedFile, ExtractedFileRestriction.extracted_file_id == ExtractedFile.id)
-        .join(Partition, ExtractedFile.partition_id == Partition.id)
-        .filter(Partition.artefact_id == artefact.id)
-        .all()
-    )
-
-
 def _check_artefact_file_restrictions(artefact):
     """Block artefact download when any extracted file within it has restrictions.
 
@@ -1107,7 +346,7 @@ def _check_artefact_file_restrictions(artefact):
     restrictions.  Because ExtractedFileRestriction has .restriction_type, the
     existing can_bypass_all_restrictions() method works on these objects directly.
     """
-    file_restrictions = _artefact_contained_file_restrictions(artefact)
+    file_restrictions = artefact_contained_file_restrictions(artefact)
 
     if not file_restrictions:
         return None
@@ -1122,36 +361,6 @@ def _check_artefact_file_restrictions(artefact):
         return _redirect_to_artefact_view(artefact)
 
     return None
-
-
-def _grantable_bypass_rtypes(artefact):
-    """RestrictionTypes a per-user bypass can be granted for on this artefact.
-
-    Covers both artefact-level and file-level restrictions across this artefact
-    *and any artefacts derived from it* — the artefact detail page surfaces
-    restrictions from the whole derived tree, so the grant form must offer those
-    types too.
-
-    A grant is created against this artefact; download enforcement walks each
-    restricted artefact/file up its derivation chain (Artefact.ancestor_ids), so
-    a grant here cascades to cover restrictions anywhere in the tree below it.
-    """
-    all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
-    art_rtypes = (
-        db.session.query(ArtefactRestriction.restriction_type)
-        .filter(ArtefactRestriction.artefact_id.in_(all_ids))
-        .distinct()
-    )
-    types = {row[0] for row in art_rtypes}
-    file_rtypes = (
-        db.session.query(ExtractedFileRestriction.restriction_type)
-        .join(ExtractedFile, ExtractedFileRestriction.extracted_file_id == ExtractedFile.id)
-        .join(Partition, ExtractedFile.partition_id == Partition.id)
-        .filter(Partition.artefact_id.in_(all_ids))
-        .distinct()
-    )
-    types.update(row[0] for row in file_rtypes)
-    return types
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>')
@@ -1299,7 +508,7 @@ def tree(uuid):
     root = artefact.root_artefact
     if root is not artefact:
         return redirect(url_for(f'{ROUTENAME}.tree', uuid=root.uuid))
-    tree_data, has_active, status_counts, total_count = _build_processing_tree(root)
+    tree_data, has_active, status_counts, total_count = build_processing_tree(root)
     return render_template(
         'artefacts/tree.html',
         artefact=root,
@@ -1355,11 +564,37 @@ def _render_viewer(artefact):
     _viewable_types = VIEWER_ARTEFACT_TYPES
     output_groups = []
 
+    # Download restrictions gate the original bytes; an analysis output renders
+    # the same content, so withhold any output whose source artefact carries a
+    # restriction the current user cannot bypass.  Outputs may come from the
+    # viewed artefact or any derived artefact (Mode 2), so resolve per output by
+    # the artefact UUID embedded in its path (see resolve_output_artefact).
+    _restriction_cache: dict[str, bool] = {}
+
+    def _output_blocked(filename) -> bool:
+        # Cache by the artefact directory component ({uuid}_{slug}) so many
+        # outputs from one source artefact resolve with a single query.
+        parts = (filename or '').split('/', 2)
+        cache_key = parts[1] if len(parts) >= 2 else filename
+        if cache_key not in _restriction_cache:
+            src = resolve_output_artefact(filename)
+            _restriction_cache[cache_key] = bool(src) and output_blocked_for(current_user, src)
+        return _restriction_cache[cache_key]
+
     def _enrich_outputs(outputs):
-        """For text outputs, read file content for inline rendering."""
+        """For text outputs, read file content for inline rendering.
+
+        Skips content whose source artefact has a non-bypassable download
+        restriction — the inline text is the restricted content itself.  This is
+        defence-in-depth: the per-group ``group['restricted']`` gate (set below)
+        is the primary control and stops the template rendering the text at all.
+        """
         storage = current_app.storage
         for out in outputs:
             if out.get('type') == 'text':
+                if _output_blocked(out.get('filename', '')):
+                    out['text_content'] = None
+                    continue
                 try:
                     key = storage.storage_key('outputs', out['filename'])
                     with storage.open_read(key) as f:
@@ -1381,7 +616,14 @@ def _render_viewer(artefact):
     all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
     use_pagination = False  # only paginate Mode 2 aggregate view without ?file=
 
-    if artefact.artefact_type in _viewable_types:
+    # If the viewed artefact itself carries a restriction this user cannot
+    # bypass, don't render any outputs (they are renderings of the restricted
+    # content) — show a restricted notice instead of broken images.
+    viewer_outputs_blocked = output_blocked_for(current_user, artefact)
+
+    if viewer_outputs_blocked:
+        viewer_status = 'restricted'
+    elif artefact.artefact_type in _viewable_types:
         # Mode 1: Artefact is itself a viewable type — show its own FORMAT_CONVERT output
         conv = Analysis.query.filter_by(
             artefact_id=artefact.id,
@@ -1674,6 +916,15 @@ def _render_viewer(artefact):
         group['explicit'] = (
             artefact_is_explicit or group.get('source_file') in explicit_file_paths
         )
+        # Generalise the per-group placeholder to all download restrictions: when
+        # a group's source artefact carries a restriction this user cannot bypass
+        # (only possible in Mode 2 for a derived artefact — the viewed artefact's
+        # own restriction short-circuits to viewer_status='restricted' above), its
+        # image/SVG outputs would 403.  Mark the group so the template renders a
+        # notice / locked placeholder instead of a broken thumbnail.
+        group['restricted'] = any(
+            _output_blocked(o.get('filename', '')) for o in group['outputs']
+        )
         # Stamp stable_id now so bundle_items (original group dicts pulled into
         # the thumbnail bundle below) carry it for per-thumbnail explicit gates.
         # Bundle wrapper groups receive their own stable_id when constructed.
@@ -1749,6 +1000,7 @@ def _render_viewer(artefact):
                         'bundle_items': singles,
                         'outputs': [],
                         'explicit': False,
+                        'restricted': False,
                         'stable_id': bundle_id,
                         'filetype': None,
                     })
@@ -2131,7 +1383,7 @@ def _render_artefact_view(artefact):
     # Batch-query all matching KnownFiles across active hash databases
     # for the current page of files, so the template can show multiple badges.
     from ..database import RestrictionType
-    from ..utils.hash_rescan import find_all_known_files_batch
+    from ..services.hash_rescan import find_all_known_files_batch
     file_known_matches = find_all_known_files_batch(files_pagination.items)
 
     # Build query args for pagination links, preserving all active filters
@@ -2305,7 +1557,9 @@ def _render_artefact_view(artefact):
                     current_app.logger.warning(f"Failed to parse density detection details for {a.uuid}: {e}")
         if (mastering_analysis is not None and protection_analysis is not None
                 and partition_detect_details is not None
-                and flux_visualisation_analysis is not None):
+                and flux_visualisation_analysis is not None
+                and armlock_analysis is not None
+                and density_detect_analysis is not None):
             break
 
     # Parse format-specific metadata (populated by METADATA_EXTRACT for ISO
@@ -2445,7 +1699,10 @@ def _render_artefact_view(artefact):
     # Build a set of folder paths that have a recognised product (for directory row badges)
     recognised_folder_paths = {rp.folder_path: rp for rp in recognised_products}
 
-    # Hash databases for the "Add to Hash DB" modal (with products pre-loaded)
+    # Hash databases for the "Add to Hash DB" modal (with products pre-loaded).
+    # hashdb_product_cache is the JSON payload for the modal's product
+    # dropdown: {database_id: [{id, title}, ...]} sorted by title.
+    hashdb_product_cache = {}
     if hashdb_mode:
         from sqlalchemy.orm import joinedload as _jl2
         hash_databases = (
@@ -2454,6 +1711,13 @@ def _render_artefact_view(artefact):
             .order_by(HashDatabase.name)
             .all()
         )
+        hashdb_product_cache = {
+            hdb.id: [
+                {'id': p.id, 'title': p.title}
+                for p in sorted(hdb.known_products, key=lambda p: p.title.lower())
+            ]
+            for hdb in hash_databases
+        }
     else:
         hash_databases = []
 
@@ -2572,7 +1836,7 @@ def _render_artefact_view(artefact):
             User.query.order_by(User.username).all()
         )
         bypass_grantable_rtypes = sorted(
-            _grantable_bypass_rtypes(artefact), key=lambda rt: rt.label
+            grantable_bypass_rtypes(artefact), key=lambda rt: rt.label
         )
     else:
         artefact_user_bypasses = []
@@ -2612,6 +1876,7 @@ def _render_artefact_view(artefact):
                            recognised_products=recognised_products,
                            recognised_folder_paths=recognised_folder_paths,
                            hash_databases=hash_databases,
+                           hashdb_product_cache=hashdb_product_cache,
                            file_known_matches=file_known_matches,
                            duplicate_counts=duplicate_counts,
                            RestrictionType=RestrictionType,
@@ -2654,7 +1919,8 @@ def _move_item_choices(artefact):
 @require_permission('read_write')
 def add_to_hashdb(uuid):
     """Add selected extracted files to a hash database."""
-    artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
+    artefact = _get_artefact_or_404(uuid=uuid)
+    _require_manage_artefact_content(artefact)
 
     file_ids = request.form.getlist('file_ids', type=int)
     raw_db_id = request.form.get('database_id', '').strip()
@@ -2718,9 +1984,13 @@ def add_to_hashdb(uuid):
     skipped_no_hash = []
     skipped_no_file = []
 
+    # Compute valid artefact IDs once with a single recursive CTE query instead
+    # of re-walking the derivation tree once per submitted file.
+    valid_artefact_ids = {artefact.id} | set(get_all_derived_artefact_ids(artefact))
+
     for file_id in file_ids:
         ef = ExtractedFile.query.get(file_id)
-        if ef is None or ef.partition.artefact_id not in _get_all_artefact_ids(artefact):
+        if ef is None or ef.partition.artefact_id not in valid_artefact_ids:
             continue
         if ef.is_directory:
             continue
@@ -2731,7 +2001,7 @@ def add_to_hashdb(uuid):
 
         # Compute hashes on demand if missing
         if not md5:
-            file_path_on_disk = _resolve_extracted_file_path(ef)
+            file_path_on_disk = resolve_extracted_file_path(ef)
             if not file_path_on_disk:
                 skipped_no_file.append(ef.path)
                 continue
@@ -2781,7 +2051,7 @@ def add_to_hashdb(uuid):
     # matching the behaviour of the per-file add_known_file route in hashdb.py.
     if new_kfs and database.is_active:
         from sqlalchemy import or_ as _or
-        from ..utils.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_new_known_files
+        from ..services.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_new_known_files
         rescan_hashes_for_new_known_files(new_kfs)
         if database.enable_product_recognition:
             conditions = []
@@ -2811,14 +2081,6 @@ def add_to_hashdb(uuid):
         flash('All selected files already exist in this hash database.', 'info')
 
     return redirect(url_for(f'{ROUTENAME}.view', **redirect_kwargs))
-
-
-def _get_all_artefact_ids(artefact):
-    """Return the set of IDs of the artefact and all derived artefacts (recursively)."""
-    ids = {artefact.id}
-    for derived in artefact.derived_artefacts:
-        ids |= _get_all_artefact_ids(derived)
-    return ids
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/upload', methods=['GET', 'POST'])
@@ -3026,129 +2288,6 @@ def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
                            can_set_private=can_priv)
 
 
-def _delete_artefact_files(artefact, deleting_ids=None, processed_blobs=None):
-    """Recursively delete files for an artefact and all its derived artefacts."""
-    storage = current_app.storage
-    if deleting_ids is None:
-        def _collect_ids(node):
-            ids = {node.id}
-            for child in node.derived_artefacts:
-                ids.update(_collect_ids(child))
-            return ids
-        deleting_ids = _collect_ids(artefact)
-    if processed_blobs is None:
-        processed_blobs = set()
-
-    for derived in artefact.derived_artefacts:
-        _delete_artefact_files(derived, deleting_ids, processed_blobs)
-
-    blob = artefact_blob(artefact)
-    if blob is not None:
-        blob_key = (artefact.storage_directory, blob.id)
-        if blob_key in processed_blobs:
-            return
-        processed_blobs.add(blob_key)
-        external_reference = (
-            db.session.query(Artefact.id)
-            .filter(
-                (Artefact.upload_blob_id == blob.id)
-                if artefact.upload_blob_id is not None
-                else (Artefact.output_blob_id == blob.id),
-                ~Artefact.id.in_(deleting_ids),
-            )
-            .first()
-        )
-        if external_reference is not None:
-            return
-
-    try:
-        key = get_artefact_storage_key(artefact)
-        storage.delete(key)
-        if blob is not None:
-            db.session.delete(blob)
-    except Exception as e:
-        current_app.logger.warning(f"Failed to delete file for artefact {artefact.uuid}: {e}")
-
-
-def _cleanup_artefact_outputs_s3(artefact, storage):
-    """Clean up analysis outputs for an artefact using S3 storage.
-
-    Deletes output files, output directories (extraction trees), and
-    cached partition images via the S3 storage backend.
-    """
-    cleanup = _collect_cleanup_paths_for_artefact(artefact)
-    for filename in cleanup['output_files']:
-        try:
-            key = storage.storage_key('outputs', filename)
-            storage.delete(key)
-            current_app.logger.info(f"Deleted output file: {filename}")
-        except Exception as e:
-            current_app.logger.warning(f"Failed to delete output file {filename}: {e}")
-    for path in cleanup['output_dirs']:
-        try:
-            if os.path.isabs(path):
-                parts = path.rstrip('/').split('/')
-                try:
-                    idx = parts.index('outputs')
-                    rel = '/'.join(parts[idx + 1:])
-                except ValueError:
-                    rel = '/'.join(parts[-3:]) if len(parts) >= 3 else parts[-1]
-            else:
-                rel = path
-            prefix = storage.storage_key('outputs', rel)
-            storage.delete_prefix(prefix)
-        except Exception as e:
-            current_app.logger.warning(f"Failed to delete output directory {path}: {e}")
-    try:
-        cache_prefix = storage.storage_key('outputs', f'.cache/{artefact.uuid}')
-        storage.delete_prefix(cache_prefix)
-    except Exception as e:
-        current_app.logger.warning(f"Failed to delete partition cache for artefact {artefact.uuid}: {e}")
-
-
-def _delete_item_files(item):
-    """Delete all files associated with an item's artefacts before DB cascade delete.
-
-    For each artefact, removes the stored file (recursing into derived artefacts),
-    analysis output directories, named output files, and cached partition images.
-    Must be called while the ORM relationships are still intact (before db.session.delete).
-    """
-    storage = current_app.storage
-    from shared.storage import S3Storage
-
-    for artefact in item.artefacts:
-        # Delete stored files for this artefact and all its derived artefacts.
-        _delete_artefact_files(artefact)
-        if isinstance(storage, S3Storage):
-            _cleanup_artefact_outputs_s3(artefact, storage)
-        else:
-            _cleanup_artefact_outputs(artefact, current_app.logger)
-
-
-def move_artefact_to_item(artefact, new_item):
-    """Move a root artefact (and all its derived artefacts) to a different item.
-
-    Only root artefacts (parent_artefact_id is None) may be moved.
-    Slug uniqueness is re-checked in the target item; slugs are regenerated on
-    collision.  This is a pure DB operation — no files move on disk.
-    """
-    if artefact.parent_artefact_id is not None:
-        raise ValueError('Only root artefacts can be moved')
-    if artefact.item_id == new_item.id:
-        raise ValueError('Artefact is already in this item')
-
-    def _update_item_id(art, target_item_id):
-        art.item_id = target_item_id
-        # Ensure slug is unique within the target item
-        art.slug = ensure_unique_slug(
-            art.slug, Artefact, existing_id=art.id,
-            scope_filter={'item_id': target_item_id},
-        )
-        for derived in art.derived_artefacts:
-            _update_item_id(derived, target_item_id)
-
-    _update_item_id(artefact, new_item.id)
-    db.session.commit()
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/move', methods=['POST'])
@@ -3157,12 +2296,6 @@ def move_artefact_to_item(artefact, new_item):
 def move(item_id=None, artefact_id=None):
     """Move a root artefact to a different item."""
     artefact = _get_artefact_or_404(item_id, artefact_id)
-    if artefact.item.private_effective and not can_contribute_to_item(artefact.item, current_user):
-        abort(403)
-
-    if artefact.parent_artefact_id is not None:
-        flash('Only root artefacts can be moved.', 'danger')
-        return _redirect_to_artefact_view(artefact)
 
     target_uuid = request.form.get('target_item_uuid')
     if not target_uuid:
@@ -3173,17 +2306,13 @@ def move(item_id=None, artefact_id=None):
     if not can_view_item(target_item, current_user):
         flash('Target item not found.', 'danger')
         return _redirect_to_artefact_view(artefact)
-    # Prevent curators from publishing private artefacts by moving them into a
-    # public item (same logic as the API move route).
-    curator_on_source = (artefact.item.private_effective
-                         and not can_change_owner(artefact.item, current_user))
-    if (curator_on_source or target_item.private_effective) and \
-            not can_contribute_to_item(target_item, current_user):
-        flash('Not permitted to move artefacts into that item.', 'danger')
-        return _redirect_to_artefact_view(artefact)
 
-    if target_item.id == artefact.item_id:
-        flash('Artefact is already in that item.', 'warning')
+    try:
+        validate_artefact_move(artefact, target_item, current_user)
+    except ArtefactMoveError as e:
+        if e.code == 'source_forbidden':
+            abort(403)
+        flash(str(e), 'warning' if e.code == 'same_item' else 'danger')
         return _redirect_to_artefact_view(artefact)
 
     old_item_name = artefact.item.name
@@ -3193,242 +2322,6 @@ def move(item_id=None, artefact_id=None):
     return _redirect_to_artefact_view(artefact)
 
 
-def _collect_item_artefact_ids(item_ids):
-    """Collect all artefact IDs for a list of items (direct + all derived) via CTE."""
-    from sqlalchemy import select as sa_select
-
-    direct_ids = [r[0] for r in db.session.execute(
-        sa_select(Artefact.id).where(Artefact.item_id.in_(item_ids))
-    ).all()]
-    if not direct_ids:
-        return []
-
-    # Recursive CTE: find all derived artefacts from any artefact in this item
-    base = sa_select(Artefact.id).where(Artefact.parent_artefact_id.in_(direct_ids))
-    cte = base.cte(name='item_derived', recursive=True)
-    recursive = sa_select(Artefact.id).where(Artefact.parent_artefact_id == cte.c.id)
-    cte = cte.union_all(recursive)
-    derived_ids = [r[0] for r in db.session.execute(sa_select(cte.c.id)).all()]
-
-    return direct_ids + derived_ids
-
-
-def _collect_item_cleanup_keys(all_artefact_ids):
-    """Collect all storage keys and cache prefixes for cleanup.
-
-    Returns a dict with keys: artefact_keys, output_file_keys, output_dir_prefixes,
-    cache_prefixes.  All values are storage key strings usable with the storage backend.
-    """
-    from sqlalchemy import select as sa_select
-
-    artefact_keys = []
-    cache_prefixes = []
-    output_dir_prefixes = []
-    output_file_keys = []
-
-    if not all_artefact_ids:
-        return {
-            'artefact_keys': artefact_keys,
-            'output_file_keys': output_file_keys,
-            'output_dir_prefixes': output_dir_prefixes,
-            'cache_prefixes': cache_prefixes,
-            'upload_blob_ids': [],
-            'output_blob_ids': [],
-        }
-
-    # Single query for artefact storage keys and cache prefixes
-    rows = db.session.execute(
-        sa_select(
-            Artefact.id,
-            Artefact.storage_directory,
-            Artefact.storage_path,
-            Artefact.uuid,
-            Artefact.upload_blob_id,
-            Artefact.output_blob_id,
-        )
-        .where(Artefact.id.in_(all_artefact_ids))
-    ).all()
-    deleting_ids = set(all_artefact_ids)
-    upload_blob_ids = set()
-    output_blob_ids = set()
-    for _artefact_id, storage_dir, storage_path, artefact_uuid, upload_blob_id, output_blob_id in rows:
-        blob_id = upload_blob_id or output_blob_id
-        if upload_blob_id:
-            upload_blob_ids.add(upload_blob_id)
-        if output_blob_id:
-            output_blob_ids.add(output_blob_id)
-        if storage_path and blob_id is None:
-            directory = 'outputs' if storage_dir == StorageDirectory.OUTPUTS else 'uploads'
-            artefact_keys.append(f"{directory}/{storage_path}")
-        cache_prefixes.append(f"outputs/.cache/{artefact_uuid}")
-
-    from ..database import OutputBlob, UploadBlob
-    orphan_upload_blob_ids = []
-    orphan_output_blob_ids = []
-    for model, ids, fk_column, directory, orphan_ids in (
-        (UploadBlob, upload_blob_ids, Artefact.upload_blob_id, "uploads", orphan_upload_blob_ids),
-        (OutputBlob, output_blob_ids, Artefact.output_blob_id, "outputs", orphan_output_blob_ids),
-    ):
-        for blob in model.query.filter(model.id.in_(ids)).all() if ids else []:
-            external_ref = (
-                db.session.query(Artefact.id)
-                .filter(fk_column == blob.id, ~Artefact.id.in_(deleting_ids))
-                .first()
-            )
-            if external_ref is None:
-                artefact_keys.append(f"{directory}/{blob.storage_path}")
-                orphan_ids.append(blob.id)
-
-    # Analysis output dirs and named output files
-    rows = db.session.execute(
-        sa_select(Analysis.output_path, Analysis.details)
-        .where(Analysis.artefact_id.in_(all_artefact_ids))
-    ).all()
-    for output_path, details in rows:
-        if output_path:
-            # output_path may be absolute (/data/outputs/...) or relative;
-            # normalise to a storage key prefix under 'outputs/'.
-            if os.path.isabs(output_path):
-                parts = output_path.rstrip('/').split('/')
-                try:
-                    idx = parts.index('outputs')
-                    rel = '/'.join(parts[idx + 1:])
-                except ValueError:
-                    rel = '/'.join(parts[-3:]) if len(parts) >= 3 else parts[-1]
-            else:
-                rel = output_path
-            output_dir_prefixes.append(f"outputs/{rel}")
-        if details:
-            try:
-                parsed = json.loads(details)
-                if 'outputs' in parsed and isinstance(parsed['outputs'], list):
-                    for output in parsed['outputs']:
-                        if 'filename' in output:
-                            output_file_keys.append(f"outputs/{output['filename']}")
-            except (json.JSONDecodeError, KeyError, TypeError):
-                pass
-
-    return {
-        'artefact_keys': artefact_keys,
-        'output_file_keys': output_file_keys,
-        'output_dir_prefixes': output_dir_prefixes,
-        'cache_prefixes': cache_prefixes,
-        'upload_blob_ids': orphan_upload_blob_ids,
-        'output_blob_ids': orphan_output_blob_ids,
-    }
-
-
-def _background_cleanup_item_files(cleanup, storage, logger_name):
-    """Delete item files in a background thread using the storage backend.
-
-    Works with both LocalStorage and S3Storage since all paths are expressed
-    as storage keys.  No ORM/app context needed.
-    """
-    import logging
-    logger = logging.getLogger(logger_name)
-
-    for key in cleanup['artefact_keys']:
-        try:
-            storage.delete(key)
-        except Exception as e:
-            logger.warning(f"Failed to delete artefact file {key}: {e}")
-
-    for key in cleanup['output_file_keys']:
-        try:
-            storage.delete(key)
-        except Exception as e:
-            logger.warning(f"Failed to delete output file {key}: {e}")
-
-    for prefix in cleanup['output_dir_prefixes']:
-        try:
-            storage.delete_prefix(prefix)
-        except Exception as e:
-            logger.warning(f"Failed to delete output directory {prefix}: {e}")
-
-    for prefix in cleanup['cache_prefixes']:
-        try:
-            storage.delete_prefix(prefix)
-        except Exception as e:
-            logger.warning(f"Failed to delete cache {prefix}: {e}")
-
-
-def _collect_all_item_ids(item):
-    """Collect the item's ID and all descendant item IDs via recursive CTE."""
-    from sqlalchemy import select as sa_select
-
-    base = sa_select(Item.id).where(Item.parent_id == item.id)
-    cte = base.cte(name='item_descendants', recursive=True)
-    recursive = sa_select(Item.id).where(Item.parent_id == cte.c.id)
-    cte = cte.union_all(recursive)
-    descendant_ids = [r[0] for r in db.session.execute(sa_select(cte.c.id)).all()]
-    return [item.id] + descendant_ids
-
-
-def bulk_delete_item(item):
-    """Delete an item, its descendants, and all related records using bulk SQL.
-
-    Handles item hierarchy (parent/child items) by collecting all descendant
-    items first, then bulk-deleting all artefacts across the entire tree.
-
-    Replaces the previous approach of ORM cascade delete which loaded every
-    related object into memory and emitted individual DELETEs — too slow for
-    items with thousands of artefacts.
-
-    File cleanup runs in a background daemon thread after the DB commit.
-    """
-    from ..database import ExternalReference, item_tags
-
-    # Phase 1: Collect all item IDs (this item + all descendants)
-    all_item_ids = _collect_all_item_ids(item)
-
-    # Phase 2: Collect all artefact IDs via CTE
-    all_ids = _collect_item_artefact_ids(all_item_ids)
-
-    # Phase 3: Collect storage keys before deleting DB records
-    cleanup = _collect_item_cleanup_keys(all_ids)
-    storage = current_app.storage
-    logger_name = current_app.logger.name
-
-    # Phase 4: Bulk SQL deletes in FK-safe order
-    if all_ids:
-        # Null out derived_from_analysis_id before deleting analyses
-        Artefact.query.filter(Artefact.id.in_(all_ids)).update(
-            {Artefact.derived_from_analysis_id: None}, synchronize_session=False)
-
-        _bulk_delete_artefact_dependents(all_ids)
-        _bulk_delete_artefacts(all_ids)
-        from ..database import OutputBlob, UploadBlob
-        if cleanup['upload_blob_ids']:
-            UploadBlob.query.filter(
-                UploadBlob.id.in_(cleanup['upload_blob_ids'])
-            ).delete(synchronize_session=False)
-        if cleanup['output_blob_ids']:
-            OutputBlob.query.filter(
-                OutputBlob.id.in_(cleanup['output_blob_ids'])
-            ).delete(synchronize_session=False)
-
-    # Item-level children (external refs, tags for all items in hierarchy)
-    ExternalReference.query.filter(
-        ExternalReference.item_id.in_(all_item_ids)
-    ).delete(synchronize_session=False)
-    db.session.execute(
-        item_tags.delete().where(item_tags.c.item_id.in_(all_item_ids)))
-
-    # Break item self-referential FK, then delete all items
-    Item.query.filter(Item.id.in_(all_item_ids)).update(
-        {Item.parent_id: None}, synchronize_session=False)
-    Item.query.filter(Item.id.in_(all_item_ids)).delete(
-        synchronize_session=False)
-
-    db.session.commit()
-
-    # Phase 5: Background file cleanup via storage backend (no ORM needed)
-    t = threading.Thread(
-        target=_background_cleanup_item_files,
-        args=(cleanup, storage, logger_name),
-        daemon=True,
-    )
-    t.start()
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/delete', methods=['POST'])
@@ -3445,15 +2338,15 @@ def delete(item_id=None, artefact_id=None, root_id=None, uuid=None):
     label = artefact.label
 
     # Delete files for this artefact and all derived artefacts.
-    _delete_artefact_files(artefact)
+    delete_artefact_files(artefact)
 
     # Clean up analysis outputs (extraction trees, visualisations, cache).
     from shared.storage import S3Storage
     storage = current_app.storage
     if isinstance(storage, S3Storage):
-        _cleanup_artefact_outputs_s3(artefact, storage)
+        cleanup_artefact_outputs_s3(artefact, storage)
     else:
-        _cleanup_artefact_outputs(artefact, current_app.logger)
+        cleanup_artefact_outputs(artefact, current_app.logger)
 
     db.session.delete(artefact)
     db.session.commit()
@@ -3480,24 +2373,10 @@ def download(item_id=None, artefact_id=None, root_id=None, uuid=None):
     if restriction_redirect:
         return restriction_redirect
 
-    storage = current_app.storage
-    key = get_artefact_storage_key(artefact)
-
-    # S3 mode: redirect to pre-signed URL
-    url = storage.presigned_url(key, filename=artefact.original_filename)
-    if url:
-        return redirect(url)
-
-    # Local mode: serve file directly
-    full_path = get_artefact_path(artefact)
-    if not os.path.exists(full_path):
+    response = serve_artefact_file(artefact)
+    if response is None:
         abort(404, description='File not found')
-
-    return send_file(
-        full_path,
-        as_attachment=True,
-        download_name=artefact.original_filename
-    )
+    return response
 
 
 @blueprint.route('/files/<string:uuid>/download', endpoint='download_file')
@@ -3521,11 +2400,10 @@ def download_file(uuid):
     if restriction_redirect:
         return restriction_redirect
 
-    file_path = _resolve_extracted_file_path(ef)
-    if not file_path:
+    response = serve_extracted_file(ef)
+    if response is None:
         abort(404, description='Extracted file not found on disk')
-
-    return send_file(file_path, as_attachment=True, download_name=ef.filename)
+    return response
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/bypass', methods=['POST'])
@@ -3549,7 +2427,7 @@ def grant_bypass(item_id=None, artefact_id=None, root_id=None):
         return _redirect_to_artefact_view(artefact)
     # A bypass only makes sense for a restriction the artefact actually carries,
     # either at artefact level or on one of its extracted files.
-    if rtype not in _grantable_bypass_rtypes(artefact):
+    if rtype not in grantable_bypass_rtypes(artefact):
         flash(f'This artefact has no {rtype.label} restriction to bypass.', 'danger')
         return _redirect_to_artefact_view(artefact)
     target_user = User.query.get_or_404(user_id)
@@ -3588,6 +2466,80 @@ def revoke_bypass(item_id=None, artefact_id=None, root_id=None, bypass_id=None):
     return _redirect_to_artefact_view(artefact)
 
 
+def _apply_restriction_action(model, fk_filter: dict, noun: str) -> None:
+    """Apply an add/remove/update restriction action from the submitted form.
+
+    Shared state machine for artefact-level (ArtefactRestriction) and
+    file-level (ExtractedFileRestriction) restrictions: *model* is the
+    restriction class, *fk_filter* the owning-row filter (e.g.
+    ``{'artefact_id': artefact.id}``), and *noun* the flash-message prefix
+    ('Restriction' / 'File restriction').
+
+    Policy enforced here, in one place for both kinds: non-admins may only
+    remove or edit restrictions they added themselves, and a duplicate
+    restriction type on the same owner is rejected.
+
+    Flashes the outcome; the caller is responsible for the redirect.
+    """
+    action = request.form.get('action', '')
+    category = request.form.get('category', '')
+    reason = request.form.get('reason', '').strip() or None
+
+    try:
+        rtype = RestrictionType(category)
+    except (ValueError, KeyError):
+        flash(f'Invalid restriction type: {category}', 'danger')
+        return
+
+    existing = model.query.filter_by(restriction_type=rtype, **fk_filter).first()
+
+    if action == 'add':
+        if not existing:
+            db.session.add(model(
+                restriction_type=rtype,
+                reason=reason,
+                added_by_id=current_user.id,
+                **fk_filter,
+            ))
+            db.session.commit()
+            flash(f'{noun} added: {rtype.label}', 'success')
+        else:
+            flash(f'{noun} already exists: {rtype.label}', 'info')
+    elif action == 'remove':
+        if existing:
+            # Non-admins can only remove restrictions they added themselves
+            if not current_user.is_admin and existing.added_by_id != current_user.id:
+                flash('Only administrators can remove restrictions added by other users.', 'danger')
+            else:
+                db.session.delete(existing)
+                db.session.commit()
+                flash(f'{noun} removed: {rtype.label}', 'success')
+        else:
+            flash(f'{noun} not found: {rtype.label}', 'warning')
+    elif action == 'update':
+        new_category = request.form.get('new_category', '').strip()
+        try:
+            new_rtype = RestrictionType(new_category) if new_category else rtype
+        except (ValueError, KeyError):
+            flash(f'Invalid restriction type: {new_category}', 'danger')
+            return
+        if not existing:
+            flash(f'{noun} not found: {rtype.label}', 'warning')
+        elif not current_user.is_admin and existing.added_by_id != current_user.id:
+            flash('Only administrators can edit restrictions added by other users.', 'danger')
+        elif new_rtype != rtype and model.query.filter_by(
+            restriction_type=new_rtype, **fk_filter
+        ).first():
+            flash(f'A {new_rtype.label} restriction already exists.', 'danger')
+        else:
+            existing.restriction_type = new_rtype
+            existing.reason = reason
+            db.session.commit()
+            flash(f'{noun} updated.', 'success')
+    else:
+        flash(f'Invalid action: {action}', 'danger')
+
+
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/restrictions', methods=['POST'])
 @blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/restrictions', methods=['POST'], endpoint='manage_restrictions_nested')
 @login_required
@@ -3597,72 +2549,8 @@ def manage_restrictions(item_id=None, artefact_id=None, root_id=None):
     artefact = _get_artefact_or_404(item_id, artefact_id, root_id)
     _require_manage_artefact_content(artefact)
 
-    action = request.form.get('action', '')
-    category = request.form.get('category', '')
-    reason = request.form.get('reason', '').strip() or None
-
-    from ..database import ArtefactRestriction, RestrictionType
-    try:
-        rtype = RestrictionType(category)
-    except (ValueError, KeyError):
-        flash(f'Invalid restriction type: {category}', 'danger')
-        return _redirect_to_artefact_view(artefact)
-
-    if action == 'add':
-        existing = ArtefactRestriction.query.filter_by(
-            artefact_id=artefact.id, restriction_type=rtype
-        ).first()
-        if not existing:
-            db.session.add(ArtefactRestriction(
-                artefact_id=artefact.id,
-                restriction_type=rtype,
-                reason=reason,
-                added_by_id=current_user.id,
-            ))
-            db.session.commit()
-            flash(f'Restriction added: {rtype.label}', 'success')
-        else:
-            flash(f'Restriction already exists: {rtype.label}', 'info')
-    elif action == 'remove':
-        existing = ArtefactRestriction.query.filter_by(
-            artefact_id=artefact.id, restriction_type=rtype
-        ).first()
-        if existing:
-            # Non-admins can only remove restrictions they added themselves
-            if not current_user.is_admin and existing.added_by_id != current_user.id:
-                flash('Only administrators can remove restrictions added by other users.', 'danger')
-            else:
-                db.session.delete(existing)
-                db.session.commit()
-                flash(f'Restriction removed: {rtype.label}', 'success')
-        else:
-            flash(f'Restriction not found: {rtype.label}', 'warning')
-    elif action == 'update':
-        new_category = request.form.get('new_category', '').strip()
-        try:
-            new_rtype = RestrictionType(new_category) if new_category else rtype
-        except (ValueError, KeyError):
-            flash(f'Invalid restriction type: {new_category}', 'danger')
-            return _redirect_to_artefact_view(artefact)
-        existing = ArtefactRestriction.query.filter_by(
-            artefact_id=artefact.id, restriction_type=rtype
-        ).first()
-        if not existing:
-            flash(f'Restriction not found: {rtype.label}', 'warning')
-        elif not current_user.is_admin and existing.added_by_id != current_user.id:
-            flash('Only administrators can edit restrictions added by other users.', 'danger')
-        elif new_rtype != rtype and ArtefactRestriction.query.filter_by(
-            artefact_id=artefact.id, restriction_type=new_rtype
-        ).first():
-            flash(f'A {new_rtype.label} restriction already exists.', 'danger')
-        else:
-            existing.restriction_type = new_rtype
-            existing.reason = reason
-            db.session.commit()
-            flash('Restriction updated.', 'success')
-    else:
-        flash(f'Invalid action: {action}', 'danger')
-
+    _apply_restriction_action(
+        ArtefactRestriction, {'artefact_id': artefact.id}, 'Restriction')
     return _redirect_to_artefact_view(artefact)
 
 
@@ -3676,77 +2564,13 @@ def manage_file_restrictions(uuid):
     if not can_view_artefact(artefact, current_user):
         abort(404)
     _require_manage_artefact_content(artefact)
+
+    _apply_restriction_action(
+        ExtractedFileRestriction, {'extracted_file_id': ef.id}, 'File restriction')
     # Always redirect to the root artefact so the user lands on the page that
     # shows the global restriction, even when the file belongs to a derived
     # artefact whose partition is displayed inline on the root's view.
-    root_artefact = artefact.root_artefact
-
-    action   = request.form.get('action', '')
-    category = request.form.get('category', '')
-    reason   = request.form.get('reason', '').strip() or None
-
-    from ..database import RestrictionType
-    try:
-        rtype = RestrictionType(category)
-    except (ValueError, KeyError):
-        flash(f'Invalid restriction type: {category}', 'danger')
-        return _redirect_to_artefact_view(root_artefact)
-
-    if action == 'add':
-        existing = ExtractedFileRestriction.query.filter_by(
-            extracted_file_id=ef.id, restriction_type=rtype
-        ).first()
-        if not existing:
-            db.session.add(ExtractedFileRestriction(
-                extracted_file_id=ef.id,
-                restriction_type=rtype,
-                reason=reason,
-                added_by_id=current_user.id,
-            ))
-            db.session.commit()
-            flash(f'File restriction added: {rtype.label}', 'success')
-        else:
-            flash(f'File restriction already exists: {rtype.label}', 'info')
-    elif action == 'remove':
-        existing = ExtractedFileRestriction.query.filter_by(
-            extracted_file_id=ef.id, restriction_type=rtype
-        ).first()
-        if existing:
-            if not current_user.is_admin and existing.added_by_id != current_user.id:
-                flash('Only administrators can remove restrictions added by other users.', 'danger')
-            else:
-                db.session.delete(existing)
-                db.session.commit()
-                flash(f'File restriction removed: {rtype.label}', 'success')
-        else:
-            flash(f'File restriction not found: {rtype.label}', 'warning')
-    elif action == 'update':
-        new_category = request.form.get('new_category', '').strip()
-        try:
-            new_rtype = RestrictionType(new_category) if new_category else rtype
-        except (ValueError, KeyError):
-            flash(f'Invalid restriction type: {new_category}', 'danger')
-            return _redirect_to_artefact_view(artefact)
-        existing = ExtractedFileRestriction.query.filter_by(
-            extracted_file_id=ef.id, restriction_type=rtype
-        ).first()
-        if not existing:
-            flash(f'File restriction not found: {rtype.label}', 'warning')
-        elif not current_user.is_admin and existing.added_by_id != current_user.id:
-            flash('Only administrators can edit restrictions added by other users.', 'danger')
-        elif new_rtype != rtype and ExtractedFileRestriction.query.filter_by(
-            extracted_file_id=ef.id, restriction_type=new_rtype
-        ).first():
-            flash(f'A {new_rtype.label} restriction already exists.', 'danger')
-        else:
-            existing.restriction_type = new_rtype
-            existing.reason = reason
-            db.session.commit()
-            flash('File restriction updated.', 'success')
-    else:
-        flash(f'Invalid action: {action}', 'danger')
-
-    return _redirect_to_artefact_view(root_artefact)
+    return _redirect_to_artefact_view(artefact.root_artefact)
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/analyse', methods=['GET', 'POST'])
@@ -3786,7 +2610,7 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
         # Run filesystem cleanup in background so the redirect happens immediately.
         app = current_app._get_current_object()
         t = threading.Thread(
-            target=_cleanup_analysis_outputs,
+            target=cleanup_analysis_outputs,
             args=(
                 get_output_folder(),
                 cleanup['output_files'],
@@ -3920,7 +2744,7 @@ def file_duplicates(uuid):
 @require_permission('read_write')
 def rescan_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Re-link extracted files to active hash databases without re-analysing."""
-    from ..utils.hash_rescan import rescan_hashes_for_artefact
+    from ..services.hash_rescan import rescan_hashes_for_artefact
     artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
     _require_manage_artefact_content(artefact)
     updated, total = rescan_hashes_for_artefact(artefact)
@@ -3941,7 +2765,7 @@ def rescan_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None)
 @require_permission('read_write')
 def rerun_product_recognition_route(uuid):
     """Queue PRODUCT_RECOGNITION for all partitions of an artefact without re-analysing."""
-    from ..utils.hash_rescan import queue_product_recognition_for_partitions
+    from ..services.hash_rescan import queue_product_recognition_for_partitions
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     if not can_view_artefact(artefact, current_user):
         abort(404)
@@ -3967,36 +2791,26 @@ def rerun_product_recognition_route(uuid):
 @blueprint.route('/outputs/<path:filename>')
 @public_downloadable
 def get_output_file(filename):
-    """Serve an analysis output file (visualisation, etc.)."""
-    # Output paths follow {item_part}/{artefact_uuid}_{slug}/{file...}.
-    # Extract the artefact UUID from the second path component and enforce
-    # visibility so private artefacts' outputs are not exposed.
-    path_parts = filename.split('/', 2)
-    artefact_for_check = None
-    if len(path_parts) >= 2:
-        uuid_candidate = path_parts[1].split('_', 1)[0]
-        if len(uuid_candidate) == 32:
-            artefact_for_check = Artefact.query.filter_by(uuid=uuid_candidate).first()
+    """Serve an analysis output file (visualisation, etc.).
+
+    Enforces artefact visibility (private artefacts' outputs must not be
+    exposed) and delegates the serving to the shared downloads service.
+    """
+    artefact_for_check = resolve_output_artefact(filename)
     if artefact_for_check is None or not can_view_artefact(artefact_for_check, current_user):
         abort(404)
 
-    storage = current_app.storage
-    key = storage.storage_key('outputs', filename)
+    # Download restrictions gate the original bytes; analysis outputs are a
+    # rendering of the same content (e.g. a Sprite/Draw image, a text
+    # conversion), so a caller who cannot bypass the artefact's restrictions
+    # must not be able to read its outputs either.
+    if output_blocked_for(current_user, artefact_for_check):
+        abort(403)
 
-    # S3 mode: redirect to pre-signed URL
-    url = storage.presigned_url(key)
-    if url:
-        return redirect(url)
-
-    # Local mode: serve directly with path traversal check
-    folder = get_output_folder()
-    file_path = os.path.realpath(os.path.join(folder, filename))
-    if not file_path.startswith(os.path.realpath(folder) + os.sep):
+    response = serve_output_file(filename)
+    if response is None:
         abort(404)
-    if not os.path.exists(file_path):
-        abort(404)
-    mime, _ = mimetypes.guess_type(file_path)
-    return send_file(file_path, mimetype=mime or 'application/octet-stream')
+    return response
 
 
 # vim: ts=4 sw=4 et

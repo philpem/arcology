@@ -310,7 +310,7 @@ class TestBlobDedup(unittest.TestCase):
             self.assertTrue(self.app.storage.exists("uploads/canonical.img"))
 
     def test_blob_object_is_deleted_only_after_last_reference(self):
-        from myapp.blueprints.artefacts import _delete_artefact_files
+        from myapp.services.artefact_lifecycle import delete_artefact_files as _delete_artefact_files
         from myapp.database import Artefact, Item, Platform, StorageDirectory, UploadBlob
         from myapp.utils.blobs import assign_blob
         from shared.enums import ArtefactType

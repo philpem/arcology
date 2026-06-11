@@ -250,6 +250,20 @@ def can_download_despite_restrictions(user, restrictions, artefact) -> bool:
     return user.can_bypass_all_restrictions(restrictions, artefact_id=artefact.ancestor_ids)
 
 
+def output_blocked_for(user, artefact) -> bool:
+    """Whether *user* is barred from an artefact's analysis OUTPUTS.
+
+    Analysis outputs (image renders, text conversions, visualisations) are a
+    rendering of the artefact's restricted bytes, so they are gated by the same
+    download restrictions.  Returns ``True`` when *artefact* — or any ancestor
+    it was derived from — carries a restriction *user* cannot bypass.
+    Encapsulates the ``can_download_despite_restrictions`` inversion shared by
+    the output-serving routes and the viewer.
+    """
+    return not can_download_despite_restrictions(
+        user, artefact.effective_restrictions, artefact)
+
+
 def item_visibility_clause(user, *, sees_all: bool = False):
     """SQLAlchemy clause to filter an ``Item`` query by *user*'s visibility."""
     if sees_all or _is_admin(user):

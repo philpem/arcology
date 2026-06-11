@@ -124,7 +124,14 @@ def _delete_with_guards(obj, endpoint: str, success_label: str, guards: list[tup
 @public_readable
 def platforms():
     platforms = Platform.query.filter(Platform.parent_id.is_(None)).order_by(func.lower(Platform.name)).all()
-    return render_template('taxonomy/platforms.html', platforms=platforms)
+    return render_template(
+        'taxonomy/tree_list.html',
+        nodes=platforms,
+        noun='Platform', noun_plural='Platforms', icon='pc-display', preposition='on',
+        new_endpoint=f'{ROUTENAME}.new_platform',
+        edit_endpoint=f'{ROUTENAME}.edit_platform',
+        delete_endpoint=f'{ROUTENAME}.delete_platform',
+    )
 
 
 @blueprint.route('/platforms/new', methods=['GET', 'POST'])
@@ -185,7 +192,14 @@ def delete_platform(id):
 @public_readable
 def categories():
     categories = Category.query.filter(Category.parent_id.is_(None)).order_by(func.lower(Category.name)).all()
-    return render_template('taxonomy/categories.html', categories=categories)
+    return render_template(
+        'taxonomy/tree_list.html',
+        nodes=categories,
+        noun='Category', noun_plural='Categories', icon='folder', preposition='in',
+        new_endpoint=f'{ROUTENAME}.new_category',
+        edit_endpoint=f'{ROUTENAME}.edit_category',
+        delete_endpoint=f'{ROUTENAME}.delete_category',
+    )
 
 
 @blueprint.route('/categories/new', methods=['GET', 'POST'])

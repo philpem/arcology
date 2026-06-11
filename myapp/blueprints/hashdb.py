@@ -106,7 +106,7 @@ def _post_known_file_changes(database: HashDatabase, new_kf_list: list[KnownFile
     if not database.is_active or not new_kf_list:
         return
 
-    from ..utils.hash_rescan import (
+    from ..services.hash_rescan import (
         queue_product_recognition_for_partitions,
         rescan_hashes_for_new_known_files,
     )
@@ -286,13 +286,25 @@ def view(id):
         .order_by(HashRescanJob.id.desc())
         .first()
     )
+    # Seed for the status poller (only polled while a rescan is running).
+    pending_rescan = Analysis.query.filter(
+        Analysis.analysis_type == AnalysisType.HASH_RESCAN,
+        Analysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.RUNNING]),
+    ).count()
 
     kf_ids = [kf.id for p in products for kf in p.known_files]
     match_counts = {}
     if kf_ids:
+        # Count only occurrences in artefacts the caller may view, so the match
+        # counts cannot reveal that a known file exists inside a private
+        # collection (mirrors the visibility filter in search()).
         rows = (
             db.session.query(ExtractedFile.known_file_id, func.count(ExtractedFile.id))
+            .join(Partition, ExtractedFile.partition_id == Partition.id)
+            .join(Artefact, Partition.artefact_id == Artefact.id)
+            .join(Item, Artefact.item_id == Item.id)
             .filter(ExtractedFile.known_file_id.in_(kf_ids))
+            .filter(artefact_visibility_clause(current_user))
             .group_by(ExtractedFile.known_file_id)
             .all()
         )
@@ -309,6 +321,7 @@ def view(id):
                            platforms=platforms,
                            RestrictionType=RestrictionType,
                            rescan_job=rescan_job,
+                           pending_rescan=pending_rescan,
                            match_counts=match_counts,
                            product_match_counts=product_match_counts)
 
@@ -394,9 +407,15 @@ def view_product(id, pid):
     kf_ids = [kf.id for kf in product.known_files]
     match_counts = {}
     if kf_ids:
+        # Visibility-filtered like view()/search(): a count must not reveal that
+        # a known file exists inside a private artefact the caller cannot see.
         rows = (
             db.session.query(ExtractedFile.known_file_id, func.count(ExtractedFile.id))
+            .join(Partition, ExtractedFile.partition_id == Partition.id)
+            .join(Artefact, Partition.artefact_id == Artefact.id)
+            .join(Item, Artefact.item_id == Item.id)
             .filter(ExtractedFile.known_file_id.in_(kf_ids))
+            .filter(artefact_visibility_clause(current_user))
             .group_by(ExtractedFile.known_file_id)
             .all()
         )
@@ -461,7 +480,7 @@ def delete(id):
 
     # Re-evaluate unlinked files so they may link to another active database.
     if is_active and affected_ef_ids:
-        from ..utils.hash_rescan import rescan_hashes_for_queryset
+        from ..services.hash_rescan import rescan_hashes_for_queryset
         rescan_hashes_for_queryset(ExtractedFile.query.filter(ExtractedFile.id.in_(affected_ef_ids)))
 
     return _route_redirect('index')
@@ -484,7 +503,7 @@ def toggle_recognition(id):
         # Newly enabled: queue PRODUCT_RECOGNITION for every partition
         # that has extracted files so the worker can produce results.
         from ..database import Partition
-        from ..utils.hash_rescan import queue_product_recognition_for_partitions
+        from ..services.hash_rescan import queue_product_recognition_for_partitions
         partition_ids = {
             row[0] for row in
             Partition.query
@@ -835,7 +854,7 @@ def save_all_files(db_id, pid):
     Only files whose hash/size/metadata actually changed are rescanned.
     Rejects the whole submission if any file would end up with no hashes.
     """
-    from ..utils.hash_rescan import (
+    from ..services.hash_rescan import (
         queue_product_recognition_for_partitions,
         rescan_hashes_for_known_file,
         rescan_links_for_known_file_id,
@@ -948,7 +967,7 @@ def delete_known_product(db_id, pid):
     flash(f'Product "{title}" deleted.', 'success')
 
     if is_active and affected_ef_ids:
-        from ..utils.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_queryset
+        from ..services.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_queryset
         # Re-evaluate the unlinked files; they may match another active database.
         rescan_hashes_for_queryset(ExtractedFile.query.filter(ExtractedFile.id.in_(affected_ef_ids)))
         if enable_recognition and pre_delete_partition_ids:
@@ -997,7 +1016,7 @@ def add_known_file(db_id, pid):
     db.session.commit()
     flash(f'File "{filename}" added to "{product.title}".', 'success')
     if product.database.is_active:
-        from ..utils.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_known_file
+        from ..services.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_known_file
         rescan_hashes_for_known_file(kf)
         if product.database.enable_product_recognition:
             partition_ids = _partition_ids_for_hashes(kf.md5, kf.sha1, kf.file_size)
@@ -1030,7 +1049,7 @@ def edit_known_file(db_id, pid, fid):
     db.session.commit()
     flash(f'File "{kf.filename}" updated.', 'success')
     if is_active:
-        from ..utils.hash_rescan import (
+        from ..services.hash_rescan import (
             queue_product_recognition_for_partitions,
             rescan_hashes_for_known_file,
             rescan_links_for_known_file_id,
@@ -1089,7 +1108,7 @@ def delete_known_file(db_id, pid, fid):
     flash(f'File "{filename}" deleted.', 'success')
 
     if is_active and affected_ef_ids:
-        from ..utils.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_queryset
+        from ..services.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_queryset
         # Re-evaluate unlinked files; they may match another active database.
         rescan_hashes_for_queryset(ExtractedFile.query.filter(ExtractedFile.id.in_(affected_ef_ids)))
         if enable_recognition and pre_delete_partition_ids:

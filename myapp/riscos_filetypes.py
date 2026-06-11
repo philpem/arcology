@@ -14,15 +14,16 @@ sometimes picked arbitrary numbers.
 # Format: 'xxx': 'Name' or 'xxx': ['Name1', 'Name2'] for multiple
 FILETYPE_MAP = {
     # Archives and Compression
-    '3fb': 'ArcFSArc',
-    '68e': 'PackdDir',
+    '3fb': 'ArcFSArc',  # ArcFS
+    '68e': 'PackdDir',  # PackDir
     'a91': 'Zip',
-    'b21': 'TBAFSarc',
-    'b23': 'X-File',
+    'b21': 'TBAFSarc',  # TBAFS
+    'b23': 'X-File',    # X-Files
     'c46': 'Tar',
-    'ddc': 'Archive',
+    'd96': 'CFSlzw',    # Computer Concepts CFS LZW
+    'ddc': 'Archive',   # Spark / SparkFS
     'fc8': 'DOSDisc',
-    'fca': 'Squash',
+    'fca': 'Squash',    # Acorn !Squash
 
     # Communications
     'cb7': '7BatCfg (ArcTerm7)',
@@ -50,6 +51,7 @@ FILETYPE_MAP = {
     'ff0': 'TIFF',
 
     # Generic RISC OS data formats
+    'faf': 'HTML',
     'fe1': 'Makefile',
     'fe4': 'DOS',
     'fea': 'Desktop',

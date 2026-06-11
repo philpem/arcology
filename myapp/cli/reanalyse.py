@@ -1,17 +1,17 @@
 import json
 import click
 from flask import current_app
-from ..blueprints.artefacts import (
-    _bulk_delete_artefact_dependents,
-    _bulk_delete_artefacts,
-    _cleanup_analysis_outputs,
-    _delete_artefact_files,
-    get_all_derived_artefact_ids,
-    get_output_folder,
-    reset_artefact_for_reanalysis,
-)
 from ..database import Analysis, AnalysisStatus, Artefact
 from ..extensions import db
+from ..services.artefact_lifecycle import (
+    bulk_delete_artefact_dependents,
+    bulk_delete_artefacts,
+    cleanup_analysis_outputs,
+    delete_artefact_files,
+    get_all_derived_artefact_ids,
+    reset_artefact_for_reanalysis,
+)
+from ..services.artefact_storage import get_output_folder
 from ..services.artefact_types import queue_analyses_for_artefact
 from ._selection import build_artefact_query
 
@@ -101,14 +101,14 @@ def reanalyse(analysis_uuid, item_uuid, tag_name, platform_name, category_name,
 
         # Delete storage files for all produced artefacts before DB cleanup.
         for pa in produced_direct:
-            _delete_artefact_files(pa)
+            delete_artefact_files(pa)
 
         if all_produced_ids:
             # Null FK back-references before deleting analyses on produced artefacts.
             Artefact.query.filter(Artefact.id.in_(all_produced_ids)).update(
                 {Artefact.derived_from_analysis_id: None}, synchronize_session=False)
-            _bulk_delete_artefact_dependents(all_produced_ids)
-            _bulk_delete_artefacts(all_produced_ids)
+            bulk_delete_artefact_dependents(all_produced_ids)
+            bulk_delete_artefacts(all_produced_ids)
 
         db.session.delete(analysis)
 
@@ -125,7 +125,7 @@ def reanalyse(analysis_uuid, item_uuid, tag_name, platform_name, category_name,
         # Clean up output files from the old analysis.
         output_folder = get_output_folder()
         cache_dir = ''  # no cache to clear for a single analysis
-        _cleanup_analysis_outputs(
+        cleanup_analysis_outputs(
             output_folder, output_files, output_dirs, cache_dir, current_app.logger,
         )
 
@@ -176,7 +176,7 @@ def reanalyse(analysis_uuid, item_uuid, tag_name, platform_name, category_name,
         # covers both the bulk deletes and the new analysis inserts.
         cleanup = reset_artefact_for_reanalysis(artefact, commit=False)
         queue_analyses_for_artefact(artefact, skip_duplicate_check=True, commit=True)
-        _cleanup_analysis_outputs(
+        cleanup_analysis_outputs(
             output_folder,
             cleanup['output_files'],
             cleanup['output_dirs'],

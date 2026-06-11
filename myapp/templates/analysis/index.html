@@ -1,5 +1,6 @@
 {% extends "_base.html" %}
 {% from '_pagination.html' import render_pagination %}
+{% from '_macros.html' import status_badge with context %}
 {% block page_title %}Analyses{% endblock %}
 
 {% block content %}
@@ -38,7 +39,7 @@
                     <td><a href="{{ url_for('myapp_blueprints_analysis.view', uuid=a.uuid) }}">#{{ a.id }}</a></td>
                     <td>{{ a.analysis_type|format_analysis_type }}</td>
                     <td><a href="{{ artefact_url(a.artefact) }}">{{ a.artefact.label }}</a></td>
-                    <td><span class="badge {{ a.status.value | status_badge_class }}">{{ a.status.value | capitalize }}</span></td>
+                    <td>{{ status_badge(a.status) }}</td>
                     <td>{{ a.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
                 </tr>
                 {% else %}

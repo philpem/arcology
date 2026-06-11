@@ -676,6 +676,24 @@ class Artefact(db.Model):
         return ids
 
     @property
+    def effective_restrictions(self) -> list["ArtefactRestriction"]:
+        """This artefact's own download restrictions plus those inherited from
+        any ancestor up the derivation chain.
+
+        A restriction on a container artefact (e.g. a ZIP) covers everything
+        derived from it — the bytes and analysis outputs of artefacts extracted
+        and promoted out of it.  This mirrors the bypass side: grants cascade
+        down ``ancestor_ids``, so collecting restrictions up the same chain
+        keeps the two symmetric.  Walks ``parent_artefact``.
+        """
+        result = list(self.restrictions)
+        a = self.parent_artefact
+        while a is not None:
+            result.extend(a.restrictions)
+            a = a.parent_artefact
+        return result
+
+    @property
     def url_slug(self) -> str:
         """Slug-based URL segment for use within an item URL."""
         return self.slug if self.slug else self.uuid[:8]

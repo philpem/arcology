@@ -185,12 +185,12 @@ class TestArtefactCleanupRegression(unittest.TestCase):
         self.assertTrue(os.path.exists(self.item_keep_file))
 
     def test_delete_item_files_uses_same_cleanup_path(self):
-        from myapp.blueprints.artefacts import _delete_item_files
         from myapp.database import Item
+        from myapp.services.artefact_lifecycle import delete_item_files
 
         with self.app.app_context():
             item = self.db.session.get(Item, self.item_id)
-            _delete_item_files(item)
+            delete_item_files(item)
 
         self.assertFalse(os.path.exists(self.storage_path))
         self.assertFalse(os.path.exists(self.analysis_dir))
@@ -269,8 +269,8 @@ class TestReanalysisClearsMediaMetadata(unittest.TestCase):
             self.artefact_id = artefact.id
 
     def test_reset_clears_media_metadata(self):
-        from myapp.blueprints.artefacts import reset_artefact_for_reanalysis
         from myapp.database import Artefact
+        from myapp.services.artefact_lifecycle import reset_artefact_for_reanalysis
 
         with self.app.app_context():
             artefact = self.db.session.get(Artefact, self.artefact_id)

@@ -7,7 +7,6 @@ RESTful API for external integrations.
 import hashlib
 import hmac
 import json
-import mimetypes
 import os
 import re
 import shutil
@@ -15,7 +14,7 @@ import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from flask import Blueprint, abort, current_app, g, jsonify, redirect, request, send_file
+from flask import Blueprint, abort, current_app, g, jsonify, request
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import contains_eager, joinedload, selectinload
@@ -47,9 +46,36 @@ from ..database import (
     StorageDirectory,
     Tag,
     User,
+    UserPermission,
 )
 from ..extensions import csrf, db
+from ..services.artefact_lifecycle import (
+    ArtefactMoveError,
+    bulk_delete_item,
+    collect_all_analyses,
+    delete_artefact_files,
+    move_artefact_to_item,
+    validate_artefact_move,
+)
+from ..services.artefact_storage import (
+    compute_file_hashes,
+    get_artefact_storage_key,
+    get_storage_extension,
+    save_uploaded_file,
+)
 from ..services.artefact_types import detect_artefact_type, queue_analyses_for_artefact
+from ..services.downloads import (
+    resolve_output_artefact,
+    serve_artefact_file,
+    serve_extracted_file,
+    serve_output_file,
+)
+from ..services.hash_rescan import find_known_file
+from ..services.restrictions import (
+    artefact_contained_file_restrictions,
+    collect_all_file_restrictions,
+    collect_ancestor_file_restrictions,
+)
 from ..services.upload_pipeline import QUEUE_FULL, QUEUE_NONE, ingest_uploaded_artefact
 from ..utils.api_serializers import (
     analysis_to_dict,
@@ -64,7 +90,6 @@ from ..utils.blobs import artefact_blob, artefact_blob_storage_path, assign_blob
 from ..utils.db_helpers import get_by_id_or_404 as _get_by_id_or_404
 from ..utils.db_helpers import get_by_uuid_or_404 as _get_by_uuid_or_404
 from ..utils.enum_display import enum_value
-from ..utils.hash_rescan import find_known_file
 from ..utils.item_helpers import assign_item_fields, assign_item_tags
 from ..utils.privacy import recompute_item_privacy
 from ..utils.slugs import ensure_unique_slug, generate_slug
@@ -82,19 +107,7 @@ from ..visibility import (
     can_view_artefact,
     can_view_item,
     item_visibility_clause,
-)
-from .artefacts import (
-    _artefact_contained_file_restrictions,
-    _collect_all_file_restrictions,
-    _collect_ancestor_file_restrictions,
-    _delete_artefact_files,
-    _get_storage_extension,
-    bulk_delete_item,
-    compute_file_hashes,
-    get_artefact_path,
-    get_artefact_storage_key,
-    move_artefact_to_item,
-    save_uploaded_file,
+    output_blocked_for,
 )
 
 ROUTENAME = __name__.replace('.', '_')
@@ -473,7 +486,6 @@ def create_item():
     db.session.flush()  # assigns item.id so tag back-references work correctly
     assign_item_tags(item, data.get('tags'))
     recompute_item_privacy(item)
-    db.session.commit()
     item.slug = ensure_unique_slug(generate_slug(item.name), Item)
     db.session.commit()
     return jsonify(item_to_dict(item)), 201
@@ -622,7 +634,7 @@ def add_artefact(item_uuid):
                 storage_directory.value, blob_storage_path,
             )
     db.session.add(artefact)
-    db.session.commit()
+    db.session.flush()  # assigns artefact.id before slug generation
     artefact.slug = ensure_unique_slug(generate_slug(artefact.label), Artefact, scope_filter={'item_id': item.id})
     db.session.commit()
     return jsonify(artefact_to_dict(artefact)), 201
@@ -642,7 +654,7 @@ def delete_artefact(uuid):
     api_user, sees_all = _api_viewer()
     if artefact.item.private_effective and not (sees_all or can_change_owner(artefact.item, api_user)):
         return error_response('Not permitted to delete artefacts from this item', 403)
-    _delete_artefact_files(artefact)
+    delete_artefact_files(artefact)
     db.session.delete(artefact)
     db.session.commit()
     return '', 204
@@ -654,8 +666,6 @@ def move_artefact(uuid):
     """Move a root artefact (and its derived artefacts) to a different item."""
     artefact = _get_artefact_or_404(uuid)
     api_user, sees_all = _api_viewer()
-    if artefact.item.private_effective and not can_contribute_to_item(artefact.item, api_user, sees_all=sees_all):
-        return error_response('Not permitted to move artefacts from this item', 403)
     data, error = _json_object()
     if error:
         return error
@@ -664,26 +674,17 @@ def move_artefact(uuid):
     if not target_uuid:
         return error_response('target_item_uuid is required', 400)
 
-    if artefact.parent_artefact_id is not None:
-        return error_response('Only root artefacts can be moved', 400)
-
     target_item = Item.query.filter_by(uuid=target_uuid).first()
     if not target_item:
         return error_response('Target item not found', 404)
     if not can_view_item(target_item, api_user, sees_all=sees_all):
         return error_response('Target item not found', 404)
-    # A curator on the source (not the owner/admin) must not be able to move
-    # artefacts into a public item — that would silently publish private content.
-    # Require write access on the target whenever the source is private and the
-    # caller is acting as a curator rather than as owner/admin.
-    curator_on_source = (artefact.item.private_effective
-                         and not can_change_owner(artefact.item, api_user))
-    if (curator_on_source or target_item.private_effective) and \
-            not can_contribute_to_item(target_item, api_user, sees_all=sees_all):
-        return error_response('Not permitted to move artefacts into this item', 403)
 
-    if target_item.id == artefact.item_id:
-        return error_response('Artefact is already in that item', 400)
+    try:
+        validate_artefact_move(artefact, target_item, api_user, sees_all=sees_all)
+    except ArtefactMoveError as e:
+        status = 403 if e.code in ('source_forbidden', 'target_forbidden') else 400
+        return error_response(str(e), status)
 
     try:
         move_artefact_to_item(artefact, target_item)
@@ -857,31 +858,24 @@ def download_artefact(uuid):
     artefact = _get_artefact_or_404(uuid, selectinload(Artefact.restrictions))
 
     # Enforce download restrictions, honouring the caller's bypass grants.
+    # Restrictions on a container artefact cascade to artefacts derived from it.
     user, _ = _api_viewer()
-    if not can_download_despite_restrictions(user, artefact.restrictions, artefact):
+    restrictions = artefact.effective_restrictions
+    if not can_download_despite_restrictions(user, restrictions, artefact):
         return error_response('Download restricted', 403,
-                              restrictions=[r.restriction_type.value for r in artefact.restrictions])
+                              restrictions=list({r.restriction_type.value for r in restrictions}))
 
     # Block the original download when its extracted contents are restricted
     # (mirrors the website's _check_artefact_file_restrictions).
-    contained = _artefact_contained_file_restrictions(artefact)
+    contained = artefact_contained_file_restrictions(artefact)
     if not can_download_despite_restrictions(user, contained, artefact):
         return error_response('Download restricted (artefact contains restricted files)', 403,
                               restrictions=list({r.restriction_type.value for r in contained}))
 
-    storage = current_app.storage
-    key = get_artefact_storage_key(artefact)
-
-    # S3 mode: redirect to pre-signed URL
-    url = storage.presigned_url(key, filename=artefact.original_filename)
-    if url:
-        return redirect(url)
-
-    # Local mode: serve file directly
-    full_path = get_artefact_path(artefact)
-    if not os.path.exists(full_path):
+    response = serve_artefact_file(artefact)
+    if response is None:
         return error_response('File not found', 404)
-    return send_file(full_path, as_attachment=True, download_name=artefact.original_filename)
+    return response
 
 
 @blueprint.route('/files/<string:uuid>/download', methods=['GET'])
@@ -897,25 +891,26 @@ def download_extracted_file(uuid):
     _require_view_artefact(artefact)
 
     # Restriction gate, honouring the caller's bypass grants (same policy as web).
+    # Restrictions on a container artefact cascade to artefacts derived from it.
     user, _ = _api_viewer()
-    if not can_download_despite_restrictions(user, artefact.restrictions, artefact):
+    restrictions = artefact.effective_restrictions
+    if not can_download_despite_restrictions(user, restrictions, artefact):
         return error_response('Download restricted', 403,
-                              restrictions=[r.restriction_type.value for r in artefact.restrictions])
+                              restrictions=list({r.restriction_type.value for r in restrictions}))
 
     # Check file-level restrictions: own, descendants (archive contains restricted file),
     # and ancestors (file is inside a restricted archive).
     file_restrictions = (
-        _collect_all_file_restrictions(ef) + _collect_ancestor_file_restrictions(ef)
+        collect_all_file_restrictions(ef) + collect_ancestor_file_restrictions(ef)
     )
     if not can_download_despite_restrictions(user, file_restrictions, artefact):
         return error_response('File download restricted', 403,
                               restrictions=list({r.restriction_type.value for r in file_restrictions}))
 
-    from .artefacts import _resolve_extracted_file_path
-    file_path = _resolve_extracted_file_path(ef)
-    if not file_path:
+    response = serve_extracted_file(ef)
+    if response is None:
         return error_response('Extracted file not found on disk', 404)
-    return send_file(file_path, as_attachment=True, download_name=ef.filename)
+    return response
 
 
 # =============================================================================
@@ -1025,9 +1020,8 @@ def get_artefact_analyses_recursive(uuid):
 
     Optional query param: ?status=failed to filter by status.
     """
-    from .artefacts import _collect_all_analyses
     artefact = _get_artefact_or_404(uuid)
-    analyses = _collect_all_analyses(artefact)
+    analyses = collect_all_analyses(artefact)
 
     status_filter = request.args.get('status')
     if status_filter:
@@ -1225,6 +1219,14 @@ def get_pending_analyses():
                (e.g. ``?types=FLUX_VISUALISATION,FLUX_DECODE``).
                Unknown names are silently ignored.
     """
+    # Worker-only: this is the worker's job-polling endpoint and returns
+    # storage paths plus metadata for *every* pending analysis system-wide,
+    # with no per-artefact visibility filter.  An ordinary user API key must
+    # not be able to enumerate private artefacts (uuids, item slugs, storage
+    # locations) through it.  The worker authenticates with the pre-shared key.
+    if not _is_worker_request():
+        return error_response('Only the worker may poll pending analyses', 403)
+
     query = (
         Analysis.query
         .filter(Analysis.status == AnalysisStatus.PENDING)
@@ -1258,6 +1260,17 @@ def reset_stale_analyses():
     Called by the worker on startup to recover any jobs left in RUNNING state
     by a previous worker crash.  Also callable by operators via the UI.
     """
+    # This re-queues every stale RUNNING job system-wide, including jobs on
+    # private artefacts the caller cannot see.  Restrict to the worker (startup
+    # crash recovery) or a staff+ operator — an ordinary read_write user must
+    # not be able to disrupt the global analysis queue.  Mirrors the staff gate
+    # on the UI route (blueprints/analysis.py reset_stale).
+    if not _is_worker_request():
+        user = getattr(g, 'api_user', None)
+        if user is None or not (
+                getattr(user, 'is_admin', False) or user.has_permission(UserPermission.STAFF)):
+            return error_response('Staff permission required', 403)
+
     timeout_seconds = current_app.config.get('STALE_JOB_TIMEOUT_SECONDS', 3600)
     # started_at is stored as naive UTC
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=timeout_seconds)
@@ -1298,48 +1311,33 @@ def reset_stale_analyses():
 @blueprint.route('/outputs/<path:filename>', methods=['GET'])
 @require_auth('read_only')
 def get_output_file(filename):
-    """Serve an output file (visualisation, etc.)."""
-    # Output paths follow {item_part}/{artefact_uuid}_{slug}/{file...}.
-    # Enforce artefact visibility so a low-privilege user API key cannot pull
-    # the outputs (visualisations, extracted text, file listings) of a private
-    # artefact just by knowing the path.  The worker authenticates with the
-    # pre-shared key and sees everything via _api_viewer()'s sees_all flag.
-    # Mirrors the web endpoint get_output_file() in blueprints/artefacts.py.
-    path_parts = filename.split('/', 2)
-    if len(path_parts) < 2:
-        return error_response('File not found', 404)
-    uuid_candidate = path_parts[1].split('_', 1)[0]
-    if len(uuid_candidate) != 32:
-        return error_response('File not found', 404)
-    artefact_for_check = Artefact.query.filter_by(uuid=uuid_candidate).first()
+    """Serve an output file (visualisation, etc.).
+
+    Enforces artefact visibility so a low-privilege user API key cannot pull
+    the outputs (visualisations, extracted text, file listings) of a private
+    artefact just by knowing the path.  The worker authenticates with the
+    pre-shared key and sees everything via _api_viewer()'s sees_all flag.
+    Serving is delegated to the shared downloads service (same code path as
+    the web endpoint).
+    """
+    artefact_for_check = resolve_output_artefact(filename)
     if artefact_for_check is None:
         return error_response('File not found', 404)
     user, sees_all = _api_viewer()
     if not can_view_artefact(artefact_for_check, user, sees_all=sees_all):
         return error_response('File not found', 404)
 
-    storage = current_app.storage
-    key = storage.storage_key('outputs', filename)
+    # Download restrictions gate the original bytes; analysis outputs render the
+    # same content, so a caller who cannot bypass the artefact's restrictions
+    # must not read its outputs either.  This mirrors download_artefact() — the
+    # worker key (user is None) is intentionally blocked from restricted bytes.
+    if output_blocked_for(user, artefact_for_check):
+        return error_response('Download restricted', 403)
 
-    # S3 mode: redirect to pre-signed URL
-    url = storage.presigned_url(key)
-    if url:
-        return redirect(url)
-
-    # Local mode: serve file directly with path traversal protection
-    from shared.storage import LocalStorage
-    if isinstance(storage, LocalStorage):
-        local_path = str(storage.local_path(key))
-        output_dir = str(storage.outputs_dir)
-        real_path = os.path.realpath(local_path)
-        if not real_path.startswith(os.path.realpath(output_dir) + os.sep):
-            return error_response('File not found', 404)
-        if not os.path.exists(real_path):
-            return error_response('File not found', 404)
-        mime, _ = mimetypes.guess_type(real_path)
-        return send_file(real_path, mimetype=mime or 'application/octet-stream')
-
-    return error_response('File not found', 404)
+    response = serve_output_file(filename)
+    if response is None:
+        return error_response('File not found', 404)
+    return response
 
 
 # =============================================================================
@@ -1448,7 +1446,7 @@ def produce_artefact(id):
             .all()
         )
         # Use no_autoflush to prevent SQLAlchemy from flushing pending deletes
-        # mid-loop when lazy-loading derived_artefacts inside _delete_artefact_files.
+        # mid-loop when lazy-loading derived_artefacts inside delete_artefact_files.
         with db.session.no_autoflush:
             # Pre-collect every ID being deleted (across all priors and their
             # subtrees) so _delete_artefact_files treats siblings as "being
@@ -1467,8 +1465,8 @@ def produce_artefact(id):
                     f"(from previous {enum_value(analysis.analysis_type)} analysis) "
                     f"before re-run"
                 )
-                _delete_artefact_files(prior, deleting_ids=all_prior_ids,
-                                       processed_blobs=processed_blobs)
+                delete_artefact_files(prior, deleting_ids=all_prior_ids,
+                                      processed_blobs=processed_blobs)
                 db.session.delete(prior)
         if prior_derived:
             db.session.flush()
@@ -1513,7 +1511,7 @@ def produce_artefact(id):
     
     db.session.add(artefact)
     try:
-        db.session.commit()
+        db.session.flush()  # assigns artefact.id before slug generation
     except IntegrityError:
         db.session.rollback()
         existing = Artefact.query.filter_by(
@@ -1542,7 +1540,7 @@ def produce_artefact(id):
             'queued_analyses': queued_analyses,
         }), 200
 
-    # Generate slug (unique within this item)
+    # Generate slug and commit artefact atomically.
     artefact.slug = ensure_unique_slug(generate_slug(artefact.label), Artefact, scope_filter={'item_id': analysis.artefact.item_id})
     db.session.commit()
 
@@ -1708,7 +1706,7 @@ def add_files(uuid):
 
     # Auto-apply restrictions from flagged hash databases
     if added > 0:
-        from ..utils.hash_rescan import apply_database_restrictions
+        from ..services.hash_rescan import apply_database_restrictions
         apply_database_restrictions(partition.artefact)
 
     response = {'added': added}
@@ -2003,6 +2001,41 @@ def upload_artefact(item_uuid):
 _UPLOAD_UUID_RE = re.compile(r'^[0-9a-f]{32}$')
 _CHUNK_STALE_SECONDS = 86400  # purge abandoned chunk dirs after 24 h
 
+# Hard cap on the number of chunks a single session may declare.  This bounds
+# the work/memory of /complete (which builds a per-chunk path list) so a caller
+# cannot trigger memory exhaustion by declaring a huge total_chunks.  At the
+# CLI's 50 MB chunk size this still allows multi-terabyte uploads.
+_MAX_TOTAL_CHUNKS = 100_000
+
+# Default ceiling on the assembled artefact size for chunked uploads (the only
+# path that can exceed the single-request MAX_CONTENT_LENGTH).  Override with the
+# MAX_UPLOAD_SIZE config key / env var.
+_DEFAULT_MAX_UPLOAD_SIZE = 16 * 1024 * 1024 * 1024  # 16 GiB
+
+
+def _max_upload_size() -> int:
+    """Return the configured maximum assembled chunked-upload size, in bytes."""
+    try:
+        return int(current_app.config.get('MAX_UPLOAD_SIZE', _DEFAULT_MAX_UPLOAD_SIZE))
+    except (TypeError, ValueError):
+        return _DEFAULT_MAX_UPLOAD_SIZE
+
+
+def _chunk_session_owner_error(meta):
+    """Return a 403 response if the current caller did not create this session.
+
+    Chunked-upload sessions are bound to their creating user (stored in meta as
+    ``creator_user_id``).  The worker key never creates these sessions, so a
+    session with no recorded creator imposes no extra constraint.
+    """
+    creator_id = meta.get('creator_user_id')
+    if creator_id is None:
+        return None
+    user = getattr(g, 'api_user', None)
+    if user is None or user.id != creator_id:
+        return error_response('Upload session not found', 404)
+    return None
+
 
 def _chunks_base() -> str:
 	"""Return (and create) the base directory for in-progress chunk uploads."""
@@ -2063,6 +2096,21 @@ def chunked_upload_init():
 			raise ValueError
 	except (KeyError, ValueError, TypeError):
 		return error_response('total_chunks must be a positive integer')
+	if total_chunks > _MAX_TOTAL_CHUNKS:
+		return error_response(
+			f'total_chunks exceeds the maximum of {_MAX_TOTAL_CHUNKS}')
+
+	# Reject up front when the client already declares an over-size upload.
+	# The assembled size is re-checked authoritatively in /complete.
+	max_size = _max_upload_size()
+	total_size = data.get('total_size')
+	if total_size is not None:
+		try:
+			if int(total_size) > max_size:
+				return error_response(
+					f'Upload exceeds the maximum size of {max_size} bytes', 413)
+		except (ValueError, TypeError):
+			return error_response('total_size must be an integer')
 
 	item_uuid = data.get('item_uuid', '')
 	if not item_uuid:
@@ -2085,6 +2133,7 @@ def chunked_upload_init():
 	if hints is not None and not isinstance(hints, dict):
 		return error_response('hints must be a JSON object')
 
+	creator = getattr(g, 'api_user', None)
 	meta = {
 		'filename': filename,
 		'total_chunks': total_chunks,
@@ -2096,6 +2145,7 @@ def chunked_upload_init():
 		'is_private': bool(data.get('is_private', False)),
 		'auto_analyse': data.get('auto_analyse', True),
 		'hints': hints,
+		'creator_user_id': creator.id if creator is not None else None,
 		'created_at': datetime.now(timezone.utc).isoformat(),
 	}
 	with open(os.path.join(chunk_dir, 'meta.json'), 'w') as f:
@@ -2122,8 +2172,20 @@ def chunked_upload_chunk(upload_uuid, chunk_index):
 	if not os.path.isdir(chunk_dir):
 		return error_response('Upload session not found', 404)
 
-	if chunk_index < 0:
-		return error_response('chunk_index must be non-negative')
+	try:
+		with open(os.path.join(chunk_dir, 'meta.json')) as f:
+			meta = json.load(f)
+	except (OSError, json.JSONDecodeError):
+		return error_response('Upload session corrupt', 500)
+
+	owner_error = _chunk_session_owner_error(meta)
+	if owner_error:
+		return owner_error
+
+	# chunk_index is a non-negative int (route converter); reject out-of-range
+	# indices so a caller cannot scatter junk chunk files that never assemble.
+	if chunk_index < 0 or chunk_index >= meta['total_chunks']:
+		return error_response('chunk_index out of range', 400)
 
 	chunk_path = os.path.join(chunk_dir, f'{chunk_index:06d}')
 	with open(chunk_path, 'wb') as f:
@@ -2154,6 +2216,10 @@ def chunked_upload_status(upload_uuid):
 			meta = json.load(f)
 	except (OSError, json.JSONDecodeError):
 		return error_response('Upload session corrupt', 500)
+
+	owner_error = _chunk_session_owner_error(meta)
+	if owner_error:
+		return owner_error
 
 	received = sorted(
 		int(name) for name in os.listdir(chunk_dir)
@@ -2193,7 +2259,15 @@ def chunked_upload_complete(upload_uuid):
 	except (OSError, json.JSONDecodeError):
 		return error_response('Upload session corrupt', 500)
 
+	owner_error = _chunk_session_owner_error(meta)
+	if owner_error:
+		return owner_error
+
+	# Defence in depth: reject an over-size total_chunks before materialising the
+	# per-chunk path list, so a tampered/old meta cannot exhaust memory here.
 	total_chunks = meta['total_chunks']
+	if not isinstance(total_chunks, int) or total_chunks < 1 or total_chunks > _MAX_TOTAL_CHUNKS:
+		return error_response('Upload session corrupt', 400)
 	chunk_files = [os.path.join(chunk_dir, f'{i:06d}') for i in range(total_chunks)]
 	missing = [i for i, p in enumerate(chunk_files) if not os.path.exists(p)]
 	if missing:
@@ -2219,13 +2293,15 @@ def chunked_upload_complete(upload_uuid):
 		artefact_type = detect_artefact_type(meta['filename'])
 
 	# Generate storage name (same pattern as save_uploaded_file)
-	ext = _get_storage_extension(original_filename)
+	ext = get_storage_extension(original_filename)
 	storage_name = f'{uuid.uuid4().hex}{ext}'
 
 	# Assemble chunks into a temp file, computing hashes inline
 	md5_hash = hashlib.md5()
 	sha256_hash = hashlib.sha256()
 	file_size = 0
+	max_size = _max_upload_size()
+	oversize = False
 
 	try:
 		with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
@@ -2240,6 +2316,19 @@ def chunked_upload_complete(upload_uuid):
 						md5_hash.update(buf)
 						sha256_hash.update(buf)
 						file_size += len(buf)
+						# Authoritative size cap (the declared total_size is only
+						# advisory).  Stop reading rather than spool an unbounded
+						# file to disk.
+						if file_size > max_size:
+							oversize = True
+							break
+				if oversize:
+					break
+
+		if oversize:
+			shutil.rmtree(chunk_dir, ignore_errors=True)
+			return error_response(
+				f'Upload exceeds the maximum size of {max_size} bytes', 413)
 
 		# Push assembled file to storage backend
 		storage_key = current_app.storage.storage_key('uploads', storage_name)
@@ -2307,11 +2396,11 @@ def run_hash_rescan(uuid):
     Runs rescan_hashes_for_artefact(), optionally queues product recognition,
     and returns {updated, total, recognition_queued}.
     """
-    from ..utils.hash_rescan import (
+    from ..services.hash_rescan import (
         queue_product_recognition_for_partitions,
         rescan_hashes_for_artefact,
     )
-    artefact = _get_by_uuid_or_404(Artefact, uuid)
+    artefact = _get_artefact_or_404(uuid)
     updated, total = rescan_hashes_for_artefact(artefact)
 
     recognition_queued = 0
@@ -2496,6 +2585,15 @@ def hash_database_recognition_config():
 @require_auth('read_write')
 def report_recognised_products(uuid):
     """Worker reports product recognition results for a partition."""
+    # Worker-only: this callback overwrites a partition's product-recognition
+    # results (it deletes the existing rows and inserts the supplied ones).  It
+    # is gated only on view-visibility of the partition, not on content-
+    # management permission, so without this check any read_write user could
+    # wipe or falsify recognition results on artefacts they do not own.
+    # Matches the worker-only gate on add_partition / add_files.
+    if not _is_worker_request():
+        return error_response('Only the worker may report recognised products', 403)
+
     partition = _get_partition_or_404(uuid)
     data, error = _json_array(force=True)
     if error:

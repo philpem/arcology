@@ -71,7 +71,8 @@ def create_app(config_name=None):
             app.config[env_key] = env_val
 
     # Integer env vars — loaded separately so they're stored as int, not str.
-    for int_key in ('WEB_UI_ANALYSIS_PRIORITY', 'STALE_JOB_TIMEOUT_SECONDS'):
+    for int_key in ('WEB_UI_ANALYSIS_PRIORITY', 'STALE_JOB_TIMEOUT_SECONDS',
+                    'MAX_UPLOAD_SIZE'):
         env_val = os.environ.get(int_key)
         if env_val is not None:
             try:
@@ -218,7 +219,7 @@ def create_app(config_name=None):
             return '-'
         size = float(size_bytes)
         for unit in ('B', 'KiB', 'MiB', 'GiB', 'TiB'):
-            if abs(size) < 1024.0 or unit == 'TB':
+            if abs(size) < 1024.0 or unit == 'TiB':
                 return f'{int(size)} {unit}' if unit == 'B' else f'{size:.1f} {unit}'
             size /= 1024.0
     app.jinja_env.filters['format_filesize'] = _format_filesize

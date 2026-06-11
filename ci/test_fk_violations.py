@@ -1238,7 +1238,6 @@ class TestBulkDeleteItem(unittest.TestCase):
     def test_bulk_delete_full_hierarchy(self):
         """bulk_delete_item should remove Item + all descendants in one pass."""
         with self.app.app_context():
-            from myapp.blueprints.artefacts import bulk_delete_item
             from myapp.database import (
                 Analysis,
                 AnalysisStatus,
@@ -1261,6 +1260,7 @@ class TestBulkDeleteItem(unittest.TestCase):
                 RiscosModule,
                 Tag,
             )
+            from myapp.services.artefact_lifecycle import bulk_delete_item
             from shared.enums import AnalysisType, ArtefactType
 
             platform = Platform(name='Bulk Del Platform')
@@ -1408,8 +1408,8 @@ class TestBulkDeleteItem(unittest.TestCase):
     def test_bulk_delete_empty_item(self):
         """bulk_delete_item should handle an item with no artefacts."""
         with self.app.app_context():
-            from myapp.blueprints.artefacts import bulk_delete_item
             from myapp.database import Item, Platform
+            from myapp.services.artefact_lifecycle import bulk_delete_item
 
             platform = Platform(name='Empty Del Platform')
             self.db.session.add(platform)

@@ -111,7 +111,7 @@ def extension_label(ext: str) -> str:
     mime, _ = _mimetypes.guess_type(f'file.{clean}')
     if mime:
         # e.g. 'image/x-wmf' → 'WMF', 'text/html' → 'HTML'
-        sub = mime.split('/')[-1].lstrip('x-').upper()
+        sub = mime.split('/')[-1].removeprefix('x-').upper()
         if len(sub) <= 8:
             return sub
     return clean.upper()

@@ -221,11 +221,9 @@ RUN \
 FROM ubuntu:24.04 AS build-riscosarc
 
 # Pinned commit SHA — update this when upgrading riscosarc.
-# Current as of 2026-03-26; branch: master
-#ARG RISCOSARC_VERSION=1f5cef10be4c5622eafb689d0dbe8f9f2601f141
-#ARG RISCOSARC_REPO=https://github.com/mjwoodcock/riscosarc.git
-ARG RISCOSARC_REPO=https://github.com/philpem/riscosarc.git
-ARG RISCOSARC_VERSION=4b5a5672a3f70dd7540ff7b1d48db19755f6a6c6
+# Current as of 2026-06-11; branch: master
+ARG RISCOSARC_VERSION=a885d02abd71a22d68440c44e895651b68fef211
+ARG RISCOSARC_REPO=https://github.com/mjwoodcock/riscosarc.git
 
 ARG DEBIAN_FRONTEND=noninteractive
 

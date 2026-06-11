@@ -126,18 +126,16 @@ def index():
         joinedload(Analysis.artefact)
     ).order_by(_status_sort_order(), Analysis.created_at.desc()).paginate(page=page, per_page=per_page)
 
-    # Single query for all status counts using conditional aggregation,
-    # restricted to analyses on artefacts the caller may view.
+    # Single query for all status counts using conditional aggregation.  These
+    # are global operational-load totals (matching the queue page): they expose
+    # only aggregate job counts, not any identifiable content, so they are not
+    # visibility-filtered even though the listed rows above are.
     counts_row = db.session.query(
         func.count(case((Analysis.status == AnalysisStatus.PENDING, 1))).label('pending'),
         func.count(case((Analysis.status == AnalysisStatus.RUNNING, 1))).label('running'),
         func.count(case((Analysis.status == AnalysisStatus.COMPLETED, 1))).label('completed'),
         func.count(case((Analysis.status == AnalysisStatus.FAILED, 1))).label('failed'),
-    ).select_from(Analysis).join(
-        Artefact, Analysis.artefact_id == Artefact.id
-    ).join(
-        Item, Artefact.item_id == Item.id
-    ).filter(artefact_visibility_clause(current_user)).one()
+    ).select_from(Analysis).one()
     status_counts = {
         'pending': counts_row.pending,
         'running': counts_row.running,
@@ -159,12 +157,24 @@ def index():
 @login_required
 def artefact_analyses(uuid):
     """List all analyses for an artefact and its derived artefacts."""
-    from .artefacts import get_all_derived_artefact_ids
+    from ..services.artefact_lifecycle import get_all_derived_artefact_ids
 
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     if not can_view_artefact(artefact, current_user):
         abort(404)
     all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+
+    # A derived artefact may be independently marked private even when the root
+    # is public, so restrict to the artefacts the caller may actually view —
+    # otherwise their analyses (and the status counts below) would leak via the
+    # parent's analysis page.
+    visible_ids = {
+        row[0] for row in db.session.query(Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(Artefact.id.in_(all_artefact_ids), artefact_visibility_clause(current_user))
+        .all()
+    }
+    all_artefact_ids = [aid for aid in all_artefact_ids if aid in visible_ids]
 
     query = Analysis.query.filter(
         Analysis.artefact_id.in_(all_artefact_ids)
@@ -216,13 +226,14 @@ def view(uuid):
     # before get_process_output started sanitising the command string.  Replace
     # \udcNN with \u00NN (the Latin-1 Unicode equivalent) so the template can
     # render them without triggering a UnicodeEncodeError in Werkzeug.
-    if analysis.details:
-        analysis.details = re.sub(
-            r'\\udc([0-9a-f]{2})',
-            lambda m: f'\\u00{m.group(1)}',
-            analysis.details
-        )
-    return render_template('analysis/view.html', analysis=analysis)
+    # Sanitised copy for display only — do not mutate the ORM object, which
+    # would cause the rewritten string to be flushed to the DB on any autoflush.
+    details = re.sub(
+        r'\\udc([0-9a-f]{2})',
+        lambda m: f'\\u00{m.group(1)}',
+        analysis.details,
+    ) if analysis.details else analysis.details
+    return render_template('analysis/view.html', analysis=analysis, details=details)
 
 
 @blueprint.route('/<string:uuid>/cancel', methods=['POST'])
@@ -249,7 +260,7 @@ def cancel(uuid):
 
 @blueprint.route('/reset-stale', methods=['POST'])
 @login_required
-@require_permission('read_write')
+@require_permission('staff')
 def reset_stale():
     """Reset RUNNING jobs that have been stuck longer than the stale timeout back to PENDING."""
     cutoff = _stale_cutoff()

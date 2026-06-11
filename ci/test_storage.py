@@ -445,7 +445,7 @@ class TestStorageIntegrationWithApp(unittest.TestCase):
             db.session.add(artefact)
             db.session.flush()
 
-            from myapp.blueprints.artefacts import get_artefact_storage_key
+            from myapp.services.artefact_storage import get_artefact_storage_key
             key = get_artefact_storage_key(artefact)
             self.assertEqual(key, 'uploads/abc123.img')
 
@@ -492,7 +492,7 @@ class TestStorageIntegrationWithApp(unittest.TestCase):
             app.storage.put('uploads/hashtest.bin', src)
             os.unlink(src)
 
-            from myapp.blueprints.artefacts import compute_file_hashes
+            from myapp.services.artefact_storage import compute_file_hashes
             md5, sha256 = compute_file_hashes('uploads/hashtest.bin', use_storage=True)
 
             expected_md5 = hashlib.md5(content).hexdigest()
