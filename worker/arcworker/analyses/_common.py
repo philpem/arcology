@@ -11,7 +11,7 @@ import functools
 import json
 import traceback
 from collections.abc import Callable
-from arcology_shared.enums import AnalysisType
+from arcology_shared.enums import AnalysisStatus, AnalysisType
 from ..config import log
 from ..exceptions import JobCancelledException
 
@@ -65,7 +65,7 @@ def analysis_handler(description: str, analysis_type: AnalysisType | None = None
                 try:
                     self.api.update_analysis(
                         analysis_id,
-                        status='failed',
+                        status=AnalysisStatus.FAILED.value,
                         success=False,
                         error_message=f'Input file missing (artefact deleted?): {e}',
                     )
@@ -76,7 +76,7 @@ def analysis_handler(description: str, analysis_type: AnalysisType | None = None
                 try:
                     self.api.update_analysis(
                         analysis_id,
-                        status='failed',
+                        status=AnalysisStatus.FAILED.value,
                         success=False,
                         error_message=f'{description} failed: {str(e)[:500]}',
                         details=json.dumps({

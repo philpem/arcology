@@ -13,7 +13,7 @@ from urllib.parse import urlencode
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from arcology_shared.enums import ArtefactType
+from arcology_shared.enums import AnalysisStatus, ArtefactType
 from .config import API_RETRIES, API_TIMEOUT, log
 from .tools import compute_file_hash
 
@@ -599,7 +599,7 @@ class ArcologyAPI:
             resp = self._request_response(
                 'put',
                 f'/analysis/{analysis_id}',
-                data={'status': 'running', 'claim_worker': True},
+                data={'status': AnalysisStatus.RUNNING.value, 'claim_worker': True},
             )
             if resp.status_code == 404:
                 log.debug(
