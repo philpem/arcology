@@ -1,7 +1,7 @@
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from scour.scour import scourString
+from scour.scour import sanitizeOptions, scourString
 
 SVG_NS = "http://www.w3.org/2000/svg"
 XLINK_NS = "http://www.w3.org/1999/xlink"
@@ -79,25 +79,26 @@ def _strip_editor_metadata(root: ET.Element) -> None:
 def _run_scour(svg_text: str) -> str:
     """
     Run Scour with conservative, production-safe options.
+
+    Options are built from Scour's own sanitizeOptions() so every option
+    Scour reads has a defined default — a hand-rolled attribute bag breaks
+    with AttributeError whenever a Scour upgrade consults a new option.
     """
-
-    # Scour expects CLI-style options object; we emulate minimal config
-    class Options:
-        strip_xml_prolog = False
-        remove_metadata = True
-        remove_descriptive_elements = False
-        remove_titles = False
-        remove_descriptions = False
-        remove_comments = True
-        shorten_ids = False
-        indent_type = "none"
-        indent_depth = 0
-        newlines = False
-        enable_viewboxing = True
-        simplify_colors = True
-        strip_ids = False
-
-    return scourString(svg_text, Options())
+    options = sanitizeOptions()
+    options.strip_xml_prolog = False
+    options.remove_metadata = True
+    options.remove_descriptive_elements = False
+    options.remove_titles = False
+    options.remove_descriptions = False
+    options.remove_comments = True
+    options.shorten_ids = False
+    options.indent_type = "none"
+    options.indent_depth = 0
+    options.newlines = False
+    options.enable_viewboxing = True
+    options.simplify_colors = True
+    options.strip_ids = False
+    return scourString(svg_text, options)
 
 
 # --- Public API ---
