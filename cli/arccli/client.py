@@ -366,12 +366,19 @@ class ArcologyClient:
 	                          auto_analyse: bool = True,
 	                          hints: dict = None,
 	                          max_retries: int = 3,
-	                          progress_cb=None) -> dict | None:
-		"""Upload with exponential-backoff retry. Returns None on persistent failure.
+	                          progress_cb=None) -> dict:
+		"""Upload with exponential-backoff retry.
+
+		Client errors (4xx) cannot succeed on retry and are re-raised
+		immediately; connection and server errors are retried up to
+		max_retries times.  Raises the last error on persistent failure —
+		the same contract as upload_artefact(), so callers handle one
+		error path instead of checking for None.
 
 		progress_cb(chunks_done, total_chunks) is forwarded to the chunked
 		uploader (files larger than CHUNKED_THRESHOLD only).
 		"""
+		last_exc = None
 		for attempt in range(max_retries):
 			try:
 				return self.upload_artefact(
@@ -383,12 +390,16 @@ class ArcologyClient:
 					progress_cb=progress_cb,
 				)
 			except (ArcologyError, requests.ConnectionError) as exc:
+				if (isinstance(exc, ArcologyError) and exc.status_code
+						and 400 <= exc.status_code < 500):
+					raise
+				last_exc = exc
 				log.warning('Upload attempt %d failed: %s', attempt + 1, exc)
 				if attempt < max_retries - 1:
 					wait = 2 ** (attempt + 1)
 					log.info('  Retrying in %ds...', wait)
 					time.sleep(wait)
-		return None
+		raise last_exc
 
 	# ---- Hash database methods ----
 

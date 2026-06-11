@@ -10,6 +10,7 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
+import requests
 from ..client import ArcologyClient, ArcologyError
 from ..formatting import format_size
 
@@ -827,16 +828,16 @@ def cmd_bulk_import(client: ArcologyClient, args):
                 log.error('    FAILED to bundle/upload %s: %s', filename, e)
                 failed_uploads.append(file_entry['relative_path'])
                 continue
+            except (ArcologyError, requests.ConnectionError) as e:
+                log.error('    FAILED: %s: %s', filename, e)
+                failed_uploads.append(file_entry['relative_path'])
+                continue
             finally:
                 if tmp_ctx is not None:
                     tmp_ctx.cleanup()
-            if result:
-                uploaded_files += 1
-                artefact_type = result.get('artefact_type', '?')
-                log.debug('    -> %s (type: %s)', result.get('uuid', '?')[:8], artefact_type)
-            else:
-                log.error('    FAILED: %s', filename)
-                failed_uploads.append(file_entry['relative_path'])
+            uploaded_files += 1
+            artefact_type = result.get('artefact_type', '?')
+            log.debug('    -> %s (type: %s)', result.get('uuid', '?')[:8], artefact_type)
 
     # Summary
     log.info('')
