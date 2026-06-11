@@ -19,6 +19,7 @@ def main():
 	parser.add_argument('--api-key', dest='api_key', help='API key for authentication')
 	parser.add_argument('--profile', default='default', help='Config profile name (default: default)')
 	parser.add_argument('--json', action='store_true', help='Output raw JSON')
+	parser.add_argument('--debug', action='store_true', help='Show full tracebacks on unexpected errors')
 
 	subparsers = parser.add_subparsers(dest='command', help='Available commands')
 
@@ -26,14 +27,16 @@ def main():
 	subparsers.add_parser('configure', help='Interactive configuration setup')
 
 	# ---- health ----
-	subparsers.add_parser('health', help='Check server connectivity')
+	health_parser = subparsers.add_parser('health', help='Check server connectivity')
+	health_parser.set_defaults(func='status:cmd_health')
 
 	# ---- items ----
 	items_parser = subparsers.add_parser('items', help='Item management')
-	items_sub = items_parser.add_subparsers(dest='items_command')
+	items_sub = items_parser.add_subparsers(dest='items_command', required=True)
 
 	# items list
 	items_list = items_sub.add_parser('list', help='List items')
+	items_list.set_defaults(func='items:cmd_items_list')
 	items_list.add_argument('--search', '-s', help='Search by name/description')
 	items_list.add_argument('--platform', '-p', type=int, help='Filter by platform ID')
 	items_list.add_argument('--category', '-c', type=int, help='Filter by category ID')
@@ -45,6 +48,7 @@ def main():
 
 	# items create
 	items_create = items_sub.add_parser('create', help='Create a new item')
+	items_create.set_defaults(func='items:cmd_items_create')
 	items_create.add_argument('--name', '-n', required=True, help='Item name')
 	items_create.add_argument('--description', '-d', help='Item description')
 	items_create.add_argument('--platform', '-p', type=int, help='Platform ID')
@@ -54,10 +58,12 @@ def main():
 
 	# items view
 	items_view = items_sub.add_parser('view', help='View item details')
+	items_view.set_defaults(func='items:cmd_items_view')
 	items_view.add_argument('uuid', help='Item UUID')
 
 	# items update
 	items_update = items_sub.add_parser('update', help='Update an item (use --parent to move it)')
+	items_update.set_defaults(func='items:cmd_items_update')
 	items_update.add_argument('uuid', help='Item UUID')
 	items_update.add_argument('--name', '-n', help='New name')
 	items_update.add_argument('--description', '-d', help='New description')
@@ -68,20 +74,23 @@ def main():
 
 	# items delete
 	items_delete = items_sub.add_parser('delete', help='Delete an item and all its descendants')
+	items_delete.set_defaults(func='items:cmd_items_delete')
 	items_delete.add_argument('uuid', help='Item UUID')
 	items_delete.add_argument('--yes', '-y', action='store_true', help='Skip confirmation')
 
 	# ---- artefacts ----
 	artefacts_parser = subparsers.add_parser('artefacts', help='Artefact management')
-	artefacts_sub = artefacts_parser.add_subparsers(dest='artefacts_command')
+	artefacts_sub = artefacts_parser.add_subparsers(dest='artefacts_command', required=True)
 
 	# artefacts move
 	artefacts_move = artefacts_sub.add_parser('move', help='Move an artefact to a different item')
+	artefacts_move.set_defaults(func='items:cmd_artefact_move')
 	artefacts_move.add_argument('uuid', help='Artefact UUID')
 	artefacts_move.add_argument('--to', required=True, dest='target_item_uuid', help='Target item UUID')
 
 	# ---- upload ----
 	upload_parser = subparsers.add_parser('upload', help='Upload artefacts to an item')
+	upload_parser.set_defaults(func='upload:cmd_upload')
 	upload_parser.add_argument('item_uuid', help='Item UUID to upload to')
 	upload_parser.add_argument('files', nargs='*', help='File(s) to upload')
 	upload_parser.add_argument('--dir', help='Upload all files from directory')
@@ -96,38 +105,44 @@ def main():
 
 	# ---- download ----
 	download_parser = subparsers.add_parser('download', help='Download an artefact')
+	download_parser.set_defaults(func='download:cmd_download')
 	download_parser.add_argument('uuid', help='Artefact UUID')
 	download_parser.add_argument('--output', '-o', help='Output path (default: original filename)')
 	download_parser.add_argument('--force', '-f', action='store_true', help='Overwrite existing file')
 
 	# ---- platforms / categories / tags ----
-	subparsers.add_parser('platforms', help='List platforms')
-	subparsers.add_parser('categories', help='List categories')
-	subparsers.add_parser('tags', help='List tags')
+	subparsers.add_parser('platforms', help='List platforms').set_defaults(func='taxonomy:cmd_platforms')
+	subparsers.add_parser('categories', help='List categories').set_defaults(func='taxonomy:cmd_categories')
+	subparsers.add_parser('tags', help='List tags').set_defaults(func='taxonomy:cmd_tags')
 
 	# ---- debug ----
 	debug_parser = subparsers.add_parser('debug', help='Debug and analysis diagnostic tools')
-	debug_sub = debug_parser.add_subparsers(dest='debug_command')
+	debug_sub = debug_parser.add_subparsers(dest='debug_command', required=True)
 
 	# debug analysis
 	debug_analysis = debug_sub.add_parser('analysis', help='Show full analysis details')
+	debug_analysis.set_defaults(func='debug:cmd_debug_analysis')
 	debug_analysis.add_argument('uuid', help='Analysis UUID')
 
 	# debug errors
 	debug_errors = debug_sub.add_parser('errors', help='Show failed analyses for artefact tree')
+	debug_errors.set_defaults(func='debug:cmd_debug_errors')
 	debug_errors.add_argument('uuid', help='Artefact UUID')
 	debug_errors.add_argument('--all', action='store_true', help='Show all analyses, not just failures')
 
 	# debug tree
 	debug_tree = debug_sub.add_parser('tree', help='Show artefact derivation tree')
+	debug_tree.set_defaults(func='debug:cmd_debug_tree')
 	debug_tree.add_argument('uuid', help='Artefact UUID')
 
 	# debug processing-tree
 	debug_ptree = debug_sub.add_parser('processing-tree', help='Show processing tree (artefact → path-grouped analyses → derived artefacts)')
+	debug_ptree.set_defaults(func='debug:cmd_debug_processing_tree')
 	debug_ptree.add_argument('uuid', help='Artefact UUID')
 
 	# debug failures
 	debug_failures = debug_sub.add_parser('failures', help='Search failed analyses system-wide')
+	debug_failures.set_defaults(func='debug:cmd_debug_failures')
 	debug_failures.add_argument('--type', dest='analysis_type', help='Filter by analysis type')
 	debug_failures.add_argument('--tool', dest='tool_name', help='Filter by tool name')
 	debug_failures.add_argument('--since', help='Failures after this date (ISO format)')
@@ -138,10 +153,12 @@ def main():
 
 	# ---- status ----
 	status_parser = subparsers.add_parser('status', help='Show artefact analysis status')
+	status_parser.set_defaults(func='status:cmd_status')
 	status_parser.add_argument('uuid', help='Artefact UUID')
 
 	# ---- bulk-import ----
 	bulk_parser = subparsers.add_parser('bulk-import', help='Bulk import a file archive into Arcology')
+	bulk_parser.set_defaults(func='bulk_import:cmd_bulk_import')
 	bulk_parser.add_argument('--archive-dir', default=None,
 	                         help='Local mirror root (required unless --purge)')
 	bulk_parser.add_argument('--tag', default=None,
@@ -194,19 +211,21 @@ def main():
 
 	# ---- hashdb ----
 	hashdb_parser = subparsers.add_parser('hashdb', help='Hash database management')
-	hashdb_sub = hashdb_parser.add_subparsers(dest='hashdb_command')
+	hashdb_sub = hashdb_parser.add_subparsers(dest='hashdb_command', required=True)
 
 	# hashdb list
-	hashdb_sub.add_parser('list', help='List all hash databases')
+	hashdb_sub.add_parser('list', help='List all hash databases').set_defaults(func='hashdb:cmd_hashdb_list')
 
 	# hashdb export
 	hashdb_export = hashdb_sub.add_parser('export', help='Export a hash database to a file')
+	hashdb_export.set_defaults(func='hashdb:cmd_hashdb_export')
 	hashdb_export.add_argument('id', type=int, help='Database ID')
 	hashdb_export.add_argument('output_file', help='Output file path')
 	hashdb_export.add_argument('--format', choices=['json', 'csv'], default='json')
 
 	# hashdb import
 	hashdb_import = hashdb_sub.add_parser('import', help='Import a hash database from a file')
+	hashdb_import.set_defaults(func='hashdb:cmd_hashdb_import')
 	hashdb_import.add_argument('input_file', help='Input file path')
 	hashdb_import.add_argument('--format', choices=['json', 'csv', 'auto'], default='auto',
 	                           help='File format (default: auto-detect from extension)')
@@ -217,6 +236,7 @@ def main():
 	# hashdb generate-arcarc
 	hashdb_gen = hashdb_sub.add_parser('generate-arcarc',
 	                                   help='Generate HashDB JSON from arcarc items in Arcology')
+	hashdb_gen.set_defaults(func='hashdb_generate:cmd_hashdb_generate_arcarc')
 	hashdb_gen.add_argument('--output', default='arcarc-hashdb.json',
 	                        help='Output JSON file (default: arcarc-hashdb.json)')
 	hashdb_gen.add_argument('--tag', default='arcarc',
@@ -257,7 +277,7 @@ def main():
 
 	# Dispatch command
 	try:
-		_dispatch(client, args)
+		_resolve_handler(args.func)(client, args)
 	except ArcologyError as e:
 		print(f"Error: {e}", file=sys.stderr)
 		sys.exit(1)
@@ -265,7 +285,10 @@ def main():
 		print("\nInterrupted.", file=sys.stderr)
 		sys.exit(130)
 	except Exception as e:
+		if args.debug:
+			raise
 		print(f"Error: {e}", file=sys.stderr)
+		print("(re-run with --debug for a full traceback)", file=sys.stderr)
 		sys.exit(1)
 
 
@@ -285,107 +308,17 @@ def _cmd_configure(args):
 	create_config(url, api_key, profile)
 
 
-def _dispatch(client, args):
-	"""Route to the appropriate command handler."""
-	from .commands.download import cmd_download
-	from .commands.items import (
-		cmd_artefact_move,
-		cmd_items_create,
-		cmd_items_delete,
-		cmd_items_list,
-		cmd_items_update,
-		cmd_items_view,
-	)
-	from .commands.status import cmd_health, cmd_status
-	from .commands.taxonomy import cmd_categories, cmd_platforms, cmd_tags
-	from .commands.upload import cmd_upload
+def _resolve_handler(spec):
+	"""Resolve a 'module:function' handler spec from arccli.commands.
 
-	if args.command == 'health':
-		cmd_health(client, args)
+	Handlers are referenced by name in set_defaults(func=...) and imported
+	lazily here so that running one command does not pay the import cost of
+	every command module.
+	"""
+	import importlib
+	module_name, func_name = spec.split(':')
+	module = importlib.import_module(f'.commands.{module_name}', package=__package__)
+	return getattr(module, func_name)
 
-	elif args.command == 'items':
-		if args.items_command == 'list':
-			cmd_items_list(client, args)
-		elif args.items_command == 'create':
-			cmd_items_create(client, args)
-		elif args.items_command == 'view':
-			cmd_items_view(client, args)
-		elif args.items_command == 'update':
-			cmd_items_update(client, args)
-		elif args.items_command == 'delete':
-			cmd_items_delete(client, args)
-		else:
-			print("Usage: arco items {list|create|view|update|delete}", file=sys.stderr)
-			sys.exit(1)
-
-	elif args.command == 'artefacts':
-		if args.artefacts_command == 'move':
-			cmd_artefact_move(client, args)
-		else:
-			print("Usage: arco artefacts {move}", file=sys.stderr)
-			sys.exit(1)
-
-	elif args.command == 'upload':
-		cmd_upload(client, args)
-
-	elif args.command == 'download':
-		cmd_download(client, args)
-
-	elif args.command == 'platforms':
-		cmd_platforms(client, args)
-
-	elif args.command == 'categories':
-		cmd_categories(client, args)
-
-	elif args.command == 'tags':
-		cmd_tags(client, args)
-
-	elif args.command == 'debug':
-		from .commands.debug import (
-			cmd_debug_analysis,
-			cmd_debug_errors,
-			cmd_debug_failures,
-			cmd_debug_processing_tree,
-			cmd_debug_tree,
-		)
-		if args.debug_command == 'analysis':
-			cmd_debug_analysis(client, args)
-		elif args.debug_command == 'errors':
-			cmd_debug_errors(client, args)
-		elif args.debug_command == 'tree':
-			cmd_debug_tree(client, args)
-		elif args.debug_command == 'processing-tree':
-			cmd_debug_processing_tree(client, args)
-		elif args.debug_command == 'failures':
-			cmd_debug_failures(client, args)
-		else:
-			print("Usage: arco debug {analysis|errors|tree|processing-tree|failures}", file=sys.stderr)
-			sys.exit(1)
-
-	elif args.command == 'status':
-		cmd_status(client, args)
-
-	elif args.command == 'bulk-import':
-		from .commands.bulk_import import cmd_bulk_import
-		cmd_bulk_import(client, args)
-
-	elif args.command == 'hashdb':
-		from .commands.hashdb import cmd_hashdb_export, cmd_hashdb_import, cmd_hashdb_list
-		from .commands.hashdb_generate import cmd_hashdb_generate_arcarc
-		if args.hashdb_command == 'list':
-			cmd_hashdb_list(client, args)
-		elif args.hashdb_command == 'export':
-			cmd_hashdb_export(client, args)
-		elif args.hashdb_command == 'import':
-			cmd_hashdb_import(client, args)
-		elif args.hashdb_command == 'generate-arcarc':
-			cmd_hashdb_generate_arcarc(client, args)
-		else:
-			print("Usage: arco hashdb {list|export|import|generate-arcarc}", file=sys.stderr)
-			sys.exit(1)
-
-	else:
-		print(f"Unknown command: {args.command}", file=sys.stderr)
-		sys.exit(1)
 
 # vim: ts=4 sw=4 noet
