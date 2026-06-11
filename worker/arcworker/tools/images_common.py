@@ -81,49 +81,8 @@ def convert_image(input_path: Path, output_dir: Path, analysis_uuid: str) -> dic
     output_dir.mkdir(parents=True, exist_ok=True)
     ext = input_path.suffix.lower()
 
-    # --- Vector metafiles ---
     if ext in _VECTOR_EXTS:
-        # Try all the converters in order until we hit one that works
-        errors = []
-        for tool_name, build_cmd in _VECTOR_EXTS[ext]:
-            out_svg = output_dir / f'{analysis_uuid}_image.svg'
-            cmd = build_cmd(input_path, out_svg)
-            try:
-                proc, _ = run_tool_with_output(cmd, timeout=60)
-            except FileNotFoundError:
-                errors.append(f'{tool_name} not found')
-                continue
-            except subprocess.TimeoutExpired:
-                errors.append(f'{tool_name} timed out')
-                continue
-            if proc.returncode != 0 or not out_svg.exists():
-                out = (proc.stdout + proc.stderr).decode('utf-8', errors='replace').strip()
-                errors.append(f'{tool_name} failed (rc={proc.returncode}): {out}')
-                log.info(f'Conversion of "{input_path}" via "{cmd}" failed, falling back to next decoder')
-                continue
-
-            try:
-                postprocess_svg(out_svg)
-                exception_trace = None
-            except Exception:
-                import traceback
-                exception_trace = traceback.format_exc()
-                log.warning(f'Error cleaning up SVG "{input_path}", bypassing: {exception_trace}')
-
-            return tool_result(
-                True,
-                tool=tool_name,
-                output_path=str(out_svg),
-                format=ext.lstrip('.').upper(),
-                exception_trace=exception_trace,
-            )
-
-        return tool_result(
-            False,
-            tool=_VECTOR_EXTS[ext][0][0],
-            error='; '.join(errors) if errors else 'No vector converter succeeded',
-            format=ext.lstrip('.').upper(),
-        )
+        return _convert_vector(input_path, output_dir, analysis_uuid, ext)
 
     # --- Pass-through raster ---
     # Trust the extension first; for files without a recognised extension
@@ -141,7 +100,64 @@ def convert_image(input_path: Path, output_dir: Path, analysis_uuid: str) -> dic
             format=passthrough_ext.lstrip('.').upper(),
         )
 
-    # --- Pillow-converted raster ---
+    return _convert_pillow(input_path, output_dir, analysis_uuid, ext)
+
+
+def _convert_vector(input_path: Path, output_dir: Path,
+                    analysis_uuid: str, ext: str) -> dict:
+    """Convert a WMF/EMF metafile to SVG, trying each converter in order."""
+    # Try all the converters in order until we hit one that works
+    errors = []
+    for tool_name, build_cmd in _VECTOR_EXTS[ext]:
+        out_svg = output_dir / f'{analysis_uuid}_image.svg'
+        cmd = build_cmd(input_path, out_svg)
+        try:
+            proc, _ = run_tool_with_output(cmd, timeout=60)
+        except FileNotFoundError:
+            errors.append(f'{tool_name} not found')
+            continue
+        except subprocess.TimeoutExpired:
+            errors.append(f'{tool_name} timed out')
+            continue
+        if proc.returncode != 0 or not out_svg.exists():
+            out = (proc.stdout + proc.stderr).decode('utf-8', errors='replace').strip()
+            errors.append(f'{tool_name} failed (rc={proc.returncode}): {out}')
+            log.info(f'Conversion of "{input_path}" via "{cmd}" failed, falling back to next decoder')
+            continue
+
+        try:
+            postprocess_svg(out_svg)
+            exception_trace = None
+        except Exception:
+            import traceback
+            exception_trace = traceback.format_exc()
+            log.warning(f'Error cleaning up SVG "{input_path}", bypassing: {exception_trace}')
+
+        return tool_result(
+            True,
+            tool=tool_name,
+            output_path=str(out_svg),
+            format=ext.lstrip('.').upper(),
+            exception_trace=exception_trace,
+        )
+
+    return tool_result(
+        False,
+        tool=_VECTOR_EXTS[ext][0][0],
+        error='; '.join(errors) if errors else 'No vector converter succeeded',
+        format=ext.lstrip('.').upper(),
+    )
+
+
+def _convert_pillow(input_path: Path, output_dir: Path,
+                    analysis_uuid: str, ext: str) -> dict:
+    """Convert a raster image to PNG via Pillow.
+
+    Redirects C-level stderr (fd 2) around the decode so LibTIFF error
+    messages printed directly by libtiff can be captured into the failure
+    record.  The redirection is process-global — keeping it confined to
+    this helper limits the blast radius if the worker ever gains threads.
+    """
     try:
         from PIL import Image, UnidentifiedImageError
     except ImportError:
