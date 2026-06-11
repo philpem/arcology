@@ -23,6 +23,93 @@ from .partition import (
 _IMD_SECTOR_SIZES = {0: 128, 1: 256, 2: 512, 3: 1024, 4: 2048, 5: 4096, 6: 8192}
 
 
+def _read_imd_data(imd_path: Path) -> tuple[bytes, int] | None:
+    """Read an IMD file and locate the start of the track records.
+
+    Returns ``(data, pos)`` where ``pos`` is the byte after the 0x1A
+    sentinel terminating the ASCII comment header, or None if the file
+    cannot be read or is not an IMD.
+    """
+    try:
+        with open(imd_path, 'rb') as f:
+            data = f.read()
+    except OSError:
+        return None
+    if not data.startswith(b'IMD '):
+        return None
+    sentinel = data.find(b'\x1A')
+    if sentinel < 0:
+        return None
+    return data, sentinel + 1
+
+
+def _parse_track_header(data: bytes, pos: int) -> tuple[dict | None, int | None]:
+    """Parse one IMD track header plus its sector-ID/cylinder/head maps.
+
+    Returns ``(hdr, new_pos)`` on success.  ``hdr`` contains: mode,
+    cylinder, head (bit 0 of the raw head byte), nsec, size_code,
+    sector_size, encoding ('FM' for modes 0-2, 'MFM' for 3-5),
+    sector_ids, and the per-sector sector_cyls / idam_heads lists
+    (taken from the optional maps when present, otherwise filled with
+    the track's cylinder/head).
+
+    Returns ``(None, None)`` when fewer than 5 header bytes remain, and
+    ``(hdr, None)`` when the header was read but a map is truncated —
+    callers can still use the header fields (e.g. for geometry extents)
+    but must stop walking the file.
+    """
+    if pos + 5 > len(data):
+        return None, None
+
+    mode      = data[pos]
+    cylinder  = data[pos + 1]
+    head_raw  = data[pos + 2]
+    nsec      = data[pos + 3]
+    size_code = data[pos + 4]
+    pos += 5
+
+    # bit 0 of head_raw is the actual head number;
+    # bits 6 and 7 are flags (head-map / cylinder-map present)
+    head             = head_raw & 0x01
+    cyl_map_present  = bool(head_raw & 0x80)
+    head_map_present = bool(head_raw & 0x40)
+
+    hdr = {
+        'mode':        mode,
+        'cylinder':    cylinder,
+        'head':        head,
+        'nsec':        nsec,
+        'size_code':   size_code,
+        'sector_size': _IMD_SECTOR_SIZES.get(size_code, 0),
+        'encoding':    'FM' if mode <= 2 else 'MFM',
+        'sector_ids':  [],
+        'sector_cyls': [cylinder] * nsec,
+        'idam_heads':  [head] * nsec,
+    }
+
+    # Sector ID map (N bytes)
+    if pos + nsec > len(data):
+        return hdr, None
+    hdr['sector_ids'] = list(data[pos:pos + nsec])
+    pos += nsec
+
+    # Optional cylinder map → per-sector IDAM cylinders
+    if cyl_map_present:
+        if pos + nsec > len(data):
+            return hdr, None
+        hdr['sector_cyls'] = list(data[pos:pos + nsec])
+        pos += nsec
+
+    # Optional head map → per-sector IDAM heads
+    if head_map_present:
+        if pos + nsec > len(data):
+            return hdr, None
+        hdr['idam_heads'] = list(data[pos:pos + nsec])
+        pos += nsec
+
+    return hdr, pos
+
+
 def parse_imd_track0(imd_path: Path) -> dict | None:
     """
     Parse track 0 header and sector data from an IMD file.
@@ -42,21 +129,11 @@ def parse_imd_track0(imd_path: Path) -> dict | None:
             sectors         dict[sector_id → bytes] for cylinder 0, head 0
         or None on any parse error.
     """
-    try:
-        with open(imd_path, 'rb') as f:
-            data = f.read()
-    except OSError:
+    loaded = _read_imd_data(imd_path)
+    if loaded is None:
         return None
+    data, pos = loaded
 
-    if not data.startswith(b'IMD '):
-        return None
-
-    # Skip the ASCII header comment terminated by 0x1A
-    sentinel = data.find(b'\x1A')
-    if sentinel < 0:
-        return None
-
-    pos = sentinel + 1
     max_cylinder = 0
     max_head = 0
     first_encoding = None
@@ -64,55 +141,26 @@ def parse_imd_track0(imd_path: Path) -> dict | None:
     track0_sectors: dict[int, bytes] = {}
 
     while pos < len(data):
-        if pos + 5 > len(data):
+        hdr, new_pos = _parse_track_header(data, pos)
+        if hdr is None:
             break
-
-        mode      = data[pos]
-        cylinder  = data[pos + 1]
-        head_raw  = data[pos + 2]
-        nsec      = data[pos + 3]
-        size_code = data[pos + 4]
-        pos += 5
-
-        # bit 0 of head_raw is the actual head number;
-        # bits 6 and 7 are flags (head-map / cylinder-map present)
-        head = head_raw & 0x01
-        cyl_map_present  = bool(head_raw & 0x80)
-        head_map_present = bool(head_raw & 0x40)
-
-        sector_size = _IMD_SECTOR_SIZES.get(size_code, 0)
-        encoding    = 'FM' if mode <= 2 else 'MFM'
 
         if first_encoding is None:
-            first_encoding    = encoding
-            first_sector_size = sector_size
+            first_encoding    = hdr['encoding']
+            first_sector_size = hdr['sector_size']
 
-        if cylinder > max_cylinder:
-            max_cylinder = cylinder
-        if head > max_head:
-            max_head = head
+        max_cylinder = max(max_cylinder, hdr['cylinder'])
+        max_head     = max(max_head, hdr['head'])
 
-        # Sector ID map (N bytes)
-        if pos + nsec > len(data):
-            break
-        sector_ids = list(data[pos:pos + nsec])
-        pos += nsec
+        if new_pos is None:
+            break          # truncated map — header counted, stop walking
+        pos = new_pos
 
-        # Optional cylinder map (N bytes)
-        if cyl_map_present:
-            if pos + nsec > len(data):
-                break
-            pos += nsec
+        sector_size = hdr['sector_size']
+        sector_ids  = hdr['sector_ids']
+        is_track0   = (hdr['cylinder'] == 0 and hdr['head'] == 0)
 
-        # Optional head map (N bytes)
-        if head_map_present:
-            if pos + nsec > len(data):
-                break
-            pos += nsec
-
-        is_track0 = (cylinder == 0 and head == 0)
-
-        for i in range(nsec):
+        for i in range(hdr['nsec']):
             if pos >= len(data):
                 break
             stype = data[pos]
@@ -177,64 +225,21 @@ def parse_imd_tracks(imd_path: Path) -> list[dict] | None:
 
     Returns None on parse error.
     """
-    try:
-        with open(imd_path, 'rb') as f:
-            data = f.read()
-    except OSError:
+    loaded = _read_imd_data(imd_path)
+    if loaded is None:
         return None
+    data, pos = loaded
 
-    if not data.startswith(b'IMD '):
-        return None
-
-    sentinel = data.find(b'\x1A')
-    if sentinel < 0:
-        return None
-
-    pos = sentinel + 1
     tracks = []
     physical_index = 0
 
     while pos < len(data):
-        if pos + 5 > len(data):
-            break
+        hdr, new_pos = _parse_track_header(data, pos)
+        if hdr is None or new_pos is None:
+            break          # end of file or truncated map — drop partial track
+        pos = new_pos
 
-        mode      = data[pos]
-        cylinder  = data[pos + 1]
-        head_raw  = data[pos + 2]
-        nsec      = data[pos + 3]
-        size_code = data[pos + 4]
-        pos += 5
-
-        head             = head_raw & 0x01
-        cyl_map_present  = bool(head_raw & 0x80)
-        head_map_present = bool(head_raw & 0x40)
-
-        sector_size = _IMD_SECTOR_SIZES.get(size_code, 0)
-        encoding    = 'FM' if mode <= 2 else 'MFM'
-
-        # Sector ID map
-        if pos + nsec > len(data):
-            break
-        sector_ids = list(data[pos:pos + nsec])
-        pos += nsec
-
-        # Optional cylinder map → per-sector IDAM cylinders
-        if cyl_map_present:
-            if pos + nsec > len(data):
-                break
-            sector_cyls = list(data[pos:pos + nsec])
-            pos += nsec
-        else:
-            sector_cyls = [cylinder] * nsec
-
-        # Optional head map → per-sector IDAM heads
-        if head_map_present:
-            if pos + nsec > len(data):
-                break
-            idam_heads = list(data[pos:pos + nsec])
-            pos += nsec
-        else:
-            idam_heads = [head] * nsec
+        sector_size = hdr['sector_size']
 
         # Read sector data: determine has_data and is_uniform_fill.
         # is_uniform_fill tracks whether every present sector consists of a
@@ -243,7 +248,7 @@ def parse_imd_tracks(imd_path: Path) -> list[dict] | None:
         is_uniform_fill = True          # set False on first varied or mismatched byte
         track_fill: int | None = None   # fill byte established by first sector with data
 
-        for _ in range(nsec):
+        for _ in range(hdr['nsec']):
             if pos >= len(data):
                 break
             stype = data[pos]
@@ -281,13 +286,13 @@ def parse_imd_tracks(imd_path: Path) -> list[dict] | None:
 
         tracks.append({
             'physical_index':  physical_index,
-            'cylinder':        cylinder,
-            'head':            head,
-            'encoding':        encoding,
+            'cylinder':        hdr['cylinder'],
+            'head':            hdr['head'],
+            'encoding':        hdr['encoding'],
             'sector_size':     sector_size,
-            'sector_ids':      sector_ids,
-            'sector_cyls':     sector_cyls,
-            'idam_heads':      idam_heads,
+            'sector_ids':      hdr['sector_ids'],
+            'sector_cyls':     hdr['sector_cyls'],
+            'idam_heads':      hdr['idam_heads'],
             'has_data':        has_data,
             'is_uniform_fill': is_uniform_fill,
         })
