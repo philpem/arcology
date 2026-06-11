@@ -126,18 +126,16 @@ def index():
         joinedload(Analysis.artefact)
     ).order_by(_status_sort_order(), Analysis.created_at.desc()).paginate(page=page, per_page=per_page)
 
-    # Single query for all status counts using conditional aggregation,
-    # restricted to analyses on artefacts the caller may view.
+    # Single query for all status counts using conditional aggregation.  These
+    # are global operational-load totals (matching the queue page): they expose
+    # only aggregate job counts, not any identifiable content, so they are not
+    # visibility-filtered even though the listed rows above are.
     counts_row = db.session.query(
         func.count(case((Analysis.status == AnalysisStatus.PENDING, 1))).label('pending'),
         func.count(case((Analysis.status == AnalysisStatus.RUNNING, 1))).label('running'),
         func.count(case((Analysis.status == AnalysisStatus.COMPLETED, 1))).label('completed'),
         func.count(case((Analysis.status == AnalysisStatus.FAILED, 1))).label('failed'),
-    ).select_from(Analysis).join(
-        Artefact, Analysis.artefact_id == Artefact.id
-    ).join(
-        Item, Artefact.item_id == Item.id
-    ).filter(artefact_visibility_clause(current_user)).one()
+    ).select_from(Analysis).one()
     status_counts = {
         'pending': counts_row.pending,
         'running': counts_row.running,
