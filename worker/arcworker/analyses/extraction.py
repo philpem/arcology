@@ -489,6 +489,17 @@ def _extract_top_level_archive(
     self._upload_extraction_tree(extract_dir)
     rel_output_path = self._relative_output_path(extract_dir)
 
+    # Queue follow-ups before completing: a crash after complete_analysis()
+    # would lose them forever (no retry happens for a completed job), while
+    # a crash after queueing is safe — the server dedupes PENDING/RUNNING
+    # analyses when the retried job queues them again.
+    if partition:
+        self.queue_partition_follow_ups(
+            artefact['uuid'],
+            partition.get('uuid'),
+            extraction_path=rel_output_path,
+        )
+
     self.complete_analysis(
         analysis_id,
         tool_name=result['tool'],
@@ -501,13 +512,6 @@ def _extract_top_level_archive(
             'derived_artefacts': derived_count,
         }),
     )
-
-    if partition:
-        self.queue_partition_follow_ups(
-            artefact['uuid'],
-            partition.get('uuid'),
-            extraction_path=rel_output_path,
-        )
 
 
 def _handle_disk_image_bundle(
@@ -840,6 +844,16 @@ def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path
     self._upload_extraction_tree(extract_dir)
     rel_output_path = self._relative_output_path(extract_dir)
 
+    # Queue ARCHIVE_DETECT to scan extracted files for nested archives.
+    # Queued before completing so a crash in between cannot lose the
+    # follow-ups (the server dedupes PENDING/RUNNING analyses on retry).
+    if partition:
+        self.queue_partition_follow_ups(
+            artefact['uuid'],
+            partition.get('uuid'),
+            extraction_path=rel_output_path,
+        )
+
     self.complete_analysis(
         analysis_id,
         tool_name=result['tool'],
@@ -847,14 +861,6 @@ def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path
         output_path=rel_output_path,
         details=_build_details({'file_count': len(files)})
     )
-
-    # Queue ARCHIVE_DETECT to scan extracted files for nested archives
-    if partition:
-        self.queue_partition_follow_ups(
-            artefact['uuid'],
-            partition.get('uuid'),
-            extraction_path=rel_output_path,
-        )
 
 
 @analysis_handler("archive detection", AnalysisType.ARCHIVE_DETECT)
