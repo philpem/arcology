@@ -506,7 +506,7 @@ class ArcologyAPI:
         artefact_uuid: str,
         analysis_type: str,
         hints: dict = None
-    ) -> dict | None:
+    ) -> dict:
         """
         Queue a new analysis for an artefact.
 
@@ -516,14 +516,29 @@ class ArcologyAPI:
             hints: Optional hints dict (will be JSON-encoded)
 
         Returns:
-            Analysis dict if successful, None otherwise
+            Analysis dict.
+
+        Raises:
+            RuntimeError: If the analysis could not be queued.  A silently
+                lost follow-up means a pipeline stage (e.g. FILE_EXTRACTION
+                after PARTITION_DETECT) simply never runs, with no failure
+                recorded anywhere.  Handlers queue follow-ups *before*
+                calling complete_analysis(), so the raise fails the job
+                cleanly via @analysis_handler and a retry re-queues — the
+                server deduplicates PENDING/RUNNING analyses, so re-queuing
+                on retry is safe.
         """
         import json
         data = {'analysis_type': analysis_type}
         if hints:
             data['hints'] = json.dumps(hints)
 
-        return self.post(f"/artefacts/{artefact_uuid}/analysis", data)
+        resp = self.post(f"/artefacts/{artefact_uuid}/analysis", data)
+        if resp is None:
+            raise RuntimeError(
+                f'Failed to queue {analysis_type} analysis for artefact {artefact_uuid}'
+            )
+        return resp
 
     def get_pending_analyses(self, analysis_types: list[str] | None = None) -> list[dict]:
         """

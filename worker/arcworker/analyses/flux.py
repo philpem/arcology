@@ -163,16 +163,18 @@ def process_detect_track_density(self, analysis: dict, artefact: dict, work_dir:
     detection = detect_track_density_mismatch(tracks)
 
     if not detection['detected']:
+        # No density mismatch: queue downstream analyses on the original SCP.
+        # Queued before completing so a crash in between cannot lose them
+        # (the server dedupes PENDING/RUNNING analyses on retry).
+        if artefact_uuid:
+            self.api.queue_analysis(artefact_uuid, AnalysisType.FLUX_VISUALISATION.value)
+            self.api.queue_analysis(artefact_uuid, AnalysisType.FLUX_DECODE.value)
         self.complete_analysis(
             analysis_id,
             tool_name='hxcfe',
             summary='No track density mismatch detected',
             details=json.dumps({'detection': detection}),
         )
-        # No density mismatch: queue downstream analyses on the original SCP.
-        if artefact_uuid:
-            self.api.queue_analysis(artefact_uuid, AnalysisType.FLUX_VISUALISATION.value)
-            self.api.queue_analysis(artefact_uuid, AnalysisType.FLUX_DECODE.value)
         return
 
     # Step 4: extract even tracks → density-corrected SCP
