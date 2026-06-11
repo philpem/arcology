@@ -9,7 +9,7 @@ The system has three main components connected via a REST API:
 - **Analysis worker** (`worker/`) - Standalone Python process that polls for analysis jobs and runs external tools
 - **CLI tool** (`cli/`) - `arco` command-line client for creating items and uploading artefacts from a client PC
 
-Shared type definitions (enums, archive formats) live in `shared/` and are imported by all three components.
+Shared type definitions (enums, archive formats) live in `arcology_shared/` and are imported by all three components.
 
 ## Architecture
 
@@ -50,7 +50,7 @@ arcology/
 │   ├── utils/                  # Utility modules
 │   ├── templates/              # Jinja2 templates (Bootstrap 5)
 │   └── static/                 # CSS
-├── shared/                     # Shared definitions (web app, worker, and CLI)
+├── arcology_shared/            # Shared definitions (web app, worker, and CLI)
 │   ├── enums.py                # ArtefactType and AnalysisType (single source of truth)
 │   └── archive_formats.py      # Archive format definitions
 ├── worker/                     # Analysis worker (separate container)
@@ -207,8 +207,8 @@ See `doc/ADMIN_COMMANDS.md` for the full reference including all flags.
 - **Application factory pattern**: `create_app()` in `app.py`; extensions bound in factory, not at import time
 - **Blueprint auto-discovery**: Any module in `myapp/blueprints/` with a `blueprint` variable is auto-registered. Optional `init_app(app)` for additional setup.
 - **Single database model file**: All SQLAlchemy models and web-specific enums live in `myapp/database.py`
-- **Shared enums**: `ArtefactType` and `AnalysisType` are defined in `shared/enums.py` and imported by both `myapp/database.py` and the worker — edit only `shared/enums.py` when adding new types
-- **Shared archive formats**: `ArchiveType` and `ARCHIVE_FORMATS` are defined in `shared/archive_formats.py` and imported by the worker — edit only `shared/archive_formats.py`
+- **Shared enums**: `ArtefactType` and `AnalysisType` are defined in `arcology_shared/enums.py` and imported by both `myapp/database.py` and the worker — edit only `arcology_shared/enums.py` when adding new types
+- **Shared archive formats**: `ArchiveType` and `ARCHIVE_FORMATS` are defined in `arcology_shared/archive_formats.py` and imported by the worker — edit only `arcology_shared/archive_formats.py`
 - **CSRF**: Enabled globally via Flask-WTF. The API blueprint exempts itself in `init_app()`.
 - **Security**: bcrypt password hashing, CSRF protection, UUID-based URLs (no IDOR)
 
@@ -283,7 +283,7 @@ Set `OIDC_ROLE_STAFF` (default `arcology-staff`) in the IdP to map SSO users to 
 
 ### Adding a new analysis type
 
-1. Add to `AnalysisType` enum in `shared/enums.py`
+1. Add to `AnalysisType` enum in `arcology_shared/enums.py`
 2. Add to `ANALYSIS_MAP` in `myapp/blueprints/artefacts.py`
 3. Implement handler in `worker/arcworker/analysis.py`
 4. Write a migration to add the value to the PostgreSQL `analysistype` enum — **use the enum NAME (uppercase), not the value** (see "Adding values to a PostgreSQL enum" below)
@@ -346,7 +346,7 @@ Python `enum.Enum` class in this project.
 
 ### Adding a new artefact type
 
-1. Add to `ArtefactType` enum in `shared/enums.py`
+1. Add to `ArtefactType` enum in `arcology_shared/enums.py`
 2. Add extension mapping in `EXTENSION_MAP` in `myapp/blueprints/artefacts.py`
 3. Add entries to `ANALYSIS_MAP` for auto-queued analyses
 
@@ -362,7 +362,7 @@ minimal, self-contained example of every step below.
 
 **Checklist** (use DFI or A2R as the reference implementation):
 
-1. **`shared/enums.py`** — add `NEWTYPE = "newtype"` to `ArtefactType` in the
+1. **`arcology_shared/enums.py`** — add `NEWTYPE = "newtype"` to `ArtefactType` in the
    "Flux-level floppy images" group.
 
 2. **`myapp/blueprints/artefacts.py`**
@@ -424,7 +424,7 @@ minimal, self-contained example of every step below.
 
 ### Adding a new archive format
 
-1. Add the new type to `ArchiveType` enum in `shared/archive_formats.py`
+1. Add the new type to `ArchiveType` enum in `arcology_shared/archive_formats.py`
 2. Add entry to `ARCHIVE_FORMATS` in the same file
 3. Add extraction branch in `process_archive_extract` in `worker/arcworker/analysis.py`
 4. Update format table in `doc/ARCHIVE_EXTRACTION.md`
@@ -628,9 +628,9 @@ Upload triggers auto-analysis based on `ANALYSIS_MAP` -> worker claims job atomi
 
 | File | Role |
 |------|------|
-| `shared/enums.py` | `ArtefactType` and `AnalysisType` — single source of truth for web, worker, and CLI |
-| `shared/archive_formats.py` | `ArchiveType`, `ARCHIVE_FORMATS`, helpers — single source of truth |
-| `shared/storage.py` | Storage backend abstraction (`LocalStorage` and `S3Storage`); selected via `STORAGE_BACKEND` env var |
+| `arcology_shared/enums.py` | `ArtefactType` and `AnalysisType` — single source of truth for web, worker, and CLI |
+| `arcology_shared/archive_formats.py` | `ArchiveType`, `ARCHIVE_FORMATS`, helpers — single source of truth |
+| `arcology_shared/storage.py` | Storage backend abstraction (`LocalStorage` and `S3Storage`); selected via `STORAGE_BACKEND` env var |
 | `myapp/database.py` | All SQLAlchemy models and web-specific enums (`AnalysisStatus`, `FilesystemType`, etc.) |
 | `myapp/blueprints/artefacts.py` | `EXTENSION_MAP` (type detection) and `ANALYSIS_MAP` (auto-analysis rules) |
 | `myapp/blueprints/search.py` | Global search: `parse_query()`, `_run_search()`, prefix query syntax |
@@ -689,9 +689,9 @@ Worker external tools (compiled in worker Dockerfile): Fluxfox (Rust), HxCFE (C)
 ## Common Gotchas
 
 - **Switching branches with migrations**: The database schema is independent of your git branch. Before checking out a branch that has different migrations, run `python devtools/db_branch_switch.py [target-branch]` to downgrade the DB first. See `doc/BRANCH_DB_SWITCHING.md`.
-- `ArtefactType` and `AnalysisType` live in `shared/enums.py` — edit there only; web app, worker, and CLI all import from it
-- `ArchiveType` and `ARCHIVE_FORMATS` live in `shared/archive_formats.py` — edit there only
-- When running the worker **outside Docker** locally, run from the repo root: `python worker/worker.py`. The entry point adds the repo root to `sys.path` automatically so `shared/` is importable
+- `ArtefactType` and `AnalysisType` live in `arcology_shared/enums.py` — edit there only; web app, worker, and CLI all import from it
+- `ArchiveType` and `ARCHIVE_FORMATS` live in `arcology_shared/archive_formats.py` — edit there only
+- When running the worker **outside Docker** locally, run from the repo root: `python worker/worker.py`. The entry point adds the repo root to `sys.path` automatically so `arcology_shared/` is importable
 - The worker Dockerfile multi-stage build compiles several tools from source and is slow to build
 - `myapp.cfg` is optional — environment variables take precedence and suffice for Docker deployments. `SQLALCHEMY_DATABASE_URI`, `SECRET_KEY`, and `WORKER_API_KEY` are all read from the environment if not set in `myapp.cfg`
 - `SECRET_KEY` auto-generates with a warning if missing, left at the default placeholder, or too short — set it explicitly in `.env` or `myapp.cfg` for persistent sessions
@@ -704,7 +704,7 @@ Worker external tools (compiled in worker Dockerfile): Fluxfox (Rust), HxCFE (C)
 - **Migration branch conflicts**: If two PRs both add a migration extending the same chain head, merging both creates "Multiple head revisions." CI detects this on PRs via `ci/check_migration_conflict.py`. A pre-push hook is available in `hooks/` (`git config core.hooksPath hooks`). See `doc/MIGRATION_CONFLICTS.md` for resolution steps.
 - Upload limit is 4GB (`MAX_CONTENT_LENGTH` in config)
 - `STALE_JOB_TIMEOUT_SECONDS` (default 3600) controls how long a job may stay in `RUNNING` state before it is considered stuck and eligible for reset back to `PENDING`. Set this above the longest expected analysis run time.
-- **S3 object Content-Type must be set at upload time, not inferred at read.** S3-compatible backends (Garage, MinIO, AWS) do not auto-detect MIME types from the key extension — if the object is uploaded without `ContentType`, browsers receive a wrong/generic type (often `text/xml` or `application/octet-stream`) and download instead of rendering inline. This was first hit with `.svg` outputs from Draw-to-SVG (fixed in commit `44091c1`) and applies equally to any worker-generated output (PNG, JPEG, SVG from WMF/EMF, etc.). `shared/storage.py`'s `S3Storage.put()` / `put_tree()` already handle this by calling `mimetypes.guess_type()` and passing `ExtraArgs={'ContentType': ...}`; `presigned_url()` also sets `ResponseContentType`. When adding a new output format, make sure (a) the saved filename has the correct extension, and (b) `mimetypes` can map that extension — for unusual types, call `mimetypes.add_type(...)` at module load in `shared/storage.py` (as we do for `.svg`). On the read side, `get_output_file()` in `myapp/blueprints/artefacts.py` and `myapp/blueprints/api.py` must also pass `mimetype=` to `send_file()` so local-storage serving matches.
+- **S3 object Content-Type must be set at upload time, not inferred at read.** S3-compatible backends (Garage, MinIO, AWS) do not auto-detect MIME types from the key extension — if the object is uploaded without `ContentType`, browsers receive a wrong/generic type (often `text/xml` or `application/octet-stream`) and download instead of rendering inline. This was first hit with `.svg` outputs from Draw-to-SVG (fixed in commit `44091c1`) and applies equally to any worker-generated output (PNG, JPEG, SVG from WMF/EMF, etc.). `arcology_shared/storage.py`'s `S3Storage.put()` / `put_tree()` already handle this by calling `mimetypes.guess_type()` and passing `ExtraArgs={'ContentType': ...}`; `presigned_url()` also sets `ResponseContentType`. When adding a new output format, make sure (a) the saved filename has the correct extension, and (b) `mimetypes` can map that extension — for unusual types, call `mimetypes.add_type(...)` at module load in `arcology_shared/storage.py` (as we do for `.svg`). On the read side, `get_output_file()` in `myapp/blueprints/artefacts.py` and `myapp/blueprints/api.py` must also pass `mimetype=` to `send_file()` so local-storage serving matches.
 - **Bootstrap 5 collapse + `stopPropagation` does not work reliably.** Bootstrap 5's collapse plugin wires its click listener via document-level event delegation, so calling `event.stopPropagation()` on a child element (or even on the toggle element's immediate container) does not prevent the collapse from firing. The reliable fix is to remove `data-bs-toggle`/`data-bs-target` from the toggle element and drive the collapse programmatically: add a JS `click` listener on the row, check `event.target.closest('.some-actions-class')` to bail out early for clicks on interactive children, and call `bootstrap.Collapse.getOrCreateInstance(collapseEl, { toggle: false }).toggle()` for all other clicks. See `myapp/templates/hashdb/view.html` for a worked example.
 - **Jinja2 `{% block %}` inside `{% if %}` is unreliable.** Block tags are resolved at parse/compile time for template inheritance, but `{% if %}` is evaluated at render time. Wrapping a `{% block %}` in `{% if %}` works in simple cases but breaks subtly when a child template tries to override the conditional block, or when the condition affects whether `{{ super() }}` is called. Always put the `{% if %}` *inside* the block, never wrap the block in the conditional:
   ```jinja

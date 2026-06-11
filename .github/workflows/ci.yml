@@ -25,7 +25,7 @@ jobs:
             migrations:
               - 'migrations/**'
               - 'myapp/database.py'
-              - 'shared/enums.py'
+              - 'arcology_shared/enums.py'
               - 'requirements.txt'
 
   lint:

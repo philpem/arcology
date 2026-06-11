@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=64"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "arcology-cli"
@@ -29,3 +29,24 @@ Repository = "https://github.com/philpem/arcology"
 
 [project.scripts]
 arco = "arccli.main:main"
+
+# The repo-level shared/ package (enums, bundle marker, archive formats) is
+# bundled into the wheel so the CLI can import it without a repo checkout.
+# shared/ remains the single source of truth used by the web app and worker;
+# the wheel carries a copy taken at build time.
+#
+# Note for editable installs (`pip install -e cli/`): hatchling copies
+# force-included files at install time rather than linking them, so changes
+# to shared/ need the editable install re-run to be picked up.  In-repo
+# development is unaffected (tests put the repo root on sys.path).
+[tool.hatch.build.targets.wheel]
+packages = ["arccli"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"../arcology_shared" = "arcology_shared"
+
+[tool.hatch.build.targets.sdist]
+include = ["arccli", "pyproject.toml"]
+
+[tool.hatch.build.targets.sdist.force-include]
+"../arcology_shared" = "arcology_shared"

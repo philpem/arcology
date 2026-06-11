@@ -6,13 +6,27 @@ opening a browser.
 
 ## Installation
 
+On a client machine (no repo checkout required) install a released wheel from
+the [Releases page](https://github.com/philpem/arcology/releases), or build
+from git:
+
+```bash
+pip install https://github.com/philpem/arcology/releases/download/cli-v0.2.0/arcology_cli-0.2.0-py3-none-any.whl
+# or
+pip install "arcology-cli @ git+https://github.com/philpem/arcology.git#subdirectory=cli"
+```
+
+From a development checkout:
+
 ```bash
 pip install -e cli/
 ```
 
-From a development checkout, the `arco` command is available immediately.
-No shared libraries are required: `arco` communicates with Arcology entirely
-over HTTP.
+The wheel bundles the repo's `arcology_shared/` package (enums, bundle marker), so no
+other Arcology code is needed on the client: `arco` communicates with the
+server entirely over HTTP.  Releases are produced by the `Release CLI`
+workflow when a `cli-v*` tag is pushed (the tag must match the version in
+`cli/pyproject.toml`).
 
 ## Configuration
 

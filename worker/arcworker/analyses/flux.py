@@ -7,7 +7,7 @@ flux→IMD/HFE/RAW_SECTOR decode, and HFE mastering / protection scans.
 
 import json
 from pathlib import Path
-from shared.enums import AnalysisType, ArtefactType
+from arcology_shared.enums import AnalysisType, ArtefactType
 from ..config import MASTERING_TRACK_SCAN_COUNT, log
 from ..tools import (
     a2r_to_scp_gw,

@@ -248,6 +248,7 @@ class TestSearchLogic(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        from arcology_shared.enums import ArtefactType
         from myapp.app import create_app
         from myapp.database import (
             Artefact,
@@ -262,7 +263,6 @@ class TestSearchLogic(unittest.TestCase):
             Tag,
         )
         from myapp.extensions import db as _db
-        from shared.enums import ArtefactType
 
         cls.app = create_app()
         cls.app.config['TESTING'] = True
@@ -931,6 +931,7 @@ class TestHashDBSearch(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        from arcology_shared.enums import ArtefactType
         from myapp.app import create_app
         from myapp.blueprints.hashdb import search as _search_view  # noqa: F401 – import check
         from myapp.database import (
@@ -945,7 +946,6 @@ class TestHashDBSearch(unittest.TestCase):
             StorageDirectory,
         )
         from myapp.extensions import db as _db
-        from shared.enums import ArtefactType
 
         cls.app = create_app()
         cls.app.config['TESTING'] = True
@@ -1159,6 +1159,7 @@ class TestMultiValuePagination(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        from arcology_shared.enums import ArtefactType
         from myapp.app import create_app
         from myapp.database import (
             Artefact,
@@ -1167,7 +1168,6 @@ class TestMultiValuePagination(unittest.TestCase):
             StorageDirectory,
         )
         from myapp.extensions import db as _db
-        from shared.enums import ArtefactType
 
         cls.app = create_app()
         cls.app.config['TESTING'] = True

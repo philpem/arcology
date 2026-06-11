@@ -8,7 +8,7 @@ the worker simply triggers it via the API and records the result.
 
 import json
 from pathlib import Path
-from shared.enums import AnalysisType
+from arcology_shared.enums import AnalysisType
 from ._common import analysis_handler
 
 

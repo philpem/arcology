@@ -33,9 +33,9 @@ class TestArtefactAnalysisStatus(unittest.TestCase):
             db.create_all()
 
     def _make_artefact(self, item, label, parent=None):
+        from arcology_shared.enums import ArtefactType
         from myapp.database import Artefact
         from myapp.extensions import db
-        from shared.enums import ArtefactType
 
         artefact = Artefact(
             item_id=item.id,
@@ -50,9 +50,9 @@ class TestArtefactAnalysisStatus(unittest.TestCase):
         return artefact
 
     def _add_analyses(self, artefact, statuses):
+        from arcology_shared.enums import AnalysisType
         from myapp.database import Analysis, AnalysisStatus
         from myapp.extensions import db
-        from shared.enums import AnalysisType
 
         for s in statuses:
             db.session.add(Analysis(

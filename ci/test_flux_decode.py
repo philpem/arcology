@@ -27,7 +27,7 @@ if _REPO_ROOT not in sys.path:
 
 os.environ.setdefault('WORKER_API_KEY', 'test')
 
-from shared.enums import AnalysisType, ArtefactType
+from arcology_shared.enums import AnalysisType, ArtefactType
 from worker.arcworker.analyses.flux import process_detect_track_density, process_flux_decode
 from worker.arcworker.analysis import AnalysisWorker
 

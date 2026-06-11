@@ -10,7 +10,7 @@ import py_compile
 import sys
 
 # Directories to check, relative to the repository root
-CHECK_DIRS = ['myapp', 'worker', 'shared', 'ci', 'migrations']
+CHECK_DIRS = ['myapp', 'worker', 'arcology_shared', 'ci', 'migrations']
 
 
 def find_python_files(base_dir):

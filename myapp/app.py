@@ -148,7 +148,7 @@ def create_app(config_name=None):
     csrf.init_app(app)
 
     # Initialise storage backend (local filesystem or S3-compatible)
-    from shared.storage import create_storage
+    from arcology_shared.storage import create_storage
     storage_config = dict(app.config)
     # Resolve relative folder paths to absolute for local storage
     upload_folder = app.config.get('UPLOAD_FOLDER', 'uploads')

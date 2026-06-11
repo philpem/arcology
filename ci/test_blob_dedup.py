@@ -18,9 +18,9 @@ os.environ.setdefault("WORKER_API_KEY", "ci-test-worker-key")
 
 class TestBlobDedup(unittest.TestCase):
     def setUp(self):
+        from arcology_shared.storage import create_storage
         from myapp.app import create_app
         from myapp.extensions import db
-        from shared.storage import create_storage
 
         self.tmpdir = tempfile.mkdtemp(prefix="arcology-blob-dedup-")
         self.app = create_app()
@@ -39,6 +39,7 @@ class TestBlobDedup(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_identical_uploads_are_distinct_artefacts_sharing_one_blob(self):
+        from arcology_shared.enums import ArtefactType
         from myapp.database import (
             Artefact,
             Item,
@@ -48,7 +49,6 @@ class TestBlobDedup(unittest.TestCase):
             User,
         )
         from myapp.utils.blobs import assign_blob
-        from shared.enums import ArtefactType
 
         payload = b"same bytes"
         sha256 = hashlib.sha256(payload).hexdigest()
@@ -124,10 +124,10 @@ class TestBlobDedup(unittest.TestCase):
             self.assertEqual(UploadBlob.query.count(), 1)
 
     def test_output_blob_keeps_logical_lineage_path_and_physical_blob_path(self):
+        from arcology_shared.enums import ArtefactType
         from myapp.database import Artefact, Item, OutputBlob, Platform, StorageDirectory
         from myapp.utils.api_serializers import artefact_to_dict
         from myapp.utils.blobs import assign_blob
-        from shared.enums import ArtefactType
 
         payload = b"derived image"
         sha256 = hashlib.sha256(payload).hexdigest()
@@ -162,9 +162,9 @@ class TestBlobDedup(unittest.TestCase):
             )
 
     def test_rehashing_output_blob_preserves_physical_and_logical_paths(self):
+        from arcology_shared.enums import ArtefactType
         from myapp.database import Artefact, Item, OutputBlob, Platform, StorageDirectory
         from myapp.utils.blobs import assign_blob
-        from shared.enums import ArtefactType
 
         old_sha256 = hashlib.sha256(b"incorrect hash").hexdigest()
         new_sha256 = hashlib.sha256(b"actual content").hexdigest()
@@ -207,9 +207,9 @@ class TestBlobDedup(unittest.TestCase):
             self.assertEqual(OutputBlob.query.count(), 1)
 
     def test_rehashing_shared_blob_updates_all_artefact_hashes(self):
+        from arcology_shared.enums import ArtefactType
         from myapp.database import Artefact, Item, Platform, StorageDirectory
         from myapp.utils.blobs import assign_blob
-        from shared.enums import ArtefactType
 
         old_sha256 = hashlib.sha256(b"old metadata").hexdigest()
         new_sha256 = hashlib.sha256(b"shared bytes").hexdigest()
@@ -251,9 +251,9 @@ class TestBlobDedup(unittest.TestCase):
             self.assertEqual(artefacts[0].upload_blob_id, artefacts[1].upload_blob_id)
 
     def test_rehashing_converges_on_existing_blob_and_removes_obsolete_object(self):
+        from arcology_shared.enums import ArtefactType
         from myapp.database import Artefact, Item, Platform, StorageDirectory, UploadBlob
         from myapp.utils.blobs import assign_blob
-        from shared.enums import ArtefactType
 
         old_sha256 = hashlib.sha256(b"incorrect metadata").hexdigest()
         canonical_sha256 = hashlib.sha256(b"canonical bytes").hexdigest()
@@ -310,10 +310,10 @@ class TestBlobDedup(unittest.TestCase):
             self.assertTrue(self.app.storage.exists("uploads/canonical.img"))
 
     def test_blob_object_is_deleted_only_after_last_reference(self):
+        from arcology_shared.enums import ArtefactType
         from myapp.database import Artefact, Item, Platform, StorageDirectory, UploadBlob
         from myapp.services.artefact_lifecycle import delete_artefact_files as _delete_artefact_files
         from myapp.utils.blobs import assign_blob
-        from shared.enums import ArtefactType
 
         payload = b"shared deletion content"
         sha256 = hashlib.sha256(payload).hexdigest()
@@ -367,10 +367,10 @@ class TestBlobDedup(unittest.TestCase):
         each delete_artefact_files call saw the other sibling as an external
         reference and neither call deleted the blob or the physical file.
         """
+        from arcology_shared.enums import ArtefactType
         from myapp.database import Artefact, Item, Platform, StorageDirectory, UploadBlob
         from myapp.services.artefact_lifecycle import delete_artefact_files as _delete_artefact_files
         from myapp.utils.blobs import assign_blob
-        from shared.enums import ArtefactType
 
         payload = b"batch deletion content"
         sha256 = hashlib.sha256(payload).hexdigest()

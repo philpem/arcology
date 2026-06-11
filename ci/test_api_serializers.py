@@ -27,10 +27,10 @@ class TestArtefactToDictSlugs(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        from arcology_shared.enums import ArtefactType
         from myapp.app import create_app
         from myapp.database import Artefact, Item
         from myapp.extensions import db
-        from shared.enums import ArtefactType
 
         cls.app = create_app()
         cls.app.config['TESTING'] = True
@@ -121,10 +121,10 @@ class TestAnalysisToDictArtefactShape(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        from arcology_shared.enums import AnalysisType, ArtefactType
         from myapp.app import create_app
         from myapp.database import Analysis, Artefact, Item
         from myapp.extensions import db
-        from shared.enums import AnalysisType, ArtefactType
 
         cls.app = create_app()
         cls.app.config['TESTING'] = True
@@ -211,10 +211,10 @@ class TestOrphanEnumSerialization(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        from arcology_shared.enums import AnalysisType, ArtefactType
         from myapp.app import create_app
         from myapp.database import Analysis, Artefact, Item
         from myapp.extensions import db
-        from shared.enums import AnalysisType, ArtefactType
 
         cls.app = create_app()
         cls.app.config['TESTING'] = True

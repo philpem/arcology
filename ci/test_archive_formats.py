@@ -1,11 +1,11 @@
 """
-Unit tests for shared/archive_formats.py.
+Unit tests for arcology_shared/archive_formats.py.
 
 Checks that the ARCHIVE_FORMATS dict is internally consistent: every
 ArchiveType enum member has an entry, required fields are present, and
 the helper functions behave correctly.
 
-shared/archive_formats.py has no external dependencies, so these tests
+arcology_shared/archive_formats.py has no external dependencies, so these tests
 run without a Flask app context (though they are grouped in the app-tests
 CI job for simplicity).
 
@@ -21,7 +21,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from shared.archive_formats import (
+from arcology_shared.archive_formats import (
     ARCHIVE_FORMATS,
     ArchiveCategory,
     ArchiveType,
@@ -44,7 +44,7 @@ class TestArchiveFormatsCompleteness(unittest.TestCase):
         self.assertFalse(
             missing,
             f'ArchiveType members without an ARCHIVE_FORMATS entry: {missing}\n'
-            'Add an entry to ARCHIVE_FORMATS in shared/archive_formats.py.',
+            'Add an entry to ARCHIVE_FORMATS in arcology_shared/archive_formats.py.',
         )
 
     def test_no_extra_format_entries(self):

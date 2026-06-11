@@ -59,8 +59,8 @@ def _make_artefact(db, label='Art', filename='art.img', parent=None):
     When ``parent`` is given the new artefact is created as a derived child of
     it (sharing the parent's item) instead of a fresh root.
     """
+    from arcology_shared.enums import ArtefactType
     from myapp.database import Artefact, Item, Platform
-    from shared.enums import ArtefactType
 
     if parent is not None:
         item_id = parent.item_id

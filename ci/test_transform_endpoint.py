@@ -32,6 +32,7 @@ class TestTransformToDiskImage(unittest.TestCase):
             _db.create_all()
 
     def setUp(self):
+        from arcology_shared.enums import ArtefactType
         from myapp.database import (
             Artefact,
             Item,
@@ -40,7 +41,6 @@ class TestTransformToDiskImage(unittest.TestCase):
             StorageDirectory,
             UploadBlob,
         )
-        from shared.enums import ArtefactType
         with self.app.app_context():
             from myapp.database import Analysis
             Analysis.query.delete()
@@ -85,8 +85,8 @@ class TestTransformToDiskImage(unittest.TestCase):
         )
 
     def test_happy_path(self):
+        from arcology_shared.enums import AnalysisType, ArtefactType
         from myapp.database import Analysis, Artefact, StorageDirectory
-        from shared.enums import AnalysisType, ArtefactType
         resp = self._post(self._payload())
         self.assertEqual(resp.status_code, 200, resp.data)
         with self.app.app_context():
@@ -110,7 +110,7 @@ class TestTransformToDiskImage(unittest.TestCase):
             art = Artefact.query.filter_by(uuid=self.artefact_uuid).one()
             self.assertEqual(art.storage_path, 'newimage.zst')
             # Still exactly one PARTITION_DETECT (no duplicate queued).
-            from shared.enums import AnalysisType
+            from arcology_shared.enums import AnalysisType
             n = Analysis.query.filter_by(
                 artefact_id=art.id, analysis_type=AnalysisType.PARTITION_DETECT).count()
             self.assertEqual(n, 1)
@@ -126,8 +126,8 @@ class TestTransformToDiskImage(unittest.TestCase):
         # The stored bytes become a disk image, so the type MUST follow the
         # content even if a ZIP type was manually pinned — otherwise a stale ZIP
         # type would re-queue ARCHIVE_EXTRACT against a raw image.
+        from arcology_shared.enums import ArtefactType
         from myapp.database import Artefact
-        from shared.enums import ArtefactType
         with self.app.app_context():
             art = Artefact.query.filter_by(uuid=self.artefact_uuid).one()
             art.type_overridden = True
@@ -140,9 +140,9 @@ class TestTransformToDiskImage(unittest.TestCase):
             self.assertEqual(art.storage_path, 'newimage.zst')
 
     def test_duplicate_image_content_reuses_blob_without_merging_artefacts(self):
+        from arcology_shared.enums import ArtefactType
         from myapp.database import Artefact, StorageDirectory, UploadBlob
         from myapp.utils.blobs import assign_blob
-        from shared.enums import ArtefactType
         dup_sha = 'c' * 64
         with self.app.app_context():
             art = Artefact.query.filter_by(uuid=self.artefact_uuid).one()

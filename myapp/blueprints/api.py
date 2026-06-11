@@ -19,7 +19,7 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import contains_eager, joinedload, selectinload
 from sqlalchemy.orm.exc import StaleDataError
-from shared.enums import COMPRESSED_RAW_SECTOR_TYPES
+from arcology_shared.enums import COMPRESSED_RAW_SECTOR_TYPES
 from ..database import (
     _API_KEY_PERMISSION_ORDER,
     Analysis,

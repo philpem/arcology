@@ -15,7 +15,7 @@ import json
 import signal
 from contextlib import contextmanager
 from pathlib import Path
-from shared.enums import AnalysisType, ArtefactType
+from arcology_shared.enums import AnalysisType, ArtefactType
 from ..config import log
 from ..tools import (
     convert_draw,

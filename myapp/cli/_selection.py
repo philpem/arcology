@@ -2,7 +2,7 @@
 
 import re
 import click
-from shared.enums import ArtefactType
+from arcology_shared.enums import ArtefactType
 from ..database import Artefact, Category, Item, Platform, Tag
 
 

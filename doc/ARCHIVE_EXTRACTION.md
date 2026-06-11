@@ -183,12 +183,12 @@ raFS and LongFiles remain deferred.
 
 ## Centralized Archive Definitions
 
-**File**: `shared/archive_formats.py`
+**File**: `arcology_shared/archive_formats.py`
 
 Single source of truth for archive format definitions, used by both web UI and worker:
 
 ```python
-from shared.archive_formats import (
+from arcology_shared.archive_formats import (
     ArchiveType,              # Enum of all formats
     ArchiveCategory,          # ARCHIVE, COMPRESS, or DISK_IMAGE
     get_archive_by_filetype,  # '3fb' -> ArchiveType.ARCFS

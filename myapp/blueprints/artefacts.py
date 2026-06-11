@@ -2526,7 +2526,7 @@ def delete(item_id=None, artefact_id=None, root_id=None, uuid=None):
     delete_artefact_files(artefact)
 
     # Clean up analysis outputs (extraction trees, visualisations, cache).
-    from shared.storage import S3Storage
+    from arcology_shared.storage import S3Storage
     storage = current_app.storage
     if isinstance(storage, S3Storage):
         cleanup_artefact_outputs_s3(artefact, storage)

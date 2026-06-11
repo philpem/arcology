@@ -10,9 +10,9 @@ import json
 import shutil
 from functools import partial
 from pathlib import Path
-from shared.archive_formats import ArchiveType, get_archive_info
-from shared.bundle import BUNDLE_MARKER, is_sidecar_name
-from shared.enums import COMPRESSED_RAW_SECTOR_TYPES, AnalysisType, ArtefactType
+from arcology_shared.archive_formats import ArchiveType, get_archive_info
+from arcology_shared.bundle import BUNDLE_MARKER, is_sidecar_name
+from arcology_shared.enums import COMPRESSED_RAW_SECTOR_TYPES, AnalysisType, ArtefactType
 from ..config import log
 from ..tools import (
     decompress_single_file,
@@ -870,7 +870,7 @@ def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path)
     Scans partition files for archives and queues extraction jobs.
     """
     import json
-    from shared.archive_formats import (
+    from arcology_shared.archive_formats import (
         get_archive_by_extension,
         get_archive_by_filetype,
         get_archive_info,
@@ -1000,7 +1000,7 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
     the handler creates a new partition for the extracted files.
     """
     import json
-    from shared.archive_formats import (
+    from arcology_shared.archive_formats import (
         ArchiveType,
         get_archive_info,
     )

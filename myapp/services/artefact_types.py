@@ -16,7 +16,7 @@ including CLI commands and background jobs).
 
 import json
 import os
-from shared.enums import AnalysisType, ArtefactType
+from arcology_shared.enums import AnalysisType, ArtefactType
 from ..database import ANALYSIS_PRIORITY_NORMAL, Analysis, AnalysisStatus, Artefact
 from ..extensions import db
 

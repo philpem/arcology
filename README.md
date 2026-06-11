@@ -174,14 +174,19 @@ file archives, and manage hash databases from your terminal.
 ### Installation
 
 ```bash
-# Run directly from a checkout (no install required)
-python cli/arco --help
+# On a client machine, install a released wheel (no repo checkout needed) —
+# see the Releases page for the latest cli-v* tag:
+pip install https://github.com/philpem/arcology/releases/download/cli-v0.2.0/arcology_cli-0.2.0-py3-none-any.whl
 
-# Or install for regular use (editable / development mode)
-pip install -e cli/
+# Or straight from git (pip clones and builds the package):
+pip install "arcology-cli @ git+https://github.com/philpem/arcology.git#subdirectory=cli"
 
 # Or with pipx (isolated install, no virtualenv needed)
 pipx install git+https://github.com/philpem/arcology.git#subdirectory=cli
+
+# From a development checkout: run directly, or editable install
+python cli/arco --help
+pip install -e cli/
 ```
 
 ### Setup

@@ -22,7 +22,7 @@ transaction that records the analysis status.
 import json
 from flask import current_app
 from sqlalchemy import select
-from shared.enums import AnalysisType
+from arcology_shared.enums import AnalysisType
 from ..database import (
     Analysis,
     AnalysisStatus,

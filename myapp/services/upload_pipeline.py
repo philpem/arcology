@@ -20,7 +20,7 @@ assignment onwards happens here:
 
 from dataclasses import dataclass, field
 from flask import current_app
-from shared.enums import AnalysisType
+from arcology_shared.enums import AnalysisType
 from ..database import ANALYSIS_PRIORITY_NORMAL, Artefact, Item, StorageDirectory
 from ..extensions import db
 from ..services.artefact_types import queue_analyses_for_artefact

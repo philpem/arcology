@@ -19,7 +19,7 @@ if _REPO_ROOT not in sys.path:
 
 
 import worker.arcworker.analyses.extraction as ext  # noqa: E402
-from shared.bundle import BUNDLE_MARKER  # noqa: E402
+from arcology_shared.bundle import BUNDLE_MARKER  # noqa: E402
 from worker.arcworker.analyses.extraction import (  # noqa: E402
     _disk_image_bundle_member,
     _image_base_name,
@@ -129,7 +129,7 @@ class TestHandleBundle(unittest.TestCase):
         return calls
 
     def test_sidecars_registered_as_sidecar_child_artefacts(self):
-        from shared.enums import ArtefactType
+        from arcology_shared.enums import ArtefactType
         calls = self._run()
         self.assertNotIn('fail', calls)
         # One derived artefact per sidecar (the image itself is NOT re-registered).

@@ -33,6 +33,7 @@ class TestArtefactCleanupRegression(unittest.TestCase):
     """Regression coverage for artefact/output cleanup paths."""
 
     def setUp(self):
+        from arcology_shared.enums import AnalysisType, ArtefactType
         from myapp.app import create_app
         from myapp.database import (
             Analysis,
@@ -45,7 +46,6 @@ class TestArtefactCleanupRegression(unittest.TestCase):
             UserPermission,
         )
         from myapp.extensions import db as _db
-        from shared.enums import AnalysisType, ArtefactType
 
         self.app = create_app()
         self.app.config['TESTING'] = True
@@ -60,7 +60,7 @@ class TestArtefactCleanupRegression(unittest.TestCase):
         os.makedirs(self.output_folder, exist_ok=True)
 
         # Re-initialise storage backend with updated folder paths
-        from shared.storage import create_storage
+        from arcology_shared.storage import create_storage
         storage_config = dict(self.app.config)
         storage_config['UPLOAD_FOLDER'] = self.upload_folder
         storage_config['OUTPUT_FOLDER'] = self.output_folder
@@ -210,6 +210,7 @@ class TestReanalysisClearsMediaMetadata(unittest.TestCase):
     """
 
     def setUp(self):
+        from arcology_shared.enums import ArtefactType
         from myapp.app import create_app
         from myapp.database import (
             Artefact,
@@ -218,7 +219,6 @@ class TestReanalysisClearsMediaMetadata(unittest.TestCase):
             StorageDirectory,
         )
         from myapp.extensions import db as _db
-        from shared.enums import ArtefactType
 
         self.app = create_app()
         self.app.config['TESTING'] = True
@@ -231,7 +231,7 @@ class TestReanalysisClearsMediaMetadata(unittest.TestCase):
         os.makedirs(self.upload_folder, exist_ok=True)
         os.makedirs(self.output_folder, exist_ok=True)
 
-        from shared.storage import create_storage
+        from arcology_shared.storage import create_storage
         self.app.storage = create_storage(dict(self.app.config))
 
         self.db = _db

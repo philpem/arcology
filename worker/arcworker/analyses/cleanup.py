@@ -21,7 +21,7 @@ a missing key just means there is nothing left to delete.
 
 import json
 from pathlib import Path
-from shared.enums import AnalysisType
+from arcology_shared.enums import AnalysisType
 from ..config import log
 from ._common import analysis_handler
 

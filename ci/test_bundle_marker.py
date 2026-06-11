@@ -1,9 +1,9 @@
 """
-Tests that the CLI's local bundle-marker / sidecar definitions stay in sync with
-the worker/web source of truth in ``shared/bundle.py`` (the ``arco`` package is
-installed standalone and cannot import ``shared`` at runtime, so the constants
-are duplicated and drift-checked here), and that the marker the CLI writes into a
-bundle zip round-trips through the worker's ``read_zip_comment``.
+Tests that the CLI uses the bundle-marker / sidecar definitions from
+``arcology_shared/bundle.py`` (the ``arco`` wheel bundles the shared package, so the
+CLI imports it directly — no drift-checked copies), and that the marker the
+CLI writes into a bundle zip round-trips through the worker's
+``read_zip_comment``.
 """
 
 import os
@@ -17,18 +17,16 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 
-import shared.bundle as shared_bundle  # noqa: E402
+import arcology_shared.bundle as shared_bundle  # noqa: E402
 from cli.arccli.commands import bulk_import as cli  # noqa: E402
 from worker.arcworker.tools.archives import read_zip_comment  # noqa: E402
 
 
-class TestMarkerDrift(unittest.TestCase):
-    def test_marker_matches_shared(self):
-        self.assertEqual(cli._BUNDLE_MARKER, shared_bundle.BUNDLE_MARKER)
-
-    def test_sidecar_rules_match_shared(self):
-        self.assertEqual(cli._SIDECAR_NAME_PREFIXES, shared_bundle.SIDECAR_NAME_PREFIXES)
-        self.assertEqual(cli._SIDECAR_EXTENSIONS, shared_bundle.SIDECAR_EXTENSIONS)
+class TestCliUsesShared(unittest.TestCase):
+    def test_cli_imports_shared_marker(self):
+        # The CLI must use arcology_shared.bundle directly, not a local copy.
+        self.assertIs(cli.BUNDLE_MARKER, shared_bundle.BUNDLE_MARKER)
+        self.assertIs(cli.is_sidecar_name, shared_bundle.is_sidecar_name)
 
 
 class TestMarkerRoundTrip(unittest.TestCase):

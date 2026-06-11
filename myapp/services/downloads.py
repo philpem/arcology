@@ -93,7 +93,7 @@ def serve_output_file(filename):
     Callers must have already enforced artefact visibility via
     resolve_output_artefact().
     """
-    from shared.storage import LocalStorage
+    from arcology_shared.storage import LocalStorage
 
     storage = current_app.storage
     key = storage.storage_key('outputs', filename)

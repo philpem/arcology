@@ -27,8 +27,8 @@ os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 
 _WORKER_KEY = os.environ['WORKER_API_KEY']
 
+from arcology_shared.enums import AnalysisType, ArtefactType
 from myapp.blueprints.artefacts import ANALYSIS_MAP
-from shared.enums import AnalysisType, ArtefactType
 
 
 class TestAnalysisMapDoesNotContainChecksum(unittest.TestCase):

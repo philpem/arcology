@@ -51,6 +51,7 @@ class TestApiOutputVisibility(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        from arcology_shared.storage import LocalStorage
         from myapp.app import create_app
         from myapp.database import (
             Artefact,
@@ -59,7 +60,6 @@ class TestApiOutputVisibility(unittest.TestCase):
             UserPermission,
         )
         from myapp.extensions import db
-        from shared.storage import LocalStorage
 
         cls.app = create_app()
         cls.app.config['TESTING'] = True

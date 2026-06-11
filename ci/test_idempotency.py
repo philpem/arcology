@@ -38,8 +38,8 @@ def _make_fixtures(db, app):
 
     Returns (item, artefact) with IDs and UUIDs populated.
     """
+    from arcology_shared.enums import ArtefactType
     from myapp.database import Artefact, Item, Platform
-    from shared.enums import ArtefactType
 
     platform = Platform(name='Test Platform')
     db.session.add(platform)
@@ -117,8 +117,8 @@ class TestRequestAnalysisIdempotency(unittest.TestCase):
         self._post_analysis()
 
         with self.app.app_context():
+            from arcology_shared.enums import AnalysisType
             from myapp.database import Analysis, Artefact
-            from shared.enums import AnalysisType
 
             artefact = Artefact.query.filter_by(uuid=self.artefact_uuid).one()
             count = Analysis.query.filter_by(
@@ -203,8 +203,8 @@ class TestProduceArtefactIdempotency(unittest.TestCase):
     def setUp(self):
         # Create a fresh RUNNING analysis for each test
         with self.app.app_context():
+            from arcology_shared.enums import AnalysisType
             from myapp.database import Analysis, AnalysisStatus, Artefact
-            from shared.enums import AnalysisType
 
             # Remove artefacts derived from previous test analyses
             art = Artefact.query.get(self.artefact_id)
@@ -305,8 +305,8 @@ class TestUniqueConstraintEnforced(unittest.TestCase):
         from sqlalchemy.exc import IntegrityError
 
         with self.app.app_context():
+            from arcology_shared.enums import AnalysisType, ArtefactType
             from myapp.database import Analysis, AnalysisStatus, Artefact
-            from shared.enums import AnalysisType, ArtefactType
 
             analysis = Analysis(
                 artefact_id=self.artefact_id,
@@ -339,8 +339,8 @@ class TestUniqueConstraintEnforced(unittest.TestCase):
     def test_null_analysis_id_allows_multiple_same_path(self):
         """Original artefacts (analysis_id IS NULL) are exempt from the constraint."""
         with self.app.app_context():
+            from arcology_shared.enums import ArtefactType
             from myapp.database import Artefact
-            from shared.enums import ArtefactType
 
             item_id = Artefact.query.get(self.artefact_id).item_id
 

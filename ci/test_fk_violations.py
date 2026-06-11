@@ -68,8 +68,8 @@ class TestItemCascadeDelete(unittest.TestCase):
     def test_delete_item_cascades_to_artefacts(self):
         """Deleting an Item should cascade-delete all its Artefacts."""
         with self.app.app_context():
+            from arcology_shared.enums import ArtefactType
             from myapp.database import Artefact, Item, Platform
-            from shared.enums import ArtefactType
 
             platform = Platform(name='Cascade Platform')
             self.db.session.add(platform)
@@ -181,8 +181,8 @@ class TestArtefactCascadeDelete(unittest.TestCase):
     def test_delete_artefact_cascades_to_analyses(self):
         """Deleting an Artefact should cascade-delete all its Analysis records."""
         with self.app.app_context():
+            from arcology_shared.enums import AnalysisType, ArtefactType
             from myapp.database import Analysis, AnalysisStatus, Artefact
-            from shared.enums import AnalysisType, ArtefactType
 
             item = self._make_item()
             artefact = Artefact(
@@ -212,8 +212,8 @@ class TestArtefactCascadeDelete(unittest.TestCase):
     def test_delete_artefact_cascades_to_partitions_and_files(self):
         """Deleting an Artefact should cascade-delete Partitions and their ExtractedFiles."""
         with self.app.app_context():
+            from arcology_shared.enums import ArtefactType
             from myapp.database import Artefact, ExtractedFile, FilesystemType, Partition
-            from shared.enums import ArtefactType
 
             item = self._make_item()
             artefact = Artefact(
@@ -255,8 +255,8 @@ class TestArtefactCascadeDelete(unittest.TestCase):
     def test_delete_artefact_cascades_to_derived_artefacts(self):
         """Deleting a parent Artefact should cascade-delete derived Artefacts."""
         with self.app.app_context():
+            from arcology_shared.enums import AnalysisType, ArtefactType
             from myapp.database import Analysis, AnalysisStatus, Artefact
-            from shared.enums import AnalysisType, ArtefactType
 
             item = self._make_item()
             parent = Artefact(
@@ -297,8 +297,8 @@ class TestArtefactCascadeDelete(unittest.TestCase):
     def test_delete_artefact_cascades_to_protection_indicators(self):
         """Deleting an Artefact should cascade-delete ArtefactProtection rows."""
         with self.app.app_context():
+            from arcology_shared.enums import ArtefactType
             from myapp.database import Artefact, ArtefactProtection
-            from shared.enums import ArtefactType
 
             item = self._make_item()
             artefact = Artefact(
@@ -322,8 +322,8 @@ class TestArtefactCascadeDelete(unittest.TestCase):
     def test_delete_artefact_cascades_to_mastering_indicators(self):
         """Deleting an Artefact should cascade-delete ArtefactMastering rows."""
         with self.app.app_context():
+            from arcology_shared.enums import ArtefactType
             from myapp.database import Artefact, ArtefactMastering
-            from shared.enums import ArtefactType
 
             item = self._make_item()
             artefact = Artefact(
@@ -347,8 +347,8 @@ class TestArtefactCascadeDelete(unittest.TestCase):
     def test_delete_artefact_cleans_up_tag_associations(self):
         """Deleting an Artefact should remove tag M2M associations but not the Tags."""
         with self.app.app_context():
+            from arcology_shared.enums import ArtefactType
             from myapp.database import Artefact, Tag
-            from shared.enums import ArtefactType
 
             item = self._make_item()
             artefact = Artefact(
@@ -384,6 +384,7 @@ class TestDeepCascadeDelete(unittest.TestCase):
     def test_delete_item_cascades_through_full_hierarchy(self):
         """Deleting an Item should cascade through Artefact -> Partition -> ExtractedFile."""
         with self.app.app_context():
+            from arcology_shared.enums import AnalysisType, ArtefactType
             from myapp.database import (
                 Analysis,
                 AnalysisStatus,
@@ -396,7 +397,6 @@ class TestDeepCascadeDelete(unittest.TestCase):
                 Partition,
                 Platform,
             )
-            from shared.enums import AnalysisType, ArtefactType
 
             platform = Platform(name='Deep Cascade Platform')
             self.db.session.add(platform)
@@ -689,8 +689,8 @@ class TestTagDeletion(unittest.TestCase):
     def test_delete_tag_with_artefact_associations(self):
         """Deleting a Tag associated with Artefacts should not raise IntegrityError."""
         with self.app.app_context():
+            from arcology_shared.enums import ArtefactType
             from myapp.database import Artefact, Item, Platform, Tag
-            from shared.enums import ArtefactType
 
             platform = Platform(name='ArtTag Platform')
             self.db.session.add(platform)
@@ -724,8 +724,8 @@ class TestTagDeletion(unittest.TestCase):
     def test_delete_tag_with_both_item_and_artefact_associations(self):
         """Deleting a Tag associated with both Items and Artefacts should work."""
         with self.app.app_context():
+            from arcology_shared.enums import ArtefactType
             from myapp.database import Artefact, Item, Platform, Tag
-            from shared.enums import ArtefactType
 
             platform = Platform(name='Both Tag Platform')
             self.db.session.add(platform)
@@ -802,6 +802,7 @@ class TestHashDatabaseCascadeDelete(unittest.TestCase):
     def test_delete_known_product_cascades_to_recognised_products(self):
         """Deleting a KnownProduct should cascade-delete RecognisedProduct rows."""
         with self.app.app_context():
+            from arcology_shared.enums import ArtefactType
             from myapp.database import (
                 Artefact,
                 FilesystemType,
@@ -812,7 +813,6 @@ class TestHashDatabaseCascadeDelete(unittest.TestCase):
                 Platform,
                 RecognisedProduct,
             )
-            from shared.enums import ArtefactType
 
             # Create hash database side
             hdb = HashDatabase(name='Recog DB', version='1.0')
@@ -884,6 +884,7 @@ class TestNullableFKEdgeCases(unittest.TestCase):
         or the delete should cascade — either way, no IntegrityError.
         """
         with self.app.app_context():
+            from arcology_shared.enums import ArtefactType
             from myapp.database import (
                 Artefact,
                 ExtractedFile,
@@ -895,7 +896,6 @@ class TestNullableFKEdgeCases(unittest.TestCase):
                 Partition,
                 Platform,
             )
-            from shared.enums import ArtefactType
 
             hdb = HashDatabase(name='NullFK DB', version='1.0')
             self.db.session.add(hdb)
@@ -1007,8 +1007,8 @@ class TestNullableFKEdgeCases(unittest.TestCase):
         ExtractedFile.parent_file_id is a self-referential nullable FK.
         """
         with self.app.app_context():
+            from arcology_shared.enums import ArtefactType
             from myapp.database import Artefact, ExtractedFile, FilesystemType, Item, Partition, Platform
-            from shared.enums import ArtefactType
 
             platform = Platform(name='EF Parent Platform')
             self.db.session.add(platform)
@@ -1086,8 +1086,8 @@ class TestAPIDeleteEndpoints(unittest.TestCase):
     def test_api_delete_item_with_artefacts(self):
         """DELETE /api/items/<uuid> with artefacts should cascade (not 500)."""
         with self.app.app_context():
+            from arcology_shared.enums import ArtefactType
             from myapp.database import Artefact, Item, Platform
-            from shared.enums import ArtefactType
 
             platform = Platform(name='API Del Platform')
             self.db.session.add(platform)
@@ -1115,8 +1115,8 @@ class TestAPIDeleteEndpoints(unittest.TestCase):
     def test_api_delete_artefact_with_analysis(self):
         """DELETE /api/artefacts/<uuid> with analyses should cascade (not 500)."""
         with self.app.app_context():
+            from arcology_shared.enums import AnalysisType, ArtefactType
             from myapp.database import Analysis, AnalysisStatus, Artefact, Item, Platform
-            from shared.enums import AnalysisType, ArtefactType
 
             platform = Platform(name='API ArtDel Platform')
             self.db.session.add(platform)
@@ -1152,6 +1152,7 @@ class TestAPIDeleteEndpoints(unittest.TestCase):
     def test_api_delete_artefact_with_deep_hierarchy(self):
         """DELETE /api/artefacts/<uuid> with derived artefacts, partitions, and files."""
         with self.app.app_context():
+            from arcology_shared.enums import AnalysisType, ArtefactType
             from myapp.database import (
                 Analysis,
                 AnalysisStatus,
@@ -1162,7 +1163,6 @@ class TestAPIDeleteEndpoints(unittest.TestCase):
                 Partition,
                 Platform,
             )
-            from shared.enums import AnalysisType, ArtefactType
 
             platform = Platform(name='API Deep Platform')
             self.db.session.add(platform)
@@ -1238,6 +1238,7 @@ class TestBulkDeleteItem(unittest.TestCase):
     def test_bulk_delete_full_hierarchy(self):
         """bulk_delete_item should remove Item + all descendants in one pass."""
         with self.app.app_context():
+            from arcology_shared.enums import AnalysisType, ArtefactType
             from myapp.database import (
                 Analysis,
                 AnalysisStatus,
@@ -1261,7 +1262,6 @@ class TestBulkDeleteItem(unittest.TestCase):
                 Tag,
             )
             from myapp.services.artefact_lifecycle import bulk_delete_item
-            from shared.enums import AnalysisType, ArtefactType
 
             platform = Platform(name='Bulk Del Platform')
             self.db.session.add(platform)
