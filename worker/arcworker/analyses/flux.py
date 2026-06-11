@@ -242,7 +242,8 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
     Attempts to decode flux to sector image, producing derived artefacts.
 
     Pipeline depends on source type:
-      SCP  → register HFE sibling + IMD sibling (both skip_analyses=[FLUX_DECODE]),
+      SCP  → register HFE sibling (skip_analyses=[FLUX_DECODE, FLUX_VISUALISATION])
+             + IMD sibling (skip_analyses=[FLUX_DECODE]),
              then gw(SCP, detected_format) → RAW_SECTOR
       HFE  → register IMD sibling (skip_analyses=[FLUX_DECODE]),
              then gw(HFE, detected_format) → RAW_SECTOR
@@ -283,12 +284,20 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
         hfe_result = flux_to_hfe_hxcfe(input_path, hfe_path)
         results.append(('HFE', hfe_result))
         if hfe_result['success']:
+            # Skip FLUX_VISUALISATION on the intermediate HFE: it is a
+            # lossy re-encoding of the SCP flux, so its plots would be worse
+            # than the ones already produced from the source SCP. Flux plots
+            # are only generated for HFEs uploaded directly by the user (via
+            # the HFE ANALYSIS_MAP entry at upload time).
             derived = self.api.register_derived_artefact(
                 analysis_id,
                 f"{artefact_label} (HFE)",
                 hfe_path,
                 ArtefactType.HFE,
-                skip_analyses=[AnalysisType.FLUX_DECODE.name],
+                skip_analyses=[
+                    AnalysisType.FLUX_DECODE.name,
+                    AnalysisType.FLUX_VISUALISATION.name,
+                ],
             )
             log.info(f"Created derived HFE artefact: {derived}")
 
