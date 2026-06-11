@@ -69,6 +69,7 @@ ANALYSIS_MAP = {
     ArtefactType.ZIP: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.TARGZ: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.RAR: [AnalysisType.ARCHIVE_EXTRACT],
+    ArtefactType.SEVENZ: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.ARC: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.TBAFS:  [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.XFILES: [AnalysisType.ARCHIVE_EXTRACT],

@@ -46,8 +46,7 @@ COMPRESSORS = shared_types.COMPRESSOR_SUFFIXES
 
 # Archive containers.  A ``.zip`` / ``.7z`` of a dd image (which may also bundle
 # a ddrescue ``.map`` and a readme) is treated as the archived form of the image.
-# ``.7z`` has no ArtefactType — the server identifies it by magic bytes.
-ARCHIVE_EXTENSIONS = shared_types.ARCHIVE_EXTENSIONS | {'.7z'}
+ARCHIVE_EXTENSIONS = shared_types.ARCHIVE_EXTENSIONS
 
 # Other importable types that are NOT image duplicates (never deduplicated):
 # flux images, cooked sector floppies, CD/DVD images, documents.
