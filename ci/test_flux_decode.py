@@ -2,7 +2,8 @@
 Unit tests for process_flux_decode branching behaviour.
 
 Verifies the four-source-type pipeline:
-  SCP  → HFE sibling + IMD sibling (both skip_analyses=[FLUX_DECODE]) + RAW_SECTOR
+  SCP  → HFE sibling (skip_analyses=[FLUX_DECODE, FLUX_VISUALISATION])
+         + IMD sibling (skip_analyses=[FLUX_DECODE]) + RAW_SECTOR
   HFE  → IMD sibling (skip_analyses=[FLUX_DECODE]) + RAW_SECTOR; no HFE sibling
   IMD  → RAW_SECTOR only; no siblings
   DFI  → SCP sibling (no skip_analyses); SCP's own FLUX_DECODE handles the rest
@@ -141,7 +142,11 @@ class TestSCPSource(unittest.TestCase):
             if c.args[3] == ArtefactType.HFE
         ]
         self.assertEqual(len(hfe_calls), 1)
-        self.assertIn(AnalysisType.FLUX_DECODE.name, hfe_calls[0].kwargs.get('skip_analyses', []))
+        skip = hfe_calls[0].kwargs.get('skip_analyses', [])
+        self.assertIn(AnalysisType.FLUX_DECODE.name, skip)
+        # The intermediate HFE is a lossy re-encode of the SCP flux, so its
+        # flux plots must not be regenerated — the SCP's own plots are kept.
+        self.assertIn(AnalysisType.FLUX_VISUALISATION.name, skip)
 
     def test_raw_sector_has_no_skip_analyses(self):
         worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.SCP, self.work_dir)
