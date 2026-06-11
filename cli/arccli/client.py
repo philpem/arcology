@@ -26,6 +26,12 @@ import requests
 CHUNKED_THRESHOLD = 100 * 1024 * 1024   # 100 MB
 CHUNK_SIZE        =  50 * 1024 * 1024   #  50 MB
 
+# (connect, read) timeout applied to every request.  The read timeout only
+# counts time spent waiting for the server to respond, not time spent
+# streaming a request body, so large uploads are unaffected.  The generous
+# read value covers slow server-side work such as chunked-upload assembly.
+DEFAULT_TIMEOUT = (10, 300)
+
 log = logging.getLogger(__name__)
 
 
@@ -40,27 +46,33 @@ class ArcologyError(Exception):
 class ArcologyClient:
 	"""HTTP client for the Arcology REST API."""
 
-	def __init__(self, base_url: str, api_key: str):
+	def __init__(self, base_url: str, api_key: str, timeout=DEFAULT_TIMEOUT):
 		self.base_url = base_url.rstrip('/')
 		self.api_url = f"{self.base_url}/api"
+		self.timeout = timeout
 		self.session = requests.Session()
 		self.session.headers['Authorization'] = f'Bearer {api_key}'
 
 	def _url(self, endpoint: str) -> str:
 		return f"{self.api_url}/{endpoint.lstrip('/')}"
 
-	def _handle_response(self, resp: requests.Response) -> dict:
-		"""Check response status and return JSON, or raise ArcologyError."""
+	def _handle_response(self, resp: requests.Response, duplicate_ok: bool = False) -> dict:
+		"""Check response status and return JSON, or raise ArcologyError.
+
+		duplicate_ok: treat a 409 as success and return its body (the artefact
+		upload endpoints respond 409 with the existing artefact record and
+		``duplicate: true`` when the same content already exists).  All other
+		endpoints use 409 for genuine conflicts, which must raise.
+		"""
 		if resp.status_code == 401:
 			raise ArcologyError("Authentication failed. Check your API key.", 401, resp)
 		if resp.status_code == 403:
 			raise ArcologyError("Insufficient permissions.", 403, resp)
 		if resp.status_code == 404:
 			raise ArcologyError("Not found.", 404, resp)
-		if resp.status_code == 409:
-			# Duplicate artefact — return the existing record, not an error
+		if resp.status_code == 409 and duplicate_ok:
 			result = resp.json()
-			result['duplicate'] = True
+			result.setdefault('duplicate', True)
 			return result
 		if resp.status_code == 413:
 			raise ArcologyError("File too large for server.", 413, resp)
@@ -76,45 +88,55 @@ class ArcologyClient:
 
 	def get(self, endpoint: str, params: dict = None) -> dict:
 		"""GET request to API endpoint."""
-		resp = self.session.get(self._url(endpoint), params=params)
+		resp = self.session.get(self._url(endpoint), params=params, timeout=self.timeout)
 		return self._handle_response(resp)
 
 	def post_json(self, endpoint: str, data: dict) -> dict:
 		"""POST JSON data to API endpoint."""
-		resp = self.session.post(self._url(endpoint), json=data)
+		resp = self.session.post(self._url(endpoint), json=data, timeout=self.timeout)
 		return self._handle_response(resp)
 
-	def post_file(self, endpoint: str, filepath: str, fields: dict) -> dict:
+	def post_file(self, endpoint: str, filepath: str, fields: dict,
+	              duplicate_ok: bool = False) -> dict:
 		"""POST multipart file upload to API endpoint."""
 		with open(filepath, 'rb') as f:
 			files = {'file': (os.path.basename(filepath), f)}
-			resp = self.session.post(self._url(endpoint), files=files, data=fields)
-		return self._handle_response(resp)
+			resp = self.session.post(self._url(endpoint), files=files, data=fields,
+			                         timeout=self.timeout)
+		return self._handle_response(resp, duplicate_ok=duplicate_ok)
 
 	def put(self, endpoint: str, data: dict) -> dict:
 		"""PUT JSON data to API endpoint."""
-		resp = self.session.put(self._url(endpoint), json=data)
+		resp = self.session.put(self._url(endpoint), json=data, timeout=self.timeout)
 		return self._handle_response(resp)
 
 	def delete(self, endpoint: str) -> dict:
 		"""DELETE request to API endpoint."""
-		resp = self.session.delete(self._url(endpoint))
+		resp = self.session.delete(self._url(endpoint), timeout=self.timeout)
 		return self._handle_response(resp)
 
 	def download(self, endpoint: str, output_path: str):
 		"""Download a file from API endpoint to local path."""
-		resp = self.session.get(self._url(endpoint), stream=True)
+		resp = self.session.get(self._url(endpoint), stream=True, timeout=self.timeout)
 		if resp.status_code >= 400:
 			self._handle_response(resp)
-		with open(output_path, 'wb') as f:
-			for chunk in resp.iter_content(chunk_size=8192):
-				f.write(chunk)
+		try:
+			with open(output_path, 'wb') as f:
+				for chunk in resp.iter_content(chunk_size=8192):
+					f.write(chunk)
+		except BaseException:
+			# Don't leave a partially-written file behind
+			try:
+				os.unlink(output_path)
+			except OSError:
+				pass
+			raise
 
 	# ---- Convenience methods ----
 
 	def health(self) -> dict:
 		"""Check server health (no auth required)."""
-		resp = self.session.get(f"{self.api_url}/health")
+		resp = self.session.get(f"{self.api_url}/health", timeout=self.timeout)
 		return self._handle_response(resp)
 
 	def list_items(self, **params) -> dict:
@@ -170,7 +192,8 @@ class ArcologyClient:
 			fields['auto_analyse'] = 'false'
 		if hints:
 			fields['hints'] = json.dumps(hints)
-		return self.post_file(f'items/{item_uuid}/artefacts/upload', filepath, fields)
+		return self.post_file(f'items/{item_uuid}/artefacts/upload', filepath, fields,
+		                      duplicate_ok=True)
 
 	def _upload_chunk(self, upload_uuid: str, chunk_index: int, data: bytes) -> dict:
 		"""POST a single raw binary chunk."""
@@ -178,6 +201,7 @@ class ArcologyClient:
 			self._url(f'uploads/chunked/{upload_uuid}/chunk/{chunk_index}'),
 			data=data,
 			headers={'Content-Type': 'application/octet-stream'},
+			timeout=self.timeout,
 		)
 		return self._handle_response(resp)
 
@@ -216,16 +240,23 @@ class ArcologyClient:
 		init_result = self.post_json('uploads/chunked/init', init_payload)
 		upload_uuid = init_result['upload_uuid']
 
-		# Upload chunks with per-chunk retry (up to 3 attempts)
+		# Upload chunks with per-chunk retry (up to 3 attempts, exponential
+		# backoff).  Client errors (4xx) cannot succeed on retry and fail fast.
 		with open(filepath, 'rb') as f:
 			for chunk_index in range(total_chunks):
 				data = f.read(chunk_size)
 				last_exc = None
-				for _attempt in range(3):
+				for attempt in range(3):
+					if attempt:
+						time.sleep(2 ** attempt)
 					try:
 						self._upload_chunk(upload_uuid, chunk_index, data)
 						break
-					except Exception as exc:
+					except ArcologyError as exc:
+						if exc.status_code and 400 <= exc.status_code < 500:
+							raise
+						last_exc = exc
+					except requests.RequestException as exc:
 						last_exc = exc
 				else:
 					raise ArcologyError(
@@ -235,8 +266,9 @@ class ArcologyClient:
 					progress_cb(chunk_index + 1, total_chunks)
 
 		# Assemble and create artefact
-		resp = self.session.post(self._url(f'uploads/chunked/{upload_uuid}/complete'))
-		return self._handle_response(resp)
+		resp = self.session.post(self._url(f'uploads/chunked/{upload_uuid}/complete'),
+		                         timeout=self.timeout)
+		return self._handle_response(resp, duplicate_ok=True)
 
 	def download_artefact(self, uuid: str, output_path: str):
 		self.download(f'artefacts/{uuid}/download', output_path)
