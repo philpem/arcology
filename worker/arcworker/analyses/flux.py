@@ -272,7 +272,11 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
                 ArtefactType.IMD,
                 skip_analyses=[AnalysisType.FLUX_DECODE.name],
             )
-            log.info(f"Created derived IMD artefact: {derived}")
+            if derived:
+                log.info(f"Created derived IMD artefact: {derived}")
+            else:
+                log.warning("Failed to register derived IMD artefact "
+                            f"for analysis {analysis_id}")
 
         # HFE sibling
         hfe_path = work_dir / f"{input_path.stem}.hfe"
@@ -294,7 +298,11 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
                     AnalysisType.FLUX_VISUALISATION.name,
                 ],
             )
-            log.info(f"Created derived HFE artefact: {derived}")
+            if derived:
+                log.info(f"Created derived HFE artefact: {derived}")
+            else:
+                log.warning("Failed to register derived HFE artefact "
+                            f"for analysis {analysis_id}")
 
     elif source_type == ArtefactType.HFE:
         # IMD sibling only (source is already HFE)
@@ -308,7 +316,11 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
                 ArtefactType.IMD,
                 skip_analyses=[AnalysisType.FLUX_DECODE.name],
             )
-            log.info(f"Created derived IMD artefact: {derived}")
+            if derived:
+                log.info(f"Created derived IMD artefact: {derived}")
+            else:
+                log.warning("Failed to register derived IMD artefact "
+                            f"for analysis {analysis_id}")
 
     elif source_type == ArtefactType.DFI:
         # DFI → SCP conversion; SCP sibling's own FLUX_DECODE handles the rest.
@@ -325,7 +337,11 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
                 scp_path,
                 ArtefactType.SCP,
             )
-            log.info(f"Created derived SCP artefact: {derived}")
+            if derived:
+                log.info(f"Created derived SCP artefact: {derived}")
+            else:
+                log.warning("Failed to register derived SCP artefact "
+                            f"for analysis {analysis_id}")
 
     elif source_type == ArtefactType.A2R:
         # A2R → SCP conversion; SCP sibling's own FLUX_DECODE handles the rest.
@@ -340,7 +356,11 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
                 scp_path,
                 ArtefactType.SCP,
             )
-            log.info(f"Created derived SCP artefact: {derived}")
+            if derived:
+                log.info(f"Created derived SCP artefact: {derived}")
+            else:
+                log.warning("Failed to register derived SCP artefact "
+                            f"for analysis {analysis_id}")
 
     else:
         # IMD source — no conversion siblings; source is already sector-decoded
@@ -495,7 +515,11 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
                     img_path,
                     ArtefactType.RAW_SECTOR
                 )
-                log.info(f"Created derived IMG artefact: {derived}")
+                if derived:
+                    log.info(f"Created derived IMG artefact: {derived}")
+                else:
+                    log.warning("Failed to register derived IMG artefact "
+                                f"for analysis {analysis_id}")
 
     # ── Report ───────────────────────────────────────────────────────────
     any_success = any(r[1]['success'] for r in results)
