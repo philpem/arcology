@@ -26,14 +26,17 @@ from ..database import (
     ExtractedFile,
     ExtractedFileRestriction,
     Item,
+    OutputBlob,
     Partition,
     RecognisedProduct,
     RiscosModule,
     StorageDirectory,
+    UploadBlob,
     artefact_tags,
     item_tags,
 )
 from ..extensions import db
+from ..utils.blobs import artefact_blob
 from ..utils.slugs import ensure_unique_slug
 from ..visibility import can_change_owner, can_contribute_to_item
 from .artefact_storage import (
@@ -278,13 +281,16 @@ def reset_artefact_for_reanalysis(artefact: Artefact, commit: bool = True):
     """
     cleanup = _collect_cleanup_paths_for_artefact(artefact, 'reset')
 
+    # Collect all derived artefact IDs first so blob ref-counting is accurate
+    # when sibling artefacts share the same blob object.
+    all_derived_ids = get_all_derived_artefact_ids(artefact)
+
     # Delete storage files for all derived artefacts (recursively).
     # Must happen before the DB delete so we can still walk the ORM tree.
+    deleting_ids: set = set(all_derived_ids)
+    processed_blobs: set = set()
     for derived in artefact.derived_artefacts:
-        delete_artefact_files(derived)
-
-    # Collect all derived artefact IDs (including nested) for bulk deletion.
-    all_derived_ids = get_all_derived_artefact_ids(artefact)
+        delete_artefact_files(derived, deleting_ids=deleting_ids, processed_blobs=processed_blobs)
 
     # Collect all artefact IDs to clean (derived + root) for bulk operations.
     all_ids = all_derived_ids + [artefact.id]
@@ -414,14 +420,55 @@ def cleanup_artefact_outputs(artefact: Artefact, logger) -> None:
     )
 
 
-def delete_artefact_files(artefact):
-    """Recursively delete files for an artefact and all its derived artefacts."""
+def delete_artefact_files(artefact, deleting_ids=None, processed_blobs=None):
+    """Recursively delete files for an artefact and all its derived artefacts.
+
+    When blob deduplication is in use, ``deleting_ids`` should be the full set
+    of artefact IDs being deleted in this operation so the function can tell
+    whether a shared blob has external references that must be preserved.
+    ``processed_blobs`` is an internal set used to avoid double-processing a
+    shared blob across sibling artefacts; callers should leave it as None.
+    """
     storage = current_app.storage
+    if deleting_ids is None:
+        def _collect_ids(node):
+            ids = {node.id}
+            for child in node.derived_artefacts:
+                ids.update(_collect_ids(child))
+            return ids
+        deleting_ids = _collect_ids(artefact)
+    if processed_blobs is None:
+        processed_blobs = set()
+
     for derived in artefact.derived_artefacts:
-        delete_artefact_files(derived)
+        delete_artefact_files(derived, deleting_ids, processed_blobs)
+
+    blob = artefact_blob(artefact)
+    if blob is not None:
+        blob_key = (artefact.storage_directory, blob.id)
+        if blob_key in processed_blobs:
+            return
+        processed_blobs.add(blob_key)
+        # Don't delete the physical file or blob record if any artefact
+        # *outside* the deletion set still references this blob.
+        external_reference = (
+            db.session.query(Artefact.id)
+            .filter(
+                (Artefact.upload_blob_id == blob.id)
+                if artefact.upload_blob_id is not None
+                else (Artefact.output_blob_id == blob.id),
+                ~Artefact.id.in_(deleting_ids),
+            )
+            .first()
+        )
+        if external_reference is not None:
+            return
+
     try:
         key = get_artefact_storage_key(artefact)
         storage.delete(key)
+        if blob is not None:
+            db.session.delete(blob)
     except Exception as e:
         current_app.logger.warning(f"Failed to delete file for artefact {artefact.uuid}: {e}")
 
@@ -583,7 +630,8 @@ def _collect_item_cleanup_keys(all_artefact_ids):
     """Collect all storage keys and cache prefixes for cleanup.
 
     Returns a dict with keys: artefact_keys, output_file_keys, output_dir_prefixes,
-    cache_prefixes.  All values are storage key strings usable with the storage backend.
+    cache_prefixes, upload_blob_ids, output_blob_ids.  The blob ID lists contain
+    IDs of blobs that have no external references (safe to delete).
     """
     artefact_keys = []
     cache_prefixes = []
@@ -596,18 +644,52 @@ def _collect_item_cleanup_keys(all_artefact_ids):
             'output_file_keys': output_file_keys,
             'output_dir_prefixes': output_dir_prefixes,
             'cache_prefixes': cache_prefixes,
+            'upload_blob_ids': [],
+            'output_blob_ids': [],
         }
 
-    # Single query for artefact storage keys and cache prefixes
+    # Single query for artefact storage keys, blob references, and cache prefixes
     rows = db.session.execute(
-        select(Artefact.storage_directory, Artefact.storage_path, Artefact.uuid)
+        select(
+            Artefact.id,
+            Artefact.storage_directory,
+            Artefact.storage_path,
+            Artefact.uuid,
+            Artefact.upload_blob_id,
+            Artefact.output_blob_id,
+        )
         .where(Artefact.id.in_(all_artefact_ids))
     ).all()
-    for storage_dir, storage_path, artefact_uuid in rows:
-        if storage_path:
+    deleting_ids = set(all_artefact_ids)
+    upload_blob_ids = set()
+    output_blob_ids = set()
+    for _artefact_id, storage_dir, storage_path, artefact_uuid, upload_blob_id, output_blob_id in rows:
+        if upload_blob_id is not None:
+            upload_blob_ids.add(upload_blob_id)
+        elif output_blob_id is not None:
+            output_blob_ids.add(output_blob_id)
+        elif storage_path:
+            # Legacy artefact with no blob record: include directly
             directory = 'outputs' if storage_dir == StorageDirectory.OUTPUTS else 'uploads'
             artefact_keys.append(f"{directory}/{storage_path}")
         cache_prefixes.append(f"outputs/.cache/{artefact_uuid}")
+
+    # For blobs, only include those with no external references
+    orphan_upload_blob_ids = []
+    orphan_output_blob_ids = []
+    for model, ids, fk_column, directory, orphan_ids in (
+        (UploadBlob, upload_blob_ids, Artefact.upload_blob_id, 'uploads', orphan_upload_blob_ids),
+        (OutputBlob, output_blob_ids, Artefact.output_blob_id, 'outputs', orphan_output_blob_ids),
+    ):
+        for blob in (model.query.filter(model.id.in_(ids)).all() if ids else []):
+            external_ref = (
+                db.session.query(Artefact.id)
+                .filter(fk_column == blob.id, ~Artefact.id.in_(deleting_ids))
+                .first()
+            )
+            if external_ref is None:
+                artefact_keys.append(f"{directory}/{blob.storage_path}")
+                orphan_ids.append(blob.id)
 
     # Analysis output dirs and named output files
     rows = db.session.execute(
@@ -643,6 +725,8 @@ def _collect_item_cleanup_keys(all_artefact_ids):
         'output_file_keys': output_file_keys,
         'output_dir_prefixes': output_dir_prefixes,
         'cache_prefixes': cache_prefixes,
+        'upload_blob_ids': orphan_upload_blob_ids,
+        'output_blob_ids': orphan_output_blob_ids,
     }
 
 
@@ -736,6 +820,14 @@ def bulk_delete_item(item):
 
         bulk_delete_artefact_dependents(all_ids)
         bulk_delete_artefacts(all_ids)
+        if cleanup['upload_blob_ids']:
+            UploadBlob.query.filter(
+                UploadBlob.id.in_(cleanup['upload_blob_ids'])
+            ).delete(synchronize_session=False)
+        if cleanup['output_blob_ids']:
+            OutputBlob.query.filter(
+                OutputBlob.id.in_(cleanup['output_blob_ids'])
+            ).delete(synchronize_session=False)
 
     # Item-level children (external refs, tags for all items in hierarchy)
     ExternalReference.query.filter(

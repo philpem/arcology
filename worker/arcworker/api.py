@@ -208,6 +208,7 @@ class ArcologyAPI:
         auto_analyse: bool = True,
         skip_analyses: list[str] | None = None,
         analysis_hints: dict | None = None,
+        logical_name: str | None = None,
     ) -> dict | None:
         """
         Register a derived artefact produced by an analysis.
@@ -235,21 +236,35 @@ class ArcologyAPI:
         Returns:
             API response dict, or None on error
         """
-        # Build a deterministic storage name so that retries after an API
-        # failure reuse the same key rather than uploading a second copy and
-        # leaving the first orphaned in S3.  The combination of analysis_id
-        # and source filename is unique within the system.
-        name_hash = hashlib.sha256(
-            f"{analysis_id}:{source_path.stem}".encode()
-        ).hexdigest()[:24]
-        storage_name = f"{name_hash}{source_path.suffix}"
+        # Derived artefact content is stored under a global content-addressed
+        # output key. Separate Artefact rows retain lineage, labels and privacy.
+        md5, sha256, file_size = compute_file_hash(source_path)
+        # Keep the final suffix so S3 stores a useful Content-Type and workers
+        # can still recognise compressed inputs. Deduplication remains keyed by
+        # (file_size, sha256), so suffix differences do not duplicate blob rows.
+        blob_storage_name = f"blobs/{sha256[:2]}/{sha256}{source_path.suffix}"
+        if self.storage:
+            key = self.storage.storage_key('outputs', blob_storage_name)
+            if not self.storage.exists(key):
+                self.storage.put(key, source_path)
+        else:
+            dest = self.outputs / blob_storage_name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if not dest.exists():
+                shutil.copy(source_path, dest)
 
-        md5, sha256, file_size = self._put_and_hash(storage_name, 'outputs', source_path)
+        # Use logical_name (e.g. a subdir-relative path) when provided so that
+        # files sharing a basename in different subdirectories get distinct
+        # storage_names and do not collide on uq_artefact_analysis_storage_path.
+        name_for_hash = logical_name if logical_name is not None else source_path.name
+        derivation_hash = hashlib.sha256(name_for_hash.encode()).hexdigest()[:24]
+        storage_name = f"derived/{analysis_id}/{derivation_hash}"
 
         payload = {
             'label': label,
             'original_filename': source_path.name,
             'storage_path': storage_name,
+            'blob_storage_path': blob_storage_name,
             'storage_directory': 'outputs',
             'artefact_type': artefact_type.value,
             'file_size': file_size,

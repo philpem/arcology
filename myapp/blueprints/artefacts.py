@@ -78,10 +78,12 @@ from ..services.restrictions import (
     grantable_bypass_rtypes,
 )
 from ..services.upload_pipeline import QUEUE_CHECKSUM_ONLY, QUEUE_FULL, ingest_uploaded_artefact
+from ..utils.blobs import artefact_blob_storage_path, assign_blob
 from ..utils.enum_display import enum_value
 from ..utils.path_nav import build_directory_tree
 from ..utils.slugs import ensure_unique_slug, generate_slug, lookup_artefact_by_id, lookup_by_identifier
 from ..visibility import (
+    artefact_visibility_clause,
     can_change_owner,
     can_contribute_to_item,
     can_curate_item,
@@ -1432,6 +1434,42 @@ def _view_file_listing(file_form, all_artefact_ids):
         page=page, per_page=per_page, max_per_page=per_page
     )
 
+    # Count globally visible instances of each content key on this page.
+    # ``file_size is not None`` deliberately includes valid zero-length files.
+    duplicate_counts = {}
+    duplicate_keys = {
+        (f.file_size, f.sha256)
+        for f in files_pagination.items
+        if not f.is_directory and f.file_size is not None and f.sha256
+    }
+    if duplicate_keys:
+        from sqlalchemy import and_ as _and
+        from sqlalchemy import or_ as _or
+        duplicate_rows = (
+            db.session.query(
+                ExtractedFile.file_size,
+                ExtractedFile.sha256,
+                _func.count(ExtractedFile.id),
+            )
+            .join(Partition)
+            .join(Artefact, Partition.artefact_id == Artefact.id)
+            .filter(artefact_visibility_clause(current_user))
+            .filter(_or(*[
+                _and(
+                    ExtractedFile.file_size == size,
+                    ExtractedFile.sha256 == sha256,
+                )
+                for size, sha256 in duplicate_keys
+            ]))
+            .group_by(ExtractedFile.file_size, ExtractedFile.sha256)
+            .all()
+        )
+        duplicate_counts = {
+            (size, sha256): count
+            for size, sha256, count in duplicate_rows
+            if count > 1
+        }
+
     # Batch-query all matching KnownFiles across active hash databases
     # for the current page of files, so the template can show multiple badges.
     from ..services.hash_rescan import find_all_known_files_batch
@@ -1457,6 +1495,7 @@ def _view_file_listing(file_form, all_artefact_ids):
         letter_pages=letter_pages,
         current_letter=current_letter,
         file_known_matches=file_known_matches,
+        duplicate_counts=duplicate_counts,
     )
 
 
@@ -2319,9 +2358,6 @@ def upload(item_id):
             queue=QUEUE_FULL if form.auto_analyse.data else QUEUE_CHECKSUM_ONLY,
             priority=web_priority,
         )
-        if outcome.duplicate:
-            flash(f'Duplicate: a file with identical content already exists as "{outcome.duplicate.label}".', 'warning')
-            return redirect(url_for(f'{ROUTENAME}.upload', item_id=item.url_id))
         artefact = outcome.artefact
 
         if form.auto_analyse.data:
@@ -2437,6 +2473,8 @@ def edit(item_id=None, artefact_id=None, root_id=None, uuid=None):
                            can_set_private=can_priv)
 
 
+
+
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/move', methods=['POST'])
 @login_required
 @require_permission('read_write')
@@ -2467,6 +2505,8 @@ def move(item_id=None, artefact_id=None):
 
     flash(f'Artefact "{artefact.label}" moved from "{old_item_name}" to "{target_item.name}".', 'success')
     return _redirect_to_artefact_view(artefact)
+
+
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/delete', methods=['POST'])
@@ -2810,13 +2850,70 @@ def compute_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None
     key = get_artefact_storage_key(artefact)
 
     try:
-        artefact.md5, artefact.sha256 = compute_file_hashes(key, use_storage=True)
+        md5, sha256 = compute_file_hashes(key, use_storage=True)
+        obsolete_storage_paths = []
+        assign_blob(
+            artefact,
+            artefact.storage_directory,
+            artefact_blob_storage_path(artefact),
+            artefact.file_size,
+            sha256,
+            md5,
+            logical_storage_path=artefact.storage_path,
+            obsolete_storage_paths=obsolete_storage_paths,
+        )
         db.session.commit()
+        for storage_path in obsolete_storage_paths:
+            try:
+                current_app.storage.delete(current_app.storage.storage_key(
+                    artefact.storage_directory.value, storage_path
+                ))
+            except Exception:
+                current_app.logger.warning(
+                    "Failed to remove obsolete blob object %s/%s",
+                    artefact.storage_directory.value,
+                    storage_path,
+                )
         flash('Hashes computed successfully.', 'success')
     except Exception as e:
         flash(f'Error computing hashes: {e}', 'error')
 
     return _redirect_to_artefact_view(artefact)
+
+
+@blueprint.route('/files/<string:uuid>/duplicates')
+@public_readable
+def file_duplicates(uuid):
+    """List visible extracted-file instances with identical content."""
+    source = (
+        ExtractedFile.query
+        .join(Partition)
+        .join(Artefact, Partition.artefact_id == Artefact.id)
+        .filter(ExtractedFile.uuid == uuid)
+        .filter(artefact_visibility_clause(current_user))
+        .first_or_404()
+    )
+    if source.file_size is None or not source.sha256 or source.is_directory:
+        abort(404)
+
+    instances = (
+        db.session.query(ExtractedFile, Partition, Artefact, Item)
+        .join(Partition, ExtractedFile.partition_id == Partition.id)
+        .join(Artefact, Partition.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(
+            ExtractedFile.file_size == source.file_size,
+            ExtractedFile.sha256 == source.sha256,
+            artefact_visibility_clause(current_user),
+        )
+        .order_by(Item.name, Artefact.label, Partition.partition_index, ExtractedFile.path)
+        .all()
+    )
+    return render_template(
+        'artefacts/file_duplicates.html',
+        source=source,
+        instances=instances,
+    )
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/rescan-hashes', methods=['POST'])
 @blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/rescan-hashes', methods=['POST'], endpoint='rescan_hashes_route_nested')

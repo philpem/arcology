@@ -57,11 +57,6 @@ class ArcologyClient:
 			raise ArcologyError("Insufficient permissions.", 403, resp)
 		if resp.status_code == 404:
 			raise ArcologyError("Not found.", 404, resp)
-		if resp.status_code == 409:
-			# Duplicate artefact — return the existing record, not an error
-			result = resp.json()
-			result['duplicate'] = True
-			return result
 		if resp.status_code == 413:
 			raise ArcologyError("File too large for server.", 413, resp)
 		if resp.status_code >= 400:

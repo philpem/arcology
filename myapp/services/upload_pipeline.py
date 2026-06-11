@@ -6,26 +6,25 @@ upload form (``myapp/blueprints/artefacts.py``) and the REST API single and
 chunked upload endpoints (``myapp/blueprints/api.py``).
 
 The caller is responsible for getting the file into the storage backend
-(under ``uploads/``) and computing its hashes; everything from the duplicate
-check onwards happens here:
+(under ``uploads/``) and computing its hashes; everything from the blob
+assignment onwards happens here:
 
-1. Duplicate check (same item + same SHA-256).  On a duplicate the stored
-   file is deleted and the existing artefact is returned.
-2. Artefact row creation, slug generation, and analysis queueing — committed
-   atomically in a single transaction.
-3. On commit failure — including the concurrent-upload race where two
-   requests with the same content pass the duplicate check and the DB unique
-   constraint fires — the transaction is rolled back and the stored file is
-   deleted, so no orphaned file or half-initialised artefact is left behind.
+1. Artefact row creation.
+2. Blob assignment — identical content already stored globally (same SHA-256
+   + file_size) reuses the existing physical file; the newly uploaded
+   duplicate is deleted immediately.
+3. Slug generation and analysis queueing — all committed in a single
+   transaction; on failure the stored file is deleted and the exception
+   re-raised so no orphaned file or half-initialised artefact is left behind.
 """
 
 from dataclasses import dataclass, field
 from flask import current_app
-from sqlalchemy.exc import IntegrityError
 from shared.enums import AnalysisType
 from ..database import ANALYSIS_PRIORITY_NORMAL, Artefact, Item, StorageDirectory
 from ..extensions import db
 from ..services.artefact_types import queue_analyses_for_artefact
+from ..utils.blobs import assign_blob as _assign_blob
 from ..utils.slugs import ensure_unique_slug, generate_slug
 
 # Analysis queueing modes for ingest_uploaded_artefact()
@@ -87,12 +86,6 @@ def ingest_uploaded_artefact(item: Item, *,
     """
     storage_key = current_app.storage.storage_key('uploads', storage_name)
 
-    if sha256:
-        existing = Artefact.query.filter_by(item_id=item.id, sha256=sha256).first()
-        if existing:
-            _delete_stored_file(storage_key)
-            return IngestOutcome(duplicate=existing)
-
     artefact = Artefact(
         item_id=item.id,
         label=label,
@@ -113,6 +106,15 @@ def ingest_uploaded_artefact(item: Item, *,
     queued: list[AnalysisType] = []
     try:
         db.session.flush()  # assign artefact.id for the Analysis rows' FK
+        blob, blob_created = _assign_blob(
+            artefact, StorageDirectory.UPLOADS, storage_name, file_size, sha256, md5
+        )
+        if blob is not None and not blob_created and blob.storage_path != storage_name:
+            # Identical content already stored globally: delete the new copy
+            # and point the artefact's compat column at the canonical blob path.
+            _delete_stored_file(storage_key)
+            storage_key = None  # prevent double-delete in the except handler
+            artefact.storage_path = blob.storage_path
         artefact.slug = ensure_unique_slug(
             generate_slug(label), Artefact, scope_filter={'item_id': item.id})
         if queue != QUEUE_NONE:
@@ -125,19 +127,10 @@ def ingest_uploaded_artefact(item: Item, *,
                 commit=False,
                 priority=priority)
         db.session.commit()
-    except IntegrityError:
-        # Two concurrent uploads of the same content raced past the duplicate
-        # check above and the DB constraint fired.  Resolve to the winner.
-        db.session.rollback()
-        _delete_stored_file(storage_key)
-        if sha256:
-            existing = Artefact.query.filter_by(item_id=item.id, sha256=sha256).first()
-            if existing:
-                return IngestOutcome(duplicate=existing)
-        raise  # constraint violation on a different column — unexpected
     except Exception:
         db.session.rollback()
-        _delete_stored_file(storage_key)
+        if storage_key is not None:
+            _delete_stored_file(storage_key)
         raise
     return IngestOutcome(artefact=artefact, queued_analyses=queued)
 
