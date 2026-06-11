@@ -22,6 +22,7 @@ from ..tools import (
     convert_sprite,
     parse_acorn_filename,
 )
+from ..utils.paths import artefact_output_subdir
 from ._common import analysis_handler
 
 # Per-file timeout (seconds) for pure-Python conversion calls (spritefile,
@@ -271,14 +272,7 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
     artefact_type_str = artefact.get('artefact_type', '')
     hints = json.loads(analysis.get('hints') or '{}')
 
-    item = artefact.get('item', {})
-    item_uuid = item.get('uuid', '')
-    item_slug = item.get('slug', '')
-    artefact_uuid = artefact.get('uuid', '')
-    artefact_slug = artefact.get('slug', '')
-    item_part = f"{item_uuid}_{item_slug}" if item_slug else item_uuid
-    artefact_part = f"{artefact_uuid}_{artefact_slug}" if artefact_slug else artefact_uuid
-    output_subdir = f"{item_part}/{artefact_part}" if (item_part and artefact_part) else None
+    output_subdir = artefact_output_subdir(artefact)
 
     _direct_types = (
         ArtefactType.ACORN_SPRITE.value,

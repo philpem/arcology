@@ -16,7 +16,7 @@ Reference:
 import logging
 import struct
 from pathlib import Path
-from .extraction import parse_acorn_filename
+from .extraction import _get_riscos_filetype, parse_acorn_filename
 
 log = logging.getLogger(__name__)
 
@@ -38,23 +38,6 @@ def _read_sector(f, lba: int) -> bytes:
     """Read one 2048-byte ISO 9660 sector at the given Logical Block Address."""
     f.seek(lba * _SECTOR)
     return f.read(_SECTOR)
-
-
-def _get_riscos_filetype(load_addr: int) -> str | None:
-    """
-    Extract a RISC OS filetype from a load address.
-
-    RISC OS encodes file types in load/exec address pairs.  When the top 12
-    bits of the load address (bits 31:20) are all 0xF, the file is
-    date-stamped and bits 19:8 hold the 12-bit filetype.
-
-    Returns the filetype as a lowercase 3-char hex string (e.g. 'fff'),
-    or None if the load address is not in date-stamped format.
-    """
-    if (load_addr >> 20) == 0xFFF:
-        filetype = (load_addr >> 8) & 0xFFF
-        return f'{filetype:03x}'
-    return None
 
 
 def _parse_archimedes_block(system_use: bytes) -> tuple[str | None, bool]:
