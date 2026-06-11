@@ -8,7 +8,9 @@ detected archive — at top level or nested).
 
 import json
 import shutil
+from functools import partial
 from pathlib import Path
+from shared.archive_formats import ArchiveType, get_archive_info
 from shared.bundle import BUNDLE_MARKER, is_sidecar_name
 from shared.enums import COMPRESSED_RAW_SECTOR_TYPES, AnalysisType, ArtefactType
 from ..config import log
@@ -214,7 +216,6 @@ def _sniff_archive_magic(file_path: Path):
       Spark: ``\\x1A`` followed by ``\\x00``, ``\\x80``–``\\x89``, or ``\\xFF``
       ZIP:   ``PK\\x03\\x04``
     """
-    from shared.archive_formats import ArchiveType
 
     try:
         with open(file_path, 'rb') as fh:
@@ -266,6 +267,100 @@ def _is_riscos_zip(file_path: Path) -> bool:
     return has_riscos_zip_metadata(file_path)
 
 
+# RISC OS archive types whose files are routinely mis-sniffed as plain ZIP
+# (SparkFS uses filetype &DDC for both Spark and ZIP): a ZIP sniff on one of
+# these means the archive is really a RISC OS ZIP.
+_RISCOS_ARCHIVE_TYPES = (
+    ArchiveType.ARCFS, ArchiveType.SPARK, ArchiveType.PACKDIR,
+    ArchiveType.TBAFS, ArchiveType.CFS, ArchiveType.SQUASH,
+    ArchiveType.ZIP_RISCOS,
+)
+
+# Extractor dispatch shared by top-level and nested archive extraction.
+_BASE_EXTRACTORS = {
+    ArchiveType.SPARK:      extract_riscosarc,
+    ArchiveType.ARCFS:      extract_riscosarc,
+    ArchiveType.PACKDIR:    extract_riscosarc,
+    ArchiveType.CFS:        extract_riscosarc,
+    ArchiveType.SQUASH:     extract_riscosarc,
+    ArchiveType.TBAFS:      extract_tbafs,
+    ArchiveType.XFILES:     extract_xfiles,
+    ArchiveType.ZIP_RISCOS: extract_zip_riscos,
+    ArchiveType.ZIP:        extract_zip,
+    ArchiveType.TAR:        partial(extract_tar, archive_type=ArchiveType.TAR.value),
+    ArchiveType.TARGZ:      partial(extract_tar, archive_type=ArchiveType.TARGZ.value),
+    ArchiveType.TARBZ2:     partial(extract_tar, archive_type=ArchiveType.TARBZ2.value),
+    ArchiveType.TARXZ:      partial(extract_tar, archive_type=ArchiveType.TARXZ.value),
+    ArchiveType.RAR:        extract_rar,
+    ArchiveType.SEVENZ:     extract_7z,
+}
+
+# Nested extraction additionally handles DOS disc images found inside a
+# partition and single-file compressors (the output file keeps the name
+# minus the compression extension).  Top-level uploads of these types take
+# different routes (FILE_EXTRACTION / the compressed-raw-sector pipeline).
+_NESTED_EXTRACTORS = {
+    **_BASE_EXTRACTORS,
+    ArchiveType.DOSDISC: extract_dos_7z,
+    **{
+        ctype: partial(
+            (lambda ap, tod, _v: decompress_single_file(ap, tod / ap.stem, _v)),
+            _v=ctype.value,
+        )
+        for ctype in (ArchiveType.GZIP, ArchiveType.BZIP2,
+                      ArchiveType.XZ, ArchiveType.ZSTD)
+    },
+}
+
+
+def _resolve_archive_type(self, path: Path, archive_type):
+    """Correct *archive_type* from the file's actual contents.
+
+    Applies, in order:
+    1. Magic-byte sniff override (filetype/extension detection can be wrong —
+       &DDC is used for both Spark and ZIP on RISC OS).  A ZIP sniff on a
+       RISC OS-detected type upgrades to ZIP_RISCOS so Acorn ,xxx suffixes
+       are parsed correctly.
+    2. Acorn extra-field (0x4341) check: a plain ZIP whose members carry
+       RISC OS metadata upgrades to ZIP_RISCOS so the CP437→RISC OS Latin-1
+       filename fix runs during extraction.
+
+    Returns ``(archive_type, archive_info, sniff_overrode)``.
+    """
+    sniff_overrode = False
+    sniffed = self._sniff_archive_magic(path)
+    if sniffed is not None and sniffed != archive_type:
+        log.info(f"Magic-byte sniff overrides {archive_type.value} → {sniffed.value}")
+        if sniffed == ArchiveType.ZIP and archive_type in _RISCOS_ARCHIVE_TYPES:
+            sniffed = ArchiveType.ZIP_RISCOS
+        archive_type = sniffed
+        sniff_overrode = True
+
+    if archive_type == ArchiveType.ZIP and self._is_riscos_zip(path):
+        log.info("ZIP contains Acorn extra-field (0x4341) metadata — upgrading to ZIP_RISCOS")
+        archive_type = ArchiveType.ZIP_RISCOS
+
+    return archive_type, get_archive_info(archive_type), sniff_overrode
+
+
+def _spark_zip_fallback(result, archive_type, path: Path, out_dir: Path):
+    """Retry a failed Spark extraction as RISC OS ZIP.
+
+    SparkFS filetypes ZIP files as &DDC (Archive), which is also used for
+    Spark, so a Spark-detected file may really be a ZIP.  Only replaces the
+    result when the ZIP fallback succeeds; otherwise the riscosarc error is
+    kept so the reported tool and details are correct.
+
+    Returns ``(result, archive_type, archive_info)``.
+    """
+    if not result['success'] and archive_type == ArchiveType.SPARK:
+        zip_result = extract_zip_riscos(path, out_dir)
+        if zip_result['success']:
+            result = zip_result
+            archive_type = ArchiveType.ZIP_RISCOS
+    return result, archive_type, get_archive_info(archive_type)
+
+
 def _extract_top_level_archive(
     self, analysis, artefact, work_dir,
     archive_type, archive_info,
@@ -278,7 +373,6 @@ def _extract_top_level_archive(
     recognised disc images to derived artefacts.
     """
     import json
-    from shared.archive_formats import ArchiveType, get_archive_info
     from ..config import OUTPUT_DIR
     from ..utils.paths import get_output_path
 
@@ -309,23 +403,9 @@ def _extract_top_level_archive(
         archive_info = get_archive_info(archive_type)
         log.info(f"Post-decompression: using {archive_type.value} (was {old_type.value})")
 
-    # Sniff magic bytes — some RISC OS archives are distributed with
-    # a .zip extension even though they are actually Spark or ArcFS.
-    sniffed = self._sniff_archive_magic(input_path)
-    if sniffed is not None and sniffed != archive_type:
-        log.info(f"Magic-byte sniff overrides {archive_type.value} → {sniffed.value}")
-        # A ZIP found via RISC OS filetype (including zip_riscos itself)
-        # should be treated as ZIP_RISCOS so Acorn ,xxx suffixes are
-        # parsed correctly and the container format is recorded accurately.
-        _RISCOS_TYPES = (
-            ArchiveType.ARCFS, ArchiveType.SPARK, ArchiveType.PACKDIR,
-            ArchiveType.TBAFS, ArchiveType.CFS, ArchiveType.SQUASH,
-            ArchiveType.ZIP_RISCOS,
-        )
-        if sniffed == ArchiveType.ZIP and archive_type in _RISCOS_TYPES:
-            sniffed = ArchiveType.ZIP_RISCOS
-        archive_type = sniffed
-        archive_info = get_archive_info(archive_type)
+    archive_type, archive_info, sniff_overrode = _resolve_archive_type(
+        self, input_path, archive_type)
+    if sniff_overrode:
         # Correct the artefact type in the DB so the UI badge reflects
         # the true format. ArchiveType and ArtefactType share string values
         # for ARC (arcfs→arc) and ZIP; the mapping is explicit for ARC.
@@ -337,14 +417,6 @@ def _extract_top_level_archive(
             archive_type.value, archive_type.value
         )
         self.api.update_artefact_type(artefact['uuid'], corrected_artefact_type)
-
-    # A plain .zip upload whose contents have RISC OS ,xxx filetype
-    # suffixes should be treated as ZIP_RISCOS so the CP437→RISC OS
-    # Latin-1 filename fix runs during extraction.
-    if archive_type == ArchiveType.ZIP and self._is_riscos_zip(input_path):
-        log.info("ZIP contains Acorn extra-field (0x4341) metadata — upgrading to ZIP_RISCOS")
-        archive_type = ArchiveType.ZIP_RISCOS
-        archive_info = get_archive_info(archive_type)
 
     # Disk-image bundle: a plain ZIP of exactly one compressed disk image plus
     # sidecars (ddrescue .map, readme, checksums).  Store the image as a single
@@ -360,27 +432,7 @@ def _extract_top_level_archive(
             return
 
     # Dispatch to the correct extraction tool
-    from functools import partial
-
-    _dispatch = {
-        ArchiveType.SPARK:      extract_riscosarc,
-        ArchiveType.ARCFS:      extract_riscosarc,
-        ArchiveType.PACKDIR:    extract_riscosarc,
-        ArchiveType.CFS:        extract_riscosarc,
-        ArchiveType.SQUASH:     extract_riscosarc,
-        ArchiveType.TBAFS:      extract_tbafs,
-        ArchiveType.XFILES:     extract_xfiles,
-        ArchiveType.ZIP_RISCOS: extract_zip_riscos,
-        ArchiveType.ZIP:        extract_zip,
-        ArchiveType.TAR:        partial(extract_tar, archive_type=ArchiveType.TAR.value),
-        ArchiveType.TARGZ:      partial(extract_tar, archive_type=ArchiveType.TARGZ.value),
-        ArchiveType.TARBZ2:     partial(extract_tar, archive_type=ArchiveType.TARBZ2.value),
-        ArchiveType.TARXZ:      partial(extract_tar, archive_type=ArchiveType.TARXZ.value),
-        ArchiveType.RAR:        extract_rar,
-        ArchiveType.SEVENZ:     extract_7z,
-    }
-
-    extractor = _dispatch.get(archive_type)
+    extractor = _BASE_EXTRACTORS.get(archive_type)
     if extractor is None:
         self.fail_analysis(
             analysis_id,
@@ -389,18 +441,8 @@ def _extract_top_level_archive(
         return
 
     result = extractor(input_path, extract_dir)
-
-    # Spark/ArcFS fallback: if riscosarc fails, the file might
-    # actually be a ZIP with RISC OS filetypes (SparkFS uses
-    # filetype &DDC for both Spark and ZIP).
-    # Only replace the result when the ZIP fallback succeeds; otherwise
-    # keep the riscosarc error so the reported tool and details are correct.
-    if not result['success'] and archive_type == ArchiveType.SPARK:
-        zip_result = extract_zip_riscos(input_path, extract_dir)
-        if zip_result['success']:
-            result = zip_result
-            archive_type = ArchiveType.ZIP_RISCOS
-            archive_info = get_archive_info(archive_type)
+    result, archive_type, archive_info = _spark_zip_fallback(
+        result, archive_type, input_path, extract_dir)
 
     if not result['success']:
         shutil.rmtree(extract_dir, ignore_errors=True)
@@ -1098,30 +1140,8 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
     # Extract archive to temporary directory first
     temp_output_dir = work_dir / 'archive_contents'
 
-    # Sniff magic bytes — filetype-based detection can be wrong (e.g.
-    # &DDC is used for both Spark and ZIP on RISC OS).  Override the
-    # archive_type when the file header tells us otherwise.
-    sniffed = self._sniff_archive_magic(archive_path)
-    if sniffed is not None and sniffed != archive_type:
-        log.info(f"Magic-byte sniff overrides {archive_type.value} → {sniffed.value}")
-        # A ZIP found via RISC OS filetype should be treated as
-        # ZIP_RISCOS so Acorn ,xxx suffixes are parsed correctly.
-        _RISCOS_TYPES = (
-            ArchiveType.ARCFS, ArchiveType.SPARK, ArchiveType.PACKDIR,
-            ArchiveType.TBAFS, ArchiveType.CFS, ArchiveType.SQUASH,
-            ArchiveType.ZIP_RISCOS,
-        )
-        if sniffed == ArchiveType.ZIP and archive_type in _RISCOS_TYPES:
-            sniffed = ArchiveType.ZIP_RISCOS
-        archive_type = sniffed
-        archive_info = get_archive_info(archive_type)
-
-    # A ZIP detected by extension (no RISC OS filetype) whose contents
-    # have ,xxx filetype suffixes is really a RISC OS ZIP.
-    if archive_type == ArchiveType.ZIP and self._is_riscos_zip(archive_path):
-        log.info("ZIP contains Acorn extra-field (0x4341) metadata — upgrading to ZIP_RISCOS")
-        archive_type = ArchiveType.ZIP_RISCOS
-        archive_info = get_archive_info(archive_type)
+    archive_type, archive_info, _sniff_overrode = _resolve_archive_type(
+        self, archive_path, archive_type)
 
     # Choose extraction method based on archive type.
     # FCFS requires a conversion step with a different source path,
@@ -1135,51 +1155,14 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
             # Extract the converted image
             result = extract_acorn_disc_image_manager(raw_path, temp_output_dir)
     else:
-        from functools import partial
-
-        _dispatch = {
-            ArchiveType.SPARK:      extract_riscosarc,
-            ArchiveType.ARCFS:      extract_riscosarc,
-            ArchiveType.PACKDIR:    extract_riscosarc,
-            ArchiveType.CFS:        extract_riscosarc,
-            ArchiveType.SQUASH:     extract_riscosarc,
-            ArchiveType.TBAFS:      extract_tbafs,
-            ArchiveType.XFILES:     extract_xfiles,
-            ArchiveType.DOSDISC:    extract_dos_7z,
-            ArchiveType.ZIP_RISCOS: extract_zip_riscos,
-            ArchiveType.ZIP:        extract_zip,
-            ArchiveType.TAR:        partial(extract_tar, archive_type=ArchiveType.TAR.value),
-            ArchiveType.TARGZ:      partial(extract_tar, archive_type=ArchiveType.TARGZ.value),
-            ArchiveType.TARBZ2:     partial(extract_tar, archive_type=ArchiveType.TARBZ2.value),
-            ArchiveType.TARXZ:      partial(extract_tar, archive_type=ArchiveType.TARXZ.value),
-            ArchiveType.RAR:        extract_rar,
-            ArchiveType.SEVENZ:     extract_7z,
-            # Single-file compressors: output file keeps the name minus the compression extension
-            ArchiveType.GZIP:       lambda ap, tod: decompress_single_file(ap, tod / ap.stem, ArchiveType.GZIP.value),
-            ArchiveType.BZIP2:      lambda ap, tod: decompress_single_file(ap, tod / ap.stem, ArchiveType.BZIP2.value),
-            ArchiveType.XZ:         lambda ap, tod: decompress_single_file(ap, tod / ap.stem, ArchiveType.XZ.value),
-            ArchiveType.ZSTD:       lambda ap, tod: decompress_single_file(ap, tod / ap.stem, ArchiveType.ZSTD.value),
-        }
-
-        extractor = _dispatch.get(archive_type)
+        extractor = _NESTED_EXTRACTORS.get(archive_type)
         if extractor is None:
             self.fail_analysis(analysis_id, f'Unsupported archive type: {archive_type.value}')
             return
 
         result = extractor(archive_path, temp_output_dir)
-
-        # SparkFS filetypes Zip files as &DDC (Archive), which is also
-        # used for Spark. If riscosarc unpacking fails, try Zip.
-        # Upgrade archive_type to ZIP_RISCOS so the display name reflects
-        # the actual container format while keeping is_acorn_archive True.
-        # Only replace the result when the ZIP fallback succeeds; otherwise
-        # keep the riscosarc error so the reported tool and details are correct.
-        if not result['success'] and archive_type == ArchiveType.SPARK:
-            zip_result = extract_zip_riscos(archive_path, temp_output_dir)
-            if zip_result['success']:
-                result = zip_result
-                archive_type = ArchiveType.ZIP_RISCOS
-                archive_info = get_archive_info(archive_type)
+        result, archive_type, archive_info = _spark_zip_fallback(
+            result, archive_type, archive_path, temp_output_dir)
 
     if not result['success']:
         self.fail_analysis(
