@@ -63,17 +63,18 @@ def upgrade():
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('username', sa.String(length=50), nullable=False),
         sa.Column('password_hash', sa.String(length=72), nullable=False),
-        sa.Column('is_admin', sa.Boolean(), nullable=False),
-        sa.Column('permission', _e('userpermission', 'READ_ONLY', 'READ_WRITE', 'STAFF'), nullable=False),
-        sa.Column('can_use_api', sa.Boolean(), nullable=False),
+        sa.Column('is_admin', sa.Boolean(), nullable=False, server_default=sa.text('false')),
+        sa.Column('permission', _e('userpermission', 'READ_ONLY', 'READ_WRITE', 'STAFF'), nullable=False, server_default=sa.text("'READ_WRITE'")),
+        sa.Column('can_use_api', sa.Boolean(), nullable=False, server_default=sa.text('false')),
         sa.Column('preferences', sa.JSON(), nullable=True),
         sa.Column('oidc_sub', sa.String(length=255), nullable=True),
         sa.Column('email', sa.String(length=255), nullable=True),
-        sa.Column('oidc_managed', sa.Boolean(), nullable=False),
+        sa.Column('oidc_managed', sa.Boolean(), nullable=False, server_default=sa.text('false')),
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('username'),
     )
-    op.create_index('ix_user_oidc_sub', 'user', ['oidc_sub'], unique=True)
+    op.create_unique_constraint('uq_user_oidc_sub', 'user', ['oidc_sub'])
+    op.create_index('ix_user_oidc_sub', 'user', ['oidc_sub'], unique=False)
     op.create_table('categories',
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('name', sa.String(length=100), nullable=False),
@@ -112,12 +113,13 @@ def upgrade():
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('name', sa.String(length=100), nullable=False),
         sa.Column('description', sa.Text(), nullable=True),
-        sa.Column('source', sa.String(length=20), nullable=False),
+        sa.Column('source', sa.String(length=20), nullable=False, server_default=sa.text("'local'")),
         sa.Column('oidc_claim_name', sa.String(length=255), nullable=True),
-        sa.Column('created_at', sa.DateTime(), nullable=False),
+        sa.Column('created_at', sa.DateTime(), nullable=False, server_default=sa.text('CURRENT_TIMESTAMP')),
         sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('name', name='uq_groups_name'),
     )
-    op.create_index('ix_groups_name', 'groups', ['name'], unique=True)
+    op.create_index('ix_groups_name', 'groups', ['name'], unique=False)
     op.create_index('ix_groups_oidc_claim_name', 'groups', ['oidc_claim_name'], unique=False)
     op.create_table('hash_databases',
         sa.Column('id', sa.Integer(), nullable=False),
@@ -127,13 +129,13 @@ def upgrade():
         sa.Column('version', sa.String(length=50), nullable=True),
         sa.Column('platform_id', sa.Integer(), nullable=True),
         sa.Column('file_count', sa.Integer(), nullable=True),
-        sa.Column('enable_product_recognition', sa.Boolean(), nullable=False),
-        sa.Column('is_active', sa.Boolean(), nullable=False),
+        sa.Column('enable_product_recognition', sa.Boolean(), nullable=False, server_default=sa.text('false')),
+        sa.Column('is_active', sa.Boolean(), nullable=False, server_default=sa.text('true')),
         sa.Column('restriction_type', _e('restrictiontype', 'MALWARE', 'PII', 'COPYRIGHT', 'LEGAL_HOLD', 'EXPLICIT', 'CORRUPTED'), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.Column('updated_at', sa.DateTime(), nullable=False),
         sa.PrimaryKeyConstraint('id'),
-        sa.ForeignKeyConstraint(['platform_id'], ['platforms.id'], ondelete='SET NULL'),
+        sa.ForeignKeyConstraint(['platform_id'], ['platforms.id'], ondelete='SET NULL', name='fk_hash_databases_platform_id'),
     )
     op.create_index('ix_hash_databases_name', 'hash_databases', ['name'], unique=True)
     op.create_table('known_products',
@@ -141,11 +143,11 @@ def upgrade():
         sa.Column('database_id', sa.Integer(), nullable=False),
         sa.Column('title', sa.String(length=200), nullable=False),
         sa.Column('description', sa.Text(), nullable=True),
-        sa.Column('path_match_enabled', sa.Boolean(), nullable=False),
+        sa.Column('path_match_enabled', sa.Boolean(), nullable=False, server_default=sa.text('false')),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.Column('updated_at', sa.DateTime(), nullable=False),
         sa.PrimaryKeyConstraint('id'),
-        sa.ForeignKeyConstraint(['database_id'], ['hash_databases.id']),
+        sa.ForeignKeyConstraint(['database_id'], ['hash_databases.id'], ondelete='CASCADE'),
     )
     op.create_index('ix_known_products_database_id', 'known_products', ['database_id'], unique=False)
     op.create_index('ix_known_products_title', 'known_products', ['title'], unique=False)
@@ -159,14 +161,14 @@ def upgrade():
         sa.Column('sha1', sa.String(length=40), nullable=True),
         sa.Column('sha256', sa.String(length=64), nullable=True),
         sa.Column('crc32', sa.String(length=8), nullable=True),
-        sa.Column('is_required', sa.Boolean(), nullable=False),
+        sa.Column('is_required', sa.Boolean(), nullable=False, server_default=sa.text('true')),
         sa.Column('relative_path', sa.String(length=1000), nullable=True),
         sa.Column('product_name', sa.String(length=200), nullable=True),
         sa.Column('product_version', sa.String(length=50), nullable=True),
         sa.Column('description', sa.Text(), nullable=True),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['database_id'], ['hash_databases.id']),
-        sa.ForeignKeyConstraint(['product_id'], ['known_products.id']),
+        sa.ForeignKeyConstraint(['product_id'], ['known_products.id'], ondelete='SET NULL', name='fk_known_files_product_id'),
     )
     op.create_index('ix_known_files_database_id', 'known_files', ['database_id'], unique=False)
     op.create_index('ix_known_files_filename', 'known_files', ['filename'], unique=False)
@@ -192,8 +194,8 @@ def upgrade():
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['platform_id'], ['platforms.id']),
         sa.ForeignKeyConstraint(['category_id'], ['categories.id']),
-        sa.ForeignKeyConstraint(['parent_id'], ['items.id']),
-        sa.ForeignKeyConstraint(['owner_id'], ['user.id'], ondelete='SET NULL'),
+        sa.ForeignKeyConstraint(['parent_id'], ['items.id'], name='fk_items_parent_id'),
+        sa.ForeignKeyConstraint(['owner_id'], ['user.id'], ondelete='SET NULL', name='fk_items_owner_id_user'),
     )
     op.create_index('ix_items_category_id', 'items', ['category_id'], unique=False)
     op.create_index('ix_items_name', 'items', ['name'], unique=False)
@@ -231,8 +233,8 @@ def upgrade():
         sa.Column('item_id', sa.Integer(), nullable=False),
         sa.Column('user_id', sa.Integer(), nullable=True),
         sa.Column('group_id', sa.Integer(), nullable=True),
-        sa.Column('permission', sa.String(length=20), nullable=False),
-        sa.Column('created_at', sa.DateTime(), nullable=False),
+        sa.Column('permission', sa.String(length=20), nullable=False, server_default=sa.text("'viewer'")),
+        sa.Column('created_at', sa.DateTime(), nullable=False, server_default=sa.text('CURRENT_TIMESTAMP')),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['item_id'], ['items.id'], ondelete='CASCADE'),
         sa.ForeignKeyConstraint(['user_id'], ['user.id'], ondelete='CASCADE'),
@@ -263,9 +265,10 @@ def upgrade():
         sa.Column('last_used_at', sa.DateTime(), nullable=True),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['user_id'], ['user.id']),
+        sa.UniqueConstraint('key_hash'),
     )
     op.create_index('ix_api_keys_key_hash', 'api_keys', ['key_hash'], unique=True)
-    op.create_index('ix_api_keys_key_prefix', 'api_keys', ['key_prefix'], unique=False)
+    op.create_index('ix_api_keys_prefix_active', 'api_keys', ['key_prefix', 'is_active'], unique=False)
     op.create_index('ix_api_keys_user_id', 'api_keys', ['user_id'], unique=False)
     op.create_table('user_restriction_bypasses',
         sa.Column('id', sa.Integer(), nullable=False),
@@ -301,7 +304,7 @@ def upgrade():
         sa.Column('updated_at', sa.DateTime(), nullable=False),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['item_id'], ['items.id']),
-        sa.ForeignKeyConstraint(['owner_id'], ['user.id'], ondelete='SET NULL'),
+        sa.ForeignKeyConstraint(['owner_id'], ['user.id'], ondelete='SET NULL', name='fk_artefacts_owner_id_user'),
         sa.ForeignKeyConstraint(['parent_artefact_id'], ['artefacts.id']),
         sa.UniqueConstraint('derived_from_analysis_id', 'storage_path', name='uq_artefact_analysis_storage_path'),
         sa.UniqueConstraint('item_id', 'sha256', name='uq_artefact_item_sha256'),
@@ -328,7 +331,7 @@ def upgrade():
         sa.Column('summary', sa.Text(), nullable=True),
         sa.Column('details', sa.Text(), nullable=True),
         sa.Column('error_message', sa.Text(), nullable=True),
-        sa.Column('priority', sa.Integer(), nullable=False),
+        sa.Column('priority', sa.Integer(), nullable=False, server_default=sa.text('0')),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.Column('started_at', sa.DateTime(), nullable=True),
         sa.Column('completed_at', sa.DateTime(), nullable=True),
@@ -340,6 +343,8 @@ def upgrade():
     op.create_index('ix_analyses_priority', 'analyses', ['priority'], unique=False)
     op.create_index('ix_analyses_slug', 'analyses', ['slug'], unique=False)
     op.create_index('ix_analyses_status', 'analyses', ['status'], unique=False)
+    op.create_index('ix_analyses_status_created', 'analyses', ['status', 'created_at'], unique=False)
+    op.create_index('ix_analyses_status_priority_created', 'analyses', ['status', 'priority', 'created_at'], unique=False)
     op.create_index('ix_analyses_uuid', 'analyses', ['uuid'], unique=True)
     # Deferred circular FK: artefacts.derived_from_analysis_id -> analyses.id.
     # SQLite cannot ALTER TABLE to add a constraint; only needed on PostgreSQL.
@@ -454,14 +459,14 @@ def upgrade():
         sa.Column('partition_id', sa.Integer(), nullable=False),
         sa.Column('product_id', sa.Integer(), nullable=False),
         sa.Column('folder_path', sa.String(length=1000), nullable=False),
-        sa.Column('required_matched', sa.Integer(), nullable=False),
-        sa.Column('required_total', sa.Integer(), nullable=False),
-        sa.Column('optional_matched', sa.Integer(), nullable=False),
-        sa.Column('optional_total', sa.Integer(), nullable=False),
+        sa.Column('required_matched', sa.Integer(), nullable=False, server_default=sa.text('0')),
+        sa.Column('required_total', sa.Integer(), nullable=False, server_default=sa.text('0')),
+        sa.Column('optional_matched', sa.Integer(), nullable=False, server_default=sa.text('0')),
+        sa.Column('optional_total', sa.Integer(), nullable=False, server_default=sa.text('0')),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.PrimaryKeyConstraint('id'),
-        sa.ForeignKeyConstraint(['partition_id'], ['partitions.id']),
-        sa.ForeignKeyConstraint(['product_id'], ['known_products.id']),
+        sa.ForeignKeyConstraint(['partition_id'], ['partitions.id'], ondelete='CASCADE'),
+        sa.ForeignKeyConstraint(['product_id'], ['known_products.id'], ondelete='CASCADE'),
     )
     op.create_index('ix_recognised_products_partition_id', 'recognised_products', ['partition_id'], unique=False)
     op.create_index('ix_recognised_products_partition_product', 'recognised_products', ['partition_id', 'product_id'], unique=False)
@@ -494,7 +499,7 @@ def upgrade():
         sa.Column('extraction_depth', sa.Integer(), nullable=False),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['partition_id'], ['partitions.id']),
-        sa.ForeignKeyConstraint(['known_file_id'], ['known_files.id'], ondelete='SET NULL'),
+        sa.ForeignKeyConstraint(['known_file_id'], ['known_files.id'], ondelete='SET NULL', name='fk_extracted_files_known_file_id'),
         sa.ForeignKeyConstraint(['parent_file_id'], ['extracted_files.id']),
     )
     op.create_index('ix_extracted_files_archive', 'extracted_files', ['is_archive', 'risc_os_filetype'], unique=False)
@@ -545,9 +550,10 @@ def upgrade():
 
 def downgrade():
     bind = op.get_bind()
+    is_pg = bind.dialect.name == 'postgresql'
     # Drop the deferred circular FK first so the two tables can be removed.
     # SQLite has no ALTER-DROP-CONSTRAINT (and never created the FK above).
-    if bind.dialect.name != 'sqlite':
+    if is_pg:
         op.drop_constraint('fk_artefacts_derived_from_analysis', 'artefacts', type_='foreignkey')
     op.drop_table('hash_rescan_jobs')
     op.drop_table('extracted_file_restrictions')

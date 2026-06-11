@@ -1054,7 +1054,7 @@ class KnownProduct(db.Model):
     __tablename__ = "known_products"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    database_id: Mapped[int] = mapped_column(ForeignKey("hash_databases.id"), index=True)
+    database_id: Mapped[int] = mapped_column(ForeignKey("hash_databases.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(200), index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     path_match_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -1072,7 +1072,7 @@ class KnownFile(db.Model):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     database_id: Mapped[int] = mapped_column(ForeignKey("hash_databases.id"), index=True)
-    product_id: Mapped[int | None] = mapped_column(ForeignKey("known_products.id"), index=True, nullable=True)
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("known_products.id", ondelete="SET NULL"), index=True, nullable=True)
     filename: Mapped[str] = mapped_column(String(255), index=True)
     file_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     md5: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
@@ -1128,8 +1128,8 @@ class RecognisedProduct(db.Model):
     __tablename__ = "recognised_products"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    partition_id: Mapped[int] = mapped_column(ForeignKey("partitions.id"), index=True)
-    product_id: Mapped[int] = mapped_column(ForeignKey("known_products.id"), index=True)
+    partition_id: Mapped[int] = mapped_column(ForeignKey("partitions.id", ondelete="CASCADE"), index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("known_products.id", ondelete="CASCADE"), index=True)
     folder_path: Mapped[str] = mapped_column(String(1000))
     required_matched: Mapped[int] = mapped_column(Integer, default=0)
     required_total: Mapped[int] = mapped_column(Integer, default=0)
