@@ -437,6 +437,9 @@ def _extract_top_level_archive(
             label=file_path.name,
             source_path=file_path,
             artefact_type=artefact_type,
+            # Same-named files may exist in different subdirectories; key the
+            # storage name on the extraction-relative path, not the basename.
+            unique_name=str(file_path.relative_to(extract_dir)),
         )
         if resp:
             derived_count += 1

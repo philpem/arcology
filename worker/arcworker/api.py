@@ -208,6 +208,7 @@ class ArcologyAPI:
         auto_analyse: bool = True,
         skip_analyses: list[str] | None = None,
         analysis_hints: dict | None = None,
+        unique_name: str | None = None,
     ) -> dict | None:
         """
         Register a derived artefact produced by an analysis.
@@ -224,6 +225,14 @@ class ArcologyAPI:
                 auto-queuing follow-on analyses.  Used to prevent ping-pong: e.g.
                 HFE/IMD siblings produced by FLUX_DECODE carry skip_analyses=['FLUX_DECODE']
                 so they don't re-trigger the decode.
+            unique_name: Stable name distinguishing this file from any other
+                file registered by the same analysis.  Required when a single
+                analysis can register multiple files whose basenames may
+                collide (e.g. same-named files in different subdirectories of
+                an extracted archive) — pass the path relative to the
+                extraction root.  Must be stable across retries, so never use
+                an absolute path under a per-run temp directory.  Defaults to
+                ``source_path.name``.
             analysis_hints: Optional dict merged into the hints of the follow-on
                 analyses queued for this derived artefact (on top of the parent
                 analysis's hints).  Used to pass per-artefact context that the
@@ -238,9 +247,9 @@ class ArcologyAPI:
         # Build a deterministic storage name so that retries after an API
         # failure reuse the same key rather than uploading a second copy and
         # leaving the first orphaned in S3.  The combination of analysis_id
-        # and source filename is unique within the system.
+        # and unique_name must be unique within the system.
         name_hash = hashlib.sha256(
-            f"{analysis_id}:{source_path.stem}".encode()
+            f"{analysis_id}:{unique_name or source_path.name}".encode()
         ).hexdigest()[:24]
         storage_name = f"{name_hash}{source_path.suffix}"
 
