@@ -664,9 +664,9 @@ def _collect_item_cleanup_keys(all_artefact_ids):
     upload_blob_ids = set()
     output_blob_ids = set()
     for _artefact_id, storage_dir, storage_path, artefact_uuid, upload_blob_id, output_blob_id in rows:
-        if upload_blob_id:
+        if upload_blob_id is not None:
             upload_blob_ids.add(upload_blob_id)
-        elif output_blob_id:
+        elif output_blob_id is not None:
             output_blob_ids.add(output_blob_id)
         elif storage_path:
             # Legacy artefact with no blob record: include directly

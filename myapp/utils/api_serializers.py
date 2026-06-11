@@ -1,6 +1,7 @@
 """Shared API serializer helpers for Arcology models."""
 
 from ..services.artefact_lifecycle import build_processing_tree
+from .blobs import artefact_blob_storage_path as _blob_storage_path
 from .enum_display import enum_value as _enum_value
 
 
@@ -63,10 +64,7 @@ def artefact_to_dict(artefact, include_partitions=False, include_storage=False):
         'created_at': artefact.created_at.isoformat(), 'updated_at': artefact.updated_at.isoformat()
     }
     if include_storage:
-        blob = artefact.upload_blob or artefact.output_blob
-        result['storage_path'] = (
-            blob.storage_path if blob is not None else artefact.storage_path
-        )
+        result['storage_path'] = _blob_storage_path(artefact)
         result['storage_directory'] = artefact.storage_directory.value
     if include_partitions:
         result['partitions'] = [partition_to_dict(p) for p in artefact.partitions]

@@ -2882,6 +2882,7 @@ def compute_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None
 
 
 @blueprint.route('/files/<string:uuid>/duplicates')
+@public_readable
 def file_duplicates(uuid):
     """List visible extracted-file instances with identical content."""
     source = (

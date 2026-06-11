@@ -57,6 +57,10 @@ def backfill_blobs(batch_size, dry_run):
                 f"({artefact.storage_directory.value}) sha256={artefact.sha256[:12]}..."
             )
         else:
+            # For legacy artefacts (pre-blob-dedup), storage_path is the
+            # physical file path in both UPLOADS and OUTPUTS. New-style output
+            # artefacts use a logical storage_path but always have output_blob_id
+            # set, so they are excluded by the query filter above.
             assign_blob(
                 artefact,
                 artefact.storage_directory,

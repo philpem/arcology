@@ -1530,7 +1530,7 @@ def produce_artefact(id):
         ).first()
         if not existing:
             return error_response('Failed to create derived artefact (integrity error)', 500)
-        # which may be missing (e.g. orphaned after a failed cascade) or stale.
+        # Re-queue analyses on the artefact already registered for this analysis/path.
         # queue_analyses_for_artefact skips PENDING/RUNNING duplicates, so this
         # is safe to call even if some analyses are already active.
         queued_analyses = []
