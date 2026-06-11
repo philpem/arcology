@@ -248,6 +248,8 @@ def _analysis_file_path(analysis, hint_file_map: dict) -> str | None:
                          (empty → direct artefact convert, returns None)
       RISCOS_MODULE_PARSE — path_prefix of the archive context
                          (empty → top-level scan, returns None)
+      NSFW_SCAN        — path_prefix of the archive context
+                         (empty → top-level scan, returns None)
     """
 
     if not analysis.hints:
@@ -263,7 +265,7 @@ def _analysis_file_path(analysis, hint_file_map: dict) -> str | None:
         if fid and fid in hint_file_map:
             return hint_file_map[fid]['path']
         return None
-    if atype in (AnalysisType.FORMAT_CONVERT, AnalysisType.RISCOS_MODULE_PARSE):
+    if atype in (AnalysisType.FORMAT_CONVERT, AnalysisType.RISCOS_MODULE_PARSE, AnalysisType.NSFW_SCAN):
         prefix = h.get(HintKey.PATH_PREFIX, '')
         return prefix if prefix else None
     return None

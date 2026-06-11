@@ -1,8 +1,10 @@
 """Tests for content-gated follow-up dispatch (queue_partition_follow_ups).
 
-After an extraction, a per-kind follow-on analysis (FORMAT_CONVERT, REPLAY_PROCESS,
-MEDIA_TRANSCODE, RISCOS_MODULE_PARSE) is queued only when the extraction actually
-contains that kind of content; PRODUCT_RECOGNITION is hash-based and always runs.
+After an extraction, a per-kind follow-on analysis (FORMAT_CONVERT, NSFW_SCAN,
+REPLAY_PROCESS, MEDIA_TRANSCODE, RISCOS_MODULE_PARSE) is queued only when the
+extraction actually contains that kind of content; PRODUCT_RECOGNITION is
+hash-based and always runs.  NSFW_SCAN is gated identically to FORMAT_CONVERT
+(CONVERTIBLE content + an extraction path) — it reads the same raster images.
 (Archive detection is folded into registration — see test_archive_detection.py.)
 These tests drive AnalysisWorker.queue_partition_follow_ups with a stub API and
 assert exactly which analyses are queued for a given present-categories set.
@@ -47,6 +49,7 @@ class TestFollowUpGating(unittest.TestCase):
         self.assertEqual(_queued(None), {
             AnalysisType.PRODUCT_RECOGNITION.value,
             AnalysisType.FORMAT_CONVERT.value,
+            AnalysisType.NSFW_SCAN.value,
             AnalysisType.RISCOS_MODULE_PARSE.value,
             AnalysisType.REPLAY_PROCESS.value,
             AnalysisType.MEDIA_TRANSCODE.value,
@@ -74,6 +77,7 @@ class TestFollowUpGating(unittest.TestCase):
         self.assertEqual(_queued({C.ARCHIVE, C.CONVERTIBLE}), {
             AnalysisType.PRODUCT_RECOGNITION.value,
             AnalysisType.FORMAT_CONVERT.value,
+            AnalysisType.NSFW_SCAN.value,
         })
 
     def test_format_convert_needs_extraction_path(self):
