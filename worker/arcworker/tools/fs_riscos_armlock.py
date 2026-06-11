@@ -22,6 +22,7 @@ The detection logic is adapted from armlock_tool.py (standalone CLI).
 
 import struct
 from pathlib import Path
+from .extraction import _get_riscos_filetype
 
 # ---------------------------------------------------------------------------
 # Disc record parsing
@@ -128,9 +129,8 @@ def _parse_directory(image: bytearray, addr: int) -> tuple[bool, list]:
         sin = image[offset + 0x16] | (image[offset + 0x17] << 8) | (image[offset + 0x18] << 16)
         attr = image[offset + 0x19]
         is_dir = bool(attr & 0x08)
-        filetype = None
-        if (load >> 20) == 0xFFF:
-            filetype = (load >> 8) & 0xFFF
+        # Hex-string form ('fff'), consistent with the rest of the system
+        filetype = _get_riscos_filetype(load)
         entries.append({
             "name": name,
             "load": load,
