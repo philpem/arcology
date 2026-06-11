@@ -292,11 +292,13 @@ def _redirect_to_artefact_view(artefact):
 
 def _check_download_restrictions(artefact):
     """Return a redirect response when download restrictions block access."""
-    if not artefact.restrictions:
+    # Restrictions on a container artefact cascade to artefacts derived from it.
+    restrictions = artefact.effective_restrictions
+    if not restrictions:
         return None
 
-    if not can_download_despite_restrictions(current_user, artefact.restrictions, artefact):
-        categories = ', '.join(r.restriction_type.label for r in artefact.restrictions)
+    if not can_download_despite_restrictions(current_user, restrictions, artefact):
+        categories = ', '.join({r.restriction_type.label for r in restrictions})
         flash(f'Download restricted: {categories}', 'danger')
         return _redirect_to_artefact_view(artefact)
 
