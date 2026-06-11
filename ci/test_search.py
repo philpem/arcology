@@ -1142,6 +1142,94 @@ class TestHashDBSearch(unittest.TestCase):
         self.assertEqual(kf.filename, 'FileB1')
 
 
+
+
+# =============================================================================
+# Multi-value pagination regression tests
+# =============================================================================
+
+class TestMultiValuePagination(unittest.TestCase):
+    """Multiple values for the same key must paginate as ONE result set.
+
+    Regression test: the per-key search functions previously applied
+    offset/limit once per token value and summed the totals, so a query like
+    'protection:bad_crc protection:weak_bits' returned up to 2x per_page rows
+    on page 1 and skipped rows on page 2.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.app import create_app
+        from myapp.database import (
+            Artefact,
+            ArtefactProtection,
+            Item,
+            StorageDirectory,
+        )
+        from myapp.extensions import db as _db
+        from shared.enums import ArtefactType
+
+        cls.app = create_app()
+        cls.app.config['TESTING'] = True
+
+        with cls.app.app_context():
+            _db.create_all()
+
+            item = Item(name='Pagination Item')
+            _db.session.add(item)
+            _db.session.flush()
+
+            # Five artefacts: three with bad_crc, two with weak_bits.
+            # Labels sort A1 < A2 < ... so page boundaries are predictable.
+            specs = [
+                ('A1', 'bad_crc'), ('A2', 'bad_crc'), ('A3', 'bad_crc'),
+                ('A4', 'weak_bits'), ('A5', 'weak_bits'),
+            ]
+            for label, ptype in specs:
+                art = Artefact(
+                    item_id=item.id,
+                    label=label,
+                    artefact_type=ArtefactType.HFE,
+                    original_filename=f'{label}.hfe',
+                    storage_path=f'{label}.hfe',
+                    storage_directory=StorageDirectory.UPLOADS,
+                )
+                _db.session.add(art)
+                _db.session.flush()
+                _db.session.add(ArtefactProtection(
+                    artefact_id=art.id, protection_type=ptype, track=1, side=0,
+                ))
+            _db.session.commit()
+
+    def _protection_results(self, page, per_page):
+        from myapp.blueprints.search import _run_search, parse_query
+        with self.app.app_context():
+            tokens = parse_query('protection:bad_crc protection:weak_bits')
+            results = _run_search(tokens, page=page, per_page=per_page)
+        return (
+            [r for r in results['artefacts'] if r['type'] == 'protection'],
+            results['totals']['artefacts'],
+        )
+
+    def test_total_counts_all_values_once(self):
+        _, total = self._protection_results(page=1, per_page=2)
+        self.assertEqual(total, 5)
+
+    def test_page_size_respected_with_multiple_values(self):
+        rows, _ = self._protection_results(page=1, per_page=2)
+        # Previously: up to per_page rows PER token value (4 here).
+        self.assertEqual(len(rows), 2)
+
+    def test_pages_partition_results_without_skips_or_dupes(self):
+        labels = []
+        for page in (1, 2, 3):
+            rows, _ = self._protection_results(page=page, per_page=2)
+            labels.extend(r['artefact'].label for r in rows)
+        self.assertEqual(sorted(labels), ['A1', 'A2', 'A3', 'A4', 'A5'])
+        self.assertEqual(len(labels), len(set(labels)))
+
+
+
 if __name__ == '__main__':
     unittest.main()
 

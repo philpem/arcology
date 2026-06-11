@@ -95,7 +95,8 @@ def parse_query(raw: str) -> dict:
 def index():
     q = request.args.get('q', '').strip()
     per_page, page, view_all = resolve_per_page('SEARCH_PER_PAGE', PER_PAGE)
-    # Clamp page to ≥1 (resolve_per_page already does this via request.args)
+    # Clamp page to ≥1: resolve_per_page passes the raw ?page= value through,
+    # and a negative page would produce a negative OFFSET in the sub-searches.
     page = max(1, page)
     tokens = parse_query(q)
 
@@ -275,150 +276,131 @@ def _search_partitions(tokens, page=1, per_page=PER_PAGE):
 
 def _search_protection(tokens, page=1, per_page=PER_PAGE):
     """Search ArtefactProtection by protection type."""
-    all_results = []
-    total = 0
-    for prot_type in tokens.get('protection', []):
-        base_q = (
-            db.session.query(ArtefactProtection, Artefact, Item)
-            .join(Artefact, ArtefactProtection.artefact_id == Artefact.id)
-            .join(Item, Artefact.item_id == Item.id)
-            .filter(ArtefactProtection.protection_type == prot_type.lower())
-            .filter(artefact_visibility_clause(current_user))
-        )
-        total += base_q.count()
-        q = base_q.order_by(func.lower(Item.name), func.lower(Artefact.label)) \
-                  .offset((page - 1) * per_page).limit(per_page).all()
-        deduped = _dedup_by_artefact(q)
-        all_results.extend([
-            {'type': 'protection', 'protection_type': prot_type, 'artefact': a, 'item': i}
-            for _, a, i in deduped
-        ])
-    return all_results, total
+    values = [v.lower() for v in tokens.get('protection', [])]
+    if not values:
+        return [], 0
+
+    base_q = (
+        db.session.query(ArtefactProtection, Artefact, Item)
+        .join(Artefact, ArtefactProtection.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(ArtefactProtection.protection_type.in_(values))
+        .filter(artefact_visibility_clause(current_user))
+    )
+    total = base_q.count()
+    q = base_q.order_by(func.lower(Item.name), func.lower(Artefact.label)) \
+              .offset((page - 1) * per_page).limit(per_page).all()
+    deduped = _dedup_by_artefact(q)
+    return [
+        {'type': 'protection', 'protection_type': p.protection_type, 'artefact': a, 'item': i}
+        for p, a, i in deduped
+    ], total
 
 
 def _search_mastering(tokens, page=1, per_page=PER_PAGE):
     """Search ArtefactMastering by mastering type."""
-    all_results = []
-    total = 0
-    for mast_type in tokens.get('mastering', []):
-        base_q = (
-            db.session.query(ArtefactMastering, Artefact, Item)
-            .join(Artefact, ArtefactMastering.artefact_id == Artefact.id)
-            .join(Item, Artefact.item_id == Item.id)
-            .filter(ArtefactMastering.mastering_type == mast_type.lower())
-            .filter(artefact_visibility_clause(current_user))
-        )
-        total += base_q.count()
-        q = base_q.order_by(func.lower(Item.name), func.lower(Artefact.label)) \
-                  .offset((page - 1) * per_page).limit(per_page).all()
-        deduped = _dedup_by_artefact(q)
-        all_results.extend([
-            {'type': 'mastering', 'mastering_type': mast_type, 'artefact': a, 'item': i}
-            for _, a, i in deduped
-        ])
-    return all_results, total
+    values = [v.lower() for v in tokens.get('mastering', [])]
+    if not values:
+        return [], 0
+
+    base_q = (
+        db.session.query(ArtefactMastering, Artefact, Item)
+        .join(Artefact, ArtefactMastering.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(ArtefactMastering.mastering_type.in_(values))
+        .filter(artefact_visibility_clause(current_user))
+    )
+    total = base_q.count()
+    q = base_q.order_by(func.lower(Item.name), func.lower(Artefact.label)) \
+              .offset((page - 1) * per_page).limit(per_page).all()
+    deduped = _dedup_by_artefact(q)
+    return [
+        {'type': 'mastering', 'mastering_type': m.mastering_type, 'artefact': a, 'item': i}
+        for m, a, i in deduped
+    ], total
+
+
+def _search_riscos_module_files(tokens, key, clause_for, page=1, per_page=PER_PAGE):
+    """Shared RiscosModule → ExtractedFile search for module/command/swi terms.
+
+    *clause_for* builds the per-value RiscosModule filter; values for the same
+    key are ORed together so the whole key is one query with one count and one
+    offset/limit (correct pagination regardless of how many values were given).
+    """
+    values = tokens.get(key, [])
+    if not values:
+        return [], 0
+
+    base_q = (
+        db.session.query(ExtractedFile, Partition, Artefact, Item)
+        .join(Partition, ExtractedFile.partition_id == Partition.id)
+        .join(Artefact, Partition.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .join(RiscosModule, and_(
+            RiscosModule.artefact_id == Artefact.id,
+            RiscosModule.file_path == ExtractedFile.path))
+        .filter(or_(*[clause_for(v) for v in values]))
+        .filter(ExtractedFile.is_directory == False)
+        .filter(artefact_visibility_clause(current_user))
+    )
+    total = base_q.count()
+    q = base_q.order_by(
+        func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path)
+    ).offset((page - 1) * per_page).limit(per_page).all()
+    return q, total
 
 
 def _search_modules(tokens, page=1, per_page=PER_PAGE):
     """Search RiscosModule by title_string or help_title, returning file tuples."""
-    all_results = []
-    total = 0
-    for mod_val in tokens.get('module', []):
-        base_q = (
-            db.session.query(ExtractedFile, Partition, Artefact, Item)
-            .join(Partition, ExtractedFile.partition_id == Partition.id)
-            .join(Artefact, Partition.artefact_id == Artefact.id)
-            .join(Item, Artefact.item_id == Item.id)
-            .join(RiscosModule, and_(
-                RiscosModule.artefact_id == Artefact.id,
-                RiscosModule.file_path == ExtractedFile.path))
-            .filter(or_(
-                _ilike(RiscosModule.title_string, mod_val),
-                _ilike(RiscosModule.help_title, mod_val)))
-            .filter(ExtractedFile.is_directory == False)
-            .filter(artefact_visibility_clause(current_user))
-        )
-        total += base_q.count()
-        q = base_q.order_by(
-            func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path)
-        ).offset((page - 1) * per_page).limit(per_page).all()
-        all_results.extend(q)
-    return all_results, total
+    return _search_riscos_module_files(
+        tokens, 'module',
+        lambda v: or_(_ilike(RiscosModule.title_string, v),
+                      _ilike(RiscosModule.help_title, v)),
+        page=page, per_page=per_page,
+    )
 
 
 def _search_commands(tokens, page=1, per_page=PER_PAGE):
     """Search RiscosModule by star command name, returning file tuples."""
-    all_results = []
-    total = 0
-    for cmd_val in tokens.get('command', []):
-        base_q = (
-            db.session.query(ExtractedFile, Partition, Artefact, Item)
-            .join(Partition, ExtractedFile.partition_id == Partition.id)
-            .join(Artefact, Partition.artefact_id == Artefact.id)
-            .join(Item, Artefact.item_id == Item.id)
-            .join(RiscosModule, and_(
-                RiscosModule.artefact_id == Artefact.id,
-                RiscosModule.file_path == ExtractedFile.path))
-            .filter(RiscosModule.commands.isnot(None))
-            .filter(_ilike_json(RiscosModule.commands, cmd_val))
-            .filter(ExtractedFile.is_directory == False)
-            .filter(artefact_visibility_clause(current_user))
-        )
-        total += base_q.count()
-        q = base_q.order_by(
-            func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path)
-        ).offset((page - 1) * per_page).limit(per_page).all()
-        all_results.extend(q)
-    return all_results, total
+    return _search_riscos_module_files(
+        tokens, 'command',
+        lambda v: and_(RiscosModule.commands.isnot(None),
+                       _ilike_json(RiscosModule.commands, v)),
+        page=page, per_page=per_page,
+    )
 
 
 def _search_swis(tokens, page=1, per_page=PER_PAGE):
     """Search RiscosModule by SWI name, returning file tuples."""
-    all_results = []
-    total = 0
-    for swi_val in tokens.get('swi', []):
-        base_q = (
-            db.session.query(ExtractedFile, Partition, Artefact, Item)
-            .join(Partition, ExtractedFile.partition_id == Partition.id)
-            .join(Artefact, Partition.artefact_id == Artefact.id)
-            .join(Item, Artefact.item_id == Item.id)
-            .join(RiscosModule, and_(
-                RiscosModule.artefact_id == Artefact.id,
-                RiscosModule.file_path == ExtractedFile.path))
-            .filter(RiscosModule.swi_names.isnot(None))
-            .filter(_ilike_json(RiscosModule.swi_names, swi_val))
-            .filter(ExtractedFile.is_directory == False)
-            .filter(artefact_visibility_clause(current_user))
-        )
-        total += base_q.count()
-        q = base_q.order_by(
-            func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path)
-        ).offset((page - 1) * per_page).limit(per_page).all()
-        all_results.extend(q)
-    return all_results, total
+    return _search_riscos_module_files(
+        tokens, 'swi',
+        lambda v: and_(RiscosModule.swi_names.isnot(None),
+                       _ilike_json(RiscosModule.swi_names, v)),
+        page=page, per_page=per_page,
+    )
 
 
 def _search_tags(tokens, page=1, per_page=PER_PAGE):
     """Search artefacts by tag name."""
-    all_results = []
-    total = 0
-    for tag_val in tokens.get('tag', []):
-        base_q = (
-            db.session.query(Artefact, Item)
-            .join(Item, Artefact.item_id == Item.id)
-            .join(artefact_tags, artefact_tags.c.artefact_id == Artefact.id)
-            .join(Tag, artefact_tags.c.tag_id == Tag.id)
-            .filter(_ilike(Tag.name, tag_val))
-            .filter(artefact_visibility_clause(current_user))
-        )
-        total += base_q.count()
-        q = base_q.order_by(func.lower(Item.name), func.lower(Artefact.label)) \
-                  .offset((page - 1) * per_page).limit(per_page).all()
-        all_results.extend([
-            {'type': 'tag', 'tag_name': tag_val, 'artefact': a, 'item': i}
-            for a, i in q
-        ])
-    return all_results, total
+    values = tokens.get('tag', [])
+    if not values:
+        return [], 0
+
+    base_q = (
+        db.session.query(Artefact, Item, Tag.name)
+        .join(Item, Artefact.item_id == Item.id)
+        .join(artefact_tags, artefact_tags.c.artefact_id == Artefact.id)
+        .join(Tag, artefact_tags.c.tag_id == Tag.id)
+        .filter(or_(*[_ilike(Tag.name, v) for v in values]))
+        .filter(artefact_visibility_clause(current_user))
+    )
+    total = base_q.count()
+    q = base_q.order_by(func.lower(Item.name), func.lower(Artefact.label)) \
+              .offset((page - 1) * per_page).limit(per_page).all()
+    return [
+        {'type': 'tag', 'tag_name': tag_name, 'artefact': a, 'item': i}
+        for a, i, tag_name in q
+    ], total
 
 
 def _search_artefact_hashes(tokens, page=1, per_page=PER_PAGE):
@@ -509,100 +491,69 @@ def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE) -> dict:
     has_disc_terms = any(k in tokens for k in ('label', 'ident', 'fs'))
     has_text = 'text' in tokens
 
-    def _add(bucket, rows, total):
-        results[bucket] = results[bucket] + rows if rows else results[bucket]
-        results['totals'][bucket] += total
+    def _add(bucket, rows, total, totals_key=None):
+        """Accumulate one sub-search: rows into *bucket*, count into totals."""
+        if rows:
+            results[bucket].extend(rows)
+        results['totals'][totals_key or bucket] += total
         if total > page * per_page:
             results['has_next'] = True
 
     # File search
-    if has_file_terms or any(k in tokens for k in ('md5', 'sha1', 'sha256')):
+    if has_file_terms:
         files, total = _search_files(tokens, page=page, per_page=per_page)
-        results['files'] = files
-        results['totals']['files'] += total
-        if total > page * per_page:
-            results['has_next'] = True
+        _add('files', files, total)
 
     # Disc/partition search
     if has_disc_terms:
         partitions, total = _search_partitions(tokens, page=page, per_page=per_page)
-        results['artefacts'].extend([
+        _add('artefacts', [
             {'type': 'partition', 'partition': p, 'artefact': a, 'item': i}
             for p, a, i in partitions
-        ])
-        results['totals']['artefacts'] += total
-        if total > page * per_page:
-            results['has_next'] = True
+        ], total)
 
     # Protection indicator search
     if 'protection' in tokens:
         prot_results, total = _search_protection(tokens, page=page, per_page=per_page)
-        results['artefacts'].extend(prot_results)
-        results['totals']['artefacts'] += total
-        if total > page * per_page:
-            results['has_next'] = True
+        _add('artefacts', prot_results, total)
 
     # Mastering indicator search
     if 'mastering' in tokens:
         mast_results, total = _search_mastering(tokens, page=page, per_page=per_page)
-        results['artefacts'].extend(mast_results)
-        results['totals']['artefacts'] += total
-        if total > page * per_page:
-            results['has_next'] = True
+        _add('artefacts', mast_results, total)
 
     # RISC OS module search
     if 'module' in tokens:
         mod_results, total = _search_modules(tokens, page=page, per_page=per_page)
-        results['files'].extend(mod_results)
-        results['totals']['files'] += total
-        if total > page * per_page:
-            results['has_next'] = True
+        _add('files', mod_results, total)
 
     # Star command search
     if 'command' in tokens:
         cmd_results, total = _search_commands(tokens, page=page, per_page=per_page)
-        results['files'].extend(cmd_results)
-        results['totals']['files'] += total
-        if total > page * per_page:
-            results['has_next'] = True
+        _add('files', cmd_results, total)
 
     # SWI name search
     if 'swi' in tokens:
         swi_results, total = _search_swis(tokens, page=page, per_page=per_page)
-        results['files'].extend(swi_results)
-        results['totals']['files'] += total
-        if total > page * per_page:
-            results['has_next'] = True
+        _add('files', swi_results, total)
 
     # Tag search
     if 'tag' in tokens:
         tag_results, total = _search_tags(tokens, page=page, per_page=per_page)
-        results['artefacts'].extend(tag_results)
-        results['totals']['artefacts'] += total
-        if total > page * per_page:
-            results['has_next'] = True
+        _add('artefacts', tag_results, total)
 
     # Artefact hash search
     if any(k in tokens for k in ('md5', 'sha256')):
         hash_results, total = _search_artefact_hashes(tokens, page=page, per_page=per_page)
-        results['artefacts'].extend(hash_results)
-        results['totals']['artefacts'] += total
-        if total > page * per_page:
-            results['has_next'] = True
+        _add('artefacts', hash_results, total)
 
     # Free-text search
     if has_text:
         items, total = _search_text_items(tokens, page=page, per_page=per_page)
-        results['catalogue_items'] = items
-        results['totals']['items'] += total
-        if total > page * per_page:
-            results['has_next'] = True
+        _add('catalogue_items', items, total, totals_key='items')
 
         art_text_results, total = _search_text_artefacts(tokens, page=page, per_page=per_page)
-        results['artefacts'].extend(art_text_results)
-        results['totals']['artefacts'] += total
-        if total > page * per_page:
-            results['has_next'] = True
+        _add('artefacts', art_text_results, total)
 
     # Deduplicate file results
     seen_file_ids = set()
