@@ -420,6 +420,26 @@ class ArcologyClient:
 		return self.post_json(f'hash-databases/{db_id}/products/{product_id}/files', files)
 
 
+def verify_artefact_hashes(filepath: str, result: dict) -> bool | None:
+	"""Compare a just-uploaded file's local hashes with the server's record.
+
+	Returns True when every hash the server returned matches, False on any
+	mismatch (likely transfer corruption), and None when the server returned
+	no hashes to compare against — callers should report that distinctly
+	rather than treating it as verified.
+	"""
+	server_md5 = result.get('md5')
+	server_sha256 = result.get('sha256')
+	if not server_md5 and not server_sha256:
+		return None
+	local_md5, local_sha256 = compute_file_hashes(filepath)
+	if server_md5 and server_md5 != local_md5:
+		return False
+	if server_sha256 and server_sha256 != local_sha256:
+		return False
+	return True
+
+
 def compute_file_hashes(filepath: str) -> tuple[str, str]:
 	"""Compute MD5 and SHA256 hashes for a file."""
 	md5_hash = hashlib.md5()
