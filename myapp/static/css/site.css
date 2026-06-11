@@ -1,0 +1,7 @@
+/* Arcology site-wide styles (moved from the inline <style> in _base.html). */
+
+body { display: flex; flex-direction: column; min-height: 100vh; }
+main { flex: 1; }
+.navbar-brand i { margin-right: 0.25rem; }
+code { font-size: 0.875em; word-break: break-all; }
+.depth-indent { padding-left: calc(var(--depth-base, 1rem) + (var(--depth, 0) * var(--depth-step, 1.5rem))); }
