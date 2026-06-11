@@ -323,11 +323,11 @@ Set `OIDC_ROLE_STAFF` (default `arcology-staff`) in the IdP to map SSO users to 
 >     op.execute(sa.text("DELETE FROM analyses WHERE analysis_type = 'MY_NEW_TYPE'"))
 > ```
 >
-> **For `ArtefactType`** — use the cascade helper block from any existing
-> artefact-type migration (e.g. `20260324_201523_add_arc_artefact_type.py`).
-> Copy the `_CASCADE_SQL` constant and call it with the type name(s):
+> **For `ArtefactType`** — copy the `_cascade_sql()` helper from
+> `doc/MIGRATION_PATTERNS.md` (the original worked examples were squashed
+> into the consolidated initial migration) and call it with the type name(s):
 > ```python
-> op.execute(sa.text(_CASCADE_SQL).bindparams(types=['MY_NEW_TYPE']))
+> op.execute(sa.text(_cascade_sql(['MY_NEW_TYPE'])))
 > ```
 >
 > **For `FilesystemType`** — remap to `UNKNOWN` rather than deleting:

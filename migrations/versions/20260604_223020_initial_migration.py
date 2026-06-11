@@ -25,10 +25,39 @@ down_revision = None
 branch_labels = None
 depends_on = None
 
-# Enum value additions later in the chain require non-transactional DDL; this
-# root migration creates types wholesale, but we keep autocommit for parity with
-# the rest of the chain and to allow CREATE TYPE outside an explicit transaction.
-autocommit = True
+# PostgreSQL enum value lists.  The ORDER matters: PostgreSQL enum comparison
+# is positional, and the original chain appended later values to the END of
+# each type via ALTER TYPE ... ADD VALUE.  These tuples reproduce the exact
+# net value order of the original 47-migration chain, so a fresh install gets
+# the same enum ordinals as upgraded deployments (verified by diffing the
+# pg_dump -s output of both chains).
+_ENUM_VALUES = {
+    'userpermission': ('READ_ONLY', 'READ_WRITE', 'STAFF'),
+    'apikeypermission': ('READ_ONLY', 'READ_UPLOAD', 'READ_WRITE'),
+    'analysisstatus': ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED'),
+    'filesystemtype': (
+        'FAT12', 'FAT16', 'FAT32', 'NTFS', 'HPFS', 'HFS', 'HFS_PLUS', 'ADFS',
+        'DFS', 'AMIGA_OFS', 'AMIGA_FFS', 'ISO9660', 'CDFS', 'CPM', 'UNKNOWN',
+        'OTHER', 'ARCHIVE',
+    ),
+    'storagedirectory': ('UPLOADS', 'OUTPUTS'),
+    'restrictiontype': ('MALWARE', 'PII', 'COPYRIGHT', 'LEGAL_HOLD', 'EXPLICIT', 'CORRUPTED'),
+    'artefacttype': (
+        'SCP', 'IMD', 'HFE', 'RAW_SECTOR', 'ISO', 'DD_ZST', 'DD_GZ', 'DD_BZ2',
+        'PDF', 'ZIP', 'TARGZ', 'RAR', 'UNKNOWN', 'ARC', 'ACORN_SPRITE',
+        'ACORN_DRAW', 'ACORN_TEXT', 'TBAFS', 'XFILES', 'DFI', 'A2R', 'IMAGE',
+        'SIDECAR',
+    ),
+    'analysistype': (
+        'FLUX_VISUALISATION', 'FLUX_DECODE', 'SECTOR_DUMP', 'FILE_EXTRACTION',
+        'ARCHIVE_DETECT', 'ARCHIVE_EXTRACT', 'METADATA_EXTRACT',
+        'PARTITION_DETECT', 'CHECKSUM_COMPUTE', 'FORMAT_IDENTIFY',
+        'DISC_MASTERING_DETECT', 'DISC_PROTECTION_DETECT',
+        'PRODUCT_RECOGNITION', 'ARMLOCK_REMOVE', 'FORMAT_CONVERT',
+        'RISCOS_MODULE_PARSE', 'DETECT_TRACK_DENSITY', 'HASH_RESCAN',
+    ),
+    'hashrescanstatus': ('RUNNING', 'COMPLETED', 'FAILED'),
+}
 
 
 def upgrade():
@@ -38,33 +67,27 @@ def upgrade():
     if is_pg:
         from sqlalchemy.dialects.postgresql import ENUM as _pgENUM
 
-        def _e(type_name, *values):
+        def _e(type_name):
             # postgresql.ENUM(create_type=False) suppresses the before_create event
             # that would otherwise re-issue CREATE TYPE after our manual pre-creation.
             # Generic sa.Enum silently ignores create_type, so the PG-specific class
             # is required here.
-            return _pgENUM(*values, name=type_name, create_type=False)
+            return _pgENUM(*_ENUM_VALUES[type_name], name=type_name, create_type=False)
 
         # Create all PostgreSQL enum types before the tables that reference them.
-        op.execute(sa.text("CREATE TYPE userpermission AS ENUM ('READ_ONLY', 'READ_WRITE', 'STAFF')"))
-        op.execute(sa.text("CREATE TYPE apikeypermission AS ENUM ('READ_ONLY', 'READ_UPLOAD', 'READ_WRITE')"))
-        op.execute(sa.text("CREATE TYPE analysisstatus AS ENUM ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED')"))
-        op.execute(sa.text("CREATE TYPE filesystemtype AS ENUM ('FAT12', 'FAT16', 'FAT32', 'NTFS', 'HPFS', 'HFS', 'HFS_PLUS', 'ADFS', 'DFS', 'AMIGA_OFS', 'AMIGA_FFS', 'ISO9660', 'CDFS', 'CPM', 'ARCHIVE', 'UNKNOWN', 'OTHER')"))
-        op.execute(sa.text("CREATE TYPE storagedirectory AS ENUM ('UPLOADS', 'OUTPUTS')"))
-        op.execute(sa.text("CREATE TYPE restrictiontype AS ENUM ('MALWARE', 'PII', 'COPYRIGHT', 'LEGAL_HOLD', 'EXPLICIT', 'CORRUPTED')"))
-        op.execute(sa.text("CREATE TYPE artefacttype AS ENUM ('SCP', 'DFI', 'A2R', 'IMD', 'HFE', 'RAW_SECTOR', 'ISO', 'DD_ZST', 'DD_GZ', 'DD_BZ2', 'PDF', 'ZIP', 'TARGZ', 'RAR', 'ARC', 'TBAFS', 'XFILES', 'ACORN_SPRITE', 'ACORN_DRAW', 'ACORN_TEXT', 'IMAGE', 'SIDECAR', 'UNKNOWN')"))
-        op.execute(sa.text("CREATE TYPE analysistype AS ENUM ('FLUX_VISUALISATION', 'FLUX_DECODE', 'DETECT_TRACK_DENSITY', 'SECTOR_DUMP', 'FILE_EXTRACTION', 'ARCHIVE_DETECT', 'ARCHIVE_EXTRACT', 'METADATA_EXTRACT', 'PARTITION_DETECT', 'CHECKSUM_COMPUTE', 'FORMAT_IDENTIFY', 'DISC_MASTERING_DETECT', 'DISC_PROTECTION_DETECT', 'ARMLOCK_REMOVE', 'PRODUCT_RECOGNITION', 'FORMAT_CONVERT', 'RISCOS_MODULE_PARSE', 'HASH_RESCAN')"))
-        op.execute(sa.text("CREATE TYPE hashrescanstatus AS ENUM ('RUNNING', 'COMPLETED', 'FAILED')"))
+        for _name, _values in _ENUM_VALUES.items():
+            op.execute(sa.text('CREATE TYPE {} AS ENUM ({})'.format(
+                _name, ', '.join(f"'{v}'" for v in _values))))
     else:
-        def _e(type_name, *values):
-            return sa.Enum(*values, name=type_name)
+        def _e(type_name):
+            return sa.Enum(*_ENUM_VALUES[type_name], name=type_name)
 
     op.create_table('user',
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('username', sa.String(length=50), nullable=False),
         sa.Column('password_hash', sa.String(length=72), nullable=False),
         sa.Column('is_admin', sa.Boolean(), nullable=False, server_default=sa.text('false')),
-        sa.Column('permission', _e('userpermission', 'READ_ONLY', 'READ_WRITE', 'STAFF'), nullable=False, server_default=sa.text("'READ_WRITE'")),
+        sa.Column('permission', _e('userpermission'), nullable=False, server_default=sa.text("'READ_WRITE'")),
         sa.Column('can_use_api', sa.Boolean(), nullable=False, server_default=sa.text('false')),
         sa.Column('preferences', sa.JSON(), nullable=True),
         sa.Column('oidc_sub', sa.String(length=255), nullable=True),
@@ -72,8 +95,8 @@ def upgrade():
         sa.Column('oidc_managed', sa.Boolean(), nullable=False, server_default=sa.text('false')),
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('username'),
+        sa.UniqueConstraint('oidc_sub', name='uq_user_oidc_sub'),
     )
-    op.create_unique_constraint('uq_user_oidc_sub', 'user', ['oidc_sub'])
     op.create_index('ix_user_oidc_sub', 'user', ['oidc_sub'], unique=False)
     op.create_table('categories',
         sa.Column('id', sa.Integer(), nullable=False),
@@ -129,11 +152,11 @@ def upgrade():
         sa.Column('version', sa.String(length=50), nullable=True),
         sa.Column('platform_id', sa.Integer(), nullable=True),
         sa.Column('file_count', sa.Integer(), nullable=True),
-        sa.Column('enable_product_recognition', sa.Boolean(), nullable=False, server_default=sa.text('false')),
-        sa.Column('is_active', sa.Boolean(), nullable=False, server_default=sa.text('true')),
-        sa.Column('restriction_type', _e('restrictiontype', 'MALWARE', 'PII', 'COPYRIGHT', 'LEGAL_HOLD', 'EXPLICIT', 'CORRUPTED'), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.Column('updated_at', sa.DateTime(), nullable=False),
+        sa.Column('enable_product_recognition', sa.Boolean(), nullable=False, server_default=sa.text('false')),
+        sa.Column('is_active', sa.Boolean(), nullable=False, server_default=sa.text('true')),
+        sa.Column('restriction_type', _e('restrictiontype'), nullable=True),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['platform_id'], ['platforms.id'], ondelete='SET NULL', name='fk_hash_databases_platform_id'),
     )
@@ -154,18 +177,18 @@ def upgrade():
     op.create_table('known_files',
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('database_id', sa.Integer(), nullable=False),
-        sa.Column('product_id', sa.Integer(), nullable=True),
         sa.Column('filename', sa.String(length=255), nullable=False),
         sa.Column('file_size', sa.BigInteger(), nullable=True),
         sa.Column('md5', sa.String(length=32), nullable=True),
         sa.Column('sha1', sa.String(length=40), nullable=True),
         sa.Column('sha256', sa.String(length=64), nullable=True),
         sa.Column('crc32', sa.String(length=8), nullable=True),
-        sa.Column('is_required', sa.Boolean(), nullable=False, server_default=sa.text('true')),
-        sa.Column('relative_path', sa.String(length=1000), nullable=True),
         sa.Column('product_name', sa.String(length=200), nullable=True),
         sa.Column('product_version', sa.String(length=50), nullable=True),
         sa.Column('description', sa.Text(), nullable=True),
+        sa.Column('product_id', sa.Integer(), nullable=True),
+        sa.Column('is_required', sa.Boolean(), nullable=False, server_default=sa.text('true')),
+        sa.Column('relative_path', sa.String(length=1000), nullable=True),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['database_id'], ['hash_databases.id']),
         sa.ForeignKeyConstraint(['product_id'], ['known_products.id'], ondelete='SET NULL', name='fk_known_files_product_id'),
@@ -185,12 +208,12 @@ def upgrade():
         sa.Column('description', sa.Text(), nullable=True),
         sa.Column('platform_id', sa.Integer(), nullable=True),
         sa.Column('category_id', sa.Integer(), nullable=True),
+        sa.Column('created_at', sa.DateTime(), nullable=False),
+        sa.Column('updated_at', sa.DateTime(), nullable=False),
         sa.Column('parent_id', sa.Integer(), nullable=True),
         sa.Column('owner_id', sa.Integer(), nullable=True),
         sa.Column('is_private', sa.Boolean(), nullable=False, server_default=sa.text('false')),
         sa.Column('private_effective', sa.Boolean(), nullable=False, server_default=sa.text('false')),
-        sa.Column('created_at', sa.DateTime(), nullable=False),
-        sa.Column('updated_at', sa.DateTime(), nullable=False),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['platform_id'], ['platforms.id']),
         sa.ForeignKeyConstraint(['category_id'], ['categories.id']),
@@ -259,7 +282,7 @@ def upgrade():
         sa.Column('name', sa.String(length=100), nullable=False),
         sa.Column('key_prefix', sa.String(length=8), nullable=False),
         sa.Column('key_hash', sa.String(length=72), nullable=False),
-        sa.Column('permission', _e('apikeypermission', 'READ_ONLY', 'READ_UPLOAD', 'READ_WRITE'), nullable=False),
+        sa.Column('permission', _e('apikeypermission'), nullable=False),
         sa.Column('is_active', sa.Boolean(), nullable=False),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.Column('last_used_at', sa.DateTime(), nullable=True),
@@ -273,7 +296,7 @@ def upgrade():
     op.create_table('user_restriction_bypasses',
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('user_id', sa.Integer(), nullable=False),
-        sa.Column('restriction_type', _e('restrictiontype', 'MALWARE', 'PII', 'COPYRIGHT', 'LEGAL_HOLD', 'EXPLICIT', 'CORRUPTED'), nullable=False),
+        sa.Column('restriction_type', _e('restrictiontype'), nullable=False),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['user_id'], ['user.id']),
         sa.UniqueConstraint('user_id', 'restriction_type', name='uq_user_restriction_bypass'),
@@ -283,16 +306,14 @@ def upgrade():
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('uuid', sa.String(length=32), nullable=False),
         sa.Column('item_id', sa.Integer(), nullable=False),
-        sa.Column('owner_id', sa.Integer(), nullable=True),
-        sa.Column('is_private', sa.Boolean(), nullable=False, server_default=sa.text('false')),
         sa.Column('label', sa.String(length=255), nullable=False),
         sa.Column('slug', sa.String(length=255), nullable=True),
-        sa.Column('artefact_type', _e('artefacttype', 'SCP', 'DFI', 'A2R', 'IMD', 'HFE', 'RAW_SECTOR', 'ISO', 'DD_ZST', 'DD_GZ', 'DD_BZ2', 'PDF', 'ZIP', 'TARGZ', 'RAR', 'ARC', 'TBAFS', 'XFILES', 'ACORN_SPRITE', 'ACORN_DRAW', 'ACORN_TEXT', 'IMAGE', 'SIDECAR', 'UNKNOWN'), nullable=False),
+        sa.Column('artefact_type', _e('artefacttype'), nullable=False),
         sa.Column('type_overridden', sa.Boolean(), nullable=False),
         sa.Column('description', sa.Text(), nullable=True),
         sa.Column('original_filename', sa.String(length=255), nullable=False),
         sa.Column('storage_path', sa.String(length=1000), nullable=False),
-        sa.Column('storage_directory', _e('storagedirectory', 'UPLOADS', 'OUTPUTS'), nullable=False),
+        sa.Column('storage_directory', _e('storagedirectory'), nullable=False),
         sa.Column('file_size', sa.BigInteger(), nullable=True),
         sa.Column('mime_type', sa.String(length=100), nullable=True),
         sa.Column('md5', sa.String(length=32), nullable=True),
@@ -302,12 +323,21 @@ def upgrade():
         sa.Column('derived_from_analysis_id', sa.Integer(), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.Column('updated_at', sa.DateTime(), nullable=False),
+        sa.Column('owner_id', sa.Integer(), nullable=True),
+        sa.Column('is_private', sa.Boolean(), nullable=False, server_default=sa.text('false')),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['item_id'], ['items.id']),
         sa.ForeignKeyConstraint(['owner_id'], ['user.id'], ondelete='SET NULL', name='fk_artefacts_owner_id_user'),
         sa.ForeignKeyConstraint(['parent_artefact_id'], ['artefacts.id']),
         sa.UniqueConstraint('derived_from_analysis_id', 'storage_path', name='uq_artefact_analysis_storage_path'),
         sa.UniqueConstraint('item_id', 'sha256', name='uq_artefact_item_sha256'),
+        # Circular FK to analyses (created below).  PostgreSQL validates the
+        # referenced table at CREATE TABLE time, so it gets the FK after
+        # analyses exists; SQLite resolves FK targets lazily at DML time and
+        # cannot ALTER TABLE ADD CONSTRAINT, so it must be declared inline.
+        *([] if is_pg else [sa.ForeignKeyConstraint(
+            ['derived_from_analysis_id'], ['analyses.id'],
+            ondelete='SET NULL', name='fk_artefacts_derived_from_analysis')]),
     )
     op.create_index('ix_artefacts_derived_from_analysis_id', 'artefacts', ['derived_from_analysis_id'], unique=False)
     op.create_index('ix_artefacts_item_id', 'artefacts', ['item_id'], unique=False)
@@ -319,9 +349,9 @@ def upgrade():
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('uuid', sa.String(length=32), nullable=False),
         sa.Column('artefact_id', sa.Integer(), nullable=False),
-        sa.Column('analysis_type', _e('analysistype', 'FLUX_VISUALISATION', 'FLUX_DECODE', 'DETECT_TRACK_DENSITY', 'SECTOR_DUMP', 'FILE_EXTRACTION', 'ARCHIVE_DETECT', 'ARCHIVE_EXTRACT', 'METADATA_EXTRACT', 'PARTITION_DETECT', 'CHECKSUM_COMPUTE', 'FORMAT_IDENTIFY', 'DISC_MASTERING_DETECT', 'DISC_PROTECTION_DETECT', 'ARMLOCK_REMOVE', 'PRODUCT_RECOGNITION', 'FORMAT_CONVERT', 'RISCOS_MODULE_PARSE', 'HASH_RESCAN'), nullable=False),
+        sa.Column('analysis_type', _e('analysistype'), nullable=False),
         sa.Column('slug', sa.String(length=255), nullable=True),
-        sa.Column('status', _e('analysisstatus', 'PENDING', 'RUNNING', 'COMPLETED', 'FAILED'), nullable=False),
+        sa.Column('status', _e('analysisstatus'), nullable=False),
         sa.Column('tool_name', sa.String(length=100), nullable=True),
         sa.Column('tool_version', sa.String(length=50), nullable=True),
         sa.Column('hints', sa.Text(), nullable=True),
@@ -331,23 +361,22 @@ def upgrade():
         sa.Column('summary', sa.Text(), nullable=True),
         sa.Column('details', sa.Text(), nullable=True),
         sa.Column('error_message', sa.Text(), nullable=True),
-        sa.Column('priority', sa.Integer(), nullable=False, server_default=sa.text('0')),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.Column('started_at', sa.DateTime(), nullable=True),
         sa.Column('completed_at', sa.DateTime(), nullable=True),
+        sa.Column('priority', sa.Integer(), nullable=False, server_default=sa.text('0')),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['artefact_id'], ['artefacts.id']),
     )
     op.create_index('ix_analyses_artefact_id', 'analyses', ['artefact_id'], unique=False)
     op.create_index('ix_analyses_created_at', 'analyses', ['created_at'], unique=False)
-    op.create_index('ix_analyses_priority', 'analyses', ['priority'], unique=False)
     op.create_index('ix_analyses_slug', 'analyses', ['slug'], unique=False)
     op.create_index('ix_analyses_status', 'analyses', ['status'], unique=False)
     op.create_index('ix_analyses_status_created', 'analyses', ['status', 'created_at'], unique=False)
     op.create_index('ix_analyses_status_priority_created', 'analyses', ['status', 'priority', 'created_at'], unique=False)
     op.create_index('ix_analyses_uuid', 'analyses', ['uuid'], unique=True)
-    # Deferred circular FK: artefacts.derived_from_analysis_id -> analyses.id.
-    # SQLite cannot ALTER TABLE to add a constraint; only needed on PostgreSQL.
+    # Deferred circular FK: artefacts.derived_from_analysis_id -> analyses.id
+    # (declared inline on SQLite above).
     if is_pg:
         op.create_foreign_key('fk_artefacts_derived_from_analysis', 'artefacts', 'analyses', ['derived_from_analysis_id'], ['id'], ondelete='SET NULL')
     op.create_table('artefact_tags',
@@ -383,10 +412,10 @@ def upgrade():
     op.create_table('artefact_restrictions',
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('artefact_id', sa.Integer(), nullable=False),
-        sa.Column('restriction_type', _e('restrictiontype', 'MALWARE', 'PII', 'COPYRIGHT', 'LEGAL_HOLD', 'EXPLICIT', 'CORRUPTED'), nullable=False),
+        sa.Column('restriction_type', _e('restrictiontype'), nullable=False),
         sa.Column('reason', sa.Text(), nullable=True),
         sa.Column('added_by_id', sa.Integer(), nullable=True),
-        sa.Column('created_at', sa.DateTime(), nullable=False),
+        sa.Column('created_at', sa.DateTime(), nullable=False, server_default=sa.text('CURRENT_TIMESTAMP')),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['artefact_id'], ['artefacts.id']),
         sa.ForeignKeyConstraint(['added_by_id'], ['user.id']),
@@ -414,7 +443,7 @@ def upgrade():
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('user_id', sa.Integer(), nullable=False),
         sa.Column('artefact_id', sa.Integer(), nullable=False),
-        sa.Column('restriction_type', _e('restrictiontype', 'MALWARE', 'PII', 'COPYRIGHT', 'LEGAL_HOLD', 'EXPLICIT', 'CORRUPTED'), nullable=False),
+        sa.Column('restriction_type', _e('restrictiontype'), nullable=False),
         sa.Column('reason', sa.Text(), nullable=True),
         sa.Column('granted_by_id', sa.Integer(), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=True),
@@ -433,9 +462,8 @@ def upgrade():
         sa.Column('partition_index', sa.Integer(), nullable=False),
         sa.Column('label', sa.String(length=100), nullable=True),
         sa.Column('slug', sa.String(length=255), nullable=True),
-        sa.Column('filesystem', _e('filesystemtype', 'FAT12', 'FAT16', 'FAT32', 'NTFS', 'HPFS', 'HFS', 'HFS_PLUS', 'ADFS', 'DFS', 'AMIGA_OFS', 'AMIGA_FFS', 'ISO9660', 'CDFS', 'CPM', 'ARCHIVE', 'UNKNOWN', 'OTHER'), nullable=False),
+        sa.Column('filesystem', _e('filesystemtype'), nullable=False),
         sa.Column('container_format', sa.Text(), nullable=True),
-        sa.Column('archive_comment', sa.Text(), nullable=True),
         sa.Column('start_sector', sa.BigInteger(), nullable=True),
         sa.Column('sector_count', sa.BigInteger(), nullable=True),
         sa.Column('block_size', sa.Integer(), nullable=True),
@@ -444,8 +472,9 @@ def upgrade():
         sa.Column('total_bytes', sa.BigInteger(), nullable=True),
         sa.Column('unique_files', sa.Integer(), nullable=True),
         sa.Column('detection_details', sa.Text(), nullable=True),
-        sa.Column('gnu_file_type', sa.Text(), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=False),
+        sa.Column('gnu_file_type', sa.Text(), nullable=True),
+        sa.Column('archive_comment', sa.Text(), nullable=True),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['artefact_id'], ['artefacts.id']),
         sa.UniqueConstraint('artefact_id', 'partition_index', name='uq_partition_artefact_index'),
@@ -492,11 +521,11 @@ def upgrade():
         sa.Column('is_archive', sa.Boolean(), nullable=False),
         sa.Column('is_directory', sa.Boolean(), nullable=False),
         sa.Column('archive_format', sa.String(length=50), nullable=True),
-        sa.Column('archive_comment', sa.Text(), nullable=True),
         sa.Column('risc_os_filetype', sa.String(length=3), nullable=True),
+        sa.Column('extraction_depth', sa.Integer(), nullable=False),
         sa.Column('load_address', sa.String(length=8), nullable=True),
         sa.Column('exec_address', sa.String(length=8), nullable=True),
-        sa.Column('extraction_depth', sa.Integer(), nullable=False),
+        sa.Column('archive_comment', sa.Text(), nullable=True),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['partition_id'], ['partitions.id']),
         sa.ForeignKeyConstraint(['known_file_id'], ['known_files.id'], ondelete='SET NULL', name='fk_extracted_files_known_file_id'),
@@ -521,7 +550,7 @@ def upgrade():
     op.create_table('extracted_file_restrictions',
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('extracted_file_id', sa.Integer(), nullable=False),
-        sa.Column('restriction_type', _e('restrictiontype', 'MALWARE', 'PII', 'COPYRIGHT', 'LEGAL_HOLD', 'EXPLICIT', 'CORRUPTED'), nullable=False),
+        sa.Column('restriction_type', _e('restrictiontype'), nullable=False),
         sa.Column('reason', sa.Text(), nullable=True),
         sa.Column('added_by_id', sa.Integer(), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=False),
@@ -534,7 +563,7 @@ def upgrade():
     op.create_table('hash_rescan_jobs',
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('database_id', sa.Integer(), nullable=True),
-        sa.Column('status', _e('hashrescanstatus', 'RUNNING', 'COMPLETED', 'FAILED'), nullable=False),
+        sa.Column('status', _e('hashrescanstatus'), nullable=False),
         sa.Column('files_updated', sa.Integer(), nullable=True),
         sa.Column('files_total', sa.Integer(), nullable=True),
         sa.Column('queued_analyses', sa.Integer(), nullable=True),
@@ -552,7 +581,7 @@ def downgrade():
     bind = op.get_bind()
     is_pg = bind.dialect.name == 'postgresql'
     # Drop the deferred circular FK first so the two tables can be removed.
-    # SQLite has no ALTER-DROP-CONSTRAINT (and never created the FK above).
+    # On SQLite the FK is inline and goes away with the table.
     if is_pg:
         op.drop_constraint('fk_artefacts_derived_from_analysis', 'artefacts', type_='foreignkey')
     op.drop_table('hash_rescan_jobs')
@@ -585,7 +614,7 @@ def downgrade():
     op.drop_table('categories')
     op.drop_table('user')
 
-    if bind.dialect.name == 'postgresql':
+    if is_pg:
         op.execute(sa.text('DROP TYPE IF EXISTS hashrescanstatus'))
         op.execute(sa.text('DROP TYPE IF EXISTS analysistype'))
         op.execute(sa.text('DROP TYPE IF EXISTS artefacttype'))

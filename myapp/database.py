@@ -25,6 +25,8 @@ from sqlalchemy import (
 )
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy import false as sa_false
+from sqlalchemy import text as sa_text
+from sqlalchemy import true as sa_true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
 from shared.enums import AnalysisType, ArtefactType
@@ -162,17 +164,20 @@ group_memberships = Table(
 
 class User(db.Model):
     __tablename__ = 'user'
+    __table_args__ = (
+        db.UniqueConstraint('oidc_sub', name='uq_user_oidc_sub'),
+    )
     id            = Column(Integer, Sequence('user_id_seq'), primary_key=True)
     username      = Column(String(50), nullable=False, unique=True)
     password_hash = Column(String(72), nullable=False)
-    is_admin      = Column(Boolean, nullable=False, default=False)
-    permission    = Column(SQLEnum(UserPermission), nullable=False, default=UserPermission.READ_WRITE)
-    can_use_api   = Column(Boolean, nullable=False, default=False)
+    is_admin      = Column(Boolean, nullable=False, default=False, server_default=sa_false())
+    permission    = Column(SQLEnum(UserPermission), nullable=False, default=UserPermission.READ_WRITE, server_default=UserPermission.READ_WRITE.name)
+    can_use_api   = Column(Boolean, nullable=False, default=False, server_default=sa_false())
     preferences   = Column(JSON, nullable=True, default=None)
     # SSO / OIDC fields (null for local-only accounts)
-    oidc_sub      = Column(String(255), nullable=True, unique=True, index=True)
+    oidc_sub      = Column(String(255), nullable=True, index=True)
     email         = Column(String(255), nullable=True)
-    oidc_managed  = Column(Boolean, nullable=False, default=False)
+    oidc_managed  = Column(Boolean, nullable=False, default=False, server_default=sa_false())
 
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     restriction_bypasses: Mapped[list["UserRestrictionBypass"]] = relationship(
@@ -277,11 +282,16 @@ class User(db.Model):
 class ApiKey(db.Model):
     """An application key granting programmatic access to the REST API."""
     __tablename__ = 'api_keys'
+    __table_args__ = (
+        db.UniqueConstraint('key_hash'),
+        # Hot path: API key authentication looks up active keys by prefix.
+        Index('ix_api_keys_prefix_active', 'key_prefix', 'is_active'),
+    )
 
     id:           Mapped[int]                  = mapped_column(primary_key=True)
     user_id:      Mapped[int]                  = mapped_column(ForeignKey("user.id"), index=True)
     name:         Mapped[str]                  = mapped_column(String(100))
-    key_prefix:   Mapped[str]                  = mapped_column(String(8), index=True)   # First 8 hex chars; display only
+    key_prefix:   Mapped[str]                  = mapped_column(String(8))   # First 8 hex chars; display only
     key_hash:     Mapped[str]                  = mapped_column(String(72), unique=True, index=True)
     permission:   Mapped[ApiKeyPermission]     = mapped_column(SQLEnum(ApiKeyPermission))
     is_active:    Mapped[bool]                 = mapped_column(Boolean, default=True)
@@ -702,6 +712,12 @@ class Artefact(db.Model):
 class Analysis(db.Model):
     """Results from analysing an artefact - auto-triggered based on artefact type."""
     __tablename__ = "analyses"
+    __table_args__ = (
+        # Hot paths: queue listing (status + created_at) and worker job claim
+        # (status + priority + created_at).
+        Index('ix_analyses_status_created', 'status', 'created_at'),
+        Index('ix_analyses_status_priority_created', 'status', 'priority', 'created_at'),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     uuid: Mapped[str] = mapped_column(String(32), unique=True, index=True, default=generate_uuid)
@@ -727,8 +743,9 @@ class Analysis(db.Model):
     details: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON for structured results
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     
-    # Queue priority: higher value = picked up sooner (see ANALYSIS_PRIORITY_* constants)
-    priority: Mapped[int] = mapped_column(Integer, default=ANALYSIS_PRIORITY_NORMAL, index=True)
+    # Queue priority: higher value = picked up sooner (see ANALYSIS_PRIORITY_* constants).
+    # No single-column index: ix_analyses_status_priority_created covers queue scans.
+    priority: Mapped[int] = mapped_column(Integer, default=ANALYSIS_PRIORITY_NORMAL, server_default=sa_text('0'))
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
@@ -942,7 +959,7 @@ class ArtefactRestriction(db.Model):
     restriction_type: Mapped[RestrictionType] = mapped_column(SQLEnum(RestrictionType))
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     added_by_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), server_default=sa_text('CURRENT_TIMESTAMP'))
 
     artefact: Mapped["Artefact"] = relationship(back_populates="restrictions")
     added_by: Mapped[Optional["User"]] = relationship()
@@ -1036,8 +1053,8 @@ class HashDatabase(db.Model):
     version: Mapped[str | None] = mapped_column(String(50), nullable=True)
     platform_id: Mapped[int | None] = mapped_column(ForeignKey("platforms.id", ondelete="SET NULL"), nullable=True)
     file_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    enable_product_recognition: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    enable_product_recognition: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default=sa_false())
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default=sa_true())
     restriction_type: Mapped[RestrictionType | None] = mapped_column(
         SQLEnum(RestrictionType), nullable=True
     )  # If set, artefacts matching this DB's files are automatically restricted
@@ -1057,7 +1074,7 @@ class KnownProduct(db.Model):
     database_id: Mapped[int] = mapped_column(ForeignKey("hash_databases.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(200), index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    path_match_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    path_match_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default=sa_false())
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -1079,7 +1096,7 @@ class KnownFile(db.Model):
     sha1: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
     sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     crc32: Mapped[str | None] = mapped_column(String(8), nullable=True)
-    is_required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default=sa_true())
     relative_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     product_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     product_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -1131,10 +1148,10 @@ class RecognisedProduct(db.Model):
     partition_id: Mapped[int] = mapped_column(ForeignKey("partitions.id", ondelete="CASCADE"), index=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("known_products.id", ondelete="CASCADE"), index=True)
     folder_path: Mapped[str] = mapped_column(String(1000))
-    required_matched: Mapped[int] = mapped_column(Integer, default=0)
-    required_total: Mapped[int] = mapped_column(Integer, default=0)
-    optional_matched: Mapped[int] = mapped_column(Integer, default=0)
-    optional_total: Mapped[int] = mapped_column(Integer, default=0)
+    required_matched: Mapped[int] = mapped_column(Integer, default=0, server_default=sa_text('0'))
+    required_total: Mapped[int] = mapped_column(Integer, default=0, server_default=sa_text('0'))
+    optional_matched: Mapped[int] = mapped_column(Integer, default=0, server_default=sa_text('0'))
+    optional_total: Mapped[int] = mapped_column(Integer, default=0, server_default=sa_text('0'))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     partition: Mapped["Partition"] = relationship(back_populates="recognised_products")
@@ -1152,14 +1169,17 @@ class RecognisedProduct(db.Model):
 class Group(db.Model):
     """A named group of users, used for sharing private items."""
     __tablename__ = "groups"
+    __table_args__ = (
+        db.UniqueConstraint('name', name='uq_groups_name'),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(100), index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 'local' = manually managed; 'oidc' = synced from identity-provider group claim
-    source: Mapped[str] = mapped_column(String(20), nullable=False, default='local')
+    source: Mapped[str] = mapped_column(String(20), nullable=False, default='local', server_default='local')
     oidc_claim_name: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), server_default=sa_text('CURRENT_TIMESTAMP'))
 
     members: Mapped[list["User"]] = relationship(secondary=group_memberships, back_populates="groups")
 
@@ -1180,8 +1200,8 @@ class ItemShare(db.Model):
     item_id: Mapped[int] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), nullable=True, index=True)
     group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), nullable=True, index=True)
-    permission: Mapped[str] = mapped_column(String(20), nullable=False, default='viewer')
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    permission: Mapped[str] = mapped_column(String(20), nullable=False, default='viewer', server_default='viewer')
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), server_default=sa_text('CURRENT_TIMESTAMP'))
 
     item: Mapped["Item"] = relationship(back_populates="shares")
     user: Mapped[Optional["User"]] = relationship("User", foreign_keys=[user_id])
