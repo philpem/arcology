@@ -94,7 +94,10 @@ jobs:
       - name: Install dependencies
         # zstandard is a CLI dependency (cli/pyproject.toml) needed by the
         # bulk-import sidecar-bundling tests; the main app does not require it.
-        run: pip install -r requirements.txt zstandard
+        # pillow and scour are worker dependencies (image/SVG conversion) —
+        # without them the 13 tests in ci/test_image_conversion.py silently
+        # skip, so the result-dict contract they assert is never checked.
+        run: pip install -r requirements.txt zstandard pillow scour
 
       - name: Check imports
         run: python ci/check_imports.py
