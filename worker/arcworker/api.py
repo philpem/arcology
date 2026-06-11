@@ -8,6 +8,7 @@ status updates, and artefact registration.
 import hashlib
 import shutil
 from pathlib import Path
+from urllib.parse import urlencode
 import requests
 from shared.enums import ArtefactType
 from .config import log
@@ -116,6 +117,34 @@ class ArcologyAPI:
             JSON response as dict, or None on error
         """
         return self._request('patch', endpoint, data=data)
+
+    def get_partition_files(self, partition_uuid: str, per_page: int = 10000,
+                            **params) -> list[dict]:
+        """Fetch all file records in a partition, handling pagination.
+
+        Extra keyword arguments become query parameters (e.g. show_known='true',
+        path_prefix=..., extraction_depth=0, is_archive='false').
+
+        Raises:
+            RuntimeError: If any page fails to fetch.  A partial file list must
+                never be processed as if it were complete — handlers rely on
+                the @analysis_handler decorator to convert this into a clean
+                job failure.
+        """
+        files: list[dict] = []
+        page = 1
+        while True:
+            query = urlencode({**params, 'per_page': per_page, 'page': page})
+            resp = self.get(f"/partitions/{partition_uuid}/files?{query}")
+            if resp is None:
+                raise RuntimeError(
+                    f'Failed to fetch partition files for {partition_uuid} (page {page})'
+                )
+            files.extend(resp.get('files', []))
+            if page >= resp.get('pages', 1):
+                break
+            page += 1
+        return files
 
     def run_hash_rescan(self, artefact_uuid: str) -> dict | None:
         """Trigger a server-side hash rescan for one artefact.
