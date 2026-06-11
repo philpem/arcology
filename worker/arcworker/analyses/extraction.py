@@ -1271,6 +1271,19 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
         },
     )
 
+    # Queue NSFW_SCAN to classify any raster images inside the archive.
+    from ..config import NSFW_ENABLED
+    if NSFW_ENABLED:
+        self.api.queue_analysis(
+            artefact['uuid'],
+            AnalysisType.NSFW_SCAN.value,
+            hints={
+                'partition_uuid':  partition_uuid,
+                'extraction_path': rel_output_path,
+                'path_prefix':     archive_display_path,
+            },
+        )
+
     tool_key = result.get('tool', 'tool').lower().replace(' ', '_')
     po = result.get('process_output')
     details: dict = {

@@ -28,6 +28,7 @@ from ..database import (
     ExternalReference,
     ExternalSystem,
     ExtractedFile,
+    ExtractedFileRestriction,
     FilesystemType,
     Group,
     HashDatabase,
@@ -38,6 +39,7 @@ from ..database import (
     Partition,
     Platform,
     RecognisedProduct,
+    RestrictionType,
     StorageDirectory,
     Tag,
     User,
@@ -1864,6 +1866,66 @@ def get_extracted_file(file_id):
         return error_response('Only the worker may access files by integer ID', 403)
     file = _get_extracted_file_or_404(id=file_id)
     return jsonify(file_to_dict(file))
+
+
+@blueprint.route('/partitions/<string:uuid>/files/restrict', methods=['POST'])
+@require_auth('read_upload')
+def apply_file_restrictions(uuid):
+    """Apply download restrictions to specific files in a partition (worker only).
+
+    Accepts a JSON body with a 'restrictions' array:
+      [{'path': '<ExtractedFile.path>', 'restriction_type': 'explicit',
+        'reason': '<optional human-readable reason>'}]
+
+    Idempotent: re-applying an existing restriction updates its reason.
+    """
+    if not _is_worker_request():
+        return error_response('Only the worker may apply file restrictions', 403)
+    partition = _get_partition_or_404(uuid)
+    data, error = _json_object(required=True)
+    if error:
+        return error
+    restrictions_data = data.get('restrictions', [])
+    if not isinstance(restrictions_data, list):
+        return error_response("'restrictions' must be an array")
+
+    applied = 0
+    updated = 0
+    not_found = 0
+
+    for item in restrictions_data:
+        path = item.get('path')
+        rtype_str = item.get('restriction_type')
+        reason = item.get('reason')
+        if not path or not rtype_str:
+            continue
+        try:
+            rtype = RestrictionType(rtype_str)
+        except ValueError:
+            continue
+        ef = ExtractedFile.query.filter_by(
+            partition_id=partition.id, path=path
+        ).first()
+        if not ef:
+            not_found += 1
+            continue
+        existing = ExtractedFileRestriction.query.filter_by(
+            extracted_file_id=ef.id, restriction_type=rtype
+        ).first()
+        if existing:
+            if reason:
+                existing.reason = reason
+            updated += 1
+        else:
+            db.session.add(ExtractedFileRestriction(
+                extracted_file_id=ef.id,
+                restriction_type=rtype,
+                reason=reason,
+            ))
+            applied += 1
+
+    db.session.commit()
+    return jsonify({'applied': applied, 'updated': updated, 'not_found': not_found})
 
 
 # =============================================================================

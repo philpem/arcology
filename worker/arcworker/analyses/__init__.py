@@ -51,7 +51,9 @@ from .images import (
     _RISCOS_VIEWABLE_SUFFIXES,
     _convert_file_to_outputs,
     _detect_viewable_type,
+    _load_nsfw_sessions,
     process_format_convert,
+    process_nsfw_scan,
 )
 from .metadata import (
     process_checksum_compute,
@@ -91,6 +93,8 @@ __all__ = [
     '_RISCOS_VIEWABLE_SUFFIXES',
     '_EXT_VIEWABLE',
     '_RISCOS_HEX_VIEWABLE',
+    '_load_nsfw_sessions',
+    'process_nsfw_scan',
     # Metadata
     'process_checksum_compute',
     'process_metadata_extract',
