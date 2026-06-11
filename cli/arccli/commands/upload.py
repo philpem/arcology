@@ -2,7 +2,7 @@
 
 import os
 import sys
-from ..client import compute_file_hashes
+from ..client import verify_artefact_hashes
 from ..formatting import format_size, print_json
 
 # Files to skip in directory uploads
@@ -68,9 +68,6 @@ def _upload_one(client, item_uuid, filepath, label, artefact_type, auto_analyse,
 
 	print(prefix, end=' ', flush=True)
 
-	# Compute hashes client-side for integrity verification
-	local_md5, local_sha256 = compute_file_hashes(filepath)
-
 	# Track whether chunked progress was shown (so we know how to print "done.")
 	_chunked = [False]
 
@@ -88,14 +85,9 @@ def _upload_one(client, item_uuid, filepath, label, artefact_type, auto_analyse,
 		progress_cb=_progress,
 	)
 
-	# Verify integrity
-	server_md5 = result.get('md5')
-	server_sha256 = result.get('sha256')
-	hash_ok = True
-	if server_md5 and server_md5 != local_md5:
-		hash_ok = False
-	if server_sha256 and server_sha256 != local_sha256:
-		hash_ok = False
+	# Verify integrity against the server's recorded hashes.
+	# None means the server returned no hashes to compare against.
+	hash_ok = verify_artefact_hashes(filepath, result)
 
 	if json_mode:
 		result['_hash_verified'] = hash_ok
@@ -110,8 +102,10 @@ def _upload_one(client, item_uuid, filepath, label, artefact_type, auto_analyse,
 		print(f"  Type:     {result['artefact_type']}")
 		if result.get('queued_analyses'):
 			print(f"  Queued:   {', '.join(result['queued_analyses'])}")
-		if not hash_ok:
+		if hash_ok is False:
 			print("  WARNING: Hash mismatch — upload may be corrupted!", file=sys.stderr)
+		elif hash_ok is None:
+			print("  NOTE: server returned no hashes; integrity not verified.", file=sys.stderr)
 
 	return hash_ok
 
@@ -147,6 +141,7 @@ def cmd_upload(client, args):
 	# Upload each file
 	successes = 0
 	failures = 0
+	hash_mismatches = 0
 	for filepath in files:
 		# Label: use --label for single file, filename stem for multi-file
 		if args.label and len(files) == 1:
@@ -156,10 +151,11 @@ def cmd_upload(client, args):
 
 		try:
 			ok = _upload_one(client, item_uuid, filepath, label, artefact_type, auto_analyse, hints, args.json)
-			if ok:
-				successes += 1
-			else:
-				failures += 1  # hash mismatch — upload may be corrupted
+			successes += 1
+			if ok is False:
+				# The artefact WAS created; report corruption separately
+				# from upload failures rather than calling it "failed".
+				hash_mismatches += 1
 		except Exception as e:
 			print(f"FAILED: {e}", file=sys.stderr)
 			failures += 1
@@ -169,9 +165,11 @@ def cmd_upload(client, args):
 		print(f"\nUploaded: {successes}/{len(files)}", end='')
 		if failures:
 			print(f" ({failures} failed)", end='')
+		if hash_mismatches:
+			print(f" ({hash_mismatches} hash mismatch(es))", end='')
 		print()
 
-	if failures:
+	if failures or hash_mismatches:
 		sys.exit(1)
 
 # vim: ts=4 sw=4 noet
