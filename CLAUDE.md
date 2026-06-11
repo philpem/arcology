@@ -32,7 +32,8 @@ CLI (arco)  --> HTTP/JSON -->  Web (Flask)  <-- HTTP/JSON -->  Worker (Python)
 arcology/
 ├── myapp/                      # Flask web application
 │   ├── app.py                  # Application factory (create_app)
-│   ├── database.py             # All SQLAlchemy models and web-specific enums
+│   ├── database.py             # All SQLAlchemy models (web enums re-exported from enums.py)
+│   ├── enums.py                # Web-specific enums (AnalysisStatus, FilesystemType, RestrictionType, UserPermission, …)
 │   ├── extensions.py           # Flask extension instances (db, migrate, login_manager, bootstrap, csrf)
 │   ├── __main__.py             # Dev server entry point (python -m myapp)
 │   ├── myapp.cfg.example       # Config template
@@ -40,13 +41,17 @@ arcology/
 │   ├── blueprints/             # Feature modules (auto-discovered)
 │   │   ├── dashboard.py        # Homepage with collection stats
 │   │   ├── items.py            # Item CRUD (search, filter, pagination)
-│   │   ├── artefacts.py        # File upload, type detection, ANALYSIS_MAP
+│   │   ├── artefacts.py        # File upload/download, type detection, restrictions UI
+│   │   ├── auth.py             # Local login/logout + Flask-Login user_loader
+│   │   ├── oidc_auth.py        # OIDC/SSO login, callback, logout, role/group sync
 │   │   ├── taxonomy.py         # Platforms, categories, tags, external systems
 │   │   ├── analysis.py         # Analysis queue UI
 │   │   ├── search.py           # Global cross-item search (prefix query syntax)
 │   │   └── api.py              # REST API for workers and external tools
 │   ├── cli/                    # Flask CLI commands (create-admin, rebuild-search-index, rescan-hashes, reanalyse)
-│   ├── services/               # Service layer: business logic shared by blueprints, API, and CLI (upload ingest pipeline)
+│   ├── services/               # Service layer shared by blueprints/API/CLI: artefact_types
+│   │                           #   (EXTENSION_MAP/ANALYSIS_MAP), upload_pipeline, artefact_lifecycle,
+│   │                           #   artefact_storage, restrictions, downloads, hash_rescan, search_index
 │   ├── utils/                  # Utility modules
 │   ├── templates/              # Jinja2 templates (Bootstrap 5)
 │   └── static/                 # CSS
@@ -206,7 +211,7 @@ See `doc/ADMIN_COMMANDS.md` for the full reference including all flags.
 - **UUIDs for public identifiers**: URLs and API responses use UUID hex strings, not sequential integer IDs
 - **Application factory pattern**: `create_app()` in `app.py`; extensions bound in factory, not at import time
 - **Blueprint auto-discovery**: Any module in `myapp/blueprints/` with a `blueprint` variable is auto-registered. Optional `init_app(app)` for additional setup.
-- **Single database model file**: All SQLAlchemy models and web-specific enums live in `myapp/database.py`
+- **Single database model file**: All SQLAlchemy models live in `myapp/database.py`. Web-specific enums (`AnalysisStatus`, `FilesystemType`, `RestrictionType`, `UserPermission`, …) live in `myapp/enums.py` and are re-exported from `database.py` for backward-compat call sites — add new web enums in `myapp/enums.py`.
 - **Shared enums**: `ArtefactType` and `AnalysisType` are defined in `arcology_shared/enums.py` and imported by both `myapp/database.py` and the worker — edit only `arcology_shared/enums.py` when adding new types
 - **Shared archive formats**: `ArchiveType` and `ARCHIVE_FORMATS` are defined in `arcology_shared/archive_formats.py` and imported by the worker — edit only `arcology_shared/archive_formats.py`
 - **CSRF**: Enabled globally via Flask-WTF. The API blueprint exempts itself in `init_app()`.
@@ -269,6 +274,25 @@ helpers. List queries must additionally filter with `item_visibility_clause(curr
 or `artefact_visibility_clause(current_user)` from `myapp/visibility.py` —
 see `_visible_analyses_query()` in `myapp/blueprints/analysis.py` for the pattern.
 
+> **Recurring security bug class — visibility-filter omission on aggregate /
+> cross-cutting queries.** Per-object guards are reliable, but the bugs in this
+> codebase cluster where code queries *across all data* and forgets the
+> visibility/restriction filter the per-object path has. When writing or
+> reviewing such code, check that:
+> - every `func.count(...)` / `.count()` / aggregate joins `Item` and applies
+>   `*_visibility_clause` (compare against the sibling that already does);
+> - results of `get_all_derived_artefact_ids(...)` are re-filtered by visibility
+>   (a *derived* artefact can be `is_private` even when its root is public);
+> - worker-poll / "operational" endpoints that return storage paths or
+>   system-wide rows are gated by `_is_worker_request()` (not just `read_only`);
+> - outputs/renderings of restricted artefacts use `output_blocked_for` /
+>   `can_download_despite_restrictions`, not visibility alone;
+> - CSV exports of user-supplied text neutralise spreadsheet formula injection.
+>
+> Real instances this caught (now fixed): API outputs IDOR, `analysis/pending`
+> leak, hashdb match counts, `analysis/artefact` derived-tree leak, unguarded
+> analysis outputs, CSV export injection.
+
 ### OIDC role for STAFF tier
 
 Set `OIDC_ROLE_STAFF` (default `arcology-staff`) in the IdP to map SSO users to the STAFF permission tier.
@@ -284,7 +308,7 @@ Set `OIDC_ROLE_STAFF` (default `arcology-staff`) in the IdP to map SSO users to 
 ### Adding a new analysis type
 
 1. Add to `AnalysisType` enum in `arcology_shared/enums.py`
-2. Add to `ANALYSIS_MAP` in `myapp/blueprints/artefacts.py`
+2. Add to `ANALYSIS_MAP` in `myapp/services/artefact_types.py`
 3. Implement handler in `worker/arcworker/analysis.py`
 4. Write a migration to add the value to the PostgreSQL `analysistype` enum — **use the enum NAME (uppercase), not the value** (see "Adding values to a PostgreSQL enum" below)
 
@@ -365,13 +389,14 @@ minimal, self-contained example of every step below.
 1. **`arcology_shared/enums.py`** — add `NEWTYPE = "newtype"` to `ArtefactType` in the
    "Flux-level floppy images" group.
 
-2. **`myapp/blueprints/artefacts.py`**
+2. **`myapp/services/artefact_types.py`**
    - `EXTENSION_MAP`: `'.newtype': ArtefactType.NEWTYPE`
    - `ANALYSIS_MAP`: `ArtefactType.NEWTYPE: [AnalysisType.FLUX_VISUALISATION, AnalysisType.FLUX_DECODE, AnalysisType.METADATA_EXTRACT]`
-   - If the format needs a user-supplied hint (e.g. clock frequency): add an
-     `IntegerField`/`StringField` to both `ArtefactUploadForm` and `AnalyseForm`,
-     populate hints in the upload and analyse view POST handlers, and expose the
-     field in the upload/analyse templates (conditionally on artefact type).
+   - In **`myapp/blueprints/artefacts.py`**, if the format needs a user-supplied
+     hint (e.g. clock frequency): add an `IntegerField`/`StringField` to both
+     `ArtefactUploadForm` and `AnalyseForm`, populate hints in the upload and
+     analyse view POST handlers, and expose the field in the upload/analyse
+     templates (conditionally on artefact type).
 
 3. **`worker/arcworker/tools/flux.py`** — implement `newtype_to_scp_<tool>()`
    returning the standard result dict (`success`, `tool`, `output_path`,
@@ -631,9 +656,11 @@ Upload triggers auto-analysis based on `ANALYSIS_MAP` -> worker claims job atomi
 | `arcology_shared/enums.py` | `ArtefactType` and `AnalysisType` — single source of truth for web, worker, and CLI |
 | `arcology_shared/archive_formats.py` | `ArchiveType`, `ARCHIVE_FORMATS`, helpers — single source of truth |
 | `arcology_shared/storage.py` | Storage backend abstraction (`LocalStorage` and `S3Storage`); selected via `STORAGE_BACKEND` env var |
-| `myapp/database.py` | All SQLAlchemy models and web-specific enums (`AnalysisStatus`, `FilesystemType`, etc.) |
+| `myapp/database.py` | All SQLAlchemy models (web enums re-exported from `myapp/enums.py`) |
+| `myapp/enums.py` | Web-specific enums (`AnalysisStatus`, `FilesystemType`, `RestrictionType`, `UserPermission`, …) |
 | `arcology_shared/artefact_types.py` | `EXTENSION_MAP` (type detection) — single source of truth for web, worker, and CLI |
 | `myapp/services/artefact_types.py` | `ANALYSIS_MAP` (auto-analysis rules) and analysis scheduling |
+| `myapp/visibility.py` | Access-control helpers (`can_view_*`, `*_visibility_clause`, share/restriction gates) |
 | `myapp/blueprints/search.py` | Global search: `parse_query()`, `_run_search()`, prefix query syntax |
 | `myapp/blueprints/api.py` | REST API consumed by workers and CLI |
 | `myapp/riscos_filetypes.py` | RISC OS filetype hex↔name mapping; `lookup_filetype_hex()` |
@@ -641,7 +668,7 @@ Upload triggers auto-analysis based on `ANALYSIS_MAP` -> worker claims job atomi
 | `worker/arcworker/tools/extraction.py` | File extraction tools, INF sidecar processing, BBC↔DOS filename translation |
 | `cli/arccli/main.py` | CLI entry point and argument parsing |
 | `cli/arccli/client.py` | CLI HTTP client for the REST API |
-| `myapp/app.py` | Application factory, login/error handlers, blueprint registration |
+| `myapp/app.py` | Application factory, error handlers, blueprint registration (login/logout live in `myapp/blueprints/auth.py`) |
 | `myapp/myapp.cfg.example` | Configuration template with all settings |
 
 ## Testing
