@@ -8,7 +8,7 @@ Routes are intentionally unauthenticated (same as /api/health).
 import json
 import os
 import yaml
-from flask import Blueprint, Response, current_app
+from flask import Blueprint, Response, current_app, render_template_string
 from ..extensions import csrf
 
 ROUTENAME = __name__.replace('.', '_')
@@ -52,14 +52,14 @@ def openapi_json():
     return Response(json.dumps(spec, indent=2), status=200, mimetype='application/json')
 
 
-_SWAGGER_UI_HTML = '''\
+_SWAGGER_UI_TEMPLATE = '''\
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Arcology API Docs</title>
-  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='swagger-ui/swagger-ui.css') }}">
   <style>
     body { margin: 0; }
     #swagger-ui .topbar { display: none; }
@@ -67,12 +67,12 @@ _SWAGGER_UI_HTML = '''\
 </head>
 <body>
   <div id="swagger-ui"></div>
-  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script src="{{ url_for('static', filename='swagger-ui/swagger-ui-bundle.js') }}"></script>
   <script>
     SwaggerUIBundle({
-      url: "/api/openapi.yaml",
+      url: "{{ url_for('myapp_blueprints_api_docs.openapi_yaml') }}",
       dom_id: "#swagger-ui",
-      presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset],
+      presets: [SwaggerUIBundle.presets.apis],
       layout: "BaseLayout",
       deepLinking: true,
       persistAuthorization: true,
@@ -86,6 +86,6 @@ _SWAGGER_UI_HTML = '''\
 @blueprint.route('/docs', methods=['GET'])
 def swagger_ui():
     """Serve the Swagger UI interactive documentation page."""
-    return Response(_SWAGGER_UI_HTML, status=200, mimetype='text/html')
+    return render_template_string(_SWAGGER_UI_TEMPLATE)
 
 # vim: ts=4 sw=4 et

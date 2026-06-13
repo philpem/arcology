@@ -18,6 +18,15 @@ RUN set -e; \
 #RUN pip install sqltap
 
 COPY myapp/ /app/myapp/
+
+# Fetch Swagger UI static assets so /api/docs works without internet access.
+# To pin a specific release, change @5 to e.g. @5.18.2
+RUN mkdir -p /app/myapp/static/swagger-ui && \
+    curl -fsSL "https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" \
+         -o /app/myapp/static/swagger-ui/swagger-ui.css && \
+    curl -fsSL "https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js" \
+         -o /app/myapp/static/swagger-ui/swagger-ui-bundle.js
+
 COPY arcology_shared/ /app/arcology_shared/
 COPY migrations/ /app/migrations/
 COPY doc/ /app/doc/
