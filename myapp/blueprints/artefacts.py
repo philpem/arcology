@@ -13,6 +13,7 @@ from flask import Blueprint, abort, current_app, flash, jsonify, redirect, rende
 from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
 from flask_wtf.file import FileField, FileRequired
+from werkzeug.exceptions import NotFound
 from wtforms import BooleanField, IntegerField, SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Optional
 from ..database import (
@@ -2403,17 +2404,13 @@ def _chunk_error(message, code=400):
     return jsonify({'error': message}), code
 
 
-def _looks_like_hex(value, length):
-    return len(value) == length and all(c in '0123456789abcdef' for c in value)
-
-
 def _resolve_chunk_target_item(pk_value, url_identifier=None):
     """Resolve and authorise a chunked-upload target item.
 
     *pk_value* is the integer DB id the item ``<select>`` posts; *url_identifier*
-    is a URL/meta fallback (an item's url_id or full UUID).  Unlike
-    ``lookup_by_identifier`` this never aborts — it returns a JSON error so the
-    AJAX caller gets a structured response.  Mirrors the web upload view's
+    is a URL/meta fallback (an item's url_id or full UUID, resolved with the same
+    rules as the rest of the app).  Returns a JSON error rather than aborting, so
+    the AJAX caller gets a structured response.  Mirrors the web upload view's
     checks: 404 when the item is not visible, 403 when visible but not
     contributable.
     """
@@ -2421,11 +2418,10 @@ def _resolve_chunk_target_item(pk_value, url_identifier=None):
     if pk_value is not None and str(pk_value).isdigit() and int(pk_value) > 0:
         item = db.session.get(Item, int(pk_value))
     elif url_identifier:
-        ident = str(url_identifier)
-        if _looks_like_hex(ident, 32):
-            item = Item.query.filter_by(uuid=ident).first()
-        elif _looks_like_hex(ident[:8], 8):
-            item = Item.query.filter(Item.uuid.startswith(ident[:8])).first()
+        try:
+            item = lookup_by_identifier(Item, str(url_identifier))
+        except NotFound:
+            item = None
     if item is None or not can_view_item(item, current_user):
         return None, _chunk_error('Item not found', 404)
     if item.private_effective and not can_contribute_to_item(item, current_user):
@@ -2578,7 +2574,7 @@ def chunked_upload_complete(item_id, upload_uuid):
         except ValueError:
             return _chunk_error(f'Invalid artefact_type: {type_override}')
     else:
-        artefact_type = detect_artefact_type(meta['filename'])
+        artefact_type = detect_artefact_type(original_filename)
 
     try:
         assembled = _chunked.assemble_to_storage(

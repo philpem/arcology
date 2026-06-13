@@ -426,10 +426,15 @@ async function refreshItemChoices(selectId) {
     async function sendChunk(uploadUuid, index, file) {
         var start = index * CHUNK_SIZE;
         var blob = file.slice(start, Math.min(start + CHUNK_SIZE, file.size));
-        var attempt = 0;
-        while (true) {
+        var url = BASE_URL + '/' + uploadUuid + '/chunk/' + index;
+        var lastErr = null;
+        // Retry network errors and 5xx with exponential backoff; a 4xx is a
+        // permanent failure (e.g. session gone, bad index) so fail fast.
+        for (var attempt = 0; attempt <= MAX_CHUNK_RETRIES; attempt++) {
+            if (attempt > 0) await delay(Math.pow(2, attempt) * 500);
+            var resp;
             try {
-                var resp = await fetch(BASE_URL + '/' + uploadUuid + '/chunk/' + index, {
+                resp = await fetch(url, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/octet-stream',
@@ -437,16 +442,15 @@ async function refreshItemChoices(selectId) {
                     },
                     body: blob,
                 });
-                if (resp.ok) return;
-                // 4xx other than transient: give up immediately.
-                if (resp.status < 500) throw new Error(await errorMessage(resp));
             } catch (e) {
-                if (attempt >= MAX_CHUNK_RETRIES) throw e;
+                lastErr = e;  // network error: retry
+                continue;
             }
-            attempt += 1;
-            if (attempt > MAX_CHUNK_RETRIES) throw new Error('Chunk ' + index + ' failed');
-            await delay(Math.pow(2, attempt) * 500);
+            if (resp.ok) return;
+            if (resp.status < 500) throw new Error(await errorMessage(resp));
+            lastErr = new Error(await errorMessage(resp));  // 5xx: retry
         }
+        throw lastErr || new Error('Chunk ' + index + ' failed');
     }
 
     async function completeSession(uploadUuid) {

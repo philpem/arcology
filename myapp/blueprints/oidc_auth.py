@@ -20,7 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 from ..database import Group, User, UserPermission
 from ..extensions import db
-from ..utils.config import bool_config
+from ..utils.config import bool_config, int_config
 from ..utils.safe_redirect import is_safe_redirect_path
 
 ROUTENAME = __name__.replace('.', '_')
@@ -517,10 +517,7 @@ def _redirect_clearing_provider_session(token: dict):
 
 def _sync_interval() -> int:
     """Return OIDC_SYNC_INTERVAL in seconds, or 0 if disabled/unconfigured."""
-    try:
-        return int(current_app.config.get('OIDC_SYNC_INTERVAL', 0))
-    except (TypeError, ValueError):
-        return 0
+    return int_config('OIDC_SYNC_INTERVAL', 0)
 
 
 def _refresh_and_fetch_userinfo() -> dict | None:
