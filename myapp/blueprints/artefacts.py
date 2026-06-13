@@ -8,10 +8,12 @@ import hashlib
 import json
 import mimetypes
 import os
-from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, url_for
+from datetime import datetime, timezone
+from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
 from flask_wtf.file import FileField, FileRequired
+from werkzeug.exceptions import NotFound
 from wtforms import BooleanField, IntegerField, SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Optional
 from ..database import (
@@ -40,6 +42,7 @@ from ..database import (
 from ..extensions import db
 from ..permissions import public_downloadable, public_readable, require_permission
 from ..riscos_filetypes import lookup_filetype_hex
+from ..services import chunked_upload as _chunked
 from ..services.artefact_lifecycle import (
     ArtefactMoveError,
     build_processing_tree,
@@ -79,6 +82,7 @@ from ..services.restrictions import (
 )
 from ..services.upload_pipeline import QUEUE_CHECKSUM_ONLY, QUEUE_FULL, ingest_uploaded_artefact
 from ..utils.blobs import artefact_blob_storage_path, assign_blob
+from ..utils.config import int_config
 from ..utils.enum_display import enum_value
 from ..utils.path_nav import build_directory_tree
 from ..utils.slugs import ensure_unique_slug, generate_slug, lookup_artefact_by_id, lookup_by_identifier
@@ -2372,7 +2376,241 @@ def upload(item_id):
     if request.args.get('upload_more') == '1':
         form.upload_more.data = True
     form.item_id.data = item.id
-    return render_template('artefacts/upload.html', form=form, item=item)
+    return render_template(
+        'artefacts/upload.html', form=form, item=item,
+        chunk_threshold=_chunk_threshold(), chunk_size=_chunk_size())
+
+
+# Default trigger levels for the browser-side chunked uploader.  Files at or
+# above CHUNKED_UPLOAD_THRESHOLD bytes are uploaded in CHUNKED_UPLOAD_CHUNK_SIZE
+# chunks; smaller files use the plain multipart form POST.  Both are overridable
+# via myapp.cfg or environment variables.
+_DEFAULT_CHUNK_THRESHOLD = 100 * 1024 * 1024  # 100 MB
+_DEFAULT_CHUNK_SIZE = 50 * 1024 * 1024  # 50 MB
+
+
+def _chunk_threshold() -> int:
+    """Configured size at/above which web uploads use the chunked path."""
+    return int_config('CHUNKED_UPLOAD_THRESHOLD', _DEFAULT_CHUNK_THRESHOLD)
+
+
+def _chunk_size() -> int:
+    """Configured size of each upload chunk, in bytes."""
+    return int_config('CHUNKED_UPLOAD_CHUNK_SIZE', _DEFAULT_CHUNK_SIZE)
+
+
+def _chunk_error(message, code=400):
+    """JSON error response for the session-authenticated chunked routes."""
+    return jsonify({'error': message}), code
+
+
+def _resolve_chunk_target_item(pk_value, url_identifier=None):
+    """Resolve and authorise a chunked-upload target item.
+
+    *pk_value* is the integer DB id the item ``<select>`` posts; *url_identifier*
+    is a URL/meta fallback (an item's url_id or full UUID, resolved with the same
+    rules as the rest of the app).  Returns a JSON error rather than aborting, so
+    the AJAX caller gets a structured response.  Mirrors the web upload view's
+    checks: 404 when the item is not visible, 403 when visible but not
+    contributable.
+    """
+    item = None
+    if pk_value is not None and str(pk_value).isdigit() and int(pk_value) > 0:
+        item = db.session.get(Item, int(pk_value))
+    elif url_identifier:
+        try:
+            item = lookup_by_identifier(Item, str(url_identifier))
+        except NotFound:
+            item = None
+    if item is None or not can_view_item(item, current_user):
+        return None, _chunk_error('Item not found', 404)
+    if item.private_effective and not can_contribute_to_item(item, current_user):
+        return None, _chunk_error('Not permitted to add to this item', 403)
+    return item, None
+
+
+@blueprint.route('/items/<string:item_id>/artefacts/chunked/init', methods=['POST'])
+@login_required
+@require_permission('read_write')
+def chunked_upload_init(item_id):
+    """Initialise a session-authenticated chunked upload from the web UI."""
+    data = request.get_json(silent=True) or {}
+
+    filename = (data.get('filename') or '').strip()
+    if not filename:
+        return _chunk_error('filename is required')
+
+    try:
+        total_chunks = int(data['total_chunks'])
+        if total_chunks < 1:
+            raise ValueError
+    except (KeyError, ValueError, TypeError):
+        return _chunk_error('total_chunks must be a positive integer')
+    if total_chunks > _chunked.MAX_TOTAL_CHUNKS:
+        return _chunk_error(
+            f'total_chunks exceeds the maximum of {_chunked.MAX_TOTAL_CHUNKS}')
+
+    # Reject up front when the client already declares an over-size upload; the
+    # assembled size is re-checked authoritatively in /complete.
+    max_size = _chunked.max_upload_size()
+    total_size = data.get('total_size')
+    if total_size is not None:
+        try:
+            if int(total_size) > max_size:
+                return _chunk_error(
+                    f'Upload exceeds the maximum size of {max_size} bytes', 413)
+        except (ValueError, TypeError):
+            return _chunk_error('total_size must be an integer')
+
+    # The target item comes from the form's item select (its integer DB id in the
+    # JSON body); fall back to the page's item from the URL so the upload page can
+    # still redirect an artefact to a different item.
+    item, error = _resolve_chunk_target_item(data.get('item_id'), item_id)
+    if error:
+        return error
+
+    label = (data.get('label') or '').strip()
+    if not label:
+        return _chunk_error('label is required')
+
+    hints = data.get('hints')
+    if hints is not None and not isinstance(hints, dict):
+        return _chunk_error('hints must be a JSON object')
+
+    meta = {
+        'filename': filename,
+        'total_chunks': total_chunks,
+        'total_size': total_size,
+        'item_uuid': item.uuid,
+        'label': label,
+        'artefact_type': data.get('artefact_type', 'auto'),
+        'description': data.get('description'),
+        'is_private': bool(data.get('is_private', False)),
+        'auto_analyse': bool(data.get('auto_analyse', True)),
+        'hints': hints,
+        'creator_user_id': current_user.id,
+        'created_at': datetime.now(timezone.utc).isoformat(),
+    }
+    upload_uuid = _chunked.init_chunk_session(meta)
+    return jsonify({'upload_uuid': upload_uuid}), 201
+
+
+def _load_owned_session(upload_uuid):
+    """Load a chunked session's meta, enforcing existence and ownership.
+
+    Returns (meta, None) on success or (None, error_response) otherwise.  A
+    session created by a different user is reported as 404 so it is
+    indistinguishable from a nonexistent one.
+    """
+    try:
+        meta = _chunked.read_meta(upload_uuid)
+    except _chunked.ChunkSessionCorrupt:
+        return None, _chunk_error('Upload session corrupt', 500)
+    if meta is None or meta.get('creator_user_id') != current_user.id:
+        return None, _chunk_error('Upload session not found', 404)
+    return meta, None
+
+
+@blueprint.route('/items/<string:item_id>/artefacts/chunked/<string:upload_uuid>/chunk/<int:chunk_index>',
+                 methods=['POST'])
+@login_required
+@require_permission('read_write')
+def chunked_upload_chunk(item_id, upload_uuid, chunk_index):
+    """Receive a single chunk (raw octet-stream body, CSRF via X-CSRFToken)."""
+    meta, error = _load_owned_session(upload_uuid)
+    if error:
+        return error
+    if chunk_index < 0 or chunk_index >= meta['total_chunks']:
+        return _chunk_error('chunk_index out of range', 400)
+    _chunked.write_chunk(upload_uuid, chunk_index, request.data)
+    return jsonify({'received': True, 'chunk': chunk_index})
+
+
+@blueprint.route('/items/<string:item_id>/artefacts/chunked/<string:upload_uuid>/status',
+                 methods=['GET'])
+@login_required
+@require_permission('read_write')
+def chunked_upload_status(item_id, upload_uuid):
+    """Report which chunks have arrived so the client can resume."""
+    meta, error = _load_owned_session(upload_uuid)
+    if error:
+        return error
+    return jsonify({
+        'upload_uuid': upload_uuid,
+        'total_chunks': meta['total_chunks'],
+        'received_chunks': _chunked.received_chunks(upload_uuid),
+    })
+
+
+@blueprint.route('/items/<string:item_id>/artefacts/chunked/<string:upload_uuid>/complete',
+                 methods=['POST'])
+@login_required
+@require_permission('read_write')
+def chunked_upload_complete(item_id, upload_uuid):
+    """Assemble the chunks and create the artefact; return a redirect URL."""
+    meta, error = _load_owned_session(upload_uuid)
+    if error:
+        return error
+
+    total_chunks = meta['total_chunks']
+    if not isinstance(total_chunks, int) or total_chunks < 1 or total_chunks > _chunked.MAX_TOTAL_CHUNKS:
+        return _chunk_error('Upload session corrupt', 400)
+    missing = _chunked.missing_chunks(upload_uuid, total_chunks)
+    if missing:
+        return _chunk_error(f'Missing chunks: {missing}', 400)
+
+    # Re-resolve and re-authorise the target item at completion time.
+    item, error = _resolve_chunk_target_item(None, meta.get('item_uuid'))
+    if error:
+        return error
+
+    original_filename = safe_original_filename(meta['filename']) or 'unnamed'
+    type_override = meta.get('artefact_type', 'auto')
+    type_overridden = False
+    if type_override and type_override != 'auto':
+        try:
+            artefact_type = ArtefactType(type_override)
+            type_overridden = True
+        except ValueError:
+            return _chunk_error(f'Invalid artefact_type: {type_override}')
+    else:
+        artefact_type = detect_artefact_type(original_filename)
+
+    try:
+        assembled = _chunked.assemble_to_storage(
+            upload_uuid, original_filename,
+            total_chunks=total_chunks, max_size=_chunked.max_upload_size())
+    except _chunked.UploadTooLarge as exc:
+        return _chunk_error(str(exc), 413)
+    except _chunked.StorageUnavailable as exc:
+        return _chunk_error(f'Storage backend unavailable: {exc}', 503)
+
+    mime_type, _ = mimetypes.guess_type(original_filename)
+    auto_analyse = bool(meta.get('auto_analyse', True))
+    web_priority = current_app.config.get('WEB_UI_ANALYSIS_PRIORITY', ANALYSIS_PRIORITY_HIGH)
+
+    outcome = ingest_uploaded_artefact(
+        item,
+        label=meta['label'],
+        artefact_type=artefact_type,
+        type_overridden=type_overridden,
+        original_filename=original_filename,
+        storage_name=assembled.storage_name,
+        file_size=assembled.file_size,
+        md5=assembled.md5,
+        sha256=assembled.sha256,
+        description=meta.get('description'),
+        mime_type=mime_type,
+        owner_id=meta.get('creator_user_id'),
+        is_private=bool(meta.get('is_private', False)),
+        hints=meta.get('hints') or None,
+        queue=QUEUE_FULL if auto_analyse else QUEUE_CHECKSUM_ONLY,
+        priority=web_priority,
+    )
+    artefact = outcome.artefact
+    redirect_url = url_for(
+        f'{ROUTENAME}.view', item_id=item.url_id, artefact_id=artefact.url_slug)
+    return jsonify({'redirect': redirect_url}), 201
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/edit', methods=['GET', 'POST'])

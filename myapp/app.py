@@ -73,7 +73,8 @@ def create_app(config_name=None):
 
     # Integer env vars — loaded separately so they're stored as int, not str.
     for int_key in ('WEB_UI_ANALYSIS_PRIORITY', 'STALE_JOB_TIMEOUT_SECONDS',
-                    'MAX_UPLOAD_SIZE'):
+                    'MAX_UPLOAD_SIZE',
+                    'CHUNKED_UPLOAD_THRESHOLD', 'CHUNKED_UPLOAD_CHUNK_SIZE'):
         env_val = os.environ.get(int_key)
         if env_val is not None:
             try:

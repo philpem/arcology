@@ -315,6 +315,252 @@ class TestChunkedUpload(unittest.TestCase):
                          'Stale chunk dir was not purged')
 
 
+class TestWebChunkedUpload(unittest.TestCase):
+    """Session-authenticated chunked upload from the web UI.
+
+    Exercises the parallel /items/<id>/artefacts/chunked/* routes that browser
+    sessions use (cookie auth + CSRF), reusing the same shared assembly service
+    as the API path.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.app import create_app
+        from myapp.extensions import db as _db
+
+        cls._tmpdir = tempfile.mkdtemp(prefix='arcology-ci-webchunk-')
+        upload_dir = os.path.join(cls._tmpdir, 'uploads')
+        output_dir = os.path.join(cls._tmpdir, 'outputs')
+        os.makedirs(upload_dir)
+        os.makedirs(output_dir)
+
+        cls.app = create_app()
+        cls.app.config.update({
+            'TESTING': True,
+            'WTF_CSRF_ENABLED': False,
+            'UPLOAD_FOLDER': upload_dir,
+            'OUTPUT_FOLDER': output_dir,
+        })
+        from arcology_shared.storage import create_storage
+        storage_cfg = dict(cls.app.config)
+        storage_cfg['UPLOAD_FOLDER'] = upload_dir
+        storage_cfg['OUTPUT_FOLDER'] = output_dir
+        with cls.app.app_context():
+            cls.app.storage = create_storage(storage_cfg)
+
+        cls.db = _db
+        with cls.app.app_context():
+            _db.create_all()
+            cls._seed(_db)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls._tmpdir, ignore_errors=True)
+
+    @classmethod
+    def _seed(cls, db):
+        from myapp.database import Item, User, UserPermission
+        user = User(username='web-chunk-user', password_hash='x',
+                    permission=UserPermission.READ_WRITE)
+        other = User(username='web-chunk-other', password_hash='x',
+                     permission=UserPermission.READ_WRITE)
+        db.session.add_all([user, other])
+        db.session.flush()
+        item = Item(name='Web Chunk Item', owner_id=user.id)
+        db.session.add(item)
+        db.session.commit()
+        cls.user_id = user.id
+        cls.other_id = other.id
+        cls.item_uuid = item.uuid
+        cls.item_url_id = item.url_id
+        cls.item_pk = item.id
+
+    def setUp(self):
+        self.client = self.app.test_client()
+        self._login(self.user_id)
+
+    def _login(self, user_id):
+        with self.client.session_transaction() as sess:
+            sess['_user_id'] = str(user_id)
+            sess['_fresh'] = True
+
+    def _base(self, url_id=None):
+        return f'/items/{url_id or self.item_url_id}/artefacts/chunked'
+
+    def _init(self, total_chunks=3, url_id=None, **extra):
+        payload = {
+            'filename': 'web.img',
+            'total_chunks': total_chunks,
+            'item_id': self.item_pk,
+            'label': 'Web Artefact',
+        }
+        payload.update(extra)
+        return self.client.post(
+            self._base(url_id) + '/init',
+            data=json.dumps(payload), content_type='application/json')
+
+    def _chunk(self, upload_uuid, index, data, url_id=None):
+        return self.client.post(
+            self._base(url_id) + f'/{upload_uuid}/chunk/{index}',
+            data=data, content_type='application/octet-stream')
+
+    def _status(self, upload_uuid, url_id=None):
+        return self.client.get(self._base(url_id) + f'/{upload_uuid}/status')
+
+    def _complete(self, upload_uuid, url_id=None):
+        return self.client.post(
+            self._base(url_id) + f'/{upload_uuid}/complete',
+            data='{}', content_type='application/json')
+
+    # ------------------------------------------------------------------
+
+    def test_happy_path(self):
+        chunks = [b'aaa', b'bbbb', b'cc']
+        full = b''.join(chunks)
+        resp = self._init(total_chunks=len(chunks), filename='happy.img',
+                          label='Happy')
+        self.assertEqual(resp.status_code, 201)
+        upload_uuid = resp.get_json()['upload_uuid']
+        for i, c in enumerate(chunks):
+            self.assertEqual(self._chunk(upload_uuid, i, c).status_code, 200)
+
+        resp = self._complete(upload_uuid)
+        self.assertEqual(resp.status_code, 201)
+        self.assertIn('redirect', resp.get_json())
+
+        from myapp.database import Artefact
+        with self.app.app_context():
+            art = Artefact.query.filter_by(label='Happy').first()
+            self.assertIsNotNone(art)
+            self.assertEqual(art.file_size, len(full))
+            self.assertEqual(art.sha256, hashlib.sha256(full).hexdigest())
+            self.assertEqual(art.md5, hashlib.md5(full).hexdigest())
+            self.assertEqual(art.owner_id, self.user_id)
+
+    def test_resume_skips_received_chunks(self):
+        resp = self._init(total_chunks=3, filename='resume.img', label='Resume')
+        upload_uuid = resp.get_json()['upload_uuid']
+        # Send chunks 0 and 2, leave 1 missing.
+        self._chunk(upload_uuid, 0, b'000')
+        self._chunk(upload_uuid, 2, b'222')
+
+        status = self._status(upload_uuid).get_json()
+        self.assertEqual(status['received_chunks'], [0, 2])
+        self.assertEqual(status['total_chunks'], 3)
+
+        # Completing now must fail (chunk 1 missing), then succeed once sent.
+        self.assertEqual(self._complete(upload_uuid).status_code, 400)
+        self._chunk(upload_uuid, 1, b'111')
+        self.assertEqual(self._complete(upload_uuid).status_code, 201)
+
+    def test_is_private_propagates(self):
+        resp = self._init(total_chunks=1, filename='priv.img', label='Priv',
+                          is_private=True)
+        upload_uuid = resp.get_json()['upload_uuid']
+        self._chunk(upload_uuid, 0, b'secret')
+        self.assertEqual(self._complete(upload_uuid).status_code, 201)
+        from myapp.database import Artefact
+        with self.app.app_context():
+            art = Artefact.query.filter_by(label='Priv').first()
+            self.assertTrue(art.is_private)
+
+    def test_auto_analyse_off_queues_checksum_only(self):
+        from myapp.database import Analysis, AnalysisType, Artefact
+        resp = self._init(total_chunks=1, filename='noanalyse.img',
+                          label='NoAnalyse', auto_analyse=False)
+        upload_uuid = resp.get_json()['upload_uuid']
+        self._chunk(upload_uuid, 0, b'data')
+        self.assertEqual(self._complete(upload_uuid).status_code, 201)
+        with self.app.app_context():
+            art = Artefact.query.filter_by(label='NoAnalyse').first()
+            types = {a.analysis_type for a in
+                     Analysis.query.filter_by(artefact_id=art.id).all()}
+            self.assertEqual(types, {AnalysisType.CHECKSUM_COMPUTE})
+
+    def test_identical_content_dedups_to_one_blob(self):
+        from myapp.database import Artefact
+        body = b'duplicate-content-xyz'
+        for label in ('Dup A', 'Dup B'):
+            resp = self._init(total_chunks=1, filename='dup.img', label=label)
+            upload_uuid = resp.get_json()['upload_uuid']
+            self._chunk(upload_uuid, 0, body)
+            self.assertEqual(self._complete(upload_uuid).status_code, 201)
+        with self.app.app_context():
+            arts = Artefact.query.filter(
+                Artefact.label.in_(['Dup A', 'Dup B'])).all()
+            self.assertEqual(len(arts), 2)
+            # Both share one stored object (blob dedup).
+            self.assertEqual(arts[0].storage_path, arts[1].storage_path)
+
+    def test_missing_chunk_rejected(self):
+        resp = self._init(total_chunks=2, filename='miss.img', label='Miss')
+        upload_uuid = resp.get_json()['upload_uuid']
+        self._chunk(upload_uuid, 0, b'only')
+        resp = self._complete(upload_uuid)
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('Missing chunks', resp.get_json()['error'])
+
+    def test_total_chunks_over_max(self):
+        resp = self._init(total_chunks=100_001, filename='big.img', label='Big')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_declared_total_size_over_max(self):
+        self.app.config['MAX_UPLOAD_SIZE'] = 1024
+        try:
+            resp = self._init(total_chunks=1, filename='huge.img', label='Huge',
+                              total_size=4096)
+            self.assertEqual(resp.status_code, 413)
+        finally:
+            self.app.config.pop('MAX_UPLOAD_SIZE', None)
+
+    def test_assembled_size_over_cap(self):
+        self.app.config['MAX_UPLOAD_SIZE'] = 4
+        try:
+            resp = self._init(total_chunks=1, filename='cap.img', label='Cap')
+            upload_uuid = resp.get_json()['upload_uuid']
+            self._chunk(upload_uuid, 0, b'way too many bytes')
+            self.assertEqual(self._complete(upload_uuid).status_code, 413)
+        finally:
+            self.app.config.pop('MAX_UPLOAD_SIZE', None)
+
+    def test_unauthenticated_rejected(self):
+        anon = self.app.test_client()
+        resp = anon.post(
+            self._base() + '/init',
+            data=json.dumps({'filename': 'x.img', 'total_chunks': 1,
+                             'item_id': self.item_pk, 'label': 'X'}),
+            content_type='application/json')
+        # @login_required redirects (3xx) or 401s anonymous callers.
+        self.assertIn(resp.status_code, (301, 302, 401))
+
+    def test_session_owner_binding(self):
+        resp = self._init(total_chunks=2, filename='owned.img', label='Owned')
+        upload_uuid = resp.get_json()['upload_uuid']
+        self._chunk(upload_uuid, 0, b'mine')
+
+        # A different logged-in user must not see or touch the session.
+        self._login(self.other_id)
+        self.assertEqual(self._status(upload_uuid).status_code, 404)
+        self.assertEqual(self._chunk(upload_uuid, 1, b'theirs').status_code, 404)
+        self.assertEqual(self._complete(upload_uuid).status_code, 404)
+
+    def test_csrf_required(self):
+        self.app.config['WTF_CSRF_ENABLED'] = True
+        try:
+            client = self.app.test_client()
+            with client.session_transaction() as sess:
+                sess['_user_id'] = str(self.user_id)
+                sess['_fresh'] = True
+            resp = client.post(
+                self._base() + '/init',
+                data=json.dumps({'filename': 'x.img', 'total_chunks': 1,
+                                 'item_id': self.item_pk, 'label': 'X'}),
+                content_type='application/json')
+            self.assertEqual(resp.status_code, 400)
+        finally:
+            self.app.config['WTF_CSRF_ENABLED'] = False
+
+
 if __name__ == '__main__':
     unittest.main()
 

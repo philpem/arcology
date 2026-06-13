@@ -287,3 +287,240 @@ async function refreshItemChoices(selectId) {
         }
     });
 }());
+
+
+/* Chunked upload for large files.
+ *
+ * Progressive enhancement: when the selected file is at or above the
+ * server-configured threshold, the form submit is intercepted and the file is
+ * uploaded in chunks via the session-authenticated /artefacts/chunked/* routes
+ * (init -> chunk -> complete), with resume support via /status.  Smaller files
+ * (or browsers without JS) fall through to the normal multipart form POST.
+ *
+ * The threshold, chunk size and init URL come from data- attributes rendered on
+ * the form, so client and server stay in sync from one config source.
+ */
+(function () {
+    'use strict';
+
+    var form = document.getElementById('upload-form');
+    if (!form || !window.fetch || !window.File || !File.prototype.slice) return;
+
+    var THRESHOLD = parseInt(form.dataset.chunkThreshold, 10) || (100 * 1024 * 1024);
+    var CHUNK_SIZE = parseInt(form.dataset.chunkSize, 10) || (50 * 1024 * 1024);
+    var INIT_URL = form.dataset.chunkInitUrl;
+    var BASE_URL = INIT_URL.replace(/\/init$/, '');
+    var MAX_CHUNK_RETRIES = 4;
+
+    var alertEl = document.getElementById('chunk-upload-alert');
+    var progressEl = document.getElementById('chunk-upload-progress');
+    var barEl = document.getElementById('chunk-upload-bar');
+    var pctEl = document.getElementById('chunk-upload-percent');
+    var statusEl = document.getElementById('chunk-upload-status');
+
+    function csrfToken() {
+        var el = document.getElementById('csrf_token') ||
+                 form.querySelector('input[name="csrf_token"]');
+        return el ? el.value : '';
+    }
+
+    function showError(msg) {
+        if (!alertEl) return;
+        alertEl.textContent = msg;
+        alertEl.classList.remove('d-none');
+    }
+
+    function clearError() {
+        if (alertEl) alertEl.classList.add('d-none');
+    }
+
+    function setProgress(done, total) {
+        var pct = total ? Math.round((done / total) * 100) : 0;
+        if (barEl) {
+            barEl.style.width = pct + '%';
+            barEl.setAttribute('aria-valuenow', String(pct));
+        }
+        if (pctEl) pctEl.textContent = pct + '%';
+        if (statusEl) statusEl.textContent = 'Uploading ' + done + ' / ' + total + ' chunks';
+    }
+
+    function sessionKey(file) {
+        return 'arco_chunk_' + file.name + '_' + file.size + '_' + file.lastModified;
+    }
+
+    function delay(ms) {
+        return new Promise(function (resolve) { setTimeout(resolve, ms); });
+    }
+
+    function collectHints() {
+        var hints = {};
+        var platSel = document.getElementById('platform_id');
+        if (platSel && platSel.value && platSel.value !== '0') {
+            hints.platform = platSel.options[platSel.selectedIndex].text;
+        }
+        var dfi = document.getElementById('dfi_clock_mhz');
+        if (dfi && dfi.value) {
+            var n = parseInt(dfi.value, 10);
+            if (!isNaN(n)) hints.dfi_clock_mhz = n;
+        }
+        return hints;
+    }
+
+    function fieldVal(id) {
+        var el = document.getElementById(id);
+        return el ? el.value : null;
+    }
+
+    function fieldChecked(id) {
+        var el = document.getElementById(id);
+        return el ? el.checked : false;
+    }
+
+    async function postJSON(url, body) {
+        return fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
+            body: JSON.stringify(body),
+        });
+    }
+
+    async function errorMessage(resp) {
+        try {
+            var data = await resp.json();
+            return data.error || ('Upload failed (HTTP ' + resp.status + ')');
+        } catch (e) {
+            return 'Upload failed (HTTP ' + resp.status + ')';
+        }
+    }
+
+    async function initSession(file, totalChunks) {
+        var hints = collectHints();
+        var resp = await postJSON(INIT_URL, {
+            filename: file.name,
+            total_chunks: totalChunks,
+            total_size: file.size,
+            item_id: fieldVal('item_id'),
+            label: fieldVal('label'),
+            artefact_type: fieldVal('artefact_type'),
+            description: fieldVal('description'),
+            is_private: fieldChecked('is_private'),
+            auto_analyse: fieldChecked('auto_analyse'),
+            hints: Object.keys(hints).length ? hints : null,
+        });
+        if (!resp.ok) throw new Error(await errorMessage(resp));
+        return (await resp.json()).upload_uuid;
+    }
+
+    async function fetchReceived(uploadUuid) {
+        try {
+            var resp = await fetch(BASE_URL + '/' + uploadUuid + '/status', {
+                headers: { 'X-CSRFToken': csrfToken() },
+            });
+            if (!resp.ok) return null;
+            return (await resp.json()).received_chunks || [];
+        } catch (e) {
+            return null;
+        }
+    }
+
+    async function sendChunk(uploadUuid, index, file) {
+        var start = index * CHUNK_SIZE;
+        var blob = file.slice(start, Math.min(start + CHUNK_SIZE, file.size));
+        var url = BASE_URL + '/' + uploadUuid + '/chunk/' + index;
+        var lastErr = null;
+        // Retry network errors and 5xx with exponential backoff; a 4xx is a
+        // permanent failure (e.g. session gone, bad index) so fail fast.
+        for (var attempt = 0; attempt <= MAX_CHUNK_RETRIES; attempt++) {
+            if (attempt > 0) await delay(Math.pow(2, attempt) * 500);
+            var resp;
+            try {
+                resp = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/octet-stream',
+                        'X-CSRFToken': csrfToken(),
+                    },
+                    body: blob,
+                });
+            } catch (e) {
+                lastErr = e;  // network error: retry
+                continue;
+            }
+            if (resp.ok) return;
+            if (resp.status < 500) throw new Error(await errorMessage(resp));
+            lastErr = new Error(await errorMessage(resp));  // 5xx: retry
+        }
+        throw lastErr || new Error('Chunk ' + index + ' failed');
+    }
+
+    async function completeSession(uploadUuid) {
+        var resp = await postJSON(BASE_URL + '/' + uploadUuid + '/complete', {});
+        if (!resp.ok) throw new Error(await errorMessage(resp));
+        return (await resp.json()).redirect;
+    }
+
+    async function runChunkedUpload(file) {
+        var totalChunks = Math.ceil(file.size / CHUNK_SIZE) || 1;
+        var storageKey = sessionKey(file);
+        var uploadUuid = null;
+        var received = [];
+
+        // Try to resume a previous interrupted upload of the same file.
+        var saved = sessionStorage.getItem(storageKey);
+        if (saved) {
+            var got = await fetchReceived(saved);
+            if (got !== null) {
+                uploadUuid = saved;
+                received = got;
+            } else {
+                sessionStorage.removeItem(storageKey);
+            }
+        }
+
+        if (!uploadUuid) {
+            uploadUuid = await initSession(file, totalChunks);
+            sessionStorage.setItem(storageKey, uploadUuid);
+        }
+
+        var receivedSet = {};
+        received.forEach(function (i) { receivedSet[i] = true; });
+
+        var done = received.length;
+        setProgress(done, totalChunks);
+        for (var i = 0; i < totalChunks; i++) {
+            if (receivedSet[i]) continue;
+            await sendChunk(uploadUuid, i, file);
+            done += 1;
+            setProgress(done, totalChunks);
+        }
+
+        if (statusEl) statusEl.textContent = 'Finishing…';
+        var redirect = await completeSession(uploadUuid);
+        sessionStorage.removeItem(storageKey);
+
+        if (fieldChecked('upload_more')) {
+            window.location = window.location.pathname + '?upload_more=1';
+        } else {
+            window.location = redirect;
+        }
+    }
+
+    form.addEventListener('submit', function (e) {
+        var fileInput = document.getElementById('file');
+        var file = fileInput && fileInput.files[0];
+        if (!file || file.size < THRESHOLD) return;  // small file: normal POST
+
+        e.preventDefault();
+        clearError();
+
+        var submitBtn = form.querySelector('button[type="submit"]');
+        if (submitBtn) submitBtn.disabled = true;
+        if (progressEl) progressEl.classList.remove('d-none');
+
+        runChunkedUpload(file).catch(function (err) {
+            showError(err && err.message ? err.message : 'Upload failed');
+            if (submitBtn) submitBtn.disabled = false;
+            if (progressEl) progressEl.classList.add('d-none');
+        });
+    });
+}());
