@@ -33,3 +33,7 @@ instance/
 
 # Claude Code
 .claude/
+
+# Swagger UI static assets (downloaded at Docker build time or via
+# devtools/fetch_swagger_ui.sh for local dev — not committed to the repo)
+myapp/static/swagger-ui/

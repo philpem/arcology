@@ -145,6 +145,7 @@ def create_app(config_name=None):
     migrate.init_app(app, db)
     login_manager.init_app(app)
     bootstrap.init_app(app)
+    app.config['BOOTSTRAP_SERVE_LOCAL'] = True
     csrf.init_app(app)
 
     # Initialise storage backend (local filesystem or S3-compatible)
@@ -342,9 +343,9 @@ def create_app(config_name=None):
         _media_src = f"{_media_src} {_s3_origin}"
     _DEFAULT_CSP = (
         "default-src 'self'; "
-        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-        "font-src 'self' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "font-src 'self'; "
         f"img-src {_img_src}; "
         f"media-src {_media_src}; "
         "connect-src 'self'; "

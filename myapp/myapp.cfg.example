@@ -76,8 +76,8 @@ STALE_JOB_TIMEOUT_SECONDS = 3600
 # =============================================================================
 # Content Security Policy
 # =============================================================================
-# The app sets a CSP header on every response.  The default policy allows
-# Bootstrap CSS/JS/Icons from cdn.jsdelivr.net and inline styles/scripts.
+# The app sets a CSP header on every response.  All CSS, JS, and fonts are
+# served locally so no external CDN origins are needed by default.
 # Override CSP_HEADER to customise it; set it to "" to disable (e.g. when
 # the reverse proxy sets the header instead — but do not set it in both places,
 # as browsers apply multiple CSP headers as a logical AND which is usually
@@ -85,9 +85,9 @@ STALE_JOB_TIMEOUT_SECONDS = 3600
 #
 #CSP_HEADER = (
 #    "default-src 'self'; "
-#    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-#    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-#    "font-src 'self' https://cdn.jsdelivr.net; "
+#    "style-src 'self' 'unsafe-inline'; "
+#    "script-src 'self' 'unsafe-inline'; "
+#    "font-src 'self'; "
 #    "img-src 'self' data:; "
 #    "connect-src 'self'; "
 #    "object-src 'none'; "

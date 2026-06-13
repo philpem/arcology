@@ -12,7 +12,7 @@
 
         {% block styles %}
             {{ bootstrap.load_css() }}
-            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+            {{ bootstrap.load_icon_font_css() }}
             <link rel="stylesheet" href="{{ url_for('static', filename='css/site.css') }}">
         {% endblock %}
 	</head>
