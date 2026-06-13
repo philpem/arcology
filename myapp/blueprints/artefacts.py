@@ -2522,7 +2522,7 @@ def chunked_upload_chunk(item_id, upload_uuid, chunk_index):
         return error
     if chunk_index < 0 or chunk_index >= meta['total_chunks']:
         return _chunk_error('chunk_index out of range', 400)
-    _chunked.write_chunk(upload_uuid, chunk_index, request.get_data())
+    _chunked.write_chunk(upload_uuid, chunk_index, request.data)
     return jsonify({'received': True, 'chunk': chunk_index})
 
 
