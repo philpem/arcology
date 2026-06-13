@@ -121,9 +121,13 @@ def init_chunk_session(meta: dict) -> str:
 def read_meta(upload_uuid: str) -> dict | None:
     """Load a session's meta.json.
 
-    Returns None when the session directory does not exist; raises
-    ChunkSessionCorrupt when the directory exists but meta.json is unreadable.
+    Returns None when the upload_uuid is malformed or the session directory does
+    not exist; raises ChunkSessionCorrupt when the directory exists but meta.json
+    is unreadable.  Validating the uuid format here keeps the (path-building)
+    callers safe from traversal without each repeating the check.
     """
+    if not UPLOAD_UUID_RE.match(upload_uuid):
+        return None
     cdir = chunk_dir(upload_uuid)
     if not os.path.isdir(cdir):
         return None

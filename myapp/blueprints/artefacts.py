@@ -2500,21 +2500,17 @@ def chunked_upload_init(item_id):
 
 
 def _load_owned_session(upload_uuid):
-    """Load a chunked session's meta, enforcing format/existence/ownership.
+    """Load a chunked session's meta, enforcing existence and ownership.
 
     Returns (meta, None) on success or (None, error_response) otherwise.  A
     session created by a different user is reported as 404 so it is
     indistinguishable from a nonexistent one.
     """
-    if not _chunked.UPLOAD_UUID_RE.match(upload_uuid):
-        return None, _chunk_error('Upload session not found', 404)
     try:
         meta = _chunked.read_meta(upload_uuid)
     except _chunked.ChunkSessionCorrupt:
         return None, _chunk_error('Upload session corrupt', 500)
-    if meta is None:
-        return None, _chunk_error('Upload session not found', 404)
-    if meta.get('creator_user_id') != current_user.id:
+    if meta is None or meta.get('creator_user_id') != current_user.id:
         return None, _chunk_error('Upload session not found', 404)
     return meta, None
 

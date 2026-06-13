@@ -7,7 +7,6 @@ RESTful API for external integrations.
 import hmac
 import json
 import os
-import uuid
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from flask import Blueprint, abort, current_app, g, jsonify, request
@@ -2001,28 +2000,29 @@ def upload_artefact(item_uuid):
 
 # The chunk storage/assembly mechanics live in services/chunked_upload.py so the
 # web blueprint (session-authenticated browser uploads) shares one implementation.
-# These aliases keep the existing call sites below unchanged.
-_UPLOAD_UUID_RE = _chunked.UPLOAD_UUID_RE
-_MAX_TOTAL_CHUNKS = _chunked.MAX_TOTAL_CHUNKS
-_max_upload_size = _chunked.max_upload_size
-_chunk_dir = _chunked.chunk_dir
-_purge_stale_chunks = _chunked.purge_stale_chunks
 
 
-def _chunk_session_owner_error(meta):
-    """Return a 403 response if the current caller did not create this session.
+def _load_chunk_meta(upload_uuid):
+    """Load a chunk session's meta, enforcing existence and caller ownership.
 
-    Chunked-upload sessions are bound to their creating user (stored in meta as
-    ``creator_user_id``).  The worker key never creates these sessions, so a
-    session with no recorded creator imposes no extra constraint.
+    Returns (meta, None) or (None, error_response).  Sessions are bound to their
+    creating user (``creator_user_id`` in meta); the worker key never creates
+    sessions, so a session with no recorded creator imposes no extra constraint.
+    A session owned by someone else is reported as 404 so it is
+    indistinguishable from a nonexistent one.
     """
+    try:
+        meta = _chunked.read_meta(upload_uuid)
+    except _chunked.ChunkSessionCorrupt:
+        return None, error_response('Upload session corrupt', 500)
+    if meta is None:
+        return None, error_response('Upload session not found', 404)
     creator_id = meta.get('creator_user_id')
-    if creator_id is None:
-        return None
-    user = getattr(g, 'api_user', None)
-    if user is None or user.id != creator_id:
-        return error_response('Upload session not found', 404)
-    return None
+    if creator_id is not None:
+        user = getattr(g, 'api_user', None)
+        if user is None or user.id != creator_id:
+            return None, error_response('Upload session not found', 404)
+    return meta, None
 
 
 @blueprint.route('/uploads/chunked/init', methods=['POST'])
@@ -2055,13 +2055,13 @@ def chunked_upload_init():
 			raise ValueError
 	except (KeyError, ValueError, TypeError):
 		return error_response('total_chunks must be a positive integer')
-	if total_chunks > _MAX_TOTAL_CHUNKS:
+	if total_chunks > _chunked.MAX_TOTAL_CHUNKS:
 		return error_response(
-			f'total_chunks exceeds the maximum of {_MAX_TOTAL_CHUNKS}')
+			f'total_chunks exceeds the maximum of {_chunked.MAX_TOTAL_CHUNKS}')
 
 	# Reject up front when the client already declares an over-size upload.
 	# The assembled size is re-checked authoritatively in /complete.
-	max_size = _max_upload_size()
+	max_size = _chunked.max_upload_size()
 	total_size = data.get('total_size')
 	if total_size is not None:
 		try:
@@ -2084,16 +2084,12 @@ def chunked_upload_init():
 	if not label:
 		return error_response('label is required')
 
-	upload_uuid = uuid.uuid4().hex
-	chunk_dir = _chunk_dir(upload_uuid)
-	os.makedirs(chunk_dir, exist_ok=True)
-
 	hints = data.get('hints')
 	if hints is not None and not isinstance(hints, dict):
 		return error_response('hints must be a JSON object')
 
 	creator = getattr(g, 'api_user', None)
-	meta = {
+	upload_uuid = _chunked.init_chunk_session({
 		'filename': filename,
 		'total_chunks': total_chunks,
 		'total_size': data.get('total_size'),
@@ -2106,10 +2102,7 @@ def chunked_upload_init():
 		'hints': hints,
 		'creator_user_id': creator.id if creator is not None else None,
 		'created_at': datetime.now(timezone.utc).isoformat(),
-	}
-	with open(os.path.join(chunk_dir, 'meta.json'), 'w') as f:
-		json.dump(meta, f)
-
+	})
 	return jsonify({'upload_uuid': upload_uuid}), 201
 
 
@@ -2124,32 +2117,16 @@ def chunked_upload_chunk(upload_uuid, chunk_index):
 
 	Returns {"received": true, "chunk": N}.
 	"""
-	if not _UPLOAD_UUID_RE.match(upload_uuid):
-		return error_response('Upload session not found', 404)
-
-	chunk_dir = _chunk_dir(upload_uuid)
-	if not os.path.isdir(chunk_dir):
-		return error_response('Upload session not found', 404)
-
-	try:
-		with open(os.path.join(chunk_dir, 'meta.json')) as f:
-			meta = json.load(f)
-	except (OSError, json.JSONDecodeError):
-		return error_response('Upload session corrupt', 500)
-
-	owner_error = _chunk_session_owner_error(meta)
-	if owner_error:
-		return owner_error
+	meta, error = _load_chunk_meta(upload_uuid)
+	if error:
+		return error
 
 	# chunk_index is a non-negative int (route converter); reject out-of-range
 	# indices so a caller cannot scatter junk chunk files that never assemble.
 	if chunk_index < 0 or chunk_index >= meta['total_chunks']:
 		return error_response('chunk_index out of range', 400)
 
-	chunk_path = os.path.join(chunk_dir, f'{chunk_index:06d}')
-	with open(chunk_path, 'wb') as f:
-		f.write(request.data)
-
+	_chunked.write_chunk(upload_uuid, chunk_index, request.data)
 	return jsonify({'received': True, 'chunk': chunk_index})
 
 
@@ -2162,33 +2139,14 @@ def chunked_upload_status(upload_uuid):
 	Returns {"upload_uuid": "...", "total_chunks": N, "received_chunks": [0, 1, ...]}.
 	Allows clients to resume after a partial failure.
 	"""
-	if not _UPLOAD_UUID_RE.match(upload_uuid):
-		return error_response('Upload session not found', 404)
-
-	chunk_dir = _chunk_dir(upload_uuid)
-	if not os.path.isdir(chunk_dir):
-		return error_response('Upload session not found', 404)
-
-	meta_path = os.path.join(chunk_dir, 'meta.json')
-	try:
-		with open(meta_path) as f:
-			meta = json.load(f)
-	except (OSError, json.JSONDecodeError):
-		return error_response('Upload session corrupt', 500)
-
-	owner_error = _chunk_session_owner_error(meta)
-	if owner_error:
-		return owner_error
-
-	received = sorted(
-		int(name) for name in os.listdir(chunk_dir)
-		if name != 'meta.json' and name.isdigit()
-	)
+	meta, error = _load_chunk_meta(upload_uuid)
+	if error:
+		return error
 
 	return jsonify({
 		'upload_uuid': upload_uuid,
 		'total_chunks': meta['total_chunks'],
-		'received_chunks': received,
+		'received_chunks': _chunked.received_chunks(upload_uuid),
 	})
 
 
@@ -2204,28 +2162,14 @@ def chunked_upload_complete(upload_uuid):
 
 	Also purges abandoned chunk directories older than 24 h.
 	"""
-	if not _UPLOAD_UUID_RE.match(upload_uuid):
-		return error_response('Upload session not found', 404)
-
-	chunk_dir = _chunk_dir(upload_uuid)
-	if not os.path.isdir(chunk_dir):
-		return error_response('Upload session not found', 404)
-
-	meta_path = os.path.join(chunk_dir, 'meta.json')
-	try:
-		with open(meta_path) as f:
-			meta = json.load(f)
-	except (OSError, json.JSONDecodeError):
-		return error_response('Upload session corrupt', 500)
-
-	owner_error = _chunk_session_owner_error(meta)
-	if owner_error:
-		return owner_error
+	meta, error = _load_chunk_meta(upload_uuid)
+	if error:
+		return error
 
 	# Defence in depth: reject an over-size total_chunks before materialising the
 	# per-chunk path list, so a tampered/old meta cannot exhaust memory here.
 	total_chunks = meta['total_chunks']
-	if not isinstance(total_chunks, int) or total_chunks < 1 or total_chunks > _MAX_TOTAL_CHUNKS:
+	if not isinstance(total_chunks, int) or total_chunks < 1 or total_chunks > _chunked.MAX_TOTAL_CHUNKS:
 		return error_response('Upload session corrupt', 400)
 	missing = _chunked.missing_chunks(upload_uuid, total_chunks)
 	if missing:
@@ -2255,7 +2199,7 @@ def chunked_upload_complete(upload_uuid):
 	try:
 		assembled = _chunked.assemble_to_storage(
 			upload_uuid, original_filename,
-			total_chunks=total_chunks, max_size=_max_upload_size())
+			total_chunks=total_chunks, max_size=_chunked.max_upload_size())
 	except _chunked.UploadTooLarge as exc:
 		return error_response(str(exc), 413)
 	except _chunked.StorageUnavailable as exc:

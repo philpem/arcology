@@ -86,8 +86,8 @@ class TestChunkedUploadLimits(unittest.TestCase):
 
     # --- 1. total_chunks cap (the OOM vector) ---
     def test_init_rejects_excessive_total_chunks(self):
-        from myapp.blueprints.api import _MAX_TOTAL_CHUNKS
-        r = self._init(self.key_a, total_chunks=_MAX_TOTAL_CHUNKS + 1)
+        from myapp.services.chunked_upload import MAX_TOTAL_CHUNKS
+        r = self._init(self.key_a, total_chunks=MAX_TOTAL_CHUNKS + 1)
         self.assertEqual(r.status_code, 400, r.data)
 
     def test_complete_rejects_tampered_total_chunks_without_oom(self):
@@ -96,10 +96,10 @@ class TestChunkedUploadLimits(unittest.TestCase):
         # this returns 400 instantly; without the guard it would OOM.
         import json
         import uuid as _uuid
-        from myapp.blueprints.api import _chunk_dir
+        from myapp.services.chunked_upload import chunk_dir
         with self.app.app_context():
             up = _uuid.uuid4().hex
-            d = _chunk_dir(up)
+            d = chunk_dir(up)
             os.makedirs(d, exist_ok=True)
             with open(os.path.join(d, 'meta.json'), 'w') as f:
                 json.dump({'total_chunks': 10 ** 9, 'item_uuid': self.item_uuid,
