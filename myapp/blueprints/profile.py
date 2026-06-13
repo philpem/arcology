@@ -7,8 +7,8 @@ User profile management: change password and manage API application keys.
 from flask import Blueprint, abort, flash, render_template, session
 from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
-from wtforms import PasswordField, SelectField, StringField
-from wtforms.validators import DataRequired, EqualTo, Length
+from wtforms import BooleanField, PasswordField, SelectField, StringField
+from wtforms.validators import DataRequired, EqualTo, Length, Optional
 from ..database import ApiKey, ApiKeyPermission, UserPermission
 from ..extensions import db
 from ..utils.web_forms import flash_form_errors, redirect_local
@@ -49,6 +49,13 @@ class CreateKeyForm(FlaskForm):
     permission = SelectField('Permission', coerce=str)
 
 
+class EmailSettingsForm(FlaskForm):
+    email                = StringField('Email Address',
+                                       validators=[Optional(), Length(max=255)],
+                                       description='Used for analysis completion notifications.')
+    email_notifications  = BooleanField('Email me when analysis completes')
+
+
 # =============================================================================
 # Routes
 # =============================================================================
@@ -70,10 +77,16 @@ def index():
         .all()
     ) if current_user.can_use_api else []
 
+    email_form = EmailSettingsForm(
+        email=current_user.email or '',
+        email_notifications=bool(current_user.get_preference('email_notifications')),
+    )
+
     return render_template('profile/index.html',
         pwd_form=pwd_form,
         key_form=key_form,
         keys=keys,
+        email_form=email_form,
     )
 
 
@@ -90,6 +103,24 @@ def change_password():
         current_user.setPassword(form.new_password.data)
         db.session.commit()
         flash('Password changed successfully.', 'success')
+    else:
+        flash_form_errors(form)
+    return _route_redirect('index')
+
+
+@blueprint.route('/email-settings', methods=['POST'])
+@login_required
+def save_email_settings():
+    form = EmailSettingsForm()
+    if form.validate_on_submit():
+        new_email = form.email.data.strip() or None
+        # OIDC users can override with a different address, but we don't
+        # overwrite the SSO-provided email with a blank submission.
+        if not current_user.oidc_managed or new_email:
+            current_user.email = new_email
+        current_user.set_preference('email_notifications', bool(form.email_notifications.data))
+        db.session.commit()
+        flash('Email notification settings saved.', 'success')
     else:
         flash_form_errors(form)
     return _route_redirect('index')

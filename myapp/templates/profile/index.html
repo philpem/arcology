@@ -59,6 +59,34 @@
 	</div>
 </div>
 
+<!-- Email Notifications -->
+<div class="card mb-4">
+	<div class="card-header"><h5 class="mb-0"><i class="bi bi-envelope"></i> Email Notifications</h5></div>
+	<div class="card-body">
+		<form method="post" action="{{ url_for('myapp_blueprints_profile.save_email_settings') }}">
+			{{ email_form.hidden_tag() }}
+			<div class="mb-3">
+				{{ email_form.email.label(class="form-label") }}
+				{% if current_user.oidc_managed and current_user.email %}
+				<input type="email" class="form-control" name="email" value="{{ current_user.email }}" readonly>
+				<div class="form-text"><i class="bi bi-shield-lock"></i> Provided by your identity provider.</div>
+				{% else %}
+				{{ email_form.email(class="form-control", type="email", placeholder="you@example.com") }}
+				<div class="form-text">{{ email_form.email.description }}</div>
+				{% endif %}
+			</div>
+			<div class="mb-3 form-check">
+				{{ email_form.email_notifications(class="form-check-input") }}
+				{{ email_form.email_notifications.label(class="form-check-label") }}
+				<div class="form-text">Sends one email when all analyses for an uploaded artefact finish.</div>
+			</div>
+			<button type="submit" class="btn btn-primary btn-sm">
+				<i class="bi bi-check-lg"></i> Save
+			</button>
+		</form>
+	</div>
+</div>
+
 <!-- Download Restriction Bypasses -->
 <div class="card mb-4">
 	<div class="card-header"><h5 class="mb-0">Download Restriction Bypasses</h5></div>

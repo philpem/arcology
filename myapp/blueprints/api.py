@@ -89,6 +89,7 @@ from ..utils.api_serializers import (
 from ..utils.blobs import artefact_blob, artefact_blob_storage_path, assign_blob
 from ..utils.db_helpers import get_by_id_or_404 as _get_by_id_or_404
 from ..utils.db_helpers import get_by_uuid_or_404 as _get_by_uuid_or_404
+from ..utils.email import notify_analysis_complete
 from ..utils.enum_display import enum_value
 from ..utils.item_helpers import assign_item_fields, assign_item_tags
 from ..utils.privacy import recompute_item_privacy
@@ -1211,7 +1212,62 @@ def update_analysis(id):
         # return 404 so the worker's existing 404 handler discards the result.
         db.session.rollback()
         return error_response('Analysis was deleted during update', 404)
+
+    # When an analysis reaches a terminal state, check whether the whole
+    # pipeline for this artefact has now drained.  If so, notify the owner.
+    if data.get('status') in ('completed', 'failed'):
+        _maybe_notify_queue_drained(analysis.artefact)
+
     return jsonify(analysis_to_dict(analysis))
+
+
+def _maybe_notify_queue_drained(artefact):
+    """Send a completion email to the artefact owner if all analyses are done.
+
+    Walks up to the root artefact, then counts all pending/running analyses
+    across the full derivation tree.  Sends one notification per drain event;
+    races between concurrent workers may occasionally send a duplicate, which
+    is acceptable for a notification feature.
+    """
+    try:
+        root = artefact
+        while root.parent_artefact_id is not None:
+            root = root.parent_artefact
+
+        # Collect all IDs in the derivation tree
+        tree_ids = [root.id]
+        stack = list(root.derived_artefacts)
+        while stack:
+            child = stack.pop()
+            tree_ids.append(child.id)
+            stack.extend(child.derived_artefacts)
+
+        active = (
+            Analysis.query
+            .filter(
+                Analysis.artefact_id.in_(tree_ids),
+                Analysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.RUNNING]),
+            )
+            .count()
+        )
+        if active > 0:
+            return
+
+        completed = (
+            Analysis.query
+            .filter(Analysis.artefact_id.in_(tree_ids),
+                    Analysis.status == AnalysisStatus.COMPLETED)
+            .count()
+        )
+        failed = (
+            Analysis.query
+            .filter(Analysis.artefact_id.in_(tree_ids),
+                    Analysis.status == AnalysisStatus.FAILED)
+            .count()
+        )
+        notify_analysis_complete(current_app._get_current_object(), root, completed, failed)
+    except Exception:
+        current_app.logger.exception('Error in _maybe_notify_queue_drained')
 
 
 def _populate_search_index(analysis):
