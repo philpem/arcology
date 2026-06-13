@@ -25,4 +25,21 @@ def bool_config(key: str, default: bool = False, app=None) -> bool:
         return val.lower() in ('1', 'true', 'yes')
     return bool(val)
 
+
+def int_config(key: str, default: int, app=None) -> int:
+    """Read a config key that may be a Python int or an env-var string.
+
+    Falls back to *default* when the key is missing or holds a value that
+    cannot be parsed as an int, so a misconfigured value fails safe rather
+    than raising at request time.
+
+    Pass *app* when no application context is active (e.g. inside
+    create_app()); otherwise current_app is used.
+    """
+    val = (app or current_app).config.get(key, default)
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return default
+
 # vim: ts=4 sw=4 et

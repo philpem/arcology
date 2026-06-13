@@ -4,13 +4,9 @@ Arcology - API Blueprint
 RESTful API for external integrations.
 """
 
-import hashlib
 import hmac
 import json
 import os
-import re
-import shutil
-import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -49,6 +45,7 @@ from ..database import (
     UserPermission,
 )
 from ..extensions import csrf, db
+from ..services import chunked_upload as _chunked
 from ..services.artefact_lifecycle import (
     ArtefactMoveError,
     bulk_delete_item,
@@ -60,7 +57,6 @@ from ..services.artefact_lifecycle import (
 from ..services.artefact_storage import (
     compute_file_hashes,
     get_artefact_storage_key,
-    get_storage_extension,
     save_uploaded_file,
 )
 from ..services.artefact_types import detect_artefact_type, queue_analyses_for_artefact
@@ -2003,27 +1999,14 @@ def upload_artefact(item_uuid):
 # of the active storage backend (local or S3).  On /complete they are assembled
 # into a tempfile and pushed via storage.put(), mirroring save_uploaded_file().
 
-_UPLOAD_UUID_RE = re.compile(r'^[0-9a-f]{32}$')
-_CHUNK_STALE_SECONDS = 86400  # purge abandoned chunk dirs after 24 h
-
-# Hard cap on the number of chunks a single session may declare.  This bounds
-# the work/memory of /complete (which builds a per-chunk path list) so a caller
-# cannot trigger memory exhaustion by declaring a huge total_chunks.  At the
-# CLI's 50 MB chunk size this still allows multi-terabyte uploads.
-_MAX_TOTAL_CHUNKS = 100_000
-
-# Default ceiling on the assembled artefact size for chunked uploads (the only
-# path that can exceed the single-request MAX_CONTENT_LENGTH).  Override with the
-# MAX_UPLOAD_SIZE config key / env var.
-_DEFAULT_MAX_UPLOAD_SIZE = 16 * 1024 * 1024 * 1024  # 16 GiB
-
-
-def _max_upload_size() -> int:
-    """Return the configured maximum assembled chunked-upload size, in bytes."""
-    try:
-        return int(current_app.config.get('MAX_UPLOAD_SIZE', _DEFAULT_MAX_UPLOAD_SIZE))
-    except (TypeError, ValueError):
-        return _DEFAULT_MAX_UPLOAD_SIZE
+# The chunk storage/assembly mechanics live in services/chunked_upload.py so the
+# web blueprint (session-authenticated browser uploads) shares one implementation.
+# These aliases keep the existing call sites below unchanged.
+_UPLOAD_UUID_RE = _chunked.UPLOAD_UUID_RE
+_MAX_TOTAL_CHUNKS = _chunked.MAX_TOTAL_CHUNKS
+_max_upload_size = _chunked.max_upload_size
+_chunk_dir = _chunked.chunk_dir
+_purge_stale_chunks = _chunked.purge_stale_chunks
 
 
 def _chunk_session_owner_error(meta):
@@ -2040,35 +2023,6 @@ def _chunk_session_owner_error(meta):
     if user is None or user.id != creator_id:
         return error_response('Upload session not found', 404)
     return None
-
-
-def _chunks_base() -> str:
-	"""Return (and create) the base directory for in-progress chunk uploads."""
-	path = os.path.join(current_app.instance_path, '.chunks')
-	os.makedirs(path, exist_ok=True)
-	return path
-
-
-def _chunk_dir(upload_uuid: str) -> str:
-	return os.path.join(_chunks_base(), upload_uuid)
-
-
-def _purge_stale_chunks() -> None:
-	"""Remove chunk directories that have not been touched in > 24 h."""
-	base = _chunks_base()
-	cutoff = datetime.now(timezone.utc).timestamp() - _CHUNK_STALE_SECONDS
-	try:
-		for name in os.listdir(base):
-			if not _UPLOAD_UUID_RE.match(name):
-				continue
-			path = os.path.join(base, name)
-			try:
-				if os.stat(path).st_mtime < cutoff:
-					shutil.rmtree(path, ignore_errors=True)
-			except OSError:
-				pass
-	except OSError:
-		pass
 
 
 @blueprint.route('/uploads/chunked/init', methods=['POST'])
@@ -2273,8 +2227,7 @@ def chunked_upload_complete(upload_uuid):
 	total_chunks = meta['total_chunks']
 	if not isinstance(total_chunks, int) or total_chunks < 1 or total_chunks > _MAX_TOTAL_CHUNKS:
 		return error_response('Upload session corrupt', 400)
-	chunk_files = [os.path.join(chunk_dir, f'{i:06d}') for i in range(total_chunks)]
-	missing = [i for i, p in enumerate(chunk_files) if not os.path.exists(p)]
+	missing = _chunked.missing_chunks(upload_uuid, total_chunks)
 	if missing:
 		return error_response(f'Missing chunks: {missing}', 400)
 
@@ -2297,62 +2250,16 @@ def chunked_upload_complete(upload_uuid):
 	else:
 		artefact_type = detect_artefact_type(meta['filename'])
 
-	# Generate storage name (same pattern as save_uploaded_file)
-	ext = get_storage_extension(original_filename)
-	storage_name = f'{uuid.uuid4().hex}{ext}'
-
-	# Assemble chunks into a temp file, computing hashes inline
-	md5_hash = hashlib.md5()
-	sha256_hash = hashlib.sha256()
-	file_size = 0
-	max_size = _max_upload_size()
-	oversize = False
-
+	# Assemble chunks into the storage backend (hashes computed inline, size cap
+	# enforced, session directory cleaned up).
 	try:
-		with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-			tmp_path = tmp.name
-			for chunk_file in chunk_files:
-				with open(chunk_file, 'rb') as cf:
-					while True:
-						buf = cf.read(65536)
-						if not buf:
-							break
-						tmp.write(buf)
-						md5_hash.update(buf)
-						sha256_hash.update(buf)
-						file_size += len(buf)
-						# Authoritative size cap (the declared total_size is only
-						# advisory).  Stop reading rather than spool an unbounded
-						# file to disk.
-						if file_size > max_size:
-							oversize = True
-							break
-				if oversize:
-					break
-
-		if oversize:
-			shutil.rmtree(chunk_dir, ignore_errors=True)
-			return error_response(
-				f'Upload exceeds the maximum size of {max_size} bytes', 413)
-
-		# Push assembled file to storage backend
-		storage_key = current_app.storage.storage_key('uploads', storage_name)
-		try:
-			current_app.storage.put(storage_key, tmp_path)
-		except OSError as exc:
-			return error_response(f'Storage backend unavailable: {exc}', 503)
-	finally:
-		try:
-			os.unlink(tmp_path)
-		except OSError:
-			pass
-
-	# Clean up chunk directory and purge any stale sessions
-	shutil.rmtree(chunk_dir, ignore_errors=True)
-	_purge_stale_chunks()
-
-	md5 = md5_hash.hexdigest()
-	sha256 = sha256_hash.hexdigest()
+		assembled = _chunked.assemble_to_storage(
+			upload_uuid, original_filename,
+			total_chunks=total_chunks, max_size=_max_upload_size())
+	except _chunked.UploadTooLarge as exc:
+		return error_response(str(exc), 413)
+	except _chunked.StorageUnavailable as exc:
+		return error_response(f'Storage backend unavailable: {exc}', 503)
 
 	auto_analyse = meta.get('auto_analyse', True)
 	if isinstance(auto_analyse, str):
@@ -2367,10 +2274,10 @@ def chunked_upload_complete(upload_uuid):
 		artefact_type=artefact_type,
 		type_overridden=type_overridden,
 		original_filename=original_filename,
-		storage_name=storage_name,
-		file_size=file_size,
-		md5=md5,
-		sha256=sha256,
+		storage_name=assembled.storage_name,
+		file_size=assembled.file_size,
+		md5=assembled.md5,
+		sha256=assembled.sha256,
 		description=meta.get('description'),
 		hints=meta.get('hints') or None,
 		queue=QUEUE_FULL if auto_analyse else QUEUE_NONE,

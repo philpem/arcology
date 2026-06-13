@@ -53,6 +53,12 @@ MAX_CONTENT_LENGTH = 4 * 1024 * 1024 * 1024  # 4GB max single-request upload
 # which is the only way to exceed MAX_CONTENT_LENGTH). Raise it for very large
 # hard-disk images (e.g. 60-100GB); such images are best uploaded zstd-compressed.
 MAX_UPLOAD_SIZE = 16 * 1024 * 1024 * 1024  # 16GB max assembled chunked upload
+# Browser uploads at or above CHUNKED_UPLOAD_THRESHOLD bytes are sent in chunks
+# of CHUNKED_UPLOAD_CHUNK_SIZE bytes (resumable, avoids the single-request limit);
+# smaller files use a normal form POST. CHUNK_SIZE must stay well below
+# MAX_CONTENT_LENGTH (each chunk is one request).
+CHUNKED_UPLOAD_THRESHOLD = 100 * 1024 * 1024  # 100MB: chunk web uploads at/above this
+CHUNKED_UPLOAD_CHUNK_SIZE = 50 * 1024 * 1024  # 50MB per chunk
 ITEMS_PER_PAGE = 25
 FILES_PER_PAGE = 100
 ANALYSES_SHOWN = 5      # Max completed analyses shown per artefact before "Show All" appears
