@@ -1996,8 +1996,13 @@ def _view_derived_entries(artefact):
     return derived_entries, sidecar_entries
 
 
-def _view_admin_bypass(artefact):
-    """Per-artefact restriction-bypass admin panel data."""
+def _view_admin_bypass(artefact, all_artefact_ids=None):
+    """Per-artefact restriction-bypass admin panel data.
+
+    *all_artefact_ids* (current + derived IDs) is threaded in from the caller so
+    ``grantable_bypass_rtypes`` reuses it instead of re-running the derived-IDs
+    recursive CTE (#486).
+    """
     # Per-artefact bypass data: only loaded for admins to avoid unnecessary queries.
     if current_user.is_authenticated and current_user.is_admin:
         artefact_user_bypasses = (
@@ -2006,11 +2011,14 @@ def _view_admin_bypass(artefact):
             .order_by(UserArtefactBypass.restriction_type)
             .all()
         )
+        # NOTE (#486): loads the entire user table for the bypass-grant owner
+        # dropdown. Fine at current scale but grows linearly with user count;
+        # revisit with a typeahead/paginated lookup if the table gets large.
         bypass_eligible_users = (
             User.query.order_by(User.username).all()
         )
         bypass_grantable_rtypes = sorted(
-            grantable_bypass_rtypes(artefact), key=lambda rt: rt.label
+            grantable_bypass_rtypes(artefact, all_artefact_ids), key=lambda rt: rt.label
         )
     else:
         artefact_user_bypasses = []
@@ -2057,7 +2065,7 @@ def _render_artefact_view(artefact):
     hashdb_ctx = _view_hashdb_context(hashdb_mode)
     restriction_ctx = _view_restriction_maps(all_artefact_ids, files_pagination)
     derived_entries, sidecar_entries = _view_derived_entries(artefact)
-    bypass_ctx = _view_admin_bypass(artefact)
+    bypass_ctx = _view_admin_bypass(artefact, all_artefact_ids)
 
     ctx = dict(
         artefact=artefact,
@@ -2099,6 +2107,9 @@ def _move_item_choices(artefact):
     if artefact.parent_artefact_id is not None:
         return []
 
+    # NOTE (#486): indented_item_choices loads the entire items table (ORDER BY
+    # name) to build the move-target dropdown. Fine at current scale but grows
+    # linearly with item count; revisit with a typeahead if the table gets large.
     from ..utils.item_helpers import indented_item_choices
     return indented_item_choices(
         value_fn=lambda item: item.url_id,
