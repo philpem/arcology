@@ -2,6 +2,7 @@
 
 import os
 import sys
+from arcology_shared.hints import UPLOAD_HINT_INT_KEYS
 from ..client import verify_artefact_hashes
 from ..formatting import format_size, print_json
 
@@ -42,7 +43,6 @@ def _parse_hints(hint_list: list[str] | None) -> dict | None:
 	if not hint_list:
 		return None
 	hints = {}
-	_INT_KEYS = {'dfi_clock_mhz'}
 	for item in hint_list:
 		if '=' not in item:
 			print(f"Warning: ignoring malformed hint '{item}' (expected KEY=VALUE)", file=sys.stderr)
@@ -50,7 +50,7 @@ def _parse_hints(hint_list: list[str] | None) -> dict | None:
 		key, _, value = item.partition('=')
 		key = key.strip()
 		value = value.strip()
-		if key in _INT_KEYS:
+		if key in UPLOAD_HINT_INT_KEYS:
 			try:
 				value = int(value)
 			except ValueError:

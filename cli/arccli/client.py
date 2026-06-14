@@ -158,7 +158,8 @@ class ArcologyClient:
 		hints: optional dict of analysis hints (e.g. {'dfi_clock_mhz': 100}).
 		  Passed as a JSON string in the 'hints' form field.  The server forwards
 		  these to queue_analyses_for_artefact() so they apply to every queued job.
-		  Supported keys:
+		  The accepted user-facing keys are the single source of truth in
+		  arcology_shared.hints.UPLOAD_HINT_KEYS:
 		    dfi_clock_mhz  (int)  — override DiscFerret sample frequency in MHz
 		    platform       (str)  — platform hint (e.g. 'BBC Micro')
 		    filesystem     (str)  — filesystem hint (e.g. 'adfs', 'fat12')

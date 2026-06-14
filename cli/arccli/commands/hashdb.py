@@ -107,9 +107,20 @@ def cmd_hashdb_export(client: ArcologyClient, args):
     with open(args.output_file, 'w', encoding='utf-8') as fh:
         fh.write(content)
 
-    total_files = sum(len(p.get('files', [])) for p in data.get('products', []))
-    print(f'Exported "{data["name"]}" ({len(data.get("products", []))} product(s), '
-          f'{total_files} file(s)) to {args.output_file}')
+    products = data.get('products', [])
+    total_files = sum(len(p.get('files', [])) for p in products)
+    if args.json:
+        from ..formatting import print_json
+        print_json({
+            'database': data['name'],
+            'products': len(products),
+            'files': total_files,
+            'format': fmt,
+            'output_file': args.output_file,
+        })
+    else:
+        print(f'Exported "{data["name"]}" ({len(products)} product(s), '
+              f'{total_files} file(s)) to {args.output_file}')
 
 
 def cmd_hashdb_import(client: ArcologyClient, args):
@@ -163,7 +174,8 @@ def cmd_hashdb_import(client: ArcologyClient, args):
         for existing in client.list_hash_databases():
             if existing['name'] == db_name:
                 db_id = existing['id']
-                print(f'Merging into existing database "{db_name}" (id={db_id})')
+                if not args.json:
+                    print(f'Merging into existing database "{db_name}" (id={db_id})')
                 break
         if db_id is None:
             print(f'Warning: --merge specified but no database named "{db_name}" found; '
@@ -178,7 +190,8 @@ def cmd_hashdb_import(client: ArcologyClient, args):
                 source_url=import_data.get('database', {}).get('source_url'),
             )
             db_id = result['id']
-            print(f'Created database "{db_name}" (id={db_id})')
+            if not args.json:
+                print(f'Created database "{db_name}" (id={db_id})')
         except ArcologyError as e:
             if e.status_code == 409:
                 print(f'Error: a database named "{db_name}" already exists. '
@@ -203,8 +216,18 @@ def cmd_hashdb_import(client: ArcologyClient, args):
             result = client.add_product_files(db_id, product_id, files)
             added = result.get('added', len(files))
             total_files += added
-            print(f'  Product "{title}": {added} file(s) added')
+            if not args.json:
+                print(f'  Product "{title}": {added} file(s) added')
 
-    print(f'\nImport complete: {len(products)} product(s), {total_files} file(s) into "{db_name}"')
+    if args.json:
+        from ..formatting import print_json
+        print_json({
+            'database': db_name,
+            'db_id': db_id,
+            'products': len(products),
+            'files': total_files,
+        })
+    else:
+        print(f'\nImport complete: {len(products)} product(s), {total_files} file(s) into "{db_name}"')
 
 # vim: ts=4 sw=4 et

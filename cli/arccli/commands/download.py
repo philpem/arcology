@@ -2,7 +2,7 @@
 
 import os
 import sys
-from ..formatting import format_size
+from ..formatting import format_size, print_json
 
 
 def cmd_download(client, args):
@@ -21,10 +21,19 @@ def cmd_download(client, args):
 		print(f"Error: '{output_path}' already exists. Use --force to overwrite.", file=sys.stderr)
 		sys.exit(1)
 
-	print(f"Downloading {original_name}...", end=' ', flush=True)
+	if not args.json:
+		print(f"Downloading {original_name}...", end=' ', flush=True)
 	client.download_artefact(uuid, output_path)
 	size = os.path.getsize(output_path)
-	print(f"done ({format_size(size)})")
-	print(f"  Saved to: {output_path}")
+	if args.json:
+		print_json({
+			'uuid': uuid,
+			'original_filename': original_name,
+			'output_path': output_path,
+			'file_size': size,
+		})
+	else:
+		print(f"done ({format_size(size)})")
+		print(f"  Saved to: {output_path}")
 
 # vim: ts=4 sw=4 noet

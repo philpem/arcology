@@ -299,6 +299,19 @@ def cmd_hashdb_generate_arcarc(client: ArcologyClient, args):
             tags = ', '.join(item.get('tags', []))
             log.info('  %s [%s] (%d artefact(s))',
                      item['name'], tags, item.get('artefact_count', 0))
+        if args.json:
+            from ..formatting import print_json
+            print_json({
+                'dry_run': True,
+                'items': [
+                    {
+                        'name': item['name'],
+                        'tags': item.get('tags', []),
+                        'artefact_count': item.get('artefact_count', 0),
+                    }
+                    for item in items
+                ],
+            })
         return
 
     all_products = []
@@ -347,5 +360,18 @@ def cmd_hashdb_generate_arcarc(client: ArcologyClient, args):
     log.info('Output:           %s', args.output)
     log.info('')
     log.info('Import with:  arco hashdb import %s', args.output)
+
+    if args.json:
+        from ..formatting import print_json
+        print_json({
+            'output': args.output,
+            'items_processed': len(items),
+            'items_with_files': items_with_files,
+            'items_without_files': items_without_files,
+            'products': len(all_products),
+            'files': total_files,
+            'required_files': required_files,
+            'optional_files': optional_files,
+        })
 
 # vim: ts=4 sw=4 et

@@ -532,6 +532,9 @@ def cmd_bulk_import_purge(client: ArcologyClient, args):
 
     if not items:
         log.info('No items found with tag "%s". Nothing to delete.', args.tag)
+        if args.json:
+            from ..formatting import print_json
+            print_json({'deleted': 0, 'failed': 0})
         return
 
     log.info('Found %d item(s) to delete:', len(items))
@@ -563,6 +566,10 @@ def cmd_bulk_import_purge(client: ArcologyClient, args):
 
     log.info('')
     log.info('Deleted %d item(s), %d failed.', deleted, failed)
+
+    if args.json:
+        from ..formatting import print_json
+        print_json({'deleted': deleted, 'failed': failed})
 
 
 def cmd_bulk_import(client: ArcologyClient, args):
@@ -692,6 +699,13 @@ def cmd_bulk_import(client: ArcologyClient, args):
         log.info('')
         log.info('Would create %d Item(s) with %d Artefact(s) total',
                  len(collections), total_files)
+        if args.json:
+            from ..formatting import print_json
+            print_json({
+                'dry_run': True,
+                'collections': len(collections),
+                'files': total_files,
+            })
         return
 
     # Validate the parent item up front so we fail fast rather than on every
@@ -853,5 +867,17 @@ def cmd_bulk_import(client: ArcologyClient, args):
         log.info('=== Failed uploads ===')
         for path in failed_uploads:
             log.info('  %s', path)
+
+    if args.json:
+        from ..formatting import print_json
+        print_json({
+            'items_created': created_items,
+            'files_uploaded': uploaded_files,
+            'files_skipped': skipped_files,
+            'files_too_big': len(oversized_files),
+            'files_failed': len(failed_uploads),
+            'oversized_files': list(oversized_files),
+            'failed_uploads': list(failed_uploads),
+        })
 
 # vim: ts=4 sw=4 et
