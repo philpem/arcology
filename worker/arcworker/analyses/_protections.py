@@ -22,6 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from arcology_shared.enums import AnalysisType
+from arcology_shared.hints import HintKey
 
 
 @dataclass(frozen=True)
@@ -60,13 +61,13 @@ def queue_extraction_or_protection_remove(
         if not scheme.detect(image_path):
             continue
         hints: dict = {
-            'filesystem': fs,
-            'partition_index': partition_index,
+            HintKey.FILESYSTEM: fs,
+            HintKey.PARTITION_INDEX: partition_index,
         }
         if container_format:
-            hints['container_format'] = container_format
+            hints[HintKey.CONTAINER_FORMAT] = container_format
         if partition_image_path:
-            hints['partition_image_path'] = partition_image_path
+            hints[HintKey.PARTITION_IMAGE_PATH] = partition_image_path
         worker.api.queue_analysis(
             target_uuid,
             scheme.analysis_type.value,

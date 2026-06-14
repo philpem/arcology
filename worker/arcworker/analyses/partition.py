@@ -11,6 +11,8 @@ import json
 import shutil
 from pathlib import Path
 from arcology_shared.enums import AnalysisType, ArtefactType
+from arcology_shared.hints import HintKey
+from ..cache_keys import partition_cache_relpath, partition_image_filename
 from ..compression import extract_partition_range, is_region_uniform
 from ..config import log
 from ..tools import (
@@ -66,7 +68,7 @@ def process_partition_detect(self, analysis: dict, artefact: dict, work_dir: Pat
     input_path = self.get_input_path(artefact, work_dir)
     decompression_info = self._decompression_info  # Capture before it's overwritten
     hints = json.loads(analysis.get('hints') or '{}')
-    filesystem_hint = hints.get('filesystem', '').lower()
+    filesystem_hint = hints.get(HintKey.FILESYSTEM, '').lower()
 
     results = {}
     detected_partitions = []
@@ -150,7 +152,7 @@ def process_partition_detect(self, analysis: dict, artefact: dict, work_dir: Pat
     # partition list in the UI they would all show as "partition 0" and be
     # indistinguishable.  Numbering side 1's partition(s) from base 1 makes the
     # aggregated list read "partition 0" / "partition 1" (i.e. side 0 / side 1).
-    partition_index_base = hints.get('partition_index_base', 0)
+    partition_index_base = hints.get(HintKey.PARTITION_INDEX_BASE, 0)
     if partition_index_base:
         for _p in detected_partitions:
             _p['index'] += partition_index_base
@@ -282,11 +284,12 @@ def process_partition_detect(self, analysis: dict, artefact: dict, work_dir: Pat
             cache_dir.mkdir(parents=True, exist_ok=True)
             for partition in detected_partitions:
                 idx = partition['index']
-                partition_path = cache_dir / f"partition_{idx}.img"
+                image_name = partition_image_filename(idx)
+                partition_path = cache_dir / image_name
                 shutil.copy(input_path, partition_path)
                 # Upload cached partition to storage (no-op in local mode)
                 cache_key = self.storage.storage_key(
-                    'outputs', f".cache/{artefact['uuid']}/partition_{idx}.img")
+                    'outputs', partition_cache_relpath(artefact['uuid'], image_name))
                 self.storage.put(cache_key, partition_path)
                 partition_image_paths[idx] = str(partition_path)
                 log.info(f"Cached decompressed image as {partition_path}")

@@ -8,8 +8,9 @@ from arcology_shared.enums import AnalysisType, ArtefactType
 from .analysis import AnalysisWorker
 from .config import (
     ARCOLOGY_API,
-    MAX_POLL,
     OUTPUT_DIR,
+    POLL_BACKOFF_CEILING,
+    POLL_BACKOFF_FLOOR,
     S3_ACCESS_KEY,
     S3_BUCKET,
     S3_ENDPOINT_URL,
@@ -30,7 +31,8 @@ __all__ = [
     'ARCOLOGY_API',
     'UPLOAD_DIR',
     'OUTPUT_DIR',
-    'MAX_POLL',
+    'POLL_BACKOFF_CEILING',
+    'POLL_BACKOFF_FLOOR',
     'WORKER_API_KEY',
     'WORKER_ANALYSIS_TYPES',
     'STORAGE_BACKEND',

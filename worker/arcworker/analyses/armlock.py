@@ -10,6 +10,7 @@ ARMlock signature is found on an ADFS partition.
 import json
 from pathlib import Path
 from arcology_shared.enums import AnalysisType, ArtefactType
+from arcology_shared.hints import HintKey
 from ..config import log
 from ..tools import detect_armlock, remove_armlock
 from ._common import analysis_handler
@@ -41,12 +42,12 @@ def process_armlock_remove(self, analysis: dict, artefact: dict, work_dir: Path)
     """
     analysis_id = analysis['id']
     hints = json.loads(analysis.get('hints') or '{}')
-    filesystem_hint = hints.get('filesystem', 'adfs')
-    partition_index = hints.get('partition_index', 0)
+    filesystem_hint = hints.get(HintKey.FILESYSTEM, 'adfs')
+    partition_index = hints.get(HintKey.PARTITION_INDEX, 0)
 
     # Use cached decompressed path if available (from PARTITION_DETECT).
     input_path = self._resolve_partition_image(
-        hints.get('partition_image_path'), artefact, work_dir)
+        hints.get(HintKey.PARTITION_IMAGE_PATH), artefact, work_dir)
 
     # Re-run detection to capture full details for the analysis record.
     detection = detect_armlock(input_path)
@@ -62,7 +63,7 @@ def process_armlock_remove(self, analysis: dict, artefact: dict, work_dir: Path)
             artefact['uuid'],
             filesystem_hint,
             partition_index,
-            partition_image_path=hints.get('partition_image_path'),
+            partition_image_path=hints.get(HintKey.PARTITION_IMAGE_PATH),
         )
         self.complete_analysis(
             analysis_id,

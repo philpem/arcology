@@ -14,6 +14,7 @@ Covers:
 import json
 from pathlib import Path
 from arcology_shared.enums import AnalysisType, ArtefactType
+from arcology_shared.hints import HintKey
 from ..config import log
 from ..tools import (
     ModuleParseError,
@@ -205,7 +206,7 @@ def process_product_recognition(self, analysis: dict, artefact: dict, work_dir: 
 
     analysis_id = analysis['id']
     hints = _json.loads(analysis.get('hints') or '{}')
-    partition_uuid = hints.get('partition_uuid')
+    partition_uuid = hints.get(HintKey.PARTITION_UUID)
 
     if not partition_uuid:
         self.fail_analysis(analysis_id, 'No partition_uuid in analysis hints')
@@ -364,9 +365,9 @@ def process_riscos_module_parse(self, analysis: dict, artefact: dict, work_dir: 
     """
     analysis_id = analysis['id']
     hints = json.loads(analysis.get('hints') or '{}')
-    partition_uuid = hints.get('partition_uuid')
-    extraction_path = hints.get('extraction_path')
-    path_prefix = hints.get('path_prefix', '')  # set when queued from archive extraction
+    partition_uuid = hints.get(HintKey.PARTITION_UUID)
+    extraction_path = hints.get(HintKey.EXTRACTION_PATH)
+    path_prefix = hints.get(HintKey.PATH_PREFIX, '')  # set when queued from archive extraction
 
     if not partition_uuid:
         self.fail_analysis(analysis_id, 'No partition_uuid in analysis hints')
