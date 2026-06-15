@@ -235,25 +235,37 @@ def main():
 	hashdb_import.add_argument('--merge', action='store_true',
 	                           help='Add to an existing database with the same name')
 
-	# hashdb generate-arcarc
-	hashdb_gen = hashdb_sub.add_parser('generate-arcarc',
-	                                   help='Generate HashDB JSON from arcarc items in Arcology')
-	hashdb_gen.set_defaults(func='hashdb_generate:cmd_hashdb_generate_arcarc')
-	hashdb_gen.add_argument('--output', default='arcarc-hashdb.json',
-	                        help='Output JSON file (default: arcarc-hashdb.json)')
-	hashdb_gen.add_argument('--tag', default='arcarc',
-	                        help='Filter items by tag (default: arcarc)')
+	# hashdb generate-riscos
+	hashdb_gen = hashdb_sub.add_parser('generate-riscos',
+	                                   help='Generate a RISC OS HashDB JSON from items in Arcology')
+	hashdb_gen.set_defaults(func='hashdb_generate:cmd_hashdb_generate_riscos')
+	hashdb_gen.add_argument('--output', default='riscos-hashdb.json',
+	                        help='Output JSON file (default: riscos-hashdb.json)')
+	hashdb_gen.add_argument('--tag', action='append',
+	                        help='Select items by tag (repeatable)')
+	hashdb_gen.add_argument('--item', action='append',
+	                        help='Select an item by UUID (repeatable)')
+	hashdb_gen.add_argument('--platform',
+	                        help='Select items by platform name')
+	hashdb_gen.add_argument('--db-name', required=True, dest='db_name',
+	                        help='HashDB name (required)')
+	hashdb_gen.add_argument('--db-description', default='', dest='db_description',
+	                        help='HashDB description')
+	hashdb_gen.add_argument('--db-version', default=None, dest='db_version',
+	                        help='HashDB version string (default: today)')
+	hashdb_gen.add_argument('--source-url', default=None, dest='source_url',
+	                        help='HashDB source URL')
 	hashdb_gen.add_argument('--multi-disc', choices=['merge', 'separate', 'both'],
 	                        default='separate', dest='multi_disc',
 	                        help='Multi-disc handling (default: separate)')
 	hashdb_gen.add_argument('--root-files', choices=['include', 'skip', 'flag'],
-	                        default='include', dest='root_files',
-	                        help='Root-level file handling (default: include)')
-	hashdb_gen.add_argument('--db-name', default='Arcarc RISC OS Archive', dest='db_name',
-	                        help='HashDB name')
+	                        default='skip', dest='root_files',
+	                        help='Root-level (non-application) file handling (default: skip)')
+	hashdb_gen.add_argument('--no-global-check', action='store_false', dest='global_check',
+	                        help='Skip the cross-catalogue /hash-lookup uniqueness check')
 	hashdb_gen.add_argument('-v', '--verbose', action='store_true')
 	hashdb_gen.add_argument('--dry-run', action='store_true',
-	                        help='Scan only, report what would be included')
+	                        help='List selected items only; generate nothing')
 
 	args = parser.parse_args()
 
