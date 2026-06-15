@@ -160,6 +160,10 @@ def index():
     pagination = ListPagination(range(max_total), page, per_page)
     pagination_args = {k: v for k, v in request.args.items() if k != 'page'}
 
+    # Module / Replay viewer icons for the file results (parallel to the
+    # artefact file listing).  Keyed by ExtractedFile.id.
+    module_info, replay_info = file_metadata_icons(results['files']) if results else ({}, {})
+
     known_protection_types = sorted(
         v for (v,) in db.session.query(distinct(ArtefactProtection.protection_type)).all()
     )
@@ -181,6 +185,8 @@ def index():
         FilesystemType=FilesystemType,
         known_protection_types=known_protection_types,
         known_mastering_types=known_mastering_types,
+        module_info=module_info,
+        replay_info=replay_info,
     )
 
 
@@ -719,6 +725,44 @@ def _search_text_artefacts(tokens, page=1, per_page=PER_PAGE):
         {'type': 'artefact_text', 'artefact': a, 'item': i}
         for a, i in q
     ], total
+
+
+def file_metadata_icons(file_rows):
+    """Map ExtractedFile.id → RiscosModule / ReplayMovie for file search rows.
+
+    Mirrors the artefact file listing (_view_module_info / _view_replay_info):
+    files whose (artefact_id, path) matches a RiscosModule or ReplayMovie row
+    get a module (bi-cpu) or Replay/ARMovie (bi-film) viewer icon next to the
+    download icon.  Keyed by ExtractedFile.id because each search row may belong
+    to a different artefact.
+    """
+    module_info = {}
+    replay_info = {}
+    if not file_rows:
+        return module_info, replay_info
+
+    # (artefact_id, path) → ExtractedFile.id, for the visible result rows only.
+    path_to_ef = {}
+    artefact_ids = set()
+    for ef, _part, art, _item in file_rows:
+        path_to_ef[(art.id, ef.path)] = ef.id
+        artefact_ids.add(art.id)
+
+    for mod in RiscosModule.query.filter(
+        RiscosModule.artefact_id.in_(artefact_ids)
+    ).all():
+        ef_id = path_to_ef.get((mod.artefact_id, mod.file_path))
+        if ef_id is not None:
+            module_info[ef_id] = mod
+
+    for mov in ReplayMovie.query.filter(
+        ReplayMovie.artefact_id.in_(artefact_ids)
+    ).all():
+        ef_id = path_to_ef.get((mov.artefact_id, mov.file_path))
+        if ef_id is not None:
+            replay_info[ef_id] = mov
+
+    return module_info, replay_info
 
 
 def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE) -> dict:
