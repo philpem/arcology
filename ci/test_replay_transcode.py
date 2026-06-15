@@ -34,7 +34,6 @@ os.environ.setdefault('SQLALCHEMY_DATABASE_URI', 'sqlite:///:memory:')
 os.environ.setdefault('SECRET_KEY', 'test')
 
 from worker.arcworker.tools.replay_transcode import (
-    _detected_pixfmt,
     transcode_armovie_to_audio,
     transcode_armovie_to_mp4,
 )
@@ -150,22 +149,19 @@ class TestTranscodeTool(unittest.TestCase):
         self.assertIn('--modules-dir', seen['cmd'])
         self.assertIn('/srv/replay-modules', seen['cmd'])
 
-    def test_pixfmt_detection_helper(self):
-        self.assertEqual(_detected_pixfmt({'stderr': 'ffmpeg -pixel_format yuv444p -i -'}), 'yuv444p')
-        self.assertEqual(_detected_pixfmt({'stdout': '... -pix_fmt rgb24 ...'}), 'rgb24')
-        self.assertEqual(_detected_pixfmt({}), 'rgb24')  # default fallback
-
-    def test_detected_pixfmt_used_in_mux(self):
-        """The ffmpeg mux must use the pixel format scotch printed, not a hardcoded one."""
+    def test_mux_input_is_rgb24_not_output_pixfmt(self):
+        """The rawvideo INPUT must be rgb24 (replay-transcode's invariant output);
+        it must never pick up the libx264 OUTPUT -pix_fmt (that reintroduces red)."""
         captured = {}
 
         def _run(cmd, timeout=None, cwd=None):
             if cmd[0] == 'replay-transcode':
                 Path(cmd[cmd.index('--output') + 1]).write_bytes(b'\x00' * 16)
-                # scotch advertises a non-RGB pixel format on stderr
+                # recipe carries BOTH tokens; the parser must not be fooled
                 return (subprocess.CompletedProcess(cmd, 0, b'', b''),
-                        {'stderr': 'Run: ffmpeg -f rawvideo -pixel_format yuv444p -i -'})
-            if '-pixel_format' in cmd:          # the mux call
+                        {'stderr': 'ffmpeg -f rawvideo -pixel_format rgb24 -i - '
+                                   '-c:v libx264 -pix_fmt yuv420p out.mp4'})
+            if '-f' in cmd and 'rawvideo' in cmd:   # the mux call
                 captured['mux'] = cmd
             Path(cmd[-1]).write_bytes(b'\x00' * 8)
             return subprocess.CompletedProcess(cmd, 0, b'', b''), {}
@@ -180,9 +176,10 @@ class TestTranscodeTool(unittest.TestCase):
                     inp, work / 'out.mp4', width=160, height=128, frame_rate=25,
                     work_dir=work,
                 )
-        self.assertTrue(res['success'])
+            self.assertTrue(res['success'])
         mux = captured['mux']
-        self.assertEqual(mux[mux.index('-pixel_format') + 1], 'yuv444p')
+        # The input pixel format (the one before '-i') is rgb24, not yuv420p.
+        self.assertEqual(mux[mux.index('-pixel_format') + 1], 'rgb24')
 
 
 class TestAudioOnlyTranscode(unittest.TestCase):

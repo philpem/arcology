@@ -26,9 +26,15 @@ MP4 + poster.jpg   →  saved as analysis output files
 - **ffmpeg** muxes the decoded frames/audio into MP4 and extracts the poster.
   Installed as a runtime package in the worker image.
 
-The raw video's **pixel format is taken from the ffmpeg recipe scotch prints**
-(rather than assuming RGB), so codecs whose native colour isn't packed RGB don't
-come out colour-corrupted (e.g. all-red).
+`replay-transcode` **always outputs plain packed `rgb24`** — every codec's
+working colour (YUV555, 6Y5UV, RGB555, palette, …) is converted to rgb24
+internally — so the rawvideo input we hand ffmpeg is always `-pixel_format
+rgb24`. We deliberately do **not** force `--video-colour`: passing
+`--video-colour rgb888` told the transcoder to read codec 7's YUV555 working
+output as RGB888, zeroing the blue channel and producing all-red frames. (Note
+the transcoder's printed recipe also contains a libx264 *output* `-pix_fmt
+yuv420p`; that is the encode format and must not be applied to the rawvideo
+input.)
 
 **Sound-only** Replay files (video format 0) have no frames; they are transcoded
 to an **M4A** (AAC) audio file and shown with an HTML5 `<audio>` player instead
