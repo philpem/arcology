@@ -11,4 +11,7 @@ code { font-size: 0.875em; word-break: break-all; }
    fills the space and always fits on screen. The browser preserves the
    intrinsic aspect ratio when max-height clamps the height. */
 .replay-player { width: 100%; height: auto; max-height: 80vh; object-fit: contain; }
+/* Embedded poster sprite (title card) shown above the sound-only audio player.
+   Clamp the height so a large poster never dominates the card. */
+.replay-poster { max-height: 60vh; width: auto; object-fit: contain; }
 

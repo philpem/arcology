@@ -40,6 +40,22 @@ input.)
 to an **M4A** (AAC) audio file and shown with an HTML5 `<audio>` player instead
 of a video player.
 
+### Poster image
+
+Every ARMovie may embed a **poster sprite** — a standard RISC OS spritefile
+(usually a title card) located by header lines 19/20 (`sprite_offset` /
+`sprite_size`). `REPLAY_TRANSCODE` extracts it to PNG (`convert_replay_poster_sprite`
+in `worker/arcworker/tools/images_acorn.py`, via the bundled `spritefile` lib)
+and uses it as the movie's poster:
+
+- **Video** movies prefer the embedded poster sprite as the thumbnail/`<video poster>`,
+  falling back to ffmpeg's first decoded frame only when there is no poster sprite.
+- **Sound-only** movies have no first frame, so the poster sprite is the only
+  image — it is shown above the `<audio>` player and as the grid thumbnail.
+
+Extraction is best-effort: a missing/unreadable sprite simply leaves the poster
+unset (no transcode failure).
+
 Both run as best-effort, per movie: a file that cannot be decoded (see
 *Decompressor modules* below) is recorded as a transcode error and skipped, and
 its parsed metadata is left untouched.
@@ -49,6 +65,7 @@ its parsed metadata is left untouched.
 | Concern | Location |
 |---------|----------|
 | Tool wrapper (`transcode_armovie_to_mp4`) | `worker/arcworker/tools/replay_transcode.py` |
+| Poster-sprite extractor (`convert_replay_poster_sprite`) | `worker/arcworker/tools/images_acorn.py` |
 | Analysis handler (`process_replay_transcode`) | `worker/arcworker/analyses/metadata.py` |
 | Queued after metadata parse | end of `process_replay` (same file) |
 | Module directory config | `REPLAY_MODULES_DIR` in `worker/arcworker/config.py` |

@@ -21,6 +21,7 @@ from ..tools import (
     ArmovieParseError,
     ModuleParseError,
     compute_file_hash,
+    convert_replay_poster_sprite,
     decode_module,
     parse_armovie_header,
     transcode_armovie_to_audio,
@@ -581,6 +582,27 @@ def process_replay(self, analysis: dict, artefact: dict, work_dir: Path):
         )
 
 
+def _save_replay_poster(worker, data, header, work_dir, output_subdir, base_name):
+    """Extract an ARMovie embedded poster sprite to PNG and save it as output.
+
+    Returns the saved output-file path (relative, as stored), or None when the
+    movie has no embedded poster sprite or extraction failed.  Best-effort: a
+    poster is a nicety, never a reason to fail the transcode.
+    """
+    sprite_offset = header.get('sprite_offset')
+    sprite_size = header.get('sprite_size')
+    if not sprite_size or sprite_size <= 0 or sprite_offset is None:
+        return None
+
+    poster_name = f'{base_name}_poster.png'
+    poster_path = work_dir / poster_name
+    result = convert_replay_poster_sprite(data, sprite_offset, sprite_size, poster_path)
+    if not result.get('success'):
+        log.info("Replay poster sprite extraction failed for %s: %s", base_name, result.get('error'))
+        return None
+    return worker.save_output_file(poster_path, poster_name, subdir=output_subdir)
+
+
 @analysis_handler("Transcode Replay video", AnalysisType.REPLAY_TRANSCODE)
 def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Path):
     """Transcode Acorn Replay / ARMovie files found in an extraction to MP4.
@@ -657,16 +679,22 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
             transcode_errors.append({'file_path': db_path, 'error': 'File not found on disk'})
             continue
 
-        # Need the frame geometry from the header to drive ffmpeg's rawvideo input.
+        # Need the frame geometry from the header to drive ffmpeg's rawvideo
+        # input; the raw bytes are also reused for the embedded poster sprite.
         try:
-            header = parse_armovie_header(file_path.read_bytes())
+            data = file_path.read_bytes()
+            header = parse_armovie_header(data)
         except ArmovieParseError as e:
             transcode_errors.append({'file_path': db_path, 'error': f'Header parse failed: {e}'})
             continue
 
+        base_name = f'{analysis["uuid"]}_{index}'
+
         if header.get('video_format') == 0:
             # Sound-only movie — no video frames, but still playable as audio.
-            audio_name = f'{analysis["uuid"]}_{index}.m4a'
+            # Many sound-only Replay files carry a poster sprite (a title card);
+            # extract it so the audio player and grid have a thumbnail.
+            audio_name = f'{base_name}.m4a'
             audio_path = work_dir / audio_name
             result = transcode_armovie_to_audio(
                 file_path, audio_path,
@@ -682,10 +710,11 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
                 })
                 continue
             saved_audio = self.save_output_file(audio_path, audio_name, subdir=output_subdir)
+            saved_poster = _save_replay_poster(self, data, header, work_dir, output_subdir, base_name)
             transcoded.append({
                 'file_path': db_path,
                 'mp4_output_path': saved_audio,   # media output (audio for sound-only)
-                'poster_path': None,
+                'poster_path': saved_poster,
                 'has_audio': True,
                 'audio_only': True,
                 'width': None,
@@ -694,10 +723,14 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
             })
             continue
 
-        mp4_name = f'{analysis["uuid"]}_{index}.mp4'
-        poster_name = f'{analysis["uuid"]}_{index}.jpg'
+        mp4_name = f'{base_name}.mp4'
+        frame_name = f'{base_name}.jpg'
         mp4_path = work_dir / mp4_name
-        poster_path = work_dir / poster_name
+        frame_path = work_dir / frame_name
+
+        # Prefer the author-supplied embedded poster sprite as the thumbnail; only
+        # fall back to ffmpeg's first decoded frame when there is no poster sprite.
+        saved_poster = _save_replay_poster(self, data, header, work_dir, output_subdir, base_name)
 
         result = transcode_armovie_to_mp4(
             file_path, mp4_path,
@@ -706,7 +739,7 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
             frame_rate=header.get('frame_rate'),
             work_dir=work_dir,
             modules_dir=modules_dir,
-            poster_path=poster_path,
+            poster_path=None if saved_poster else frame_path,
         )
 
         if not result['success']:
@@ -719,9 +752,8 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
             continue
 
         saved_mp4 = self.save_output_file(mp4_path, mp4_name, subdir=output_subdir)
-        saved_poster = None
-        if result.get('poster_path'):
-            saved_poster = self.save_output_file(poster_path, poster_name, subdir=output_subdir)
+        if not saved_poster and result.get('poster_path'):
+            saved_poster = self.save_output_file(frame_path, frame_name, subdir=output_subdir)
 
         transcoded.append({
             'file_path': db_path,
