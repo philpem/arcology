@@ -360,6 +360,16 @@ class AnalysisWorker:
             AnalysisType.RISCOS_MODULE_PARSE.value,
             hints=module_hints,
         )
+        # Acorn Replay / ARMovie metadata — harmless no-op on extractions with
+        # no filetype ae7 files.
+        replay_hints = {HintKey.PARTITION_UUID: partition_uuid}
+        if extraction_path:
+            replay_hints[HintKey.EXTRACTION_PATH] = extraction_path
+        self.api.queue_analysis(
+            artefact_uuid,
+            AnalysisType.REPLAY_PROCESS.value,
+            hints=replay_hints,
+        )
 
     def _relative_output_path(self, extract_dir: Path) -> str:
         """Convert an absolute extraction directory to a relative path for storage.

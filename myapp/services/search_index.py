@@ -30,6 +30,7 @@ from ..database import (
     ArtefactMastering,
     ArtefactProtection,
     Partition,
+    ReplayMovie,
     RiscosModule,
 )
 from ..extensions import db
@@ -147,6 +148,66 @@ def handle_riscos_modules(analysis: Analysis, details: dict,
         ))
 
 
+def handle_replay_movies(analysis: Analysis, details: dict,
+                          full_rebuild: bool = False) -> None:
+    """Rebuild ReplayMovie rows from a REPLAY_PROCESS result.
+
+    Same scoped-deletion semantics as ``handle_riscos_modules`` (see there for
+    the path_prefix / full_rebuild race-avoidance rationale).
+    """
+    path_prefix = details.get('path_prefix', '')
+
+    if full_rebuild:
+        ReplayMovie.query.filter_by(artefact_id=analysis.artefact_id).delete()
+    elif path_prefix:
+        ReplayMovie.query.filter(
+            ReplayMovie.artefact_id == analysis.artefact_id,
+            ReplayMovie.file_path.like(path_prefix + '/%'),
+        ).delete(synchronize_session=False)
+    elif details.get('movies'):
+        ReplayMovie.query.filter_by(artefact_id=analysis.artefact_id).delete()
+
+    _title_max = ReplayMovie.__table__.c.title.type.length
+    _author_max = ReplayMovie.__table__.c.author.type.length
+    _copyright_max = ReplayMovie.__table__.c.copyright.type.length
+    _path_max = ReplayMovie.__table__.c.file_path.type.length
+    _vlabel_max = ReplayMovie.__table__.c.video_label.type.length
+
+    def _truncate(value, limit):
+        if value is None:
+            return None
+        return value[:limit]
+
+    for mov in details.get('movies', []):
+        file_path = mov.get('file_path', '')
+        if file_path and len(file_path) > _path_max:
+            current_app.logger.warning(
+                f"Skipping ARMovie with oversized file_path ({len(file_path)}): {file_path}"
+            )
+            continue
+        # ARMovie titles may legitimately be empty — index the row regardless.
+        db.session.add(ReplayMovie(
+            artefact_id=analysis.artefact_id,
+            file_path=file_path,
+            title=_truncate(mov.get('title'), _title_max),
+            author=_truncate(mov.get('author'), _author_max),
+            copyright=_truncate(mov.get('copyright'), _copyright_max),
+            video_format=mov.get('video_format'),
+            video_label=_truncate(mov.get('video_label'), _vlabel_max),
+            width=mov.get('width'),
+            height=mov.get('height'),
+            pixel_depth=mov.get('pixel_depth'),
+            frame_rate=mov.get('frame_rate'),
+            sound_format=mov.get('sound_format'),
+            sound_rate=mov.get('sound_rate'),
+            sound_channels=mov.get('sound_channels'),
+            sound_precision=mov.get('sound_precision'),
+            frames_per_chunk=mov.get('frames_per_chunk'),
+            number_of_chunks=mov.get('number_of_chunks'),
+            duration_seconds=mov.get('duration_seconds'),
+        ))
+
+
 # =============================================================================
 # High-level entry point (used by the API on analysis completion)
 # =============================================================================
@@ -156,6 +217,7 @@ _HANDLER_MAP = {
     AnalysisType.DISC_MASTERING_DETECT:  handle_mastering,
     AnalysisType.PARTITION_DETECT:       handle_partition_detect,
     AnalysisType.RISCOS_MODULE_PARSE:    handle_riscos_modules,
+    AnalysisType.REPLAY_PROCESS:         handle_replay_movies,
 }
 
 
@@ -242,9 +304,10 @@ def rebuild_all(echo=None) -> dict:
             except (ValueError, TypeError):
                 echo(f"  WARNING: could not parse details for analysis {analysis.uuid}")
                 continue
-            # full_rebuild=True for the RISC OS modules handler so the CLI's
-            # batch pass doesn't need path-prefix logic (it rebuilds from scratch).
-            if analysis_type == AnalysisType.RISCOS_MODULE_PARSE:
+            # full_rebuild=True for the per-file handlers so the CLI's batch
+            # pass doesn't need path-prefix logic (it rebuilds from scratch).
+            if analysis_type in (AnalysisType.RISCOS_MODULE_PARSE,
+                                 AnalysisType.REPLAY_PROCESS):
                 handler(analysis, details, full_rebuild=True)
             else:
                 handler(analysis, details)

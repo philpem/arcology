@@ -8,12 +8,13 @@ def rebuild_search_index():
     """Rebuild the search index tables from completed analysis results.
 
     Reads all completed DISC_PROTECTION_DETECT, DISC_MASTERING_DETECT,
-    PARTITION_DETECT, and RISCOS_MODULE_PARSE analyses and writes
-    structured rows to:
+    PARTITION_DETECT, RISCOS_MODULE_PARSE, and REPLAY_PROCESS analyses and
+    writes structured rows to:
       - artefact_protection
       - artefact_mastering
       - partitions.gnu_file_type
       - riscos_modules
+      - replay_movies
 
     The command is idempotent: existing rows are replaced on each run.
     Run this after applying the 20260309_000000 migration, or any time

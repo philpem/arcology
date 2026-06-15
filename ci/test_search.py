@@ -156,6 +156,29 @@ class TestParseQuery(unittest.TestCase):
         self.assertIn('ident', tokens)
         self.assertNotIn('gnu', tokens)
 
+    # Acorn Replay / ARMovie keys
+
+    def test_replay_title_key(self):
+        tokens = self.parse('ReplayTitle:"lion fish"')
+        self.assertEqual(tokens.get('replay_title'), ['lion fish'])
+
+    def test_replay_video_format_key(self):
+        tokens = self.parse('ReplayVideoFormat:7')
+        self.assertEqual(tokens.get('replay_vformat'), ['7'])
+
+    def test_replay_video_codec_synonym(self):
+        # ReplayVideoCodec and ReplayCodec are synonyms for ReplayVideoFormat.
+        self.assertEqual(self.parse('ReplayVideoCodec:7').get('replay_vformat'), ['7'])
+        self.assertEqual(self.parse('ReplayCodec:7').get('replay_vformat'), ['7'])
+
+    def test_replay_width_range_value_preserved(self):
+        tokens = self.parse('ReplayWidth:160..299')
+        self.assertEqual(tokens.get('replay_width'), ['160..299'])
+
+    def test_replay_duration_operator_value_preserved(self):
+        tokens = self.parse('ReplayDuration:>=30')
+        self.assertEqual(tokens.get('replay_duration'), ['>=30'])
+
     def test_alias_gnufile(self):
         tokens = self.parse('gnufile:DOS')
         self.assertIn('ident', tokens)
@@ -303,6 +326,7 @@ class TestSearchLogic(unittest.TestCase):
             FilesystemType,
             Item,
             Partition,
+            ReplayMovie,
             RiscosModule,
             StorageDirectory,
             Tag,
@@ -456,6 +480,82 @@ class TestSearchLogic(unittest.TestCase):
                 file_path='Modules/ADFS',
                 commands='["ADFS", "Back", "Bye", "Desktop_ADFS"]',
                 swi_names='["ADFS_DiscOp", "ADFS_HDC", "ADFS_Drives"]',
+            ))
+
+            # Acorn Replay / ARMovie file (public artefact) + its ReplayMovie row
+            f_replay = ExtractedFile(
+                partition_id=part.id,
+                path='Video/LionFish',
+                filename='LionFish',
+                extension=None,
+                risc_os_filetype='ae7',
+                md5='r1' + '0' * 30,
+                sha1='r1' + '0' * 38,
+                sha256='r1' + '0' * 62,
+                is_directory=False,
+            )
+            _db.session.add(f_replay)
+            _db.session.add(ReplayMovie(
+                artefact_id=art.id,
+                file_path='Video/LionFish',
+                title='Lion fish in the Red Sea',
+                author='BBC',
+                copyright='(C) BBC',
+                video_format=19,
+                video_label='Super Moving Blocks',
+                width=160,
+                height=128,
+                pixel_depth=16,
+                frame_rate=12.5,
+                sound_format=1,
+                sound_rate=44100,
+                sound_channels=1,
+                number_of_chunks=15,
+                duration_seconds=30.0,
+            ))
+
+            # A PRIVATE artefact with an ARMovie — must be excluded for anon.
+            art_priv = Artefact(
+                item_id=item.id,
+                label='Private',
+                artefact_type=ArtefactType.HFE,
+                original_filename='priv.hfe',
+                storage_path='priv.hfe',
+                storage_directory=StorageDirectory.UPLOADS,
+                is_private=True,
+                md5='ffffeeeeddddcccc0000111122223333',
+                sha256='f' * 64,
+            )
+            _db.session.add(art_priv)
+            _db.session.flush()
+            part_priv = Partition(
+                artefact_id=art_priv.id,
+                partition_index=0,
+                label='Secret',
+                filesystem=FilesystemType.ADFS,
+            )
+            _db.session.add(part_priv)
+            _db.session.flush()
+            f_priv = ExtractedFile(
+                partition_id=part_priv.id,
+                path='Video/Secret',
+                filename='Secret',
+                extension=None,
+                risc_os_filetype='ae7',
+                md5='r2' + '0' * 30,
+                sha256='r2' + '0' * 62,
+                is_directory=False,
+            )
+            _db.session.add(f_priv)
+            _db.session.add(ReplayMovie(
+                artefact_id=art_priv.id,
+                file_path='Video/Secret',
+                title='Secret Lion fish footage',
+                video_format=7,
+                width=320,
+                height=256,
+                frame_rate=25.0,
+                duration_seconds=120.0,
             ))
 
             # Tags
@@ -864,6 +964,117 @@ class TestSearchLogic(unittest.TestCase):
         results = self._search('swi:DiscOp')
         file_paths = [ef.path for ef, _, _, _ in results['files']]
         self.assertIn('Modules/ADFS', file_paths)
+
+    # ------------------------------------------------------------------
+    # Acorn Replay / ARMovie searches
+    # ------------------------------------------------------------------
+
+    def test_replay_title_substring(self):
+        results = self._search('ReplayTitle:"lion fish"')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('Video/LionFish', file_paths)
+
+    def test_replay_video_format_exact(self):
+        results = self._search('ReplayVideoFormat:19')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('Video/LionFish', file_paths)
+
+    def test_replay_video_codec_synonym(self):
+        results = self._search('ReplayVideoCodec:19')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('Video/LionFish', file_paths)
+
+    def test_replay_video_format_no_match(self):
+        results = self._search('ReplayVideoFormat:99')
+        self.assertEqual(results['files'], [])
+
+    def test_replay_width_range(self):
+        results = self._search('ReplayWidth:160..299')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('Video/LionFish', file_paths)
+
+    def test_replay_width_range_excludes(self):
+        # The public movie is 160 wide; a 200.. lower bound excludes it.
+        results = self._search('ReplayWidth:200..')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertNotIn('Video/LionFish', file_paths)
+
+    def test_replay_duration_gte(self):
+        results = self._search('ReplayDuration:>=30')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('Video/LionFish', file_paths)
+
+    def test_replay_duration_lt_excludes(self):
+        results = self._search('ReplayDuration:<10')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertNotIn('Video/LionFish', file_paths)
+
+    def test_replay_combined_keys_and(self):
+        # Title AND format must both match the same movie.
+        results = self._search('ReplayTitle:"lion fish" ReplayVideoFormat:19')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('Video/LionFish', file_paths)
+
+    def test_replay_private_excluded(self):
+        # The private artefact's ARMovie also matches "lion fish" but must be
+        # excluded for an anonymous searcher.
+        results = self._search('ReplayTitle:"lion fish"')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertNotIn('Video/Secret', file_paths)
+
+    # ------------------------------------------------------------------
+    # _numeric_filter behaviour (exact / range / operators)
+    # ------------------------------------------------------------------
+
+    def _numeric_widths(self, val, **kwargs):
+        """Return the set of ReplayMovie.width values matching _numeric_filter."""
+        from myapp.blueprints.search import _numeric_filter
+        from myapp.database import ReplayMovie
+        from myapp.extensions import db as _db
+        with self.app.app_context():
+            rows = (_db.session.query(ReplayMovie.width)
+                    .filter(_numeric_filter(ReplayMovie.width, val, **kwargs))
+                    .all())
+            return {w for (w,) in rows}
+
+    def test_numeric_exact(self):
+        self.assertEqual(self._numeric_widths('160'), {160})
+
+    def test_numeric_gte(self):
+        self.assertEqual(self._numeric_widths('>=160'), {160, 320})
+
+    def test_numeric_gt(self):
+        self.assertEqual(self._numeric_widths('>160'), {320})
+
+    def test_numeric_lte(self):
+        self.assertEqual(self._numeric_widths('<=160'), {160})
+
+    def test_numeric_lt(self):
+        self.assertEqual(self._numeric_widths('<320'), {160})
+
+    def test_numeric_range_inclusive(self):
+        self.assertEqual(self._numeric_widths('160..320'), {160, 320})
+
+    def test_numeric_range_lower_only(self):
+        self.assertEqual(self._numeric_widths('200..'), {320})
+
+    def test_numeric_range_upper_only(self):
+        self.assertEqual(self._numeric_widths('..200'), {160})
+
+    def test_numeric_unparseable_matches_nothing(self):
+        self.assertEqual(self._numeric_widths('abc'), set())
+
+    def test_numeric_float_column(self):
+        from myapp.blueprints.search import _numeric_filter
+        from myapp.database import ReplayMovie
+        from myapp.extensions import db as _db
+        with self.app.app_context():
+            rows = (_db.session.query(ReplayMovie.duration_seconds)
+                    .filter(_numeric_filter(ReplayMovie.duration_seconds, '>=30', is_float=True))
+                    .all())
+            durations = {d for (d,) in rows}
+        self.assertIn(30.0, durations)
+        self.assertIn(120.0, durations)
 
     # ------------------------------------------------------------------
     # Tag searches

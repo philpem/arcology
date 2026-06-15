@@ -7,7 +7,7 @@ Global cross-item search using a prefix query syntax.
 import re
 from flask import Blueprint, render_template, request
 from flask_login import current_user
-from sqlalchemy import and_, case, distinct, func, or_
+from sqlalchemy import and_, case, distinct, false, func, or_
 from ..database import (
     Artefact,
     ArtefactMastering,
@@ -16,6 +16,7 @@ from ..database import (
     FilesystemType,
     Item,
     Partition,
+    ReplayMovie,
     RiscosModule,
     Tag,
     artefact_tags,
@@ -48,6 +49,18 @@ _ALIASES = {
     'gnufile':    'ident',
     'filesystem': 'fs',
     'prot':       'protection',
+    # Acorn Replay / ARMovie metadata keys (lower-cased by the parser)
+    'replaytitle':       'replay_title',
+    'replayauthor':      'replay_author',
+    'replaycopyright':   'replay_copyright',
+    'replayvideoformat': 'replay_vformat',
+    'replayvideocodec':  'replay_vformat',   # synonym
+    'replaycodec':       'replay_vformat',   # synonym
+    'replaysoundformat': 'replay_sformat',
+    'replaywidth':       'replay_width',
+    'replayheight':      'replay_height',
+    'replayframerate':   'replay_framerate',
+    'replayduration':    'replay_duration',
 }
 
 # Reserved token key under which negated terms are collected.  A negation is a
@@ -73,7 +86,10 @@ def parse_query(raw: str) -> dict:
     """Parse a search query string into a dict of {key: [values]}.
 
     Keys: md5, sha1, sha256, filename, path, type, ext, ident,
-          label, fs, protection, mastering, tag, text (bare words).
+          label, fs, protection, mastering, tag, text (bare words),
+          replay_title, replay_author, replay_copyright, replay_vformat,
+          replay_sformat, replay_width, replay_height, replay_framerate,
+          replay_duration (Acorn Replay / ARMovie metadata).
 
     Keyed terms may be negated with a leading '!' (e.g. '!type:Obey').  Negated
     terms are collected under the reserved ``NOT_KEY`` as a nested
@@ -232,6 +248,68 @@ def _negated_clauses(tokens: dict, builders: dict) -> list:
         for val in _neg(tokens, key):
             out.append(_negate(builder(val)))
     return out
+
+
+def _numeric_filter(col, val: str, *, is_float: bool = False):
+    """Build a numeric column filter supporting exact match or a range.
+
+    Supported value forms (general — usable by any numeric search key):
+      ``160``            exact match
+      ``>=160`` / ``>160`` / ``<=300`` / ``<300``   comparison
+      ``15..25``         inclusive range (15 ≤ col ≤ 25)
+      ``15..``           lower bound only (col ≥ 15)
+      ``..23``           upper bound only (col ≤ 23)
+
+    An unparseable value yields a clause that matches nothing (rather than
+    raising), so a malformed term simply returns no rows.
+    """
+    cast = float if is_float else int
+
+    def _num(s):
+        try:
+            return cast(s)
+        except (ValueError, TypeError):
+            return None
+
+    val = val.strip()
+
+    # Range form: "lo..hi", "lo..", "..hi"
+    if '..' in val:
+        lo_s, hi_s = val.split('..', 1)
+        clauses = []
+        if lo_s != '':
+            lo = _num(lo_s)
+            if lo is None:
+                return false()
+            clauses.append(col >= lo)
+        if hi_s != '':
+            hi = _num(hi_s)
+            if hi is None:
+                return false()
+            clauses.append(col <= hi)
+        if not clauses:
+            return false()
+        return and_(*clauses)
+
+    # Comparison operators
+    for op_str, op in (('>=', '>='), ('<=', '<='), ('>', '>'), ('<', '<')):
+        if val.startswith(op_str):
+            n = _num(val[len(op_str):])
+            if n is None:
+                return false()
+            if op == '>=':
+                return col >= n
+            if op == '<=':
+                return col <= n
+            if op == '>':
+                return col > n
+            return col < n
+
+    # Bare value → exact match
+    n = _num(val)
+    if n is None:
+        return false()
+    return col == n
 
 
 def _resolve_riscos_type(val: str):
@@ -465,6 +543,66 @@ def _search_swis(tokens, page=1, per_page=PER_PAGE):
     )
 
 
+def _search_replay_movies(tokens, page=1, per_page=PER_PAGE):
+    """Search ReplayMovie metadata, returning ExtractedFile tuples.
+
+    Mirrors _search_riscos_module_files: joins ReplayMovie to its ExtractedFile
+    by (artefact_id, file_path) so results render in the existing file bucket.
+    Text keys use substring match; numeric keys support exact-or-range via
+    _numeric_filter.  Different keys are ANDed; multiple values for one key are
+    ORed.
+    """
+    # (token key, ReplayMovie column, clause builder)
+    _text_keys = (
+        ('replay_title', ReplayMovie.title),
+        ('replay_author', ReplayMovie.author),
+        ('replay_copyright', ReplayMovie.copyright),
+    )
+    _int_keys = (
+        ('replay_vformat', ReplayMovie.video_format),
+        ('replay_sformat', ReplayMovie.sound_format),
+        ('replay_width', ReplayMovie.width),
+        ('replay_height', ReplayMovie.height),
+    )
+    _float_keys = (
+        ('replay_framerate', ReplayMovie.frame_rate),
+        ('replay_duration', ReplayMovie.duration_seconds),
+    )
+
+    per_key = {}
+    for key, col in _text_keys:
+        for v in tokens.get(key, []):
+            per_key.setdefault(key, []).append(_ilike(col, v))
+    for key, col in _int_keys:
+        for v in tokens.get(key, []):
+            per_key.setdefault(key, []).append(_numeric_filter(col, v))
+    for key, col in _float_keys:
+        for v in tokens.get(key, []):
+            per_key.setdefault(key, []).append(_numeric_filter(col, v, is_float=True))
+
+    if not per_key:
+        return [], 0
+
+    combined = and_(*[or_(*clauses) for clauses in per_key.values()])
+    base_q = (
+        db.session.query(ExtractedFile, Partition, Artefact, Item)
+        .join(Partition, ExtractedFile.partition_id == Partition.id)
+        .join(Artefact, Partition.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .join(ReplayMovie, and_(
+            ReplayMovie.artefact_id == Artefact.id,
+            ReplayMovie.file_path == ExtractedFile.path))
+        .filter(combined)
+        .filter(ExtractedFile.is_directory == False)
+        .filter(artefact_visibility_clause(current_user))
+    )
+    total = base_q.count()
+    q = base_q.order_by(
+        func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path)
+    ).offset((page - 1) * per_page).limit(per_page).all()
+    return q, total
+
+
 def _search_tags(tokens, page=1, per_page=PER_PAGE):
     """Search artefacts by tag name."""
     values = tokens.get('tag', [])
@@ -642,6 +780,11 @@ def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE) -> dict:
     if 'swi' in tokens:
         swi_results, total = _search_swis(tokens, page=page, per_page=per_page)
         _add('files', swi_results, total)
+
+    # Acorn Replay / ARMovie metadata search
+    if any(k.startswith('replay_') for k in tokens):
+        replay_results, total = _search_replay_movies(tokens, page=page, per_page=per_page)
+        _add('files', replay_results, total)
 
     # Tag search
     if 'tag' in tokens:

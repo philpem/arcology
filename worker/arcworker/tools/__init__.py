@@ -18,6 +18,7 @@ from .archives import (
     list_zip_member_names,
     read_zip_comment,
 )
+from .armovie import ArmovieParseError, parse_armovie_header
 from .base import (
     compute_file_hash,
     exception_result,
@@ -60,6 +61,8 @@ from .partition import (
 from .riscos_module import HelpParseError, ModuleParseError, decode_module
 
 __all__ = [
+    'ArmovieParseError',
+    'parse_armovie_header',
     'run_tool',
     'run_tool_with_output',
     'get_process_output',
