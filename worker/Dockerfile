@@ -362,7 +362,7 @@ RUN python3 -m pip install --break-system-packages sentry-sdk
 # submodule update pins it to the SHA recorded in the checked-out commit.
 # philpem fork — adds self.warnings and fixes next==0 infinite loop in spritefile.py.
 # Revert to dcf21 once the fix is merged upstream (PR pending).
-ARG DRAWFILE_RENDER_SHA=0e5aaedc6e57c1ad2b5d5cbd599ad64a26371361
+ARG DRAWFILE_RENDER_SHA=f5bbbab90b8cf6951dfa43b885ed34d98e1005f6
 ARG DRAWFILE_RENDER_REPO=https://github.com/philpem/drawfile-render
 #ARG DRAWFILE_RENDER_SHA=7834d3bb626e68a51f49da145978d296599bc24d
 #ARG DRAWFILE_RENDER_REPO=https://github.com/dcf21/drawfile-render.git
