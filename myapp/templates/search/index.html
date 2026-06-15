@@ -1,6 +1,6 @@
 {% extends "_base.html" %}
 {% from '_pagination.html' import render_pagination %}
-{% from '_macros.html' import file_download_icon with context %}
+{% from '_macros.html' import file_download_icon, file_viewer_metadata_icons with context %}
 {% block page_title %}Search{% endblock %}
 
 {% block content %}
@@ -231,16 +231,9 @@
 					<a href="{{ artefact_url(art) }}?path={{ ef.browse_path | urlencode }}#files"
 					   class="font-monospace text-decoration-none">{{ ef.path }}</a>
 					{{ file_download_icon(ef.uuid, art.restrictions, ef.restrictions) }}
-					{% if module_info is defined and ef.id in module_info %}
-					{% set mod = module_info[ef.id] %}
-					<a href="{{ artefact_url(art, 'viewer') }}?file={{ ef.path | urlencode }}"
-					   class="text-success ms-1" title="RISC OS Module: {{ mod.help_title or mod.title_string }}{% if mod.version %} {{ mod.version }}{% endif %}{% if mod.date %} ({{ mod.date }}){% endif %}"><i class="bi bi-cpu"></i></a>
-					{% endif %}
-					{% if replay_info is defined and ef.id in replay_info %}
-					{% set rm = replay_info[ef.id] %}
-					<a href="{{ artefact_url(art, 'viewer') }}?file={{ ef.path | urlencode }}"
-					   class="text-primary ms-1" title="Acorn Replay / ARMovie{% if rm.title %}: {{ rm.title }}{% endif %}{% if rm.video_format is not none %} (format {{ rm.video_format }}{% if rm.video_label %} {{ rm.video_label }}{% endif %}){% endif %}{% if rm.width is not none and rm.height is not none %} — {{ rm.width }}×{{ rm.height }}{% endif %}"><i class="bi bi-film"></i></a>
-					{% endif %}
+					{{ file_viewer_metadata_icons(art, ef.path,
+						module_info[ef.id] if module_info is defined and ef.id in module_info else None,
+						replay_info[ef.id] if replay_info is defined and ef.id in replay_info else None) }}
 				</td>
 				<td>
 					{% if ef.risc_os_filetype %}
