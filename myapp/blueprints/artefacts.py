@@ -1773,7 +1773,7 @@ def _view_conversion_status(artefact, all_artefact_ids):
         # path via the file_id stored in hints.
         # Defer the large `details` JSON: this loop only reads hints,
         # error_message, and uuid, so loading details is wasted I/O (#486).
-        from sqlalchemy.orm import defer as _defer_details
+        from sqlalchemy.orm import defer
         failed_extractions = (
             Analysis.query
             .filter(
@@ -1781,7 +1781,7 @@ def _view_conversion_status(artefact, all_artefact_ids):
                 Analysis.analysis_type == AnalysisType.ARCHIVE_EXTRACT,
                 Analysis.status == AnalysisStatus.FAILED,
             )
-            .options(_defer_details(Analysis.details))
+            .options(defer(Analysis.details))
             .all()
         )
         if failed_extractions:
