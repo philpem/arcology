@@ -17,7 +17,6 @@ Two-stage pipeline:
 Both binaries are expected on ``PATH`` (installed by the worker Dockerfile).
 """
 
-import re
 from pathlib import Path
 from .base import run_tool_with_output, tool_result
 
@@ -25,21 +24,13 @@ from .base import run_tool_with_output, tool_result
 # field is usually present).  ffmpeg's rawvideo demuxer needs *some* rate.
 _DEFAULT_FRAME_RATE = 25.0
 
-# scotch prints the matching ffmpeg invocation (including the -pixel_format /
-# -pix_fmt for its raw output) on stdout/stderr.  We reuse that pixel format
-# instead of assuming one — forcing the wrong colour model produces corrupt
-# (e.g. all-red) frames on codecs whose native colour isn't plain packed RGB.
-_PIXFMT_RE = re.compile(r'-(?:pixel_format|pix_fmt)\s+(\S+)')
-_DEFAULT_PIXFMT = 'rgb24'
-
-
-def _detected_pixfmt(process_output) -> str:
-    """Extract the ffmpeg pixel format scotch recommends, else the rgb24 default."""
-    text = ''
-    if isinstance(process_output, dict):
-        text = f"{process_output.get('stdout', '')}\n{process_output.get('stderr', '')}"
-    m = _PIXFMT_RE.search(text)
-    return m.group(1) if m else _DEFAULT_PIXFMT
+# replay-transcode ALWAYS emits plain packed rgb24 — every codec's working
+# colour (YUV555, 6Y5UV, RGB555, palette, …) is converted to rgb24 internally,
+# so the rawvideo *input* pixel format is invariant.  Do NOT confuse this with
+# the libx264 *output* "-pix_fmt yuv420p" in scotch's printed recipe; feeding
+# rgb24 bytes to ffmpeg as yuv420p is exactly what the old forced
+# "--video-colour rgb888" produced — washed red/pink frames.
+_RAW_PIXFMT = 'rgb24'
 
 
 def transcode_armovie_to_mp4(
@@ -108,12 +99,11 @@ def transcode_armovie_to_mp4(
         )
 
     has_audio = wav_path.exists() and wav_path.stat().st_size > 0
-    pixfmt = _detected_pixfmt(decode_output)
 
-    # ── Stage 2: raw frames (+ WAV) → MP4 ──────────────────────────────────
+    # ── Stage 2: raw rgb24 frames (+ WAV) → MP4 ────────────────────────────
     mux_cmd = [
         'ffmpeg', '-y', '-hide_banner',
-        '-f', 'rawvideo', '-pixel_format', pixfmt,
+        '-f', 'rawvideo', '-pixel_format', _RAW_PIXFMT,
         '-video_size', f'{width}x{height}',
         '-framerate', f'{fps:g}',
         '-i', str(raw_path),
