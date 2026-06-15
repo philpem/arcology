@@ -66,6 +66,15 @@ API_RETRIES = _int_env('API_RETRIES', '3')
 # Lower values detect cancellation sooner; higher values reduce API load.
 CANCEL_CHECK_INTERVAL = _int_env('CANCEL_CHECK_INTERVAL', '30')
 
+# Acorn Replay / ARMovie transcoding (REPLAY_TRANSCODE analysis).
+# Directory containing RISC OS Replay decompressor modules (Decomp*/Decompress,ffd),
+# passed to scotch's replay-transcode as --modules-dir.  Compressed Replay codecs
+# (Moving Lines, Moving Blocks, Super Moving Blocks, …) need the original Acorn
+# decompressor module to decode; those modules are proprietary and not shipped, so
+# operators mount their own.  Unset (default) means only codecs that need no module
+# (e.g. type 23 raw, uncompressed) can be transcoded.
+REPLAY_MODULES_DIR = os.environ.get('REPLAY_MODULES_DIR', '')
+
 # Archive extraction configuration
 MAX_ARCHIVE_DEPTH = _int_env('MAX_ARCHIVE_DEPTH', '10')
 

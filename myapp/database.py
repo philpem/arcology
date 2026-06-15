@@ -972,8 +972,10 @@ class ReplayMovie(db.Model):
     frames_per_chunk: Mapped[float | None] = mapped_column(Float, nullable=True)
     number_of_chunks: Mapped[int | None] = mapped_column(Integer, nullable=True)  # entry count (highest index + 1)
     duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
-    # Forward provision for the future transcode-to-MP4 feature; never written yet.
+    # Transcoded outputs, populated by a REPLAY_TRANSCODE analysis (scotch + ffmpeg).
+    # Relative paths under the 'outputs' storage directory, served via get_output_file.
     mp4_output_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    poster_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
     artefact: Mapped["Artefact"] = relationship(back_populates="replay_movies")
 

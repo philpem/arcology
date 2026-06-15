@@ -1126,8 +1126,6 @@ def _viewer_replay_detail(file_filter, all_artefact_ids):
         'frames_per_chunk': row.frames_per_chunk,
         'number_of_chunks': row.number_of_chunks,
         'duration_seconds': row.duration_seconds,
-        # Future transcode provision; never populated yet.
-        'mp4_url': None,
     }
 
     # Merge the full header/stats from the analysis details for this file.
@@ -1143,11 +1141,47 @@ def _viewer_replay_detail(file_filter, all_artefact_ids):
             details = {}
         for m in details.get('movies', []):
             if m.get('file_path') == file_filter:
-                merged = dict(m)
-                merged['mp4_url'] = None
-                detail = merged
+                detail = dict(m)
                 break
+
+    # Transcoded video + poster (populated by a REPLAY_TRANSCODE analysis).
+    detail['mp4_url'] = (
+        url_for(f'{ROUTENAME}.get_output_file', filename=row.mp4_output_path)
+        if row.mp4_output_path else None
+    )
+    detail['poster_url'] = (
+        url_for(f'{ROUTENAME}.get_output_file', filename=row.poster_path)
+        if row.poster_path else None
+    )
     return detail
+
+
+def _viewer_replay_posters(all_artefact_ids):
+    """Poster thumbnails for ARMovie files, shown in the viewer grid.
+
+    Each links to the Replay detail/player card (viewer?file=<path>), the same
+    way converted sprites link to their full image.  Poster images come from a
+    completed REPLAY_TRANSCODE analysis; a movie not yet transcoded shows with
+    no poster (the template renders a film placeholder).
+    """
+    rows = (
+        ReplayMovie.query
+        .filter(ReplayMovie.artefact_id.in_(all_artefact_ids))
+        .order_by(ReplayMovie.file_path)
+        .all()
+    )
+    posters = []
+    for row in rows:
+        posters.append({
+            'file_path': row.file_path,
+            'title': row.title,
+            'poster_url': (
+                url_for(f'{ROUTENAME}.get_output_file', filename=row.poster_path)
+                if row.poster_path else None
+            ),
+            'has_mp4': bool(row.mp4_output_path),
+        })
+    return posters
 
 
 def _viewer_stamp_stable_ids(artefact, output_groups):
@@ -1210,6 +1244,8 @@ def _render_viewer(artefact):
 
     module_detail = _viewer_module_detail(file_filter, all_artefact_ids)
     replay_detail = _viewer_replay_detail(file_filter, all_artefact_ids)
+    # Poster grid only when not already drilled into a single movie's player card.
+    replay_posters = [] if file_filter else _viewer_replay_posters(all_artefact_ids)
 
     _viewer_stamp_stable_ids(artefact, output_groups)
 
@@ -1224,6 +1260,7 @@ def _render_viewer(artefact):
         failed_conversion_list=failed_conversion_list,
         module_detail=module_detail,
         replay_detail=replay_detail,
+        replay_posters=replay_posters,
         user_can_bypass_explicit=user_can_bypass_explicit,
         total_counts=total_counts,
         total_groups=total_groups,

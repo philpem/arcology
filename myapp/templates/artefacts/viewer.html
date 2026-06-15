@@ -294,20 +294,25 @@
 <h5 class="font-monospace border-bottom pb-2 mb-3">{{ replay_detail.file_path }}</h5>
 {% endif %}
 
-{# Future video player provision — shows a transcoded MP4 when available. #}
+{# Video player — shows the transcoded MP4 when a REPLAY_TRANSCODE analysis has run. #}
 <div class="card mb-4">
     <div class="card-header">
         <i class="bi bi-film text-primary"></i> Acorn Replay / ARMovie{% if replay_detail.title %} — {{ replay_detail.title }}{% endif %}
     </div>
     <div class="card-body">
         {% if replay_detail.mp4_url %}
-        <video controls preload="metadata" class="w-100 mb-3" src="{{ replay_detail.mp4_url }}">
+        <video controls preload="metadata" class="w-100 mb-3"{% if replay_detail.poster_url %} poster="{{ replay_detail.poster_url }}"{% endif %} src="{{ replay_detail.mp4_url }}">
             Your browser does not support the video element.
         </video>
+        <div class="mb-3">
+            <a href="{{ replay_detail.mp4_url }}" download class="btn btn-sm btn-outline-primary">
+                <i class="bi bi-download"></i> Download converted movie (MP4)
+            </a>
+        </div>
         {% else %}
         <div class="ratio ratio-16x9 bg-dark d-flex align-items-center justify-content-center mb-3 rounded">
             <span class="text-muted small">
-                <i class="bi bi-film"></i> Video preview not yet available (transcode pending).
+                <i class="bi bi-film"></i> Video preview not yet available (transcode pending or codec unsupported).
             </span>
         </div>
         {% endif %}
@@ -357,6 +362,32 @@
             </tbody>
         </table>
     </div>
+</div>
+{% endif %}
+
+{% if replay_posters %}
+{# Replay videos as poster thumbnails (like converted sprites) — each links to
+   the movie's player card via ?file=<path>. #}
+<h6 class="font-monospace border-bottom pb-1 mb-2 mt-3"><i class="bi bi-film text-primary"></i> Acorn Replay videos</h6>
+<div class="row g-3 mb-4">
+    {% for p in replay_posters %}
+    <div class="{{ viewer_col_class }}">
+        <div class="card viewer-img-card h-100">
+            <a href="{{ request.path }}?file={{ p.file_path | urlencode }}" title="Open Replay player{% if p.title %}: {{ p.title }}{% endif %}">
+                {% if p.poster_url %}
+                <img src="{{ p.poster_url }}" class="viewer-img card-img-top" alt="{{ p.title or p.file_path }}" loading="lazy">
+                {% else %}
+                <div class="ratio ratio-16x9 bg-dark d-flex align-items-center justify-content-center rounded-top">
+                    <span class="text-muted small text-center px-1"><i class="bi bi-film"></i><br>{% if p.has_mp4 %}video{% else %}not transcoded{% endif %}</span>
+                </div>
+                {% endif %}
+            </a>
+            <div class="card-footer p-1 text-center">
+                <span class="viewer-name font-monospace">{{ p.title or (p.file_path.split('/') | last) }}</span>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
 </div>
 {% endif %}
 

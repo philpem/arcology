@@ -58,6 +58,8 @@ from .metadata import (
     process_format_identify,
     process_metadata_extract,
     process_product_recognition,
+    process_replay,
+    process_replay_transcode,
     process_riscos_module_parse,
 )
 from .partition import process_partition_detect
@@ -94,6 +96,8 @@ __all__ = [
     'process_metadata_extract',
     'process_format_identify',
     'process_product_recognition',
+    'process_replay',
+    'process_replay_transcode',
     'process_riscos_module_parse',
     # Armlock
     'process_armlock_remove',
