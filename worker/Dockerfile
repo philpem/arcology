@@ -342,6 +342,10 @@ COPY --from=build-tbafs /usr/local/bin/tbafs-extractor /usr/local/bin/
 # Copy scotch Acorn Replay transcoder (used with ffmpeg by REPLAY_TRANSCODE)
 COPY --from=build-scotch /usr/local/bin/replay-transcode /usr/local/bin/
 COPY --from=build-scotch /usr/local/bin/replay-inspect /usr/local/bin/
+# Bundle the freeware Acorn Replay decompressor modules (Acorn freeware via
+# RISC OS Open; Escape © Eidos 1993; LinePack © H. B. Pedersen 1995).  These are
+# the decoders replay-transcode runs under its ARM simulator for compressed codecs.
+COPY --from=build-scotch /src/scotch/vendor/armovie-codecs/ /usr/local/share/armovie-codecs/
 
 # Copy image conversion tools
 COPY --from=build-wmfrs /usr/local/bin/wmf-cli /usr/local/bin
@@ -434,10 +438,10 @@ ENV OUTPUT_DIR=/data/outputs
 ENV POLL_INTERVAL=10
 ENV LOG_LEVEL=INFO
 ENV TOOL_TIMEOUT=3600
-# Optional: directory of RISC OS Replay decompressor modules (Decompress,ffd)
-# for transcoding compressed Replay codecs. Mount your own; unset = only
-# module-free codecs (e.g. type 23 raw) can be transcoded. See doc/REPLAY_TRANSCODE.md.
-ENV REPLAY_MODULES_DIR=""
+# Acorn Replay decompressor modules for transcoding compressed codecs, bundled
+# from scotch above. Override to point at a different module set if needed.
+# See doc/REPLAY_TRANSCODE.md.
+ENV REPLAY_MODULES_DIR=/usr/local/share/armovie-codecs
 
 # Create data directories
 RUN mkdir -p /data/uploads /data/outputs

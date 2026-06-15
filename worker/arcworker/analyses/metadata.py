@@ -634,7 +634,9 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
         return
 
     output_subdir = artefact_output_subdir(artefact)
-    modules_dir = REPLAY_MODULES_DIR or None
+    # Only pass --modules-dir when it actually exists (it won't when the worker
+    # runs outside the Docker image that bundles the codecs).
+    modules_dir = REPLAY_MODULES_DIR if REPLAY_MODULES_DIR and Path(REPLAY_MODULES_DIR).is_dir() else None
 
     transcoded = []
     transcode_errors = []

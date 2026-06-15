@@ -62,29 +62,31 @@ a **Download converted movie (MP4)** button is offered.
 
 Most Replay videos use a **compressed** codec (Moving Lines = 1, Moving Blocks =
 7/17/20, Super Moving Blocks = 19, …). scotch decodes these by running the
-*original RISC OS decompressor module* (`Decompress,ffd`) under its ARM
-simulator. **Those modules are proprietary Acorn / third-party code and are not
-redistributable**, so Arcology does not ship them.
+original RISC OS decompressor module (`Decompress,ffd`) under its ARM simulator.
 
-> Bundling was considered (per the feature request) but the Replay decompressor
-> modules are not freely licensed, so they cannot be included in the image.
+These modules are **freeware and are bundled** with the worker image, copied
+from scotch's `vendor/armovie-codecs/` (layout `DecompNN/Decompress,ffd` +
+`Info`, plus `MovingLine` for codec 1 and third-party Escape/LinePack codecs).
+So compressed codecs transcode **out of the box** — no manual setup.
 
-To transcode compressed codecs, provide your own module directory:
+Licensing of the bundled modules (per scotch's `vendor/armovie-codecs/README.md`):
 
-1. Place the decompressor modules in a directory, e.g. `./data/replay-modules`.
-2. The directory is mounted into the worker and pointed at by
-   `REPLAY_MODULES_DIR` (already wired in `docker-compose.yml`).
+- Acorn codecs: distributed by Acorn as freeware, now open source via **RISC OS
+  Open Ltd**; taken unmodified from a compiled RISC OS 2003 ARMovie build.
+- Escape codec: freeware, © **Eidos plc 1993**.
+- LinePack codec: freeware, © **Henrik Bjerregaard Pedersen 1995**.
 
-Without modules, only codecs that need none — notably **type 23** (raw
-6Y6Y5U5V) and uncompressed movies — can be transcoded; everything else is
-recorded as `transcode_errors` with stage `decode` and the viewer shows
-*"Video preview not yet available (transcode pending or codec unsupported)."*
+The image sets `REPLAY_MODULES_DIR=/usr/local/share/armovie-codecs`. Override it
+to point at a different module set (e.g. a mounted directory) if needed. A movie
+whose codec still cannot be decoded is recorded in `transcode_errors` (stage
+`decode`) and the viewer shows *"Video preview not yet available (transcode
+pending or codec unsupported)."*
 
 ## Configuration
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `REPLAY_MODULES_DIR` | *(unset)* | Directory of RISC OS Replay decompressor modules passed to `replay-transcode --modules-dir`. Unset ⇒ module-free codecs only. |
+| `REPLAY_MODULES_DIR` | `/usr/local/share/armovie-codecs` (bundled) | Directory of RISC OS Replay decompressor modules passed to `replay-transcode --modules-dir`. The worker only passes it when the directory exists, so running outside the Docker image (where it is absent) simply limits transcoding to module-free codecs. |
 
 `TOOL_TIMEOUT` (default 3600 s) bounds each transcode subprocess — raise it for
 long movies.
@@ -92,7 +94,7 @@ long movies.
 ## Operating
 
 - Transcoding is queued automatically after extraction (via `REPLAY_PROCESS`).
-- To (re-)transcode after adding decompressor modules, re-run the analysis:
+- To re-transcode (e.g. after changing `REPLAY_MODULES_DIR`), re-run the analysis:
 
   ```bash
   flask reanalyse --analysis <REPLAY_TRANSCODE-uuid>
@@ -107,8 +109,7 @@ long movies.
     - WORKER_ANALYSIS_TYPES=REPLAY_TRANSCODE
   ```
 
-- After importing modules and re-running transcodes, refresh the index if rows
-  look stale: `flask rebuild-search-index`.
+- If transcoded rows look stale, refresh the index: `flask rebuild-search-index`.
 
 ## Future work
 
