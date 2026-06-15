@@ -61,7 +61,7 @@ def artefact_contained_file_restrictions(artefact):
     )
 
 
-def grantable_bypass_rtypes(artefact):
+def grantable_bypass_rtypes(artefact, all_artefact_ids=None):
     """RestrictionTypes a per-user bypass can be granted for on this artefact.
 
     Covers both artefact-level and file-level restrictions across this artefact
@@ -72,8 +72,15 @@ def grantable_bypass_rtypes(artefact):
     A grant is created against this artefact; download enforcement walks each
     restricted artefact/file up its derivation chain (Artefact.ancestor_ids), so
     a grant here cascades to cover restrictions anywhere in the tree below it.
+
+    Pass *all_artefact_ids* (current artefact ID + its derived IDs) when the
+    caller has already computed them, to avoid re-running the derived-IDs
+    recursive CTE.
     """
-    all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    if all_artefact_ids is not None:
+        all_ids = all_artefact_ids
+    else:
+        all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
     art_rtypes = (
         db.session.query(ArtefactRestriction.restriction_type)
         .filter(ArtefactRestriction.artefact_id.in_(all_ids))
