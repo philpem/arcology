@@ -17,6 +17,7 @@ the leading token is read).
 """
 
 import logging
+import re
 
 log = logging.getLogger(__name__)
 
@@ -26,25 +27,66 @@ _HEADER_LINES = 21
 # Line 1 must be this literal magic (exact match).
 _MAGIC = 'ARMovie'
 
+# Leading optional sign + digits (VAL / strtoull(…, 10) style: parse the number
+# at the start and stop at the first non-digit, so e.g. "1K" → 1).
+_LEADING_DIGITS_RE = re.compile(r'\s*([+-]?\d+)')
+
+# Generic descriptor some writers append after the video-format number
+# (e.g. "19 video format", analogous to "160 pixels").  It is boilerplate, not a
+# codec name, so it is dropped from the captured label.
+_VIDEO_FORMAT_DESCRIPTOR = 'video format'
+
 
 class ArmovieParseError(Exception):
     """Raised when the data is not a valid ARMovie file."""
 
 
 def _leading_int(line: str) -> int | None:
-    """Return the leading whitespace-delimited token of *line* as an int.
+    """Return the integer at the start of *line*, ignoring any trailing text.
 
     Numeric header lines are written as ``<number> <descriptive prose>`` (e.g.
-    ``160 pixels``); only the first token is significant.  Returns None when the
-    token is missing or not an integer.
+    ``160 pixels``) and some values carry an attached suffix (e.g. ``1K``).
+    Parsing is VAL/``strtoull(…, 10)`` style: read the leading optional sign and
+    digits and stop at the first non-digit.  Returns None when no leading number
+    is present.
     """
-    parts = line.split()
-    if not parts:
+    m = _LEADING_DIGITS_RE.match(line)
+    if not m:
         return None
-    try:
-        return int(parts[0])
-    except ValueError:
-        return None
+    return int(m.group(1))
+
+
+def _parse_codec(line: str) -> tuple[int | None, str | None]:
+    """Parse a codec line into its number and (optional) name/label.
+
+    The video-format field is ``<number><label>`` where the number is parsed
+    VAL-style (leading digits) and the remainder is the codec name as written:
+
+    * ``1K``             → ``(1, "1K")``          (attached suffix → whole token)
+    * ``1 Moving Lines`` → ``(1, "Moving Lines")``(space-separated → remainder)
+    * ``19``             → ``(19, None)``         (bare number → no label)
+    * ``19 video format``→ ``(19, None)``         (generic descriptor dropped)
+    * ``0``              → ``(0, None)``
+
+    Returns (number, label); either element may be None.
+    """
+    stripped = line.strip()
+    m = _LEADING_DIGITS_RE.match(stripped)
+    if not m:
+        return None, None
+    number = int(m.group(1))
+    rest = stripped[m.end():]
+    if not rest:
+        label = None
+    elif rest[:1].isspace():
+        # Space-separated: the label is the remaining text (a codec name), unless
+        # it is just the generic boilerplate descriptor.
+        remainder = rest.strip()
+        label = None if remainder.lower() == _VIDEO_FORMAT_DESCRIPTOR else (remainder or None)
+    else:
+        # Attached suffix (e.g. "1K"): keep the whole first token.
+        label = stripped.split()[0]
+    return number, label
 
 
 def _leading_float(line: str) -> float | None:
@@ -137,7 +179,7 @@ def parse_armovie_header(data: bytes) -> dict:
     title           = _text_or_none(lines[1])
     copyright_      = _text_or_none(lines[2])
     author          = _text_or_none(lines[3])
-    video_format    = _leading_int(lines[4])
+    video_format, video_label = _parse_codec(lines[4])
     width           = _leading_int(lines[5])
     height          = _leading_int(lines[6])
     pixel_depth     = _leading_int(lines[7])
@@ -180,6 +222,7 @@ def parse_armovie_header(data: bytes) -> dict:
         'copyright': copyright_,
         'author': author,
         'video_format': video_format,
+        'video_label': video_label,
         'width': width,
         'height': height,
         'pixel_depth': pixel_depth,

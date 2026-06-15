@@ -1113,6 +1113,7 @@ def _viewer_replay_detail(file_filter, all_artefact_ids):
         'author': row.author,
         'copyright': row.copyright,
         'video_format': row.video_format,
+        'video_label': row.video_label,
         'width': row.width,
         'height': row.height,
         'pixel_depth': row.pixel_depth,

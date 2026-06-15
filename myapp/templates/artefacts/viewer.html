@@ -323,7 +323,7 @@
                 <tr><th>Copyright</th><td>{{ replay_detail.copyright }}</td></tr>
                 {% endif %}
                 {% if replay_detail.video_format is not none %}
-                <tr><th>Video format</th><td>{{ replay_detail.video_format }}{% if replay_detail.sound_only %} <span class="text-muted small">(sound-only)</span>{% endif %}</td></tr>
+                <tr><th>Video format</th><td>{{ replay_detail.video_format }}{% if replay_detail.video_label %} ({{ replay_detail.video_label }}){% endif %}{% if replay_detail.sound_only %} <span class="text-muted small">(sound-only)</span>{% endif %}</td></tr>
                 {% endif %}
                 {% if replay_detail.width is not none and replay_detail.height is not none %}
                 <tr><th>Dimensions</th><td>{{ replay_detail.width }} × {{ replay_detail.height }} px{% if replay_detail.pixel_depth is not none %}, {{ replay_detail.pixel_depth }} bpp{% endif %}</td></tr>

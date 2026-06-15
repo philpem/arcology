@@ -502,6 +502,7 @@ class TestSearchLogic(unittest.TestCase):
                 author='BBC',
                 copyright='(C) BBC',
                 video_format=19,
+                video_label='Super Moving Blocks',
                 width=160,
                 height=128,
                 pixel_depth=16,

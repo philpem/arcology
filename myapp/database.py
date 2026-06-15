@@ -960,6 +960,7 @@ class ReplayMovie(db.Model):
     author: Mapped[str | None] = mapped_column(String(255), nullable=True)
     copyright: Mapped[str | None] = mapped_column(String(255), nullable=True)
     video_format: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # compression/codec id (0 = sound-only)
+    video_label: Mapped[str | None] = mapped_column(String(64), nullable=True)  # codec name/label as written in the header (e.g. "1K", "Moving Lines")
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     pixel_depth: Mapped[int | None] = mapped_column(Integer, nullable=True)

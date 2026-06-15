@@ -171,6 +171,7 @@ def handle_replay_movies(analysis: Analysis, details: dict,
     _author_max = ReplayMovie.__table__.c.author.type.length
     _copyright_max = ReplayMovie.__table__.c.copyright.type.length
     _path_max = ReplayMovie.__table__.c.file_path.type.length
+    _vlabel_max = ReplayMovie.__table__.c.video_label.type.length
 
     def _truncate(value, limit):
         if value is None:
@@ -192,6 +193,7 @@ def handle_replay_movies(analysis: Analysis, details: dict,
             author=_truncate(mov.get('author'), _author_max),
             copyright=_truncate(mov.get('copyright'), _copyright_max),
             video_format=mov.get('video_format'),
+            video_label=_truncate(mov.get('video_label'), _vlabel_max),
             width=mov.get('width'),
             height=mov.get('height'),
             pixel_depth=mov.get('pixel_depth'),

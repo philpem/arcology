@@ -255,7 +255,7 @@
                                 {% if replay_info is defined and file.path in replay_info %}
                                 {% set rm = replay_info[file.path] %}
                                 <a href="{{ artefact_url(artefact, 'viewer') }}?file={{ file.path | urlencode }}"
-                                   class="text-primary ms-1" title="Acorn Replay / ARMovie{% if rm.title %}: {{ rm.title }}{% endif %}{% if rm.video_format is not none %} (format {{ rm.video_format }}){% endif %}{% if rm.width is not none and rm.height is not none %} — {{ rm.width }}×{{ rm.height }}{% endif %}"><i class="bi bi-film"></i></a>
+                                   class="text-primary ms-1" title="Acorn Replay / ARMovie{% if rm.title %}: {{ rm.title }}{% endif %}{% if rm.video_format is not none %} (format {{ rm.video_format }}{% if rm.video_label %} {{ rm.video_label }}{% endif %}){% endif %}{% if rm.width is not none and rm.height is not none %} — {{ rm.width }}×{{ rm.height }}{% endif %}"><i class="bi bi-film"></i></a>
                                 {% endif %}
                                 {% endif %}
                             </td>

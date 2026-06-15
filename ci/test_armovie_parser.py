@@ -139,6 +139,52 @@ class TestArmovieParser(unittest.TestCase):
         with self.assertRaises(ArmovieParseError):
             parse_armovie_header(_build(_FULL_LINES[:10]))
 
+    def test_video_format_generic_descriptor_no_label(self):
+        # "19 video format" → number 19, generic descriptor dropped (no label).
+        meta = parse_armovie_header(_build(_FULL_LINES))
+        self.assertEqual(meta["video_format"], 19)
+        self.assertNotIn("video_label", meta)
+
+    def test_video_format_attached_suffix(self):
+        # CFC / Anglia TV style: "1K" → codec number 1 with label "1K"
+        # (the whole token is kept because the suffix is attached, no space).
+        lines = list(_FULL_LINES)
+        lines[4] = "1K"
+        meta = parse_armovie_header(_build(lines))
+        self.assertEqual(meta["video_format"], 1)
+        self.assertEqual(meta["video_label"], "1K")
+
+    def test_video_format_named_codec(self):
+        # "1 Moving Lines" → number 1, label "Moving Lines" (space-separated
+        # remainder is a genuine codec name, kept verbatim).
+        lines = list(_FULL_LINES)
+        lines[4] = "1 Moving Lines"
+        meta = parse_armovie_header(_build(lines))
+        self.assertEqual(meta["video_format"], 1)
+        self.assertEqual(meta["video_label"], "Moving Lines")
+
+    def test_video_format_named_codec_blocks(self):
+        lines = list(_FULL_LINES)
+        lines[4] = "2 Moving Blocks"
+        meta = parse_armovie_header(_build(lines))
+        self.assertEqual(meta["video_format"], 2)
+        self.assertEqual(meta["video_label"], "Moving Blocks")
+
+    def test_video_format_bare_number_no_label(self):
+        lines = list(_FULL_LINES)
+        lines[4] = "19"
+        meta = parse_armovie_header(_build(lines))
+        self.assertEqual(meta["video_format"], 19)
+        self.assertNotIn("video_label", meta)
+
+    def test_sound_only_no_label(self):
+        # Format 0 (sound-only) carries no codec label.
+        lines = list(_FULL_LINES)
+        lines[4] = "0"
+        meta = parse_armovie_header(_build(lines))
+        self.assertEqual(meta["video_format"], 0)
+        self.assertNotIn("video_label", meta)
+
     def test_catalogue_sound_track_count(self):
         # Place a small catalogue right after the header and point line 18 at it.
         header_lines = list(_FULL_LINES)

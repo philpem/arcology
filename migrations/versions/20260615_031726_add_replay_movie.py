@@ -40,6 +40,7 @@ def upgrade():
         sa.Column('author', sa.String(length=255), nullable=True),
         sa.Column('copyright', sa.String(length=255), nullable=True),
         sa.Column('video_format', sa.Integer(), nullable=True),
+        sa.Column('video_label', sa.String(length=64), nullable=True),
         sa.Column('width', sa.Integer(), nullable=True),
         sa.Column('height', sa.Integer(), nullable=True),
         sa.Column('pixel_depth', sa.Integer(), nullable=True),
