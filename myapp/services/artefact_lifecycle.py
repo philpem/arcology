@@ -14,6 +14,7 @@ import os
 import shutil
 from flask import current_app
 from sqlalchemy import select
+from arcology_shared.hints import HintKey
 from ..database import (
     Analysis,
     AnalysisStatus,
@@ -139,12 +140,12 @@ def _analysis_file_path(analysis, hint_file_map: dict) -> str | None:
 
     atype = analysis.analysis_type
     if atype == _AT.ARCHIVE_EXTRACT:
-        fid = h.get('file_id')
+        fid = h.get(HintKey.FILE_ID)
         if fid and fid in hint_file_map:
             return hint_file_map[fid]['path']
         return None
     if atype in (_AT.ARCHIVE_DETECT, _AT.FORMAT_CONVERT, _AT.RISCOS_MODULE_PARSE):
-        prefix = h.get('path_prefix', '')
+        prefix = h.get(HintKey.PATH_PREFIX, '')
         return prefix if prefix else None
     return None
 
@@ -227,7 +228,7 @@ def build_processing_tree(root: Artefact) -> tuple[dict, bool, dict, int]:
     for analysis in all_analyses:
         if analysis.analysis_type == _AT.ARCHIVE_EXTRACT and analysis.hints:
             try:
-                fid = _json.loads(analysis.hints).get('file_id')
+                fid = _json.loads(analysis.hints).get(HintKey.FILE_ID)
                 if fid:
                     file_ids.append(fid)
             except Exception:
@@ -640,10 +641,10 @@ def _collect_item_cleanup_keys(all_artefact_ids):
 
     if not all_artefact_ids:
         return {
-            'artefact_keys': artefact_keys,
-            'output_file_keys': output_file_keys,
-            'output_dir_prefixes': output_dir_prefixes,
-            'cache_prefixes': cache_prefixes,
+            HintKey.ARTEFACT_KEYS: artefact_keys,
+            HintKey.OUTPUT_FILE_KEYS: output_file_keys,
+            HintKey.OUTPUT_DIR_PREFIXES: output_dir_prefixes,
+            HintKey.CACHE_PREFIXES: cache_prefixes,
             'upload_blob_ids': [],
             'output_blob_ids': [],
         }
@@ -721,10 +722,10 @@ def _collect_item_cleanup_keys(all_artefact_ids):
                 pass
 
     return {
-        'artefact_keys': artefact_keys,
-        'output_file_keys': output_file_keys,
-        'output_dir_prefixes': output_dir_prefixes,
-        'cache_prefixes': cache_prefixes,
+        HintKey.ARTEFACT_KEYS: artefact_keys,
+        HintKey.OUTPUT_FILE_KEYS: output_file_keys,
+        HintKey.OUTPUT_DIR_PREFIXES: output_dir_prefixes,
+        HintKey.CACHE_PREFIXES: cache_prefixes,
         'upload_blob_ids': orphan_upload_blob_ids,
         'output_blob_ids': orphan_output_blob_ids,
     }
@@ -759,8 +760,8 @@ def queue_storage_cleanup(cleanup_keys: dict, artefact_id: int | None = None,
     so a job exists if and only if the deletion committed.
     """
     if not any(cleanup_keys.get(k) for k in (
-            'artefact_keys', 'output_file_keys',
-            'output_dir_prefixes', 'cache_prefixes')):
+            HintKey.ARTEFACT_KEYS, HintKey.OUTPUT_FILE_KEYS,
+            HintKey.OUTPUT_DIR_PREFIXES, HintKey.CACHE_PREFIXES)):
         return None
 
     job = Analysis(
@@ -786,7 +787,7 @@ def collect_output_cleanup_keys(artefact: Artefact) -> dict:
     """
     all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
     keys = _collect_item_cleanup_keys(all_ids)
-    keys['artefact_keys'] = []
+    keys[HintKey.ARTEFACT_KEYS] = []
     return keys
 
 
