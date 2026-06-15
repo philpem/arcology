@@ -65,7 +65,7 @@ from ..services.downloads import (
     serve_extracted_file,
     serve_output_file,
 )
-from ..services.hash_rescan import find_known_file
+from ..services.hash_rescan import find_known_file, find_known_files_for_records
 from ..services.restrictions import (
     artefact_contained_file_restrictions,
     collect_all_file_restrictions,
@@ -1634,8 +1634,12 @@ def add_files(uuid):
     if 'files' not in data:
         return error_response('files array required')
 
-    added = 0
-    skipped = 0
+    # Resolve the final (possibly archive-nested) path for each incoming file
+    # up front so duplicate detection and known-file matching can both run as
+    # single batch queries instead of one query per file.  A partition listing
+    # can contain thousands of files; the per-file N+1 pattern here was slow
+    # enough under concurrent extraction to blow the worker's HTTP timeout.
+    candidates = []
     for f in data['files']:
         if 'path' not in f or 'filename' not in f:
             continue
@@ -1651,15 +1655,36 @@ def add_files(uuid):
                 if not path.startswith(parent_file.path + '/'):
                     path = parent_file.path + '/' + path
 
-        # Check if this file already exists in the partition (prevents duplicates)
-        existing_file = ExtractedFile.query.filter_by(
-            partition_id=partition.id,
-            path=path
-        ).first()
+        candidates.append((path, f))
 
-        if existing_file:
+    # Single query for all paths already present in this partition (duplicate
+    # guard), instead of one SELECT per incoming file.
+    existing_paths = set()
+    if candidates:
+        incoming_paths = {path for path, _ in candidates}
+        existing_paths = {
+            row[0]
+            for row in db.session.query(ExtractedFile.path)
+            .filter(
+                ExtractedFile.partition_id == partition.id,
+                ExtractedFile.path.in_(incoming_paths),
+            )
+            .all()
+        }
+
+    # Single batch query to match every incoming file against active hash
+    # databases, replacing the per-file find_known_file() N+1 pattern.
+    known_matches = find_known_files_for_records([f for _, f in candidates])
+
+    added = 0
+    skipped = 0
+    seen_paths = set()
+    for (path, f), known in zip(candidates, known_matches, strict=True):
+        # Guard against both pre-existing rows and duplicates within this batch.
+        if path in existing_paths or path in seen_paths:
             skipped += 1
             continue
+        seen_paths.add(path)
 
         modified_time = None
         modified_time_str = f.get('modified_time')
@@ -1689,11 +1714,9 @@ def add_files(uuid):
             extraction_depth=f.get('extraction_depth', 0)
         )
 
-        if ef.md5 or ef.sha1:
-            known = find_known_file(md5=ef.md5, sha1=ef.sha1, file_size=ef.file_size)
-            if known:
-                ef.known_file_id = known.id
-                ef.is_known = True
+        if known is not None:
+            ef.known_file_id = known.id
+            ef.is_known = True
         db.session.add(ef)
         added += 1
 
