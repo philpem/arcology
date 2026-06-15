@@ -75,6 +75,7 @@ from ..services.downloads import (
     serve_extracted_file,
     serve_output_file,
 )
+from ..services.file_metadata import metadata_by_path
 from ..services.restrictions import (
     artefact_contained_file_restrictions,
     collect_all_file_restrictions,
@@ -1880,41 +1881,6 @@ def _view_conversion_status(artefact, all_artefact_ids):
     return viewable_filenames, failed_conversion_info, has_converted_outputs
 
 
-def _view_module_info(all_artefact_ids):
-    """RISC OS module tooltips for ffa files in the listing."""
-    # Build module_info: dict mapping ExtractedFile.path → module metadata for
-    # files with filetype ffa.  Used by the file listing template to show a
-    # tooltip with the module's internal name, version, and date.
-    # Query across all derived artefacts so modules found in e.g. an ISO
-    # extracted from a ZIP are visible when viewing the parent ZIP.
-    module_info = {}
-    all_modules = RiscosModule.query.filter(
-        RiscosModule.artefact_id.in_(all_artefact_ids)
-    ).all()
-    for mod in all_modules:
-        if mod.file_path:
-            module_info[mod.file_path] = mod
-    return module_info
-
-
-def _view_replay_info(all_artefact_ids):
-    """Map ExtractedFile.path → ReplayMovie for ARMovie files (filetype ae7).
-
-    Used by the file listing template to surface a link to the viewer's Replay
-    detail card and a tooltip with the movie's title and codec.  Queried across
-    all derived artefacts so movies inside nested extractions are visible from
-    the parent.
-    """
-    replay_info = {}
-    all_movies = ReplayMovie.query.filter(
-        ReplayMovie.artefact_id.in_(all_artefact_ids)
-    ).all()
-    for mov in all_movies:
-        if mov.file_path:
-            replay_info[mov.file_path] = mov
-    return replay_info
-
-
 def _view_recognised_products(all_partitions):
     """Recognised products card and folder badges."""
     # Recognised products for all partitions of this artefact tree
@@ -2148,8 +2114,7 @@ def _render_artefact_view(artefact):
 
     viewable_filenames, failed_conversion_info, has_converted_outputs = \
         _view_conversion_status(artefact, all_artefact_ids)
-    module_info = _view_module_info(all_artefact_ids)
-    replay_info = _view_replay_info(all_artefact_ids)
+    module_info, replay_info = metadata_by_path(all_artefact_ids)
     recognised_products, recognised_folder_paths = _view_recognised_products(all_partitions)
     hashdb_ctx = _view_hashdb_context(hashdb_mode)
     restriction_ctx = _view_restriction_maps(all_artefact_ids, files_pagination)

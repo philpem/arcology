@@ -914,10 +914,10 @@ class TestSearchLogic(unittest.TestCase):
     def test_file_metadata_icons_module(self):
         # A file-search row matching a RiscosModule should get a module icon
         # entry keyed by ExtractedFile.id (parallel to the artefact listing).
-        from myapp.blueprints.search import file_metadata_icons
+        from myapp.services.file_metadata import metadata_by_file_id
         with self.app.app_context():
             results = self._search('module:WindowManager')
-            module_info, replay_info = file_metadata_icons(results['files'])
+            module_info, replay_info = metadata_by_file_id(results['files'])
             row = next(r for r in results['files']
                        if r[0].path == 'Modules/WindowManager')
             self.assertIn(row[0].id, module_info)
@@ -926,10 +926,10 @@ class TestSearchLogic(unittest.TestCase):
 
     def test_file_metadata_icons_replay(self):
         # A file-search row matching a ReplayMovie should get a film icon entry.
-        from myapp.blueprints.search import file_metadata_icons
+        from myapp.services.file_metadata import metadata_by_file_id
         with self.app.app_context():
             results = self._search('replay_title:Lion')
-            module_info, replay_info = file_metadata_icons(results['files'])
+            module_info, replay_info = metadata_by_file_id(results['files'])
             row = next(r for r in results['files']
                        if r[0].path == 'Video/LionFish')
             self.assertIn(row[0].id, replay_info)
@@ -937,9 +937,24 @@ class TestSearchLogic(unittest.TestCase):
             self.assertNotIn(row[0].id, module_info)
 
     def test_file_metadata_icons_empty(self):
-        from myapp.blueprints.search import file_metadata_icons
+        from myapp.services.file_metadata import metadata_by_file_id
         with self.app.app_context():
-            self.assertEqual(file_metadata_icons([]), ({}, {}))
+            self.assertEqual(metadata_by_file_id([]), ({}, {}))
+
+    def test_file_metadata_by_path(self):
+        # The artefact-listing adapter keys by file_path for a single artefact.
+        from myapp.services.file_metadata import metadata_by_path
+        with self.app.app_context():
+            module_info, replay_info = metadata_by_path([self.art_id])
+            self.assertEqual(module_info['Modules/WindowManager'].title_string,
+                             'WindowManager')
+            self.assertEqual(replay_info['Video/LionFish'].title,
+                             'Lion fish in the Red Sea')
+
+    def test_file_metadata_by_path_empty(self):
+        from myapp.services.file_metadata import metadata_by_path
+        with self.app.app_context():
+            self.assertEqual(metadata_by_path([]), ({}, {}))
 
     # ------------------------------------------------------------------
     # Command searches
