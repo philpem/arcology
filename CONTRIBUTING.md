@@ -137,7 +137,8 @@ The worker is a standalone Python process that polls the web app's REST API for 
 | `S3_ACCESS_KEY` | (required for S3) | S3 access key ID |
 | `S3_SECRET_KEY` | (required for S3) | S3 secret access key |
 | `S3_REGION` | (optional for S3) | S3 region (e.g. `us-east-1`) |
-| `POLL_INTERVAL` | `10` | Seconds between polls when no job is available |
+| `POLL_INTERVAL` | `10` | Ceiling of the idle poll backoff (seconds) |
+| `POLL_BACKOFF_FLOOR` | `0.5` | Floor of the idle poll backoff (seconds) |
 | `TOOL_TIMEOUT` | `3600` | Per-job subprocess timeout in seconds |
 | `MAX_ARCHIVE_DEPTH` | `10` | Maximum nested archive extraction depth |
 | `MAX_DECOMPRESSED_BYTES` | `10737418240` (10 GiB) | Maximum decompressed size; guards against decompression bombs |

@@ -163,7 +163,10 @@ def cmd_items_delete(client, args):
 			return
 
 	client.delete_item(args.uuid)
-	print(f"Deleted item: {args.uuid}")
+	if args.json:
+		print_json({'deleted': args.uuid})
+	else:
+		print(f"Deleted item: {args.uuid}")
 
 
 def cmd_artefact_move(client, args):

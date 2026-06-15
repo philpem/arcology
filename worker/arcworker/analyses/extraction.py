@@ -13,6 +13,7 @@ from pathlib import Path
 from arcology_shared.archive_formats import ArchiveType, get_archive_info
 from arcology_shared.bundle import BUNDLE_MARKER, is_sidecar_name
 from arcology_shared.enums import COMPRESSED_RAW_SECTOR_TYPES, AnalysisType, ArtefactType
+from arcology_shared.hints import HintKey
 from ..config import log
 from ..tools import (
     decompress_single_file,
@@ -624,14 +625,14 @@ def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path
         return
 
     hints = json.loads(analysis.get('hints') or '{}')
-    filesystem = hints.get('filesystem', '').lower()
-    partition_index = hints.get('partition_index', 0)
-    hint_container_format = hints.get('container_format', '')
+    filesystem = hints.get(HintKey.FILESYSTEM, '').lower()
+    partition_index = hints.get(HintKey.PARTITION_INDEX, 0)
+    hint_container_format = hints.get(HintKey.CONTAINER_FORMAT, '')
 
     # Use cached partition image from PARTITION_DETECT when available,
     # avoiding redundant decompression of the original artefact.
     input_path = self._resolve_partition_image(
-        hints.get('partition_image_path'), artefact, work_dir)
+        hints.get(HintKey.PARTITION_IMAGE_PATH), artefact, work_dir)
 
     # Get Item for hierarchical path
     item = artefact.get('item', {'uuid': 'default', 'slug': 'default'})
@@ -881,9 +882,9 @@ def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path)
     analysis_id = analysis['id']
 
     hints = json.loads(analysis.get('hints') or '{}')
-    partition_uuid = hints.get('partition_uuid')
-    extraction_path = hints.get('extraction_path')
-    path_prefix = hints.get('path_prefix', '')
+    partition_uuid = hints.get(HintKey.PARTITION_UUID)
+    extraction_path = hints.get(HintKey.EXTRACTION_PATH)
+    path_prefix = hints.get(HintKey.PATH_PREFIX, '')
 
     if not partition_uuid:
         self.fail_analysis(analysis_id, 'No partition_uuid in analysis hints')
@@ -955,17 +956,19 @@ def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path)
 
         # Queue extraction
         extract_hints = {
-            'file_id': file_data['id'],
-            'partition_uuid': partition_uuid,
-            'archive_type': archive_type.value,
+            HintKey.FILE_ID: file_data['id'],
+            HintKey.PARTITION_UUID: partition_uuid,
+            HintKey.ARCHIVE_TYPE: archive_type.value,
+            # archive_format / is_compressor are informational extras carried
+            # for logging; the ARCHIVE_EXTRACT handler does not read them back.
             'archive_format': archive_info['name'],
             'is_compressor': is_compressor,
-            'extraction_depth': current_depth + 1,
+            HintKey.EXTRACTION_DEPTH: current_depth + 1,
         }
         if extraction_path:
-            extract_hints['extraction_path'] = extraction_path
+            extract_hints[HintKey.EXTRACTION_PATH] = extraction_path
         if path_prefix:
-            extract_hints['path_prefix'] = path_prefix
+            extract_hints[HintKey.PATH_PREFIX] = path_prefix
         self.api.queue_analysis(
             artefact['uuid'],
             AnalysisType.ARCHIVE_EXTRACT.value,
@@ -1011,12 +1014,12 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
 
     hints = json.loads(analysis.get('hints') or '{}')
 
-    file_id = hints.get('file_id')
-    partition_uuid = hints.get('partition_uuid')
-    archive_type_str = hints.get('archive_type')
-    extraction_depth = hints.get('extraction_depth', 1)
-    hinted_extraction_path = hints.get('extraction_path')
-    path_prefix = hints.get('path_prefix', '')
+    file_id = hints.get(HintKey.FILE_ID)
+    partition_uuid = hints.get(HintKey.PARTITION_UUID)
+    archive_type_str = hints.get(HintKey.ARCHIVE_TYPE)
+    extraction_depth = hints.get(HintKey.EXTRACTION_DEPTH, 1)
+    hinted_extraction_path = hints.get(HintKey.EXTRACTION_PATH)
+    path_prefix = hints.get(HintKey.PATH_PREFIX, '')
 
     # ── Top-level artefact archive ──────────────────────────────────
     # When no partition_uuid is provided, the artefact itself is the
@@ -1222,9 +1225,9 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
             artefact['uuid'],
             AnalysisType.ARCHIVE_DETECT.value,
             hints={
-                'partition_uuid': partition_uuid,
-                'extraction_path': rel_output_path,
-                'path_prefix': archive_display_path,
+                HintKey.PARTITION_UUID: partition_uuid,
+                HintKey.EXTRACTION_PATH: rel_output_path,
+                HintKey.PATH_PREFIX: archive_display_path,
             }
         )
 
@@ -1235,7 +1238,7 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
     self.api.queue_analysis(
         artefact['uuid'],
         AnalysisType.PRODUCT_RECOGNITION.value,
-        hints={'partition_uuid': partition_uuid},
+        hints={HintKey.PARTITION_UUID: partition_uuid},
     )
 
     # Queue FORMAT_CONVERT to scan for and convert any Sprite/Draw/Text files.
@@ -1246,9 +1249,9 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
         artefact['uuid'],
         AnalysisType.FORMAT_CONVERT.value,
         hints={
-            'extraction_path': rel_output_path,
-            'path_prefix': archive_display_path,
-            'partition_uuid': partition_uuid,
+            HintKey.EXTRACTION_PATH: rel_output_path,
+            HintKey.PATH_PREFIX: archive_display_path,
+            HintKey.PARTITION_UUID: partition_uuid,
         },
     )
 
@@ -1262,9 +1265,9 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
         artefact['uuid'],
         AnalysisType.RISCOS_MODULE_PARSE.value,
         hints={
-            'partition_uuid': partition_uuid,
-            'extraction_path': rel_output_path,
-            'path_prefix': archive_display_path,
+            HintKey.PARTITION_UUID: partition_uuid,
+            HintKey.EXTRACTION_PATH: rel_output_path,
+            HintKey.PATH_PREFIX: archive_display_path,
         },
     )
 

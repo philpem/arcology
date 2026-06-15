@@ -213,13 +213,21 @@ class ArcologyAPI:
         """
         self.patch(f"/artefacts/{artefact_uuid}", {'media_metadata': metadata})
 
-    def update_analysis(self, analysis_id: int, **kwargs):
+    def update_analysis(self, analysis_id: int, **kwargs) -> bool:
         """
         Update analysis record in API.
 
         Args:
             analysis_id: ID of the analysis to update
             **kwargs: Fields to update (status, success, error_message, etc.)
+
+        Returns:
+            True if the update was applied.  False is the distinct "gone"
+            signal: the analysis row no longer exists server-side (deleted by
+            a re-analyse race), so the result was discarded.  Handlers that
+            keep working after reporting progress can check this and abort
+            cleanly rather than producing derived artefacts for a job the
+            server has forgotten.
 
         Raises:
             RuntimeError: If the API call fails (e.g. network error, server
@@ -236,8 +244,9 @@ class ArcologyAPI:
                     f"Analysis {analysis_id} no longer exists on the server "
                     f"(it was probably deleted by a re-analyse). Discarding result."
                 )
-                return
+                return False
             resp.raise_for_status()
+            return True
         except requests.HTTPError as e:
             raise RuntimeError(
                 f"update_analysis failed for analysis {analysis_id}: {e}"

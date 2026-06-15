@@ -16,6 +16,7 @@ import threading
 import time
 from pathlib import Path
 from arcology_shared.enums import AnalysisStatus
+from arcology_shared.hints import HintKey
 
 try:
     import sentry_sdk
@@ -26,8 +27,9 @@ except ImportError:
 
 from . import analyses as _analyses
 from .api import ArcologyAPI
+from .cache_keys import artefact_cache_prefix, partition_cache_relpath
 from .compression import decompress_if_needed
-from .config import CANCEL_CHECK_INTERVAL, MAX_POLL, log
+from .config import CANCEL_CHECK_INTERVAL, POLL_BACKOFF_CEILING, POLL_BACKOFF_FLOOR, log
 from .exceptions import JobCancelledException
 from .tools.base import clear_cancel_event, set_cancel_event
 from .utils.text import make_latin1_fspath
@@ -263,7 +265,8 @@ class AnalysisWorker:
                     cache_key = self.storage.storage_key('outputs', str(rel))
                 except ValueError:
                     cache_key = self.storage.storage_key(
-                        'outputs', f".cache/{artefact['uuid']}/{local_path.name}")
+                        'outputs',
+                        partition_cache_relpath(artefact['uuid'], local_path.name))
                 dest = work_dir / local_path.name
                 try:
                     self.storage.get(cache_key, dest)
@@ -273,8 +276,12 @@ class AnalysisWorker:
                     pass  # not cached yet; fall through to get_input_path
         return self.get_input_path(artefact, work_dir)
 
-    def complete_analysis(self, analysis_id: int, summary: str | None = None, **kwargs):
-        """Report a completed successful analysis to the API."""
+    def complete_analysis(self, analysis_id: int, summary: str | None = None, **kwargs) -> bool:
+        """Report a completed successful analysis to the API.
+
+        Returns False when the analysis no longer exists server-side (the
+        "gone" signal from update_analysis); True otherwise.
+        """
         payload = {
             'status': AnalysisStatus.COMPLETED.value,
             'success': True,
@@ -282,7 +289,7 @@ class AnalysisWorker:
         }
         if summary is not None:
             payload['summary'] = summary
-        self.api.update_analysis(analysis_id, **payload)
+        return self.api.update_analysis(analysis_id, **payload)
 
     def queue_file_extraction(
         self,
@@ -296,13 +303,13 @@ class AnalysisWorker:
         """Queue FILE_EXTRACTION with the standard hint structure."""
         from arcology_shared.enums import AnalysisType
         hints = {
-            'filesystem': filesystem,
-            'partition_index': partition_index,
+            HintKey.FILESYSTEM: filesystem,
+            HintKey.PARTITION_INDEX: partition_index,
         }
         if partition_image_path:
-            hints['partition_image_path'] = partition_image_path
+            hints[HintKey.PARTITION_IMAGE_PATH] = partition_image_path
         if container_format:
-            hints['container_format'] = container_format
+            hints[HintKey.CONTAINER_FORMAT] = container_format
         self.api.queue_analysis(
             artefact_uuid,
             AnalysisType.FILE_EXTRACTION.value,
@@ -319,11 +326,11 @@ class AnalysisWorker:
     ):
         """Queue the standard archive-detect, product-recognition, and format-convert follow-ups."""
         from arcology_shared.enums import AnalysisType
-        archive_hints = {'partition_uuid': partition_uuid}
+        archive_hints = {HintKey.PARTITION_UUID: partition_uuid}
         if extraction_path:
-            archive_hints['extraction_path'] = extraction_path
+            archive_hints[HintKey.EXTRACTION_PATH] = extraction_path
         if path_prefix:
-            archive_hints['path_prefix'] = path_prefix
+            archive_hints[HintKey.PATH_PREFIX] = path_prefix
         self.api.queue_analysis(
             artefact_uuid,
             AnalysisType.ARCHIVE_DETECT.value,
@@ -332,22 +339,22 @@ class AnalysisWorker:
         self.api.queue_analysis(
             artefact_uuid,
             AnalysisType.PRODUCT_RECOGNITION.value,
-            hints={'partition_uuid': partition_uuid},
+            hints={HintKey.PARTITION_UUID: partition_uuid},
         )
         if extraction_path:
             self.api.queue_analysis(
                 artefact_uuid,
                 AnalysisType.FORMAT_CONVERT.value,
                 hints={
-                    'extraction_path': extraction_path,
-                    'partition_uuid': partition_uuid,
+                    HintKey.EXTRACTION_PATH: extraction_path,
+                    HintKey.PARTITION_UUID: partition_uuid,
                 },
             )
         # RISC OS module metadata extraction — harmless no-op on non-Acorn
         # extractions since only filetype ffa files are scanned.
-        module_hints = {'partition_uuid': partition_uuid}
+        module_hints = {HintKey.PARTITION_UUID: partition_uuid}
         if extraction_path:
-            module_hints['extraction_path'] = extraction_path
+            module_hints[HintKey.EXTRACTION_PATH] = extraction_path
         self.api.queue_analysis(
             artefact_uuid,
             AnalysisType.RISCOS_MODULE_PARSE.value,
@@ -470,7 +477,7 @@ class AnalysisWorker:
         if isinstance(self.storage, LocalStorage):
             return
 
-        cache_dir = self.outputs / '.cache' / artefact_uuid
+        cache_dir = self.outputs / artefact_cache_prefix(artefact_uuid)
         if not cache_dir.exists():
             return
 
@@ -700,8 +707,7 @@ class AnalysisWorker:
         # Recover any jobs left in RUNNING state by a previous worker crash
         self.api.reset_stale_analyses()
 
-        MIN_POLL = 0.5
-        current_delay = MIN_POLL
+        current_delay = POLL_BACKOFF_FLOOR
 
         while True:
             try:
@@ -710,10 +716,10 @@ class AnalysisWorker:
                 if processed == 0:
                     log.debug(f"No pending analyses, sleeping {current_delay}s")
                     time.sleep(current_delay)
-                    current_delay = min(current_delay * 2, MAX_POLL)
+                    current_delay = min(current_delay * 2, POLL_BACKOFF_CEILING)
                 else:
                     log.info(f"Processed {processed} analyses")
-                    current_delay = MIN_POLL
+                    current_delay = POLL_BACKOFF_FLOOR
 
             except KeyboardInterrupt:
                 log.info("Shutting down")
@@ -721,5 +727,5 @@ class AnalysisWorker:
 
             except Exception:
                 log.exception("Unexpected error in main loop")
-                time.sleep(MAX_POLL)
+                time.sleep(POLL_BACKOFF_CEILING)
 # vim: ts=4 sw=4 et

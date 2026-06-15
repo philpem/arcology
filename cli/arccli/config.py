@@ -50,8 +50,12 @@ def get_config(args):
 	return {'url': url.rstrip('/'), 'api_key': api_key}
 
 
-def _load_config_file(profile='default'):
-	"""Load configuration from config file."""
+def read_profile(profile='default'):
+	"""Return a profile's settings as a dict, or {} if absent.
+
+	Never errors or exits — used by `arco configure`, which must tolerate a
+	not-yet-existing profile so it can create one.
+	"""
 	if not CONFIG_FILE.exists():
 		return {}
 
@@ -59,11 +63,29 @@ def _load_config_file(profile='default'):
 	config.read(CONFIG_FILE)
 
 	if profile not in config:
-		if profile != 'default':
-			print(f"Warning: profile '{profile}' not found in config file.", file=sys.stderr)
 		return {}
 
 	return dict(config[profile])
+
+
+def _load_config_file(profile='default'):
+	"""Load configuration from config file for an active command.
+
+	A non-default profile that cannot be found is a hard error: the user
+	explicitly named it, so silently falling back to empty config (and then
+	to env/flags) would mask the mistake.  The 'default' profile is optional —
+	an absent file or section just yields {}.
+	"""
+	if profile != 'default' and not read_profile(profile):
+		if CONFIG_FILE.exists():
+			print(f"Error: profile '{profile}' not found in {CONFIG_FILE}.", file=sys.stderr)
+		else:
+			print(f"Error: profile '{profile}' requested but no config file at {CONFIG_FILE}.",
+			      file=sys.stderr)
+		print(f"Run 'arco configure --profile {profile}' to create it.", file=sys.stderr)
+		sys.exit(1)
+
+	return read_profile(profile)
 
 
 def create_config(url, api_key, profile='default'):

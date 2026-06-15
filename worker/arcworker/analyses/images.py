@@ -16,6 +16,7 @@ import signal
 from contextlib import contextmanager
 from pathlib import Path
 from arcology_shared.enums import AnalysisType, ArtefactType
+from arcology_shared.hints import HintKey
 from ..config import log
 from ..tools import (
     convert_draw,
@@ -306,9 +307,9 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
         return
 
     # --- Mode 2: Extraction scan ---
-    extraction_path = hints.get('extraction_path')
-    partition_uuid = hints.get('partition_uuid')
-    path_prefix = hints.get('path_prefix', '')  # e.g. 'Archives/Emulators.zip'
+    extraction_path = hints.get(HintKey.EXTRACTION_PATH)
+    partition_uuid = hints.get(HintKey.PARTITION_UUID)
+    path_prefix = hints.get(HintKey.PATH_PREFIX, '')  # e.g. 'Archives/Emulators.zip'
     if not extraction_path:
         self.fail_analysis(
             analysis_id,

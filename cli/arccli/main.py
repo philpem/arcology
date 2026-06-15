@@ -6,8 +6,9 @@ Entry point and argument parsing.
 
 import argparse
 import sys
+from arcology_shared.hints import UPLOAD_HINT_KEYS
 from .client import ArcologyClient, ArcologyError
-from .config import create_config, get_config
+from .config import create_config, get_config, read_profile
 
 
 def main():
@@ -100,8 +101,9 @@ def main():
 	upload_parser.add_argument('--hint', action='append', metavar='KEY=VALUE', dest='hints',
 	                           help='Analysis hint as KEY=VALUE (repeatable). '
 	                                'Example: --hint dfi_clock_mhz=100. '
-	                                'Supported keys: dfi_clock_mhz (int, MHz for DFI clock override), '
-	                                'platform (str), filesystem (str).')
+	                                'Supported keys: ' + ', '.join(UPLOAD_HINT_KEYS) + '. '
+	                                '(dfi_clock_mhz is an integer MHz value for DFI clock '
+	                                'override; the rest are free-text strings.)')
 
 	# ---- download ----
 	download_parser = subparsers.add_parser('download', help='Download an artefact')
@@ -293,17 +295,29 @@ def main():
 
 
 def _cmd_configure(args):
-	"""Interactive configuration setup."""
+	"""Interactive configuration setup.
+
+	Pre-fills from the profile's existing values so re-running to change one
+	field does not require retyping the other: an empty answer keeps the
+	current value.  The secret API key is never echoed back in the prompt.
+	"""
 	print("Arcology CLI Configuration")
 	print("-" * 30)
 	profile = args.profile
-	url = input(f"Server URL [{profile}]: ").strip()
+	existing = read_profile(profile)
+	current_url = existing.get('url', '')
+	current_key = existing.get('api_key', '')
+
+	url_prompt = f"Server URL [{current_url}]: " if current_url else "Server URL: "
+	url = input(url_prompt).strip() or current_url
 	if not url:
-		print("Cancelled.")
+		print("Cancelled (no server URL provided).")
 		return
-	api_key = input("API key: ").strip()
+
+	key_prompt = "API key [keep existing]: " if current_key else "API key: "
+	api_key = input(key_prompt).strip() or current_key
 	if not api_key:
-		print("Cancelled.")
+		print("Cancelled (no API key provided).")
 		return
 	create_config(url, api_key, profile)
 

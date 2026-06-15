@@ -22,6 +22,7 @@ a missing key just means there is nothing left to delete.
 import json
 from pathlib import Path
 from arcology_shared.enums import AnalysisType
+from arcology_shared.hints import HintKey
 from ..config import log
 from ._common import analysis_handler
 
@@ -37,10 +38,10 @@ def process_cleanup(self, analysis: dict, artefact: dict, work_dir: Path):
         self.fail_analysis(analysis_id, 'CLEANUP hints are not valid JSON')
         return
 
-    keys = list(hints.get('artefact_keys') or []) + \
-        list(hints.get('output_file_keys') or [])
-    prefixes = list(hints.get('output_dir_prefixes') or []) + \
-        list(hints.get('cache_prefixes') or [])
+    keys = list(hints.get(HintKey.ARTEFACT_KEYS) or []) + \
+        list(hints.get(HintKey.OUTPUT_FILE_KEYS) or [])
+    prefixes = list(hints.get(HintKey.OUTPUT_DIR_PREFIXES) or []) + \
+        list(hints.get(HintKey.CACHE_PREFIXES) or [])
 
     deleted = 0
     errors = 0

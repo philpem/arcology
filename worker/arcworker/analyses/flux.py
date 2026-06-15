@@ -8,6 +8,7 @@ flux→IMD/HFE/RAW_SECTOR decode, and HFE mastering / protection scans.
 import json
 from pathlib import Path
 from arcology_shared.enums import AnalysisType, ArtefactType
+from arcology_shared.hints import HintKey
 from ..config import MASTERING_TRACK_SCAN_COUNT, log
 from ..tools import (
     a2r_to_scp_gw,
@@ -68,7 +69,7 @@ def process_flux_visualisation(self, analysis: dict, artefact: dict, work_dir: P
         hints = json.loads(analysis.get('hints') or '{}')
         scp_path = work_dir / f"{input_path.stem}_vis.scp"
         if source_type == ArtefactType.DFI:
-            clock_mhz = hints.get('dfi_clock_mhz')
+            clock_mhz = hints.get(HintKey.DFI_CLOCK_MHZ)
             to_scp_result = dfi_to_scp_hxcfe(input_path, scp_path, clock_mhz=clock_mhz)
         elif source_type == ArtefactType.A2R:
             to_scp_result = a2r_to_scp_gw(input_path, scp_path)
@@ -326,7 +327,7 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
         # DFI → SCP conversion; SCP sibling's own FLUX_DECODE handles the rest.
         # The clock frequency may be overridden via the dfi_clock_mhz hint, which
         # is passed through an hxcfe script (the only way to set DFILOADER_SAMPLE_FREQUENCY_MHZ).
-        clock_mhz = hints.get('dfi_clock_mhz')
+        clock_mhz = hints.get(HintKey.DFI_CLOCK_MHZ)
         scp_path = work_dir / f"{input_path.stem}.scp"
         scp_result = dfi_to_scp_hxcfe(input_path, scp_path, clock_mhz=clock_mhz)
         results.append(('SCP', scp_result))
@@ -374,7 +375,7 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
     independent_sides = None
 
     if source_type not in _SCP_VIA_CONVERSION_TYPES:
-        gw_format = hints.get('gw_format')
+        gw_format = hints.get(HintKey.GW_FORMAT)
         gw_format_source = 'hint' if gw_format else None
 
         imd_track0_summary = None
@@ -495,7 +496,7 @@ def process_flux_decode(self, analysis: dict, artefact: dict, work_dir: Path):
                         # Number each side's partition by its physical side so the
                         # parent disc's aggregated partition list reads
                         # "partition 0" / "partition 1" rather than two "0"s.
-                        analysis_hints={'partition_index_base': head},
+                        analysis_hints={HintKey.PARTITION_INDEX_BASE: head},
                     )
                     log.info(f"Created derived side-{head} artefact: {derived}")
 

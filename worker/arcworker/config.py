@@ -39,7 +39,12 @@ def validate_config() -> None:
 ARCOLOGY_API = os.environ.get('ARCOLOGY_API', 'http://host.docker.internal:5000/api')
 UPLOAD_DIR = Path(os.environ.get('UPLOAD_DIR', '/data/uploads'))
 OUTPUT_DIR = Path(os.environ.get('OUTPUT_DIR', '/data/outputs'))
-MAX_POLL = _int_env('POLL_INTERVAL', '10')
+# Poll backoff bounds.  When idle, the worker sleeps between API polls and
+# doubles the delay up to POLL_BACKOFF_CEILING; a successful claim resets it to
+# POLL_BACKOFF_FLOOR.  POLL_INTERVAL names the *ceiling* of that backoff (kept
+# for backwards compatibility with existing deployments / the Dockerfile).
+POLL_BACKOFF_CEILING = _int_env('POLL_INTERVAL', '10')
+POLL_BACKOFF_FLOOR = float(os.environ.get('POLL_BACKOFF_FLOOR', '0.5'))
 LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
 
 # Worker API key for authenticating with the web application.
