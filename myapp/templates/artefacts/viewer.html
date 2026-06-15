@@ -302,7 +302,11 @@
     <div class="card-body">
         {% if replay_detail.mp4_url %}
         {% if replay_detail.video_format == 0 %}
-        {# Sound-only Replay file — audio player. #}
+        {# Sound-only Replay file — audio player, with the embedded poster sprite
+           (a title card) shown above it when present. #}
+        {% if replay_detail.poster_url %}
+        <img src="{{ replay_detail.poster_url }}" class="img-fluid mb-3 d-block mx-auto rounded replay-poster" alt="{{ replay_detail.title or replay_detail.file_path }} poster">
+        {% endif %}
         <audio controls preload="metadata" class="w-100 mb-3" src="{{ replay_detail.mp4_url }}">
             Your browser does not support the audio element.
         </audio>

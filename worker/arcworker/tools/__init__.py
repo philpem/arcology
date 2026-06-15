@@ -48,7 +48,7 @@ from .flux import (
 )
 from .fs_iso_riscos import parse_iso_riscos_filetypes
 from .fs_riscos_armlock import detect_armlock, remove_armlock
-from .images_acorn import convert_draw, convert_sprite
+from .images_acorn import convert_draw, convert_replay_poster_sprite, convert_sprite
 from .iso9660 import parse_iso9660_pvd
 from .partition import (
     detect_acorn_adfs,
@@ -108,6 +108,7 @@ __all__ = [
     'detect_armlock',
     'remove_armlock',
     'convert_sprite',
+    'convert_replay_poster_sprite',
     'convert_draw',
     'transcode_armovie_to_mp4',
     'transcode_armovie_to_audio',

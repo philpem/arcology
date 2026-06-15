@@ -20,6 +20,101 @@ def _safe_sprite_name(name: str, index: int) -> str:
     return safe[:64]
 
 
+def _sprite_to_pil_image(sprite: dict):
+    """Convert one spritefile-library sprite dict into a PIL Image.
+
+    Handles colour-mode conversion and non-square-pixel correction (e.g. Mode 13
+    / Mode 15: xdpi=90, ydpi=45) so the result displays with the right aspect
+    ratio.  Shared by :func:`convert_sprite` and
+    :func:`convert_replay_poster_sprite`.  Importing PIL is the caller's job.
+    """
+    from PIL import Image
+
+    img = Image.frombytes(
+        sprite['mode'],
+        (sprite['width'], sprite['height']),
+        bytes(sprite['image']),
+    )
+    if img.mode not in ('RGB', 'RGBA'):
+        img = img.convert('RGBA')
+
+    # Correct non-square pixels.  Physical pixel size = 1/dpi inches; when X and
+    # Y DPI differ the pixels are rectangular, so scale to make them square.
+    xdpi = sprite.get('dpi x', 0)
+    ydpi = sprite.get('dpi y', 0)
+    if xdpi > 0 and ydpi > 0 and xdpi != ydpi:
+        if xdpi > ydpi:
+            # Y pixels are taller than wide — stretch height.
+            new_h = round(img.height * xdpi / ydpi)
+            img = img.resize((img.width, new_h), Image.NEAREST)
+        else:
+            # X pixels are wider than tall — stretch width.
+            new_w = round(img.width * ydpi / xdpi)
+            img = img.resize((new_w, img.height), Image.NEAREST)
+    return img
+
+
+def convert_replay_poster_sprite(
+    data: bytes, sprite_offset: int, sprite_size: int, output_path: Path,
+) -> dict:
+    """Extract an Acorn Replay / ARMovie embedded poster sprite to a PNG.
+
+    The poster is stored as a complete standard RISC OS spritefile (12-byte area
+    header + one sprite) located at ``sprite_offset`` for ``sprite_size`` bytes
+    within the ARMovie file — exactly the layout the ``spritefile`` library
+    reads.  The first (only) sprite is rendered to ``output_path`` as PNG.
+
+    Args:
+        data: The full ARMovie file bytes.
+        sprite_offset: Byte offset of the embedded spritefile (header line 19).
+        sprite_size: Length in bytes of the embedded spritefile (header line 20).
+        output_path: Destination ``.png`` path for the poster image.
+
+    Returns:
+        Standard tool-result dict: ``success`` and ``poster_path`` on success,
+        ``error`` otherwise.  Never raises.
+    """
+    if not sprite_size or sprite_size <= 0 or sprite_offset is None or sprite_offset < 0:
+        return tool_result(False, tool='spritefile', error='No embedded poster sprite', poster_path=None)
+    if sprite_offset + sprite_size > len(data):
+        return tool_result(
+            False, tool='spritefile',
+            error=f'Poster sprite extent ({sprite_offset}+{sprite_size}) exceeds file size ({len(data)})',
+            poster_path=None,
+        )
+
+    try:
+        import spritefile
+        from PIL import Image  # noqa: F401  (ensures the dependency is present)
+    except ImportError as e:
+        return tool_result(False, tool='spritefile', error=f'Missing dependency: {e}', poster_path=None)
+
+    blob = data[sprite_offset:sprite_offset + sprite_size]
+
+    try:
+        with io.BytesIO(blob) as fh:
+            sf = spritefile.spritefile(file=fh)
+        for w in getattr(sf, 'warnings', []):
+            log.warning('spritefile warning in Replay poster: %s', w)
+        sprite_list = list(sf.sprites.items())
+    except Exception as e:
+        log.warning('Failed to read Replay poster sprite: %s\n%s', e, _tb.format_exc().rstrip())
+        return tool_result(False, tool='spritefile', error=f'Failed to read poster sprite: {e}', poster_path=None)
+
+    if not sprite_list:
+        return tool_result(False, tool='spritefile', error='Poster spritefile contained no sprites', poster_path=None)
+
+    _name, sprite = sprite_list[0]
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        img = _sprite_to_pil_image(sprite)
+        img.save(str(output_path), 'PNG')
+    except Exception as e:
+        log.warning('Failed to convert Replay poster sprite: %s', e)
+        return tool_result(False, tool='spritefile', error=f'Failed to convert poster sprite: {e}', poster_path=None)
+
+    return tool_result(True, tool='spritefile', poster_path=str(output_path))
+
 
 def convert_sprite(input_path: Path, output_dir: Path, analysis_uuid: str) -> dict:
     """
@@ -38,7 +133,7 @@ def convert_sprite(input_path: Path, output_dir: Path, analysis_uuid: str) -> di
     """
     try:
         import spritefile
-        from PIL import Image
+        from PIL import Image  # noqa: F401  (ensures the dependency is present)
     except ImportError as e:
         return tool_result(
             False, tool='spritefile', error=f'Missing dependency: {e}', sprites=[],
@@ -79,29 +174,7 @@ def convert_sprite(input_path: Path, output_dir: Path, analysis_uuid: str) -> di
             out_filename = f'{analysis_uuid}_{idx:02d}_{safe_name}.png'
             out_path = output_dir / out_filename
 
-            img = Image.frombytes(
-                sprite['mode'],
-                (sprite['width'], sprite['height']),
-                bytes(sprite['image']),
-            )
-            if img.mode not in ('RGB', 'RGBA'):
-                img = img.convert('RGBA')
-
-            # Correct non-square pixels (e.g. Mode 13 / Mode 15: xdpi=90, ydpi=45).
-            # Physical pixel size = 1/dpi inches; when X and Y DPI differ the pixels
-            # are rectangular.  Scale the image so pixels become square on screen.
-            xdpi = sprite.get('dpi x', 0)
-            ydpi = sprite.get('dpi y', 0)
-            if xdpi > 0 and ydpi > 0 and xdpi != ydpi:
-                if xdpi > ydpi:
-                    # Y pixels are taller than wide — stretch height.
-                    new_h = round(img.height * xdpi / ydpi)
-                    img = img.resize((img.width, new_h), Image.NEAREST)
-                else:
-                    # X pixels are wider than tall — stretch width.
-                    new_w = round(img.width * ydpi / xdpi)
-                    img = img.resize((new_w, img.height), Image.NEAREST)
-
+            img = _sprite_to_pil_image(sprite)
             img.save(str(out_path), 'PNG')
 
             sprites.append({'name': name, 'path': out_path})
