@@ -58,7 +58,7 @@ from .partition import (
     detect_partitions_sfdisk,
     read_fat_volume_label,
 )
-from .replay_transcode import transcode_armovie_to_mp4
+from .replay_transcode import transcode_armovie_to_audio, transcode_armovie_to_mp4
 from .riscos_module import HelpParseError, ModuleParseError, decode_module
 
 __all__ = [
@@ -110,6 +110,7 @@ __all__ = [
     'convert_sprite',
     'convert_draw',
     'transcode_armovie_to_mp4',
+    'transcode_armovie_to_audio',
     'decode_module',
     'HelpParseError',
     'ModuleParseError',

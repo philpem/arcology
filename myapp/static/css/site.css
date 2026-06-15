@@ -6,8 +6,9 @@ main { flex: 1; }
 code { font-size: 0.875em; word-break: break-all; }
 .depth-indent { padding-left: calc(var(--depth-base, 1rem) + (var(--depth, 0) * var(--depth-step, 1.5rem))); }
 
-/* Replay/ARMovie video player: never exceed the viewport on either axis, so a
-   small retro video isn't upscaled off-screen. max-width keeps it within the
-   column; max-height caps it to the viewport height. Aspect ratio preserved. */
-.replay-player { max-width: 100%; max-height: 80vh; height: auto; }
+/* Replay/ARMovie video player: scale a small retro video up to the column
+   width (width:100%), but never taller than 80% of the viewport, so it both
+   fills the space and always fits on screen. The browser preserves the
+   intrinsic aspect ratio when max-height clamps the height. */
+.replay-player { width: 100%; height: auto; max-height: 80vh; object-fit: contain; }
 

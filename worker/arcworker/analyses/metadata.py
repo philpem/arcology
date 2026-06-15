@@ -23,6 +23,7 @@ from ..tools import (
     compute_file_hash,
     decode_module,
     parse_armovie_header,
+    transcode_armovie_to_audio,
     transcode_armovie_to_mp4,
 )
 from ..tools.extraction import convert_fcfs_to_raw
@@ -664,7 +665,33 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
             continue
 
         if header.get('video_format') == 0:
-            # Sound-only movie — nothing to transcode to video.
+            # Sound-only movie — no video frames, but still playable as audio.
+            audio_name = f'{analysis["uuid"]}_{index}.m4a'
+            audio_path = work_dir / audio_name
+            result = transcode_armovie_to_audio(
+                file_path, audio_path,
+                work_dir=work_dir,
+                modules_dir=modules_dir,
+            )
+            if not result['success']:
+                log.warning(f"Audio transcode failed for {db_path}: {result.get('error')}")
+                transcode_errors.append({
+                    'file_path': db_path,
+                    'error': result.get('error', 'Audio transcode failed'),
+                    'stage': result.get('stage'),
+                })
+                continue
+            saved_audio = self.save_output_file(audio_path, audio_name, subdir=output_subdir)
+            transcoded.append({
+                'file_path': db_path,
+                'mp4_output_path': saved_audio,   # media output (audio for sound-only)
+                'poster_path': None,
+                'has_audio': True,
+                'audio_only': True,
+                'width': None,
+                'height': None,
+                'tool_result': result,
+            })
             continue
 
         mp4_name = f'{analysis["uuid"]}_{index}.mp4'

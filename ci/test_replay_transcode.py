@@ -33,7 +33,11 @@ os.environ.setdefault('WORKER_API_KEY', 'test')
 os.environ.setdefault('SQLALCHEMY_DATABASE_URI', 'sqlite:///:memory:')
 os.environ.setdefault('SECRET_KEY', 'test')
 
-from worker.arcworker.tools.replay_transcode import transcode_armovie_to_mp4
+from worker.arcworker.tools.replay_transcode import (
+    _detected_pixfmt,
+    transcode_armovie_to_audio,
+    transcode_armovie_to_mp4,
+)
 
 
 def _make_fake_run(*, decode_ok=True, make_wav=True):
@@ -145,6 +149,79 @@ class TestTranscodeTool(unittest.TestCase):
                 )
         self.assertIn('--modules-dir', seen['cmd'])
         self.assertIn('/srv/replay-modules', seen['cmd'])
+
+    def test_pixfmt_detection_helper(self):
+        self.assertEqual(_detected_pixfmt({'stderr': 'ffmpeg -pixel_format yuv444p -i -'}), 'yuv444p')
+        self.assertEqual(_detected_pixfmt({'stdout': '... -pix_fmt rgb24 ...'}), 'rgb24')
+        self.assertEqual(_detected_pixfmt({}), 'rgb24')  # default fallback
+
+    def test_detected_pixfmt_used_in_mux(self):
+        """The ffmpeg mux must use the pixel format scotch printed, not a hardcoded one."""
+        captured = {}
+
+        def _run(cmd, timeout=None, cwd=None):
+            if cmd[0] == 'replay-transcode':
+                Path(cmd[cmd.index('--output') + 1]).write_bytes(b'\x00' * 16)
+                # scotch advertises a non-RGB pixel format on stderr
+                return (subprocess.CompletedProcess(cmd, 0, b'', b''),
+                        {'stderr': 'Run: ffmpeg -f rawvideo -pixel_format yuv444p -i -'})
+            if '-pixel_format' in cmd:          # the mux call
+                captured['mux'] = cmd
+            Path(cmd[-1]).write_bytes(b'\x00' * 8)
+            return subprocess.CompletedProcess(cmd, 0, b'', b''), {}
+
+        with tempfile.TemporaryDirectory() as td:
+            work = Path(td)
+            inp = work / 'movie.rpl'
+            inp.write_bytes(b'ARMovie')
+            with patch('worker.arcworker.tools.replay_transcode.run_tool_with_output',
+                       side_effect=_run):
+                res = transcode_armovie_to_mp4(
+                    inp, work / 'out.mp4', width=160, height=128, frame_rate=25,
+                    work_dir=work,
+                )
+        self.assertTrue(res['success'])
+        mux = captured['mux']
+        self.assertEqual(mux[mux.index('-pixel_format') + 1], 'yuv444p')
+
+
+class TestAudioOnlyTranscode(unittest.TestCase):
+    def test_sound_only_produces_audio(self):
+        def _run(cmd, timeout=None, cwd=None):
+            if cmd[0] == 'replay-transcode':
+                Path(cmd[cmd.index('--audio-output') + 1]).write_bytes(b'RIFFxxxx')
+                return subprocess.CompletedProcess(cmd, 0, b'', b''), {}
+            Path(cmd[-1]).write_bytes(b'\x00' * 8)   # ffmpeg m4a output
+            return subprocess.CompletedProcess(cmd, 0, b'', b''), {}
+
+        with tempfile.TemporaryDirectory() as td:
+            work = Path(td)
+            inp = work / 'sound.rpl'
+            inp.write_bytes(b'ARMovie')
+            out = work / 'sound.m4a'
+            with patch('worker.arcworker.tools.replay_transcode.run_tool_with_output',
+                       side_effect=_run):
+                res = transcode_armovie_to_audio(inp, out, work_dir=work)
+            self.assertTrue(res['success'])
+            self.assertTrue(res['audio_only'])
+            self.assertTrue(res['has_audio'])
+            self.assertEqual(res['output_type'], 'm4a')
+            self.assertTrue(out.exists())
+
+    def test_sound_only_no_audio_fails(self):
+        def _run(cmd, timeout=None, cwd=None):
+            # replay-transcode writes no WAV (e.g. nothing decodable)
+            return subprocess.CompletedProcess(cmd, 0, b'', b'no audio'), {}
+
+        with tempfile.TemporaryDirectory() as td:
+            work = Path(td)
+            inp = work / 'sound.rpl'
+            inp.write_bytes(b'ARMovie')
+            with patch('worker.arcworker.tools.replay_transcode.run_tool_with_output',
+                       side_effect=_run):
+                res = transcode_armovie_to_audio(inp, work / 'o.m4a', work_dir=work)
+        self.assertFalse(res['success'])
+        self.assertEqual(res['stage'], 'decode')
 
 
 class TestSearchIndexAndViewer(unittest.TestCase):
