@@ -65,10 +65,6 @@ services:
     volumes:
       - ./data/uploads:/data/uploads
       - ./data/outputs:/data/outputs
-      # Optional: RISC OS Replay decompressor modules for REPLAY_TRANSCODE of
-      # compressed codecs. Drop Decompress,ffd modules in ./data/replay-modules.
-      # Harmless if the directory is empty/absent. See doc/REPLAY_TRANSCODE.md.
-      - ./data/replay-modules:/data/replay-modules:ro
     environment:
       - ARCOLOGY_API=http://web:8000/api
       - UPLOAD_DIR=/data/uploads
@@ -77,7 +73,9 @@ services:
       - LOG_LEVEL=INFO
       - MAX_ARCHIVE_DEPTH=10  # Maximum recursion depth for nested archives
       - WORKER_API_KEY=${WORKER_API_KEY}
-      - REPLAY_MODULES_DIR=/data/replay-modules
+      # REPLAY_TRANSCODE uses the Acorn Replay decompressor modules bundled in
+      # the worker image (REPLAY_MODULES_DIR defaults to them). Override here to
+      # point at a different/mounted module set. See doc/REPLAY_TRANSCODE.md.
       # Restrict this worker to specific job types (comma-separated AnalysisType names).
       # Leave unset (or empty) to accept all job types.
       # Example for a dedicated flux-decoding worker pool:
