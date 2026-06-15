@@ -1896,6 +1896,24 @@ def _view_module_info(all_artefact_ids):
     return module_info
 
 
+def _view_replay_info(all_artefact_ids):
+    """Map ExtractedFile.path → ReplayMovie for ARMovie files (filetype ae7).
+
+    Used by the file listing template to surface a link to the viewer's Replay
+    detail card and a tooltip with the movie's title and codec.  Queried across
+    all derived artefacts so movies inside nested extractions are visible from
+    the parent.
+    """
+    replay_info = {}
+    all_movies = ReplayMovie.query.filter(
+        ReplayMovie.artefact_id.in_(all_artefact_ids)
+    ).all()
+    for mov in all_movies:
+        if mov.file_path:
+            replay_info[mov.file_path] = mov
+    return replay_info
+
+
 def _view_recognised_products(all_partitions):
     """Recognised products card and folder badges."""
     # Recognised products for all partitions of this artefact tree
@@ -2130,6 +2148,7 @@ def _render_artefact_view(artefact):
     viewable_filenames, failed_conversion_info, has_converted_outputs = \
         _view_conversion_status(artefact, all_artefact_ids)
     module_info = _view_module_info(all_artefact_ids)
+    replay_info = _view_replay_info(all_artefact_ids)
     recognised_products, recognised_folder_paths = _view_recognised_products(all_partitions)
     hashdb_ctx = _view_hashdb_context(hashdb_mode)
     restriction_ctx = _view_restriction_maps(all_artefact_ids, files_pagination)
@@ -2151,6 +2170,7 @@ def _render_artefact_view(artefact):
         failed_conversion_info=failed_conversion_info,
         has_converted_outputs=has_converted_outputs,
         module_info=module_info,
+        replay_info=replay_info,
         recognised_products=recognised_products,
         recognised_folder_paths=recognised_folder_paths,
         derived_entries=derived_entries,
