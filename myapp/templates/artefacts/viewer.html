@@ -301,7 +301,7 @@
     </div>
     <div class="card-body">
         {% if replay_detail.mp4_url %}
-        <video controls preload="metadata" class="w-100 mb-3"{% if replay_detail.poster_url %} poster="{{ replay_detail.poster_url }}"{% endif %} src="{{ replay_detail.mp4_url }}">
+        <video controls preload="metadata" class="mb-3 d-block mx-auto replay-player"{% if replay_detail.poster_url %} poster="{{ replay_detail.poster_url }}"{% endif %} src="{{ replay_detail.mp4_url }}">
             Your browser does not support the video element.
         </video>
         <div class="mb-3">
