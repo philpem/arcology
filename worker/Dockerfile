@@ -223,8 +223,8 @@ FROM ubuntu:24.04 AS build-scotch
 # Pinned commit SHA — update this when upgrading scotch.
 # To find the SHA for a new commit:
 #   git ls-remote https://github.com/philpem/scotch.git refs/heads/main
-# Current as of 2026-06-15; branch: main (replay-transcode merged).
-ARG SCOTCH_VERSION=71986f3b231e9055d9ad4859f94993ce04f9a085
+# Current as of 2026-06-15; branch: main.
+ARG SCOTCH_VERSION=835a3ade948574f2e4eb0b0307ef7786ddad530d
 ARG SCOTCH_REPO=https://github.com/philpem/scotch.git
 
 # Disable prompt during package installation
