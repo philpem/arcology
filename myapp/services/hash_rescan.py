@@ -337,6 +337,81 @@ def _find_known_files_batch(extracted_files):
     return result
 
 
+def find_known_files_for_records(records):
+    """Batch-match raw file records to active-database KnownFiles.
+
+    Mirrors find_known_file() semantics (md5/sha1 must match, size matches
+    leniently) but resolves a whole list of records in a single query instead
+    of one query per file.  Used by the worker file-registration endpoint to
+    avoid an N+1 query pattern when a partition contains thousands of files.
+
+    Args:
+        records: list of mappings, each exposing 'md5', 'sha1' and 'file_size'
+            keys (e.g. the file dicts POSTed to /partitions/<uuid>/files).
+
+    Returns:
+        list aligned with *records*; each element is the best-matching
+        KnownFile (lowest id, same tie-break as find_known_file()) or None.
+    """
+    md5s = set()
+    sha1s = set()
+    for rec in records:
+        md5 = rec.get('md5')
+        sha1 = rec.get('sha1')
+        if md5:
+            md5s.add(md5.lower())
+        if sha1:
+            sha1s.add(sha1.lower())
+
+    if not md5s and not sha1s:
+        return [None] * len(records)
+
+    conditions = []
+    if md5s:
+        conditions.append(KnownFile.md5.in_(list(md5s)))
+    if sha1s:
+        conditions.append(KnownFile.sha1.in_(list(sha1s)))
+
+    candidates = (
+        _active_known_file_query()
+        .filter(or_(*conditions))
+        .order_by(KnownFile.id)
+        .all()
+    )
+
+    by_md5 = {}
+    by_sha1 = {}
+    for kf in candidates:
+        if kf.md5:
+            by_md5.setdefault(kf.md5.lower(), []).append(kf)
+        if kf.sha1:
+            by_sha1.setdefault(kf.sha1.lower(), []).append(kf)
+
+    results = []
+    for rec in records:
+        md5 = rec.get('md5')
+        sha1 = rec.get('sha1')
+        if not md5 and not sha1:
+            results.append(None)
+            continue
+        pool = None
+        if md5:
+            pool = set(by_md5.get(md5.lower(), []))
+        if sha1:
+            sha1_set = set(by_sha1.get(sha1.lower(), []))
+            pool = pool & sha1_set if pool is not None else sha1_set
+        if not pool:
+            results.append(None)
+            continue
+        file_size = rec.get('file_size')
+        if file_size is not None:
+            pool = {kf for kf in pool
+                    if kf.file_size is None or kf.file_size == file_size}
+        results.append(min(pool, key=lambda kf: kf.id) if pool else None)
+
+    return results
+
+
 def rescan_hashes_for_queryset(query, batch_size=500):
     """Re-link hashes for an ExtractedFile queryset.
 

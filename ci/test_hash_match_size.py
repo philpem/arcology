@@ -154,6 +154,52 @@ class TestBatchMatchSizeAgreement(_HashMatchBase):
             self.assertNotIn(1, result)
 
 
+class TestFindKnownFilesForRecords(_HashMatchBase):
+    """find_known_files_for_records() must agree with find_known_file().
+
+    This is the batched matcher used by api.add_files() to register a whole
+    partition listing with a single query instead of one query per file.
+    """
+
+    def test_returns_match_aligned_with_input_order(self):
+        from myapp.services.hash_rescan import find_known_files_for_records
+
+        with self.app.app_context():
+            md5a = _unique_md5()
+            md5b = _unique_md5()
+            kf_a = self._make_known_file(file_size=4096, md5=md5a)
+            kf_b = self._make_known_file(file_size=None, md5=md5b)
+            records = [
+                {'md5': md5a, 'sha1': None, 'file_size': 4096},   # exact size match
+                {'md5': _unique_md5(), 'sha1': None, 'file_size': 1},  # no match
+                {'md5': md5b, 'sha1': None, 'file_size': 9999},   # NULL-size match
+                {'md5': None, 'sha1': None, 'file_size': None},   # no hash -> None
+            ]
+            result = find_known_files_for_records(records)
+            self.assertEqual(len(result), len(records))
+            self.assertEqual(result[0].id, kf_a)
+            self.assertIsNone(result[1])
+            self.assertEqual(result[2].id, kf_b)
+            self.assertIsNone(result[3])
+
+    def test_differing_size_does_not_match(self):
+        from myapp.services.hash_rescan import find_known_files_for_records
+
+        with self.app.app_context():
+            md5 = _unique_md5()
+            self._make_known_file(file_size=4096, md5=md5)
+            result = find_known_files_for_records(
+                [{'md5': md5, 'sha1': None, 'file_size': 512}]
+            )
+            self.assertIsNone(result[0])
+
+    def test_empty_input_returns_empty_list(self):
+        from myapp.services.hash_rescan import find_known_files_for_records
+
+        with self.app.app_context():
+            self.assertEqual(find_known_files_for_records([]), [])
+
+
 class TestRescanLinksNullSize(_HashMatchBase):
     """End-to-end: a rescan links a sized file to a NULL-size KnownFile."""
 
