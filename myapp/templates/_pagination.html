@@ -7,8 +7,8 @@
 
    Both delegate to _pagination_inner(), so the layout is identical everywhere:
      * centre  – Prev ‹ … numbered page links … › Next, with the *current*
-                 page rendered as an editable "Page [x] of y" jump box whenever
-                 the page list is truncated (i.e. iter_pages() emits an ellipsis)
+                 page always rendered as an editable "Page [x] of y" jump box
+                 (consistent on every page, truncated or not)
      * right   – per-page selector (25/50/100/250/All)
      * below   – centred "Showing X–Y of N"
 
@@ -20,7 +20,6 @@
 
 {% macro _pagination_inner(pagination, pagination_args, valid_per_page=none, view_all=false) %}
 {% set pages_list = pagination.iter_pages(left_edge=1, left_current=2, right_current=3, right_edge=1) | list %}
-{% set truncated = none in pages_list %}
 {% if pagination.pages > 1 or valid_per_page %}
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
     {# left spacer (equal grow, zero basis) keeps the page group centred on md+ #}
@@ -39,8 +38,10 @@
             {% for pg in pages_list %}
                 {% if pg is none %}
                 <li class="page-item disabled"><span class="page-link">…</span></li>
-                {% elif pg == pagination.page and truncated %}
-                {# editable current-page jump box – type a number, Enter to jump #}
+                {% elif pg == pagination.page %}
+                {# editable current-page jump box – type a number, Enter to jump.
+                   Always rendered (not only when truncated) so the control looks
+                   the same on every page regardless of how many numbers fit. #}
                 <li class="page-item active" aria-current="page">
                     <form method="get" class="page-link d-inline-flex align-items-center gap-1 py-0">
                         {% for k, v in pagination_args.items() %}
@@ -53,8 +54,6 @@
                         <span>of {{ pagination.pages }}</span>
                     </form>
                 </li>
-                {% elif pg == pagination.page %}
-                <li class="page-item active" aria-current="page"><span class="page-link">{{ pg }}</span></li>
                 {% else %}
                 <li class="page-item"><a class="page-link" href="?{{ dict(pagination_args, page=pg) | urlencode }}">{{ pg }}</a></li>
                 {% endif %}
