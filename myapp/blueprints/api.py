@@ -369,6 +369,21 @@ def _get_extracted_file_or_404(*, id=None, uuid=None, load_options=()):
     return file
 
 
+def _has_restricting_hash_database():
+    """True if any active hash database carries a restriction_type.
+
+    Cheap guard for the file-registration hot path: when no database is
+    flagged, apply_database_restrictions() can only ever be a no-op, so the
+    per-batch O(files) re-scan it performs is pure overhead and is skipped.
+    """
+    return db.session.query(
+        HashDatabase.query.filter(
+            HashDatabase.is_active.is_(True),
+            HashDatabase.restriction_type.isnot(None),
+        ).exists()
+    ).scalar()
+
+
 def _get_hash_database_or_404(id):
     return _get_by_id_or_404(HashDatabase, id)
 
@@ -1677,6 +1692,7 @@ def add_files(uuid):
     known_matches = find_known_files_for_records([f for _, f in candidates])
 
     added = 0
+    added_unique = 0
     skipped = 0
     seen_paths = set()
     for (path, f), known in zip(candidates, known_matches, strict=True):
@@ -1717,11 +1733,21 @@ def add_files(uuid):
         if known is not None:
             ef.known_file_id = known.id
             ef.is_known = True
+        else:
+            added_unique += 1
         db.session.add(ef)
         added += 1
 
-    partition.total_files = ExtractedFile.query.filter_by(partition_id=partition.id).count()
-    partition.unique_files = ExtractedFile.query.filter_by(partition_id=partition.id, is_known=False).count()
+    # Update the partition counters incrementally rather than re-running two
+    # COUNT(*) scans over the (growing) partition on every batch.  A large disc
+    # is registered as many sequential 100-file batches; the per-batch full
+    # counts made each request progressively slower and, under concurrent
+    # extraction, helped saturate the sync worker pool until other workers'
+    # requests timed out.  Duplicates are already filtered above, so the row
+    # delta for this batch is exactly `added` (of which `added_unique` are not
+    # known-file matches).
+    partition.total_files = (partition.total_files or 0) + added
+    partition.unique_files = (partition.unique_files or 0) + added_unique
     try:
         db.session.commit()
     except OperationalError as exc:
@@ -1732,8 +1758,13 @@ def add_files(uuid):
             return error_response('Deadlock detected, please retry', 503)
         raise
 
-    # Auto-apply restrictions from flagged hash databases
-    if added > 0:
+    # Auto-apply restrictions from flagged hash databases.  This is a no-op
+    # unless some active hash database has a restriction_type set, but the full
+    # implementation re-scans every known file across all of the artefact's
+    # partitions — O(files) work that, repeated per batch, becomes O(files²)
+    # over a large disc.  Gate it behind a single cheap existence check so the
+    # common case (no flagged databases) costs one indexed lookup instead.
+    if added > 0 and _has_restricting_hash_database():
         from ..services.hash_rescan import apply_database_restrictions
         apply_database_restrictions(partition.artefact)
 

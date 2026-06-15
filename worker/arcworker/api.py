@@ -8,6 +8,7 @@ status updates, and artefact registration.
 import hashlib
 import shutil
 import threading
+import time
 from pathlib import Path
 from urllib.parse import urlencode
 import requests
@@ -501,7 +502,25 @@ class ArcologyAPI:
                     'parent_file_id': f.get('parent_file_id'),
                     'extraction_depth': f.get('extraction_depth', 0),
                 })
-            resp = self.post(f"/partitions/{partition_uuid}/files", {'files': file_records})
+            # The endpoint is idempotent: it filters out paths already present
+            # in the partition, so re-posting a batch never duplicates rows.
+            # That makes it safe to retry, which matters because a large disc
+            # is many sequential batches and a single transient stall (a busy
+            # web worker, a brief lock wait) would otherwise fail the entire
+            # extraction with no recovery.
+            resp = None
+            for attempt in range(API_RETRIES + 1):
+                resp = self.post(f"/partitions/{partition_uuid}/files", {'files': file_records})
+                if resp is not None:
+                    break
+                if attempt < API_RETRIES:
+                    backoff = 2 ** attempt
+                    log.warning(
+                        f"Retrying file-record batch for partition {partition_uuid} "
+                        f"(batch starting at record {i}) in {backoff}s "
+                        f"(attempt {attempt + 1}/{API_RETRIES})"
+                    )
+                    time.sleep(backoff)
             if resp is None:
                 raise RuntimeError(
                     f"Failed to post file records to partition {partition_uuid} "
