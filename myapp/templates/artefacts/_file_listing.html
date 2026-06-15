@@ -1,6 +1,6 @@
 {% from '_pagination.html' import render_pagination_compact, render_letter_bar_compact %}
 {% from '_path_nav.html' import render_path_breadcrumb, render_subdirectory_bar %}
-{% from '_macros.html' import file_download_icon with context %}
+{% from '_macros.html' import file_download_icon, file_viewer_metadata_icons with context %}
         <div class="card" id="files">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span>
@@ -247,16 +247,9 @@
                                    class="text-danger ms-1"
                                    title="{{ 'Extraction failed' if _fc.kind == 'extraction' else 'Conversion failed' }}: {{ _fc.error }}"><i class="bi bi-exclamation-circle-fill"></i></a>
                                 {% endif %}
-                                {% if module_info is defined and file.path in module_info %}
-                                {% set mod = module_info[file.path] %}
-                                <a href="{{ artefact_url(artefact, 'viewer') }}?file={{ file.path | urlencode }}"
-                                   class="text-success ms-1" title="RISC OS Module: {{ mod.help_title or mod.title_string }}{% if mod.version %} {{ mod.version }}{% endif %}{% if mod.date %} ({{ mod.date }}){% endif %}"><i class="bi bi-cpu"></i></a>
-                                {% endif %}
-                                {% if replay_info is defined and file.path in replay_info %}
-                                {% set rm = replay_info[file.path] %}
-                                <a href="{{ artefact_url(artefact, 'viewer') }}?file={{ file.path | urlencode }}"
-                                   class="text-primary ms-1" title="Acorn Replay / ARMovie{% if rm.title %}: {{ rm.title }}{% endif %}{% if rm.video_format is not none %} (format {{ rm.video_format }}{% if rm.video_label %} {{ rm.video_label }}{% endif %}){% endif %}{% if rm.width is not none and rm.height is not none %} — {{ rm.width }}×{{ rm.height }}{% endif %}"><i class="bi bi-film"></i></a>
-                                {% endif %}
+                                {{ file_viewer_metadata_icons(artefact, file.path,
+                                    module_info[file.path] if module_info is defined and file.path in module_info else None,
+                                    replay_info[file.path] if replay_info is defined and file.path in replay_info else None) }}
                                 {% endif %}
                             </td>
                             <td>{% if file.is_directory %}<span class="text-muted">DIR</span>{% elif file.file_size %}<span title="{{ file.file_size }} bytes">{{ file.file_size | format_filesize }}</span>{% else %}-{% endif %}</td>

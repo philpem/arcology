@@ -24,6 +24,7 @@ from ..database import (
 from ..extensions import db
 from ..permissions import public_readable
 from ..riscos_filetypes import lookup_filetype_hex
+from ..services.file_metadata import metadata_by_file_id
 from ..utils.pagination import VALID_PER_PAGE, ListPagination, resolve_per_page
 from ..visibility import artefact_visibility_clause, item_visibility_clause
 
@@ -160,6 +161,10 @@ def index():
     pagination = ListPagination(range(max_total), page, per_page)
     pagination_args = {k: v for k, v in request.args.items() if k != 'page'}
 
+    # Module / Replay viewer icons for the file results (parallel to the
+    # artefact file listing).  Keyed by ExtractedFile.id.
+    module_info, replay_info = metadata_by_file_id(results['files']) if results else ({}, {})
+
     known_protection_types = sorted(
         v for (v,) in db.session.query(distinct(ArtefactProtection.protection_type)).all()
     )
@@ -181,6 +186,8 @@ def index():
         FilesystemType=FilesystemType,
         known_protection_types=known_protection_types,
         known_mastering_types=known_mastering_types,
+        module_info=module_info,
+        replay_info=replay_info,
     )
 
 
