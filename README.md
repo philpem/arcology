@@ -213,7 +213,12 @@ arco bulk-import --archive-dir ~/discs --tag myimport --platform "BBC Micro"
 arco hashdb list
 arco hashdb export 1 riscos_apps.json
 arco hashdb import riscos_apps.json
-arco hashdb generate-arcarc --output arcarc-hashdb.json
+
+# Build a RISC OS application hash database from imported disc images.
+# Selects items by tag (or --item/--platform), parses each app's !Run to mark
+# the launched executable Mandatory, and emits import-ready JSON.
+arco hashdb generate-riscos --tag arcarc --db-name "Arcarc RISC OS" --output riscos-hashdb.json
+arco hashdb import riscos-hashdb.json
 ```
 
 Run `arco --help` or `arco <command> --help` for full usage details.

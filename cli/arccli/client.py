@@ -420,6 +420,25 @@ class ArcologyClient:
 	def add_product_files(self, db_id: int, product_id: int, files: list) -> dict:
 		return self.post_json(f'hash-databases/{db_id}/products/{product_id}/files', files)
 
+	def hash_lookup(self, md5: str = None, sha1: str = None) -> dict:
+		"""Look up a file by hash: returns any matching KnownFile and every
+		extracted-file occurrence across the (visible) collection."""
+		params = {}
+		if md5:
+			params['md5'] = md5
+		if sha1:
+			params['sha1'] = sha1
+		return self.get('hash-lookup', params=params)
+
+	def download_extracted_file_bytes(self, uuid: str) -> bytes:
+		"""Return the raw bytes of a single extracted file (e.g. a RISC OS
+		!Run Obey file).  Restricted artefacts return an error."""
+		resp = self.session.get(self._url(f'files/{uuid}/download'),
+		                        timeout=self.timeout)
+		if resp.status_code >= 400:
+			self._handle_response(resp)
+		return resp.content
+
 
 def verify_artefact_hashes(filepath: str, result: dict) -> bool | None:
 	"""Compare a just-uploaded file's local hashes with the server's record.
