@@ -1524,6 +1524,12 @@ def _view_file_listing(file_form, all_artefact_ids):
             )
             .join(Partition)
             .join(Artefact, Partition.artefact_id == Artefact.id)
+            # artefact_visibility_clause references Item columns, so Item must be
+            # explicitly joined.  Without it SQLAlchemy adds Item as an implicit
+            # cartesian join, multiplying count(ExtractedFile.id) by the number of
+            # matching items and inflating the badge above the real instance count
+            # shown by the file_duplicates list view (which joins Item correctly).
+            .join(Item, Artefact.item_id == Item.id)
             .filter(artefact_visibility_clause(current_user))
             .filter(_or(*[
                 _and(
@@ -3193,6 +3199,11 @@ def file_duplicates(uuid):
         ExtractedFile.query
         .join(Partition)
         .join(Artefact, Partition.artefact_id == Artefact.id)
+        # Item must be joined: artefact_visibility_clause references Item
+        # columns.  Without the join SQLAlchemy adds Item as a cartesian product,
+        # so the uuid-matched row passes the filter whenever *any* item is
+        # visible — leaking files inside private artefacts the user cannot see.
+        .join(Item, Artefact.item_id == Item.id)
         .filter(ExtractedFile.uuid == uuid)
         .filter(artefact_visibility_clause(current_user))
         .first_or_404()
