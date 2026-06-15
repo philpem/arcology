@@ -33,6 +33,7 @@ from ..database import (
     Partition,
     Platform,
     RecognisedProduct,
+    ReplayMovie,
     RestrictionType,
     RiscosModule,
     Tag,
@@ -1088,6 +1089,65 @@ def _viewer_module_detail(file_filter, all_artefact_ids):
     return module_detail
 
 
+def _viewer_replay_detail(file_filter, all_artefact_ids):
+    """Acorn Replay / ARMovie detail card when ?file= matches an ARMovie path.
+
+    The ReplayMovie row anchors the lookup (and provides the searchable subset);
+    the full 21-line header + derived stats are read from the matching movie
+    entry in the latest completed REPLAY_PROCESS analysis details, falling back
+    to the row's columns when the analysis details are unavailable.
+    """
+    if not file_filter:
+        return None
+    row = ReplayMovie.query.filter(
+        ReplayMovie.artefact_id.in_(all_artefact_ids),
+        ReplayMovie.file_path == file_filter,
+    ).first()
+    if not row:
+        return None
+
+    # Start from the indexed columns as a fallback.
+    detail = {
+        'file_path': row.file_path,
+        'title': row.title,
+        'author': row.author,
+        'copyright': row.copyright,
+        'video_format': row.video_format,
+        'width': row.width,
+        'height': row.height,
+        'pixel_depth': row.pixel_depth,
+        'frame_rate': row.frame_rate,
+        'sound_format': row.sound_format,
+        'sound_rate': row.sound_rate,
+        'sound_channels': row.sound_channels,
+        'sound_precision': row.sound_precision,
+        'frames_per_chunk': row.frames_per_chunk,
+        'number_of_chunks': row.number_of_chunks,
+        'duration_seconds': row.duration_seconds,
+        # Future transcode provision; never populated yet.
+        'mp4_url': None,
+    }
+
+    # Merge the full header/stats from the analysis details for this file.
+    rp_analysis = Analysis.query.filter(
+        Analysis.artefact_id == row.artefact_id,
+        Analysis.analysis_type == AnalysisType.REPLAY_PROCESS,
+        Analysis.status == AnalysisStatus.COMPLETED,
+    ).order_by(Analysis.id.desc()).first()
+    if rp_analysis:
+        try:
+            details = json.loads(rp_analysis.details or '{}')
+        except (json.JSONDecodeError, TypeError):
+            details = {}
+        for m in details.get('movies', []):
+            if m.get('file_path') == file_filter:
+                merged = dict(m)
+                merged['mp4_url'] = None
+                detail = merged
+                break
+    return detail
+
+
 def _viewer_stamp_stable_ids(artefact, output_groups):
     """Defensive stable-ID stamping for groups missed upstream."""
     # ── Stable IDs for any group that didn't get one upstream ───────────────
@@ -1147,6 +1207,7 @@ def _render_viewer(artefact):
     prefs_dirty = prefs_dirty or thumb_dirty
 
     module_detail = _viewer_module_detail(file_filter, all_artefact_ids)
+    replay_detail = _viewer_replay_detail(file_filter, all_artefact_ids)
 
     _viewer_stamp_stable_ids(artefact, output_groups)
 
@@ -1160,6 +1221,7 @@ def _render_viewer(artefact):
         viewer_status=viewer_status,
         failed_conversion_list=failed_conversion_list,
         module_detail=module_detail,
+        replay_detail=replay_detail,
         user_can_bypass_explicit=user_can_bypass_explicit,
         total_counts=total_counts,
         total_groups=total_groups,

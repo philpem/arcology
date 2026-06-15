@@ -15,6 +15,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -625,6 +626,9 @@ class Artefact(db.Model):
     riscos_modules: Mapped[list["RiscosModule"]] = relationship(
         back_populates="artefact", cascade="all, delete-orphan"
     )
+    replay_movies: Mapped[list["ReplayMovie"]] = relationship(
+        back_populates="artefact", cascade="all, delete-orphan"
+    )
     user_bypasses: Mapped[list["UserArtefactBypass"]] = relationship(
         back_populates="artefact", cascade="all, delete-orphan",
         foreign_keys="UserArtefactBypass.artefact_id",
@@ -937,6 +941,40 @@ class RiscosModule(db.Model):
     swi_names: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list of full SWI names (e.g. ADFS_DiscOp)
 
     artefact: Mapped["Artefact"] = relationship(back_populates="riscos_modules")
+
+
+class ReplayMovie(db.Model):
+    """Acorn Replay / ARMovie (RISC OS filetype &AE7) metadata.
+
+    Populated server-side when a REPLAY_PROCESS analysis completes.  One row per
+    ARMovie file found in an extraction (a disc image may contain several).
+    Like RiscosModule, ARMovie files are only ever encountered as extracted
+    files (never standalone artefacts), so ``file_path`` is always set.
+    """
+    __tablename__ = 'replay_movies'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    artefact_id: Mapped[int] = mapped_column(ForeignKey('artefacts.id'), index=True)
+    file_path: Mapped[str | None] = mapped_column(String(1000), nullable=True, index=True)  # Path within extraction
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    author: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    copyright: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    video_format: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # compression/codec id (0 = sound-only)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pixel_depth: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    frame_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sound_format: Mapped[int | None] = mapped_column(Integer, nullable=True)  # sound codec id (0 = silent)
+    sound_rate: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sound_channels: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sound_precision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    frames_per_chunk: Mapped[float | None] = mapped_column(Float, nullable=True)
+    number_of_chunks: Mapped[int | None] = mapped_column(Integer, nullable=True)  # entry count (highest index + 1)
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Forward provision for the future transcode-to-MP4 feature; never written yet.
+    mp4_output_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+
+    artefact: Mapped["Artefact"] = relationship(back_populates="replay_movies")
 
 
 # =============================================================================

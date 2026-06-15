@@ -119,6 +119,7 @@ class AnalysisType(enum.Enum):
 
     # RISC OS / Acorn specific
     RISCOS_MODULE_PARSE    = "riscos_module_parse"    # Parse RISC OS relocatable module metadata (title, version, date, SWIs, commands)
+    REPLAY_PROCESS         = "replay_process"         # Process Acorn Replay / ARMovie file (parse header + catalogue; later: transcode)
 
     # Maintenance
     HASH_RESCAN            = "hash_rescan"             # Re-link extracted files against active hash databases

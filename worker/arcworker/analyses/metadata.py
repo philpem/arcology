@@ -9,6 +9,7 @@ Covers:
   PRODUCT_RECOGNITION  — fold extracted files against hash-database product
                          definitions.
   RISCOS_MODULE_PARSE  — parse RISC OS relocatable modules (filetype FFA).
+  REPLAY_PROCESS       — parse Acorn Replay / ARMovie files (filetype AE7).
 """
 
 import json
@@ -17,9 +18,11 @@ from arcology_shared.enums import AnalysisType, ArtefactType
 from arcology_shared.hints import HintKey
 from ..config import log
 from ..tools import (
+    ArmovieParseError,
     ModuleParseError,
     compute_file_hash,
     decode_module,
+    parse_armovie_header,
 )
 from ..tools.extraction import convert_fcfs_to_raw
 from ..tools.iso9660 import parse_iso9660_pvd
@@ -452,6 +455,108 @@ def process_riscos_module_parse(self, analysis: dict, artefact: dict, work_dir: 
     self.complete_analysis(
         analysis_id,
         tool_name='riscos_module_parser',
+        summary=', '.join(summary_parts),
+        details=json.dumps(details_dict),
+    )
+
+
+@analysis_handler("Process Replay file", AnalysisType.REPLAY_PROCESS)
+def process_replay(self, analysis: dict, artefact: dict, work_dir: Path):
+    """Process Acorn Replay / ARMovie files found in an extraction.
+
+    Scans partition files for filetype ae7 (ARMovie), reads each from disk, and
+    parses the text header + chunk catalogue into searchable metadata.  Named
+    "process" (not "parse") because this handler will later be extended to
+    transcode the video to a portable format.
+
+    Only meaningful for extractions that contain ARMovie files; a harmless
+    no-op otherwise.
+    """
+    analysis_id = analysis['id']
+    hints = json.loads(analysis.get('hints') or '{}')
+    partition_uuid = hints.get(HintKey.PARTITION_UUID)
+    extraction_path = hints.get(HintKey.EXTRACTION_PATH)
+    path_prefix = hints.get(HintKey.PATH_PREFIX, '')  # set when queued from archive extraction
+
+    if not partition_uuid:
+        self.fail_analysis(analysis_id, 'No partition_uuid in analysis hints')
+        return
+
+    # Fetch files with RISC OS filetype ae7 (ARMovie).
+    base_params = {'show_known': 'true'}
+    if path_prefix:
+        base_params['path_prefix'] = path_prefix
+    else:
+        base_params['extraction_depth'] = 0
+
+    all_files = self.api.get_partition_files(partition_uuid, **base_params)
+
+    replay_files = [
+        f for f in all_files
+        if (f.get('risc_os_filetype') or '').lower() == 'ae7'
+        and not f.get('is_directory', False)
+    ]
+
+    if not replay_files:
+        self.complete_analysis(
+            analysis_id,
+            summary='No Acorn Replay / ARMovie files (filetype ae7) found',
+            details=json.dumps({'movies': [], 'files_scanned': 0}),
+        )
+        return
+
+    if not extraction_path:
+        extraction_path = find_extraction_path(self, artefact.get('uuid'))
+
+    if not extraction_path:
+        self.fail_analysis(analysis_id, 'Could not determine extraction path')
+        return
+
+    movies = []
+    parse_errors = 0
+
+    for file_data in replay_files:
+        db_path = file_data['path']
+        risc_os_filetype = file_data.get('risc_os_filetype', '')
+
+        file_path, _disk_path = resolve_extraction_file(
+            self, extraction_path, db_path, work_dir,
+            path_prefix=path_prefix,
+            risc_os_filetype=risc_os_filetype or None,
+        )
+
+        if file_path is None:
+            log.warning(f"ARMovie file not found on disk: {db_path}")
+            parse_errors += 1
+            continue
+
+        try:
+            data = file_path.read_bytes()
+            result = parse_armovie_header(data)
+            result['file_path'] = db_path
+            movies.append(result)
+        except ArmovieParseError as e:
+            log.warning(f"Could not parse ARMovie {db_path}: {e}")
+            parse_errors += 1
+        except Exception as e:
+            log.warning(f"Unexpected error parsing ARMovie {db_path}: {e}")
+            parse_errors += 1
+
+    summary_parts = [f'Parsed {len(movies)} Acorn Replay / ARMovie file(s)']
+    if parse_errors:
+        summary_parts.append(f'{parse_errors} could not be parsed')
+
+    details_dict: dict = {
+        'movies': movies,
+        'files_scanned': len(replay_files),
+        'parse_errors': parse_errors,
+    }
+    if path_prefix:
+        details_dict['path_prefix'] = path_prefix
+
+    self.complete_analysis(
+        analysis_id,
+        tool_name='armovie_parser',
         summary=', '.join(summary_parts),
         details=json.dumps(details_dict),
     )
