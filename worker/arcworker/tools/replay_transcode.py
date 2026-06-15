@@ -17,12 +17,29 @@ Two-stage pipeline:
 Both binaries are expected on ``PATH`` (installed by the worker Dockerfile).
 """
 
+import re
 from pathlib import Path
 from .base import run_tool_with_output, tool_result
 
 # Fallback frame rate when the ARMovie header did not record one (rare; the
 # field is usually present).  ffmpeg's rawvideo demuxer needs *some* rate.
 _DEFAULT_FRAME_RATE = 25.0
+
+# scotch prints the matching ffmpeg invocation (including the -pixel_format /
+# -pix_fmt for its raw output) on stdout/stderr.  We reuse that pixel format
+# instead of assuming one — forcing the wrong colour model produces corrupt
+# (e.g. all-red) frames on codecs whose native colour isn't plain packed RGB.
+_PIXFMT_RE = re.compile(r'-(?:pixel_format|pix_fmt)\s+(\S+)')
+_DEFAULT_PIXFMT = 'rgb24'
+
+
+def _detected_pixfmt(process_output) -> str:
+    """Extract the ffmpeg pixel format scotch recommends, else the rgb24 default."""
+    text = ''
+    if isinstance(process_output, dict):
+        text = f"{process_output.get('stdout', '')}\n{process_output.get('stderr', '')}"
+    m = _PIXFMT_RE.search(text)
+    return m.group(1) if m else _DEFAULT_PIXFMT
 
 
 def transcode_armovie_to_mp4(
@@ -73,7 +90,6 @@ def transcode_armovie_to_mp4(
         '--input', str(input_path),
         '--output', str(raw_path),
         '--audio-output', str(wav_path),
-        '--video-colour', 'rgb888',   # force RGB24 so ffmpeg's input is predictable
         '--skip-unsupported',          # partial output instead of hard-failing
     ]
     if modules_dir:
@@ -92,11 +108,12 @@ def transcode_armovie_to_mp4(
         )
 
     has_audio = wav_path.exists() and wav_path.stat().st_size > 0
+    pixfmt = _detected_pixfmt(decode_output)
 
-    # ── Stage 2: raw RGB24 (+ WAV) → MP4 ───────────────────────────────────
+    # ── Stage 2: raw frames (+ WAV) → MP4 ──────────────────────────────────
     mux_cmd = [
         'ffmpeg', '-y', '-hide_banner',
-        '-f', 'rawvideo', '-pixel_format', 'rgb24',
+        '-f', 'rawvideo', '-pixel_format', pixfmt,
         '-video_size', f'{width}x{height}',
         '-framerate', f'{fps:g}',
         '-i', str(raw_path),
@@ -145,6 +162,79 @@ def transcode_armovie_to_mp4(
         width=width,
         height=height,
         frame_rate=fps,
+    )
+
+
+def transcode_armovie_to_audio(
+    input_path: Path,
+    output_path: Path,
+    *,
+    work_dir: Path,
+    modules_dir: str | None = None,
+    timeout: int | None = None,
+) -> dict:
+    """Transcode a sound-only ARMovie (video_format 0) to an M4A (AAC) file.
+
+    Sound-only Replay files have no video frames but should still be playable
+    (audio only). scotch decodes the audio track to WAV; ffmpeg encodes it to
+    M4A for an HTML5 ``<audio>`` player.
+
+    Returns a standard tool-result dict (``output_path``, ``has_audio=True``,
+    ``audio_only=True``) on success, or ``error`` + ``stage`` on failure.
+    """
+    raw_path = work_dir / f'{output_path.stem}.rgb'   # produced but unused
+    wav_path = work_dir / f'{output_path.stem}.wav'
+
+    decode_cmd = [
+        'replay-transcode',
+        '--input', str(input_path),
+        '--output', str(raw_path),
+        '--audio-output', str(wav_path),
+        '--skip-unsupported',
+    ]
+    if modules_dir:
+        decode_cmd += ['--modules-dir', modules_dir]
+
+    decode_result, decode_output = run_tool_with_output(decode_cmd, timeout=timeout)
+
+    if not wav_path.exists() or wav_path.stat().st_size == 0:
+        return tool_result(
+            False,
+            tool='replay-transcode',
+            error=decode_result.stderr.decode(errors='replace')[:1000]
+                  or 'replay-transcode produced no audio',
+            process_output=decode_output,
+            stage='decode',
+        )
+
+    enc_cmd = [
+        'ffmpeg', '-y', '-hide_banner',
+        '-i', str(wav_path),
+        '-c:a', 'aac', '-b:a', '128k',
+        '-movflags', '+faststart',
+        str(output_path),
+    ]
+    enc_result, enc_output = run_tool_with_output(enc_cmd, timeout=timeout)
+
+    if enc_result.returncode != 0 or not output_path.exists():
+        return tool_result(
+            False,
+            tool='ffmpeg',
+            error=enc_result.stderr.decode(errors='replace')[:1000],
+            process_output=enc_output,
+            stage='mux',
+        )
+
+    return tool_result(
+        True,
+        tool='replay-transcode,ffmpeg',
+        output_path=str(output_path),
+        output_type='m4a',
+        summary='Transcoded sound-only ARMovie to M4A audio',
+        process_output={'decode': decode_output, 'encode': enc_output},
+        has_audio=True,
+        audio_only=True,
+        poster_path=None,
     )
 
 # vim: ts=4 sw=4 et

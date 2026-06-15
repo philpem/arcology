@@ -1180,6 +1180,7 @@ def _viewer_replay_posters(all_artefact_ids):
                 if row.poster_path else None
             ),
             'has_mp4': bool(row.mp4_output_path),
+            'sound_only': row.video_format == 0,
         })
     return posters
 

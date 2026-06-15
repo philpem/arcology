@@ -301,6 +301,17 @@
     </div>
     <div class="card-body">
         {% if replay_detail.mp4_url %}
+        {% if replay_detail.video_format == 0 %}
+        {# Sound-only Replay file — audio player. #}
+        <audio controls preload="metadata" class="w-100 mb-3" src="{{ replay_detail.mp4_url }}">
+            Your browser does not support the audio element.
+        </audio>
+        <div class="mb-3">
+            <a href="{{ replay_detail.mp4_url }}" download class="btn btn-sm btn-outline-primary">
+                <i class="bi bi-download"></i> Download converted audio (M4A)
+            </a>
+        </div>
+        {% else %}
         <video controls preload="metadata" class="mb-3 d-block mx-auto replay-player"{% if replay_detail.poster_url %} poster="{{ replay_detail.poster_url }}"{% endif %} src="{{ replay_detail.mp4_url }}">
             Your browser does not support the video element.
         </video>
@@ -309,12 +320,13 @@
                 <i class="bi bi-download"></i> Download converted movie (MP4)
             </a>
         </div>
+        {% endif %}
         {% else %}
-        <div class="ratio ratio-16x9 bg-dark d-flex align-items-center justify-content-center mb-3 rounded">
-            <span class="text-muted small">
-                <i class="bi bi-film"></i> Video preview not yet available (transcode pending or codec unsupported).
-            </span>
-        </div>
+        <p class="text-muted small mb-3">
+            <i class="bi bi-film"></i>
+            {% if replay_detail.video_format == 0 %}Audio not yet available (transcode pending).
+            {% else %}Preview not yet available (transcode pending or codec unsupported).{% endif %}
+        </p>
         {% endif %}
         <table class="table table-sm mb-0">
             <tbody>
@@ -368,7 +380,7 @@
 {% if replay_posters %}
 {# Replay videos as poster thumbnails (like converted sprites) — each links to
    the movie's player card via ?file=<path>. #}
-<h6 class="font-monospace border-bottom pb-1 mb-2 mt-3"><i class="bi bi-film text-primary"></i> Acorn Replay videos</h6>
+<h6 class="font-monospace border-bottom pb-1 mb-2 mt-3"><i class="bi bi-film text-primary"></i> Acorn Replay media</h6>
 <div class="row g-3 mb-4">
     {% for p in replay_posters %}
     <div class="{{ viewer_col_class }}">
@@ -378,7 +390,10 @@
                 <img src="{{ p.poster_url }}" class="viewer-img card-img-top" alt="{{ p.title or p.file_path }}" loading="lazy">
                 {% else %}
                 <div class="ratio ratio-16x9 bg-dark d-flex align-items-center justify-content-center rounded-top">
-                    <span class="text-muted small text-center px-1"><i class="bi bi-film"></i><br>{% if p.has_mp4 %}video{% else %}not transcoded{% endif %}</span>
+                    <span class="text-muted small text-center px-1">
+                        {% if p.sound_only %}<i class="bi bi-music-note-beamed"></i><br>{% if p.has_mp4 %}audio{% else %}not transcoded{% endif %}
+                        {% else %}<i class="bi bi-film"></i><br>{% if p.has_mp4 %}video{% else %}not transcoded{% endif %}{% endif %}
+                    </span>
                 </div>
                 {% endif %}
             </a>

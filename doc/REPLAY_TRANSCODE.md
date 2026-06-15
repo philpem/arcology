@@ -26,6 +26,14 @@ MP4 + poster.jpg   →  saved as analysis output files
 - **ffmpeg** muxes the decoded frames/audio into MP4 and extracts the poster.
   Installed as a runtime package in the worker image.
 
+The raw video's **pixel format is taken from the ffmpeg recipe scotch prints**
+(rather than assuming RGB), so codecs whose native colour isn't packed RGB don't
+come out colour-corrupted (e.g. all-red).
+
+**Sound-only** Replay files (video format 0) have no frames; they are transcoded
+to an **M4A** (AAC) audio file and shown with an HTML5 `<audio>` player instead
+of a video player.
+
 Both run as best-effort, per movie: a file that cannot be decoded (see
 *Decompressor modules* below) is recorded as a transcode error and skipped, and
 its parsed metadata is left untouched.
