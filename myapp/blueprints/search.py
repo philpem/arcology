@@ -7,7 +7,7 @@ Global cross-item search using a prefix query syntax.
 import re
 from flask import Blueprint, render_template, request
 from flask_login import current_user
-from sqlalchemy import and_, distinct, func, or_
+from sqlalchemy import and_, case, distinct, func, or_
 from ..database import (
     Artefact,
     ArtefactMastering,
@@ -50,12 +50,19 @@ _ALIASES = {
     'prot':       'protection',
 }
 
-# Regex: optional-quote value after colon, or bare word
+# Reserved token key under which negated terms are collected.  A negation is a
+# keyed term prefixed with '!' (e.g. '!type:Obey').  Stored as a nested
+# {key: [values]} dict and only present when at least one negation is parsed.
+NOT_KEY = '__not__'
+
+# Regex: optional '!' negation prefix on keyed terms, quoted/bare value after a
+# colon, or bare word.  Negation is only recognised on key:value forms — a bare
+# word beginning with '!' (e.g. a RISC OS filename like '!Boot') is left intact.
 _TOKEN_RE = re.compile(
-    r'(\w+):"([^"]+)"'   # key:"quoted value"
-    r'|(\w+):(\S+)'      # key:value
-    r'|"([^"]+)"'        # "bare quoted phrase"
-    r'|(\S+)',            # bare word
+    r'(!?)(\w+):"([^"]+)"'   # [!]key:"quoted value"
+    r'|(!?)(\w+):(\S+)'      # [!]key:value
+    r'|"([^"]+)"'            # "bare quoted phrase"
+    r'|(\S+)',               # bare word
     re.UNICODE,
 )
 
@@ -67,23 +74,37 @@ def parse_query(raw: str) -> dict:
 
     Keys: md5, sha1, sha256, filename, path, type, ext, ident,
           label, fs, protection, mastering, tag, text (bare words).
+
+    Keyed terms may be negated with a leading '!' (e.g. '!type:Obey').  Negated
+    terms are collected under the reserved ``NOT_KEY`` as a nested
+    {key: [values]} dict; this key is absent when no negations are present.
     """
     tokens: dict[str, list[str]] = {}
+    negations: dict[str, list[str]] = {}
 
     for m in _TOKEN_RE.finditer(raw or ''):
-        if m.group(1):   # key:"quoted value"
-            key, val = m.group(1).lower(), m.group(2)
-        elif m.group(3): # key:value
-            key, val = m.group(3).lower(), m.group(4)
-        elif m.group(5): # "bare quoted phrase"
-            key, val = 'text', m.group(5)
-        else:             # bare word
-            key, val = 'text', m.group(6)
+        if m.group(2) is not None:    # [!]key:"quoted value"
+            neg, key, val = m.group(1), m.group(2).lower(), m.group(3)
+        elif m.group(5) is not None:  # [!]key:value
+            neg, key, val = m.group(4), m.group(5).lower(), m.group(6)
+        elif m.group(7) is not None:  # "bare quoted phrase"
+            neg, key, val = '', 'text', m.group(7)
+        else:                          # bare word
+            neg, key, val = '', 'text', m.group(8)
 
         key = _ALIASES.get(key, key)
-        tokens.setdefault(key, []).append(val)
+        target = negations if neg else tokens
+        target.setdefault(key, []).append(val)
+
+    if negations:
+        tokens[NOT_KEY] = negations
 
     return tokens
+
+
+def _neg(tokens: dict, key: str) -> list[str]:
+    """Return the list of negated values for *key* (empty if none)."""
+    return tokens.get(NOT_KEY, {}).get(key, [])
 
 
 # =============================================================================
@@ -100,7 +121,15 @@ def index():
     page = max(1, page)
     tokens = parse_query(q)
 
-    results = _run_search(tokens, page=page, per_page=per_page) if q else None
+    # A query made up entirely of negations has nothing to match against — every
+    # sub-search needs at least one positive term to seed its result set.
+    has_positive = any(k != NOT_KEY for k in tokens)
+    query_error = None
+    if q and NOT_KEY in tokens and not has_positive:
+        query_error = "A search must include at least one term that is not negated."
+
+    run = bool(q) and query_error is None
+    results = _run_search(tokens, page=page, per_page=per_page) if run else None
     if results:
         results.pop('has_next', None)
         totals = results.pop('totals', {'files': 0, 'artefacts': 0, 'items': 0})
@@ -126,6 +155,7 @@ def index():
         'search/index.html',
         q=q,
         tokens=tokens,
+        query_error=query_error,
         results=results,
         totals=totals,
         pagination=pagination,
@@ -178,6 +208,32 @@ def _ilike_json(col, val):
     return col.ilike(pattern)
 
 
+def _negate(clause):
+    """Null-safe negation: TRUE for rows where *clause* is not TRUE.
+
+    A plain ``~clause`` drops rows where the underlying column is NULL, because
+    a NULL comparison yields NULL (not TRUE), and ``NOT NULL`` is still NULL.
+    That would wrongly exclude e.g. a file with no RISC OS filetype from a
+    ``!type:Obey`` term.  A CASE routes both non-matching and NULL rows to the
+    ELSE branch so they are kept.
+    """
+    return case((clause, False), else_=True)
+
+
+def _negated_clauses(tokens: dict, builders: dict) -> list:
+    """Build null-safe NOT clauses for any negated terms among *builders* keys.
+
+    *builders* maps a token key to a callable turning one value into the same
+    column expression used for the positive match; each negated value is wrapped
+    in :func:`_negate` so matching rows are excluded.
+    """
+    out = []
+    for key, builder in builders.items():
+        for val in _neg(tokens, key):
+            out.append(_negate(builder(val)))
+    return out
+
+
 def _resolve_riscos_type(val: str):
     """Return an ExtractedFile.risc_os_filetype filter for a type: term.
 
@@ -225,7 +281,16 @@ def _search_files(tokens, page=1, per_page=PER_PAGE):
     if not per_key:
         return [], 0
 
-    combined = and_(*[or_(*clauses) for clauses in per_key.values()])
+    neg = _negated_clauses(tokens, {
+        'md5':      lambda v: ExtractedFile.md5 == v.lower(),
+        'sha1':     lambda v: ExtractedFile.sha1 == v.lower(),
+        'sha256':   lambda v: ExtractedFile.sha256 == v.lower(),
+        'filename': lambda v: _ilike_path(ExtractedFile.filename, v),
+        'path':     lambda v: _ilike(ExtractedFile.path, v),
+        'type':     _resolve_riscos_type,
+        'ext':      lambda v: ExtractedFile.extension == v.lower(),
+    })
+    combined = and_(*[or_(*clauses) for clauses in per_key.values()], *neg)
     base_q = (
         db.session.query(ExtractedFile, Partition, Artefact, Item)
         .join(Partition, ExtractedFile.partition_id == Partition.id)
@@ -249,17 +314,24 @@ def _search_partitions(tokens, page=1, per_page=PER_PAGE):
         per_key.setdefault('label', []).append(_ilike(Partition.label, v))
     for v in tokens.get('ident', []):
         per_key.setdefault('ident', []).append(_ilike(Partition.gnu_file_type, v))
-    for v in tokens.get('fs', []):
+    def _fs_clause(v):
         try:
-            fs_val = FilesystemType(v.lower())
-            per_key.setdefault('fs', []).append(Partition.filesystem == fs_val)
+            return Partition.filesystem == FilesystemType(v.lower())
         except ValueError:
-            per_key.setdefault('fs', []).append(_ilike(Partition.container_format, v))
+            return _ilike(Partition.container_format, v)
+
+    for v in tokens.get('fs', []):
+        per_key.setdefault('fs', []).append(_fs_clause(v))
 
     if not per_key:
         return [], 0
 
-    combined = and_(*[or_(*clauses) for clauses in per_key.values()])
+    neg = _negated_clauses(tokens, {
+        'label': lambda v: _ilike(Partition.label, v),
+        'ident': lambda v: _ilike(Partition.gnu_file_type, v),
+        'fs':    _fs_clause,
+    })
+    combined = and_(*[or_(*clauses) for clauses in per_key.values()], *neg)
     base_q = (
         db.session.query(Partition, Artefact, Item)
         .join(Artefact, Partition.artefact_id == Artefact.id)
@@ -280,11 +352,16 @@ def _search_protection(tokens, page=1, per_page=PER_PAGE):
     if not values:
         return [], 0
 
+    filters = [ArtefactProtection.protection_type.in_(values)]
+    neg_values = [v.lower() for v in _neg(tokens, 'protection')]
+    if neg_values:
+        filters.append(_negate(ArtefactProtection.protection_type.in_(neg_values)))
+
     base_q = (
         db.session.query(ArtefactProtection, Artefact, Item)
         .join(Artefact, ArtefactProtection.artefact_id == Artefact.id)
         .join(Item, Artefact.item_id == Item.id)
-        .filter(ArtefactProtection.protection_type.in_(values))
+        .filter(and_(*filters))
         .filter(artefact_visibility_clause(current_user))
     )
     total = base_q.count()
@@ -303,11 +380,16 @@ def _search_mastering(tokens, page=1, per_page=PER_PAGE):
     if not values:
         return [], 0
 
+    filters = [ArtefactMastering.mastering_type.in_(values)]
+    neg_values = [v.lower() for v in _neg(tokens, 'mastering')]
+    if neg_values:
+        filters.append(_negate(ArtefactMastering.mastering_type.in_(neg_values)))
+
     base_q = (
         db.session.query(ArtefactMastering, Artefact, Item)
         .join(Artefact, ArtefactMastering.artefact_id == Artefact.id)
         .join(Item, Artefact.item_id == Item.id)
-        .filter(ArtefactMastering.mastering_type.in_(values))
+        .filter(and_(*filters))
         .filter(artefact_visibility_clause(current_user))
     )
     total = base_q.count()
@@ -331,6 +413,9 @@ def _search_riscos_module_files(tokens, key, clause_for, page=1, per_page=PER_PA
     if not values:
         return [], 0
 
+    module_filter = [or_(*[clause_for(v) for v in values])]
+    module_filter += [_negate(clause_for(v)) for v in _neg(tokens, key)]
+
     base_q = (
         db.session.query(ExtractedFile, Partition, Artefact, Item)
         .join(Partition, ExtractedFile.partition_id == Partition.id)
@@ -339,7 +424,7 @@ def _search_riscos_module_files(tokens, key, clause_for, page=1, per_page=PER_PA
         .join(RiscosModule, and_(
             RiscosModule.artefact_id == Artefact.id,
             RiscosModule.file_path == ExtractedFile.path))
-        .filter(or_(*[clause_for(v) for v in values]))
+        .filter(and_(*module_filter))
         .filter(ExtractedFile.is_directory == False)
         .filter(artefact_visibility_clause(current_user))
     )
@@ -386,12 +471,15 @@ def _search_tags(tokens, page=1, per_page=PER_PAGE):
     if not values:
         return [], 0
 
+    tag_filter = [or_(*[_ilike(Tag.name, v) for v in values])]
+    tag_filter += [_negate(_ilike(Tag.name, v)) for v in _neg(tokens, 'tag')]
+
     base_q = (
         db.session.query(Artefact, Item, Tag.name)
         .join(Item, Artefact.item_id == Item.id)
         .join(artefact_tags, artefact_tags.c.artefact_id == Artefact.id)
         .join(Tag, artefact_tags.c.tag_id == Tag.id)
-        .filter(or_(*[_ilike(Tag.name, v) for v in values]))
+        .filter(and_(*tag_filter))
         .filter(artefact_visibility_clause(current_user))
     )
     total = base_q.count()
@@ -414,10 +502,16 @@ def _search_artefact_hashes(tokens, page=1, per_page=PER_PAGE):
     if not art_filters:
         return [], 0
 
+    hash_filter = [or_(*art_filters)]
+    hash_filter += _negated_clauses(tokens, {
+        'md5':    lambda v: Artefact.md5 == v.lower(),
+        'sha256': lambda v: Artefact.sha256 == v.lower(),
+    })
+
     base_q = (
         db.session.query(Artefact, Item)
         .join(Item, Artefact.item_id == Item.id)
-        .filter(or_(*art_filters))
+        .filter(and_(*hash_filter))
         .filter(artefact_visibility_clause(current_user))
     )
     total = base_q.count()
@@ -440,9 +534,15 @@ def _search_text_items(tokens, page=1, per_page=PER_PAGE):
     if not text_filters:
         return [], 0
 
+    item_filter = [or_(*text_filters)]
+    for v in _neg(tokens, 'text'):
+        pattern = f'%{v}%'
+        item_filter.append(_negate(or_(
+            Item.name.ilike(pattern), Item.description.ilike(pattern))))
+
     base_q = (
         Item.query
-        .filter(or_(*text_filters))
+        .filter(and_(*item_filter))
         .filter(item_visibility_clause(current_user))
     )
     total = base_q.count()
@@ -462,10 +562,16 @@ def _search_text_artefacts(tokens, page=1, per_page=PER_PAGE):
     if not art_text_filters:
         return [], 0
 
+    art_filter = [or_(*art_text_filters)]
+    for v in _neg(tokens, 'text'):
+        pattern = f'%{v}%'
+        art_filter.append(_negate(or_(
+            Artefact.label.ilike(pattern), Artefact.description.ilike(pattern))))
+
     base_q = (
         db.session.query(Artefact, Item)
         .join(Item, Artefact.item_id == Item.id)
-        .filter(or_(*art_text_filters))
+        .filter(and_(*art_filter))
         .filter(artefact_visibility_clause(current_user))
     )
     total = base_q.count()

@@ -187,6 +187,51 @@ class TestParseQuery(unittest.TestCase):
         self.assertIn('text', tokens)
         self.assertIn('filename', tokens)
 
+    # Negation
+
+    def test_negation_simple(self):
+        from myapp.blueprints.search import NOT_KEY
+        tokens = self.parse('!type:Obey')
+        self.assertEqual(tokens.get(NOT_KEY), {'type': ['Obey']})
+        # Negation-only query has no positive terms
+        self.assertEqual([k for k in tokens if k != NOT_KEY], [])
+
+    def test_negation_with_positive(self):
+        from myapp.blueprints.search import NOT_KEY
+        tokens = self.parse('type:Basic !type:Obey')
+        self.assertEqual(tokens.get('type'), ['Basic'])
+        self.assertEqual(tokens[NOT_KEY], {'type': ['Obey']})
+
+    def test_negation_alias_applied(self):
+        from myapp.blueprints.search import NOT_KEY
+        # '!filetype:Obey' should normalise the key to 'type'
+        tokens = self.parse('!filetype:Obey')
+        self.assertEqual(tokens[NOT_KEY], {'type': ['Obey']})
+
+    def test_negation_quoted_value(self):
+        from myapp.blueprints.search import NOT_KEY
+        tokens = self.parse('!label:"Boot Disc"')
+        self.assertEqual(tokens[NOT_KEY], {'label': ['Boot Disc']})
+
+    def test_negation_not_present_without_bang(self):
+        from myapp.blueprints.search import NOT_KEY
+        tokens = self.parse('type:Obey')
+        self.assertNotIn(NOT_KEY, tokens)
+
+    def test_bare_bang_word_is_literal_text(self):
+        # A bare word starting with '!' (e.g. RISC OS '!Boot') is NOT a negation
+        from myapp.blueprints.search import NOT_KEY
+        tokens = self.parse('!Boot')
+        self.assertEqual(tokens.get('text'), ['!Boot'])
+        self.assertNotIn(NOT_KEY, tokens)
+
+    def test_negation_value_keeps_internal_bang(self):
+        # The value of a positive term may itself start with '!'
+        from myapp.blueprints.search import NOT_KEY
+        tokens = self.parse('filename:!RunImage')
+        self.assertEqual(tokens.get('filename'), ['!RunImage'])
+        self.assertNotIn(NOT_KEY, tokens)
+
 
 # =============================================================================
 # Unit tests: RISC OS filetype lookup (no database required)
@@ -557,6 +602,54 @@ class TestSearchLogic(unittest.TestCase):
     def test_no_file_results(self):
         results = self._search('filename:doesnotexist_xyzzy')
         self.assertEqual(results['files'], [])
+
+    # ------------------------------------------------------------------
+    # Negation
+    # ------------------------------------------------------------------
+
+    def test_negation_excludes_matching_file(self):
+        # type:ffa matches WindowManager and ADFS; exclude filename ADFS
+        results = self._search('type:ffa !filename:ADFS')
+        filenames = [ef.filename for ef, *_ in results['files']]
+        self.assertIn('WindowManager', filenames)
+        self.assertNotIn('ADFS', filenames)
+
+    def test_negation_keeps_null_column_rows(self):
+        # f2 ('bas') has a NULL risc_os_filetype — !type:Obey must not drop it
+        results = self._search('ext:bas !type:Obey')
+        filenames = [ef.filename for ef, *_ in results['files']]
+        self.assertIn('bas', filenames)
+
+    def test_negation_by_type(self):
+        # All ffa-typed files except those also typed ffa... exclude WindowManager
+        results = self._search('type:ffa !filename:WindowManager')
+        filenames = [ef.filename for ef, *_ in results['files']]
+        self.assertIn('ADFS', filenames)
+        self.assertNotIn('WindowManager', filenames)
+
+    def test_negation_only_returns_nothing(self):
+        # A pure-negation query seeds no positive result set
+        results = self._search('!type:Obey')
+        self.assertEqual(results['files'], [])
+        self.assertEqual(results['artefacts'], [])
+        self.assertEqual(results['catalogue_items'], [])
+
+    def test_negation_tag_row_level(self):
+        # Artefact is tagged bbc-micro; excluding a non-present tag keeps it
+        results = self._search('tag:bbc-micro !tag:zzz_nonexistent')
+        tag_results = [r for r in results['artefacts'] if r['type'] == 'tag']
+        self.assertTrue(len(tag_results) > 0)
+
+    def test_negation_protection_excludes_matching_rows(self):
+        # Excluding the same protection type leaves no matching rows
+        results = self._search('protection:bad_crc !protection:bad_crc')
+        prot_results = [r for r in results['artefacts'] if r['type'] == 'protection']
+        self.assertEqual(prot_results, [])
+
+    def test_negation_text_excludes_item(self):
+        # 'Software' matches the item; excluding a present word removes it
+        results = self._search('Software !text:classic')
+        self.assertEqual(results['catalogue_items'], [])
 
     # ------------------------------------------------------------------
     # Disc / partition searches
