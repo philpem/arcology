@@ -1424,8 +1424,15 @@ def _view_file_listing(file_form, all_artefact_ids):
     if sort_desc:
         sort_expr = desc(sort_expr)
 
-    # Compute letter-to-page mapping for A-Z jump bar (only for path sort)
-    if sort_col == 'path':
+    files_pagination = files_query.order_by(sort_expr).paginate(
+        page=page, per_page=per_page, max_per_page=per_page
+    )
+
+    # Compute letter-to-page mapping for A-Z jump bar (only for path sort).
+    # Skip the extra GROUP BY pass when the whole listing fits on one page —
+    # the jump bar has nothing to jump to, so its ~16ms query is pure waste
+    # for the common small-artefact case (#486).
+    if sort_col == 'path' and files_pagination.pages > 1:
         from ..utils.pagination import compute_letter_pages
         letter_pages, current_letter = compute_letter_pages(
             files_query, ExtractedFile.path,
@@ -1433,10 +1440,6 @@ def _view_file_listing(file_form, all_artefact_ids):
         )
     else:
         letter_pages, current_letter = {}, ''
-
-    files_pagination = files_query.order_by(sort_expr).paginate(
-        page=page, per_page=per_page, max_per_page=per_page
-    )
 
     # Count globally visible instances of each content key on this page.
     # ``file_size is not None`` deliberately includes valid zero-length files.
