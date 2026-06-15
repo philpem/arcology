@@ -419,6 +419,20 @@ Quote multi-word values:
 label:"Boot Disc"
 ```
 
+### Negation
+
+Prefix any keyed term with `!` to exclude matches:
+
+```
+type:Basic !type:Obey                 # BASIC files, but not Obey files
+tag:bbc-micro !tag:demo               # Tagged "bbc-micro" but not "demo"
+```
+
+A negated term refines an existing search — it never produces results on its
+own, so a query must contain at least one non-negated term.  (A bare word
+beginning with `!`, such as the RISC OS filename `!Boot`, is treated as a
+literal search term, not a negation.)
+
 ### Examples
 
 ```
@@ -427,6 +441,7 @@ type:Squash                           # All files with RISC OS filetype "Squash"
 type:fca                              # Same thing, using the hex code
 protection:bad_crc fs:adfs            # Protected ADFS discs
 tag:bbc-micro ext:bas                 # BASIC files tagged "bbc-micro"
+tag:bbc-micro !tag:demo               # Tagged "bbc-micro" but not "demo"
 md5:d41d8cd98f00b204e9800998ecf8427e  # Find a file by hash
 mastering:formaster                   # Discs with Formaster mastering data
 module:WindowManager                  # Find the WindowManager module

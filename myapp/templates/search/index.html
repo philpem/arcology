@@ -28,6 +28,7 @@
 		</form>
 		<div class="mt-2 text-muted small">
 			<strong>Prefix syntax:</strong>
+			Prefix any keyed term with <code>!</code> to exclude matches (<code>!type:Obey</code>, <code>!tag:demo</code>). A query must contain at least one non-negated term.
 			<code>md5:</code> <code>sha1:</code> <code>sha256:</code>
 			<code>filename:</code> <code>path:</code>
 			<code>type:</code> (RISC OS hex or name) <code>ext:</code>
@@ -42,6 +43,10 @@
 		</div>
 	</div>
 </div>
+
+{% if query_error %}
+<div class="alert alert-warning"><i class="bi bi-exclamation-triangle"></i> {{ query_error }}</div>
+{% endif %}
 
 {% if results is none %}
 {# No search yet — show quick-reference #}
