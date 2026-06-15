@@ -22,6 +22,9 @@ from urllib.parse import quote
 
 # Ensure SVG is always mapped correctly — some Linux systems omit it.
 mimetypes.add_type('image/svg+xml', '.svg')
+# MP4 (transcoded Acorn Replay videos) — guarantee the Content-Type so the
+# browser plays it inline in an HTML5 <video> instead of downloading it.
+mimetypes.add_type('video/mp4', '.mp4')
 
 
 def _mime_for_key(key: str) -> str:

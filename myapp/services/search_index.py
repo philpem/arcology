@@ -208,6 +208,40 @@ def handle_replay_movies(analysis: Analysis, details: dict,
         ))
 
 
+def handle_replay_transcode(analysis: Analysis, details: dict,
+                            full_rebuild: bool = False) -> None:
+    """Attach transcoded MP4 / poster paths to existing ReplayMovie rows.
+
+    Update-only (never inserts or deletes): the rows are created by the
+    REPLAY_PROCESS analysis, which always completes — and has its result
+    indexed — before the REPLAY_TRANSCODE job it queues can run.  In the
+    ``rebuild_all`` batch pass, REPLAY_PROCESS precedes REPLAY_TRANSCODE in
+    ``_HANDLER_MAP`` order, so the rows likewise exist by the time this runs.
+    A movie with no matching row (transcode without a recorded parse) is simply
+    skipped — re-running rebuild-search-index repairs it.
+    """
+    _mp4_max = ReplayMovie.__table__.c.mp4_output_path.type.length
+    _poster_max = ReplayMovie.__table__.c.poster_path.type.length
+
+    def _truncate(value, limit):
+        return value[:limit] if value else None
+
+    for entry in details.get('transcoded', []):
+        file_path = entry.get('file_path')
+        if not file_path:
+            continue
+        ReplayMovie.query.filter_by(
+            artefact_id=analysis.artefact_id,
+            file_path=file_path,
+        ).update(
+            {
+                'mp4_output_path': _truncate(entry.get('mp4_output_path'), _mp4_max),
+                'poster_path': _truncate(entry.get('poster_path'), _poster_max),
+            },
+            synchronize_session=False,
+        )
+
+
 # =============================================================================
 # High-level entry point (used by the API on analysis completion)
 # =============================================================================
@@ -218,6 +252,8 @@ _HANDLER_MAP = {
     AnalysisType.PARTITION_DETECT:       handle_partition_detect,
     AnalysisType.RISCOS_MODULE_PARSE:    handle_riscos_modules,
     AnalysisType.REPLAY_PROCESS:         handle_replay_movies,
+    # Must come after REPLAY_PROCESS — it updates the rows that handler creates.
+    AnalysisType.REPLAY_TRANSCODE:       handle_replay_transcode,
 }
 
 

@@ -216,6 +216,39 @@ RUN \
 
 
 #################
+# Build scotch (Acorn Replay encoder/decoder/transcoder)
+#################
+FROM ubuntu:24.04 AS build-scotch
+
+# Pinned commit SHA — update this when upgrading scotch.
+# To find the SHA for a new commit:
+#   git ls-remote https://github.com/philpem/scotch.git refs/heads/main
+# Current as of 2026-06-15; branch: main (replay-transcode merged).
+ARG SCOTCH_VERSION=71986f3b231e9055d9ad4859f94993ce04f9a085
+ARG SCOTCH_REPO=https://github.com/philpem/scotch.git
+
+# Disable prompt during package installation
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Set number of parallel compiler instances
+ARG MINUSJ=-j3
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt -y update && apt -y upgrade && \
+    apt -y install git build-essential cmake
+
+# scotch is pure C11 + libm (vendored ARM emulator); no third-party runtime deps.
+# We only need the transcoder (Replay -> raw RGB24 + WAV) and the inspector.
+RUN git clone "${SCOTCH_REPO}" /src/scotch && \
+    cd /src/scotch && git checkout "${SCOTCH_VERSION}" && \
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build build ${MINUSJ} --target replay-transcode replay-inspect && \
+    cp build/replay-transcode /usr/local/bin/ && \
+    cp build/replay-inspect /usr/local/bin/
+
+
+#################
 # Build riscosarc
 #################
 FROM ubuntu:24.04 AS build-riscosarc
@@ -306,6 +339,10 @@ COPY --from=build-riscosarc /usr/local/bin/riscosarc.jar /usr/local/bin/
 COPY --from=build-riscosarc /usr/local/bin/riscosarc /usr/local/bin/
 COPY --from=build-tbafs /usr/local/bin/tbafs-extractor /usr/local/bin/
 
+# Copy scotch Acorn Replay transcoder (used with ffmpeg by REPLAY_TRANSCODE)
+COPY --from=build-scotch /usr/local/bin/replay-transcode /usr/local/bin/
+COPY --from=build-scotch /usr/local/bin/replay-inspect /usr/local/bin/
+
 # Copy image conversion tools
 COPY --from=build-wmfrs /usr/local/bin/wmf-cli /usr/local/bin
 
@@ -328,6 +365,8 @@ ARG DEBIAN_FRONTEND=noninteractive
 # - file: GNU File for file format identification (TODO, look at replacing with Dexvert)
 # - fdisk: For sfdisk - used to carve up PC partitions
 # - default-jre: Java JRE for riscosarc
+# - ffmpeg: mux scotch's decoded Replay frames into MP4 (REPLAY_TRANSCODE); also
+#           the basis for future AVI/other-container output
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 	--mount=type=cache,target=/var/lib/apt,sharing=locked \
 	sed -i '/^Components:/ s/$/ multiverse/' /etc/apt/sources.list.d/ubuntu.sources && \
@@ -338,6 +377,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 		unzip unrar tar util-linux \
 		file fdisk \
 		default-jre \
+		ffmpeg \
 		libcairo2 libfontconfig1 python3-cairo python3-cairocffi python3-pillow \
 		fonts-freefont-ttf \
 		scour
@@ -394,6 +434,10 @@ ENV OUTPUT_DIR=/data/outputs
 ENV POLL_INTERVAL=10
 ENV LOG_LEVEL=INFO
 ENV TOOL_TIMEOUT=3600
+# Optional: directory of RISC OS Replay decompressor modules (Decompress,ffd)
+# for transcoding compressed Replay codecs. Mount your own; unset = only
+# module-free codecs (e.g. type 23 raw) can be transcoded. See doc/REPLAY_TRANSCODE.md.
+ENV REPLAY_MODULES_DIR=""
 
 # Create data directories
 RUN mkdir -p /data/uploads /data/outputs
