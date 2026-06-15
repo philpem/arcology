@@ -23,50 +23,66 @@ The detection logic is adapted from armlock_tool.py (standalone CLI).
 import struct
 from pathlib import Path
 from .extraction import _get_riscos_filetype
+from .partition import (
+    FILECORE_BB_DISC_RECORD_OFFSET,
+    FILECORE_BOOT_BLOCK_OFFSET,
+    parse_filecore_disc_record,
+)
+
+# ---------------------------------------------------------------------------
+# FileCore on-disc layout constants
+# ---------------------------------------------------------------------------
+
+# Disc address of the disc record: the FileCore boot block lives at &C00 and the
+# disc record sits at &1C0 within it, so &C00 + &1C0 = &DC0.  Derived from
+# partition.py's named constants so the offset cannot silently diverge from the
+# (now shared) disc-record parser.
+DISC_RECORD_ADDR = FILECORE_BOOT_BLOCK_OFFSET + FILECORE_BB_DISC_RECORD_OFFSET
+
+# New-format FileCore directory ("Hugo"/"Nick") layout.
+# NB: 0x800 is the *small* directory size; Extended-format (E+/F+) "big"
+# directories are 0x1000 (4 KB) and are intentionally NOT handled here — the
+# ARMlock discs this module targets are all small-directory format.
+FILECORE_DIR_SIZE = 0x800
+# Size of one directory entry.
+FILECORE_DIR_ENTRY_SIZE = 26
+# Entries start after the 1-byte StartMasSeq + 4-byte "Hugo"/"Nick" magic.
+FILECORE_DIR_HEADER_SIZE = 5
+# Bytes reserved at the end of the block for the directory tail (DirTail:
+# parent SIN, dir name, end-sequence byte and StartMasSeq check).
+FILECORE_DIR_TAIL_SIZE = 0x29
+
+# Directory-entry field offsets, relative to the entry start.
+_DIRENT_NAME = 0x00          # 10 bytes, CR/NUL terminated
+_DIRENT_NAME_LEN = 10
+_DIRENT_LOAD = 0x0A          # ui32le load address
+_DIRENT_EXEC = 0x0E          # ui32le exec address
+_DIRENT_LENGTH = 0x12        # ui32le length
+_DIRENT_SIN = 0x16           # 3-byte LE object SIN (indirect disc address)
+_DIRENT_ATTR = 0x19          # 1-byte object attributes
+# Object-attribute bit set when the entry is a directory.
+FILECORE_ATTR_DIR = 0x08
+
+# Disc address at which ARMlock stashes the real root directory during
+# installation (one FILECORE_DIR_SIZE block).
+ARMLOCK_STASH_ADDR = 0x400
+
 
 # ---------------------------------------------------------------------------
 # Disc record parsing
 # ---------------------------------------------------------------------------
 
-def _read_disc_record(image: bytearray, offset: int = 0xDC0) -> dict:
-    """Parse the 64-byte disc record from the boot block."""
+def _read_disc_record(image: bytearray, offset: int = DISC_RECORD_ADDR) -> dict:
+    """Parse the 64-byte disc record from the boot block.
+
+    Thin wrapper over the shared, full-featured
+    :func:`partition.parse_filecore_disc_record`; *offset* defaults to the
+    whole-disc boot-block location (&DC0).
+    """
     d = image[offset:offset + 0x40]
     if len(d) < 0x20:
         raise ValueError("Image too small to contain a disc record")
-    rec = {
-        "log2_sector_size": d[0x00],
-        "sectors_per_track": d[0x01],
-        "heads": d[0x02],
-        "density": d[0x03],
-        "idlen": d[0x04],
-        "log2_bpmb": d[0x05],
-        "skew": d[0x06],
-        "boot_option": d[0x07],
-        "low_sector": d[0x08],
-        "nzones_lo": d[0x09],
-        "zone_spare": struct.unpack_from("<H", d, 0x0A)[0],
-        "root_dir": struct.unpack_from("<I", d, 0x0C)[0],
-        "disc_size_lo": struct.unpack_from("<I", d, 0x10)[0],
-    }
-    # Extended fields (RISC OS 3.6+)
-    if len(d) >= 0x30:
-        rec["disc_id"] = struct.unpack_from("<H", d, 0x14)[0]
-        rec["disc_name"] = d[0x16:0x20].rstrip(b"\x00").decode("ascii", errors="replace")
-        rec["disc_size_hi"] = struct.unpack_from("<I", d, 0x24)[0]
-        rec["share_size"] = d[0x28]
-        rec["big_flag"] = d[0x29]
-        rec["nzones_hi"] = d[0x2A]
-        rec["format_version"] = struct.unpack_from("<I", d, 0x2C)[0]
-    else:
-        rec["disc_name"] = ""
-        rec["disc_size_hi"] = 0
-        rec["nzones_hi"] = 0
-        rec["format_version"] = 0
-    rec["nzones"] = rec["nzones_lo"] | (rec["nzones_hi"] << 8)
-    rec["disc_size"] = rec["disc_size_lo"] | (rec["disc_size_hi"] << 32)
-    rec["sector_size"] = 1 << rec["log2_sector_size"]
-    rec["bpmb"] = 1 << rec["log2_bpmb"]
-    return rec
+    return parse_filecore_disc_record(bytes(d))
 
 
 # ---------------------------------------------------------------------------
@@ -105,30 +121,36 @@ def _compute_armlock_addresses(rec: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def _parse_directory(image: bytearray, addr: int) -> tuple[bool, list]:
-    """Parse a new-format Filecore directory (0x800 bytes) at the given address.
+    """Parse a new-format Filecore directory (FILECORE_DIR_SIZE bytes) at the given address.
 
     Returns (valid, entries) where entries is a list of dicts with keys:
       name, load, exec, length, sin, attr, is_dir, filetype
     """
-    if addr + 0x800 > len(image):
+    if addr + FILECORE_DIR_SIZE > len(image):
         return False, []
-    magic = image[addr + 1:addr + 5]
+    magic = image[addr + 1:addr + FILECORE_DIR_HEADER_SIZE]
     if magic not in (b"Hugo", b"Nick"):
         return False, []
     entries = []
-    offset = addr + 5
-    while offset + 26 <= addr + 0x800 - 0x29:
+    offset = addr + FILECORE_DIR_HEADER_SIZE
+    entries_end = addr + FILECORE_DIR_SIZE - FILECORE_DIR_TAIL_SIZE
+    while offset + FILECORE_DIR_ENTRY_SIZE <= entries_end:
         if image[offset] == 0x00:
             break
-        name_bytes = image[offset:offset + 10]
-        name_end = next((i for i in range(10) if name_bytes[i] in (0x00, 0x0D)), 10)
+        name_bytes = image[offset + _DIRENT_NAME:offset + _DIRENT_NAME + _DIRENT_NAME_LEN]
+        name_end = next(
+            (i for i in range(_DIRENT_NAME_LEN) if name_bytes[i] in (0x00, 0x0D)),
+            _DIRENT_NAME_LEN,
+        )
         name = name_bytes[:name_end].decode("ascii", errors="replace")
-        load = struct.unpack_from("<I", image, offset + 0x0A)[0]
-        exec_addr = struct.unpack_from("<I", image, offset + 0x0E)[0]
-        length = struct.unpack_from("<I", image, offset + 0x12)[0]
-        sin = image[offset + 0x16] | (image[offset + 0x17] << 8) | (image[offset + 0x18] << 16)
-        attr = image[offset + 0x19]
-        is_dir = bool(attr & 0x08)
+        load = struct.unpack_from("<I", image, offset + _DIRENT_LOAD)[0]
+        exec_addr = struct.unpack_from("<I", image, offset + _DIRENT_EXEC)[0]
+        length = struct.unpack_from("<I", image, offset + _DIRENT_LENGTH)[0]
+        sin = (image[offset + _DIRENT_SIN]
+               | (image[offset + _DIRENT_SIN + 1] << 8)
+               | (image[offset + _DIRENT_SIN + 2] << 16))
+        attr = image[offset + _DIRENT_ATTR]
+        is_dir = bool(attr & FILECORE_ATTR_DIR)
         # Hex-string form ('fff'), consistent with the rest of the system
         filetype = _get_riscos_filetype(load)
         entries.append({
@@ -141,7 +163,7 @@ def _parse_directory(image: bytearray, addr: int) -> tuple[bool, list]:
             "is_dir": is_dir,
             "filetype": filetype,
         })
-        offset += 26
+        offset += FILECORE_DIR_ENTRY_SIZE
     return True, entries
 
 
@@ -269,9 +291,9 @@ def _read_subdir_by_sin(image: bytearray, rec: dict, sin: int) -> tuple[bool, li
     """Read a subdirectory by its SIN and return its directory entries.
 
     Resolves the SIN via the zone map (same mechanism as for files) and
-    parses the resulting 0x800-byte directory block.
+    parses the resulting directory block.
     """
-    raw = _extract_file_by_sin(image, rec, sin, 0x800)
+    raw = _extract_file_by_sin(image, rec, sin, FILECORE_DIR_SIZE)
     if not raw:
         return False, []
     return _parse_directory(bytearray(raw), 0)
@@ -503,8 +525,8 @@ def detect_armlock(image_path: Path) -> dict:
     if valid_s:
         result['stripped_root'] = stripped_entries
 
-    # Parse real root (stashed at 0x400 by ARMlock during installation)
-    valid_r, real_entries = _parse_directory(image, 0x400)
+    # Parse real root (stashed at ARMLOCK_STASH_ADDR by ARMlock during installation)
+    valid_r, real_entries = _parse_directory(image, ARMLOCK_STASH_ADDR)
     if valid_r:
         result['real_root'] = real_entries
 
@@ -612,12 +634,12 @@ def remove_armlock(image_path: Path, output_path: Path) -> dict:
         new_check = _compute_zone_check(sector)
         image[map_addr] = new_check
 
-    # 2. Copy real root from stash location (0x400) to correct location
-    real_root = bytes(image[0x400:0x400 + 0x800])
-    image[addrs['root_dir']:addrs['root_dir'] + 0x800] = real_root
+    # 2. Copy real root from stash location to its correct location
+    real_root = bytes(image[ARMLOCK_STASH_ADDR:ARMLOCK_STASH_ADDR + FILECORE_DIR_SIZE])
+    image[addrs['root_dir']:addrs['root_dir'] + FILECORE_DIR_SIZE] = real_root
 
     # 3. Zero out the stashed copy
-    image[0x400:0x400 + 0x800] = b'\x00' * 0x800
+    image[ARMLOCK_STASH_ADDR:ARMLOCK_STASH_ADDR + FILECORE_DIR_SIZE] = b'\x00' * FILECORE_DIR_SIZE
 
     try:
         output_path.write_bytes(image)

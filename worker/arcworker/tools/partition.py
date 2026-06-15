@@ -155,9 +155,94 @@ def _decode_nexus_flags(flags: int) -> dict:
     }
 
 
+def _decode_disc_name(disc_record: bytes) -> str:
+    """Decode the 10-byte FileCore disc name at offset 0x16.
+
+    The name is CR (0x0D) or NUL terminated and padded; decode as Latin-1
+    (RISC OS uses the Latin-1 superset) and strip surrounding whitespace.
+    """
+    if len(disc_record) < _DR_DISC_NAME + 10:
+        return ''
+    raw = disc_record[_DR_DISC_NAME:_DR_DISC_NAME + 10]
+    for terminator in (b'\r', b'\x00'):
+        idx = raw.find(terminator)
+        if idx != -1:
+            raw = raw[:idx]
+            break
+    return raw.decode('latin-1', errors='replace').strip()
+
+
+def parse_filecore_disc_record(disc_record: bytes) -> dict:
+    """Decode a full FileCore disc record into all of its fields.
+
+    This is the single, full-featured FileCore disc-record decoder shared by
+    the partition-table detectors here (which need ``disc_name`` / ``disc_size``
+    for labels) and the ARMlock remover in ``fs_riscos_armlock.py`` (which needs
+    the geometry, root-dir SIN and zone-map fields).  It supersedes the two
+    formerly-separate parsers so their field coverage cannot drift.
+
+    Args:
+        disc_record: The disc record itself, i.e.
+            ``boot_block[FILECORE_BB_DISC_RECORD_OFFSET:]`` (disc address
+            &C00 + &1C0 on a whole disc).  At least 64 bytes for full coverage.
+
+    Returns:
+        Dict of the raw fields plus the derived ``nzones``, ``disc_size`` (full
+        64-bit), ``disc_size_lo``, ``sector_size`` and ``bpmb``.  Extended
+        fields absent on pre-RISC OS 3.6 (old-map) records default to 0 / ''.
+    """
+    d = disc_record
+    rec = {
+        'log2_sector_size': d[0x00] if len(d) > 0x00 else 0,
+        'sectors_per_track': d[0x01] if len(d) > 0x01 else 0,
+        'heads': d[0x02] if len(d) > 0x02 else 0,
+        'density': d[0x03] if len(d) > 0x03 else 0,
+        'idlen': d[0x04] if len(d) > 0x04 else 0,
+        'log2_bpmb': d[0x05] if len(d) > 0x05 else 0,
+        'skew': d[0x06] if len(d) > 0x06 else 0,
+        'boot_option': d[0x07] if len(d) > 0x07 else 0,
+        'low_sector': d[0x08] if len(d) > 0x08 else 0,
+        'nzones_lo': d[0x09] if len(d) > 0x09 else 0,
+    }
+    if len(d) >= 0x14:
+        rec['zone_spare'] = struct.unpack_from('<H', d, 0x0A)[0]
+        rec['root_dir'] = struct.unpack_from('<I', d, 0x0C)[0]
+        rec['disc_size_lo'] = struct.unpack_from('<I', d, _DR_DISC_SIZE)[0]
+    else:
+        rec['zone_spare'] = 0
+        rec['root_dir'] = 0
+        rec['disc_size_lo'] = 0
+    rec['disc_name'] = _decode_disc_name(d)
+    # Extended fields (new map, RISC OS 3.6+); absent on old-map discs.
+    if len(d) >= 0x30:
+        rec['disc_id'] = struct.unpack_from('<H', d, 0x14)[0]
+        rec['disc_size_hi'] = struct.unpack_from('<I', d, 0x24)[0]
+        rec['share_size'] = d[0x28]
+        rec['big_flag'] = d[0x29]
+        rec['nzones_hi'] = d[0x2A]
+        rec['format_version'] = struct.unpack_from('<I', d, 0x2C)[0]
+    else:
+        rec['disc_id'] = 0
+        rec['disc_size_hi'] = 0
+        rec['share_size'] = 0
+        rec['big_flag'] = 0
+        rec['nzones_hi'] = 0
+        rec['format_version'] = 0
+    rec['nzones'] = rec['nzones_lo'] | (rec['nzones_hi'] << 8)
+    rec['disc_size'] = rec['disc_size_lo'] | (rec['disc_size_hi'] << 32)
+    rec['sector_size'] = 1 << rec['log2_sector_size']
+    rec['bpmb'] = 1 << rec['log2_bpmb']
+    return rec
+
+
 def _parse_filecore_disc_record(disc_record: bytes) -> dict:
     """
     Parse a Filecore disc record into a dict of useful fields.
+
+    Thin projection over :func:`parse_filecore_disc_record` for the
+    partition-table detectors that only need name/size/sector fields.
+    ``disc_size`` is the low 32 bits (partition sub-discs are never
+    big-format), preserving the historical behaviour of these callers.
 
     Args:
         disc_record: At least 64 bytes starting at the disc record
@@ -169,23 +254,11 @@ def _parse_filecore_disc_record(disc_record: bytes) -> dict:
     if len(disc_record) < 0x14:
         return {'disc_size': 0, 'disc_name': ''}
 
-    disc_size = struct.unpack_from('<I', disc_record, _DR_DISC_SIZE)[0]
-
-    disc_name = ''
-    if len(disc_record) >= _DR_DISC_NAME + 10:
-        raw = disc_record[_DR_DISC_NAME:_DR_DISC_NAME + 10]
-        # Terminated by CR (0x0D) or null
-        for terminator in (b'\r', b'\x00'):
-            idx = raw.find(terminator)
-            if idx != -1:
-                raw = raw[:idx]
-                break
-        disc_name = raw.decode('latin-1', errors='replace').strip()
-
+    full = parse_filecore_disc_record(disc_record)
     return {
-        'disc_size': disc_size,
-        'disc_name': disc_name,
-        'log2_sector_size': disc_record[0] if disc_record else 0,
+        'disc_size': full['disc_size_lo'],
+        'disc_name': full['disc_name'],
+        'log2_sector_size': full['log2_sector_size'],
     }
 
 
