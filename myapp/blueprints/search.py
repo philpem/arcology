@@ -214,6 +214,13 @@ def index():
     )
 
 
+@blueprint.route('/help')
+@public_readable
+def help():
+    """Search syntax reference page."""
+    return render_template('search/help.html')
+
+
 # =============================================================================
 # Search logic
 # =============================================================================

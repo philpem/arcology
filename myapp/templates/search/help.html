@@ -1,0 +1,81 @@
+{% extends "_base.html" %}
+{% block page_title %}Search syntax{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+	<h1><i class="bi bi-search"></i> Search syntax</h1>
+	<a href="{{ url_for('myapp_blueprints_search.index') }}" class="btn btn-outline-secondary">
+		<i class="bi bi-arrow-left"></i> Back to search
+	</a>
+</div>
+
+<p class="text-muted">
+	A search query is made up of one or more terms separated by spaces. A bare
+	word searches item and artefact names and descriptions; a <em>keyed</em>
+	term (<code>key:value</code>) searches a specific field.
+</p>
+
+<h2 class="h5 mt-4">General rules</h2>
+<ul>
+	<li><strong>Wildcards:</strong> use <code>*</code> to match any sequence of characters, e.g. <code>tag:prot*</code> or <code>swi:OS_*</code>.</li>
+	<li><strong>Exclude matches:</strong> prefix any keyed term with <code>!</code> to exclude it, e.g. <code>!type:Obey</code> or <code>!tag:demo</code>. A query must contain at least one non-negated term.</li>
+	<li><strong>Multi-word values:</strong> wrap values containing spaces in double quotes, e.g. <code>module:"Voice Module"</code> or <code>label:"Boot Disc"</code>.</li>
+	<li><strong>Matching:</strong> most text fields match as a substring by default. <code>filename:</code> matches the whole name exactly unless you add a <code>*</code> wildcard (so <code>filename:!Run</code> matches only <code>!Run</code>, while <code>filename:!Run*</code> matches <code>!RunImage</code>). Hashes match a prefix when shorter than the full length, otherwise exactly.</li>
+</ul>
+
+<h2 class="h5 mt-4">Search keys</h2>
+<div class="table-responsive">
+	<table class="table table-sm">
+		<thead><tr><th>Key</th><th>Searches</th><th>Example</th></tr></thead>
+		<tbody>
+			<tr><th colspan="3" class="table-light">Hashes</th></tr>
+			<tr><td><code>md5:</code></td><td>Artefact or file MD5 hash (full or prefix)</td><td><code>md5:d41d8cd98f00b204e9800998ecf8427e</code></td></tr>
+			<tr><td><code>sha1:</code></td><td>File SHA-1 hash (full or prefix)</td><td><code>sha1:da39a3ee5e6b4b0d3255bfef95601890</code></td></tr>
+			<tr><td><code>sha256:</code></td><td>Artefact or file SHA-256 hash (full or prefix)</td><td><code>sha256:e3b0c44298fc1c149afb...</code></td></tr>
+
+			<tr><th colspan="3" class="table-light">Files</th></tr>
+			<tr><td><code>filename:</code></td><td>Extracted file name (exact unless wildcarded)</td><td><code>filename:!RunImage</code></td></tr>
+			<tr><td><code>path:</code></td><td>Extracted file path (substring)</td><td><code>path:!Impression</code></td></tr>
+			<tr><td><code>type:</code></td><td>RISC OS filetype, as 3-digit hex or name</td><td><code>type:fff</code>, <code>type:Squash</code></td></tr>
+			<tr><td><code>ext:</code></td><td>File extension</td><td><code>ext:bas</code></td></tr>
+
+			<tr><th colspan="3" class="table-light">Discs &amp; partitions</th></tr>
+			<tr><td><code>label:</code></td><td>Disc / partition label (substring)</td><td><code>label:System</code></td></tr>
+			<tr><td><code>fs:</code></td><td>Filesystem type</td><td><code>fs:adfs</code></td></tr>
+			<tr><td><code>ident:</code></td><td>file(1) identification string (substring)</td><td><code>ident:"DOS boot sector"</code></td></tr>
+
+			<tr><th colspan="3" class="table-light">RISC OS modules</th></tr>
+			<tr><td><code>module:</code></td><td>Module name or help title</td><td><code>module:WindowManager</code></td></tr>
+			<tr><td><code>command:</code></td><td>Star (*) command provided by a module</td><td><code>command:Filer_Run</code></td></tr>
+			<tr><td><code>swi:</code></td><td>SWI provided by a module</td><td><code>swi:ADFS_DiscOp</code></td></tr>
+
+			<tr><th colspan="3" class="table-light">Discs (analysis)</th></tr>
+			<tr><td><code>protection:</code></td><td>Copy-protection indicator</td><td><code>protection:bad_crc</code></td></tr>
+			<tr><td><code>mastering:</code></td><td>Mastering / duplicator fingerprint</td><td><code>mastering:traceback</code></td></tr>
+
+			<tr><th colspan="3" class="table-light">Other</th></tr>
+			<tr><td><code>tag:</code></td><td>Artefact tag</td><td><code>tag:bbc-micro</code></td></tr>
+			<tr><td><em>(bare words)</em></td><td>Item and artefact names &amp; descriptions</td><td><code>Impression</code>, <code>BBC Basic</code></td></tr>
+		</tbody>
+	</table>
+</div>
+
+<h2 class="h5 mt-4">Acorn Replay / ARMovie metadata</h2>
+<p class="text-muted small">Numeric keys accept an exact value, a comparison (<code>&gt;=</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&lt;</code>), or a range (<code>15..25</code>, <code>15..</code>, <code>..25</code>).</p>
+<div class="table-responsive">
+	<table class="table table-sm">
+		<thead><tr><th>Key</th><th>Searches</th><th>Example</th></tr></thead>
+		<tbody>
+			<tr><td><code>replaytitle:</code></td><td>Movie title</td><td><code>replaytitle:"Demo Reel"</code></td></tr>
+			<tr><td><code>replayauthor:</code></td><td>Movie author</td><td><code>replayauthor:Acorn</code></td></tr>
+			<tr><td><code>replaycopyright:</code></td><td>Copyright string</td><td><code>replaycopyright:1992</code></td></tr>
+			<tr><td><code>replayvideoformat:</code></td><td>Video format / codec</td><td><code>replayvideoformat:16</code></td></tr>
+			<tr><td><code>replaysoundformat:</code></td><td>Sound format</td><td><code>replaysoundformat:1</code></td></tr>
+			<tr><td><code>replaywidth:</code></td><td>Frame width (pixels)</td><td><code>replaywidth:320</code></td></tr>
+			<tr><td><code>replayheight:</code></td><td>Frame height (pixels)</td><td><code>replayheight:256</code></td></tr>
+			<tr><td><code>replayframerate:</code></td><td>Frame rate (fps)</td><td><code>replayframerate:&gt;=24</code></td></tr>
+			<tr><td><code>replayduration:</code></td><td>Duration (seconds)</td><td><code>replayduration:10..60</code></td></tr>
+		</tbody>
+	</table>
+</div>
+{% endblock %}

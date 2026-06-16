@@ -27,19 +27,9 @@
 			</div>
 		</form>
 		<div class="mt-2 text-muted small">
-			<strong>Prefix syntax:</strong>
-			Prefix any keyed term with <code>!</code> to exclude matches (<code>!type:Obey</code>, <code>!tag:demo</code>). A query must contain at least one non-negated term.
-			<code>md5:</code> <code>sha1:</code> <code>sha256:</code>
-			<code>filename:</code> <code>path:</code>
-			<code>type:</code> (RISC OS hex or name) <code>ext:</code>
-			<code>ident:</code> <code>label:</code> <code>fs:</code>
-			<code>module:</code> (RISC OS module name)
-			<code>command:</code> (star command name)
-			<code>swi:</code> (SWI name)
-			<code>protection:</code> <code>mastering:</code> <code>tag:</code>
-			— bare words search item and artefact names &amp; descriptions.
-			<code>filename:</code> matches exactly without a wildcard (<code>filename:!Run</code> matches only <code>!Run</code>); use <code>*</code> for glob matching (<code>filename:!Run*</code> matches <code>!RunImage</code> etc.). <code>path:</code> matches as a substring by default.
-			Other fields use substring matching by default. Quote multi-word values: <code>module:"Voice Module"</code> <code>label:"Boot Disc"</code>
+			Use prefixes such as <code>type:</code>, <code>tag:</code>, or <code>filename:</code> to search specific fields,
+			<code>*</code> for wildcards, and <code>!</code> to exclude matches. Bare words search names &amp; descriptions.
+			<a href="{{ url_for('myapp_blueprints_search.help') }}">Search syntax help</a>
 		</div>
 	</div>
 </div>
@@ -52,7 +42,8 @@
 	<i class="bi bi-exclamation-triangle"></i>
 	Unknown search {{ 'keys' if unknown_keys|length > 1 else 'key' }}
 	{% for k in unknown_keys %}<code>{{ k }}:</code>{% if not loop.last %}, {% endif %}{% endfor %}
-	{{ 'were' if unknown_keys|length > 1 else 'was' }} ignored — see the syntax hint above.
+	{{ 'were' if unknown_keys|length > 1 else 'was' }} ignored — see the
+	<a href="{{ url_for('myapp_blueprints_search.help') }}">search syntax help</a>.
 </div>
 {% endif %}
 {% for warning in query_warnings %}
