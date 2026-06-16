@@ -18,7 +18,10 @@
         {% for a in running %}
         {% set is_stale = a.started_at and a.started_at < stale_cutoff %}
         <div class="list-group-item d-flex justify-content-between{% if is_stale %} list-group-item-warning{% endif %}">
-            <span><a href="{{ url_for('myapp_blueprints_analysis.view', uuid=a.uuid) }}">#{{ a.id }}</a> {{ a.analysis_type|format_analysis_type }} - {% if a.artefact %}{{ a.artefact.label }}{% else %}<span class="text-muted fst-italic">system job</span>{% endif %}</span>
+            <span>
+                <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=a.uuid) }}">#{{ a.id }}</a> {{ a.analysis_type|format_analysis_type }} - {% if a.artefact %}{{ a.artefact.label }}{% else %}<span class="text-muted fst-italic">system job</span>{% endif %}
+                {% if a.summary %}<br><small class="text-muted"><i class="bi bi-hourglass-split"></i> {{ a.summary }}</small>{% endif %}
+            </span>
             <span class="text-muted">
                 Started {{ a.started_at.strftime('%Y-%m-%d %H:%M:%S') if a.started_at else 'unknown' }}{% if is_stale %} <span class="badge bg-warning text-dark">stale</span>{% endif %}
             </span>

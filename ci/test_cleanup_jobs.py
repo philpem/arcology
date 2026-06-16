@@ -23,7 +23,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
@@ -232,6 +232,81 @@ class TestWorkerProcessCleanup(unittest.TestCase):
         process_cleanup(worker, analysis, {}, Path('/tmp'))
         worker.fail_analysis.assert_called_once()
         worker.complete_analysis.assert_not_called()
+
+    def test_reports_interim_progress(self):
+        """A long cleanup emits at least one interim progress summary."""
+        worker = self._run({
+            'artefact_keys': ['uploads/a.img', 'uploads/b.img'],
+            'output_dir_prefixes': ['outputs/item/art/'],
+        })
+        worker.report_progress.assert_called()
+        # The summary text counts against the combined key+prefix total.
+        _id, text = worker.report_progress.call_args[0]
+        self.assertEqual(_id, 42)
+        self.assertIn('of 3', text)
+
+
+class TestProgressReporter(unittest.TestCase):
+    """Throttled progress reporter used by long-running handlers."""
+
+    def _worker(self, alive=True):
+        w = MagicMock()
+        w.report_progress.return_value = alive
+        return w
+
+    def test_first_update_emits_immediately_and_formats(self):
+        from worker.arcworker.analyses._common import ProgressReporter
+
+        worker = self._worker()
+        reporter = ProgressReporter(worker, 1, total=10, label='Deleting')
+        self.assertTrue(reporter.update(1))
+        worker.report_progress.assert_called_once_with(1, 'Deleting: 1 of 10 (10%)')
+
+    def test_throttles_within_interval(self):
+        from worker.arcworker.analyses import _common
+        from worker.arcworker.analyses._common import ProgressReporter
+
+        worker = self._worker()
+        with patch.object(_common.time, 'monotonic') as mono:
+            mono.return_value = 100.0
+            reporter = ProgressReporter(worker, 1, total=10, min_interval=5.0)
+            reporter.update(1)                       # first call always emits
+            mono.return_value = 102.0
+            reporter.update(2)                       # within interval -> throttled
+            self.assertEqual(worker.report_progress.call_count, 1)
+            mono.return_value = 106.0
+            reporter.update(3)                       # interval elapsed -> emits
+            self.assertEqual(worker.report_progress.call_count, 2)
+
+    def test_force_bypasses_throttle(self):
+        from worker.arcworker.analyses import _common
+        from worker.arcworker.analyses._common import ProgressReporter
+
+        worker = self._worker()
+        with patch.object(_common.time, 'monotonic', return_value=100.0):
+            reporter = ProgressReporter(worker, 1, total=10, min_interval=5.0)
+            reporter.update(1)
+            reporter.update(2, force=True)
+            self.assertEqual(worker.report_progress.call_count, 2)
+
+    def test_summary_override(self):
+        from worker.arcworker.analyses._common import ProgressReporter
+
+        worker = self._worker()
+        ProgressReporter(worker, 7).update(summary='Custom text')
+        worker.report_progress.assert_called_once_with(7, 'Custom text')
+
+    def test_gone_signal_stops_further_updates(self):
+        from worker.arcworker.analyses._common import ProgressReporter
+
+        worker = self._worker(alive=False)
+        reporter = ProgressReporter(worker, 1, total=10)
+        self.assertFalse(reporter.update(1))
+        self.assertFalse(reporter.alive)
+        worker.report_progress.reset_mock()
+        # Once dead, even a forced update short-circuits without hitting the API.
+        self.assertFalse(reporter.update(2, force=True))
+        worker.report_progress.assert_not_called()
 
 
 if __name__ == '__main__':

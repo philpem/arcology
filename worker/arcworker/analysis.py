@@ -289,6 +289,26 @@ class AnalysisWorker:
                     pass  # not cached yet; fall through to get_input_path
         return self.get_input_path(artefact, work_dir)
 
+    def report_progress(self, analysis_id: int, summary: str) -> bool:
+        """Report interim progress for a still-running analysis.
+
+        Writes *summary* to the analysis without changing its status, so a
+        long-running job (e.g. a large CLEANUP, or any handler that loops over
+        many items) shows live progress in the queue/detail UI instead of an
+        opaque spinner.
+
+        Best-effort: a failed progress update must never fail an otherwise
+        healthy job, so transient API errors are swallowed and logged at debug
+        level.  Returns False only on the definitive "gone" signal (the row was
+        deleted server-side, e.g. by a re-analyse race) so callers can stop
+        early; True otherwise.
+        """
+        try:
+            return self.api.update_analysis(analysis_id, summary=summary)
+        except Exception as e:
+            log.debug(f"Progress update for analysis {analysis_id} failed (ignored): {e}")
+            return True
+
     def complete_analysis(self, analysis_id: int, summary: str | None = None, **kwargs) -> bool:
         """Report a completed successful analysis to the API.
 

@@ -251,6 +251,21 @@ def view(uuid):
     return render_template('analysis/view.html', analysis=analysis, details=details)
 
 
+@blueprint.route('/<string:uuid>/status.json')
+@login_required
+def status_json(uuid):
+    """Return live status/progress for one analysis (detail-page JS poller).
+
+    Exposes only the running-progress fields the detail page needs, gated by
+    the same visibility check as the detail view itself.
+    """
+    analysis = _get_analysis_or_404(uuid)
+    return jsonify(
+        status=analysis.status.value,
+        summary=analysis.summary,
+    )
+
+
 @blueprint.route('/<string:uuid>/cancel', methods=['POST'])
 @login_required
 @require_permission('read_write')

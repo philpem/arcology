@@ -24,7 +24,12 @@ from pathlib import Path
 from arcology_shared.enums import AnalysisType
 from arcology_shared.hints import HintKey
 from ..config import log
-from ._common import analysis_handler
+from ._common import ProgressReporter, analysis_handler
+
+# Emit a progress summary at most this often while deleting, so a large
+# cleanup (hundreds of keys/prefixes) shows live progress instead of an
+# opaque "In progress…" spinner.
+_PROGRESS_INTERVAL_SECONDS = 5.0
 
 
 @analysis_handler("storage cleanup", AnalysisType.CLEANUP)
@@ -45,6 +50,13 @@ def process_cleanup(self, analysis: dict, artefact: dict, work_dir: Path):
 
     deleted = 0
     errors = 0
+    processed = 0
+    total = len(keys) + len(prefixes)
+    reporter = ProgressReporter(
+        self, analysis_id, total=total,
+        min_interval=_PROGRESS_INTERVAL_SECONDS,
+        label='Deleting storage objects',
+    )
 
     for key in keys:
         try:
@@ -55,6 +67,8 @@ def process_cleanup(self, analysis: dict, artefact: dict, work_dir: Path):
         except Exception as e:
             errors += 1
             log.warning(f"Cleanup: failed to delete key {key!r}: {e}")
+        processed += 1
+        reporter.update(processed)
 
     for prefix in prefixes:
         try:
@@ -65,6 +79,8 @@ def process_cleanup(self, analysis: dict, artefact: dict, work_dir: Path):
         except Exception as e:
             errors += 1
             log.warning(f"Cleanup: failed to delete prefix {prefix!r}: {e}")
+        processed += 1
+        reporter.update(processed)
 
     summary = f'{deleted} of {len(keys) + len(prefixes)} keys/prefixes deleted'
     if errors:
