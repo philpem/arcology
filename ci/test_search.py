@@ -258,6 +258,33 @@ class TestParseQuery(unittest.TestCase):
         self.assertEqual(tokens.get('filename'), ['!RunImage'])
         self.assertNotIn(NOT_KEY, tokens)
 
+    # Unknown key detection
+
+    def test_unknown_key_detected(self):
+        from myapp.blueprints.search import KNOWN_KEYS, NOT_KEY
+        tokens = self.parse('name:Dummy')
+        used = (set(tokens) - {NOT_KEY}) | set(tokens.get(NOT_KEY, {}))
+        self.assertTrue(used - KNOWN_KEYS, "Expected 'name' to be flagged as unknown")
+
+    def test_known_key_not_flagged(self):
+        from myapp.blueprints.search import KNOWN_KEYS, NOT_KEY
+        tokens = self.parse('filename:!RunImage type:fff')
+        used = (set(tokens) - {NOT_KEY}) | set(tokens.get(NOT_KEY, {}))
+        self.assertEqual(used - KNOWN_KEYS, set())
+
+    def test_alias_resolves_to_known_key(self):
+        # 'file:' is an alias for 'filename:' — after resolution it must not appear unknown
+        from myapp.blueprints.search import KNOWN_KEYS, NOT_KEY
+        tokens = self.parse('file:!RunImage')
+        used = (set(tokens) - {NOT_KEY}) | set(tokens.get(NOT_KEY, {}))
+        self.assertEqual(used - KNOWN_KEYS, set())
+
+    def test_negated_unknown_key_detected(self):
+        from myapp.blueprints.search import KNOWN_KEYS, NOT_KEY
+        tokens = self.parse('filename:!RunImage !name:Dummy')
+        used = (set(tokens) - {NOT_KEY}) | set(tokens.get(NOT_KEY, {}))
+        self.assertIn('name', used - KNOWN_KEYS)
+
 
 # =============================================================================
 # Unit tests: RISC OS filetype lookup (no database required)

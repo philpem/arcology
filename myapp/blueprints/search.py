@@ -69,6 +69,22 @@ _ALIASES = {
 # {key: [values]} dict and only present when at least one negation is parsed.
 NOT_KEY = '__not__'
 
+# Canonical search keys recognised by the search engine (after alias resolution).
+# Any key not in this set is silently ignored by all sub-searches; we surface
+# such keys to the user as warnings so they can spot typos.
+KNOWN_KEYS = frozenset({
+    'md5', 'sha1', 'sha256',
+    'filename', 'path', 'type', 'ext',
+    'ident', 'label', 'fs',
+    'protection', 'mastering',
+    'module', 'command', 'swi',
+    'tag',
+    'text',
+    'replay_title', 'replay_author', 'replay_copyright',
+    'replay_vformat', 'replay_sformat',
+    'replay_width', 'replay_height', 'replay_framerate', 'replay_duration',
+})
+
 # Regex: optional '!' negation prefix on keyed terms, quoted/bare value after a
 # colon, or bare word.  Negation is only recognised on key:value forms — a bare
 # word beginning with '!' (e.g. a RISC OS filename like '!Boot') is left intact.
@@ -138,6 +154,11 @@ def index():
     page = max(1, page)
     tokens = parse_query(q)
 
+    # Warn about keys the search engine doesn't recognise (typos / wrong syntax).
+    # Aliases are already resolved by parse_query, so only truly unknown keys appear.
+    _all_used_keys = (set(tokens) - {NOT_KEY}) | set(tokens.get(NOT_KEY, {}))
+    unknown_keys = sorted(_all_used_keys - KNOWN_KEYS)
+
     # A query made up entirely of negations has nothing to match against — every
     # sub-search needs at least one positive term to seed its result set.
     has_positive = any(k != NOT_KEY for k in tokens)
@@ -177,6 +198,7 @@ def index():
         q=q,
         tokens=tokens,
         query_error=query_error,
+        unknown_keys=unknown_keys,
         results=results,
         totals=totals,
         pagination=pagination,

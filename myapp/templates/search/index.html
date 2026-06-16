@@ -47,6 +47,16 @@
 {% if query_error %}
 <div class="alert alert-warning"><i class="bi bi-exclamation-triangle"></i> {{ query_error }}</div>
 {% endif %}
+{% if unknown_keys %}
+<div class="alert alert-warning">
+	<i class="bi bi-exclamation-triangle"></i>
+	Unknown search key{{ 's' if unknown_keys|length > 1 else '' }}:
+	{% for k in unknown_keys %}<code>{{ k }}:</code>{% if not loop.last %}, {% endif %}{% endfor %} —
+	{{ 'these terms were' if unknown_keys|length > 1 else 'this term was' }} ignored.
+	Valid keys include <code>filename:</code>, <code>path:</code>, <code>type:</code>,
+	<code>label:</code>, <code>tag:</code>, <code>text:</code>, and others shown below.
+</div>
+{% endif %}
 
 {% if results is none %}
 {# No search yet — show quick-reference #}
