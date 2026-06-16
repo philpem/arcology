@@ -947,6 +947,11 @@ def _viewer_explicit_gate(artefact, output_groups, all_partition_ids, _output_bl
             explicit_file_paths = {row.path for row in explicit_efs}
 
     for group in output_groups:
+        # Replay groups carry their own explicit/restricted/stable_id from
+        # content_gate_flags (gated per owning artefact, incl. derived ones);
+        # don't overwrite them with the output-path based computation here.
+        if group.get('is_replay'):
+            continue
         group['explicit'] = (
             artefact_is_explicit or group.get('source_file') in explicit_file_paths
         )
@@ -1000,10 +1005,11 @@ def _viewer_thumbnail_bundle(artefact, output_groups, file_filter):
         single_img_groups, other_groups = [], []
         for g in output_groups:
             img_count = sum(1 for o in g['outputs'] if o.get('type') == 'image')
-            if img_count == 1:
-                # Explicit single-image groups stay in the bundle; the template
-                # wraps each individual explicit thumbnail with its own gate so
-                # the directory grid stays unified.
+            if img_count == 1 or g.get('is_replay'):
+                # Single-image groups and Replay movies are single thumbnails, so
+                # they join the per-directory bundle grid.  Explicit ones stay in
+                # the bundle; the template wraps each with its own gate so the
+                # directory grid stays unified.
                 single_img_groups.append(g)
             else:
                 other_groups.append(g)
@@ -1187,13 +1193,16 @@ def _viewer_replay_detail(file_filter, all_artefact_ids):
     return detail
 
 
-def _viewer_replay_posters(all_artefact_ids):
-    """Poster thumbnails for ARMovie files, shown in the viewer grid.
+def _viewer_replay_groups(all_artefact_ids, current_path):
+    """Replay (ARMovie) movies as viewer groups, interleaved with converted outputs.
 
+    Each movie becomes a single-thumbnail group keyed by its extracted-file path
+    (``source_file``) so it sorts, filters, paginates and thumbnail-bundles
+    alongside the other files instead of sitting in a separate trailing section.
     Each links to the Replay detail/player card (viewer?file=<path>), the same
     way converted sprites link to their full image.  Poster images come from a
-    completed REPLAY_TRANSCODE analysis; a movie not yet transcoded shows with
-    no poster (the template renders a film placeholder).
+    completed REPLAY_TRANSCODE analysis; a movie not yet transcoded has no poster
+    (the template renders a play/audio placeholder).
     """
     rows = (
         ReplayMovie.query
@@ -1207,26 +1216,36 @@ def _viewer_replay_posters(all_artefact_ids):
         {a.id: a for a in Artefact.query.filter(Artefact.id.in_(art_ids)).all()}
         if art_ids else {}
     )
-    posters = []
+    groups = []
     for row in rows:
+        # Honour the subdirectory browse filter (?path=), matching the prefix
+        # filter _viewer_collect_groups applies to the converted-output groups.
+        if current_path and not (row.file_path or '').startswith(current_path):
+            continue
         restricted, explicit = content_gate_flags(
             current_user, artefacts.get(row.artefact_id))
-        posters.append({
-            'file_path': row.file_path,
-            'title': row.title,
-            'poster_url': (
-                url_for(f'{ROUTENAME}.get_output_file', filename=row.poster_path)
-                if row.poster_path else None
-            ),
-            'has_mp4': bool(row.mp4_output_path),
-            'sound_only': row.video_format == 0,
+        groups.append({
+            'label': row.file_path,
+            'source_file': row.file_path,
+            'outputs': [],
+            'is_replay': True,
+            'replay': {
+                'file_path': row.file_path,
+                'title': row.title,
+                'poster_url': (
+                    url_for(f'{ROUTENAME}.get_output_file', filename=row.poster_path)
+                    if row.poster_path else None
+                ),
+                'has_mp4': bool(row.mp4_output_path),
+                'sound_only': row.video_format == 0,
+            },
             'restricted': restricted,
             'explicit': explicit,
             'stable_id': hashlib.md5(
                 f"replay:{row.artefact_id}:{row.file_path}".encode()
             ).hexdigest()[:12],
         })
-    return posters
+    return groups
 
 
 def _viewer_stamp_stable_ids(artefact, output_groups):
@@ -1267,6 +1286,21 @@ def _render_viewer(artefact):
     output_groups, viewer_status, failed_conversion_list, use_pagination = \
         _viewer_collect_groups(artefact, all_artefact_ids, file_filter, current_path, _enrich_outputs)
 
+    # Fold Replay (ARMovie) movies into the unified grid so they interleave with
+    # the converted outputs by filename — sharing the same sort, subdirectory
+    # nav, filetype facet, pagination and thumbnail bundling — instead of sitting
+    # in a separate trailing "Acorn Replay media" section.  Skip when drilled
+    # into a single file (?file=): the replay_detail player card handles that.
+    replay_present = False
+    if not file_filter and viewer_status != 'restricted':
+        replay_groups = _viewer_replay_groups(all_artefact_ids, current_path)
+        if replay_groups:
+            replay_present = True
+            output_groups = output_groups + replay_groups
+            # Re-sort the merged list (collect already sorted its own groups) so
+            # movies and converted outputs interleave alphabetically by path.
+            output_groups.sort(key=lambda g: g['label'].lower())
+
     subdirectories, archive_paths = _viewer_subdirectories(
         artefact, output_groups, file_filter, current_path, all_partition_ids)
 
@@ -1292,13 +1326,10 @@ def _render_viewer(artefact):
     # outputs, so suppress them when the artefact's outputs are restricted —
     # matching how image/Draw outputs are hidden (the bytes are independently
     # gated by get_output_file, but we must not show a broken player either).
+    # The interleaved poster thumbnails were already folded into output_groups
+    # above; replay_detail covers the single-movie (?file=) player card.
     _outputs_restricted = viewer_status == 'restricted'
     replay_detail = None if _outputs_restricted else _viewer_replay_detail(file_filter, all_artefact_ids)
-    # Poster grid only when not already drilled into a single movie's player card.
-    replay_posters = (
-        [] if (file_filter or _outputs_restricted)
-        else _viewer_replay_posters(all_artefact_ids)
-    )
 
     _viewer_stamp_stable_ids(artefact, output_groups)
 
@@ -1313,7 +1344,7 @@ def _render_viewer(artefact):
         failed_conversion_list=failed_conversion_list,
         module_detail=module_detail,
         replay_detail=replay_detail,
-        replay_posters=replay_posters,
+        replay_present=replay_present,
         user_can_bypass_explicit=user_can_bypass_explicit,
         total_counts=total_counts,
         total_groups=total_groups,

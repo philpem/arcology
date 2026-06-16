@@ -41,27 +41,47 @@
 {% endif %}
 {% endmacro %}
 
-{# Replay poster thumbnail link — rendered plain, or wrapped in the explicit
-   gate when the movie is EXPLICIT-and-bypassable. #}
-{% macro replay_poster_link(p) %}
-<a href="{{ request.path }}?file={{ p.file_path | urlencode }}" class="position-relative d-block" title="Open Replay player{% if p.title %}: {{ p.title }}{% endif %}">
-    {# Media-type badge: distinguishes sound-only Replay (no video
-       track) from video, overlaid on the poster thumbnail. #}
-    <span class="badge bg-dark bg-opacity-75 position-absolute top-0 end-0 m-1"
-          title="{% if p.sound_only %}Sound-only Replay{% else %}Replay movie{% endif %}">
-        {% if p.sound_only %}<i class="bi bi-music-note-beamed"></i> Sound{% else %}<i class="bi bi-film"></i> Movie{% endif %}
-    </span>
+{# Replay thumbnail link — the poster (or a dark placeholder when not yet
+   transcoded) with a centred play/audio badge marking it as playable media.
+   The <a> always carries .viewer-thumb-link so it keeps the square aspect box
+   whether it is a direct card child or nested inside the explicit gate.  The
+   overlay sits above the poster (z-index) with pointer-events:none so clicks
+   fall through to the link.  bi-play-fill = video / audio+video,
+   bi-music-note-beamed = sound-only (and any future audio-only filetype). #}
+{% macro replay_thumb(p) %}
+<a href="{{ request.path }}?file={{ p.file_path | urlencode }}"
+   class="viewer-thumb-link replay-thumb"
+   title="Open Replay player{% if p.title %}: {{ p.title }}{% endif %}{% if not p.has_mp4 %} (not yet transcoded){% endif %}">
     {% if p.poster_url %}
-    <img src="{{ p.poster_url }}" class="viewer-img card-img-top" alt="{{ p.title or p.file_path }}" loading="lazy">
+    <img src="{{ p.poster_url }}" class="viewer-img" alt="{{ p.title or p.file_path }}" loading="lazy">
     {% else %}
-    <div class="ratio ratio-16x9 bg-dark d-flex align-items-center justify-content-center rounded-top">
-        <span class="text-muted small text-center px-1">
-            {% if p.sound_only %}<i class="bi bi-music-note-beamed"></i><br>{% if p.has_mp4 %}audio{% else %}not transcoded{% endif %}
-            {% else %}<i class="bi bi-film"></i><br>{% if p.has_mp4 %}video{% else %}not transcoded{% endif %}{% endif %}
-        </span>
-    </div>
+    <div class="viewer-img bg-dark"></div>
     {% endif %}
+    <span class="replay-play-overlay{% if not p.has_mp4 %} replay-play-overlay-pending{% endif %}"
+          aria-hidden="true"
+          title="{% if p.sound_only %}Sound-only Replay{% else %}Replay movie{% endif %}{% if not p.has_mp4 %} — not yet transcoded{% endif %}">
+        <i class="bi {% if p.sound_only %}bi-music-note-beamed{% else %}bi-play-fill{% endif %}"></i>
+    </span>
 </a>
+{% endmacro %}
+
+{# One Replay movie as a thumbnail card in the unified grid (interleaved with
+   converted-output thumbnails).  Applies the same content gates as image
+   thumbnails: hard-locked placeholder when restricted, blur+consent when
+   EXPLICIT-and-bypassable, plain otherwise. #}
+{% macro replay_card(item, viewer_col_class) %}
+{% set p = item.replay %}
+<div class="{{ viewer_col_class }}">
+    {% call thumb_card(p.title or (p.file_path.split('/') | last)) %}
+        {% if item.restricted %}
+        {{ locked_thumb() }}
+        {% elif item.explicit %}
+        {% call explicit_gate(item.stable_id, compact=true) %}{{ replay_thumb(p) }}{% endcall %}
+        {% else %}
+        {{ replay_thumb(p) }}
+        {% endif %}
+    {% endcall %}
+</div>
 {% endmacro %}
 
 {# Image / SVG / text outputs for one non-bundle group — rendered plain, hidden
@@ -186,6 +206,23 @@
     background: repeating-conic-gradient(#e0e0e0 0% 25%, #ffffff 0% 50%) 0 0 / 16px 16px;
     border: 1px solid #dee2e6;
 }
+/* Replay playability badge — centred over the poster/placeholder.  Explicit
+   z-index keeps it above the poster image (which otherwise paints over a
+   plain sibling); pointer-events:none lets clicks reach the <a> link. */
+.replay-play-overlay {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 3; pointer-events: none;
+    width: 2.75rem; height: 2.75rem;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55); color: #fff;
+    font-size: 1.4rem; line-height: 1;
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.55);
+}
+.replay-play-overlay-pending { opacity: 0.6; }
+/* Optically centre the play triangle inside the circle. */
+.replay-play-overlay .bi-play-fill { margin-left: 0.12em; }
 /* 8-column grid at xl breakpoint (Bootstrap has no col-1.5) */
 @media (min-width: 1200px) {
     .col-custom-8-xl { flex: 0 0 12.5%; width: 12.5%; max-width: 12.5%; }
@@ -237,7 +274,7 @@
 <div class="alert alert-info">
     <i class="bi bi-hourglass-split"></i> Conversion in progress — please refresh in a moment.
 </div>
-{% elif viewer_status == 'failed' and not module_detail and not replay_detail %}
+{% elif viewer_status == 'failed' and not module_detail and not replay_detail and not replay_present %}
 <div class="alert alert-warning">
     <i class="bi bi-exclamation-triangle"></i>
     Conversion failed or has not been run yet.
@@ -506,29 +543,6 @@
 </div>
 {% endif %}
 
-{% if replay_posters %}
-{# Replay videos as poster thumbnails (like converted sprites) — each links to
-   the movie's player card via ?file=<path>. #}
-<h6 class="font-monospace border-bottom pb-1 mb-2 mt-3"><i class="bi bi-film text-primary"></i> Acorn Replay media</h6>
-<div class="row g-3 mb-4">
-    {% for p in replay_posters %}
-    <div class="{{ viewer_col_class }}">
-        {% call thumb_card(p.title or (p.file_path.split('/') | last)) %}
-            {% if p.restricted %}
-            {# Non-bypassable restriction (incl. NSFW without bypass): locked placeholder. #}
-            {{ locked_thumb() }}
-            {% elif p.explicit %}
-            {# Explicit (NSFW) but bypassable: blur the thumbnail behind a reveal gate. #}
-            {% call explicit_gate(p.stable_id, compact=true) %}{{ replay_poster_link(p) }}{% endcall %}
-            {% else %}
-            {{ replay_poster_link(p) }}
-            {% endif %}
-        {% endcall %}
-    </div>
-    {% endfor %}
-</div>
-{% endif %}
-
 {% for group in output_groups %}
 
 {% if group.is_thumbnail_bundle %}
@@ -536,6 +550,9 @@
 {% if group.label %}<h6 class="font-monospace border-bottom pb-1 mb-2 mt-3">{{ group.label }}</h6>{% endif %}
 <div class="row g-3 mb-4">
     {% for item in group.bundle_items %}
+    {% if item.is_replay %}
+    {{ replay_card(item, viewer_col_class) }}
+    {% else %}
     {% set img_out = item.outputs | selectattr('type', 'equalto', 'image') | first %}
     {% if img_out %}
     {% set preview_file = img_out.svg_filename if img_out.svg_filename else img_out.filename %}
@@ -568,8 +585,22 @@
         {% endif %}
     </div>
     {% endif %}
+    {% endif %}{# end is_replay else #}
     {% endfor %}
 </div>
+
+{% elif group.is_replay %}
+{# ── Single Replay movie group (interleaved, non-thumbnail mode) ── #}
+{% if output_groups | length > 1 or group.source_file %}
+<section class="mb-5">
+<h5 class="font-monospace border-bottom pb-2 mb-3">{{ group.label }}</h5>
+{% endif %}
+<div class="row g-3 mb-4">
+{{ replay_card(group, viewer_col_class) }}
+</div>
+{% if output_groups | length > 1 or group.source_file %}
+</section>
+{% endif %}
 
 {% else %}
 
@@ -611,7 +642,7 @@
 </div>
 {% endif %}
 
-{% if output_groups or replay_detail or replay_posters %}
+{% if output_groups or replay_detail %}
 <script>
 function revealExplicit(gid) {
     var overlay = document.getElementById('explicit-overlay-' + gid);
