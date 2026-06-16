@@ -111,7 +111,7 @@ def strip_tosec_metadata(label: str) -> str:
     ``Word(NG) 1.0`` stays intact.
     """
     result = _TOSEC_TRAILING_RE.sub('', label)
-    result = _TOSEC_TAG_RE.sub('', result)
+    result = _TOSEC_TAG_RE.sub(' ', result)
     result = _TOSEC_VERSION_UNWRAP_RE.sub(r'v\1', result)
     result = _MULTI_SPACE_RE.sub(' ', result)
     return result.strip()
@@ -594,11 +594,6 @@ def _gather_item(client: ArcologyClient, item: dict, filter_tags: list[str],
                  root_files: str, jobs: int) -> dict:
     """Fetch an item's artefacts/partitions/files and group by application dir."""
     item_name = item['name']
-    category = ''
-    for tag in item.get('tags', []):
-        if tag not in filter_tags:
-            category = tag
-            break
 
     # Reuse the artefact list when the item was already fetched in detail
     # (the --item selection path), otherwise fetch it now.
@@ -619,7 +614,6 @@ def _gather_item(client: ArcologyClient, item: dict, filter_tags: list[str],
     return {
         'item': item,
         'item_name': item_name,
-        'category': category,
         'version': version,
         'artefact_results': artefact_results,
     }
