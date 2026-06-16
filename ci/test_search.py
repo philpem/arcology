@@ -374,30 +374,31 @@ class TestCheckQueryWarnings(unittest.TestCase):
 
     # Hash length / format validation
 
-    def test_short_md5_warns(self):
-        warns = self._texts('md5:abc')
-        self.assertTrue(any('md5:abc' in w for w in warns))
+    def test_prefix_md5_no_warn(self):
+        # Short hex values are valid prefix searches — must NOT warn
+        warns = self._texts('md5:deadbeef')
+        self.assertFalse(any('md5:deadbeef' in w for w in warns))
 
     def test_correct_md5_no_warn(self):
         warns = self._texts('md5:' + 'a' * 32)
-        self.assertFalse(any('32-character' in w for w in warns))
+        self.assertFalse(any('too long' in w or 'hexadecimal' in w for w in warns))
 
-    def test_short_sha1_warns(self):
-        warns = self._texts('sha1:cafe')
-        self.assertTrue(any('sha1:cafe' in w for w in warns))
+    def test_too_long_md5_warns(self):
+        warns = self._texts('md5:' + 'a' * 33)
+        self.assertTrue(any('too long' in w for w in warns))
 
     def test_correct_sha256_no_warn(self):
         warns = self._texts('sha256:' + 'b' * 64)
-        self.assertFalse(any('64-character' in w for w in warns))
+        self.assertFalse(any('too long' in w or 'hexadecimal' in w for w in warns))
 
     def test_nonhex_md5_warns(self):
-        warns = self._texts('md5:' + 'z' * 32)
-        self.assertTrue(any('md5:' in w for w in warns))
+        warns = self._texts('md5:zzzzzzzz')
+        self.assertTrue(any('hexadecimal' in w for w in warns))
 
     def test_wildcard_hash_not_double_warned(self):
-        # A wildcard hash should warn about the wildcard but NOT about length
+        # A wildcard hash should warn about the wildcard but NOT about length/format
         warns = self._texts('md5:dead*')
-        self.assertFalse(any('32-character' in w for w in warns))
+        self.assertFalse(any('hexadecimal' in w or 'too long' in w for w in warns))
 
     def test_no_warnings_clean_query(self):
         warns = self._texts('type:fff filename:!RunImage')
@@ -812,8 +813,19 @@ class TestSearchLogic(unittest.TestCase):
         filenames = [ef.filename for ef, *_ in results['files']]
         self.assertIn('!RunImage', filenames)
 
+    def test_md5_prefix_finds_file(self):
+        # An 8-character prefix should match the file whose MD5 starts with it
+        results = self._search('md5:deadbeef')
+        filenames = [ef.filename for ef, *_ in results['files']]
+        self.assertIn('!RunImage', filenames)
+
     def test_sha1_finds_file(self):
         results = self._search('sha1:cafebabe' + '0' * 32)
+        filenames = [ef.filename for ef, *_ in results['files']]
+        self.assertIn('!RunImage', filenames)
+
+    def test_sha1_prefix_finds_file(self):
+        results = self._search('sha1:cafebabe')
         filenames = [ef.filename for ef, *_ in results['files']]
         self.assertIn('!RunImage', filenames)
 
