@@ -300,6 +300,26 @@
         <i class="bi bi-film text-primary"></i> Acorn Replay / ARMovie{% if replay_detail.title %} — {{ replay_detail.title }}{% endif %}
     </div>
     <div class="card-body">
+        {% if replay_detail.restricted %}
+        {# Non-bypassable download restriction (incl. NSFW without bypass): withhold
+           the player/poster (the bytes 403 anyway) and show a notice. #}
+        <div class="alert alert-warning">
+            <i class="bi bi-lock-fill"></i>
+            This Replay file has a download restriction and you do not hold a bypass,
+            so its player and poster are not available.
+        </div>
+        {% else %}
+        {% if replay_detail.explicit %}
+        {# Explicit (NSFW) content the user may bypass: blur player + poster behind
+           a consent overlay, mirroring the image-output explicit gate. #}
+        <div class="explicit-gate mb-3" id="explicit-gate-{{ replay_detail.stable_id }}">
+            <div class="explicit-gate-overlay" id="explicit-overlay-{{ replay_detail.stable_id }}">
+                <span class="badge bg-danger fs-6 mb-2"><i class="bi bi-exclamation-triangle-fill"></i> Explicit Content</span>
+                <p class="text-white text-center small mb-3">This content is marked as explicit. Click to reveal.</p>
+                <button class="btn btn-outline-light btn-sm" onclick="revealExplicit('{{ replay_detail.stable_id }}')">I understand — show content</button>
+            </div>
+            <div id="explicit-content-{{ replay_detail.stable_id }}" class="explicit-content-blur">
+        {% endif %}
         {% if replay_detail.mp4_url %}
         {% if replay_detail.video_format == 0 %}
         {# Sound-only Replay file — audio player, with the embedded poster sprite
@@ -322,6 +342,10 @@
             {% else %}Preview not yet available (transcode pending or codec unsupported).{% endif %}
         </p>
         {% endif %}
+        {% if replay_detail.explicit %}
+            </div>{# explicit-content #}
+        </div>{# explicit-gate #}
+        {% endif %}
         {# Download toolbar — shown whenever any artefact is available to download. #}
         {% if replay_detail.mp4_url or replay_detail.poster_url or replay_detail.original_url %}
         <div class="mb-3 d-flex flex-wrap gap-2">
@@ -343,6 +367,7 @@
             {% endif %}
         </div>
         {% endif %}
+        {% endif %}{# end not restricted #}
         <table class="table table-sm mb-0">
             <tbody>
                 {% if replay_detail.title %}
@@ -400,6 +425,22 @@
     {% for p in replay_posters %}
     <div class="{{ viewer_col_class }}">
         <div class="card viewer-img-card h-100">
+            {% if p.restricted %}
+            {# Non-bypassable restriction (incl. NSFW without bypass): locked placeholder. #}
+            <div class="viewer-thumb-link bg-dark d-flex align-items-center justify-content-center"
+                 title="Download restricted">
+                <i class="bi bi-lock-fill text-secondary fs-3"></i>
+            </div>
+            {% else %}
+            {% if p.explicit %}
+            {# Explicit (NSFW) but bypassable: blur the thumbnail behind a reveal gate. #}
+            <div class="explicit-gate" id="explicit-gate-{{ p.stable_id }}">
+                <div class="explicit-gate-overlay" id="explicit-overlay-{{ p.stable_id }}">
+                    <span class="badge bg-danger mb-2"><i class="bi bi-exclamation-triangle-fill"></i> Explicit</span>
+                    <button class="btn btn-outline-light btn-sm" onclick="revealExplicit('{{ p.stable_id }}')">Show</button>
+                </div>
+                <div id="explicit-content-{{ p.stable_id }}" class="explicit-content-blur">
+            {% endif %}
             <a href="{{ request.path }}?file={{ p.file_path | urlencode }}" class="position-relative d-block" title="Open Replay player{% if p.title %}: {{ p.title }}{% endif %}">
                 {# Media-type badge: distinguishes sound-only Replay (no video
                    track) from video, overlaid on the poster thumbnail. #}
@@ -418,6 +459,11 @@
                 </div>
                 {% endif %}
             </a>
+            {% if p.explicit %}
+                </div>{# explicit-content #}
+            </div>{# explicit-gate #}
+            {% endif %}
+            {% endif %}{# end not restricted #}
             <div class="card-footer p-1 text-center">
                 <span class="viewer-name font-monospace">{{ p.title or (p.file_path.split('/') | last) }}</span>
             </div>
@@ -620,7 +666,7 @@
 </div>
 {% endif %}
 
-{% if output_groups %}
+{% if output_groups or replay_detail or replay_posters %}
 <script>
 function revealExplicit(gid) {
     var overlay = document.getElementById('explicit-overlay-' + gid);
