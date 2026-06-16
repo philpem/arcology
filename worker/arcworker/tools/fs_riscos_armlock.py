@@ -20,8 +20,10 @@ This module provides two public functions:
 The detection logic is adapted from armlock_tool.py (standalone CLI).
 """
 
+import shutil
 import struct
 from pathlib import Path
+from .base import mmap_readonly
 from .extraction import _get_riscos_filetype
 from .partition import (
     FILECORE_BB_DISC_RECORD_OFFSET,
@@ -458,11 +460,22 @@ def detect_armlock(image_path: Path) -> dict:
     }
 
     try:
-        image = bytearray(image_path.read_bytes())
+        with mmap_readonly(image_path) as image:
+            return _detect_armlock_scan(image, result)
     except OSError as e:
         result['error'] = f'Cannot read image: {e}'
         return result
 
+
+def _detect_armlock_scan(image, result: dict) -> dict:
+    """Run ARMlock detection over an already-open image buffer.
+
+    *image* is any indexable byte buffer — in practice a read-only ``mmap`` of
+    the disc image, so a multi-GB hard-disc image is never copied into RAM (the
+    detector only touches structures near the start plus whatever the FileCore
+    directory chain references).  *result* is the partially-built dict from
+    :func:`detect_armlock`, returned populated.
+    """
     if len(image) < 0xE00:
         result['error'] = 'Image too small to contain a boot block'
         return result
@@ -605,16 +618,20 @@ def remove_armlock(image_path: Path, output_path: Path) -> dict:
       success (bool)
       error (str|None)
     """
+    # Validate the disc record from a small prefix first, so a multi-GB image is
+    # never read into RAM.  The boot block lives at &C00 with the disc record
+    # inside it, so the first &E00 bytes are sufficient to read and validate it.
     try:
-        image = bytearray(image_path.read_bytes())
+        with open(image_path, 'rb') as f:
+            head = f.read(0x1000)
     except OSError as e:
         return {'success': False, 'error': f'Cannot read image: {e}'}
 
-    if len(image) < 0xE00:
+    if len(head) < 0xE00:
         return {'success': False, 'error': 'Image too small to contain a boot block'}
 
     try:
-        rec = _read_disc_record(image)
+        rec = _read_disc_record(head)
     except ValueError as e:
         return {'success': False, 'error': str(e)}
 
@@ -624,25 +641,34 @@ def remove_armlock(image_path: Path, output_path: Path) -> dict:
     addrs = _compute_armlock_addresses(rec)
     sector_size = rec['sector_size']
 
-    # 1. Fix zone map boot_option and recompute ZoneCheck for both copies
-    for map_addr in (addrs['map_primary'], addrs['map_backup']):
-        stored_boot = image[map_addr + 0x0B]
-        real_boot = _decode_armlock_boot_option(stored_boot)
-        image[map_addr + 0x0B] = real_boot
-        sector = bytearray(image[map_addr:map_addr + sector_size])
-        sector[0x0B] = real_boot
-        new_check = _compute_zone_check(sector)
-        image[map_addr] = new_check
-
-    # 2. Copy real root from stash location to its correct location
-    real_root = bytes(image[ARMLOCK_STASH_ADDR:ARMLOCK_STASH_ADDR + FILECORE_DIR_SIZE])
-    image[addrs['root_dir']:addrs['root_dir'] + FILECORE_DIR_SIZE] = real_root
-
-    # 3. Zero out the stashed copy
-    image[ARMLOCK_STASH_ADDR:ARMLOCK_STASH_ADDR + FILECORE_DIR_SIZE] = b'\x00' * FILECORE_DIR_SIZE
-
+    # Copy the image on disk, then patch only the few affected sectors in place
+    # with seek/read/write.  The full image is never held in memory — only the
+    # handful of touched sectors are read — so even a multi-GB hard-disc image is
+    # safe, and this needs no mmap (so there is nothing to fall back from).
     try:
-        output_path.write_bytes(image)
+        shutil.copy(image_path, output_path)
+        with open(output_path, 'r+b') as f:
+            # 1. Fix zone map boot_option and recompute ZoneCheck for both copies
+            for map_addr in (addrs['map_primary'], addrs['map_backup']):
+                f.seek(map_addr)
+                sector = bytearray(f.read(sector_size))
+                if len(sector) < sector_size:
+                    return {'success': False, 'error': 'Truncated image: zone map sector missing'}
+                real_boot = _decode_armlock_boot_option(sector[0x0B])
+                sector[0x0B] = real_boot
+                sector[0] = _compute_zone_check(sector)  # check byte at sector offset 0
+                f.seek(map_addr)
+                f.write(sector)
+
+            # 2. Copy real root from stash location to its correct location
+            f.seek(ARMLOCK_STASH_ADDR)
+            real_root = f.read(FILECORE_DIR_SIZE)
+            f.seek(addrs['root_dir'])
+            f.write(real_root)
+
+            # 3. Zero out the stashed copy
+            f.seek(ARMLOCK_STASH_ADDR)
+            f.write(b'\x00' * FILECORE_DIR_SIZE)
     except OSError as e:
         return {'success': False, 'error': f'Cannot write output: {e}'}
 

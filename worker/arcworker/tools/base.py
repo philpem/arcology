@@ -2,7 +2,10 @@
 Base utilities for running external tools.
 """
 
+import contextlib
 import hashlib
+import mmap
+import os
 import subprocess
 import sys
 import threading
@@ -340,5 +343,42 @@ def compute_file_hash(filepath: Path) -> tuple[str, str, int]:
             size += len(chunk)
 
     return md5.hexdigest(), sha256.hexdigest(), size
+
+
+@contextlib.contextmanager
+def mmap_readonly(path: Path):
+    """Memory-map a file read-only for random access without loading it into RAM.
+
+    Disc images and other artefacts catalogued here can be many gigabytes;
+    reading one whole with ``Path.read_bytes()`` allocates the entire file on the
+    Python heap and has OOM-killed workers (a 6 GB ADFS hard-disc image during an
+    inline ARMlock probe).  A read-only mmap exposes the same byte-buffer
+    interface (``buf[i]`` -> int, ``buf[a:b]`` -> bytes, ``len(buf)``) while only
+    the pages actually touched are faulted into memory.
+
+    Yields an :class:`mmap.mmap` for a non-empty file, or an empty ``bytes``
+    object for an empty file (mmap cannot map a zero-length file).
+
+    If mmap is unavailable for the file (rare — e.g. some network or special
+    filesystems return ENODEV), falls back to a full read so the analysis still
+    completes.  The fallback is logged because it forfeits the memory bound; in
+    practice the worker only mmaps regular local files (inputs are downloaded to
+    a local work dir), where mmap does not fail.
+    """
+    with open(path, 'rb') as f:
+        if f.seek(0, os.SEEK_END) == 0:
+            yield b''
+            return
+        f.seek(0)
+        try:
+            buf = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+        except (OSError, ValueError) as e:
+            log.warning("mmap unavailable for %s (%s); falling back to full read", path, e)
+            yield f.read()
+            return
+        try:
+            yield buf
+        finally:
+            buf.close()
 
 # vim: ts=4 sw=4 et

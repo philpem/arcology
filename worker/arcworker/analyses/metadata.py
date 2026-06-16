@@ -23,6 +23,7 @@ from ..tools import (
     compute_file_hash,
     convert_replay_poster_sprite,
     decode_module,
+    mmap_readonly,
     parse_armovie_header,
     transcode_armovie_to_audio,
     transcode_armovie_to_mp4,
@@ -535,8 +536,8 @@ def process_replay(self, analysis: dict, artefact: dict, work_dir: Path):
             continue
 
         try:
-            data = file_path.read_bytes()
-            result = parse_armovie_header(data)
+            with mmap_readonly(file_path) as data:
+                result = parse_armovie_header(data)
             result['file_path'] = db_path
             movies.append(result)
         except ArmovieParseError as e:
@@ -582,12 +583,15 @@ def process_replay(self, analysis: dict, artefact: dict, work_dir: Path):
         )
 
 
-def _save_replay_poster(worker, data, header, work_dir, output_subdir, base_name):
+def _save_replay_poster(worker, file_path, header, work_dir, output_subdir, base_name):
     """Extract an ARMovie embedded poster sprite to PNG and save it as output.
 
     Returns the saved output-file path (relative, as stored), or None when the
     movie has no embedded poster sprite or extraction failed.  Best-effort: a
     poster is a nicety, never a reason to fail the transcode.
+
+    The movie file is memory-mapped so only the sprite region is faulted in —
+    a multi-GB Replay file is never loaded into RAM to grab its thumbnail.
     """
     sprite_offset = header.get('sprite_offset')
     sprite_size = header.get('sprite_size')
@@ -596,7 +600,8 @@ def _save_replay_poster(worker, data, header, work_dir, output_subdir, base_name
 
     poster_name = f'{base_name}_poster.png'
     poster_path = work_dir / poster_name
-    result = convert_replay_poster_sprite(data, sprite_offset, sprite_size, poster_path)
+    with mmap_readonly(file_path) as data:
+        result = convert_replay_poster_sprite(data, sprite_offset, sprite_size, poster_path)
     if not result.get('success'):
         log.info("Replay poster sprite extraction failed for %s: %s", base_name, result.get('error'))
         return None
@@ -682,8 +687,8 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
         # Need the frame geometry from the header to drive ffmpeg's rawvideo
         # input; the raw bytes are also reused for the embedded poster sprite.
         try:
-            data = file_path.read_bytes()
-            header = parse_armovie_header(data)
+            with mmap_readonly(file_path) as data:
+                header = parse_armovie_header(data)
         except ArmovieParseError as e:
             transcode_errors.append({'file_path': db_path, 'error': f'Header parse failed: {e}'})
             continue
@@ -710,7 +715,7 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
                 })
                 continue
             saved_audio = self.save_output_file(audio_path, audio_name, subdir=output_subdir)
-            saved_poster = _save_replay_poster(self, data, header, work_dir, output_subdir, base_name)
+            saved_poster = _save_replay_poster(self, file_path, header, work_dir, output_subdir, base_name)
             transcoded.append({
                 'file_path': db_path,
                 'mp4_output_path': saved_audio,   # media output (audio for sound-only)
@@ -730,7 +735,7 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
 
         # Prefer the author-supplied embedded poster sprite as the thumbnail; only
         # fall back to ffmpeg's first decoded frame when there is no poster sprite.
-        saved_poster = _save_replay_poster(self, data, header, work_dir, output_subdir, base_name)
+        saved_poster = _save_replay_poster(self, file_path, header, work_dir, output_subdir, base_name)
 
         result = transcode_armovie_to_mp4(
             file_path, mp4_path,
