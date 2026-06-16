@@ -29,6 +29,7 @@ import json
 import logging
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from ..client import ArcologyClient
 
@@ -469,8 +470,53 @@ def make_is_unique(client: ArcologyClient, md5_appkeys: dict[str, set],
 # Item gathering and product building
 # ---------------------------------------------------------------------------
 
+def _run_jobs(fn, items: list, jobs: int) -> list:
+    """Map *fn* over *items*, in parallel when jobs > 1, preserving order.
+
+    Used for the read-only API fan-out (artefact/partition fetches, !Run/!Boot
+    downloads, hash lookups).  requests.Session is safe for concurrent GETs.
+    """
+    if jobs > 1 and len(items) > 1:
+        with ThreadPoolExecutor(max_workers=jobs) as ex:
+            return list(ex.map(fn, items))
+    return [fn(it) for it in items]
+
+
+def _gather_artefact(client: ArcologyClient, art: dict, root_files: str,
+                     idx: int, n_art: int) -> dict | None:
+    """Fetch one artefact's partitions/files and group by application dir."""
+    art_label = art.get('label', art.get('original_filename', ''))
+    art_detail = client.get_artefact(art['uuid'])
+    partitions = art_detail.get('partitions', [])
+    if not partitions:
+        log.info('    [%d/%d] %s: no partitions', idx, n_art, art_label)
+        return None
+
+    all_files = []
+    for part in partitions:
+        all_files.extend(
+            client.get_partition_files_all(part['uuid'], show_known='true')
+        )
+    if not all_files:
+        log.info('    [%d/%d] %s: %d partition(s), no files',
+                 idx, n_art, art_label, len(partitions))
+        return None
+
+    app_dirs = find_app_directories(all_files, root_files, art_label)
+    log.info('    [%d/%d] %s: %d partition(s), %d file(s), %d app(s)',
+             idx, n_art, art_label, len(partitions), len(all_files), len(app_dirs))
+
+    parsed = parse_artefact_label(art_label)
+    return {
+        'label': art_label,
+        'disc_number': parsed['disc_number'],
+        'version': parsed['version'],
+        'app_dirs': app_dirs,
+    }
+
+
 def _gather_item(client: ArcologyClient, item: dict, filter_tags: list[str],
-                 root_files: str) -> dict:
+                 root_files: str, jobs: int) -> dict:
     """Fetch an item's artefacts/partitions/files and group by application dir."""
     item_name = item['name']
     category = ''
@@ -479,32 +525,20 @@ def _gather_item(client: ArcologyClient, item: dict, filter_tags: list[str],
             category = tag
             break
 
-    item_detail = client.get_item(item['uuid'])
-    artefacts = item_detail.get('artefacts', [])
+    # Reuse the artefact list when the item was already fetched in detail
+    # (the --item selection path), otherwise fetch it now.
+    artefacts = item.get('artefacts')
+    if artefacts is None:
+        artefacts = client.get_item(item['uuid']).get('artefacts', [])
+    n_art = len(artefacts)
+    log.info('  %d artefact(s)', n_art)
 
-    artefact_results = []
-    for art in artefacts:
-        art_label = art.get('label', art.get('original_filename', ''))
-        art_detail = client.get_artefact(art['uuid'])
-        partitions = art_detail.get('partitions', [])
-        if not partitions:
-            continue
-
-        all_files = []
-        for part in partitions:
-            all_files.extend(
-                client.get_partition_files_all(part['uuid'], show_known='true')
-            )
-        if not all_files:
-            continue
-
-        parsed = parse_artefact_label(art_label)
-        artefact_results.append({
-            'label': art_label,
-            'disc_number': parsed['disc_number'],
-            'version': parsed['version'],
-            'app_dirs': find_app_directories(all_files, root_files, art_label),
-        })
+    results = _run_jobs(
+        lambda pair: _gather_artefact(client, pair[1], root_files, pair[0], n_art),
+        list(enumerate(artefacts, 1)),
+        jobs,
+    )
+    artefact_results = [r for r in results if r]
 
     version = next((ar['version'] for ar in artefact_results if ar['version']), None)
     return {
@@ -516,35 +550,23 @@ def _gather_item(client: ArcologyClient, item: dict, filter_tags: list[str],
     }
 
 
-def _build_products(client: ArcologyClient, g: dict, args, is_unique) -> list[dict]:
+def _build_products(client: ArcologyClient, g: dict, args, is_unique,
+                    jobs: int) -> list[dict]:
     """Build HashDB product dicts for one gathered item."""
-    products = []
     description = g['category'].title() if g['category'] else ''
     artefact_results = g['artefact_results']
     is_multi_disc = len(artefact_results) > 1
     context = _item_context(g['item_name'], g['version'])
 
-    def make_product(app_dir_name, app_files, disc_number, suffix=''):
-        launched = get_launched_set(client, app_files, verbose=args.verbose)
-        classified = classify_app_files(app_dir_name, app_files, launched,
-                                        is_unique, verbose=args.verbose)
-        pfiles = build_product_files(classified, verbose=args.verbose)
-        if not pfiles:
-            return None
-        return {
-            'title': build_product_title(app_dir_name, context, disc_number) + suffix,
-            'description': description,
-            'path_match_enabled': True,
-            'files': pfiles,
-        }
+    # Assemble the per-application work items, then process them concurrently
+    # (each one downloads !Run/!Boot and may issue hash lookups).
+    tasks = []  # (app_dir_name, app_files, disc_number, suffix)
 
     if args.multi_disc in ('separate', 'both'):
         for ar in artefact_results:
             disc_num = ar['disc_number'] if is_multi_disc else None
             for app_dir_name, app_files in ar['app_dirs'].items():
-                p = make_product(app_dir_name, app_files, disc_num)
-                if p:
-                    products.append(p)
+                tasks.append((app_dir_name, app_files, disc_num, ''))
 
     if args.multi_disc in ('merge', 'both'):
         merged: dict[str, list[dict]] = {}
@@ -567,11 +589,27 @@ def _build_products(client: ArcologyClient, g: dict, args, is_unique) -> list[di
                     seen.add(key)
                     deduped.append(f)
             suffix = ' [All Discs]' if (args.multi_disc == 'both' and is_multi_disc) else ''
-            p = make_product(app_dir_name, deduped, None, suffix=suffix)
-            if p:
-                products.append(p)
+            tasks.append((app_dir_name, deduped, None, suffix))
 
-    return products
+    def make_product(task):
+        app_dir_name, app_files, disc_number, suffix = task
+        launched = get_launched_set(client, app_files, verbose=args.verbose)
+        classified = classify_app_files(app_dir_name, app_files, launched,
+                                        is_unique, verbose=args.verbose)
+        pfiles = build_product_files(classified, verbose=args.verbose)
+        if not pfiles:
+            return None
+        mandatory = sum(1 for f in pfiles if f['is_required'])
+        log.info('    %s: %d mandatory, %d optional',
+                 app_dir_name, mandatory, len(pfiles) - mandatory)
+        return {
+            'title': build_product_title(app_dir_name, context, disc_number) + suffix,
+            'description': description,
+            'path_match_enabled': True,
+            'files': pfiles,
+        }
+
+    return [p for p in _run_jobs(make_product, tasks, jobs) if p]
 
 
 # ---------------------------------------------------------------------------
@@ -621,12 +659,13 @@ def cmd_hashdb_generate_riscos(client: ArcologyClient, args):
         sys.exit(1)
 
     filter_tags = list(args.tag or [])
+    jobs = max(1, getattr(args, 'jobs', 1) or 1)
 
     items = _select_items(client, args)
     if not items:
         log.error('No items matched the selection.')
         sys.exit(1)
-    log.info('Selected %d item(s)', len(items))
+    log.info('Selected %d item(s) (concurrency: %d)', len(items), jobs)
 
     if args.dry_run:
         log.info('')
@@ -648,10 +687,11 @@ def cmd_hashdb_generate_riscos(client: ArcologyClient, args):
         return
 
     # Pass 1: gather every item's application files.
+    log.info('Gathering files...')
     gathered = []
     for i, item in enumerate(items, 1):
         log.info('[%d/%d] %s', i, len(items), item['name'])
-        g = _gather_item(client, item, filter_tags, args.root_files)
+        g = _gather_item(client, item, filter_tags, args.root_files, jobs)
         if g['artefact_results']:
             gathered.append(g)
 
@@ -670,10 +710,12 @@ def cmd_hashdb_generate_riscos(client: ArcologyClient, args):
     is_unique = make_is_unique(client, md5_appkeys, args.global_check)
 
     # Pass 2: build products.
+    n_apps = sum(len(ar['app_dirs']) for g in gathered for ar in g['artefact_results'])
+    log.info('Building products from %d application instance(s)...', n_apps)
     all_products = []
     items_with_products = 0
     for g in gathered:
-        products = _build_products(client, g, args, is_unique)
+        products = _build_products(client, g, args, is_unique, jobs)
         if products:
             all_products.extend(products)
             items_with_products += 1
