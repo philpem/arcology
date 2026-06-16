@@ -1419,7 +1419,7 @@ class TestHashDBSearch(unittest.TestCase):
                 kf_ids_sq = (
                     _db.session.query(KnownFile.id)
                     .filter(KnownFile.database_id == db_id)
-                    .subquery()
+                    .scalar_subquery()
                 )
                 kf_filter = ExtractedFile.known_file_id.in_(kf_ids_sq)
 

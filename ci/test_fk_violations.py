@@ -1380,6 +1380,14 @@ class TestBulkDeleteItem(unittest.TestCase):
             partition_id = partition.id
             ef_id = ef.id
 
+            # Simulate a fresh request session: clear the identity map so the
+            # objects created above don't collide with the rows bulk_delete_item
+            # re-loads (otherwise SQLAlchemy emits an "identity map already had
+            # an identity for ..." SAWarning).  In production the delete runs in
+            # its own request with a clean session.
+            self.db.session.expunge_all()
+            item = Item.query.get(item_id)
+
             # Verify records exist
             self.assertEqual(Artefact.query.filter_by(item_id=item_id).count(), 2)
             self.assertGreater(ExtractedFile.query.count(), 0)

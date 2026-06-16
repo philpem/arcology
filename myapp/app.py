@@ -141,6 +141,11 @@ def create_app(config_name=None):
                 send_default_pii=True,
                 )
 
+    # Route Python warnings (notably SQLAlchemy's cartesian-product SAWarning)
+    # into the logs unconditionally, and into Sentry as events when configured.
+    from .utils.warnings import install_warning_capture
+    install_warning_capture(report_to_sentry='SENTRY_DSN' in app.config)
+
     # Initialise extensions
     db.init_app(app)
     migrate.init_app(app, db)
