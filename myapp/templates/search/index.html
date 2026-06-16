@@ -50,11 +50,9 @@
 {% if unknown_keys %}
 <div class="alert alert-warning">
 	<i class="bi bi-exclamation-triangle"></i>
-	Unknown search key{{ 's' if unknown_keys|length > 1 else '' }}:
-	{% for k in unknown_keys %}<code>{{ k }}:</code>{% if not loop.last %}, {% endif %}{% endfor %} —
-	{{ 'these terms were' if unknown_keys|length > 1 else 'this term was' }} ignored.
-	Valid keys include <code>filename:</code>, <code>path:</code>, <code>type:</code>,
-	<code>label:</code>, <code>tag:</code>, <code>text:</code>, and others shown below.
+	Unknown search {{ 'keys' if unknown_keys|length > 1 else 'key' }}
+	{% for k in unknown_keys %}<code>{{ k }}:</code>{% if not loop.last %}, {% endif %}{% endfor %}
+	{{ 'were' if unknown_keys|length > 1 else 'was' }} ignored — see the syntax hint above.
 </div>
 {% endif %}
 {% for warning in query_warnings %}
