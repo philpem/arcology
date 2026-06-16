@@ -398,6 +398,8 @@ def build_product_files(classified: list[tuple[dict, bool]],
             entry['md5'] = f['md5']
         if f.get('sha1'):
             entry['sha1'] = f['sha1']
+        if f.get('sha256'):
+            entry['sha256'] = f['sha256']
         if not entry.get('md5') and not entry.get('sha1'):
             continue  # cannot match a file with no hash
         result.append(entry)

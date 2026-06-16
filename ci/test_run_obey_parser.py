@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from cli.arccli.commands.hashdb_generate import (  # noqa: E402
     _item_context,
     _resolve_obey_path,
+    build_product_files,
     build_product_title,
     classify_app_files,
     get_launched_set,
@@ -27,6 +28,7 @@ def _f(path, **kw):
         'filename': path.rsplit('/', 1)[-1],
         'md5': kw.get('md5', 'aa' * 16),
         'sha1': kw.get('sha1'),
+        'sha256': kw.get('sha256'),
         'file_size': kw.get('file_size', 100),
         'is_known': kw.get('is_known', False),
         'is_directory': kw.get('is_directory', False),
@@ -311,6 +313,28 @@ class TestMakeIsUnique(unittest.TestCase):
         m = {'abc': {('item1', '!Foo')}}
         is_unique = make_is_unique(C(), m, global_check=True)
         self.assertTrue(is_unique({'md5': 'abc'}))
+
+
+class TestBuildProductFiles(unittest.TestCase):
+    def test_carries_all_three_hashes(self):
+        f = _f('!Foo/!RunImage', md5='m' * 32, sha1='s' * 40, sha256='h' * 64)
+        entries = build_product_files([(f, True)])
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]['md5'], 'm' * 32)
+        self.assertEqual(entries[0]['sha1'], 's' * 40)
+        self.assertEqual(entries[0]['sha256'], 'h' * 64)
+        self.assertTrue(entries[0]['is_required'])
+
+    def test_omits_absent_hashes(self):
+        f = _f('!Foo/x', md5='m' * 32, sha1=None, sha256=None)
+        entries = build_product_files([(f, False)])
+        self.assertEqual(len(entries), 1)
+        self.assertNotIn('sha1', entries[0])
+        self.assertNotIn('sha256', entries[0])
+
+    def test_skips_file_with_no_hashes(self):
+        f = _f('!Foo/data', md5=None, sha1=None, sha256=None)
+        self.assertEqual(build_product_files([(f, False)]), [])
 
 
 class TestProductTitle(unittest.TestCase):
