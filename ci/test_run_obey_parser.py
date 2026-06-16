@@ -141,6 +141,14 @@ class TestParseRunObey(unittest.TestCase):
         )
         self.assertEqual(parse_run_obey(text), ['!real'])
 
+    def test_extra_vars_seed_resolves_reference(self):
+        # A variable supplied via extra_vars (e.g. from !Boot) resolves.
+        text = "Run <Foo$Dir>.!RunImage\n"
+        self.assertEqual(
+            parse_run_obey(text, extra_vars={'foo$dir': '<Obey$Dir>'}),
+            ['!runimage'],
+        )
+
     def test_var_set_to_external_literal_dropped(self):
         # App$Dir is Set, but to an external path (no Obey anchor) -> dropped.
         text = (
@@ -213,29 +221,58 @@ class TestClassifyAppFiles(unittest.TestCase):
 
 class TestGetLaunchedSet(unittest.TestCase):
     class _FakeClient:
-        def __init__(self, payload):
-            self.payload = payload
+        def __init__(self, payloads):
+            # payloads: dict[uuid -> bytes]
+            self.payloads = payloads
             self.requested = []
 
         def download_extracted_file_bytes(self, uuid):
             self.requested.append(uuid)
-            return self.payload
+            return self.payloads[uuid]
 
     def test_downloads_and_parses_run(self):
         files = [
             _f('!Foo/!Run', uuid='run-uuid'),
             _f('!Foo/!RunImage', risc_os_filetype='ff8'),
         ]
-        client = self._FakeClient(b"Run <Obey$Dir>.!RunImage\n")
+        client = self._FakeClient({'run-uuid': b"Run <Obey$Dir>.!RunImage\n"})
         launched = get_launched_set(client, files)
         self.assertEqual(launched, {'!runimage'})
         self.assertEqual(client.requested, ['run-uuid'])
 
     def test_no_run_file(self):
         files = [_f('!Foo/!RunImage', risc_os_filetype='ff8')]
-        client = self._FakeClient(b"")
+        client = self._FakeClient({})
         self.assertEqual(get_launched_set(client, files), set())
         self.assertEqual(client.requested, [])
+
+    def test_boot_supplies_variable_for_run(self):
+        # The path variable is Set in !Boot, used (unset locally) in !Run.
+        files = [
+            _f('!Foo/!Boot', uuid='boot-uuid'),
+            _f('!Foo/!Run', uuid='run-uuid'),
+            _f('!Foo/!RunImage', risc_os_filetype='ff8'),
+        ]
+        client = self._FakeClient({
+            'boot-uuid': b"Set Foo$Dir <Obey$Dir>\n",
+            'run-uuid': b"Run <Foo$Dir>.!RunImage\n",
+        })
+        launched = get_launched_set(client, files)
+        self.assertEqual(launched, {'!runimage'})
+        self.assertIn('boot-uuid', client.requested)
+        self.assertIn('run-uuid', client.requested)
+
+    def test_run_set_overrides_boot(self):
+        # Both define Foo$Dir; !Run's definition wins (it runs after !Boot).
+        files = [
+            _f('!Foo/!Boot', uuid='boot-uuid'),
+            _f('!Foo/!Run', uuid='run-uuid'),
+        ]
+        client = self._FakeClient({
+            'boot-uuid': b"Set Foo$Dir <Obey$Dir>.wrong\n",
+            'run-uuid': b"Set Foo$Dir <Obey$Dir>.bin\nRun <Foo$Dir>.loader\n",
+        })
+        self.assertEqual(get_launched_set(client, files), {'bin/loader'})
 
 
 class TestMakeIsUnique(unittest.TestCase):
