@@ -52,6 +52,19 @@ MIN_STORE_SCORE = 0.10
 # treated as a comparable component.
 MIN_COMPONENT_FILES = 2
 
+# Deep-scan rule (B1): besides top-level dirs and RISC OS ``!`` apps, any
+# directory no deeper than this whose subtree holds >= MIN_COMPONENT_FILES files
+# is also a component.  This catches nested PC application folders
+# (e.g. ``Program Files/Adobe/Photoshop``) so the same app is matched across
+# discs that differ overall.  Depth is the number of path segments to the dir
+# (a top-level dir is depth 1).
+MAX_COMPONENT_DEPTH = 4
+
+# Safety cap on components emitted per partition; if the deep scan produces more,
+# the largest (by file count) are kept.  Bounds storage and pair generation on
+# pathological trees.
+MAX_COMPONENTS_PER_PARTITION = 500
+
 # A content hash shared by more than this many artefacts is treated as
 # ubiquitous "boilerplate" (common !System module, near-empty file, …): it does
 # NOT generate candidate pairs on its own.  This both bounds the O(n^2)
@@ -138,24 +151,59 @@ def _file_rows_query():
     )
 
 
-def _candidate_roots(paths) -> set[str]:
-    """Component root paths within one partition.
+def _partition_components(files):
+    """Yield ``(root_path, member)`` components for one partition's files.
 
-    A root is either a top-level directory or the first ``!``-prefixed segment
-    (a RISC OS application directory) on a file's path.
+    ``files`` is a list of ``(path, hash, size)``.  Component roots are:
+      1. top-level directories,
+      2. the first ``!``-prefixed segment on a path (RISC OS application dirs),
+      3. any directory no deeper than ``MAX_COMPONENT_DEPTH`` whose subtree holds
+         >= ``MIN_COMPONENT_FILES`` files (catches nested PC app folders).
+
+    Directories with identical content sets are de-duplicated to the shallowest
+    (collapsing pass-through chains like ``Program Files/Adobe`` -> ``Adobe`` when
+    the parent contains nothing else), and the result is capped at
+    ``MAX_COMPONENTS_PER_PARTITION`` (largest kept).
     """
+    # Subtree content set for every directory: each file belongs to all its
+    # ancestor directories.
+    dir_sets: dict[str, dict] = {}
     roots: set[str] = set()
-    for p in paths:
-        segs = p.split("/")
+    for path, h, size in files:
+        segs = path.split("/")
+        for i in range(1, len(segs)):  # ancestor dirs (exclude the file itself)
+            dir_sets.setdefault("/".join(segs[:i]), {})[h] = size
         if len(segs) > 1:
             roots.add(segs[0])  # top-level directory
         acc: list[str] = []
-        for seg in segs[:-1]:  # exclude the filename itself
+        for seg in segs[:-1]:
             acc.append(seg)
-            if seg.startswith("!"):
+            if seg.startswith("!"):  # RISC OS application directory
                 roots.add("/".join(acc))
                 break
-    return roots
+
+    # Deep-scan rule: shallow-enough directories with enough content.
+    for d, members in dir_sets.items():
+        if d.count("/") + 1 <= MAX_COMPONENT_DEPTH and len(members) >= MIN_COMPONENT_FILES:
+            roots.add(d)
+
+    # Materialise, drop too-small, de-duplicate identical content sets.
+    by_key: dict[frozenset, tuple] = {}
+    for d in roots:
+        members = dir_sets.get(d, {})
+        if len(members) < MIN_COMPONENT_FILES:
+            continue
+        key = frozenset(members.items())
+        depth = d.count("/")
+        cur = by_key.get(key)
+        if cur is None or depth < cur[0] or (depth == cur[0] and d < cur[1]):
+            by_key[key] = (depth, d, members)
+
+    components = [(d, members) for (_, d, members) in by_key.values()]
+    if len(components) > MAX_COMPONENTS_PER_PARTITION:
+        components.sort(key=lambda t: len(t[1]), reverse=True)
+        components = components[:MAX_COMPONENTS_PER_PARTITION]
+    yield from components
 
 
 def _pairs_from_inverted(inverted: dict) -> set[tuple]:
@@ -276,15 +324,7 @@ def _components_from_rows(rows):
         part_artefact[partition_id] = artefact_id
 
     for partition_id, files in by_partition.items():
-        paths = [f[0] for f in files]
-        for root in _candidate_roots(paths):
-            prefix = root + "/"
-            member = {
-                h: size for (path, h, size) in files
-                if path == root or path.startswith(prefix)
-            }
-            if len(member) < MIN_COMPONENT_FILES:
-                continue
+        for root, member in _partition_components(files):
             yield partition_id, part_artefact[partition_id], root, root.split("/")[-1], member
 
 
@@ -573,6 +613,101 @@ def similar_components(artefact, viewer, *, min_score=0.0, per_component_limit=N
         result.append((comps[local_id], matches))
     result.sort(key=lambda t: t[1][0][2].score if t[1] else 0.0, reverse=True)
     return result
+
+
+def component_match_counts(artefact_ids, viewer, *, min_score=0.0):
+    """Map ``{root_path: (visible_match_count, component_uuid)}`` for the
+    components of ``artefact_ids`` that have at least one visible match.
+
+    Used to badge directories in the file browser.  Keyed by the component's
+    partition-relative ``root_path`` so it lines up with browse paths.
+    """
+    comps = {
+        c.id: c for c in
+        ArtefactComponent.query.filter(ArtefactComponent.artefact_id.in_(list(artefact_ids))).all()
+    }
+    if not comps:
+        return {}
+    sims = (
+        ComponentSimilarity.query
+        .filter(
+            or_(
+                ComponentSimilarity.component_a_id.in_(comps.keys()),
+                ComponentSimilarity.component_b_id.in_(comps.keys()),
+            )
+        )
+        .filter(ComponentSimilarity.score >= min_score)
+        .all()
+    )
+    rels = []  # (local_id, other_id)
+    other_ids: set[int] = set()
+    for sim in sims:
+        if sim.component_a_id in comps:
+            local_id, other_id = sim.component_a_id, sim.component_b_id
+        else:
+            local_id, other_id = sim.component_b_id, sim.component_a_id
+        rels.append((local_id, other_id))
+        other_ids.add(other_id)
+    if not other_ids:
+        return {}
+    visible_others = {
+        cid for (cid,) in
+        db.session.query(ArtefactComponent.id)
+        .join(Artefact, ArtefactComponent.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(ArtefactComponent.id.in_(other_ids))
+        .filter(artefact_visibility_clause(viewer))
+        .all()
+    }
+    per_local: dict[int, set] = {}
+    for local_id, other_id in rels:
+        if other_id in visible_others:
+            per_local.setdefault(local_id, set()).add(other_id)
+
+    out: dict[str, tuple] = {}
+    for local_id, others in per_local.items():
+        comp = comps[local_id]
+        # If two components share a root_path across artefacts in this view, keep
+        # the larger match count.
+        existing = out.get(comp.root_path)
+        if existing is None or len(others) > existing[0]:
+            out[comp.root_path] = (len(others), comp.uuid)
+    return out
+
+
+def matches_for_component(component, viewer, *, min_score=0.0):
+    """Visible components similar to ``component``, best first.
+
+    Returns ``[(other_component, other_artefact, ComponentSimilarity), ...]``.
+    """
+    sims = (
+        ComponentSimilarity.query
+        .filter(
+            or_(
+                ComponentSimilarity.component_a_id == component.id,
+                ComponentSimilarity.component_b_id == component.id,
+            )
+        )
+        .filter(ComponentSimilarity.score >= min_score)
+        .all()
+    )
+    by_other: dict[int, ComponentSimilarity] = {}
+    for sim in sims:
+        other = sim.component_b_id if sim.component_a_id == component.id else sim.component_a_id
+        by_other[other] = sim
+    if not by_other:
+        return []
+    rows = (
+        db.session.query(ArtefactComponent, Artefact)
+        .join(Artefact, ArtefactComponent.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(ArtefactComponent.id.in_(by_other.keys()))
+        .filter(artefact_visibility_clause(viewer))
+        .all()
+    )
+    out = [(comp, art, by_other[comp.id]) for comp, art in rows]
+    out.sort(key=lambda t: t[2].score, reverse=True)
+    return out
 
 
 # ---------------------------------------------------------------------------

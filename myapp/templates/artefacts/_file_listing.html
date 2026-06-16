@@ -64,7 +64,7 @@
                 </div>
             </div>
             {% endif %}
-            {{ render_subdirectory_bar(subdirectories, current_path, pagination_args, archive_paths=archive_paths, recognised_folder_paths=recognised_folder_paths) }}
+            {{ render_subdirectory_bar(subdirectories, current_path, pagination_args, archive_paths=archive_paths, recognised_folder_paths=recognised_folder_paths, similar_folder_counts=similar_folder_counts|default(none)) }}
             {{ render_letter_bar_compact(letter_pages, current_letter, pagination_args) }}
             {% if hashdb_mode %}
             <form id="hashdb-form" action="{{ url_for('myapp_blueprints_artefacts.add_to_hashdb', uuid=artefact.uuid) }}" method="post">

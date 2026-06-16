@@ -319,6 +319,78 @@ class TestArtefactSimilarity(_SimilarityBase):
         self.assertEqual(other_comp.name, '!ArtWorks')
         self.assertGreater(sim.score, 0.99)
 
+    def test_component_match_counts_and_route(self):
+        """component_match_counts badges a folder; the component page lists matches."""
+        from myapp.database import ArtefactComponent
+        from myapp.services.similarity import (
+            component_match_counts,
+            matches_for_component,
+            rebuild_all,
+        )
+        aw = [('!ArtWorks/!Run', 'aw1', 2000), ('!ArtWorks/!RunImage', 'aw2', 80000),
+              ('!ArtWorks/Messages', 'aw3', 4000)]
+        a = _add_artefact(self.db, self.item, 'HD-A', aw + [('Docs/x', 'dx', 1000), ('Docs/y', 'dy', 1000)])
+        _add_artefact(self.db, self.item, 'HD-B', aw + [('Work/z', 'wz', 1000), ('Work/q', 'wq', 1000)])
+        rebuild_all()
+
+        counts = component_match_counts([a.id], None)
+        self.assertIn('!ArtWorks', counts)
+        count, comp_uuid = counts['!ArtWorks']
+        self.assertEqual(count, 1)
+
+        comp = ArtefactComponent.query.filter_by(uuid=comp_uuid).first()
+        matches = matches_for_component(comp, None)
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0][1].label, 'HD-B')
+
+        # Private candidate is hidden from anonymous viewers.
+        self.assertEqual(component_match_counts([a.id], None).get('!ArtWorks')[0], 1)
+
+    def test_component_similar_route(self):
+        from myapp.services.similarity import component_match_counts, rebuild_all
+        aw = [('!App/!Run', 'a1', 2000), ('!App/data', 'a2', 9000), ('!App/res', 'a3', 3000)]
+        a = _add_artefact(self.db, self.item, 'One', aw + [('u', 'u1', 500)])
+        _add_artefact(self.db, self.item, 'Two', aw + [('v', 'v1', 500)])
+        rebuild_all()
+        comp_uuid = component_match_counts([a.id], None)['!App'][1]
+        client = self.app.test_client()
+        resp = client.get(f'/components/{comp_uuid}/similar')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn(b'Two', resp.data)
+
+    def test_nested_pc_app_component_matches(self):
+        """A deeply-nested app folder (e.g. Photoshop) matches across discs even
+        when its path differs and the discs differ overall (B1)."""
+        from myapp.services.similarity import rebuild_all, similar_artefacts, similar_components
+        photoshop = [
+            ('Adobe/Photoshop/Photoshop.exe', 'ps1', 5000),
+            ('Adobe/Photoshop/plugin.8bf', 'ps2', 2000),
+            ('Adobe/Photoshop/readme.txt', 'ps3', 1000),
+        ]
+        # Same app at different nested paths; the rest of each disc is large and
+        # unique, so the shared app is a small fraction of the whole.
+        discA = [(f'Program Files/{p}', h, s) for p, h, s in photoshop] \
+            + [(f'Windows/sys{i}', f'wa{i}', 50000) for i in range(15)]
+        discB = [(f'Apps/{p}', h, s) for p, h, s in photoshop] \
+            + [(f'Docs/file{i}', f'db{i}', 50000) for i in range(15)]
+        a = _add_artefact(self.db, self.item, 'PC-A', discA)
+        _add_artefact(self.db, self.item, 'PC-B', discB)
+
+        rebuild_all()
+
+        # Whole-disc similarity is low (shared app is a small fraction).
+        whole = similar_artefacts(a, None)
+        if whole:
+            self.assertLess(whole[0][1].score, 0.5)
+
+        # Component-level finds the shared Photoshop subtree regardless of path.
+        comps = similar_components(a, None)
+        self.assertTrue(comps, "expected a nested-app component match")
+        _local, others = comps[0]
+        self.assertTrue(others)
+        self.assertGreater(others[0][2].score, 0.99)
+        self.assertEqual(others[0][1].label, 'PC-B')
+
 
 class TestTlshHelper(unittest.TestCase):
     """The optional TLSH fuzzy-hash helper (degrades gracefully without the lib)."""

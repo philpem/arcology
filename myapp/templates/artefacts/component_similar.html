@@ -1,0 +1,52 @@
+{% extends "_base.html" %}
+{% block page_title %}Similar folders{% endblock %}
+
+{% macro score_badge(score) %}
+{% set pct = (score * 100) | round(0, 'floor') | int %}
+<span class="badge
+    {%- if score >= 0.9 %} bg-success
+    {%- elif score >= 0.7 %} bg-warning text-dark
+    {%- else %} bg-secondary{% endif %}">{{ pct }}%</span>
+{% endmacro %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ artefact_url(artefact) }}">{{ artefact.label }}</a></li>
+        <li class="breadcrumb-item active">Similar folders</li>
+    </ol>
+</nav>
+
+<h1 class="mb-1">Similar folders</h1>
+<p class="text-muted">
+    <code>{{ component.root_path }}</code>
+    <span class="ms-2">{{ component.file_count }} files, {{ component.total_bytes | format_filesize }}</span>
+</p>
+<p class="text-muted small">
+    Other artefacts that contain a substantially similar copy of this folder
+    (matched by content, independent of where it sits or what surrounds it).
+</p>
+
+{% if matches %}
+<div class="table-responsive">
+    <table class="table table-sm table-hover align-middle">
+        <thead>
+            <tr><th>Similarity</th><th>Item</th><th>Artefact</th><th>Folder</th><th>Shared / total files</th></tr>
+        </thead>
+        <tbody>
+        {% for other_comp, other_art, sim in matches %}
+            <tr>
+                <td>{{ score_badge(sim.score) }}</td>
+                <td><a href="{{ url_for('myapp_blueprints_items.view', uuid=other_art.item.url_id) }}">{{ other_art.item.name }}</a></td>
+                <td><a href="{{ artefact_url(other_art) }}">{{ other_art.label }}</a></td>
+                <td><a href="{{ artefact_url(other_art) }}?path={{ (other_comp.root_path ~ '/') | urlencode }}"><code>{{ other_comp.root_path }}</code></a></td>
+                <td>{{ sim.shared_files }} / {{ sim.union_files }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="text-muted">No similar folders found.</p>
+{% endif %}
+{% endblock %}

@@ -82,7 +82,13 @@ from ..services.restrictions import (
     collect_ancestor_file_restrictions,
     grantable_bypass_rtypes,
 )
-from ..services.similarity import similar_artefacts, similar_components, similar_files_by_tlsh
+from ..services.similarity import (
+    component_match_counts,
+    matches_for_component,
+    similar_artefacts,
+    similar_components,
+    similar_files_by_tlsh,
+)
 from ..services.upload_pipeline import QUEUE_CHECKSUM_ONLY, QUEUE_FULL, ingest_uploaded_artefact
 from ..utils.blobs import artefact_blob_storage_path, assign_blob
 from ..utils.config import int_config
@@ -2255,6 +2261,7 @@ def _render_artefact_view(artefact):
     derived_entries, sidecar_entries = _view_derived_entries(artefact)
     bypass_ctx = _view_admin_bypass(artefact, all_artefact_ids)
     similar_preview = similar_artefacts(artefact, current_user, limit=SIMILAR_SIDEBAR_LIMIT)
+    similar_folder_counts = component_match_counts(all_artefact_ids, current_user)
 
     ctx = dict(
         artefact=artefact,
@@ -2277,6 +2284,7 @@ def _render_artefact_view(artefact):
         derived_entries=derived_entries,
         sidecar_entries=sidecar_entries,
         similar_preview=similar_preview,
+        similar_folder_counts=similar_folder_counts,
         move_item_choices=_move_item_choices(artefact),
     )
     ctx.update(analyses_ctx)
@@ -3506,6 +3514,28 @@ def file_near_duplicates(uuid):
     return render_template(
         'artefacts/file_near_duplicates.html',
         source=source,
+        matches=matches,
+    )
+
+
+@blueprint.route('/components/<string:uuid>/similar')
+@public_readable
+def component_similar(uuid):
+    """Artefacts whose directory subtree (component) matches this one."""
+    from ..database import ArtefactComponent
+    component, artefact = (
+        db.session.query(ArtefactComponent, Artefact)
+        .join(Artefact, ArtefactComponent.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(ArtefactComponent.uuid == uuid)
+        .filter(artefact_visibility_clause(current_user))
+        .first_or_404()
+    )
+    matches = matches_for_component(component, current_user)
+    return render_template(
+        'artefacts/component_similar.html',
+        component=component,
+        artefact=artefact,
         matches=matches,
     )
 

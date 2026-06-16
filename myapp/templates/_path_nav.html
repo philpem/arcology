@@ -35,26 +35,38 @@
 
 {% macro render_subdirectory_bar(subdirectories, current_path, pagination_args,
                                  archive_paths=None,
-                                 recognised_folder_paths=None) -%}
+                                 recognised_folder_paths=None,
+                                 similar_folder_counts=None) -%}
 {%- if subdirectories %}
 {%- set _archives = archive_paths if archive_paths is not none else [] %}
 {%- set _recognised = recognised_folder_paths if recognised_folder_paths is not none else {} %}
+{%- set _similar = similar_folder_counts if similar_folder_counts is not none else {} %}
 <div class="card-body border-bottom bg-light">
     <div class="small text-muted mb-2"><i class="bi bi-folder"></i> Subdirectories at this level:</div>
     <div class="d-flex flex-wrap gap-2">
         {%- for subdir in subdirectories %}
         {%- set subdir_full_path = current_path + subdir %}
         {%- set subdir_rp = _recognised.get(subdir_full_path) %}
-        <a href="?{{ dict(pagination_args, path=subdir_full_path + '/') | urlencode }}"
-           class="btn btn-sm {{ 'btn-info' if subdir_rp else 'btn-outline-primary' }}"
-           {%- if subdir_rp %} title="Recognised: {{ subdir_rp.product.title }} ({{ subdir_rp.required_matched }}/{{ subdir_rp.required_total }} required matched)"{%- endif %}>
-            {%- if subdir_full_path in _archives %}
-            <i class="bi bi-file-zip-fill"></i>
-            {%- else %}
-            <i class="bi bi-folder-fill"></i>
+        {%- set subdir_sim = _similar.get(subdir_full_path) %}
+        <span class="btn-group btn-group-sm" role="group">
+            <a href="?{{ dict(pagination_args, path=subdir_full_path + '/') | urlencode }}"
+               class="btn btn-sm {{ 'btn-info' if subdir_rp else 'btn-outline-primary' }}"
+               {%- if subdir_rp %} title="Recognised: {{ subdir_rp.product.title }} ({{ subdir_rp.required_matched }}/{{ subdir_rp.required_total }} required matched)"{%- endif %}>
+                {%- if subdir_full_path in _archives %}
+                <i class="bi bi-file-zip-fill"></i>
+                {%- else %}
+                <i class="bi bi-folder-fill"></i>
+                {%- endif %}
+                {{ subdir }}{% if subdir_rp %} <i class="bi bi-check2-square"></i>{% endif %}
+            </a>
+            {%- if subdir_sim %}
+            <a href="{{ url_for('myapp_blueprints_artefacts.component_similar', uuid=subdir_sim[1]) }}"
+               class="btn btn-sm btn-outline-secondary"
+               title="This folder appears on {{ subdir_sim[0] }} other artefact(s)">
+                <i class="bi bi-shuffle"></i> {{ subdir_sim[0] }}
+            </a>
             {%- endif %}
-            {{ subdir }}{% if subdir_rp %} <i class="bi bi-check2-square"></i>{% endif %}
-        </a>
+        </span>
         {%- endfor %}
     </div>
 </div>
