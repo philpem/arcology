@@ -3,7 +3,7 @@
 # Runs the web application and analysis worker(s) together.
 #
 # Usage:
-#   mkdir -p data/uploads data/outputs data/db data/jinja_cache data/chunks  # Create directories first
+#   mkdir -p data/uploads data/outputs data/db data/jinja_cache data/chunks data/redis  # Create directories first
 #   docker-compose up -d                        # Start with 1 worker
 #   docker-compose up -d --scale worker=4       # Start with 4 workers
 #   docker-compose logs -f worker               # Watch worker logs
@@ -32,8 +32,15 @@ services:
       db:
         condition: service_healthy
         restart: true
+      cache:
+        condition: service_healthy
     ports:
       - "8000:8000"
+    environment:
+      # Shared read-through cache.  Enables version-keyed caching of hot
+      # read paths (dashboard stats, …) across all Gunicorn workers.  Remove
+      # this line to disable caching (the app then runs uncached/always-fresh).
+      - REDIS_URL=redis://cache:6379/0
     volumes:
       - ./data/uploads:/app/instance/uploads
       - ./data/outputs:/app/instance/outputs
@@ -170,5 +177,23 @@ services:
       - POSTGRES_PASSWORD=arcology_password
     volumes:
       - ./data/db/pg:/var/lib/postgresql
+
+  # Shared cache (Redis).  Holds the read-through cache and, critically, the
+  # monotonic "content version" counter that drives cache invalidation.  That
+  # counter must survive restarts and must never silently reset to a lower
+  # value (which would reintroduce staleness), so persistence is enabled and
+  # eviction is disabled (noeviction: the server refuses writes rather than
+  # dropping keys under memory pressure).
+  cache:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 

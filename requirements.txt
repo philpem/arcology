@@ -12,7 +12,12 @@ Flask-WTF
 Flask-Login
 Flask-SQLAlchemy
 Flask-Migrate
+Flask-Caching
 bootstrap-flask
+
+# Redis client (optional — only used when CACHE_REDIS_URL/REDIS_URL is set;
+# the cache degrades to NullCache when unconfigured)
+redis
 
 # Python bcrypt password hashing
 bcrypt
