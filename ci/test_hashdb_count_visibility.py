@@ -121,28 +121,44 @@ class TestHashdbCountVisibility(unittest.TestCase):
             sess['_user_id'] = str(uid)
             sess['_fresh'] = True
 
-    def _counts_for(self, url, uid):
+    def _context_for(self, url, uid):
         self._login(uid)
         with captured_templates(self.app) as templates:
             r = self.client.get(url)
             self.assertEqual(r.status_code, 200, r.data)
             self.assertTrue(templates, 'no template rendered')
-            return templates[-1][1]['match_counts']
+            return templates[-1][1]
 
-    def test_view_count_hidden_from_non_owner(self):
-        counts = self._counts_for(f'/hashdb/{self.db_id}', self.viewer_id)
+    def _counts_for(self, url, uid):
+        return self._context_for(url, uid)['match_counts']
+
+    # The view page now aggregates per-product (the per-file table is loaded
+    # lazily via product_files); assert the product-level count is filtered.
+    def test_view_product_count_hidden_from_non_owner(self):
+        ctx = self._context_for(f'/hashdb/{self.db_id}', self.viewer_id)
         # The only match is inside a private artefact the viewer cannot see.
+        self.assertEqual(ctx['product_match_counts'].get(self.product_id, 0), 0)
+
+    def test_view_product_count_visible_to_admin(self):
+        ctx = self._context_for(f'/hashdb/{self.db_id}', self.admin_id)
+        self.assertEqual(ctx['product_match_counts'].get(self.product_id, 0), 1)
+
+    # The lazily-loaded per-file fragment must apply the same visibility filter.
+    def test_product_files_count_hidden_from_non_owner(self):
+        url = f'/hashdb/{self.db_id}/products/{self.product_id}/files'
+        counts = self._counts_for(url, self.viewer_id)
         self.assertEqual(counts.get(self.kf_id, 0), 0)
 
-    def test_view_count_visible_to_admin(self):
-        counts = self._counts_for(f'/hashdb/{self.db_id}', self.admin_id)
+    def test_product_files_count_visible_to_admin(self):
+        url = f'/hashdb/{self.db_id}/products/{self.product_id}/files'
+        counts = self._counts_for(url, self.admin_id)
         self.assertEqual(counts.get(self.kf_id, 0), 1)
 
-    def test_view_product_count_hidden_from_non_owner(self):
+    def test_view_product_page_count_hidden_from_non_owner(self):
         counts = self._counts_for(f'/hashdb/{self.db_id}/{self.product_id}', self.viewer_id)
         self.assertEqual(counts.get(self.kf_id, 0), 0)
 
-    def test_view_product_count_visible_to_admin(self):
+    def test_view_product_page_count_visible_to_admin(self):
         counts = self._counts_for(f'/hashdb/{self.db_id}/{self.product_id}', self.admin_id)
         self.assertEqual(counts.get(self.kf_id, 0), 1)
 

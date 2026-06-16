@@ -1,0 +1,48 @@
+{# Known-file table for a single product, fetched lazily by view.html. #}
+{% if files %}
+<table class="table table-sm table-bordered mb-0" style="font-size:0.82em">
+    <thead class="table-light">
+        <tr>
+            <th>Filename</th>
+            <th>Rel. path</th>
+            <th>Req.</th>
+            <th>Size</th>
+            <th>MD5</th>
+            <th>SHA1</th>
+            <th>SHA256</th>
+            <th>CRC32</th>
+            <th title="Extracted files matching this known file">Matches</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for kf in files %}
+    <tr>
+        <td><code>{{ kf.filename }}</code></td>
+        <td class="text-muted">{{ kf.relative_path or '' }}</td>
+        <td>
+            {% if kf.is_required %}
+            <span class="badge bg-danger">Req</span>
+            {% else %}
+            <span class="badge bg-secondary">Opt</span>
+            {% endif %}
+        </td>
+        <td class="text-muted">{% if kf.file_size is not none %}<span title="{{ kf.file_size }} bytes">{{ kf.file_size | format_filesize }}</span>{% else %}—{% endif %}</td>
+        <td><code class="text-break">{{ kf.md5 or '—' }}</code></td>
+        <td><code class="text-break">{{ kf.sha1 or '—' }}</code></td>
+        <td><code class="text-break">{{ kf.sha256 or '—' }}</code></td>
+        <td><code>{{ kf.crc32 or '—' }}</code></td>
+        <td>
+            {% set c = match_counts.get(kf.id, 0) %}
+            {% if c %}
+            <span class="badge bg-success">{{ c }}</span>
+            {% else %}
+            <span class="text-muted">—</span>
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<span class="text-muted small">No files in this product yet.</span>
+{% endif %}

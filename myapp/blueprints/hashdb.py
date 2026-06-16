@@ -273,9 +273,11 @@ def new():
 @login_required
 def view(id):
     database = HashDatabase.query.get_or_404(id)
+    # Load only the product rows here — the per-product file tables (which can
+    # run to tens of thousands of rows) are fetched lazily on expand via
+    # product_files() so the initial page stays small.
     products = (
         KnownProduct.query
-        .options(db.joinedload(KnownProduct.known_files))
         .filter_by(database_id=id)
         .order_by(func.lower(KnownProduct.title))
         .all()
@@ -293,28 +295,32 @@ def view(id):
         Analysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.RUNNING]),
     ).count()
 
-    kf_ids = [kf.id for p in products for kf in p.known_files]
-    match_counts = {}
-    if kf_ids:
-        # Count only occurrences in artefacts the caller may view, so the match
-        # counts cannot reveal that a known file exists inside a private
-        # collection (mirrors the visibility filter in search()).
-        rows = (
-            db.session.query(ExtractedFile.known_file_id, func.count(ExtractedFile.id))
-            .join(Partition, ExtractedFile.partition_id == Partition.id)
-            .join(Artefact, Partition.artefact_id == Artefact.id)
-            .join(Item, Artefact.item_id == Item.id)
-            .filter(ExtractedFile.known_file_id.in_(kf_ids))
-            .filter(artefact_visibility_clause(current_user))
-            .group_by(ExtractedFile.known_file_id)
-            .all()
-        )
-        match_counts = {kf_id: cnt for kf_id, cnt in rows}
+    # Per-product known-file counts (the badge shown on each collapsed row) —
+    # aggregated in SQL so we never have to load the KnownFile rows themselves.
+    file_counts = dict(
+        db.session.query(KnownFile.product_id, func.count(KnownFile.id))
+        .filter(KnownFile.database_id == id)
+        .group_by(KnownFile.product_id)
+        .all()
+    )
 
-    product_match_counts = {
-        p.id: sum(match_counts.get(kf.id, 0) for kf in p.known_files)
-        for p in products
-    }
+    # Per-product match counts, aggregated in SQL and grouped by product.
+    # Joining through KnownFile filtered by database_id lets the DB use the
+    # known_file_id / database_id indexes instead of building a huge IN(...)
+    # list of every known-file id.  Visibility-filtered like search() so a
+    # count cannot reveal that a known file exists inside a private artefact
+    # the caller may not see.
+    product_match_counts = dict(
+        db.session.query(KnownFile.product_id, func.count(ExtractedFile.id))
+        .join(ExtractedFile, ExtractedFile.known_file_id == KnownFile.id)
+        .join(Partition, ExtractedFile.partition_id == Partition.id)
+        .join(Artefact, Partition.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(KnownFile.database_id == id)
+        .filter(artefact_visibility_clause(current_user))
+        .group_by(KnownFile.product_id)
+        .all()
+    )
 
     return render_template('hashdb/view.html',
                            database=database,
@@ -323,8 +329,47 @@ def view(id):
                            RestrictionType=RestrictionType,
                            rescan_job=rescan_job,
                            pending_rescan=pending_rescan,
-                           match_counts=match_counts,
+                           file_counts=file_counts,
                            product_match_counts=product_match_counts)
+
+
+@blueprint.route('/<int:id>/products/<int:pid>/files')
+@login_required
+def product_files(id, pid):
+    """Render one product's known-file table.
+
+    Fetched lazily by the view page when a product row is expanded, so the
+    bytes for a product's (potentially huge) file list are only produced on
+    demand rather than for every product on initial page load.
+    """
+    HashDatabase.query.get_or_404(id)
+    product = KnownProduct.query.filter_by(id=pid, database_id=id).first_or_404()
+    files = (
+        KnownFile.query
+        .filter_by(product_id=pid)
+        .order_by(func.lower(KnownFile.filename))
+        .all()
+    )
+
+    # Per-file match counts, visibility-filtered exactly like view()/search()
+    # so the count cannot reveal a known file inside a private artefact.
+    # Filtering by product_id (indexed) avoids a giant IN(...) of file ids.
+    match_counts = dict(
+        db.session.query(ExtractedFile.known_file_id, func.count(ExtractedFile.id))
+        .join(KnownFile, ExtractedFile.known_file_id == KnownFile.id)
+        .join(Partition, ExtractedFile.partition_id == Partition.id)
+        .join(Artefact, Partition.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(KnownFile.product_id == pid)
+        .filter(artefact_visibility_clause(current_user))
+        .group_by(ExtractedFile.known_file_id)
+        .all()
+    )
+
+    return render_template('hashdb/_product_files.html',
+                           product=product,
+                           files=files,
+                           match_counts=match_counts)
 
 
 SEARCH_LIMIT = 200
