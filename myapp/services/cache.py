@@ -85,6 +85,66 @@ def bump_content_version():
         pass
 
 
+def cache_user_id(user):
+    """Stable cache-key fragment identifying the *viewer* for per-user caches.
+
+    Anonymous viewers share a single bucket ('anon') since they all see exactly
+    the same (public) data.
+    """
+    return user.get_id() if getattr(user, 'is_authenticated', False) else 'anon'
+
+
+# Stored in place of a value to record that an id was computed and has *no*
+# result.  Lets cache_per_id() distinguish a genuine miss (recompute) from a
+# known-empty id (cache hit, omit), so ids without a value aren't recomputed
+# on every request.  The leading NUL makes a collision with real data
+# impossible.
+_EMPTY_SENTINEL = '\x00arc-empty\x00'
+
+
+def cache_per_id(prefix, ids, compute, timeout=None):
+    """Read-through cache of a per-id computation, keyed by content version.
+
+    ``prefix`` namespaces the entries (include a viewer fragment from
+    cache_user_id() for per-user data).  ``compute(missing_ids)`` must return a
+    ``dict`` mapping (a subset of) the requested ids to their values; ids it
+    omits are remembered as empty so they are not recomputed until the content
+    version changes.  Returns ``dict[id, value]`` for the ids that have a value,
+    matching ``compute``'s own "absent means none" semantics.
+
+    With NullCache every id is always a miss, so this reduces to a single
+    ``compute(all_ids)`` call — identical behaviour to the un-cached code.
+    """
+    ids = list(dict.fromkeys(ids))  # dedupe, preserve order
+    if not ids:
+        return {}
+    version = content_version()
+    keymap = {f'{prefix}:{i}:v{version}': i for i in ids}
+    found = cache.get_dict(*keymap.keys())
+
+    result = {}
+    missing = []
+    for key, i in keymap.items():
+        val = found.get(key)
+        if val is None:
+            missing.append(i)
+        elif val != _EMPTY_SENTINEL:
+            result[i] = val
+
+    if missing:
+        computed = compute(missing) or {}
+        to_set = {}
+        for i in missing:
+            if i in computed:
+                result[i] = computed[i]
+                to_set[f'{prefix}:{i}:v{version}'] = computed[i]
+            else:
+                to_set[f'{prefix}:{i}:v{version}'] = _EMPTY_SENTINEL
+        cache.set_many(to_set, timeout=timeout)
+
+    return result
+
+
 # db.session is a process-global scoped_session shared by every create_app()
 # call, so the listeners must be attached exactly once per process — otherwise
 # repeated app creation (notably in tests) would stack duplicate handlers and

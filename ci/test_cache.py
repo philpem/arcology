@@ -112,6 +112,73 @@ class TestDashboardStatsCaching(_CacheTestBase):
         self.assertEqual(after['total_items'], first['total_items'] + 1)
 
 
+class TestCachePerId(_CacheTestBase):
+    def test_reads_through_and_caches(self):
+        from myapp.services.cache import cache_per_id
+
+        calls = []
+
+        def compute(ids):
+            calls.append(list(ids))
+            return {i: i * 10 for i in ids}
+
+        first = cache_per_id('t:x', [1, 2, 3], compute)
+        self.assertEqual(first, {1: 10, 2: 20, 3: 30})
+        # Second call is fully served from cache — compute not invoked again.
+        second = cache_per_id('t:x', [1, 2, 3], compute)
+        self.assertEqual(second, {1: 10, 2: 20, 3: 30})
+        self.assertEqual(len(calls), 1)
+
+    def test_only_missing_ids_recomputed(self):
+        from myapp.services.cache import cache_per_id
+
+        calls = []
+
+        def compute(ids):
+            calls.append(sorted(ids))
+            return {i: i * 10 for i in ids}
+
+        cache_per_id('t:y', [1, 2], compute)
+        cache_per_id('t:y', [2, 3, 4], compute)
+        self.assertEqual(calls, [[1, 2], [3, 4]])  # 2 was already cached
+
+    def test_empty_result_is_negatively_cached(self):
+        from myapp.services.cache import cache_per_id
+
+        calls = []
+
+        def compute(ids):
+            calls.append(list(ids))
+            return {}  # nothing has a value
+
+        self.assertEqual(cache_per_id('t:z', [1, 2], compute), {})
+        self.assertEqual(cache_per_id('t:z', [1, 2], compute), {})
+        # Known-empty ids must NOT be recomputed on the second call.
+        self.assertEqual(len(calls), 1)
+
+    def test_version_bump_invalidates(self):
+        from myapp.services.cache import bump_content_version, cache_per_id
+
+        def compute_a(ids):
+            return {i: 'a' for i in ids}
+
+        def compute_b(ids):
+            return {i: 'b' for i in ids}
+
+        self.assertEqual(cache_per_id('t:v', [1], compute_a), {1: 'a'})
+        bump_content_version()
+        # New version → previous key unreachable → recompute returns fresh value.
+        self.assertEqual(cache_per_id('t:v', [1], compute_b), {1: 'b'})
+
+    def test_per_user_prefixes_are_isolated(self):
+        from myapp.services.cache import cache_per_id
+
+        cache_per_id('t:u:alice', [1], lambda ids: {i: 'alice' for i in ids})
+        # A different viewer prefix must not see alice's cached value.
+        got = cache_per_id('t:u:bob', [1], lambda ids: {i: 'bob' for i in ids})
+        self.assertEqual(got, {1: 'bob'})
+
+
 class TestNullCacheIsNoOp(unittest.TestCase):
     """With no backend configured the cache disables itself (always fresh)."""
 

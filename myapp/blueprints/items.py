@@ -33,6 +33,7 @@ from ..services.artefact_lifecycle import (
     mark_item_pending_deletion,
     queue_item_delete,
 )
+from ..services.cache import cache_per_id, cache_user_id
 from ..utils.item_helpers import (
     assign_item_fields,
     assign_item_tags,
@@ -187,27 +188,34 @@ def index():
     else:
         item_ids = [item.id for item in pagination.items]
 
-    # Compute artefact and child counts in batch queries
-    artefact_counts = {}
-    child_counts = {}
-    if item_ids:
-        counts = (
+    # Compute artefact and child counts in batch queries (read-through cached
+    # per viewer + content version; items with no visible artefacts/children
+    # are absent, so the template's .get(id, 0) yields 0 as before).
+    uid = cache_user_id(current_user)
+
+    def _artefact_counts(ids):
+        rows = (
             db.session.query(Artefact.item_id, func.count(Artefact.id))
             .join(Item, Artefact.item_id == Item.id)
-            .filter(Artefact.item_id.in_(item_ids))
+            .filter(Artefact.item_id.in_(ids))
             .filter(artefact_visibility_clause(current_user))
             .group_by(Artefact.item_id)
             .all()
         )
-        artefact_counts = dict(counts)
-        child_counts_q = (
+        return dict(rows)
+
+    def _child_counts(ids):
+        rows = (
             db.session.query(Item.parent_id, func.count(Item.id))
-            .filter(Item.parent_id.in_(item_ids))
+            .filter(Item.parent_id.in_(ids))
             .filter(item_visibility_clause(current_user))
             .group_by(Item.parent_id)
             .all()
         )
-        child_counts = dict(child_counts_q)
+        return dict(rows)
+
+    artefact_counts = cache_per_id(f'item:acount:u{uid}', item_ids, _artefact_counts)
+    child_counts = cache_per_id(f'item:ccount:u{uid}', item_ids, _child_counts)
 
     return render_template('items/index.html',
                            items=pagination.items,
@@ -407,8 +415,13 @@ def view(uuid, item):
 
     artefacts_page = artefact_query.order_by(_ARTEFACT_SORT_OPTIONS[artefact_sort]).paginate(page=page, per_page=per_page)
 
-    artefact_analysis_status = _compute_artefact_analysis_status(
-        [a.id for a in artefacts_page.items]
+    # Analysis-status aggregates are operational (not viewer-specific) and the
+    # BFS over the derived tree is the costly part — cache globally per root
+    # artefact + content version.  Any analysis state change bumps the version.
+    artefact_analysis_status = cache_per_id(
+        'art:astatus',
+        [a.id for a in artefacts_page.items],
+        _compute_artefact_analysis_status,
     )
 
     user_can_manage_shares = can_manage_shares(item, current_user)
