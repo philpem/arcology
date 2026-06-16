@@ -763,6 +763,9 @@ Automated tests live in `ci/` and run in the `app-tests` GitHub Actions job (SQL
 | `ci/test_url_identifiers.py` | URL-safe identifiers and slug generation |
 | `ci/test_fk_violations.py` | FK cascade deletes, defensive checks, M2M cleanup, nullable FK edge cases (SQLite FK enforcement enabled) |
 | `ci/test_inf_processing.py` | RISC OS INF sidecar parsing, BBC↔DOS filename translation, `process_inf_sidecars()` end-to-end |
+| `ci/test_chunked_upload.py` | Chunked upload protocol (sync path): init/chunk/status/complete, API + web |
+| `ci/test_chunked_finalize.py` | Async finalise core (state machine, single-winner claim, stale re-drive) + async `/complete` + `/complete/status` |
+| `ci/test_cli_chunked.py` | `arco` chunked client: async finalise poll loop + resumable uploads (fake server) |
 
 Run locally:
 
