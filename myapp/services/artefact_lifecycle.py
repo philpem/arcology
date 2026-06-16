@@ -16,6 +16,7 @@ from flask import current_app
 from sqlalchemy import select
 from arcology_shared.hints import HintKey
 from ..database import (
+    ANALYSIS_PRIORITY_NORMAL,
     Analysis,
     AnalysisStatus,
     AnalysisType,
@@ -742,7 +743,8 @@ def _collect_all_item_ids(item):
 
 
 def queue_storage_cleanup(cleanup_keys: dict, artefact_id: int | None = None,
-                          commit: bool = False):
+                          commit: bool = False,
+                          priority: int = ANALYSIS_PRIORITY_NORMAL):
     """Queue a CLEANUP analysis job that deletes the given storage keys.
 
     *cleanup_keys* is the dict produced by _collect_item_cleanup_keys():
@@ -753,6 +755,15 @@ def queue_storage_cleanup(cleanup_keys: dict, artefact_id: int | None = None,
     storage backend, so the cleanup works for both local and S3 deployments,
     survives web-container restarts (unlike the previous daemon threads), and
     is retryable through the normal analysis queue machinery.
+
+    *priority* controls where the job sits in the worker's queue (which is
+    ordered priority DESC, created_at).  Item deletion can leave it at the
+    default NORMAL priority — nothing races a deleted item.  A *re-analysis*
+    cleanup, however, MUST outrank the replacement analyses queued alongside
+    it: otherwise the worker drains the higher-priority new jobs first, leaving
+    the CLEANUP PENDING, and it then deletes the per-artefact partition cache
+    (outputs/.cache/<uuid>, shared across runs) out from under the fresh run.
+    Pass a priority above the new analyses' priority in that case.
 
     Returns the Analysis row, or None when there is nothing to delete.
     The caller commits (pass commit=True to commit here) — for deletions this
@@ -769,6 +780,7 @@ def queue_storage_cleanup(cleanup_keys: dict, artefact_id: int | None = None,
         analysis_type=AnalysisType.CLEANUP,
         status=AnalysisStatus.PENDING,
         hints=json.dumps(cleanup_keys),
+        priority=priority,
     )
     db.session.add(job)
     if commit:
