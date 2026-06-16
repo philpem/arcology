@@ -2,7 +2,9 @@
 Base utilities for running external tools.
 """
 
+import contextlib
 import hashlib
+import os
 import subprocess
 import sys
 import threading
@@ -13,6 +15,23 @@ from typing import TypedDict
 from ..config import TOOL_TIMEOUT, log
 from ..exceptions import JobCancelledException
 from ..utils.text import sanitize_filename
+
+# Upper bound on how many bytes any single helper will pull into RAM at once.
+# Disc images are gigabytes; the parsers that legitimately read a whole file
+# (sprites, RISC OS modules, IMD floppies, text) all operate on inherently small
+# files, so this cap turns an unexpectedly huge input (corrupt metadata, a
+# hostile upload, a misdetected type) into a clean error instead of an OOM/DoS.
+# 256 MiB is far above any legitimate such file yet well under a worker's budget.
+MAX_INMEM_BYTES = 256 * 1024 * 1024
+
+
+class FileTooLargeError(OSError):
+    """A file exceeds the in-memory read cap (MAX_INMEM_BYTES).
+
+    Subclasses OSError so the existing ``except OSError`` handlers in the
+    small-file parsers treat an over-cap file like any other unreadable file
+    (skip / error result) rather than crashing.
+    """
 
 # Module-level cancellation event.  Set by the monitoring thread in AnalysisWorker
 # when it detects that the current job has been deleted or is no longer running.
@@ -340,5 +359,77 @@ def compute_file_hash(filepath: Path) -> tuple[str, str, int]:
             size += len(chunk)
 
     return md5.hexdigest(), sha256.hexdigest(), size
+
+
+def read_file_capped(path: Path, max_bytes: int = MAX_INMEM_BYTES) -> bytes:
+    """Read an entire file into memory, refusing inputs larger than *max_bytes*.
+
+    Use for the small-file parsers (sprite, RISC OS module, IMD, text) that must
+    materialise the whole file but whose formats are inherently small.  An
+    unexpectedly huge file (corrupt header, hostile upload, type misdetection)
+    would otherwise OOM the worker; instead this raises :class:`FileTooLargeError`
+    (an OSError) which their existing error handling already covers.
+    """
+    size = os.stat(path).st_size
+    if size > max_bytes:
+        raise FileTooLargeError(
+            f"Refusing to read {path} into memory: {size} bytes exceeds the "
+            f"{max_bytes}-byte cap"
+        )
+    with open(path, 'rb') as f:
+        return f.read()
+
+
+@contextlib.contextmanager
+def open_sector_reader(path: Path):
+    """Open *path* and yield a :class:`SectorReader` over it.
+
+    Random read-only access to a (potentially multi-GB) file via seek/read,
+    without mmapping it or loading it into RAM.  Use for disc images whose
+    parsers index/slice the buffer at scattered offsets but only ever touch a
+    handful of sectors (e.g. the ARMlock FileCore-chain probe).
+    """
+    with open(path, 'rb') as f:
+        size = f.seek(0, os.SEEK_END)
+        f.seek(0)
+        yield SectorReader(f, size)
+
+
+class SectorReader:
+    """Read-only random-access view over an open file using seek/read.
+
+    Supports ``len()``, integer indexing (``buf[i]`` -> int) and slice indexing
+    (``buf[a:b]`` -> bytes), reading only the requested range from disk.  This
+    lets buffer-oriented parsers address a huge file with a few sector-sized
+    reads instead of holding the whole thing in memory.
+
+    Single-threaded use only: it seeks a shared file handle, so concurrent
+    access would interleave seeks.  ``struct.unpack_from`` does NOT accept a
+    SectorReader (no buffer protocol) — slice first, then unpack the bytes.
+    """
+
+    __slots__ = ('_f', '_size')
+
+    def __init__(self, f, size: int):
+        self._f = f
+        self._size = size
+
+    def __len__(self) -> int:
+        return self._size
+
+    def __getitem__(self, key):
+        if isinstance(key, slice):
+            start, stop, step = key.indices(self._size)
+            if start >= stop:
+                return b''
+            self._f.seek(start)
+            data = self._f.read(stop - start)
+            return data if step == 1 else data[::step]
+        if key < 0:
+            key += self._size
+        if not 0 <= key < self._size:
+            raise IndexError('SectorReader index out of range')
+        self._f.seek(key)
+        return self._f.read(1)[0]
 
 # vim: ts=4 sw=4 et

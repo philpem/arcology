@@ -16,13 +16,21 @@ lines carry a leading token optionally followed by descriptive prose, so only
 the leading token is read).
 """
 
+import io
 import logging
+import os
 import re
 
 log = logging.getLogger(__name__)
 
 # The header is exactly 21 newline-terminated lines.
 _HEADER_LINES = 21
+
+# Bounded reads so a multi-GB movie is never loaded whole: the 21-line text
+# header lives at the very start, and only a capped window of the catalogue is
+# scanned for the sound-track count.
+_HEADER_READ_BYTES = 64 * 1024
+_CATALOGUE_READ_BYTES = 4 * 1024 * 1024
 
 # Line 1 must be this literal magic (exact match).
 _MAGIC = 'ARMovie'
@@ -106,18 +114,18 @@ def _text_or_none(line: str) -> str | None:
     return text or None
 
 
-def _parse_catalogue(data: bytes, catalogue_offset: int, number_of_chunks: int) -> int | None:
+def _parse_catalogue(region: bytes, number_of_chunks: int) -> int | None:
     """Best-effort scan of the chunk catalogue to count sound tracks.
 
+    *region* is the (bounded) slice of the file starting at the catalogue offset.
     Each catalogue line is ``file_offset,video_bytes[;sound_0[;sound_1...]]``.
     Returns the maximum number of ``;``-separated sound-track fields seen across
     the (up to *number_of_chunks*) lines, or None if the catalogue cannot be
     read.  Never raises — header fields are the authoritative payload.
     """
-    if catalogue_offset <= 0 or catalogue_offset >= len(data):
+    if not region:
         return None
     try:
-        region = data[catalogue_offset:]
         text = region.decode('latin-1', errors='replace')
         max_tracks = 0
         lines_read = 0
@@ -145,20 +153,35 @@ def _parse_catalogue(data: bytes, catalogue_offset: int, number_of_chunks: int) 
         return None
 
 
-def parse_armovie_header(data: bytes) -> dict:
+def parse_armovie_header(source) -> dict:
     """Parse an ARMovie file's text header (and, if present, the catalogue).
 
-    *data* should be the whole file (or at least the header); when the buffer
-    extends past the catalogue offset the catalogue is also scanned for the
-    sound-track count.
+    *source* may be a filesystem path, a seekable binary file object, or a
+    bytes-like object (the last mainly for tests).  Only a bounded prefix is read
+    for the 21-line header and a bounded window at the catalogue offset for the
+    sound-track count, so a multi-GB movie is never loaded into RAM.
 
     Returns a flat dict of the populated fields (None values omitted).  Raises
-    ArmovieParseError if the magic line is missing or the header is truncated.
+    ArmovieParseError if the file cannot be read, the magic line is missing, or
+    the header is truncated.
     """
-    # The header is ASCII/Latin-1 text; decode leniently.  We only need the
-    # first 21 lines, so decoding the whole buffer is acceptable for typical
-    # files but we cap it to avoid decoding very large payloads needlessly.
-    head = data[:65536]
+    if isinstance(source, (str, os.PathLike)):
+        try:
+            with open(source, 'rb') as fh:
+                return _parse_armovie_stream(fh)
+        except OSError as e:
+            raise ArmovieParseError(f"Could not read ARMovie file: {e}") from e
+    if isinstance(source, (bytes, bytearray, memoryview)):
+        return _parse_armovie_stream(io.BytesIO(bytes(source)))
+    return _parse_armovie_stream(source)
+
+
+def _parse_armovie_stream(fh) -> dict:
+    """Parse an ARMovie header from a seekable binary file object via bounded reads."""
+    # The header is ASCII/Latin-1 text in the first 21 newline-terminated lines;
+    # read only a bounded prefix rather than the whole (possibly huge) payload.
+    fh.seek(0)
+    head = fh.read(_HEADER_READ_BYTES)
     try:
         text = head.decode('latin-1', errors='replace')
     except Exception as e:  # noqa: BLE001
@@ -212,10 +235,11 @@ def parse_armovie_header(data: bytes) -> dict:
     has_poster_sprite = (sprite_size > 0) if sprite_size is not None else None
 
     sound_track_count = None
-    if catalogue_offset is not None:
-        sound_track_count = _parse_catalogue(
-            data, catalogue_offset, number_of_chunks or 0
-        )
+    if catalogue_offset is not None and catalogue_offset > 0:
+        # Seek to the catalogue and read only a bounded window of it.
+        fh.seek(catalogue_offset)
+        catalogue = fh.read(_CATALOGUE_READ_BYTES)
+        sound_track_count = _parse_catalogue(catalogue, number_of_chunks or 0)
 
     result: dict = {
         'title': title,

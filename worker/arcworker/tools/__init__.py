@@ -20,9 +20,13 @@ from .archives import (
 )
 from .armovie import ArmovieParseError, parse_armovie_header
 from .base import (
+    FileTooLargeError,
+    SectorReader,
     compute_file_hash,
     exception_result,
     get_process_output,
+    open_sector_reader,
+    read_file_capped,
     run_and_build_result,
     run_tool,
     run_tool_with_output,
@@ -68,6 +72,10 @@ __all__ = [
     'run_tool_with_output',
     'get_process_output',
     'compute_file_hash',
+    'open_sector_reader',
+    'SectorReader',
+    'read_file_capped',
+    'FileTooLargeError',
     'tool_result',
     'run_and_build_result',
     'exception_result',

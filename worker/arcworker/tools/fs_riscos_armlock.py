@@ -20,8 +20,11 @@ This module provides two public functions:
 The detection logic is adapted from armlock_tool.py (standalone CLI).
 """
 
+import shutil
 import struct
 from pathlib import Path
+from ..config import log
+from .base import open_sector_reader
 from .extraction import _get_riscos_filetype
 from .partition import (
     FILECORE_BB_DISC_RECORD_OFFSET,
@@ -66,6 +69,12 @@ FILECORE_ATTR_DIR = 0x08
 # Disc address at which ARMlock stashes the real root directory during
 # installation (one FILECORE_DIR_SIZE block).
 ARMLOCK_STASH_ADDR = 0x400
+
+# Upper bound on a single FileCore object assembled by _extract_file_by_sin.
+# The objects we read (the ARMlock module and its Options files, directory
+# blocks) are at most tens of KB; this cap stops a corrupt/hostile directory
+# entry claiming a huge length from reading gigabytes into RAM.
+_MAX_FILECORE_FILE_BYTES = 64 * 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -128,28 +137,36 @@ def _parse_directory(image: bytearray, addr: int) -> tuple[bool, list]:
     """
     if addr + FILECORE_DIR_SIZE > len(image):
         return False, []
-    magic = image[addr + 1:addr + FILECORE_DIR_HEADER_SIZE]
+    # Materialise the directory block in a single (bounded) read.  This keeps the
+    # parse working when *image* is a SectorReader (whose slices are real bytes
+    # but which has no buffer protocol for struct.unpack_from) and reads the whole
+    # directory once rather than re-seeking per field.  Offsets below are
+    # directory-block-relative.
+    block = bytes(image[addr:addr + FILECORE_DIR_SIZE])
+    if len(block) < FILECORE_DIR_SIZE:
+        return False, []
+    magic = block[1:FILECORE_DIR_HEADER_SIZE]
     if magic not in (b"Hugo", b"Nick"):
         return False, []
     entries = []
-    offset = addr + FILECORE_DIR_HEADER_SIZE
-    entries_end = addr + FILECORE_DIR_SIZE - FILECORE_DIR_TAIL_SIZE
+    offset = FILECORE_DIR_HEADER_SIZE
+    entries_end = FILECORE_DIR_SIZE - FILECORE_DIR_TAIL_SIZE
     while offset + FILECORE_DIR_ENTRY_SIZE <= entries_end:
-        if image[offset] == 0x00:
+        if block[offset] == 0x00:
             break
-        name_bytes = image[offset + _DIRENT_NAME:offset + _DIRENT_NAME + _DIRENT_NAME_LEN]
+        name_bytes = block[offset + _DIRENT_NAME:offset + _DIRENT_NAME + _DIRENT_NAME_LEN]
         name_end = next(
             (i for i in range(_DIRENT_NAME_LEN) if name_bytes[i] in (0x00, 0x0D)),
             _DIRENT_NAME_LEN,
         )
         name = name_bytes[:name_end].decode("ascii", errors="replace")
-        load = struct.unpack_from("<I", image, offset + _DIRENT_LOAD)[0]
-        exec_addr = struct.unpack_from("<I", image, offset + _DIRENT_EXEC)[0]
-        length = struct.unpack_from("<I", image, offset + _DIRENT_LENGTH)[0]
-        sin = (image[offset + _DIRENT_SIN]
-               | (image[offset + _DIRENT_SIN + 1] << 8)
-               | (image[offset + _DIRENT_SIN + 2] << 16))
-        attr = image[offset + _DIRENT_ATTR]
+        load = struct.unpack_from("<I", block, offset + _DIRENT_LOAD)[0]
+        exec_addr = struct.unpack_from("<I", block, offset + _DIRENT_EXEC)[0]
+        length = struct.unpack_from("<I", block, offset + _DIRENT_LENGTH)[0]
+        sin = (block[offset + _DIRENT_SIN]
+               | (block[offset + _DIRENT_SIN + 1] << 8)
+               | (block[offset + _DIRENT_SIN + 2] << 16))
+        attr = block[offset + _DIRENT_ATTR]
         is_dir = bool(attr & FILECORE_ATTR_DIR)
         # Hex-string form ('fff'), consistent with the rest of the system
         filetype = _get_riscos_filetype(load)
@@ -262,11 +279,26 @@ def _walk_zone_map(image: bytearray, rec: dict, target_frag_id: int) -> list:
     return fragments
 
 
-def _extract_file_by_sin(image: bytearray, rec: dict, sin: int, file_length: int) -> bytes | None:
-    """Resolve a SIN and extract file data."""
+def _extract_file_by_sin(
+    image: bytearray, rec: dict, sin: int, file_length: int,
+    max_bytes: int = _MAX_FILECORE_FILE_BYTES,
+) -> bytes | None:
+    """Resolve a SIN and extract file data.
+
+    The files this is used for (the ARMlock module and its small Options files,
+    plus directory blocks) are tiny, so *file_length* and the assembled object
+    are capped at *max_bytes*: a corrupt/hostile directory entry claiming a
+    multi-GB length must not cause gigabytes to be read into RAM.
+    """
     frag_id = sin >> 8
     sharing_offset = sin & 0xFF
     if frag_id < 2:
+        return None
+    if file_length > max_bytes:
+        log.warning(
+            "ARMlock: refusing to extract object of %d bytes (> %d-byte cap)",
+            file_length, max_bytes,
+        )
         return None
     fragments = _walk_zone_map(image, rec, frag_id)
     if not fragments:
@@ -276,6 +308,10 @@ def _extract_file_by_sin(image: bytearray, rec: dict, sin: int, file_length: int
         if disc_addr + frag_bytes > len(image):
             frag_bytes = len(image) - disc_addr
         obj_data.extend(image[disc_addr:disc_addr + frag_bytes])
+        if len(obj_data) > max_bytes:
+            # Assembled object already exceeds what we will ever return; stop
+            # before an over-long fragment chain balloons memory.
+            break
     start = 0
     if sharing_offset > 0:
         share_unit = rec["sector_size"]
@@ -458,11 +494,23 @@ def detect_armlock(image_path: Path) -> dict:
     }
 
     try:
-        image = bytearray(image_path.read_bytes())
+        with open_sector_reader(image_path) as image:
+            return _detect_armlock_scan(image, result)
     except OSError as e:
         result['error'] = f'Cannot read image: {e}'
         return result
 
+
+def _detect_armlock_scan(image, result: dict) -> dict:
+    """Run ARMlock detection over an already-open image buffer.
+
+    *image* is any indexable byte buffer — in practice a :class:`SectorReader`
+    over the disc image, so a multi-GB hard-disc image is never copied into RAM:
+    each ``image[a:b]`` is a bounded seek/read and the detector only touches the
+    boot block, the two zone maps, the root/stash directories and whatever small
+    files the FileCore directory chain references.  *result* is the
+    partially-built dict from :func:`detect_armlock`, returned populated.
+    """
     if len(image) < 0xE00:
         result['error'] = 'Image too small to contain a boot block'
         return result
@@ -605,16 +653,20 @@ def remove_armlock(image_path: Path, output_path: Path) -> dict:
       success (bool)
       error (str|None)
     """
+    # Validate the disc record from a small prefix first, so a multi-GB image is
+    # never read into RAM.  The boot block lives at &C00 with the disc record
+    # inside it, so the first &E00 bytes are sufficient to read and validate it.
     try:
-        image = bytearray(image_path.read_bytes())
+        with open(image_path, 'rb') as f:
+            head = f.read(0x1000)
     except OSError as e:
         return {'success': False, 'error': f'Cannot read image: {e}'}
 
-    if len(image) < 0xE00:
+    if len(head) < 0xE00:
         return {'success': False, 'error': 'Image too small to contain a boot block'}
 
     try:
-        rec = _read_disc_record(image)
+        rec = _read_disc_record(head)
     except ValueError as e:
         return {'success': False, 'error': str(e)}
 
@@ -624,25 +676,34 @@ def remove_armlock(image_path: Path, output_path: Path) -> dict:
     addrs = _compute_armlock_addresses(rec)
     sector_size = rec['sector_size']
 
-    # 1. Fix zone map boot_option and recompute ZoneCheck for both copies
-    for map_addr in (addrs['map_primary'], addrs['map_backup']):
-        stored_boot = image[map_addr + 0x0B]
-        real_boot = _decode_armlock_boot_option(stored_boot)
-        image[map_addr + 0x0B] = real_boot
-        sector = bytearray(image[map_addr:map_addr + sector_size])
-        sector[0x0B] = real_boot
-        new_check = _compute_zone_check(sector)
-        image[map_addr] = new_check
-
-    # 2. Copy real root from stash location to its correct location
-    real_root = bytes(image[ARMLOCK_STASH_ADDR:ARMLOCK_STASH_ADDR + FILECORE_DIR_SIZE])
-    image[addrs['root_dir']:addrs['root_dir'] + FILECORE_DIR_SIZE] = real_root
-
-    # 3. Zero out the stashed copy
-    image[ARMLOCK_STASH_ADDR:ARMLOCK_STASH_ADDR + FILECORE_DIR_SIZE] = b'\x00' * FILECORE_DIR_SIZE
-
+    # Copy the image on disk, then patch only the few affected sectors in place
+    # with seek/read/write.  The full image is never held in memory — only the
+    # handful of touched sectors are read — so even a multi-GB hard-disc image is
+    # safe, and this needs no mmap (so there is nothing to fall back from).
     try:
-        output_path.write_bytes(image)
+        shutil.copy(image_path, output_path)
+        with open(output_path, 'r+b') as f:
+            # 1. Fix zone map boot_option and recompute ZoneCheck for both copies
+            for map_addr in (addrs['map_primary'], addrs['map_backup']):
+                f.seek(map_addr)
+                sector = bytearray(f.read(sector_size))
+                if len(sector) < sector_size:
+                    return {'success': False, 'error': 'Truncated image: zone map sector missing'}
+                real_boot = _decode_armlock_boot_option(sector[0x0B])
+                sector[0x0B] = real_boot
+                sector[0] = _compute_zone_check(sector)  # check byte at sector offset 0
+                f.seek(map_addr)
+                f.write(sector)
+
+            # 2. Copy real root from stash location to its correct location
+            f.seek(ARMLOCK_STASH_ADDR)
+            real_root = f.read(FILECORE_DIR_SIZE)
+            f.seek(addrs['root_dir'])
+            f.write(real_root)
+
+            # 3. Zero out the stashed copy
+            f.seek(ARMLOCK_STASH_ADDR)
+            f.write(b'\x00' * FILECORE_DIR_SIZE)
     except OSError as e:
         return {'success': False, 'error': f'Cannot write output: {e}'}
 
