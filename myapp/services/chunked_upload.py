@@ -10,10 +10,18 @@ protocol:
     complete-> assemble the chunks into the storage backend + hash them
 
 This module owns the filesystem mechanics so the two blueprints share one
-implementation.  Chunks are stored locally under
-``<instance_path>/.chunks/<upload_uuid>/`` regardless of the active storage
-backend (local or S3); on completion they are assembled into a tempfile and
-pushed via ``storage.put()``, mirroring save_uploaded_file().
+implementation.  Chunks are staged on the local filesystem under
+``<CHUNK_DIR>/<upload_uuid>/`` regardless of the active storage backend (local
+or S3); on completion they are assembled into a tempfile and pushed via
+``storage.put()``, mirroring save_uploaded_file().
+
+``CHUNK_DIR`` (config key / env var) selects the staging location and
+**must point at a persisted volume in any containerised deployment**: an
+in-progress upload can be tens of gigabytes, and the default
+``<instance_path>/.chunks`` sits on the container's ephemeral writable layer,
+so a container recreate (deploy) would both discard resumable sessions and
+risk staging large uploads on a small rootfs (or tmpfs/RAM).  A relative
+``CHUNK_DIR`` is resolved against the Flask instance path.
 
 Callers translate the exceptions raised here into their own error formats
 (JSON for the API, flash/redirect for the web UI).
@@ -80,8 +88,19 @@ def max_upload_size() -> int:
 
 
 def chunks_base() -> str:
-    """Return (and create) the base directory for in-progress chunk uploads."""
-    path = os.path.join(current_app.instance_path, '.chunks')
+    """Return (and create) the base directory for in-progress chunk uploads.
+
+    Honours the ``CHUNK_DIR`` config key / env var (resolved against the Flask
+    instance path when relative); defaults to ``<instance_path>/.chunks``.
+    See the module docstring for why this must be a persisted volume in
+    containerised deployments.
+    """
+    configured = current_app.config.get('CHUNK_DIR')
+    if configured:
+        path = configured if os.path.isabs(configured) \
+            else os.path.join(current_app.instance_path, configured)
+    else:
+        path = os.path.join(current_app.instance_path, '.chunks')
     os.makedirs(path, exist_ok=True)
     return path
 

@@ -59,6 +59,12 @@ MAX_UPLOAD_SIZE = 16 * 1024 * 1024 * 1024  # 16GB max assembled chunked upload
 # MAX_CONTENT_LENGTH (each chunk is one request).
 CHUNKED_UPLOAD_THRESHOLD = 100 * 1024 * 1024  # 100MB: chunk web uploads at/above this
 CHUNKED_UPLOAD_CHUNK_SIZE = 50 * 1024 * 1024  # 50MB per chunk
+# Staging directory for in-progress chunked uploads (relative paths resolve
+# against the instance path; default <instance_path>/.chunks). An in-progress
+# upload can be many gigabytes — point this at a persisted volume with adequate
+# space. In Docker the default location is on the ephemeral container layer
+# unless mounted (the bundled docker-compose.yml mounts ./data/chunks here).
+# CHUNK_DIR = '/app/instance/.chunks'
 ITEMS_PER_PAGE = 25
 FILES_PER_PAGE = 100
 ANALYSES_SHOWN = 5      # Max completed analyses shown per artefact before "Show All" appears

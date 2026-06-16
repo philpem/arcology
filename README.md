@@ -20,7 +20,7 @@ A digital artefact catalogue for retrocomputing collections, built on Flask.
 cd arcology
 
 # Create data directories
-mkdir -p data/uploads data/outputs data/db
+mkdir -p data/uploads data/outputs data/db data/chunks
 
 # Build and start (first build takes a while - compiles analysis tools)
 docker compose up --build -d
