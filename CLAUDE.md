@@ -328,26 +328,46 @@ who **cannot** bypass it, it behaves like any restriction (hard block). For a
 user who **can** bypass it, the content is shown but **blurred behind a
 "click to reveal" consent overlay** rather than served outright. This is the
 `.explicit-gate` / `.explicit-content-blur` / `revealExplicit()` machinery in
-`myapp/templates/artefacts/viewer.html`, driven by `_viewer_explicit_gate()` in
-`myapp/blueprints/artefacts.py` (sets `group['explicit']` / `group['restricted']`
-and returns `user_can_bypass_explicit`).
+`myapp/templates/artefacts/viewer.html`.
+
+**Compute the two gate flags from one place** (`myapp/visibility.py`) — do not
+re-derive them inline:
+- `content_gate_flags(user, artefact) -> (restricted, explicit)` — the single
+  source of truth for the per-owning-artefact display flags. `restricted` is
+  `output_blocked_for(user, art)` (hard lock — render a locked placeholder /
+  notice); `explicit` is `(not restricted) and can_reveal_explicit(user) and art
+  is effectively EXPLICIT` (soft blur). The two are mutually exclusive.
+- `can_reveal_explicit(user)` — whether the user holds the EXPLICIT bypass (the
+  soft-gate predicate). Used both for `content_gate_flags` and for the viewer's
+  `user_can_bypass_explicit` flag (set by `_viewer_explicit_gate()`, which still
+  does the path-based per-extracted-file `group['explicit']` computation).
+
+**Render the two gates from one place** — the macros in
+`myapp/templates/artefacts/_content_gates.html` are the single source of the
+gate markup; do not hand-write the overlay / blur / locked-placeholder HTML:
+- `{% call explicit_gate(stable_id, compact=…, gate_class=…) %}…media…{% endcall %}`
+  — wraps media in the blur + consent overlay (`compact` = terse thumbnail
+  variant; default = full card/player variant).
+- `locked_thumb(title=…)` — the hard-locked thumbnail placeholder.
+- `restricted_notice(subject, what, level=…)` — the inline "withheld due to a
+  restriction" alert.
 
 > **Recurring requirement — any viewer surface that renders restricted bytes
 > must wire up *both* gates.** When you add a new kind of rendered media to the
 > viewer (image output, module render, Replay player/poster, …):
-> 1. compute, per owning artefact, `restricted = output_blocked_for(user, art)`
->    (hard lock) and `explicit = (not restricted) and can_bypass and art is
->    EXPLICIT` (soft blur);
-> 2. in the template, render a locked placeholder when `restricted`, wrap the
->    media in the `.explicit-gate` blur/reveal markup when `explicit`, otherwise
->    render normally;
+> 1. compute the flags with `content_gate_flags(user, owning_artefact)` — never
+>    re-derive the `restricted` / `explicit` logic inline;
+> 2. in the template, render `locked_thumb()` / `restricted_notice(...)` when
+>    `restricted`, wrap the media in `{% call explicit_gate(...) %}` when
+>    `explicit`, otherwise render normally;
 > 3. gate per **owning** artefact, not just the viewed root — a *derived* movie
 >    can be explicit/restricted while its root is not.
 >
-> The Acorn Replay viewer is the worked example: `_replay_gate_flags()` +
+> The Acorn Replay viewer is the worked example: `content_gate_flags()` in
 > `_viewer_replay_detail` / `_viewer_replay_posters` (blueprint) and the
-> `replay_detail` / `replay_posters` blocks (template). Covered by
-> `ci/test_output_restrictions.py` (`*_replay_*` tests).
+> `replay_detail` / `replay_posters` blocks (template, via the
+> `_content_gates.html` macros). Covered by `ci/test_output_restrictions.py`
+> (`*_replay_*` tests).
 
 ### OIDC role for STAFF tier
 

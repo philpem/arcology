@@ -95,8 +95,10 @@ from ..visibility import (
     can_curate_item,
     can_download_despite_restrictions,
     can_manage_privacy,
+    can_reveal_explicit,
     can_view_artefact,
     can_view_item,
+    content_gate_flags,
     output_blocked_for,
 )
 
@@ -922,7 +924,7 @@ def _viewer_explicit_gate(artefact, output_groups, all_partition_ids, _output_bl
     # group['explicit'] must be set before the thumbnail bundling pass so that
     # explicit groups are not pulled into the unified thumbnail grid.
     explicit_type = RestrictionType.EXPLICIT
-    user_can_bypass_explicit = current_user.is_authenticated and current_user.can_bypass_restriction(explicit_type)
+    user_can_bypass_explicit = can_reveal_explicit(current_user)
 
     artefact_is_explicit = any(
         r.restriction_type == explicit_type for r in artefact.restrictions
@@ -1090,38 +1092,6 @@ def _viewer_module_detail(file_filter, all_artefact_ids):
     return module_detail
 
 
-def _replay_can_bypass_explicit():
-    """Whether the current user may bypass the EXPLICIT (NSFW) restriction."""
-    return (
-        current_user.is_authenticated
-        and current_user.can_bypass_restriction(RestrictionType.EXPLICIT)
-    )
-
-
-def _replay_gate_flags(artefact, can_bypass_explicit):
-    """(restricted, explicit) content-gate flags for a Replay movie's artefact.
-
-    Mirrors the image-output gating so NSFW/restricted Replay media get the same
-    treatment as converted images:
-
-    * ``restricted`` — the artefact carries a download restriction the user
-      cannot bypass (any type, incl. EXPLICIT without bypass): render a locked
-      placeholder / notice instead of the player/poster (the bytes 403 anyway).
-    * ``explicit`` — the artefact is EXPLICIT and the user *can* bypass it:
-      render behind the blur + "click to reveal" consent gate.
-    """
-    if artefact is None:
-        return False, False
-    restricted = output_blocked_for(current_user, artefact)
-    explicit = (
-        not restricted
-        and can_bypass_explicit
-        and any(r.restriction_type == RestrictionType.EXPLICIT
-                for r in artefact.effective_restrictions)
-    )
-    return restricted, explicit
-
-
 def _viewer_replay_detail(file_filter, all_artefact_ids):
     """Acorn Replay / ARMovie detail card when ?file= matches an ARMovie path.
 
@@ -1208,7 +1178,7 @@ def _viewer_replay_detail(file_filter, all_artefact_ids):
     # the movie's owning artefact so a derived/explicit movie is gated even when
     # the viewed root artefact is not.
     owning = db.session.get(Artefact, row.artefact_id)
-    restricted, explicit = _replay_gate_flags(owning, _replay_can_bypass_explicit())
+    restricted, explicit = content_gate_flags(current_user, owning)
     detail['restricted'] = restricted
     detail['explicit'] = explicit
     detail['stable_id'] = hashlib.md5(
@@ -1237,11 +1207,10 @@ def _viewer_replay_posters(all_artefact_ids):
         {a.id: a for a in Artefact.query.filter(Artefact.id.in_(art_ids)).all()}
         if art_ids else {}
     )
-    can_bypass_explicit = _replay_can_bypass_explicit()
     posters = []
     for row in rows:
-        restricted, explicit = _replay_gate_flags(
-            artefacts.get(row.artefact_id), can_bypass_explicit)
+        restricted, explicit = content_gate_flags(
+            current_user, artefacts.get(row.artefact_id))
         posters.append({
             'file_path': row.file_path,
             'title': row.title,

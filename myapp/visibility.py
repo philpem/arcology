@@ -30,6 +30,7 @@ Three share permission levels are supported:
 
 from sqlalchemy import and_, or_, select, true
 from .database import Artefact, Item, ItemShare, group_memberships
+from .enums import RestrictionType
 
 # Valid share permission levels in ascending order of privilege.
 SHARE_PERMISSIONS = ('viewer', 'editor', 'curator')
@@ -262,6 +263,47 @@ def output_blocked_for(user, artefact) -> bool:
     """
     return not can_download_despite_restrictions(
         user, artefact.effective_restrictions, artefact)
+
+
+def can_reveal_explicit(user) -> bool:
+    """Whether *user* may bypass the EXPLICIT (NSFW) soft gate.
+
+    ``EXPLICIT`` is a *soft* restriction: a user who holds the bypass is shown
+    the content behind a blur + "click to reveal" consent overlay rather than
+    having it withheld outright.  A user without the bypass is hard-blocked like
+    any other restriction.  This is the single predicate the viewer uses to
+    decide between the two behaviours — centralised here so the web routes,
+    the Replay paths and the output viewer cannot drift apart.
+    """
+    return _is_authenticated(user) and user.can_bypass_restriction(RestrictionType.EXPLICIT)
+
+
+def content_gate_flags(user, artefact) -> tuple[bool, bool]:
+    """Return ``(restricted, explicit)`` display flags for *artefact*'s outputs.
+
+    Single source of truth for the two content gates the viewer applies to any
+    rendered media (converted images, SVGs, the Replay player/poster):
+
+    * ``restricted`` — the artefact (or an ancestor it was derived from) carries
+      a download restriction *user* cannot bypass, incl. EXPLICIT without the
+      bypass.  Render a hard-locked placeholder / notice; the bytes 403 anyway.
+    * ``explicit`` — the artefact is effectively EXPLICIT and *user* *can*
+      bypass it: render behind the blur / "click to reveal" consent overlay.
+      Mutually exclusive with ``restricted`` (a hard block wins).
+
+    Gate per **owning** artefact, not just the viewed root — a *derived* output
+    can be explicit/restricted while its root is not.
+    """
+    if artefact is None:
+        return False, False
+    restricted = output_blocked_for(user, artefact)
+    explicit = (
+        not restricted
+        and can_reveal_explicit(user)
+        and any(r.restriction_type == RestrictionType.EXPLICIT
+                for r in artefact.effective_restrictions)
+    )
+    return restricted, explicit
 
 
 def item_visibility_clause(user, *, sees_all: bool = False):
