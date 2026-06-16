@@ -106,6 +106,32 @@ class TestQueueStorageCleanup(_CleanupBase):
                      'output_dir_prefixes': [], 'cache_prefixes': []}
             self.assertIsNone(queue_storage_cleanup(empty, commit=True))
 
+    def test_default_priority_is_normal(self):
+        from myapp.database import ANALYSIS_PRIORITY_NORMAL
+        from myapp.services.artefact_lifecycle import queue_storage_cleanup
+
+        with self.app.app_context():
+            job = queue_storage_cleanup(
+                {'artefact_keys': ['uploads/x.img']}, commit=True)
+            self.assertEqual(job.priority, ANALYSIS_PRIORITY_NORMAL)
+
+    def test_reanalysis_cleanup_outranks_new_analyses(self):
+        """A re-analysis CLEANUP must be claimed before its replacement jobs.
+
+        The worker polls ORDER BY priority DESC, created_at; if the cleanup
+        does not outrank the new analyses it sits PENDING while they run and
+        then deletes their output (the shared outputs/.cache/<uuid> prefix).
+        """
+        from myapp.database import ANALYSIS_PRIORITY_HIGH
+        from myapp.services.artefact_lifecycle import queue_storage_cleanup
+
+        with self.app.app_context():
+            web_priority = ANALYSIS_PRIORITY_HIGH
+            job = queue_storage_cleanup(
+                {'cache_prefixes': ['outputs/.cache/abcd']},
+                commit=True, priority=web_priority + 1)
+            self.assertGreater(job.priority, web_priority)
+
 
 class TestCollectOutputCleanupKeys(_CleanupBase):
     def test_collects_outputs_but_never_uploads(self):

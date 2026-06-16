@@ -3176,8 +3176,13 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
         # handled local storage).
         cleanup_keys = collect_output_cleanup_keys(artefact)
         reset_artefact_for_reanalysis(artefact)
-        queue_storage_cleanup(cleanup_keys, artefact_id=artefact.id, commit=True)
         web_priority = current_app.config.get('WEB_UI_ANALYSIS_PRIORITY', ANALYSIS_PRIORITY_HIGH)
+        # The cleanup must outrank the replacement analyses, or the worker
+        # (queue ordered priority DESC, created_at) runs the new jobs first and
+        # the CLEANUP then deletes their output — notably the shared
+        # outputs/.cache/<uuid> partition cache — after they have already run.
+        queue_storage_cleanup(cleanup_keys, artefact_id=artefact.id, commit=True,
+                              priority=web_priority + 1)
         queue_analyses_for_artefact(artefact, hints if hints else None, priority=web_priority)
 
         flash('Re-analysis queued. Previous results have been cleared.', 'success')
