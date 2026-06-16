@@ -263,6 +263,8 @@ def main():
 	                        help='Root-level (non-application) file handling (default: skip)')
 	hashdb_gen.add_argument('--no-global-check', action='store_false', dest='global_check',
 	                        help='Skip the cross-catalogue /hash-lookup uniqueness check')
+	hashdb_gen.add_argument('-j', '--jobs', type=int, default=8,
+	                        help='Concurrent API requests (default: 8; 1 = serial)')
 	hashdb_gen.add_argument('-v', '--verbose', action='store_true')
 	hashdb_gen.add_argument('--dry-run', action='store_true',
 	                        help='List selected items only; generate nothing')
