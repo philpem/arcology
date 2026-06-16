@@ -108,9 +108,10 @@ def cache_per_id(prefix, ids, compute, timeout=None):
     ``prefix`` namespaces the entries (include a viewer fragment from
     cache_user_id() for per-user data).  ``compute(missing_ids)`` must return a
     ``dict`` mapping (a subset of) the requested ids to their values; ids it
-    omits are remembered as empty so they are not recomputed until the content
-    version changes.  Returns ``dict[id, value]`` for the ids that have a value,
-    matching ``compute``'s own "absent means none" semantics.
+    omits — or maps to ``None`` — are remembered as empty so they are not
+    recomputed until the content version changes.  Returns ``dict[id, value]``
+    for the ids that have a (non-None) value, matching ``compute``'s own
+    "absent means none" semantics.
 
     With NullCache every id is always a miss, so this reduces to a single
     ``compute(all_ids)`` call — identical behaviour to the un-cached code.
@@ -119,13 +120,20 @@ def cache_per_id(prefix, ids, compute, timeout=None):
     if not ids:
         return {}
     version = content_version()
-    keymap = {f'{prefix}:{i}:v{version}': i for i in ids}
+
+    def _key(i):
+        return f'{prefix}:{i}:v{version}'
+
+    keymap = {_key(i): i for i in ids}
     found = cache.get_dict(*keymap.keys())
 
     result = {}
     missing = []
     for key, i in keymap.items():
         val = found.get(key)
+        # A stored None is indistinguishable from an absent key, so None always
+        # means "miss" here — which is why compute()'s None values are stored as
+        # the empty sentinel below rather than as None.
         if val is None:
             missing.append(i)
         elif val != _EMPTY_SENTINEL:
@@ -135,11 +143,14 @@ def cache_per_id(prefix, ids, compute, timeout=None):
         computed = compute(missing) or {}
         to_set = {}
         for i in missing:
-            if i in computed:
-                result[i] = computed[i]
-                to_set[f'{prefix}:{i}:v{version}'] = computed[i]
+            val = computed.get(i)
+            if val is not None:
+                result[i] = val
+                to_set[_key(i)] = val
             else:
-                to_set[f'{prefix}:{i}:v{version}'] = _EMPTY_SENTINEL
+                # Absent or explicitly None — record as known-empty so it is not
+                # recomputed every request (and never stored as a misread None).
+                to_set[_key(i)] = _EMPTY_SENTINEL
         cache.set_many(to_set, timeout=timeout)
 
     return result
@@ -155,9 +166,25 @@ _invalidation_registered = False
 def register_cache_invalidation(app):
     """Wire the SQLAlchemy commit hook that bumps the content version.
 
-    A flush records whether any content model was written on the session; the
-    subsequent commit performs the bump.  Bumping on commit (not flush) means a
-    rolled-back transaction never invalidates anything.
+    A write to a content model flags the session; the subsequent commit performs
+    the bump.  Two listeners flag the session because writes reach the database
+    by two different mechanisms:
+
+      * ``after_flush`` — ORM unit-of-work writes (``session.add``, attribute
+        mutations, ``session.delete``), detected by instance type.
+      * ``do_orm_execute`` — ORM-enabled bulk/core DML
+        (``Query.update()/delete()``, ``session.execute(update(Model)…)``),
+        which never appears in ``session.new/dirty/deleted`` and so is invisible
+        to ``after_flush``.  This covers the atomic job claim, reassign-ownership
+        and bulk item deletes — all of which mutate content models.
+
+    The flag is intentionally **not** cleared on rollback.  A SAVEPOINT
+    (``begin_nested``) rollback fires ``after_rollback`` too, so clearing there
+    would drop a flag set by an earlier write that the *outer* transaction still
+    commits — serving stale data (the search-index savepoint in update_analysis
+    hit exactly this).  Leaving the flag set means a fully rolled-back
+    transaction may bump the version on the session's next commit; that is a
+    harmless over-invalidation (a cache miss), never staleness.
 
     Idempotent: only the first call per process attaches the listeners.
     """
@@ -182,14 +209,23 @@ def register_cache_invalidation(app):
                 session.info[flag] = True
                 return
 
+    @event.listens_for(db.session, 'do_orm_execute')
+    def _note_bulk_writes(orm_execute_state):
+        # Only UPDATE/DELETE/INSERT statements mutate data; SELECTs must not
+        # invalidate.  bind_mapper is the mapped class the statement targets.
+        if orm_execute_state.is_select:
+            return
+        if not (orm_execute_state.is_update or orm_execute_state.is_delete or
+                orm_execute_state.is_insert):
+            return
+        mapper = orm_execute_state.bind_mapper
+        if mapper is not None and issubclass(mapper.class_, content_models):
+            orm_execute_state.session.info[flag] = True
+
     @event.listens_for(db.session, 'after_commit')
     def _bump_on_commit(session):
         if session.info.pop(flag, False):
             bump_content_version()
-
-    @event.listens_for(db.session, 'after_rollback')
-    def _clear_on_rollback(session):
-        session.info.pop(flag, None)
 
 
 # vim: ts=4 sw=4 et

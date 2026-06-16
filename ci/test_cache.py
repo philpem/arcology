@@ -52,6 +52,9 @@ class _CacheTestBase(unittest.TestCase):
     def tearDown(self):
         from myapp.extensions import db
         db.session.rollback()
+        # Discard the session so its .info (incl. the dirty flag) does not leak
+        # into the next test — mirrors Flask-SQLAlchemy's per-request remove().
+        db.session.remove()
         self.ctx.pop()
 
 
@@ -85,8 +88,55 @@ class TestContentVersion(_CacheTestBase):
         db.session.add(Item(name='Rolled Back Item'))
         db.session.flush()   # trips after_flush, flags the session
         db.session.rollback()
-        # commit something unrelated-free to ensure no deferred bump leaks
+        # No commit happened, so the version must not have moved.
         self.assertEqual(content_version(), before)
+
+    def test_bulk_dml_bumps_version(self):
+        """Bulk/core DML on a content model must invalidate (do_orm_execute)."""
+        from sqlalchemy import update
+        from myapp.database import Item
+        from myapp.extensions import db
+        from myapp.services.cache import content_version
+
+        db.session.add(Item(name='Bulk Target'))
+        db.session.commit()
+
+        before = content_version()
+        # Core/bulk UPDATE — never appears in session.dirty, so after_flush
+        # alone would miss it; do_orm_execute must catch it.
+        db.session.execute(update(Item).values(description='bulk-updated'))
+        db.session.commit()
+        self.assertEqual(content_version(), before + 1)
+
+        before = content_version()
+        Item.query.update({'name': 'renamed'})  # legacy bulk Query.update
+        db.session.commit()
+        self.assertEqual(content_version(), before + 1)
+
+    def test_savepoint_rollback_still_bumps(self):
+        """A committed content change survives a nested-transaction rollback.
+
+        Regression for the bug where after_rollback (which fires on SAVEPOINT
+        rollback too) cleared the dirty flag, so the outer commit failed to
+        invalidate — serving stale data.
+        """
+        from myapp.database import Item
+        from myapp.extensions import db
+        from myapp.services.cache import content_version
+
+        before = content_version()
+        item = Item(name='Outer Write')
+        db.session.add(item)
+        db.session.flush()           # flags the session (content write)
+        try:
+            with db.session.begin_nested():   # SAVEPOINT
+                db.session.add(Item(name='Inner Doomed'))
+                db.session.flush()
+                raise RuntimeError('boom')    # roll the savepoint back
+        except RuntimeError:
+            pass
+        db.session.commit()          # outer write commits — must bump
+        self.assertEqual(content_version(), before + 1)
 
 
 class TestDashboardStatsCaching(_CacheTestBase):
