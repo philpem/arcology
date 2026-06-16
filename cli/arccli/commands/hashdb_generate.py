@@ -122,13 +122,6 @@ _ROOT = '\x00'
 # System variables that always resolve to the application directory.
 _OBEY_VARS = {'obey$dir', 'obey$path'}
 
-# Well-known system variables that point *outside* the application; a file
-# referenced through one of these is not an in-app file and is ignored.
-_EXTERNAL_VARS = {
-    'system$dir', 'system$path', 'boot$dir', 'resources$dir',
-    'choices$dir', 'choices$write', 'wimp$scrapdir', 'scrap$dir',
-}
-
 _SET_RE = re.compile(r'^Set(?:Macro|Eval)?\s+(\S+)\s+(.+)$', re.IGNORECASE)
 _VAR_RE = re.compile(r'<([^>]+)>')
 
@@ -153,6 +146,11 @@ def _expand(token: str, varmap: dict[str, str], depth: int = 0) -> str:
     """Expand <var> references, anchoring application-directory variables on the
     _ROOT sentinel.  Handles the `Set App$Dir <Obey$Dir>` indirection pattern
     (and chains/subdirectories thereof).
+
+    Strict resolution: only Obey$Dir/Obey$Path and variables explicitly Set in
+    the Obey file count as in-app.  A variable the file never Set is assumed to
+    be external and is left unresolved, so its target is not treated as an
+    in-app file.
     """
     if depth > 16:  # guard against pathological/circular definitions
         return token
@@ -163,11 +161,7 @@ def _expand(token: str, varmap: dict[str, str], depth: int = 0) -> str:
             return _ROOT
         if name in varmap:
             return _expand(varmap[name], varmap, depth + 1)
-        if name in _EXTERNAL_VARS:
-            return m.group(0)  # external: leave unresolved
-        if name.endswith('$dir') or name.endswith('$path'):
-            return _ROOT       # unknown directory variable: assume app dir
-        return m.group(0)      # unknown: leave unresolved
+        return m.group(0)  # unset variable -> external, left unresolved
 
     return _VAR_RE.sub(repl, token)
 
