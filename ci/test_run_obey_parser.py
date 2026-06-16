@@ -342,13 +342,13 @@ class TestProductTitle(unittest.TestCase):
     def test_title_with_context(self):
         self.assertEqual(
             build_product_title('!Impression', 'Impression 1.30 (Computer Concepts)'),
-            '!Impression — Impression 1.30 (Computer Concepts)',
+            '!Impression - Impression 1.30 (Computer Concepts)',
         )
 
     def test_title_with_disc(self):
         self.assertEqual(
             build_product_title('!Foo', 'Bar', 2),
-            '!Foo — Bar (Disk 2)',
+            '!Foo - Bar (Disk 2)',
         )
 
     def test_title_no_context(self):
