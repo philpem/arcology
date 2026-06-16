@@ -1,0 +1,58 @@
+{#
+  Content-gate markup — single source of truth for the download-restriction and
+  EXPLICIT (NSFW) gates the viewer wraps around rendered media.
+
+  Two gates, mirroring myapp/visibility.py:content_gate_flags():
+    * restricted — hard block: render locked_thumb()/restricted_notice() in place
+      of the media (its bytes 403 anyway).
+    * explicit   — soft block: wrap the media via {% call explicit_gate(...) %} so
+      it renders blurred behind a "click to reveal" consent overlay.
+
+  The blur/reveal is driven by revealExplicit()/reapplyAllBlurs() and the
+  .explicit-* CSS in viewer.html, keyed off the per-item stable_id.
+#}
+
+{#
+  Wrap blurred media behind the EXPLICIT consent overlay.  Use as:
+      {% call explicit_gate(stable_id) %}<img ...>{% endcall %}
+  compact=true is the terse thumbnail variant (badge + "Show"); the default is
+  the full card/player variant (badge + explanatory text + "I understand").
+#}
+{% macro explicit_gate(stable_id, compact=false, gate_class='') %}
+<div class="explicit-gate{% if gate_class %} {{ gate_class }}{% endif %}" id="explicit-gate-{{ stable_id }}">
+    <div class="explicit-gate-overlay" id="explicit-overlay-{{ stable_id }}">
+        {% if compact %}
+        <span class="badge bg-danger mb-2"><i class="bi bi-exclamation-triangle-fill"></i> Explicit</span>
+        <button class="btn btn-outline-light btn-sm" onclick="revealExplicit('{{ stable_id }}')">Show</button>
+        {% else %}
+        <span class="badge bg-danger fs-6 mb-2"><i class="bi bi-exclamation-triangle-fill"></i> Explicit Content</span>
+        <p class="text-white text-center small mb-3">This content is marked as explicit. Click to reveal.</p>
+        <button class="btn btn-outline-light btn-sm" onclick="revealExplicit('{{ stable_id }}')">I understand — show content</button>
+        {% endif %}
+    </div>
+    <div id="explicit-content-{{ stable_id }}" class="explicit-content-blur">{{ caller() }}</div>
+</div>
+{% endmacro %}
+
+{#
+  Locked placeholder shown inside a thumbnail card when the bytes are restricted
+  (or EXPLICIT without a bypass).  Pass title='' to drop the tooltip.
+#}
+{% macro locked_thumb(title='Download restricted') %}
+<div class="viewer-thumb-link bg-dark d-flex align-items-center justify-content-center"{% if title %} title="{{ title }}"{% endif %}>
+    <i class="bi bi-lock-fill text-secondary fs-3"></i>
+</div>
+{% endmacro %}
+
+{#
+  Inline notice that rendered outputs are withheld because the caller cannot
+  bypass a download restriction.  level is 'warning' (default) or 'danger'.
+  Renders: "{subject} has a download restriction and you do not hold a bypass,
+  so {what} not available."
+#}
+{% macro restricted_notice(subject, what, level='warning') %}
+<div class="alert alert-{{ level }}">
+    <i class="bi bi-lock-fill"></i>
+    {{ subject }} has a download restriction and you do not hold a bypass, so {{ what }} not available.
+</div>
+{% endmacro %}

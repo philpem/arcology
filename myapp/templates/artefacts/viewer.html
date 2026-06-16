@@ -1,6 +1,133 @@
 {% extends "_base.html" %}
 {% from "_pagination.html" import render_pagination_compact %}
 {% from "_path_nav.html" import render_path_breadcrumb, render_subdirectory_bar %}
+{% from "artefacts/_content_gates.html" import explicit_gate, locked_thumb, restricted_notice %}
+
+{# Thumbnail card chrome shared by the Replay poster grid and the thumbnail
+   bundle.  Wrap the card body via {% call thumb_card(label) %}…{% endcall %}. #}
+{% macro thumb_card(label) %}
+<div class="card viewer-img-card h-100">
+    {{ caller() }}
+    <div class="card-footer p-1 text-center">
+        <span class="viewer-name font-monospace">{{ label }}</span>
+    </div>
+</div>
+{% endmacro %}
+
+{# Replay player/poster body — rendered plain, or wrapped in the explicit gate
+   when the movie's owning artefact is EXPLICIT-and-bypassable. #}
+{% macro replay_player(d) %}
+{% if d.mp4_url %}
+{% if d.video_format == 0 %}
+{# Sound-only Replay file — audio player, with the embedded poster sprite
+   (a title card) shown above it when present. #}
+{% if d.poster_url %}
+<img src="{{ d.poster_url }}" class="img-fluid mb-3 d-block mx-auto rounded replay-poster" alt="{{ d.title or d.file_path }} poster">
+{% endif %}
+<audio controls preload="metadata" class="w-100 mb-3" src="{{ d.mp4_url }}">
+    Your browser does not support the audio element.
+</audio>
+{% else %}
+<video controls preload="metadata" class="mb-3 d-block mx-auto replay-player"{% if d.poster_url %} poster="{{ d.poster_url }}"{% endif %} src="{{ d.mp4_url }}">
+    Your browser does not support the video element.
+</video>
+{% endif %}
+{% else %}
+<p class="text-muted small mb-3">
+    <i class="bi bi-film"></i>
+    {% if d.video_format == 0 %}Audio not yet available (transcode pending).
+    {% else %}Preview not yet available (transcode pending or codec unsupported).{% endif %}
+</p>
+{% endif %}
+{% endmacro %}
+
+{# Replay poster thumbnail link — rendered plain, or wrapped in the explicit
+   gate when the movie is EXPLICIT-and-bypassable. #}
+{% macro replay_poster_link(p) %}
+<a href="{{ request.path }}?file={{ p.file_path | urlencode }}" class="position-relative d-block" title="Open Replay player{% if p.title %}: {{ p.title }}{% endif %}">
+    {# Media-type badge: distinguishes sound-only Replay (no video
+       track) from video, overlaid on the poster thumbnail. #}
+    <span class="badge bg-dark bg-opacity-75 position-absolute top-0 end-0 m-1"
+          title="{% if p.sound_only %}Sound-only Replay{% else %}Replay movie{% endif %}">
+        {% if p.sound_only %}<i class="bi bi-music-note-beamed"></i> Sound{% else %}<i class="bi bi-film"></i> Movie{% endif %}
+    </span>
+    {% if p.poster_url %}
+    <img src="{{ p.poster_url }}" class="viewer-img card-img-top" alt="{{ p.title or p.file_path }}" loading="lazy">
+    {% else %}
+    <div class="ratio ratio-16x9 bg-dark d-flex align-items-center justify-content-center rounded-top">
+        <span class="text-muted small text-center px-1">
+            {% if p.sound_only %}<i class="bi bi-music-note-beamed"></i><br>{% if p.has_mp4 %}audio{% else %}not transcoded{% endif %}
+            {% else %}<i class="bi bi-film"></i><br>{% if p.has_mp4 %}video{% else %}not transcoded{% endif %}{% endif %}
+        </span>
+    </div>
+    {% endif %}
+</a>
+{% endmacro %}
+
+{# Image / SVG / text outputs for one non-bundle group — rendered plain, hidden
+   in a d-none wrapper (explicit, no bypass), or blurred behind the explicit
+   gate.  Single source so the body is not duplicated across those branches. #}
+{% macro group_output_body(group, viewer_col_class) %}
+{% set ns = namespace(image_outputs=[], svg_outputs=[], text_outputs=[]) %}
+{% for out in group.outputs %}
+    {% if out.type == 'image' %}{% set ns.image_outputs = ns.image_outputs + [out] %}
+    {% elif out.type == 'svg' %}{% set ns.svg_outputs = ns.svg_outputs + [out] %}
+    {% elif out.type == 'text' %}{% set ns.text_outputs = ns.text_outputs + [out] %}
+    {% endif %}
+{% endfor %}
+{# ── Image outputs ── #}
+{% if ns.image_outputs %}
+<div class="row g-3 mb-4">
+    {% for out in ns.image_outputs %}
+    <div class="{{ viewer_col_class }}">
+        <div class="card viewer-img-card h-100">
+            {# Prefer svg_filename for old results where PNG was stored as filename; new results store SVG directly as filename. #}
+            {% set preview_file = out.svg_filename if out.svg_filename else out.filename %}
+            <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
+               target="_blank" rel="noopener">
+                <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
+                     class="viewer-img card-img-top" alt="{{ out.name }}" loading="lazy">
+            </a>
+            <div class="card-footer p-1 text-center">
+                <span class="viewer-name font-monospace">{{ out.name }}</span>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+{# ── SVG outputs (other tools that produce standalone SVG without a paired PNG) ── #}
+{% if ns.svg_outputs %}
+<div class="mb-3">
+    {% for out in ns.svg_outputs %}
+    <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=out.filename) }}"
+       target="_blank" rel="noopener" class="btn btn-outline-secondary me-2">
+        <i class="bi bi-filetype-svg"></i> View SVG ({{ out.name }})
+    </a>
+    {% endfor %}
+</div>
+{% endif %}
+{# ── Text outputs ── #}
+{% if ns.text_outputs %}
+    {% for out in ns.text_outputs %}
+    <div class="viewer-text mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-1">
+            {% if not group.source_file %}<span class="font-monospace small text-muted">{{ out.name }}</span>{% endif %}
+            <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=out.filename) }}"
+               target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary ms-auto">
+                <i class="bi bi-file-text"></i> Raw
+            </a>
+        </div>
+        {% if out.text_content is not none %}
+        <pre>{{ out.text_content }}</pre>
+        {% else %}
+        <div class="alert alert-warning">Text content unavailable — <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=out.filename) }}" target="_blank">open raw file</a>.</div>
+        {% endif %}
+    </div>
+    {% endfor %}
+{% endif %}
+{% endmacro %}
+
 {% block page_title %}View — {{ artefact.label }}{% endblock %}
 
 {% block styles %}
@@ -105,11 +232,7 @@
 {% endif %}
 
 {% if viewer_status == 'restricted' %}
-<div class="alert alert-danger">
-    <i class="bi bi-lock-fill"></i>
-    This artefact has a download restriction and you do not hold a bypass, so its
-    converted outputs are not available.
-</div>
+{{ restricted_notice('This artefact', 'its converted outputs are', level='danger') }}
 {% elif viewer_status == 'pending' %}
 <div class="alert alert-info">
     <i class="bi bi-hourglass-split"></i> Conversion in progress — please refresh in a moment.
@@ -303,48 +426,14 @@
         {% if replay_detail.restricted %}
         {# Non-bypassable download restriction (incl. NSFW without bypass): withhold
            the player/poster (the bytes 403 anyway) and show a notice. #}
-        <div class="alert alert-warning">
-            <i class="bi bi-lock-fill"></i>
-            This Replay file has a download restriction and you do not hold a bypass,
-            so its player and poster are not available.
-        </div>
+        {{ restricted_notice('This Replay file', 'its player and poster are') }}
         {% else %}
         {% if replay_detail.explicit %}
         {# Explicit (NSFW) content the user may bypass: blur player + poster behind
            a consent overlay, mirroring the image-output explicit gate. #}
-        <div class="explicit-gate mb-3" id="explicit-gate-{{ replay_detail.stable_id }}">
-            <div class="explicit-gate-overlay" id="explicit-overlay-{{ replay_detail.stable_id }}">
-                <span class="badge bg-danger fs-6 mb-2"><i class="bi bi-exclamation-triangle-fill"></i> Explicit Content</span>
-                <p class="text-white text-center small mb-3">This content is marked as explicit. Click to reveal.</p>
-                <button class="btn btn-outline-light btn-sm" onclick="revealExplicit('{{ replay_detail.stable_id }}')">I understand — show content</button>
-            </div>
-            <div id="explicit-content-{{ replay_detail.stable_id }}" class="explicit-content-blur">
-        {% endif %}
-        {% if replay_detail.mp4_url %}
-        {% if replay_detail.video_format == 0 %}
-        {# Sound-only Replay file — audio player, with the embedded poster sprite
-           (a title card) shown above it when present. #}
-        {% if replay_detail.poster_url %}
-        <img src="{{ replay_detail.poster_url }}" class="img-fluid mb-3 d-block mx-auto rounded replay-poster" alt="{{ replay_detail.title or replay_detail.file_path }} poster">
-        {% endif %}
-        <audio controls preload="metadata" class="w-100 mb-3" src="{{ replay_detail.mp4_url }}">
-            Your browser does not support the audio element.
-        </audio>
+        {% call explicit_gate(replay_detail.stable_id, gate_class='mb-3') %}{{ replay_player(replay_detail) }}{% endcall %}
         {% else %}
-        <video controls preload="metadata" class="mb-3 d-block mx-auto replay-player"{% if replay_detail.poster_url %} poster="{{ replay_detail.poster_url }}"{% endif %} src="{{ replay_detail.mp4_url }}">
-            Your browser does not support the video element.
-        </video>
-        {% endif %}
-        {% else %}
-        <p class="text-muted small mb-3">
-            <i class="bi bi-film"></i>
-            {% if replay_detail.video_format == 0 %}Audio not yet available (transcode pending).
-            {% else %}Preview not yet available (transcode pending or codec unsupported).{% endif %}
-        </p>
-        {% endif %}
-        {% if replay_detail.explicit %}
-            </div>{# explicit-content #}
-        </div>{# explicit-gate #}
+        {{ replay_player(replay_detail) }}
         {% endif %}
         {# Download toolbar — shown whenever any artefact is available to download. #}
         {% if replay_detail.mp4_url or replay_detail.poster_url or replay_detail.original_url %}
@@ -424,50 +513,17 @@
 <div class="row g-3 mb-4">
     {% for p in replay_posters %}
     <div class="{{ viewer_col_class }}">
-        <div class="card viewer-img-card h-100">
+        {% call thumb_card(p.title or (p.file_path.split('/') | last)) %}
             {% if p.restricted %}
             {# Non-bypassable restriction (incl. NSFW without bypass): locked placeholder. #}
-            <div class="viewer-thumb-link bg-dark d-flex align-items-center justify-content-center"
-                 title="Download restricted">
-                <i class="bi bi-lock-fill text-secondary fs-3"></i>
-            </div>
-            {% else %}
-            {% if p.explicit %}
+            {{ locked_thumb() }}
+            {% elif p.explicit %}
             {# Explicit (NSFW) but bypassable: blur the thumbnail behind a reveal gate. #}
-            <div class="explicit-gate" id="explicit-gate-{{ p.stable_id }}">
-                <div class="explicit-gate-overlay" id="explicit-overlay-{{ p.stable_id }}">
-                    <span class="badge bg-danger mb-2"><i class="bi bi-exclamation-triangle-fill"></i> Explicit</span>
-                    <button class="btn btn-outline-light btn-sm" onclick="revealExplicit('{{ p.stable_id }}')">Show</button>
-                </div>
-                <div id="explicit-content-{{ p.stable_id }}" class="explicit-content-blur">
+            {% call explicit_gate(p.stable_id, compact=true) %}{{ replay_poster_link(p) }}{% endcall %}
+            {% else %}
+            {{ replay_poster_link(p) }}
             {% endif %}
-            <a href="{{ request.path }}?file={{ p.file_path | urlencode }}" class="position-relative d-block" title="Open Replay player{% if p.title %}: {{ p.title }}{% endif %}">
-                {# Media-type badge: distinguishes sound-only Replay (no video
-                   track) from video, overlaid on the poster thumbnail. #}
-                <span class="badge bg-dark bg-opacity-75 position-absolute top-0 end-0 m-1"
-                      title="{% if p.sound_only %}Sound-only Replay{% else %}Replay movie{% endif %}">
-                    {% if p.sound_only %}<i class="bi bi-music-note-beamed"></i> Sound{% else %}<i class="bi bi-film"></i> Movie{% endif %}
-                </span>
-                {% if p.poster_url %}
-                <img src="{{ p.poster_url }}" class="viewer-img card-img-top" alt="{{ p.title or p.file_path }}" loading="lazy">
-                {% else %}
-                <div class="ratio ratio-16x9 bg-dark d-flex align-items-center justify-content-center rounded-top">
-                    <span class="text-muted small text-center px-1">
-                        {% if p.sound_only %}<i class="bi bi-music-note-beamed"></i><br>{% if p.has_mp4 %}audio{% else %}not transcoded{% endif %}
-                        {% else %}<i class="bi bi-film"></i><br>{% if p.has_mp4 %}video{% else %}not transcoded{% endif %}{% endif %}
-                    </span>
-                </div>
-                {% endif %}
-            </a>
-            {% if p.explicit %}
-                </div>{# explicit-content #}
-            </div>{# explicit-gate #}
-            {% endif %}
-            {% endif %}{# end not restricted #}
-            <div class="card-footer p-1 text-center">
-                <span class="viewer-name font-monospace">{{ p.title or (p.file_path.split('/') | last) }}</span>
-            </div>
-        </div>
+        {% endcall %}
     </div>
     {% endfor %}
 </div>
@@ -483,60 +539,32 @@
     {% set img_out = item.outputs | selectattr('type', 'equalto', 'image') | first %}
     {% if img_out %}
     {% set preview_file = img_out.svg_filename if img_out.svg_filename else img_out.filename %}
+    {% set preview_url = url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) %}
     <div class="{{ viewer_col_class }}">
         {% if item.restricted %}
         {# Non-bypassable download restriction: show a locked placeholder — the
            output's bytes are gated, so the image would 403. #}
-        <div class="card viewer-img-card h-100">
-            <div class="viewer-thumb-link bg-dark d-flex align-items-center justify-content-center"
-                 title="Download restricted">
-                <i class="bi bi-lock-fill text-secondary fs-3"></i>
-            </div>
-            <div class="card-footer p-1 text-center">
-                <span class="viewer-name font-monospace">{{ item.label }}</span>
-            </div>
-        </div>
+        {% call thumb_card(item.label) %}{{ locked_thumb() }}{% endcall %}
         {% elif item.explicit and not user_can_bypass_explicit %}
         {# No bypass: show a locked placeholder in place of the image. #}
-        <div class="card viewer-img-card h-100">
-            <div class="viewer-thumb-link bg-dark d-flex align-items-center justify-content-center">
-                <i class="bi bi-lock-fill text-secondary fs-3"></i>
-            </div>
-            <div class="card-footer p-1 text-center">
-                <span class="viewer-name font-monospace">{{ item.label }}</span>
-            </div>
-        </div>
+        {% call thumb_card(item.label) %}{{ locked_thumb(title='') }}{% endcall %}
         {% elif item.explicit %}
-        {# Bypass permitted: blur thumbnail in-place with a per-card gate. #}
-        <div class="card viewer-img-card h-100">
-            <div class="explicit-gate" id="explicit-gate-{{ item.stable_id }}">
-                <div class="explicit-gate-overlay" id="explicit-overlay-{{ item.stable_id }}">
-                    <span class="badge bg-danger mb-2"><i class="bi bi-exclamation-triangle-fill"></i> Explicit</span>
-                    <button class="btn btn-outline-light btn-sm" onclick="revealExplicit('{{ item.stable_id }}')">Show</button>
-                </div>
-                <div id="explicit-content-{{ item.stable_id }}" class="explicit-content-blur">
-                    <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
-                       class="viewer-thumb-link" target="_blank" rel="noopener">
-                        <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
-                             class="viewer-img" alt="{{ img_out.name }}" loading="lazy">
-                    </a>
-                </div>
-            </div>
-            <div class="card-footer p-1 text-center">
-                <span class="viewer-name font-monospace">{{ item.label }}</span>
-            </div>
-        </div>
-        {% else %}
-        <div class="card viewer-img-card h-100">
-            <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
-               target="_blank" rel="noopener">
-                <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
-                     class="viewer-img card-img-top" alt="{{ img_out.name }}" loading="lazy">
+        {# Bypass permitted: blur thumbnail in-place with a per-card gate.  The
+           link needs .viewer-thumb-link for the aspect box since it is not the
+           direct card child here. #}
+        {% call thumb_card(item.label) %}
+            {% call explicit_gate(item.stable_id, compact=true) %}
+            <a href="{{ preview_url }}" class="viewer-thumb-link" target="_blank" rel="noopener">
+                <img src="{{ preview_url }}" class="viewer-img" alt="{{ img_out.name }}" loading="lazy">
             </a>
-            <div class="card-footer p-1 text-center">
-                <span class="viewer-name font-monospace">{{ item.label }}</span>
-            </div>
-        </div>
+            {% endcall %}
+        {% endcall %}
+        {% else %}
+        {% call thumb_card(item.label) %}
+            <a href="{{ preview_url }}" target="_blank" rel="noopener">
+                <img src="{{ preview_url }}" class="viewer-img card-img-top" alt="{{ img_out.name }}" loading="lazy">
+            </a>
+        {% endcall %}
         {% endif %}
     </div>
     {% endif %}
@@ -544,13 +572,6 @@
 </div>
 
 {% else %}
-{% set ns = namespace(image_outputs=[], svg_outputs=[], text_outputs=[]) %}
-{% for out in group.outputs %}
-    {% if out.type == 'image' %}{% set ns.image_outputs = ns.image_outputs + [out] %}
-    {% elif out.type == 'svg' %}{% set ns.svg_outputs = ns.svg_outputs + [out] %}
-    {% elif out.type == 'text' %}{% set ns.text_outputs = ns.text_outputs + [out] %}
-    {% endif %}
-{% endfor %}
 
 {% if output_groups | length > 1 or group.source_file %}
 <section class="mb-5">
@@ -561,96 +582,20 @@
 {# Non-bypassable download restriction on this output's source artefact: its
    converted outputs render the restricted content, so withhold them and show a
    notice rather than broken images / 403 raw links. #}
-<div class="alert alert-warning">
-    <i class="bi bi-lock-fill"></i>
-    This file has a download restriction and you do not hold a bypass, so its
-    converted output is not available.
-</div>
-{% else %}
-
-{% if group.explicit %}
-  {# ── Explicit content gate ── #}
-  {% if user_can_bypass_explicit %}
-  {# Bypass permitted: blur content with a consent overlay #}
-  <div class="explicit-gate mb-4" id="explicit-gate-{{ group.stable_id }}">
-    <div class="explicit-gate-overlay" id="explicit-overlay-{{ group.stable_id }}">
-      <span class="badge bg-danger fs-6 mb-2"><i class="bi bi-exclamation-triangle-fill"></i> Explicit Content</span>
-      <p class="text-white text-center small mb-3">This content is marked as explicit. Click to reveal.</p>
-      <button class="btn btn-outline-light btn-sm" onclick="revealExplicit('{{ group.stable_id }}')">I understand — show content</button>
-    </div>
-    <div id="explicit-content-{{ group.stable_id }}" class="explicit-content-blur">
-{% else %}
-  {# No bypass: content is simply hidden #}
-  <div class="alert alert-danger mb-4">
+{{ restricted_notice('This file', 'its converted output is') }}
+{% elif group.explicit and not user_can_bypass_explicit %}
+{# Explicit, no bypass: content is hidden behind a notice.  The body is still
+   emitted inside a d-none wrapper (unchanged behaviour). #}
+<div class="alert alert-danger mb-4">
     <i class="bi bi-lock-fill"></i> Explicit content — access restricted.
-  </div>
-  {# Hidden placeholder div so loop.index is consistent if bypass ever added #}
-  <div class="d-none">
-{% endif %}
-{% endif %}
-
-{# ── Image outputs ── #}
-{% if ns.image_outputs %}
-<div class="row g-3 mb-4">
-    {% for out in ns.image_outputs %}
-    <div class="{{ viewer_col_class }}">
-        <div class="card viewer-img-card h-100">
-            {# Prefer svg_filename for old results where PNG was stored as filename; new results store SVG directly as filename. #}
-            {% set preview_file = out.svg_filename if out.svg_filename else out.filename %}
-            <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
-               target="_blank" rel="noopener">
-                <img src="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=preview_file) }}"
-                     class="viewer-img card-img-top" alt="{{ out.name }}" loading="lazy">
-            </a>
-            <div class="card-footer p-1 text-center">
-                <span class="viewer-name font-monospace">{{ out.name }}</span>
-            </div>
-        </div>
-    </div>
-    {% endfor %}
 </div>
+<div class="d-none">{{ group_output_body(group, viewer_col_class) }}</div>
+{% elif group.explicit %}
+{# Bypass permitted: blur content behind a consent overlay. #}
+{% call explicit_gate(group.stable_id, gate_class='mb-4') %}{{ group_output_body(group, viewer_col_class) }}{% endcall %}
+{% else %}
+{{ group_output_body(group, viewer_col_class) }}
 {% endif %}
-
-{# ── SVG outputs (other tools that produce standalone SVG without a paired PNG) ── #}
-{% if ns.svg_outputs %}
-<div class="mb-3">
-    {% for out in ns.svg_outputs %}
-    <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=out.filename) }}"
-       target="_blank" rel="noopener" class="btn btn-outline-secondary me-2">
-        <i class="bi bi-filetype-svg"></i> View SVG ({{ out.name }})
-    </a>
-    {% endfor %}
-</div>
-{% endif %}
-
-{# ── Text outputs ── #}
-{% if ns.text_outputs %}
-    {% for out in ns.text_outputs %}
-    <div class="viewer-text mb-4">
-        <div class="d-flex justify-content-between align-items-center mb-1">
-            {% if not group.source_file %}<span class="font-monospace small text-muted">{{ out.name }}</span>{% endif %}
-            <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=out.filename) }}"
-               target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary ms-auto">
-                <i class="bi bi-file-text"></i> Raw
-            </a>
-        </div>
-        {% if out.text_content is not none %}
-        <pre>{{ out.text_content }}</pre>
-        {% else %}
-        <div class="alert alert-warning">Text content unavailable — <a href="{{ url_for('myapp_blueprints_artefacts.get_output_file', filename=out.filename) }}" target="_blank">open raw file</a>.</div>
-        {% endif %}
-    </div>
-    {% endfor %}
-{% endif %}
-
-{% if group.explicit %}
-    </div>{# closes explicit-content-N or d-none #}
-  {% if user_can_bypass_explicit %}
-  </div>{# closes explicit-gate-N #}
-  {% endif %}
-{% endif %}
-
-{% endif %}{# end group.restricted else #}
 
 {% if output_groups | length > 1 or group.source_file %}
 </section>
