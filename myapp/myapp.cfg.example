@@ -65,6 +65,11 @@ CHUNKED_UPLOAD_CHUNK_SIZE = 50 * 1024 * 1024  # 50MB per chunk
 # space. In Docker the default location is on the ephemeral container layer
 # unless mounted (the bundled docker-compose.yml mounts ./data/chunks here).
 # CHUNK_DIR = '/app/instance/.chunks'
+# Asynchronous chunked-upload finalise (see doc/CHUNKED_UPLOADS.md). Defaults shown.
+# FINALIZE_CONCURRENCY = 2            # max concurrent finalises per web process
+# FINALIZE_HEARTBEAT_SECONDS = 15     # heartbeat cadence during assembly
+# FINALIZE_STALE_SECONDS = 120        # heartbeat age before an orphaned finalise is re-driven
+# FINALIZE_RESULT_TTL_SECONDS = 3600  # retain a done/failed session this long for status polling
 ITEMS_PER_PAGE = 25
 FILES_PER_PAGE = 100
 ANALYSES_SHOWN = 5      # Max completed analyses shown per artefact before "Show All" appears

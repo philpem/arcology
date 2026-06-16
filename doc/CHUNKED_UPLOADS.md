@@ -157,16 +157,18 @@ upload in progress can be in one of two windows.
 The chunks received so far are safe on the volume and `meta.json` is intact.
 Resume = "ask the server which chunks it already has and send only the rest":
 
-- **Web UI** already resumes: it keys the session in `sessionStorage`
-  (`sessionKey()`), calls `/status` (`fetchReceived()`), and skips received
-  chunks (`runChunkedUpload()`). The per-chunk retry loop (`sendChunk()`)
-  retries network/5xx errors with backoff, riding out a short outage.
-- **CLI** must gain the same: persist the `upload_uuid` keyed by file identity
-  (path + size + mtime) under `~/.config/arcology/` (alongside `config.ini`);
-  on `arco upload`, if a saved session exists and `/status` confirms it, resume
-  by skipping received chunks; otherwise `init` a fresh session. The per-chunk
-  retry must be patient enough (longer backoff / more attempts) to outlast a
-  redeploy gap rather than failing the whole upload.
+- **Web UI** resumes via `localStorage` (`sessionKey()` / `resumeGet/Set/Del`)
+  so a resume survives even a browser restart, calls `/status`
+  (`fetchReceived()`), and skips received chunks (`runChunkedUpload()`). The
+  per-chunk retry loop (`sendChunk()`) retries network/5xx errors with capped
+  backoff (7 attempts), riding out a short outage.
+- **CLI** resumes via a `~/.config/arcology/resume.json` sidecar keyed by file
+  identity (server + target item + path + size + mtime + chunk count). On
+  `arco upload`, if a saved session exists the client inspects the server
+  (`_resume_session()`): a finished session returns the artefact, an in-flight
+  one skips chunks the server already holds, and a missing/failed one starts
+  fresh. Per-chunk retry is patient (6 attempts, capped backoff) to outlast a
+  redeploy gap.
 
 Server guard: once finalise has started (`finalize_state` != `pending`), the
 chunk-write route rejects further writes for that session; `/status` keeps
@@ -232,10 +234,14 @@ period (it cannot complete in 45 s anyway); re-drive is the recovery path.
 
 ## Tests
 
-`ci/test_chunked_finalize.py` (new) covers: state transitions;
-`claim_finalize` atomicity and stale re-drive; `run_finalize` success/failure
-meta writes; **a double-claim yields exactly one artefact** (the key
-correctness test); success retains meta but drops chunk files; status-endpoint
-shapes per state for both blueprints incl. auth/ownership (403/404). Existing
-chunked tests are extended to assert the synchronous path still returns
-`201 + artefact` (old-client regression guard).
+- `ci/test_chunked_finalize.py` — the finalise core (state transitions;
+  `claim_finalize` atomicity and stale re-drive; `run_finalize`
+  success/failure meta writes; **a double-claim yields exactly one artefact** —
+  the key correctness test; success retains meta but drops chunk files; pool
+  execution) plus the HTTP async `/complete` + `/complete/status` routes
+  (complete → poll → done, late-chunk 409, unknown-session 404).
+- `ci/test_chunked_upload.py` — the existing synchronous path, which still
+  returns `201 + artefact` (web: redirect): the old-client regression guard.
+- `ci/test_cli_chunked.py` — the `arco` client against an in-memory fake of the
+  protocol: async happy path, transient-error retry, resume-skips-received, and
+  resume-returns-existing-artefact.
