@@ -384,6 +384,34 @@ class TestTlshFileSimilarity(_SimilarityBase):
         matches = similar_files_by_tlsh(src, None, max_distance=10**9)
         self.assertEqual([m[0].filename for m in matches][:1], ['MAINv2'])
 
+    def test_plumbing_with_stubbed_lib(self):
+        """Exercise the query/exclusion/ranking wiring WITHOUT the real library.
+
+        Patches the two fuzzyhash entry points so the integration runs even when
+        py-tlsh is absent (as in the default CI job).  Digests are stored as
+        numeric strings; the stub distance is their absolute difference.
+        """
+        from unittest.mock import patch
+        from myapp.services import similarity
+        a = self._add_files_with_tlsh('Src', [('MAIN', '1000', 2048)])
+        self._add_files_with_tlsh('Near', [('NEARDIFF', '1010', 2048)])   # distance 10
+        self._add_files_with_tlsh('Far', [('FARDIFF', '5000', 2048)])     # distance 4000
+        # Same path -> same sha256 as the source -> exact dup, must be excluded
+        # even though its (stub) TLSH distance is 0.
+        self._add_files_with_tlsh('Exact', [('MAIN', '1000', 2048)])
+        src = a.partitions[0].files[0]
+
+        def stub_diff(x, y):
+            return abs(int(x) - int(y))
+
+        with patch.object(similarity, 'HAS_TLSH', True), \
+             patch.object(similarity, 'tlsh_diff', stub_diff):
+            names = [m[0].filename
+                     for m in similarity.similar_files_by_tlsh(src, None, max_distance=100)]
+        self.assertIn('NEARDIFF', names)      # within threshold
+        self.assertNotIn('FARDIFF', names)    # beyond threshold
+        self.assertNotIn('MAIN', names)       # exact sha256 duplicate excluded
+
 
 if __name__ == '__main__':
     unittest.main()
