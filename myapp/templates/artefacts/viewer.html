@@ -310,20 +310,10 @@
         <audio controls preload="metadata" class="w-100 mb-3" src="{{ replay_detail.mp4_url }}">
             Your browser does not support the audio element.
         </audio>
-        <div class="mb-3">
-            <a href="{{ replay_detail.mp4_url }}" download class="btn btn-sm btn-outline-primary">
-                <i class="bi bi-download"></i> Download converted audio (M4A)
-            </a>
-        </div>
         {% else %}
         <video controls preload="metadata" class="mb-3 d-block mx-auto replay-player"{% if replay_detail.poster_url %} poster="{{ replay_detail.poster_url }}"{% endif %} src="{{ replay_detail.mp4_url }}">
             Your browser does not support the video element.
         </video>
-        <div class="mb-3">
-            <a href="{{ replay_detail.mp4_url }}" download class="btn btn-sm btn-outline-primary">
-                <i class="bi bi-download"></i> Download converted movie (MP4)
-            </a>
-        </div>
         {% endif %}
         {% else %}
         <p class="text-muted small mb-3">
@@ -331,6 +321,27 @@
             {% if replay_detail.video_format == 0 %}Audio not yet available (transcode pending).
             {% else %}Preview not yet available (transcode pending or codec unsupported).{% endif %}
         </p>
+        {% endif %}
+        {# Download toolbar — shown whenever any artefact is available to download. #}
+        {% if replay_detail.mp4_url or replay_detail.poster_url or replay_detail.original_url %}
+        <div class="mb-3 d-flex flex-wrap gap-2">
+            {% if replay_detail.mp4_url %}
+            <a href="{{ replay_detail.mp4_url }}" download class="btn btn-sm btn-outline-primary">
+                <i class="bi bi-download"></i>
+                {% if replay_detail.video_format == 0 %}Download converted audio (M4A){% else %}Download converted movie (MP4){% endif %}
+            </a>
+            {% endif %}
+            {% if replay_detail.poster_url %}
+            <a href="{{ replay_detail.poster_url }}" download class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-image"></i> Download poster (PNG)
+            </a>
+            {% endif %}
+            {% if replay_detail.original_url %}
+            <a href="{{ replay_detail.original_url }}" download class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-film"></i> Download original Replay file
+            </a>
+            {% endif %}
+        </div>
         {% endif %}
         <table class="table table-sm mb-0">
             <tbody>
@@ -389,7 +400,13 @@
     {% for p in replay_posters %}
     <div class="{{ viewer_col_class }}">
         <div class="card viewer-img-card h-100">
-            <a href="{{ request.path }}?file={{ p.file_path | urlencode }}" title="Open Replay player{% if p.title %}: {{ p.title }}{% endif %}">
+            <a href="{{ request.path }}?file={{ p.file_path | urlencode }}" class="position-relative d-block" title="Open Replay player{% if p.title %}: {{ p.title }}{% endif %}">
+                {# Media-type badge: distinguishes sound-only Replay (no video
+                   track) from video, overlaid on the poster thumbnail. #}
+                <span class="badge bg-dark bg-opacity-75 position-absolute top-0 end-0 m-1"
+                      title="{% if p.sound_only %}Sound-only Replay{% else %}Replay movie{% endif %}">
+                    {% if p.sound_only %}<i class="bi bi-music-note-beamed"></i> Sound{% else %}<i class="bi bi-film"></i> Movie{% endif %}
+                </span>
                 {% if p.poster_url %}
                 <img src="{{ p.poster_url }}" class="viewer-img card-img-top" alt="{{ p.title or p.file_path }}" loading="lazy">
                 {% else %}
