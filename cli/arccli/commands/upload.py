@@ -75,6 +75,11 @@ def _upload_one(client, item_uuid, filepath, label, artefact_type, auto_analyse,
 		_chunked[0] = True
 		print(f"\r{prefix}  [{done}/{total} chunks]", end='', flush=True)
 
+	def _status(state):
+		if state == 'assembling':
+			_chunked[0] = True
+			print(f"\r{prefix}  assembling on server...", end='', flush=True)
+
 	result = client.upload_artefact(
 		item_uuid=item_uuid,
 		filepath=filepath,
@@ -83,6 +88,7 @@ def _upload_one(client, item_uuid, filepath, label, artefact_type, auto_analyse,
 		auto_analyse=auto_analyse,
 		hints=hints,
 		progress_cb=_progress,
+		status_cb=_status,
 	)
 
 	# Verify integrity against the server's recorded hashes.
