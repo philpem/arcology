@@ -11,7 +11,7 @@ progress_updated_at is a heartbeat timestamp so an actively-progressing job is
 no longer mistaken for a stuck one.
 
 Revision ID: 00006a3194e4
-Revises: 00006a314d69
+Revises: 00006a31c878
 Create Date: 2026-06-16 18:24:36 UTC
 """
 
@@ -20,7 +20,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "00006a3194e4"
-down_revision = "00006a314d69"
+down_revision = "00006a31c878"
 branch_labels = None
 depends_on = None
 
