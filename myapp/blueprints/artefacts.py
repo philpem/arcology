@@ -2663,6 +2663,9 @@ def chunked_upload_chunk(item_id, upload_uuid, chunk_index):
     meta, error = _load_owned_session(upload_uuid)
     if error:
         return error
+    # Once finalise has been claimed the session is immutable.
+    if meta.get('finalize_state') is not None:
+        return _chunk_error('Upload is being finalised; no more chunks accepted', 409)
     if chunk_index < 0 or chunk_index >= meta['total_chunks']:
         return _chunk_error('chunk_index out of range', 400)
     _chunked.write_chunk(upload_uuid, chunk_index, request.data)
@@ -2685,12 +2688,84 @@ def chunked_upload_status(item_id, upload_uuid):
     })
 
 
+def _resolve_chunk_artefact_type(meta):
+    """Resolve (artefact_type, type_overridden, original_filename) from meta.
+
+    Returns ((…tuple…), None) or (None, error_response) on an invalid stored
+    artefact_type override.  Shared by the sync and async /complete paths and
+    by /complete/status (re-drive).
+    """
+    original_filename = safe_original_filename(meta['filename']) or 'unnamed'
+    type_override = meta.get('artefact_type', 'auto')
+    type_overridden = False
+    if type_override and type_override != 'auto':
+        try:
+            artefact_type = ArtefactType(type_override)
+            type_overridden = True
+        except ValueError:
+            return None, _chunk_error(f'Invalid artefact_type: {type_override}')
+    else:
+        artefact_type = detect_artefact_type(original_filename)
+    return (artefact_type, type_overridden, original_filename), None
+
+
+def _build_chunk_finalize_fn(meta, artefact_type, type_overridden, original_filename):
+    """Build the ingest closure run off-thread by the async finalise runner.
+
+    Captures only primitives (the request's authorisation has already happened
+    on the request thread) so it is safe to run in the pool thread under a fresh
+    app context; re-resolves the Item there and returns the artefact's UUID.
+    Mirrors the synchronous ingest below.
+    """
+    item_uuid = meta['item_uuid']
+    label = meta['label']
+    description = meta.get('description')
+    hints = meta.get('hints') or None
+    owner_id = meta.get('creator_user_id')
+    is_private = bool(meta.get('is_private', False))
+    auto_analyse = bool(meta.get('auto_analyse', True))
+    mime_type, _ = mimetypes.guess_type(original_filename)
+    web_priority = current_app.config.get('WEB_UI_ANALYSIS_PRIORITY', ANALYSIS_PRIORITY_HIGH)
+
+    def _finalize(assembled):
+        item = Item.query.filter_by(uuid=item_uuid).first()
+        if item is None:
+            raise RuntimeError(f'Item {item_uuid} no longer exists')
+        outcome = ingest_uploaded_artefact(
+            item,
+            label=label,
+            artefact_type=artefact_type,
+            type_overridden=type_overridden,
+            original_filename=original_filename,
+            storage_name=assembled.storage_name,
+            file_size=assembled.file_size,
+            md5=assembled.md5,
+            sha256=assembled.sha256,
+            description=description,
+            mime_type=mime_type,
+            owner_id=owner_id,
+            is_private=is_private,
+            hints=hints,
+            queue=QUEUE_FULL if auto_analyse else QUEUE_CHECKSUM_ONLY,
+            priority=web_priority,
+        )
+        return outcome.artefact.uuid
+
+    return _finalize
+
+
 @blueprint.route('/items/<string:item_id>/artefacts/chunked/<string:upload_uuid>/complete',
                  methods=['POST'])
 @login_required
 @require_permission('read_write')
 def chunked_upload_complete(item_id, upload_uuid):
-    """Assemble the chunks and create the artefact; return a redirect URL."""
+    """Assemble the chunks and create the artefact.
+
+    Synchronously by default (returns a redirect URL with 201); when the request
+    body sets ``"async": true`` the assembly runs on the background pool and the
+    endpoint returns 202 with a status_url the client polls via
+    /complete/status, keeping a large assembly off the request thread.
+    """
     meta, error = _load_owned_session(upload_uuid)
     if error:
         return error
@@ -2707,17 +2782,23 @@ def chunked_upload_complete(item_id, upload_uuid):
     if error:
         return error
 
-    original_filename = safe_original_filename(meta['filename']) or 'unnamed'
-    type_override = meta.get('artefact_type', 'auto')
-    type_overridden = False
-    if type_override and type_override != 'auto':
-        try:
-            artefact_type = ArtefactType(type_override)
-            type_overridden = True
-        except ValueError:
-            return _chunk_error(f'Invalid artefact_type: {type_override}')
-    else:
-        artefact_type = detect_artefact_type(original_filename)
+    resolved, error = _resolve_chunk_artefact_type(meta)
+    if error:
+        return error
+    artefact_type, type_overridden, original_filename = resolved
+
+    data = request.get_json(silent=True) or {}
+    if data.get('async'):
+        finalize_fn = _build_chunk_finalize_fn(
+            meta, artefact_type, type_overridden, original_filename)
+        if _chunked.claim_finalize(upload_uuid):
+            _chunked.submit_finalize(upload_uuid, finalize_fn)
+        status = _chunked.finalize_status(upload_uuid) or {'state': 'pending'}
+        return jsonify({
+            'upload_uuid': upload_uuid,
+            'state': status['state'],
+            'status_url': request.path + '/status',
+        }), 202
 
     try:
         assembled = _chunked.assemble_to_storage(
@@ -2754,6 +2835,52 @@ def chunked_upload_complete(item_id, upload_uuid):
     redirect_url = url_for(
         f'{ROUTENAME}.view', item_id=item.url_id, artefact_id=artefact.url_slug)
     return jsonify({'redirect': redirect_url}), 201
+
+
+@blueprint.route('/items/<string:item_id>/artefacts/chunked/<string:upload_uuid>/complete/status',
+                 methods=['GET'])
+@login_required
+@require_permission('read_write')
+def chunked_upload_complete_status(item_id, upload_uuid):
+    """Poll the result of an asynchronous finalise.
+
+    Returns 202 {state: pending|assembling} while working, 200 {state: done,
+    redirect} once the artefact exists, or 200 {state: failed, error}.  A stale
+    (orphaned) assembly is re-driven here so an upload never gets stuck.
+    """
+    meta, error = _load_owned_session(upload_uuid)
+    if error:
+        return error
+    status = _chunked.finalize_status(upload_uuid)
+    if status is None:
+        return _chunk_error('Upload session not found', 404)
+
+    state = status['state']
+    if state == _chunked.FINALIZE_DONE:
+        artefact = Artefact.query.filter_by(uuid=status.get('artefact_uuid')).first()
+        if artefact is None:
+            return _chunk_error('Finalised artefact not found', 404)
+        item = artefact.item
+        redirect_url = url_for(
+            f'{ROUTENAME}.view', item_id=item.url_id, artefact_id=artefact.url_slug)
+        return jsonify({'state': 'done', 'redirect': redirect_url}), 200
+    if state == _chunked.FINALIZE_FAILED:
+        return jsonify({
+            'state': 'failed',
+            'error': status.get('error'),
+            'error_code': status.get('error_code'),
+        }), 200
+
+    # pending or assembling: re-drive a stale (orphaned) assembly.
+    if state == _chunked.FINALIZE_ASSEMBLING and _chunked.finalize_is_stale(upload_uuid):
+        resolved, type_error = _resolve_chunk_artefact_type(meta)
+        if not type_error and _chunked.claim_finalize(upload_uuid):
+            artefact_type, type_overridden, original_filename = resolved
+            _chunked.submit_finalize(
+                upload_uuid,
+                _build_chunk_finalize_fn(
+                    meta, artefact_type, type_overridden, original_filename))
+    return jsonify({'upload_uuid': upload_uuid, 'state': state}), 202
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/edit', methods=['GET', 'POST'])

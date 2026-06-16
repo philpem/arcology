@@ -262,6 +262,115 @@ class TestChunkedFinalizeCore(unittest.TestCase):
                 Artefact.query.filter_by(label='ViaPool').count(), 1)
 
 
+class TestChunkedFinalizeAPIEndpoints(unittest.TestCase):
+    """HTTP-level tests for the async /complete + /complete/status API routes."""
+
+    @classmethod
+    def setUpClass(cls):
+        import json
+        from myapp.app import create_app
+        from myapp.extensions import db as _db
+
+        cls._json = json
+        cls._tmpdir = tempfile.mkdtemp(prefix='arcology-ci-finalize-api-')
+        upload_dir = os.path.join(cls._tmpdir, 'uploads')
+        output_dir = os.path.join(cls._tmpdir, 'outputs')
+        os.makedirs(upload_dir)
+        os.makedirs(output_dir)
+
+        cls.app = create_app()
+        cls.app.config.update({
+            'TESTING': True,
+            'UPLOAD_FOLDER': upload_dir,
+            'OUTPUT_FOLDER': output_dir,
+        })
+        from arcology_shared.storage import create_storage
+        storage_cfg = dict(cls.app.config)
+        storage_cfg['UPLOAD_FOLDER'] = upload_dir
+        storage_cfg['OUTPUT_FOLDER'] = output_dir
+        with cls.app.app_context():
+            cls.app.storage = create_storage(storage_cfg)
+
+        cls.client = cls.app.test_client()
+        with cls.app.app_context():
+            _db.create_all()
+            from myapp.database import Item, Platform
+            platform = Platform(name='API Finalize Platform')
+            _db.session.add(platform)
+            _db.session.flush()
+            item = Item(name='API Finalize Item', platform_id=platform.id)
+            _db.session.add(item)
+            _db.session.commit()
+            cls.item_uuid = item.uuid
+
+    @classmethod
+    def tearDownClass(cls):
+        from myapp.services import chunked_upload as _chunked
+        _chunked.shutdown_executor(wait=True)
+        shutil.rmtree(cls._tmpdir, ignore_errors=True)
+
+    _AUTH = {'X-API-Key': os.environ['WORKER_API_KEY']}
+
+    def _init(self, total_chunks=2, **extra):
+        payload = {'filename': 'async.img', 'total_chunks': total_chunks,
+                   'item_uuid': self.item_uuid, 'label': extra.pop('label', 'Async')}
+        payload.update(extra)
+        r = self.client.post('/api/uploads/chunked/init',
+                             data=self._json.dumps(payload),
+                             content_type='application/json', headers=self._AUTH)
+        return r.get_json()['upload_uuid']
+
+    def _chunk(self, uuid_, idx, data):
+        return self.client.post(f'/api/uploads/chunked/{uuid_}/chunk/{idx}',
+                                data=data, content_type='application/octet-stream',
+                                headers=self._AUTH)
+
+    def _complete_async(self, uuid_):
+        return self.client.post(f'/api/uploads/chunked/{uuid_}/complete',
+                                data=self._json.dumps({'async': True}),
+                                content_type='application/json', headers=self._AUTH)
+
+    def _poll(self, uuid_, timeout=10):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            r = self.client.get(
+                f'/api/uploads/chunked/{uuid_}/complete/status', headers=self._AUTH)
+            body = r.get_json()
+            if body['state'] in ('done', 'failed'):
+                return r.status_code, body
+            time.sleep(0.05)
+        self.fail('finalise did not complete within timeout')
+
+    def test_async_complete_then_poll_done(self):
+        uuid_ = self._init(total_chunks=2, label='AsyncDone')
+        self._chunk(uuid_, 0, b'AAAA')
+        self._chunk(uuid_, 1, b'BBBB')
+
+        r = self._complete_async(uuid_)
+        self.assertEqual(r.status_code, 202, r.data)
+        self.assertIn(r.get_json()['state'], ('pending', 'assembling', 'done'))
+
+        code, body = self._poll(uuid_)
+        self.assertEqual(code, 200)
+        self.assertEqual(body['state'], 'done')
+        self.assertEqual(body['artefact']['original_filename'], 'async.img')
+        self.assertEqual(body['artefact']['file_size'], 8)
+
+    def test_chunk_rejected_after_finalise_started(self):
+        uuid_ = self._init(total_chunks=2, label='LateChunk')
+        self._chunk(uuid_, 0, b'AAAA')
+        self._chunk(uuid_, 1, b'BBBB')
+        self.assertEqual(self._complete_async(uuid_).status_code, 202)
+        # A late chunk write must be refused (409) regardless of finalise state.
+        self.assertEqual(self._chunk(uuid_, 0, b'XXXX').status_code, 409)
+        self._poll(uuid_)  # drain to done so teardown is clean
+
+    def test_status_404_for_unknown(self):
+        r = self.client.get(
+            f'/api/uploads/chunked/{"a" * 32}/complete/status', headers=self._AUTH)
+        self.assertEqual(r.status_code, 404)
+
+
 if __name__ == '__main__':
     unittest.main()
 
