@@ -51,6 +51,10 @@ services:
       retries: 3
       start_period: 60s
     restart: unless-stopped
+    # On `docker compose stop/down`, give Gunicorn time to drain in-flight
+    # requests (it stops accepting new ones immediately). Should comfortably
+    # exceed GUNICORN_GRACEFUL_TIMEOUT (default 30s) in Dentrypoint.sh.
+    stop_grace_period: 45s
 
   # Analysis worker(s)
   # Scale with: docker-compose up -d --scale worker=N
@@ -81,6 +85,14 @@ services:
       # Example for a dedicated flux-decoding worker pool:
       #   - WORKER_ANALYSIS_TYPES=FLUX_VISUALISATION,FLUX_DECODE,METADATA_EXTRACT
     restart: unless-stopped
+    # On SIGTERM the worker stops claiming new jobs and finishes the one in
+    # flight before exiting. A single analysis can run up to TOOL_TIMEOUT
+    # (default 3600s), so give it room to land instead of being SIGKILL'd
+    # (exit 137). Raise toward TOOL_TIMEOUT if you routinely process large
+    # flux dumps and want every shutdown to wait for the current job; lower it
+    # if you prefer faster shutdowns (a killed job is just reset to PENDING and
+    # re-run by the next worker, so this is safe to tune down).
+    stop_grace_period: 120s
     deploy:
       # Default to 1 replica, override with --scale worker=N
       replicas: 1

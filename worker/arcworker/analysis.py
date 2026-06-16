@@ -10,10 +10,10 @@ class attribute at the bottom of this module so the function bodies
 
 import contextlib
 import shutil
+import signal
 import sys
 import tempfile
 import threading
-import time
 from pathlib import Path
 from arcology_shared.enums import AnalysisStatus
 from arcology_shared.hints import HintKey
@@ -119,6 +119,12 @@ class AnalysisWorker:
                                api_key=api_key, storage=storage)
         self.analysis_types: list[str] = list(analysis_types) if analysis_types else []
         self._decompression_info = None  # Set by get_input_path() when decompression occurs
+
+        # Set when SIGTERM/SIGINT is received so the main loop finishes the
+        # current job and then exits cleanly instead of being SIGKILL'd by
+        # Docker.  An Event (rather than a bare bool) lets idle polling sleeps
+        # wake immediately on shutdown.
+        self._shutdown = threading.Event()
 
     def get_input_path(self, artefact: dict, work_dir: Path) -> Path:
         """
@@ -693,8 +699,49 @@ class AnalysisWorker:
 
         return 0
 
+    def _install_signal_handlers(self):
+        """Register SIGTERM/SIGINT handlers for graceful shutdown.
+
+        Docker sends SIGTERM on ``docker compose stop``/``down``.  Because the
+        worker runs as PID 1 in its container, Python's default signal
+        disposition does not apply and an unhandled SIGTERM is ignored — the
+        container then sits until the stop grace period elapses and is killed
+        with SIGKILL (exit 137).  Installing an explicit handler lets us finish
+        the in-flight job and exit cleanly.
+
+        Must be called from the main thread (Python only allows signal handlers
+        to be installed there); ``run()`` is invoked from ``main()`` so this
+        holds.
+        """
+        def _handle(signum, _frame):
+            name = signal.Signals(signum).name
+            if self._shutdown.is_set():
+                # Second signal: operator is impatient.  Honour it immediately
+                # rather than waiting for the current job to finish.
+                log.warning("Received %s again — exiting now", name)
+                sys.exit(0)
+            log.info(
+                "Received %s — will finish the current job (if any) then shut down. "
+                "Send the signal again to exit immediately.",
+                name,
+            )
+            self._shutdown.set()
+
+        for _sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(_sig, _handle)
+
+    def _idle_sleep(self, delay: float):
+        """Sleep up to ``delay`` seconds, waking early if shutdown is requested.
+
+        ``time.sleep`` would resume after the signal handler returns (PEP 475),
+        leaving the worker unresponsive to SIGTERM for up to a full backoff
+        interval; waiting on the shutdown Event wakes immediately instead.
+        """
+        self._shutdown.wait(timeout=delay)
+
     def run(self):
         """Main worker loop."""
+        self._install_signal_handlers()
         log.info("Starting Arcology worker")
         log.info(f"API: {self.api.api}")
         log.info(f"Uploads: {self.uploads}")
@@ -719,13 +766,18 @@ class AnalysisWorker:
 
         current_delay = POLL_BACKOFF_FLOOR
 
-        while True:
+        while not self._shutdown.is_set():
             try:
                 processed = self.claim_and_process()
 
+                # A shutdown signal may have arrived while the job ran; check
+                # before sleeping or claiming another job.
+                if self._shutdown.is_set():
+                    break
+
                 if processed == 0:
                     log.debug(f"No pending analyses, sleeping {current_delay}s")
-                    time.sleep(current_delay)
+                    self._idle_sleep(current_delay)
                     current_delay = min(current_delay * 2, POLL_BACKOFF_CEILING)
                 else:
                     log.info(f"Processed {processed} analyses")
@@ -737,5 +789,7 @@ class AnalysisWorker:
 
             except Exception:
                 log.exception("Unexpected error in main loop")
-                time.sleep(POLL_BACKOFF_CEILING)
+                self._idle_sleep(POLL_BACKOFF_CEILING)
+
+        log.info("Worker shut down cleanly")
 # vim: ts=4 sw=4 et
