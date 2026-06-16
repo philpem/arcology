@@ -224,7 +224,7 @@ FROM ubuntu:24.04 AS build-scotch
 # To find the SHA for a new commit:
 #   git ls-remote https://github.com/philpem/scotch.git refs/heads/main
 # Current as of 2026-06-15; branch: main.
-ARG SCOTCH_VERSION=f3445a4cfff18d5dbd1fd9e4196a7c1b229a8308
+ARG SCOTCH_VERSION=7451dbee25a8a43bbc4bd6b0a0c08f45e0564e0c
 ARG SCOTCH_REPO=https://github.com/philpem/scotch.git
 
 # Disable prompt during package installation
