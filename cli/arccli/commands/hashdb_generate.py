@@ -64,6 +64,58 @@ _VERSION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Strip trailing TOSEC/Arcarc parenthetical metadata groups such as
+# (1993)(Oak Solutions)(GB) or [b] from the end of a label, stopping at a
+# version tag like (v1.5) so that is preserved.
+_TOSEC_TRAILING_RE = re.compile(
+    r'(\s*(?!\(v[^)]*\))[\(\[][^\)\]]*[\)\]])+\s*$',
+    re.IGNORECASE,
+)
+
+# Strip space-preceded parenthetical groups remaining after the trailing strip,
+# e.g. the mid-label freeware/language tag in "100Chess (FR) 1.05".
+# Version tags like (v1.5) are excluded via negative lookahead.
+# Groups with no space before the bracket (e.g. Word(NG)) are also unaffected.
+_TOSEC_TAG_RE = re.compile(
+    r'\s+(?!\(v[^)]*\))[\(\[][^\)\]]*[\)\]]',
+    re.IGNORECASE,
+)
+
+# Normalise parenthesised version tags to bare form: (v1.5) -> v1.5.
+_TOSEC_VERSION_UNWRAP_RE = re.compile(r'\(v([^)]*)\)', re.IGNORECASE)
+
+# Collapse runs of spaces left behind after stripping.
+_MULTI_SPACE_RE = re.compile(r'  +')
+
+# Known archive/disc-image extensions that may appear in artefact labels
+# when the label was derived from the original filename.
+_KNOWN_EXTS_RE = re.compile(
+    r'\.(zip|adf|ssd|dsd|adl|adm|ads|img|hfe|scp|dfi|a2r|arc|zoo'
+    r'|gz|bz2|xz|lzh|lha|tar|7z|rar|dsk|ima|st|msa)$',
+    re.IGNORECASE,
+)
+
+
+def strip_tosec_metadata(label: str) -> str:
+    """Strip TOSEC/Arcarc parenthetical tag groups from a label and normalise.
+
+    1. Strip trailing groups (catches chained ``(1992)(Publisher)`` with no
+       space between them), stopping at a ``(v...)`` version tag.
+    2. Strip any remaining space-preceded non-version groups (catches
+       mid-label tags like the freeware marker in ``100Chess (FR) 1.05``).
+    3. Unwrap ``(v...)`` to bare ``v...`` so ``Elite (v1.5)`` and
+       ``Elite v1.5`` both produce the same title.
+    4. Collapse any doubled spaces left by the stripping steps.
+
+    Groups with no space before the opening bracket are preserved, e.g.
+    ``Word(NG) 1.0`` stays intact.
+    """
+    result = _TOSEC_TRAILING_RE.sub('', label)
+    result = _TOSEC_TAG_RE.sub('', result)
+    result = _TOSEC_VERSION_UNWRAP_RE.sub(r'v\1', result)
+    result = _MULTI_SPACE_RE.sub(' ', result)
+    return result.strip()
+
 
 def parse_artefact_label(label: str) -> dict:
     """Parse an Arcarc/TOSEC-style artefact label.
@@ -438,7 +490,7 @@ def _product_context(clean_name: str | None, item_name: str | None) -> str:
 def build_product_title(app_dir_name: str, context: str | None = None,
                         disc_number: int | None = None) -> str:
     """Compose a product title: app-dir name plus product provenance."""
-    title = f'{app_dir_name} — {context}' if context else app_dir_name
+    title = f'{app_dir_name} - {context}' if context else app_dir_name
     if disc_number is not None:
         title += f' (Disk {disc_number})'
     return title
@@ -502,6 +554,9 @@ def _gather_artefact(client: ArcologyClient, art: dict, root_files: str,
                      idx: int, n_art: int) -> dict | None:
     """Fetch one artefact's partitions/files and group by application dir."""
     art_label = art.get('label', art.get('original_filename', ''))
+    # Strip archive/disc-image extensions so display names are clean even when
+    # the label was derived from the original filename (e.g. "Foo 1.0.zip").
+    display_label = _KNOWN_EXTS_RE.sub('', art_label)
     art_detail = client.get_artefact(art['uuid'])
     partitions = art_detail.get('partitions', [])
     if not partitions:
@@ -522,10 +577,13 @@ def _gather_artefact(client: ArcologyClient, art: dict, root_files: str,
     log.info('    [%d/%d] %s: %d partition(s), %d file(s), %d app(s)',
              idx, n_art, art_label, len(partitions), len(all_files), len(app_dirs))
 
-    parsed = parse_artefact_label(art_label)
+    parsed = parse_artefact_label(display_label)
+    full_name = parsed['clean_name']          # e.g. "Rephorm 1.04 (1993)(Oak Solutions)"
+    clean_name = strip_tosec_metadata(full_name)  # e.g. "Rephorm 1.04"
     return {
         'label': art_label,
-        'clean_name': parsed['clean_name'],
+        'full_name': full_name,
+        'clean_name': clean_name,
         'disc_number': parsed['disc_number'],
         'version': parsed['version'],
         'app_dirs': app_dirs,
@@ -570,7 +628,6 @@ def _gather_item(client: ArcologyClient, item: dict, filter_tags: list[str],
 def _build_products(client: ArcologyClient, g: dict, args, is_unique,
                     jobs: int) -> list[dict]:
     """Build HashDB product dicts for one gathered item."""
-    description = g['category'].title() if g['category'] else ''
     artefact_results = g['artefact_results']
     is_multi_disc = len(artefact_results) > 1
     item_name = g['item_name']
@@ -579,23 +636,30 @@ def _build_products(client: ArcologyClient, g: dict, args, is_unique,
     # (each one downloads !Run/!Boot and may issue hash lookups).  Each task
     # carries its own context — the artefact's product name — so the title
     # identifies the actual software, not the (collection) item name.
-    tasks = []  # (app_dir_name, app_files, disc_number, suffix, context)
+    # Tasks: (app_dir_name, app_files, disc_number, suffix, short_context, full_context)
+    # short_context: TOSEC metadata stripped (for the JSON title / lozenge label)
+    # full_context:  year/publisher retained  (for the JSON description / hover text)
+    tasks = []
 
     if args.multi_disc in ('separate', 'both'):
         for ar in artefact_results:
             disc_num = ar['disc_number'] if is_multi_disc else None
-            context = _product_context(ar.get('clean_name'), item_name)
+            short_ctx = _product_context(ar.get('clean_name'), item_name)
+            full_ctx = _product_context(ar.get('full_name'), item_name)
             for app_dir_name, app_files in ar['app_dirs'].items():
-                tasks.append((app_dir_name, app_files, disc_num, '', context))
+                tasks.append((app_dir_name, app_files, disc_num, '', short_ctx, full_ctx))
 
     if args.multi_disc in ('merge', 'both'):
         merged: dict[str, list[dict]] = {}
         merged_context: dict[str, str] = {}
+        merged_full_context: dict[str, str] = {}
         for ar in artefact_results:
             disc_num = ar['disc_number']
-            context = _product_context(ar.get('clean_name'), item_name)
+            short_ctx = _product_context(ar.get('clean_name'), item_name)
+            full_ctx = _product_context(ar.get('full_name'), item_name)
             for app_dir_name, app_files in ar['app_dirs'].items():
-                merged_context.setdefault(app_dir_name, context)
+                merged_context.setdefault(app_dir_name, short_ctx)
+                merged_full_context.setdefault(app_dir_name, full_ctx)
                 bucket = merged.setdefault(app_dir_name, [])
                 for f in app_files:
                     if is_multi_disc and disc_num is not None:
@@ -613,10 +677,11 @@ def _build_products(client: ArcologyClient, g: dict, args, is_unique,
                     deduped.append(f)
             suffix = ' [All Discs]' if (args.multi_disc == 'both' and is_multi_disc) else ''
             tasks.append((app_dir_name, deduped, None, suffix,
-                          merged_context[app_dir_name]))
+                          merged_context[app_dir_name],
+                          merged_full_context[app_dir_name]))
 
     def make_product(task):
-        app_dir_name, app_files, disc_number, suffix, context = task
+        app_dir_name, app_files, disc_number, suffix, short_context, full_context = task
         launched = get_launched_set(client, app_files, verbose=args.verbose)
         classified = classify_app_files(app_dir_name, app_files, launched,
                                         is_unique, verbose=args.verbose)
@@ -624,11 +689,12 @@ def _build_products(client: ArcologyClient, g: dict, args, is_unique,
         if not pfiles:
             return None
         mandatory = sum(1 for f in pfiles if f['is_required'])
-        log.info('    %s: %d mandatory, %d optional',
-                 app_dir_name, mandatory, len(pfiles) - mandatory)
+        product_title = build_product_title(app_dir_name, short_context, disc_number) + suffix
+        log.info('    %s: %3d mandatory, %3d optional',
+                 product_title, mandatory, len(pfiles) - mandatory)
         return {
-            'title': build_product_title(app_dir_name, context, disc_number) + suffix,
-            'description': description,
+            'title': product_title,
+            'description': build_product_title(app_dir_name, full_context, disc_number),
             'path_match_enabled': True,
             'files': pfiles,
         }
