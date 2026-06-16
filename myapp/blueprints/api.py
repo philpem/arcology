@@ -2205,6 +2205,11 @@ def chunked_upload_chunk(upload_uuid, chunk_index):
 	if error:
 		return error
 
+	# Once finalise has been claimed the session is immutable; reject late chunk
+	# writes rather than corrupting an in-progress or completed assembly.
+	if meta.get('finalize_state') is not None:
+		return error_response('Upload is being finalised; no more chunks accepted', 409)
+
 	# chunk_index is a non-negative int (route converter); reject out-of-range
 	# indices so a caller cannot scatter junk chunk files that never assemble.
 	if chunk_index < 0 or chunk_index >= meta['total_chunks']:
@@ -2234,15 +2239,78 @@ def chunked_upload_status(upload_uuid):
 	})
 
 
+def _resolve_chunk_artefact_type(meta):
+	"""Resolve (artefact_type, type_overridden, original_filename) from meta.
+
+	Returns ((…tuple…), None) or (None, error_response) when the stored
+	artefact_type override is invalid.  Shared by the sync and async /complete
+	paths and by /complete/status (re-drive).
+	"""
+	from werkzeug.utils import secure_filename
+	original_filename = secure_filename(meta['filename']) or 'unnamed'
+	type_override = meta.get('artefact_type', 'auto')
+	type_overridden = False
+	if type_override and type_override != 'auto':
+		try:
+			artefact_type = ArtefactType(type_override)
+			type_overridden = True
+		except ValueError:
+			return None, error_response(f'Invalid artefact_type: {type_override}')
+	else:
+		artefact_type = detect_artefact_type(meta['filename'])
+	return (artefact_type, type_overridden, original_filename), None
+
+
+def _build_chunk_finalize_fn(meta, artefact_type, type_overridden, original_filename):
+	"""Build the ingest closure run off-thread by the async finalise runner.
+
+	Captures only primitives so it is safe to run in the pool thread under a
+	fresh app context; re-resolves the Item there and returns the created
+	artefact's UUID.  Mirrors the synchronous ingest below.
+	"""
+	item_uuid = meta['item_uuid']
+	label = meta['label']
+	description = meta.get('description')
+	hints = meta.get('hints') or None
+	auto_analyse = meta.get('auto_analyse', True)
+	if isinstance(auto_analyse, str):
+		auto_analyse = auto_analyse.lower() != 'false'
+
+	def _finalize(assembled):
+		item = Item.query.filter_by(uuid=item_uuid).first()
+		if item is None:
+			raise RuntimeError(f'Item {item_uuid} no longer exists')
+		outcome = ingest_uploaded_artefact(
+			item,
+			label=label,
+			artefact_type=artefact_type,
+			type_overridden=type_overridden,
+			original_filename=original_filename,
+			storage_name=assembled.storage_name,
+			file_size=assembled.file_size,
+			md5=assembled.md5,
+			sha256=assembled.sha256,
+			description=description,
+			hints=hints,
+			queue=QUEUE_FULL if auto_analyse else QUEUE_NONE,
+		)
+		return outcome.artefact.uuid
+
+	return _finalize
+
+
 @blueprint.route('/uploads/chunked/<string:upload_uuid>/complete', methods=['POST'])
 @require_auth('read_upload')
 def chunked_upload_complete(upload_uuid):
 	"""
 	Assemble all chunks and create the artefact.
 
-	Verifies all chunks are present, assembles them into a temp file (computing
-	hashes inline), then pushes to the storage backend and creates an Artefact
-	record.  Returns the same 201 JSON as the regular upload endpoint.
+	Verifies all chunks are present, then either:
+	  - synchronously assembles + ingests and returns the artefact (201), or
+	  - when the request body sets ``"async": true``, claims the session, runs
+	    finalise on the background pool, and returns 202 with a status_url the
+	    client polls via /complete/status.  This keeps a large (multi-GB)
+	    assembly off the request thread, so it cannot blow the worker timeout.
 
 	Also purges abandoned chunk directories older than 24 h.
 	"""
@@ -2264,22 +2332,27 @@ def chunked_upload_complete(upload_uuid):
 	if manage_error:
 		return manage_error
 
-	# Determine artefact type
-	from werkzeug.utils import secure_filename
-	original_filename = secure_filename(meta['filename']) or 'unnamed'
-	type_override = meta.get('artefact_type', 'auto')
-	type_overridden = False
-	if type_override and type_override != 'auto':
-		try:
-			artefact_type = ArtefactType(type_override)
-			type_overridden = True
-		except ValueError:
-			return error_response(f'Invalid artefact_type: {type_override}')
-	else:
-		artefact_type = detect_artefact_type(meta['filename'])
+	resolved, error = _resolve_chunk_artefact_type(meta)
+	if error:
+		return error
+	artefact_type, type_overridden, original_filename = resolved
 
-	# Assemble chunks into the storage backend (hashes computed inline, size cap
-	# enforced, session directory cleaned up).
+	data = request.get_json(silent=True) or {}
+	if data.get('async'):
+		# Off-thread finalise: claim the session (idempotent — a duplicate
+		# /complete just reports the existing state) and submit to the pool.
+		finalize_fn = _build_chunk_finalize_fn(
+			meta, artefact_type, type_overridden, original_filename)
+		if _chunked.claim_finalize(upload_uuid):
+			_chunked.submit_finalize(upload_uuid, finalize_fn)
+		status = _chunked.finalize_status(upload_uuid) or {'state': 'pending'}
+		return jsonify({
+			'upload_uuid': upload_uuid,
+			'state': status['state'],
+			'status_url': request.path + '/status',
+		}), 202
+
+	# Synchronous path (unchanged): assemble + ingest inline, return the artefact.
 	try:
 		assembled = _chunked.assemble_to_storage(
 			upload_uuid, original_filename,
@@ -2316,6 +2389,53 @@ def chunked_upload_complete(upload_uuid):
 		if t != AnalysisType.CHECKSUM_COMPUTE
 	]
 	return jsonify(result), 201
+
+
+@blueprint.route('/uploads/chunked/<string:upload_uuid>/complete/status', methods=['GET'])
+@require_auth('read_upload')
+def chunked_upload_complete_status(upload_uuid):
+	"""
+	Poll the result of an asynchronous finalise.
+
+	Returns one of:
+	  - 202 {state: "pending"|"assembling"}  — still working (poll again)
+	  - 200 {state: "done", artefact: {...}} — artefact created
+	  - 200 {state: "failed", error, error_code}
+
+	If the session is 'assembling' but its heartbeat has gone stale (the runner
+	was orphaned by a restart/redeploy), finalise is re-driven here so an upload
+	never gets stuck — the client keeps polling and picks up the result.
+	"""
+	meta, error = _load_chunk_meta(upload_uuid)
+	if error:
+		return error
+	status = _chunked.finalize_status(upload_uuid)
+	if status is None:
+		return error_response('Upload session not found', 404)
+
+	state = status['state']
+	if state == _chunked.FINALIZE_DONE:
+		art = Artefact.query.filter_by(uuid=status.get('artefact_uuid')).first()
+		if art is None:
+			return error_response('Finalised artefact not found', 404)
+		return jsonify({'state': 'done', 'artefact': artefact_to_dict(art)}), 200
+	if state == _chunked.FINALIZE_FAILED:
+		return jsonify({
+			'state': 'failed',
+			'error': status.get('error'),
+			'error_code': status.get('error_code'),
+		}), 200
+
+	# pending or assembling: re-drive a stale (orphaned) assembly.
+	if state == _chunked.FINALIZE_ASSEMBLING and _chunked.finalize_is_stale(upload_uuid):
+		resolved, type_error = _resolve_chunk_artefact_type(meta)
+		if not type_error and _chunked.claim_finalize(upload_uuid):
+			artefact_type, type_overridden, original_filename = resolved
+			_chunked.submit_finalize(
+				upload_uuid,
+				_build_chunk_finalize_fn(
+					meta, artefact_type, type_overridden, original_filename))
+	return jsonify({'upload_uuid': upload_uuid, 'state': state}), 202
 
 
 # =============================================================================
