@@ -22,6 +22,7 @@ from ..tools import (
     convert_draw,
     convert_sprite,
     parse_acorn_filename,
+    read_file_capped,
 )
 from ..utils.paths import artefact_output_subdir
 from ._common import analysis_handler, resolve_extraction_file
@@ -198,7 +199,7 @@ def _convert_file_to_outputs_inner(
     elif artefact_type == ArtefactType.ACORN_TEXT:
         true_name, _ = parse_acorn_filename(input_path.name)
         try:
-            raw = input_path.read_bytes()
+            raw = read_file_capped(input_path)
             # Decode as Latin-1 (covers all Acorn/DOS byte values);
             # normalise RISC OS line endings (0x0A) to LF.
             text = raw.decode('latin-1').replace('\r\n', '\n').replace('\r', '\n')

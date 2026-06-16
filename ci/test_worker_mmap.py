@@ -24,7 +24,11 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from worker.arcworker.tools.base import mmap_readonly  # noqa: E402
+from worker.arcworker.tools.base import (  # noqa: E402
+    FileTooLargeError,
+    mmap_readonly,
+    read_file_capped,
+)
 from worker.arcworker.tools.fs_riscos_armlock import detect_armlock  # noqa: E402
 
 
@@ -65,6 +69,37 @@ class TestMmapReadonly(unittest.TestCase):
                 self.assertEqual(bytes(buf[10:20]), payload[10:20])
                 # struct-style buffer-protocol access must work (parsers rely on it)
                 self.assertEqual(memoryview(buf)[5], payload[5])
+        finally:
+            os.unlink(p)
+
+
+class TestReadFileCapped(unittest.TestCase):
+    def test_returns_contents_under_cap(self):
+        payload = b'hello world' * 10
+        fd, name = tempfile.mkstemp()
+        os.close(fd)
+        p = Path(name)
+        try:
+            p.write_bytes(payload)
+            self.assertEqual(read_file_capped(p, max_bytes=10_000), payload)
+        finally:
+            os.unlink(p)
+
+    def test_refuses_file_over_cap_without_reading_it(self):
+        # 1 GiB sparse file with a tiny cap: must raise *before* reading, so no
+        # gigabyte is pulled into RAM (FileTooLargeError is an OSError, which the
+        # small-file parsers already handle as "unreadable").
+        p = _make_sparse(1024**3)
+        if p.stat().st_blocks * 512 > 64 * 1024**2:
+            os.unlink(p)
+            self.skipTest('filesystem did not create a sparse file')
+        try:
+            before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            with self.assertRaises(FileTooLargeError):
+                read_file_capped(p, max_bytes=1024 * 1024)
+            after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            self.assertIsInstance(FileTooLargeError(), OSError)
+            self.assertLess((after - before) * 1024, 256 * 1024**2)
         finally:
             os.unlink(p)
 

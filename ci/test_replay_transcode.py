@@ -247,6 +247,8 @@ class TestPosterSprite(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             work = Path(td)
+            movie = work / 'movie.ae7'
+            movie.write_bytes(b'\x00' * 4096)
             worker = MagicMock()
             worker.save_output_file.return_value = 'item/art/abc_0_poster.png'
 
@@ -256,7 +258,7 @@ class TestPosterSprite(unittest.TestCase):
 
             with patch.object(metadata, 'convert_replay_poster_sprite', side_effect=_fake_convert):
                 saved = metadata._save_replay_poster(
-                    worker, b'\x00' * 4096,
+                    worker, movie,
                     {'sprite_offset': 100, 'sprite_size': 200},
                     work, 'item/art', 'abc_0',
                 )

@@ -9,7 +9,7 @@ import re
 import traceback as _tb
 from pathlib import Path
 from ..config import log
-from .base import tool_result
+from .base import read_file_capped, tool_result
 
 
 def _safe_sprite_name(name: str, index: int) -> str:
@@ -144,8 +144,10 @@ def convert_sprite(input_path: Path, output_dir: Path, analysis_uuid: str) -> di
     error = None
 
     try:
-        raw = input_path.read_bytes()
+        raw = read_file_capped(input_path)
     except OSError as e:
+        # Includes FileTooLargeError: a sprite file is small, so refuse to slurp
+        # an over-size (corrupt/hostile) file into RAM.
         return tool_result(False, tool='spritefile', error=f'Cannot read file: {e}', sprites=[])
 
     try:

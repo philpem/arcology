@@ -20,10 +20,12 @@ from .archives import (
 )
 from .armovie import ArmovieParseError, parse_armovie_header
 from .base import (
+    FileTooLargeError,
     compute_file_hash,
     exception_result,
     get_process_output,
     mmap_readonly,
+    read_file_capped,
     run_and_build_result,
     run_tool,
     run_tool_with_output,
@@ -70,6 +72,8 @@ __all__ = [
     'get_process_output',
     'compute_file_hash',
     'mmap_readonly',
+    'read_file_capped',
+    'FileTooLargeError',
     'tool_result',
     'run_and_build_result',
     'exception_result',

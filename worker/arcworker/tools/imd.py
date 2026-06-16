@@ -12,6 +12,7 @@ copy-protection sectors and interleaves them into the output image.
 import struct
 from pathlib import Path
 from ..config import log
+from .base import read_file_capped
 from .partition import (
     FILECORE_BB_DISC_RECORD_OFFSET,
     _is_valid_filecore_disc_record,
@@ -31,9 +32,10 @@ def _read_imd_data(imd_path: Path) -> tuple[bytes, int] | None:
     cannot be read or is not an IMD.
     """
     try:
-        with open(imd_path, 'rb') as f:
-            data = f.read()
+        data = read_file_capped(imd_path)
     except OSError:
+        # Unreadable, or implausibly large for an IMD floppy image — the cap
+        # stops an over-size file being slurped into RAM.
         return None
     if not data.startswith(b'IMD '):
         return None

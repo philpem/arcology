@@ -25,6 +25,7 @@ from ..tools import (
     decode_module,
     mmap_readonly,
     parse_armovie_header,
+    read_file_capped,
     transcode_armovie_to_audio,
     transcode_armovie_to_mp4,
 )
@@ -432,7 +433,9 @@ def process_riscos_module_parse(self, analysis: dict, artefact: dict, work_dir: 
             continue
 
         try:
-            data = file_path.read_bytes()
+            # Capped read: a RISC OS module is small; refuse to slurp an
+            # over-size (corrupt/hostile) file into RAM.
+            data = read_file_capped(file_path)
             result = decode_module(data)
             result['file_path'] = db_path
             # Exclude the raw help_string (redundant with help_title)
