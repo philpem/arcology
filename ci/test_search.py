@@ -1385,13 +1385,27 @@ class TestSearchLogic(unittest.TestCase):
         self.assertIn('files', results)
         self.assertIn('artefacts', results)
         self.assertIn('catalogue_items', results)
-        self.assertIn('totals', results)
+        self.assertIn('has_next', results)
         self.assertEqual(results['files'], [])
         self.assertEqual(results['artefacts'], [])
         self.assertEqual(results['catalogue_items'], [])
-        self.assertEqual(results['totals']['files'], 0)
-        self.assertEqual(results['totals']['artefacts'], 0)
-        self.assertEqual(results['totals']['items'], 0)
+        self.assertFalse(results['has_next'])
+
+    def test_has_next_false_when_results_fit_one_page(self):
+        # Both fixture files match; per_page=100 fits them on one page.
+        from myapp.blueprints.search import _run_search, parse_query
+        with self.app.app_context():
+            results = _run_search(parse_query('path:!Impression path:Tools'), per_page=100)
+        self.assertFalse(results['has_next'])
+        self.assertEqual(len(results['files']), 2)
+
+    def test_has_next_true_when_results_exceed_page(self):
+        # Both fixture files match; per_page=1 means only one fits, has_next=True.
+        from myapp.blueprints.search import _run_search, parse_query
+        with self.app.app_context():
+            results = _run_search(parse_query('path:!Impression path:Tools'), per_page=1)
+        self.assertTrue(results['has_next'])
+        self.assertEqual(len(results['files']), 1)
 
 
 # =============================================================================
@@ -1717,12 +1731,15 @@ class TestMultiValuePagination(unittest.TestCase):
             results = _run_search(tokens, page=page, per_page=per_page)
         return (
             [r for r in results['artefacts'] if r['type'] == 'protection'],
-            results['totals']['artefacts'],
+            results['has_next'],
         )
 
-    def test_total_counts_all_values_once(self):
-        _, total = self._protection_results(page=1, per_page=2)
-        self.assertEqual(total, 5)
+    def test_has_next_reflects_further_pages(self):
+        # 5 total artefacts, per_page=2 → pages 1 and 2 have more, page 3 does not
+        _, has_next = self._protection_results(page=1, per_page=2)
+        self.assertTrue(has_next)
+        _, has_next = self._protection_results(page=3, per_page=2)
+        self.assertFalse(has_next)
 
     def test_page_size_respected_with_multiple_values(self):
         rows, _ = self._protection_results(page=1, per_page=2)
