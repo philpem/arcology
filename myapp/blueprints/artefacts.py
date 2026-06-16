@@ -1153,6 +1153,24 @@ def _viewer_replay_detail(file_filter, all_artefact_ids):
         url_for(f'{ROUTENAME}.get_output_file', filename=row.poster_path)
         if row.poster_path else None
     )
+
+    # Link to download the original ARMovie file (the extracted file the
+    # ReplayMovie row was indexed from), gated by the same download route as the
+    # file listing.  Matched by path within the viewer's artefact set.
+    ef_uuid = (
+        db.session.query(ExtractedFile.uuid)
+        .join(Partition)
+        .filter(
+            Partition.artefact_id.in_(all_artefact_ids),
+            ExtractedFile.path == file_filter,
+            ExtractedFile.is_directory == False,  # noqa: E712
+        )
+        .limit(1)
+        .scalar()
+    )
+    detail['original_url'] = (
+        url_for(f'{ROUTENAME}.download_file', uuid=ef_uuid) if ef_uuid else None
+    )
     return detail
 
 

@@ -77,9 +77,9 @@ its parsed metadata is left untouched.
 |---------|----------|
 | `mp4_output_path` / `poster_path` columns | `ReplayMovie` in `myapp/database.py` |
 | Search-index update | `handle_replay_transcode` in `myapp/services/search_index.py` |
-| Player card + download button | `myapp/templates/artefacts/viewer.html` |
-| Poster thumbnails in the viewer grid | `_viewer_replay_posters` + `viewer.html` |
-| MP4/poster URLs | `_viewer_replay_detail` in `myapp/blueprints/artefacts.py` |
+| Player card + download toolbar (media / poster / original) | `myapp/templates/artefacts/viewer.html` |
+| Poster thumbnails + media-type badge (Movie/Sound) in the viewer grid | `_viewer_replay_posters` + `viewer.html` |
+| MP4 / poster / original-file URLs | `_viewer_replay_detail` in `myapp/blueprints/artefacts.py` |
 | `.mp4` MIME registration | `arcology_shared/storage.py` |
 
 The MP4 and poster are **analysis output files** (served by `get_output_file`,

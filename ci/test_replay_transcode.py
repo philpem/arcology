@@ -369,6 +369,32 @@ class TestSearchIndexAndViewer(unittest.TestCase):
             self.assertIn('abc.jpg', detail['poster_url'])
             self._db.session.rollback()
 
+    def test_viewer_detail_links_original_file(self):
+        """original_url points at the extracted ARMovie file's download route."""
+        from myapp.blueprints.artefacts import _viewer_replay_detail
+        from myapp.database import ExtractedFile, FilesystemType, Partition
+        with self.app.app_context():
+            art, mov = self._fixture()
+            part = Partition(
+                artefact_id=art.id, partition_index=0,
+                filesystem=FilesystemType.UNKNOWN,
+            )
+            self._db.session.add(part)
+            self._db.session.flush()
+            ef = ExtractedFile(
+                partition_id=part.id,
+                path='Movies/Demo',
+                filename='Demo',
+                risc_os_filetype='ae7',
+            )
+            self._db.session.add(ef)
+            self._db.session.flush()
+            with self.app.test_request_context():
+                detail = _viewer_replay_detail('Movies/Demo', [art.id])
+            self.assertIsNotNone(detail['original_url'])
+            self.assertIn(ef.uuid, detail['original_url'])
+            self._db.session.rollback()
+
     def test_viewer_detail_no_transcode_yet(self):
         from myapp.blueprints.artefacts import _viewer_replay_detail
         with self.app.app_context():
