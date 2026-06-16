@@ -66,7 +66,14 @@ _VERSION_RE = re.compile(
 
 
 def parse_artefact_label(label: str) -> dict:
-    """Parse version and disc number from an artefact label."""
+    """Parse an Arcarc/TOSEC-style artefact label.
+
+    The label is the per-artefact product name (set at upload time by the
+    Arcarc/TOSEC filename parser), e.g. ``BeebIt (FR) 0.53 (Disk 1 of 2)``.
+    Returns its disc number/total, any ``(vX)`` version, and ``clean_name`` —
+    the label with the ``(Disk N of M)`` suffix removed — which is the right
+    basis for a product title.
+    """
     result = {'disc_number': None, 'disc_total': None, 'version': None}
 
     m = _DISC_RE.search(label)
@@ -77,6 +84,11 @@ def parse_artefact_label(label: str) -> dict:
     m = _VERSION_RE.search(label)
     if m:
         result['version'] = m.group(1)
+
+    # The clean product name drops the disc parenthetical (_DISC_RE eats the
+    # leading whitespace too); collapse any doubled spaces left behind.
+    clean = re.sub(r'\s{2,}', ' ', _DISC_RE.sub('', label)).strip()
+    result['clean_name'] = clean
 
     return result
 
@@ -413,17 +425,19 @@ def build_product_files(classified: list[tuple[dict, bool]],
 # Product title construction
 # ---------------------------------------------------------------------------
 
-def _item_context(item_name: str, version: str | None) -> str:
-    """Build the provenance context appended to a product title."""
-    ctx = (item_name or '').strip()
-    if version and f'v{version}' not in ctx and version not in ctx:
-        ctx = f'{ctx} v{version}'.strip() if ctx else f'v{version}'
-    return ctx
+def _product_context(clean_name: str | None, item_name: str | None) -> str:
+    """The provenance shown after the app-dir name in a product title.
+
+    Prefer the artefact's clean product name (e.g. ``BeebIt (FR) 0.53``) — that
+    identifies the actual software — and fall back to the item name only when an
+    artefact has no usable label.
+    """
+    return (clean_name or '').strip() or (item_name or '').strip()
 
 
 def build_product_title(app_dir_name: str, context: str | None = None,
                         disc_number: int | None = None) -> str:
-    """Compose a product title: app-dir name plus item/version provenance."""
+    """Compose a product title: app-dir name plus product provenance."""
     title = f'{app_dir_name} — {context}' if context else app_dir_name
     if disc_number is not None:
         title += f' (Disk {disc_number})'
@@ -511,6 +525,7 @@ def _gather_artefact(client: ArcologyClient, art: dict, root_files: str,
     parsed = parse_artefact_label(art_label)
     return {
         'label': art_label,
+        'clean_name': parsed['clean_name'],
         'disc_number': parsed['disc_number'],
         'version': parsed['version'],
         'app_dirs': app_dirs,
@@ -558,23 +573,29 @@ def _build_products(client: ArcologyClient, g: dict, args, is_unique,
     description = g['category'].title() if g['category'] else ''
     artefact_results = g['artefact_results']
     is_multi_disc = len(artefact_results) > 1
-    context = _item_context(g['item_name'], g['version'])
+    item_name = g['item_name']
 
     # Assemble the per-application work items, then process them concurrently
-    # (each one downloads !Run/!Boot and may issue hash lookups).
-    tasks = []  # (app_dir_name, app_files, disc_number, suffix)
+    # (each one downloads !Run/!Boot and may issue hash lookups).  Each task
+    # carries its own context — the artefact's product name — so the title
+    # identifies the actual software, not the (collection) item name.
+    tasks = []  # (app_dir_name, app_files, disc_number, suffix, context)
 
     if args.multi_disc in ('separate', 'both'):
         for ar in artefact_results:
             disc_num = ar['disc_number'] if is_multi_disc else None
+            context = _product_context(ar.get('clean_name'), item_name)
             for app_dir_name, app_files in ar['app_dirs'].items():
-                tasks.append((app_dir_name, app_files, disc_num, ''))
+                tasks.append((app_dir_name, app_files, disc_num, '', context))
 
     if args.multi_disc in ('merge', 'both'):
         merged: dict[str, list[dict]] = {}
+        merged_context: dict[str, str] = {}
         for ar in artefact_results:
             disc_num = ar['disc_number']
+            context = _product_context(ar.get('clean_name'), item_name)
             for app_dir_name, app_files in ar['app_dirs'].items():
+                merged_context.setdefault(app_dir_name, context)
                 bucket = merged.setdefault(app_dir_name, [])
                 for f in app_files:
                     if is_multi_disc and disc_num is not None:
@@ -591,10 +612,11 @@ def _build_products(client: ArcologyClient, g: dict, args, is_unique,
                     seen.add(key)
                     deduped.append(f)
             suffix = ' [All Discs]' if (args.multi_disc == 'both' and is_multi_disc) else ''
-            tasks.append((app_dir_name, deduped, None, suffix))
+            tasks.append((app_dir_name, deduped, None, suffix,
+                          merged_context[app_dir_name]))
 
     def make_product(task):
-        app_dir_name, app_files, disc_number, suffix = task
+        app_dir_name, app_files, disc_number, suffix, context = task
         launched = get_launched_set(client, app_files, verbose=args.verbose)
         classified = classify_app_files(app_dir_name, app_files, launched,
                                         is_unique, verbose=args.verbose)

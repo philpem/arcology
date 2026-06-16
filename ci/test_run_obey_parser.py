@@ -10,13 +10,14 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from cli.arccli.commands.hashdb_generate import (  # noqa: E402
-    _item_context,
+    _product_context,
     _resolve_obey_path,
     build_product_files,
     build_product_title,
     classify_app_files,
     get_launched_set,
     make_is_unique,
+    parse_artefact_label,
     parse_run_obey,
 )
 
@@ -353,13 +354,32 @@ class TestProductTitle(unittest.TestCase):
     def test_title_no_context(self):
         self.assertEqual(build_product_title('!Foo'), '!Foo')
 
-    def test_item_context_appends_version(self):
-        self.assertEqual(_item_context('Impression', '1.30'), 'Impression v1.30')
 
-    def test_item_context_no_duplicate_version(self):
+class TestProductContext(unittest.TestCase):
+    def test_prefers_artefact_clean_name(self):
+        # The collection item is named "Arcarc: Apps", but the product should be
+        # identified by the artefact's own name.
         self.assertEqual(
-            _item_context('Impression v1.30', '1.30'), 'Impression v1.30'
+            _product_context('BeebIt (FR) 0.53', 'Arcarc: Apps'),
+            'BeebIt (FR) 0.53',
         )
+
+    def test_falls_back_to_item_name(self):
+        self.assertEqual(_product_context('', 'Arcarc: Apps'), 'Arcarc: Apps')
+        self.assertEqual(_product_context(None, 'Arcarc: Apps'), 'Arcarc: Apps')
+
+
+class TestParseArtefactLabel(unittest.TestCase):
+    def test_clean_name_strips_disc_suffix(self):
+        p = parse_artefact_label('BeebIt (FR) 0.53 (Disk 1 of 2)')
+        self.assertEqual(p['clean_name'], 'BeebIt (FR) 0.53')
+        self.assertEqual(p['disc_number'], 1)
+        self.assertEqual(p['disc_total'], 2)
+
+    def test_clean_name_without_disc(self):
+        p = parse_artefact_label('BeebIt (FR) 0.53')
+        self.assertEqual(p['clean_name'], 'BeebIt (FR) 0.53')
+        self.assertIsNone(p['disc_number'])
 
 
 if __name__ == '__main__':
