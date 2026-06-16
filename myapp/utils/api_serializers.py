@@ -82,6 +82,10 @@ def analysis_to_dict(analysis, include_artefact=False, include_artefact_storage=
         'success': analysis.success, 'summary': analysis.summary, 'error_message': analysis.error_message,
         'details': analysis.details,
         'priority': analysis.priority,
+        'progress_message': analysis.progress_message,
+        'progress_current': analysis.progress_current,
+        'progress_total': analysis.progress_total,
+        'progress_updated_at': analysis.progress_updated_at.isoformat() if analysis.progress_updated_at else None,
         'created_at': analysis.created_at.isoformat(),
         'started_at': analysis.started_at.isoformat() if analysis.started_at else None,
         'completed_at': analysis.completed_at.isoformat() if analysis.completed_at else None

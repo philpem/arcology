@@ -1153,7 +1153,7 @@ def update_analysis(id):
 
     nul_error = _nul_error(data, [
         'tool_name', 'tool_version', 'output_url', 'output_path',
-        'summary', 'details', 'error_message',
+        'summary', 'details', 'error_message', 'progress_message',
     ])
     if nul_error:
         return nul_error
@@ -1165,6 +1165,7 @@ def update_analysis(id):
     _WORKER_ONLY_FIELDS = {
         'output_path', 'status', 'success', 'details',
         'tool_name', 'tool_version', 'summary', 'error_message', 'output_url',
+        'progress_message', 'progress_current', 'progress_total',
     }
     worker = _is_worker_request()
     for _f in _WORKER_ONLY_FIELDS:
@@ -1203,7 +1204,8 @@ def update_analysis(id):
             return error_response('Invalid status')
 
     for field in ['tool_name', 'tool_version', 'output_url', 'output_path',
-                  'success', 'summary', 'details', 'error_message']:
+                  'success', 'summary', 'details', 'error_message',
+                  'progress_message', 'progress_current', 'progress_total']:
         if field in data:
             setattr(analysis, field, data[field])
 
@@ -1211,6 +1213,24 @@ def update_analysis(id):
         analysis.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
     if data.get('status') in ('completed', 'failed'):
         analysis.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    # Progress/heartbeat bookkeeping.  The server stamps progress_updated_at
+    # (not the worker clock, matching started_at/completed_at) whenever a
+    # running job reports progress or sends a bare heartbeat — this timestamp
+    # is what heartbeat-based stale detection compares against, so an actively
+    # progressing job is never reset as stuck.  On completion the live-progress
+    # fields are cleared so finished rows don't carry a stale bar.
+    has_progress = any(
+        f in data for f in ('progress_message', 'progress_current', 'progress_total')
+    )
+    if worker and analysis.status == AnalysisStatus.RUNNING and (
+            has_progress or data.get('heartbeat')):
+        analysis.progress_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    if data.get('status') in ('completed', 'failed'):
+        analysis.progress_message = None
+        analysis.progress_current = None
+        analysis.progress_total = None
+        analysis.progress_updated_at = None
 
     # On successful completion of specific analysis types, extract structured
     # data from the JSON details blob into indexed search tables.
@@ -1332,7 +1352,11 @@ def reset_stale_analyses():
     result = db.session.execute(
         update(Analysis)
         .where(Analysis.status == AnalysisStatus.RUNNING)
-        .where(Analysis.started_at < cutoff)
+        # Heartbeat-based staleness: a job is stuck only if it has shown no sign
+        # of life (progress update or heartbeat, else its start) for the whole
+        # timeout window.  An actively-progressing long job keeps bumping
+        # progress_updated_at and is therefore never reset.
+        .where(func.coalesce(Analysis.progress_updated_at, Analysis.started_at) < cutoff)
         .values(
             status=AnalysisStatus.PENDING,
             error_message=None,
@@ -1345,6 +1369,10 @@ def reset_stale_analyses():
             success=None,
             summary=None,
             details=None,
+            progress_message=None,
+            progress_current=None,
+            progress_total=None,
+            progress_updated_at=None,
         )
     )
     db.session.commit()
@@ -2574,6 +2602,25 @@ def create_known_product(db_id):
     return jsonify({'id': product.id, 'title': product.title}), 201
 
 
+def _build_known_file(db_id: int, product_id: int, f: dict) -> "KnownFile | None":
+    """Construct a KnownFile from an import payload entry, or None if invalid."""
+    if not f.get('filename'):
+        return None
+    return KnownFile(
+        database_id=db_id,
+        product_id=product_id,
+        filename=f['filename'],
+        file_size=f.get('file_size'),
+        md5=(f.get('md5') or '').lower() or None,
+        sha1=(f.get('sha1') or '').lower() or None,
+        sha256=(f.get('sha256') or '').lower() or None,
+        crc32=(f.get('crc32') or '').lower() or None,
+        is_required=bool(f.get('is_required', True)),
+        relative_path=f.get('relative_path'),
+        description=f.get('description'),
+    )
+
+
 @blueprint.route('/hash-databases/<int:db_id>/products/<int:pid>/files', methods=['POST'])
 @require_auth('read_write')
 def add_known_files_bulk(db_id, pid):
@@ -2589,21 +2636,9 @@ def add_known_files_bulk(db_id, pid):
         return error_response('files array is required')
     new_kf_list = []
     for f in files:
-        if not f.get('filename'):
+        kf = _build_known_file(db_id, pid, f)
+        if kf is None:
             continue
-        kf = KnownFile(
-            database_id=db_id,
-            product_id=pid,
-            filename=f['filename'],
-            file_size=f.get('file_size'),
-            md5=f.get('md5', '').lower() or None,
-            sha1=f.get('sha1', '').lower() or None,
-            sha256=f.get('sha256', '').lower() or None,
-            crc32=f.get('crc32', '').lower() or None,
-            is_required=bool(f.get('is_required', True)),
-            relative_path=f.get('relative_path'),
-            description=f.get('description'),
-        )
         db.session.add(kf)
         new_kf_list.append(kf)
     database.file_count = (database.file_count or 0) + len(new_kf_list)
@@ -2615,6 +2650,58 @@ def add_known_files_bulk(db_id, pid):
     link_new_known_files(database, new_kf_list)
 
     return jsonify({'added': len(new_kf_list)}), 201
+
+
+@blueprint.route('/hash-databases/<int:db_id>/import', methods=['POST'])
+@require_auth('read_write')
+def import_known_database(db_id):
+    """Batch-import products and their files into a hash database in one request.
+
+    Accepts ``{"products": [{"title", "description", "path_match_enabled",
+    "files": [...]}, ...]}`` and inserts every product and file in a single
+    transaction, running the collection-linking/rescan step exactly once at the
+    end (rather than once per product).  This is the fast path used by
+    ``arco hashdb import``; the per-product create/add endpoints remain for
+    backward compatibility.
+    """
+    database = _get_hash_database_or_404(db_id)
+    data, error = _json_object(force=True)
+    if error:
+        return error
+    products = data.get('products')
+    if not isinstance(products, list):
+        return error_response('products array is required')
+
+    new_kf_list = []
+    products_added = 0
+    for p in products:
+        title = (p.get('title') or '').strip()
+        if not title:
+            continue
+        product = KnownProduct(
+            database_id=db_id,
+            title=title,
+            description=p.get('description'),
+            path_match_enabled=bool(p.get('path_match_enabled', False)),
+        )
+        db.session.add(product)
+        db.session.flush()  # assign product.id for the KnownFile rows
+        products_added += 1
+        for f in p.get('files') or []:
+            kf = _build_known_file(db_id, product.id, f)
+            if kf is None:
+                continue
+            db.session.add(kf)
+            new_kf_list.append(kf)
+
+    database.file_count = (database.file_count or 0) + len(new_kf_list)
+    db.session.commit()
+
+    # Run the collection-linking / product-recognition pass once for the whole
+    # batch, mirroring the web import route's single end-of-import call.
+    link_new_known_files(database, new_kf_list)
+
+    return jsonify({'products': products_added, 'files': len(new_kf_list)}), 201
 
 
 @blueprint.route('/hash-databases/recognition-config', methods=['GET'])

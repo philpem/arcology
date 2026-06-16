@@ -9,6 +9,7 @@ without pulling in the AnalysisWorker class.
 
 import functools
 import json
+import time
 import traceback
 from collections.abc import Callable
 from arcology_shared.enums import AnalysisStatus, AnalysisType
@@ -20,6 +21,91 @@ from ..exceptions import JobCancelledException
 # ``(self, analysis, artefact, work_dir)``; the dispatch loop in
 # AnalysisWorker.process_analysis() calls them with itself as ``self``.
 HANDLERS: dict[str, Callable] = {}
+
+
+class ProgressReporter:
+    """Throttled progress reporter for long-running analysis handlers.
+
+    A handler that iterates over many items (CLEANUP deleting hundreds of
+    storage keys, an extraction walking thousands of files, …) can call
+    :meth:`update` on every iteration; the reporter only forwards a progress
+    summary to the server at most once every *min_interval* seconds, so tight
+    loops do not flood the API.  The first :meth:`update` always emits so the
+    UI leaves the bare "In progress…" state promptly.
+
+    The summary is written via ``worker.report_progress`` (status stays
+    RUNNING).  When the server reports the job is gone (deleted by a
+    re-analyse race), :attr:`alive` flips to False and :meth:`update` returns
+    False so the caller can stop early.
+
+    Usage::
+
+        reporter = ProgressReporter(self, analysis_id, total=n, label='Deleting')
+        for i, item in enumerate(items, 1):
+            ...
+            if not reporter.update(i):
+                break  # job was deleted server-side
+    """
+
+    def __init__(self, worker, analysis_id: int, total: int | None = None,
+                 *, min_interval: float = 5.0, label: str = 'Processing'):
+        self.worker = worker
+        self.analysis_id = analysis_id
+        self.total = total
+        self.min_interval = min_interval
+        self.label = label
+        self.alive = True
+        self._last_emit = 0.0  # monotonic time of last emit; 0 == never emitted
+
+    def start(self, total: int | None = None, label: str | None = None):
+        """Set the total and/or label once the work size is known.
+
+        Handy when the framework injects a reporter before the handler knows
+        how many items it will process: ``self.progress.start(total=n,
+        label='Hashing').update(0)``.  Returns ``self`` so it can be chained.
+
+        A change of *label* marks a new phase (e.g. Hashing → Registering on the
+        same reused reporter): the throttle is reset so the next ``update`` emits
+        immediately, otherwise a phase shorter than *min_interval* could be
+        entirely throttled out and the UI would keep showing the previous
+        phase's label/percentage.
+        """
+        if total is not None:
+            self.total = total
+        if label is not None and label != self.label:
+            self.label = label
+            self._last_emit = 0.0  # new phase → let the next update emit at once
+        return self
+
+    def _format(self, done: int | None) -> str:
+        if done is not None and self.total:
+            pct = int(done * 100 / self.total)
+            return f'{self.label}: {done} of {self.total} ({pct}%)'
+        if done is not None:
+            return f'{self.label}: {done}'
+        return self.label
+
+    def update(self, done: int | None = None, *, message: str | None = None,
+               force: bool = False) -> bool:
+        """Maybe emit progress (message + current/total); return :attr:`alive`.
+
+        Throttled to one emit per *min_interval* seconds unless *force* is set
+        (the first call always emits).  *done* feeds both the formatted message
+        and the numeric ``progress_current``; pass *message* to override the
+        auto-formatted ``"<label>: <done> of <total> (<pct>%)"`` text.
+        """
+        if not self.alive:
+            return False
+        now = time.monotonic()
+        if not force and self._last_emit and (now - self._last_emit) < self.min_interval:
+            return True
+        self._last_emit = now
+        text = message if message is not None else self._format(done)
+        if self.worker.report_progress(
+                self.analysis_id, message=text,
+                current=done, total=self.total) is False:
+            self.alive = False
+        return self.alive
 
 
 def analysis_handler(description: str, analysis_type: AnalysisType | None = None):

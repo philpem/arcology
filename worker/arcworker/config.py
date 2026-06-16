@@ -66,6 +66,20 @@ API_RETRIES = _int_env('API_RETRIES', '3')
 # Lower values detect cancellation sooner; higher values reduce API load.
 CANCEL_CHECK_INTERVAL = _int_env('CANCEL_CHECK_INTERVAL', '30')
 
+# Upper bound (in seconds) on how long the cancellation-monitor thread keeps
+# sending liveness heartbeats for a single job.  The monitor's heartbeat keeps a
+# RUNNING job from being treated as stale (see STALE_JOB_TIMEOUT_SECONDS), which
+# is what we want for a job that is genuinely making progress.  But the monitor
+# only knows the worker *process* is alive, not that the *handler* is making
+# forward progress — so a handler wedged on an unbounded call (a network/storage
+# read with no timeout, an infinite loop) would otherwise be kept "fresh"
+# forever and never recovered.  Capping the heartbeat means a job that stops
+# reporting real progress (handlers bump the timestamp directly via
+# ProgressReporter, independent of this cap) becomes eligible for stale reset
+# roughly HEARTBEAT_MAX_SECONDS + STALE_JOB_TIMEOUT_SECONDS after it started.
+# Set generously above the longest expected *silent* (no item-progress) phase.
+HEARTBEAT_MAX_SECONDS = _int_env('HEARTBEAT_MAX_SECONDS', '21600')  # 6 hours
+
 # How often (in seconds) the worker asks the server to re-queue stale RUNNING
 # jobs (those orphaned by a crash or a SIGKILL past the stop grace period).
 # The server only re-queues jobs older than STALE_JOB_TIMEOUT_SECONDS, so this
