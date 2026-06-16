@@ -178,8 +178,6 @@ def index():
     else:
         sentinel_total = 0
 
-    totals = {'files': 0, 'artefacts': 0, 'items': 0}
-
     # Build a Pagination-compatible object so search shares the common macro.
     # range() keeps this O(1); the shim only needs the count, not the rows.
     pagination = ListPagination(range(sentinel_total), page, per_page)
@@ -204,7 +202,6 @@ def index():
         unknown_keys=unknown_keys,
         query_warnings=query_warnings,
         results=results,
-        totals=totals,
         pagination=pagination,
         pagination_args=pagination_args,
         valid_per_page=VALID_PER_PAGE,

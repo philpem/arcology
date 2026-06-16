@@ -1391,6 +1391,22 @@ class TestSearchLogic(unittest.TestCase):
         self.assertEqual(results['catalogue_items'], [])
         self.assertFalse(results['has_next'])
 
+    def test_has_next_false_when_results_fit_one_page(self):
+        # Both fixture files match; per_page=100 fits them on one page.
+        from myapp.blueprints.search import _run_search, parse_query
+        with self.app.app_context():
+            results = _run_search(parse_query('path:!Impression path:Tools'), per_page=100)
+        self.assertFalse(results['has_next'])
+        self.assertEqual(len(results['files']), 2)
+
+    def test_has_next_true_when_results_exceed_page(self):
+        # Both fixture files match; per_page=1 means only one fits, has_next=True.
+        from myapp.blueprints.search import _run_search, parse_query
+        with self.app.app_context():
+            results = _run_search(parse_query('path:!Impression path:Tools'), per_page=1)
+        self.assertTrue(results['has_next'])
+        self.assertEqual(len(results['files']), 1)
+
 
 # =============================================================================
 # HTTP-level smoke tests
