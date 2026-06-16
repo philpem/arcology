@@ -16,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       migrations: ${{ steps.filter.outputs.migrations }}
+      web: ${{ steps.filter.outputs.web }}
+      worker: ${{ steps.filter.outputs.worker }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -27,6 +29,16 @@ jobs:
               - 'myapp/database.py'
               - 'arcology_shared/enums.py'
               - 'requirements.txt'
+            web:
+              - 'Dockerfile'
+              - 'Dentrypoint.sh'
+              - '.flaskenv'
+              - 'requirements.txt'
+              - 'myapp/**'
+              - 'arcology_shared/**'
+            worker:
+              - 'worker/**'
+              - 'arcology_shared/**'
 
   lint:
     name: Static Checks
@@ -90,6 +102,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
 
       - name: Install dependencies
         # zstandard is a CLI dependency (cli/pyproject.toml) needed by the
@@ -108,6 +122,8 @@ jobs:
         # `python -W error::sqlalchemy.exc.SAWarning` does not work — the
         # category cannot be resolved at interpreter startup.  See
         # myapp/utils/warnings.py and ci/test_cartesian_join.py.
+        # It fans the test modules out across the runner's CPUs (default
+        # os.cpu_count(); override with TEST_JOBS) — set TEST_JOBS=1 to debug.
         run: python ci/run_app_tests.py
 
   test-migrations:
@@ -116,8 +132,13 @@ jobs:
     # Toggle via repository variable: Settings > Secrets and variables > Actions > Variables
     # Set ENABLE_MIGRATION_TESTS to "true" to enable this job.
     # Only runs when migration-related files have changed.
+    #
+    # Depends on migration-static: the fast static checks (sanity, conflict
+    # detection) are a prerequisite for the slow PostgreSQL upgrade/downgrade
+    # cycle.  If the static checks fail the Postgres run would fail too, so
+    # gating on it avoids burning ~a minute of runner time on the sad path.
     if: vars.ENABLE_MIGRATION_TESTS == 'true' && needs.changes.outputs.migrations == 'true'
-    needs: [changes]
+    needs: [changes, migration-static]
 
     services:
       postgres:
@@ -160,20 +181,47 @@ jobs:
       - name: Re-upgrade database (idempotency)
         run: flask db upgrade
 
-  docker-build:
-    name: Docker Build
+  docker-build-web:
+    name: Docker Build (web)
     runs-on: ubuntu-latest
     # Toggle via repository variable: Settings > Secrets and variables > Actions > Variables
     # Set ENABLE_DOCKER_BUILD to "true" to enable this job.
     # Recommended to enable after open-sourcing (unlimited free minutes for public repos).
-    if: vars.ENABLE_DOCKER_BUILD == 'true'
-    needs: lint
+    #
+    # Only builds:
+    #   * after the branch has merged to master (push to master, not on PRs);
+    #   * when every other non-skipped test job passed (!failure() treats
+    #     skipped optional jobs — e.g. the migration jobs — as OK);
+    #   * when files affecting the web image actually changed.
+    needs: [changes, lint, app-tests, migration-static, test-migrations]
+    if: >-
+      ${{ !cancelled() && !failure()
+          && vars.ENABLE_DOCKER_BUILD == 'true'
+          && github.event_name == 'push'
+          && github.ref == 'refs/heads/master'
+          && needs.changes.outputs.web == 'true' }}
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Build web image
         run: docker build -t arcology-web:test .
+
+  docker-build-worker:
+    name: Docker Build (worker)
+    runs-on: ubuntu-latest
+    # See docker-build-web above for the gating rationale.  Only builds when
+    # files affecting the worker image (worker/** or shared code) changed.
+    needs: [changes, lint, app-tests, migration-static, test-migrations]
+    if: >-
+      ${{ !cancelled() && !failure()
+          && vars.ENABLE_DOCKER_BUILD == 'true'
+          && github.event_name == 'push'
+          && github.ref == 'refs/heads/master'
+          && needs.changes.outputs.worker == 'true' }}
+
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Build worker image
         run: docker build -t arcology-worker:test -f worker/Dockerfile .
