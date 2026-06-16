@@ -2401,29 +2401,10 @@ def add_to_hashdb(uuid):
     database.file_count = (database.file_count or 0) + added
     db.session.commit()
 
-    # Trigger hash rescan and product recognition for the newly added files,
-    # matching the behaviour of the per-file add_known_file route in hashdb.py.
-    if new_kfs and database.is_active:
-        from sqlalchemy import or_ as _or
-        from ..services.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_new_known_files
-        rescan_hashes_for_new_known_files(new_kfs)
-        if database.enable_product_recognition:
-            conditions = []
-            for kf in new_kfs:
-                if kf.md5:
-                    conditions.append(ExtractedFile.md5 == kf.md5)
-                if kf.sha1:
-                    conditions.append(ExtractedFile.sha1 == kf.sha1)
-            if conditions:
-                partition_ids = {
-                    row[0] for row in
-                    ExtractedFile.query
-                    .with_entities(ExtractedFile.partition_id)
-                    .filter(_or(*conditions))
-                    .all()
-                }
-                if partition_ids:
-                    queue_product_recognition_for_partitions(partition_ids)
+    # Link existing extracted files to the new KnownFiles (and queue product
+    # recognition when enabled) — shared with the import routes.
+    from ..services.hash_rescan import link_new_known_files
+    link_new_known_files(database, new_kfs)
 
     if added:
         flash(f'Added {added} file(s) to "{product.title}" in "{database.name}".', 'success')
