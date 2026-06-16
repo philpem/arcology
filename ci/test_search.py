@@ -1407,6 +1407,22 @@ class TestSearchLogic(unittest.TestCase):
         self.assertTrue(results['has_next'])
         self.assertEqual(len(results['files']), 1)
 
+    def test_total_reflects_real_count_not_sentinel(self):
+        # The total must be the real match count, independent of the page size,
+        # so the pagination widget can show the true number of pages instead of
+        # only ever "current page + 1" (the old next-page-only sentinel).
+        from myapp.blueprints.search import _run_search, parse_query
+        with self.app.app_context():
+            full = _run_search(parse_query('path:!Impression path:Tools'), per_page=100)
+            paged = _run_search(parse_query('path:!Impression path:Tools'), page=1, per_page=1)
+        self.assertEqual(full['total'], 2)
+        # Same query, tiny page size: total is still the real count, not page+1.
+        self.assertEqual(paged['total'], 2)
+
+    def test_total_zero_when_no_match(self):
+        results = self._search('xyzzy_guaranteed_no_match_12345')
+        self.assertEqual(results['total'], 0)
+
 
 # =============================================================================
 # HTTP-level smoke tests
@@ -1753,6 +1769,16 @@ class TestMultiValuePagination(unittest.TestCase):
             labels.extend(r['artefact'].label for r in rows)
         self.assertEqual(sorted(labels), ['A1', 'A2', 'A3', 'A4', 'A5'])
         self.assertEqual(len(labels), len(set(labels)))
+
+    def test_total_counts_distinct_artefacts(self):
+        # 5 matching artefacts → real total is 5 (so ceil(5/2) = 3 pages),
+        # regardless of which page is requested.
+        from myapp.blueprints.search import _run_search, parse_query
+        with self.app.app_context():
+            tokens = parse_query('protection:bad_crc protection:weak_bits')
+            for page in (1, 2, 3):
+                results = _run_search(tokens, page=page, per_page=2)
+                self.assertEqual(results['total'], 5)
 
 
 
