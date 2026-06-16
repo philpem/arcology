@@ -7,6 +7,7 @@ Global cross-item search using a prefix query syntax.
 import re
 from flask import Blueprint, render_template, request
 from flask_login import current_user
+from markupsafe import Markup, escape
 from sqlalchemy import and_, case, distinct, false, func, or_
 from ..database import (
     Artefact,
@@ -166,6 +167,7 @@ def index():
     if q and NOT_KEY in tokens and not has_positive:
         query_error = "A search must include at least one term that is not negated."
 
+    query_warnings = _check_query_warnings(tokens)
     run = bool(q) and query_error is None
     results = _run_search(tokens, page=page, per_page=per_page) if run else None
     if results:
@@ -199,6 +201,7 @@ def index():
         tokens=tokens,
         query_error=query_error,
         unknown_keys=unknown_keys,
+        query_warnings=query_warnings,
         results=results,
         totals=totals,
         pagination=pagination,
@@ -748,6 +751,96 @@ def _search_text_artefacts(tokens, page=1, per_page=PER_PAGE):
         {'type': 'artefact_text', 'artefact': a, 'item': i}
         for a, i in q
     ], total
+
+
+def _check_query_warnings(tokens: dict) -> list:
+    """Return a list of safe Markup warning strings for questionable query constructs.
+
+    Catches common mistakes that silently return wrong or empty results:
+    - Negated key whose sub-search won't activate (no positive activator present)
+    - Unknown RISC OS filetype name/code in a type: or !type: term
+    - Wildcard in a hash search (hashes are matched exactly, not as patterns)
+    - Hash value that is the wrong length or contains non-hex characters
+    """
+    warnings = []
+    positive_keys = set(tokens) - {NOT_KEY}
+    negated = tokens.get(NOT_KEY, {})
+
+    # Search-function activation groups.  Each sub-search only runs when at
+    # least one of its "activating" positive keys is present.  A negated key
+    # is "orphaned" — will silently have no effect — when every group it
+    # belongs to is inactive.
+    _file_keys     = frozenset({'md5', 'sha1', 'sha256', 'filename', 'path', 'type', 'ext'})
+    _disc_keys     = frozenset({'label', 'ident', 'fs'})
+    _replay_keys   = frozenset(k for k in KNOWN_KEYS if k.startswith('replay_'))
+    _art_hash_keys = frozenset({'md5', 'sha256'})
+    _solo_keys     = frozenset({'protection', 'mastering', 'module', 'command', 'swi', 'tag', 'text'})
+
+    def _group_active(neg_key):
+        if neg_key in _file_keys and positive_keys & _file_keys:
+            return True
+        if neg_key in _disc_keys and positive_keys & _disc_keys:
+            return True
+        if neg_key in _art_hash_keys and positive_keys & _art_hash_keys:
+            return True
+        if neg_key in _replay_keys and positive_keys & _replay_keys:
+            return True
+        if neg_key in _solo_keys and neg_key in positive_keys:
+            return True
+        return False
+
+    for neg_key in negated:
+        if neg_key not in KNOWN_KEYS:
+            continue  # already flagged by unknown_keys check
+        if not _group_active(neg_key):
+            k = escape(neg_key)
+            if neg_key in _file_keys:
+                hint = Markup("add a positive file term such as <code>filename:</code>, <code>type:</code>, or <code>ext:</code>")
+            elif neg_key in _disc_keys:
+                hint = Markup("add a positive disc/partition term: <code>label:</code>, <code>ident:</code>, or <code>fs:</code>")
+            elif neg_key in _replay_keys:
+                hint = Markup("add a positive Replay term such as <code>replay_title:</code>")
+            else:
+                hint = Markup(f"add a positive <code>{k}:</code> term")
+            warnings.append(Markup(
+                f"<code>!{k}:</code> has no effect — {hint} to activate that search."
+            ))
+
+    # Invalid RISC OS filetype name or code
+    for v, neg in [(v, False) for v in tokens.get('type', [])] + \
+                  [(v, True)  for v in negated.get('type', [])]:
+        if lookup_filetype_hex(v) is None:
+            vesc = escape(v)
+            pfx = Markup(f"!type:{vesc}") if neg else Markup(f"type:{vesc}")
+            warnings.append(Markup(
+                f"<code>{pfx}</code>: unknown RISC OS filetype — use a 3-digit hex code "
+                "(e.g. <code>fff</code>) or a known name like "
+                "<code>Text</code>, <code>BASIC</code>, <code>Absolute</code>."
+            ))
+
+    # Wildcards in hash searches — hashes are compared exactly, * never matches
+    for hkey in ('md5', 'sha1', 'sha256'):
+        for v in tokens.get(hkey, []) + negated.get(hkey, []):
+            if '*' in v or '%' in v:
+                warnings.append(Markup(
+                    f"<code>{escape(hkey)}:</code> matches the full hash exactly — "
+                    f"<code>{escape(v)}</code> will never match anything."
+                ))
+
+    # Hash value format / length validation
+    _hash_lengths = {'md5': 32, 'sha1': 40, 'sha256': 64}
+    _hex_re = re.compile(r'^[0-9a-f]+$', re.IGNORECASE)
+    for hkey, expected in _hash_lengths.items():
+        for v in tokens.get(hkey, []) + negated.get(hkey, []):
+            if '*' in v or '%' in v:
+                continue  # already warned above
+            if not _hex_re.match(v) or len(v) != expected:
+                warnings.append(Markup(
+                    f"<code>{escape(hkey)}:{escape(v)}</code>: "
+                    f"expected a {expected}-character hex string."
+                ))
+
+    return warnings
 
 
 def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE) -> dict:

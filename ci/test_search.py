@@ -287,6 +287,124 @@ class TestParseQuery(unittest.TestCase):
 
 
 # =============================================================================
+# Unit tests: _check_query_warnings (no database required)
+# =============================================================================
+
+class TestCheckQueryWarnings(unittest.TestCase):
+    """Unit tests for _check_query_warnings — no app context needed."""
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.blueprints.search import _check_query_warnings, parse_query
+        cls.warn = staticmethod(lambda q: _check_query_warnings(parse_query(q)))
+
+    def _texts(self, q):
+        """Return warning strings (stripped of markup) for a query string."""
+        return [str(w) for w in self.warn(q)]
+
+    # Orphaned negations
+
+    def test_orphaned_negation_disc_without_disc_positive(self):
+        # !label: with only a file positive term — disc search never runs
+        warns = self._texts('filename:foo !label:System')
+        self.assertTrue(any('!label:' in w for w in warns))
+
+    def test_orphaned_negation_file_without_file_positive(self):
+        # !filename: with only a disc positive term
+        warns = self._texts('label:System !filename:foo')
+        self.assertTrue(any('!filename:' in w for w in warns))
+
+    def test_no_orphaned_negation_same_group(self):
+        # !label: with a disc positive — fine
+        warns = self._texts('label:System !label:Secret')
+        self.assertFalse(any('!label:' in w for w in warns))
+
+    def test_no_orphaned_negation_file_neg_within_file_group(self):
+        # !filename: with a file positive — fine
+        warns = self._texts('type:fff !filename:foo')
+        self.assertFalse(any('!filename:' in w for w in warns))
+
+    def test_orphaned_negation_protection_without_positive(self):
+        warns = self._texts('filename:foo !protection:bad_crc')
+        self.assertTrue(any('!protection:' in w for w in warns))
+
+    def test_no_orphaned_negation_protection_with_positive(self):
+        warns = self._texts('protection:bad_crc !protection:weak_bits')
+        self.assertFalse(any('!protection:' in w for w in warns))
+
+    def test_orphaned_negation_replay_without_positive(self):
+        warns = self._texts('filename:foo !replay_title:secret')
+        self.assertTrue(any('!replay_title:' in w for w in warns))
+
+    def test_no_orphaned_negation_replay_with_positive(self):
+        warns = self._texts('replay_title:Lion !replay_title:secret')
+        self.assertFalse(any('!replay_title:' in w for w in warns))
+
+    # Invalid RISC OS filetype
+
+    def test_invalid_type_name_warns(self):
+        warns = self._texts('type:NotARealType')
+        self.assertTrue(any('NotARealType' in w for w in warns))
+
+    def test_valid_type_hex_no_warn(self):
+        warns = self._texts('type:fff')
+        self.assertFalse(any('fff' in w and 'unknown' in w for w in warns))
+
+    def test_valid_type_name_no_warn(self):
+        warns = self._texts('type:Text')
+        self.assertFalse(any('unknown' in w for w in warns))
+
+    def test_invalid_negated_type_warns(self):
+        warns = self._texts('type:fff !type:NotARealType')
+        self.assertTrue(any('NotARealType' in w for w in warns))
+
+    # Wildcards in hash searches
+
+    def test_wildcard_in_md5_warns(self):
+        warns = self._texts('md5:dead*')
+        self.assertTrue(any('md5:' in w and 'dead*' in w for w in warns))
+
+    def test_wildcard_in_sha256_warns(self):
+        warns = self._texts('sha256:abc*')
+        self.assertTrue(any('sha256:' in w for w in warns))
+
+    def test_no_wildcard_no_warn(self):
+        warns = self._texts('md5:' + 'd' * 32)
+        self.assertFalse(any('never match' in w for w in warns))
+
+    # Hash length / format validation
+
+    def test_short_md5_warns(self):
+        warns = self._texts('md5:abc')
+        self.assertTrue(any('md5:abc' in w for w in warns))
+
+    def test_correct_md5_no_warn(self):
+        warns = self._texts('md5:' + 'a' * 32)
+        self.assertFalse(any('32-character' in w for w in warns))
+
+    def test_short_sha1_warns(self):
+        warns = self._texts('sha1:cafe')
+        self.assertTrue(any('sha1:cafe' in w for w in warns))
+
+    def test_correct_sha256_no_warn(self):
+        warns = self._texts('sha256:' + 'b' * 64)
+        self.assertFalse(any('64-character' in w for w in warns))
+
+    def test_nonhex_md5_warns(self):
+        warns = self._texts('md5:' + 'z' * 32)
+        self.assertTrue(any('md5:' in w for w in warns))
+
+    def test_wildcard_hash_not_double_warned(self):
+        # A wildcard hash should warn about the wildcard but NOT about length
+        warns = self._texts('md5:dead*')
+        self.assertFalse(any('32-character' in w for w in warns))
+
+    def test_no_warnings_clean_query(self):
+        warns = self._texts('type:fff filename:!RunImage')
+        self.assertEqual(warns, [])
+
+
+# =============================================================================
 # Unit tests: RISC OS filetype lookup (no database required)
 # =============================================================================
 

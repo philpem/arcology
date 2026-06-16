@@ -57,6 +57,9 @@
 	<code>label:</code>, <code>tag:</code>, <code>text:</code>, and others shown below.
 </div>
 {% endif %}
+{% for warning in query_warnings %}
+<div class="alert alert-warning"><i class="bi bi-exclamation-triangle"></i> {{ warning }}</div>
+{% endfor %}
 
 {% if results is none %}
 {# No search yet — show quick-reference #}
