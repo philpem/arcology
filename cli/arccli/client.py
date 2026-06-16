@@ -307,10 +307,7 @@ class ArcologyClient:
 
 	def _finalize_status(self, upload_uuid: str) -> dict:
 		"""GET the async finalise status for a chunked upload session."""
-		resp = self.session.get(
-			self._url(f'uploads/chunked/{upload_uuid}/complete/status'),
-			timeout=self.timeout)
-		return self._handle_response(resp)
+		return self.get(f'uploads/chunked/{upload_uuid}/complete/status')
 
 	def _complete_and_wait(self, upload_uuid: str, status_cb=None) -> dict:
 		"""Request async finalise and poll until the artefact exists.

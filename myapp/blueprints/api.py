@@ -2277,7 +2277,7 @@ def _build_chunk_finalize_fn(meta, artefact_type, type_overridden, original_file
 		auto_analyse = auto_analyse.lower() != 'false'
 
 	def _finalize(assembled):
-		item = Item.query.filter_by(uuid=item_uuid).first()
+		item = db.session.scalar(db.select(Item).filter_by(uuid=item_uuid))
 		if item is None:
 			raise RuntimeError(f'Item {item_uuid} no longer exists')
 		outcome = ingest_uploaded_artefact(
@@ -2415,7 +2415,8 @@ def chunked_upload_complete_status(upload_uuid):
 
 	state = status['state']
 	if state == _chunked.FINALIZE_DONE:
-		art = Artefact.query.filter_by(uuid=status.get('artefact_uuid')).first()
+		art = db.session.scalar(
+			db.select(Artefact).filter_by(uuid=status.get('artefact_uuid')))
 		if art is None:
 			return error_response('Finalised artefact not found', 404)
 		return jsonify({'state': 'done', 'artefact': artefact_to_dict(art)}), 200
@@ -2426,8 +2427,15 @@ def chunked_upload_complete_status(upload_uuid):
 			'error_code': status.get('error_code'),
 		}), 200
 
-	# pending or assembling: re-drive a stale (orphaned) assembly.
+	# pending or assembling: re-drive a stale (orphaned) assembly.  Re-check
+	# manage rights first — re-drive ingests the artefact just as /complete does,
+	# so it must enforce the same authorisation rather than relying on the
+	# session-ownership check alone (permissions may have changed since /complete).
 	if state == _chunked.FINALIZE_ASSEMBLING and _chunked.finalize_is_stale(upload_uuid):
+		item = _get_item_or_404(meta['item_uuid'])
+		manage_error = _require_manage_item_content(item)
+		if manage_error:
+			return manage_error
 		resolved, type_error = _resolve_chunk_artefact_type(meta)
 		if not type_error and _chunked.claim_finalize(upload_uuid):
 			artefact_type, type_overridden, original_filename = resolved

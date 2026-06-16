@@ -27,6 +27,8 @@ Callers translate the exceptions raised here into their own error formats
 (JSON for the API, flash/redirect for the web UI).
 """
 
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -60,9 +62,14 @@ FINALIZE_ASSEMBLING = 'assembling'
 FINALIZE_DONE = 'done'
 FINALIZE_FAILED = 'failed'
 
+# Per-session advisory lock file used to make claim_finalize() atomic across
+# gunicorn worker *processes* on the same host (a threading.Lock only serialises
+# within one process).  Held only for the brief claim read-modify-write.
+_LOCK_NAME = '.finalize.lock'
+
 # Serialises read-modify-write of meta.json within a process so the atomic
-# claim and the heartbeat updates do not interleave.  Cross-process safety
-# rests on the atomic os.replace() write plus the stale-heartbeat threshold.
+# claim and the heartbeat updates do not interleave.  Cross-process atomicity of
+# the claim additionally rests on the _LOCK_NAME flock (see _claim_flock).
 _finalize_lock = threading.Lock()
 _executor_lock = threading.Lock()
 _executor: ThreadPoolExecutor | None = None
@@ -176,14 +183,17 @@ def purge_stale_chunks() -> None:
             continue
         path = os.path.join(base, name)
         try:
-            meta = _read_meta_dir(path)
-            if meta and meta.get('finalize_state') in (FINALIZE_DONE, FINALIZE_FAILED):
-                finalized_at = meta.get('finalized_at', 0)
-                if now - finalized_at > result_ttl:
-                    shutil.rmtree(path, ignore_errors=True)
-                continue
+            # Stat first; only parse meta.json when the directory is recent
+            # enough that it might be a finished session still inside its TTL.
+            # A dir untouched for > CHUNK_STALE_SECONDS is abandoned regardless
+            # of state (an active finalise's heartbeat keeps its mtime fresh).
             if os.stat(path).st_mtime < mtime_cutoff:
                 shutil.rmtree(path, ignore_errors=True)
+                continue
+            meta = _read_meta_dir(path)
+            if meta and meta.get('finalize_state') in (FINALIZE_DONE, FINALIZE_FAILED):
+                if now - meta.get('finalized_at', 0) > result_ttl:
+                    shutil.rmtree(path, ignore_errors=True)
         except OSError:
             pass
 
@@ -379,11 +389,42 @@ def assemble_to_storage(upload_uuid: str, original_filename: str, *,
 
 def _delete_chunk_files(cdir: str, total_chunks: int) -> None:
     """Remove the numbered chunk files, keeping the session dir + meta.json."""
+    if not isinstance(total_chunks, int):
+        return
     for i in range(total_chunks):
         try:
             os.unlink(os.path.join(cdir, f'{i:06d}'))
         except OSError:
             pass
+
+
+@contextlib.contextmanager
+def _claim_flock(cdir: str):
+    """Hold a cross-process advisory lock on a session for the claim window.
+
+    gunicorn runs several worker processes, so the per-process ``_finalize_lock``
+    cannot make the claim's read-modify-write atomic across them.  An flock on a
+    per-session lock file does: a second worker (or thread) blocks here until the
+    first finishes its short claim, then re-reads the now-updated meta and backs
+    off.  The lock is advisory and released by the OS if the holder dies, so a
+    crashed owner never wedges a re-drive.  flock is POSIX/local-filesystem;
+    this assumes the documented single-host web deployment.  Yields True when the
+    lock was acquired, False when it could not be (best-effort fall back to the
+    in-process lock only).
+    """
+    fd = None
+    try:
+        fd = os.open(os.path.join(cdir, _LOCK_NAME), os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield True
+    except OSError:
+        yield False
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)  # releases the flock
+            except OSError:
+                pass
 
 
 def _get_executor() -> ThreadPoolExecutor:
@@ -435,10 +476,16 @@ def claim_finalize(upload_uuid: str) -> bool:
     runner died — a redeploy or crash).  A live 'assembling', 'done' or 'failed'
     session is not claimable.  This single-winner transition is what prevents a
     double finalise (and hence duplicate artefacts).
+
+    Atomicity holds across gunicorn worker *processes*: the read-modify-write
+    runs under a per-session flock (_claim_flock), so a second worker serialises
+    behind the first and then observes the just-written 'assembling' + fresh
+    heartbeat and backs off.  The in-process _finalize_lock additionally orders
+    it against the heartbeat writer.
     """
     cdir = chunk_dir(upload_uuid)
     stale_seconds = finalize_stale_seconds()
-    with _finalize_lock:
+    with _claim_flock(cdir), _finalize_lock:
         meta = _read_meta_dir(cdir)
         if meta is None:
             return False
@@ -516,7 +563,6 @@ def run_finalize(upload_uuid: str, finalize_fn) -> None:
         _set_finalize_result(
             cdir, finalize_state=FINALIZE_DONE,
             artefact_uuid=artefact_uuid, finalized_at=time.time())
-        _delete_chunk_files(cdir, total_chunks)
     except UploadTooLarge as exc:
         _set_finalize_result(
             cdir, finalize_state=FINALIZE_FAILED,
@@ -535,6 +581,11 @@ def run_finalize(upload_uuid: str, finalize_fn) -> None:
             finalized_at=time.time())
     finally:
         stop.set()
+        # Once finalise reaches a terminal state (done or failed — neither is
+        # re-claimable), the staged chunks are dead weight; drop them now rather
+        # than leaving up to max_upload_size bytes on the volume until the TTL
+        # purge.  meta.json is retained for status polling.
+        _delete_chunk_files(cdir, total_chunks)
         purge_stale_chunks()
 
 
