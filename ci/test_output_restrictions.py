@@ -68,6 +68,7 @@ class TestOutputRestrictionGate(unittest.TestCase):
             Artefact,
             ArtefactRestriction,
             Item,
+            ReplayMovie,
             RestrictionType,
         )
         from myapp.extensions import db
@@ -121,6 +122,18 @@ class TestOutputRestrictionGate(unittest.TestCase):
                 {'type': 'text', 'name': 'conv.txt', 'filename': cls.output_path},
             ]})
             db.session.add(conv)
+
+            # A transcoded Replay movie on the same restricted artefact: its
+            # player/poster are renderings of restricted content, so the viewer
+            # must not emit the MP4/poster URLs for a non-bypass user.
+            cls.replay_mp4_path = f'pub-item/{art.uuid}_restricted/movie.mp4'
+            cls.replay_poster_path = f'pub-item/{art.uuid}_restricted/movie_poster.png'
+            db.session.add(ReplayMovie(
+                artefact_id=art.id, file_path='Movies/Secret', title='Secret',
+                video_format=1, width=320, height=256,
+                mp4_output_path=cls.replay_mp4_path,
+                poster_path=cls.replay_poster_path,
+            ))
 
             # ── Mode 2 aggregate scenario ────────────────────────────────────
             # An UNRESTRICTED container artefact (ZIP) whose DERIVED child is
@@ -221,6 +234,23 @@ class TestOutputRestrictionGate(unittest.TestCase):
         r = self.client.get(f'/items/{self.item_url}/artefacts/{self.container_slug}/viewer')
         self.assertEqual(r.status_code, 200, r.data)
         self.assertIn(self.child_img_path.encode(), r.data)
+
+    # ---- Replay player/poster on a restricted artefact ----
+    def test_viewer_withholds_restricted_replay_media(self):
+        # Non-bypass viewer: the Replay player/poster (renderings of restricted
+        # content) must not be emitted, the same way image outputs are hidden.
+        self._login(self.viewer_id)
+        r = self.client.get(f'/items/{self.item_url}/artefacts/{self.art_slug}/viewer')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertNotIn(self.replay_mp4_path.encode(), r.data)
+        self.assertNotIn(self.replay_poster_path.encode(), r.data)
+        self.assertIn(b'download restriction', r.data)
+
+    def test_viewer_shows_replay_media_for_admin(self):
+        self._login(self.admin_id)
+        r = self.client.get(f'/items/{self.item_url}/artefacts/{self.art_slug}/viewer')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIn(self.replay_poster_path.encode(), r.data)
 
 
 if __name__ == '__main__':
