@@ -27,8 +27,8 @@
       "total_files": 2
     },
     {
+      "added": 2,
       "call": "post_files",
-      "count": 2,
       "partition": "it-part-0001"
     },
     {
@@ -125,12 +125,15 @@
       "container_format": "TAR Archive",
       "files": [
         {
+          "archive_format": null,
           "attributes": null,
           "exec_address": null,
           "extension": "dat",
           "extraction_depth": 0,
           "file_size": 8,
           "filename": "blob.dat",
+          "id": 1,
+          "is_archive": false,
           "is_directory": false,
           "load_address": null,
           "md5": "3677509751ccf61539174d2b9635a7bf",
@@ -142,12 +145,15 @@
           "sha256": "8a851ff82ee7048ad09ec3847f1ddf44944104d2cbd17ef4e3db22c6785a0d45"
         },
         {
+          "archive_format": null,
           "attributes": null,
           "exec_address": null,
           "extension": "txt",
           "extraction_depth": 0,
           "file_size": 10,
           "filename": "notes.txt",
+          "id": 2,
+          "is_archive": false,
           "is_directory": false,
           "load_address": null,
           "md5": "f28183a0ba75c2d2a7c45784cfb29dba",

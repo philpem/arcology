@@ -41,8 +41,8 @@
       "total_files": 2
     },
     {
+      "added": 2,
       "call": "post_files",
-      "count": 2,
       "partition": "it-part-0001"
     },
     {
@@ -152,12 +152,15 @@
       "container_format": "ZIP Archive",
       "files": [
         {
+          "archive_format": null,
           "attributes": null,
           "exec_address": null,
           "extension": "adf",
           "extraction_depth": 0,
           "file_size": 274,
           "filename": "disc.adf",
+          "id": 1,
+          "is_archive": false,
           "is_directory": false,
           "load_address": null,
           "md5": "003ebc82c990bc14191b370d82f24db4",
@@ -169,12 +172,15 @@
           "sha256": "1d1219815607dae2c2a3cf65cc3861414b05e27f56e52dceebe3187c717d927d"
         },
         {
+          "archive_format": null,
           "attributes": null,
           "exec_address": null,
           "extension": "txt",
           "extraction_depth": 0,
           "file_size": 11,
           "filename": "readme.txt",
+          "id": 2,
+          "is_archive": false,
           "is_directory": false,
           "load_address": null,
           "md5": "3ef3dacf81ea34c5f8295641eef63077",

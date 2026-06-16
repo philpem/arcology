@@ -70,8 +70,15 @@ imports Flask and cannot load in the worker container; `ci/test_integration_anal
 
 ## Current coverage
 
-- `it_archive_extraction.py`: top-level ZIP / TAR.GZ extraction and disc-image
-  promotion (`zip_plain`, `tar_gz`, `zip_promote`).
+- `it_archive_extraction.py`:
+  - `zip_plain` — top-level ZIP extraction **plus recursive nested-archive
+    detection and extraction** (an inner `.zip` is detected, marked, extracted,
+    and its contents registered under the parent's path with `parent_file_id`
+    chaining and `extraction_depth` tracking).
+  - `tar_gz` — gzip decompression + TAR extraction (the simple terminating case).
+  - `zip_promote` — promotion of an extracted disc image to a derived
+    `RAW_SECTOR` artefact, whose `PARTITION_DETECT` is queued (and appears in
+    `final_queue` since it is not in this case's `run_types`).
 
 Next iterations add partition/filesystem detection and container-built fixtures
 (7z, FAT, MBR, ADFS); the harness is already generic over those.

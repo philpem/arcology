@@ -79,9 +79,10 @@ def _clean_event(event, roots):
 
 
 def _clean_file_record(record, roots):
-    keep = ('path', 'filename', 'extension', 'file_size', 'md5', 'sha1', 'sha256',
-            'is_directory', 'risc_os_filetype', 'load_address', 'exec_address',
-            'attributes', 'parent_file_id', 'extraction_depth', 'partition_uuid')
+    keep = ('id', 'path', 'filename', 'extension', 'file_size', 'md5', 'sha1', 'sha256',
+            'is_directory', 'is_archive', 'archive_format', 'risc_os_filetype',
+            'load_address', 'exec_address', 'attributes', 'parent_file_id',
+            'extraction_depth', 'partition_uuid')
     cleaned = {}
     for key in keep:
         if key in record:

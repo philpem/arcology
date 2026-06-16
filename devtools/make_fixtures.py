@@ -76,7 +76,9 @@ def make_zip_plain() -> None:
         'original_filename': 'archive.zip',
         'artefact_type': 'ZIP',
         'seed_analyses': [{'type': 'archive_extract'}],
-        'run_types': ['archive_extract'],
+        # Run both extract and detect so the nested inner.zip is detected and
+        # recursively extracted (parent_file_id chaining, depth tracking).
+        'run_types': ['archive_extract', 'archive_detect'],
         'required_tools': ['unzip'],
         'max_steps': 20,
     })
