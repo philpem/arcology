@@ -41,7 +41,11 @@ class TestResolveObeyPath(unittest.TestCase):
         self.assertEqual(_resolve_obey_path('<Obey$Dir>.!RunImage'), '!RunImage')
 
     def test_subdirectory(self):
-        self.assertEqual(_resolve_obey_path('<App$Dir>.bin.loader'), 'bin/loader')
+        self.assertEqual(_resolve_obey_path('<Obey$Dir>.bin.loader'), 'bin/loader')
+
+    def test_unset_variable_is_external(self):
+        # Strict: a variable with no Set (and not Obey$Dir) is external.
+        self.assertIsNone(_resolve_obey_path('<App$Dir>.!RunImage'))
 
     def test_options_and_args_rejected(self):
         self.assertIsNone(_resolve_obey_path('-quit'))
@@ -63,7 +67,7 @@ class TestParseRunObey(unittest.TestCase):
         self.assertEqual(parse_run_obey(text), ['!runimage'])
 
     def test_basic_quit(self):
-        text = "*BASIC -quit <App$Dir>.!RunImage\n"
+        text = "*BASIC -quit <Obey$Dir>.!RunImage\n"
         self.assertEqual(parse_run_obey(text), ['!runimage'])
 
     def test_basic_quit_no_star(self):
@@ -125,14 +129,25 @@ class TestParseRunObey(unittest.TestCase):
             "RMEnsure SharedMod 1.00 RMLoad <System$Dir>.Modules.SharedMod\n"
             "Run <Obey$Dir>.!RunImage\n"
         )
-        # The System$Dir module is not an in-app file; only !RunImage remains.
+        # System$Dir is never Set here -> external; only !RunImage remains.
         self.assertEqual(parse_run_obey(text), ['!runimage'])
 
-    def test_unknown_dir_var_assumed_in_app(self):
-        # No Set line for Foo$Dir: an unknown *$Dir is assumed to be the app dir
-        # (backward-compatible with the previous naive behaviour).
-        text = "Run <Foo$Dir>.!RunImage\n"
-        self.assertEqual(parse_run_obey(text), ['!runimage'])
+    def test_unset_variable_dropped(self):
+        # Strict: a variable referenced but never Set is treated as external,
+        # so its target is dropped entirely.
+        text = (
+            "Run <Foo$Dir>.!RunImage\n"
+            "Run <Obey$Dir>.!Real\n"
+        )
+        self.assertEqual(parse_run_obey(text), ['!real'])
+
+    def test_var_set_to_external_literal_dropped(self):
+        # App$Dir is Set, but to an external path (no Obey anchor) -> dropped.
+        text = (
+            "Set App$Dir Resources:$.Apps.Foo\n"
+            "Run <App$Dir>.!RunImage\n"
+        )
+        self.assertEqual(parse_run_obey(text), [])
 
 
 class TestClassifyAppFiles(unittest.TestCase):
