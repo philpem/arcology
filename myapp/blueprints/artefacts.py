@@ -3177,11 +3177,15 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
         cleanup_keys = collect_output_cleanup_keys(artefact)
         reset_artefact_for_reanalysis(artefact)
         web_priority = current_app.config.get('WEB_UI_ANALYSIS_PRIORITY', ANALYSIS_PRIORITY_HIGH)
-        # The cleanup must outrank the replacement analyses, or the worker
-        # (queue ordered priority DESC, created_at) runs the new jobs first and
-        # the CLEANUP then deletes their output — notably the shared
-        # outputs/.cache/<uuid> partition cache — after they have already run.
-        queue_storage_cleanup(cleanup_keys, artefact_id=artefact.id, commit=True,
+        # Queue the cleanup and the replacement analyses in one transaction so
+        # the dispatch barrier (api.get_pending_analyses) and the jobs it guards
+        # become visible together.  The barrier holds back the artefact's new
+        # analyses while this CLEANUP is PENDING/RUNNING — the hard guarantee
+        # that the previous run's output (notably the shared
+        # outputs/.cache/<uuid> partition cache) is deleted before the new run
+        # produces any.  The +1 priority keeps the cleanup near the queue front
+        # so the barrier lifts promptly; it is a latency hint, not the guarantee.
+        queue_storage_cleanup(cleanup_keys, artefact_id=artefact.id, commit=False,
                               priority=web_priority + 1)
         queue_analyses_for_artefact(artefact, hints if hints else None, priority=web_priority)
 

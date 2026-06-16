@@ -1256,6 +1256,32 @@ def get_pending_analyses():
         .filter(Analysis.status == AnalysisStatus.PENDING)
         .options(joinedload(Analysis.artefact).joinedload(Artefact.item))
     )
+    # Re-analysis dispatch barrier.  A re-analysis queues a CLEANUP job (delete
+    # the previous run's output) alongside the replacement analyses.  While that
+    # CLEANUP is still outstanding (PENDING or RUNNING), do NOT hand out any
+    # other analysis for the same artefact: otherwise a second worker could run
+    # a replacement job concurrently and the CLEANUP would then delete its
+    # output — notably the shared outputs/.cache/<uuid> partition cache, which
+    # is keyed on the artefact (not the analysis) and repopulated by the new
+    # run.  The CLEANUP row itself is never blocked (so it gets claimed), and
+    # item-deletion cleanups (artefact_id IS NULL) gate nothing.  The barrier
+    # keys on PENDING/RUNNING only, so a terminal CLEANUP (COMPLETED or FAILED,
+    # incl. malformed-hints failures) lifts it — a best-effort cleanup never
+    # deadlocks the new run; a crash leaves it RUNNING until reset-stale
+    # re-queues it, which holds the artefact's jobs in the safe direction.
+    blocking_cleanup_artefacts = (
+        select(Analysis.artefact_id)
+        .where(
+            Analysis.analysis_type == AnalysisType.CLEANUP,
+            Analysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.RUNNING]),
+            Analysis.artefact_id.isnot(None),
+        )
+    )
+    query = query.filter(or_(
+        Analysis.analysis_type == AnalysisType.CLEANUP,
+        Analysis.artefact_id.is_(None),
+        Analysis.artefact_id.notin_(blocking_cleanup_artefacts),
+    ))
     types_param = request.args.get('types', '')
     if types_param:
         requested_names = [t.strip() for t in types_param.split(',') if t.strip()]
