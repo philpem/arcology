@@ -103,13 +103,14 @@ class TestChunkedFinalizeCore(unittest.TestCase):
         """Build an ingest closure mirroring what the blueprints supply."""
         from arcology_shared.artefact_types import detect_artefact_type
         from myapp.database import Item
+        from myapp.extensions import db
         from myapp.services.upload_pipeline import QUEUE_NONE, ingest_uploaded_artefact
         item_id = self.item_pk
 
         def fn(assembled):
             if counter is not None:
                 counter.append(1)
-            item = Item.query.get(item_id)
+            item = db.session.get(Item, item_id)
             outcome = ingest_uploaded_artefact(
                 item, label=label,
                 artefact_type=detect_artefact_type(filename),
