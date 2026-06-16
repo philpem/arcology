@@ -199,25 +199,51 @@ def cmd_hashdb_import(client: ArcologyClient, args):
                 sys.exit(1)
             raise
 
-    # Import products and files
+    # Import products and files.  Prefer the batch import endpoint (one request
+    # per BATCH_SIZE products, with the collection-linking pass running once per
+    # request) and fall back to the per-product endpoints for older servers.
+    BATCH_SIZE = 200
     total_files = 0
-    for product in products:
-        title = product.get('title', 'Untitled')
-        result = client.create_hash_database_product(
-            db_id,
-            title=title,
-            description=product.get('description'),
-            path_match_enabled=product.get('path_match_enabled', False),
-        )
-        product_id = result['id']
+    use_batch = True
 
-        files = product.get('files', [])
-        if files:
-            result = client.add_product_files(db_id, product_id, files)
-            added = result.get('added', len(files))
-            total_files += added
-            if not args.json:
-                print(f'  Product "{title}": {added} file(s) added')
+    for start in range(0, len(products), BATCH_SIZE):
+        batch = products[start:start + BATCH_SIZE]
+        if use_batch:
+            try:
+                result = client.import_hash_database_products(db_id, batch)
+                added = result.get('files', sum(len(p.get('files', [])) for p in batch))
+                total_files += added
+                if not args.json:
+                    print(f'  Imported {result.get("products", len(batch))} '
+                          f'product(s), {added} file(s)')
+                continue
+            except ArcologyError as e:
+                if e.status_code != 404:
+                    raise
+                # Older server without the batch endpoint: fall back for the
+                # rest of the import.
+                use_batch = False
+                if not args.json:
+                    print('  (server lacks batch import; using per-product upload)',
+                          file=sys.stderr)
+
+        for product in batch:
+            title = product.get('title', 'Untitled')
+            result = client.create_hash_database_product(
+                db_id,
+                title=title,
+                description=product.get('description'),
+                path_match_enabled=product.get('path_match_enabled', False),
+            )
+            product_id = result['id']
+
+            files = product.get('files', [])
+            if files:
+                result = client.add_product_files(db_id, product_id, files)
+                added = result.get('added', len(files))
+                total_files += added
+                if not args.json:
+                    print(f'  Product "{title}": {added} file(s) added')
 
     if args.json:
         from ..formatting import print_json

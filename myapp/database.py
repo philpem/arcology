@@ -1149,6 +1149,11 @@ class KnownFile(db.Model):
     __table_args__ = (
         Index("ix_known_files_md5_size", "md5", "file_size"),
         Index("ix_known_files_sha1_size", "sha1", "file_size"),
+        # Composite indexes for the per-(database, product) duplicate check in
+        # the hashdb import path (_existing_known_file).
+        Index("ix_known_files_db_product_md5", "database_id", "product_id", "md5"),
+        Index("ix_known_files_db_product_sha1", "database_id", "product_id", "sha1"),
+        Index("ix_known_files_db_product_sha256", "database_id", "product_id", "sha256"),
     )
 
 

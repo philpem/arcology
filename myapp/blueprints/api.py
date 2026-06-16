@@ -2609,6 +2609,77 @@ def add_known_files_bulk(db_id, pid):
     return jsonify({'added': len(new_kf_list)}), 201
 
 
+def _build_known_file(db_id: int, product_id: int, f: dict) -> "KnownFile | None":
+    """Construct a KnownFile from an import payload entry, or None if invalid."""
+    if not f.get('filename'):
+        return None
+    return KnownFile(
+        database_id=db_id,
+        product_id=product_id,
+        filename=f['filename'],
+        file_size=f.get('file_size'),
+        md5=(f.get('md5') or '').lower() or None,
+        sha1=(f.get('sha1') or '').lower() or None,
+        sha256=(f.get('sha256') or '').lower() or None,
+        crc32=(f.get('crc32') or '').lower() or None,
+        is_required=bool(f.get('is_required', True)),
+        relative_path=f.get('relative_path'),
+        description=f.get('description'),
+    )
+
+
+@blueprint.route('/hash-databases/<int:db_id>/import', methods=['POST'])
+@require_auth('read_write')
+def import_known_database(db_id):
+    """Batch-import products and their files into a hash database in one request.
+
+    Accepts ``{"products": [{"title", "description", "path_match_enabled",
+    "files": [...]}, ...]}`` and inserts every product and file in a single
+    transaction, running the collection-linking/rescan step exactly once at the
+    end (rather than once per product).  This is the fast path used by
+    ``arco hashdb import``; the per-product create/add endpoints remain for
+    backward compatibility.
+    """
+    database = _get_hash_database_or_404(db_id)
+    data, error = _json_object(force=True)
+    if error:
+        return error
+    products = data.get('products')
+    if not isinstance(products, list):
+        return error_response('products array is required')
+
+    new_kf_list = []
+    products_added = 0
+    for p in products:
+        title = (p.get('title') or '').strip()
+        if not title:
+            continue
+        product = KnownProduct(
+            database_id=db_id,
+            title=title,
+            description=p.get('description'),
+            path_match_enabled=bool(p.get('path_match_enabled', False)),
+        )
+        db.session.add(product)
+        db.session.flush()  # assign product.id for the KnownFile rows
+        products_added += 1
+        for f in p.get('files') or []:
+            kf = _build_known_file(db_id, product.id, f)
+            if kf is None:
+                continue
+            db.session.add(kf)
+            new_kf_list.append(kf)
+
+    database.file_count = (database.file_count or 0) + len(new_kf_list)
+    db.session.commit()
+
+    # Run the collection-linking / product-recognition pass once for the whole
+    # batch, mirroring the web import route's single end-of-import call.
+    link_new_known_files(database, new_kf_list)
+
+    return jsonify({'products': products_added, 'files': len(new_kf_list)}), 201
+
+
 @blueprint.route('/hash-databases/recognition-config', methods=['GET'])
 @require_auth('read_only')
 def hash_database_recognition_config():
