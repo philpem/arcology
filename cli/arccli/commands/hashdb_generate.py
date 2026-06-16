@@ -192,14 +192,8 @@ def _resolve_obey_path(token: str, varmap: dict[str, str] | None = None) -> str 
     return None
 
 
-def parse_run_obey(text: str) -> list[str]:
-    """Parse a RISC OS !Run Obey file, returning the app-relative paths of the
-    files it launches (lowercased, '/'-separated).  Best-effort.
-
-    A first pass collects `Set`/`SetMacro` variable assignments so that path
-    references built from them (the common `Set App$Dir <Obey$Dir>` idiom, and
-    subdirectory/chained variants) resolve to the correct app-relative path.
-    """
+def _clean_obey_lines(text: str) -> list[str]:
+    """Split Obey-file text into non-blank, non-comment, star-stripped lines."""
     cleaned: list[str] = []
     for raw in text.splitlines():
         line = raw.strip()
@@ -209,8 +203,23 @@ def parse_run_obey(text: str) -> list[str]:
             line = line[1:].strip()
         if line:
             cleaned.append(line)
+    return cleaned
 
-    varmap = _build_var_map(cleaned)
+
+def parse_run_obey(text: str, extra_vars: dict[str, str] | None = None) -> list[str]:
+    """Parse a RISC OS !Run Obey file, returning the app-relative paths of the
+    files it launches (lowercased, '/'-separated).  Best-effort.
+
+    A first pass collects `Set`/`SetMacro` variable assignments so that path
+    references built from them (the common `Set App$Dir <Obey$Dir>` idiom, and
+    subdirectory/chained variants) resolve to the correct app-relative path.
+
+    *extra_vars* pre-seeds the variable map (e.g. with `Set`s harvested from
+    !Boot, which runs before !Run); assignments in this file take precedence.
+    """
+    cleaned = _clean_obey_lines(text)
+    varmap = dict(extra_vars or {})
+    varmap.update(_build_var_map(cleaned))
 
     targets: list[str] = []
 
@@ -286,22 +295,42 @@ def _filetype_mandatory(f: dict) -> bool:
     return False
 
 
+def _find_app_file(app_files: list[dict], leaf: str) -> dict | None:
+    """Find a file in the application directory by leaf filename (e.g. '!run')."""
+    for f in app_files:
+        if f.get('filename', '').lower() == leaf and not f.get('is_directory'):
+            return f
+    return None
+
+
 def get_launched_set(client: ArcologyClient, app_files: list[dict],
                      verbose: bool = False) -> set[str]:
     """Locate the application's !Run file, download it, and parse the set of
     app-relative paths (lowercased) that it launches.  Empty set if no !Run.
+
+    !Boot is consulted too (it runs before !Run and frequently sets the app's
+    path variable): its `Set` assignments seed the variable map used to resolve
+    !Run's references, so a variable defined only in !Boot still resolves.
     """
-    run_file = None
-    for f in app_files:
-        if f.get('filename', '').lower() == '!run' and not f.get('is_directory'):
-            run_file = f
-            break
+    run_file = _find_app_file(app_files, '!run')
     if not run_file or not run_file.get('uuid'):
         return set()
 
+    boot_vars: dict[str, str] = {}
+    boot_file = _find_app_file(app_files, '!boot')
+    if boot_file and boot_file.get('uuid'):
+        try:
+            boot_data = client.download_extracted_file_bytes(boot_file['uuid'])
+            boot_vars = _build_var_map(
+                _clean_obey_lines(boot_data.decode('latin-1', errors='replace'))
+            )
+        except Exception as exc:  # noqa: BLE001 - !Boot vars are best-effort
+            log.debug('    Could not read !Boot: %s', exc)
+
     try:
         data = client.download_extracted_file_bytes(run_file['uuid'])
-        launched = set(parse_run_obey(data.decode('latin-1', errors='replace')))
+        launched = set(parse_run_obey(data.decode('latin-1', errors='replace'),
+                                      extra_vars=boot_vars))
         if verbose:
             log.info('    !Run launches: %s', ', '.join(sorted(launched)) or '(none parsed)')
         return launched
