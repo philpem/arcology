@@ -33,9 +33,11 @@ import os
 import re
 import shutil
 import tempfile
+import threading
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from flask import current_app
 from ..utils.config import int_config
 from .artefact_storage import get_storage_extension
@@ -43,6 +45,27 @@ from .artefact_storage import get_storage_extension
 UPLOAD_UUID_RE = re.compile(r'^[0-9a-f]{32}$')
 
 CHUNK_STALE_SECONDS = 86400  # purge abandoned chunk dirs after 24 h
+
+# Finalise tuning defaults (overridable via config keys / env vars of the same
+# name).  See doc/CHUNKED_UPLOADS.md for the asynchronous-finalise design.
+DEFAULT_FINALIZE_CONCURRENCY = 2      # max concurrent finalises per web process
+DEFAULT_FINALIZE_HEARTBEAT_SECONDS = 15
+DEFAULT_FINALIZE_STALE_SECONDS = 120  # age of heartbeat_at before re-drive
+DEFAULT_FINALIZE_RESULT_TTL_SECONDS = 3600  # retain done/failed sessions this long
+
+# Finalise lifecycle states stored in meta.json under 'finalize_state'.  A
+# session with no finalize_state key is implicitly PENDING (not yet finalised,
+# and therefore claimable).
+FINALIZE_ASSEMBLING = 'assembling'
+FINALIZE_DONE = 'done'
+FINALIZE_FAILED = 'failed'
+
+# Serialises read-modify-write of meta.json within a process so the atomic
+# claim and the heartbeat updates do not interleave.  Cross-process safety
+# rests on the atomic os.replace() write plus the stale-heartbeat threshold.
+_finalize_lock = threading.Lock()
+_executor_lock = threading.Lock()
+_executor: ThreadPoolExecutor | None = None
 
 # Hard cap on the number of chunks a single session may declare.  This bounds
 # the work/memory of complete (which builds a per-chunk path list) so a caller
@@ -87,6 +110,29 @@ def max_upload_size() -> int:
     return int_config('MAX_UPLOAD_SIZE', DEFAULT_MAX_UPLOAD_SIZE)
 
 
+def finalize_concurrency() -> int:
+    """Max concurrent finalise jobs per web process."""
+    return max(1, int_config('FINALIZE_CONCURRENCY', DEFAULT_FINALIZE_CONCURRENCY))
+
+
+def finalize_heartbeat_seconds() -> int:
+    """Cadence at which a running finalise refreshes its heartbeat."""
+    return max(1, int_config('FINALIZE_HEARTBEAT_SECONDS',
+                             DEFAULT_FINALIZE_HEARTBEAT_SECONDS))
+
+
+def finalize_stale_seconds() -> int:
+    """Age of heartbeat_at past which an 'assembling' session is re-drivable."""
+    return max(1, int_config('FINALIZE_STALE_SECONDS',
+                             DEFAULT_FINALIZE_STALE_SECONDS))
+
+
+def finalize_result_ttl_seconds() -> int:
+    """How long a done/failed session is retained for status polling."""
+    return max(1, int_config('FINALIZE_RESULT_TTL_SECONDS',
+                             DEFAULT_FINALIZE_RESULT_TTL_SECONDS))
+
+
 def chunks_base() -> str:
     """Return (and create) the base directory for in-progress chunk uploads.
 
@@ -110,21 +156,36 @@ def chunk_dir(upload_uuid: str) -> str:
 
 
 def purge_stale_chunks() -> None:
-    """Remove chunk directories that have not been touched in > 24 h."""
+    """Reap finished and abandoned chunk sessions.
+
+    Removes a session directory when either:
+      - it holds a done/failed finalise result older than the result TTL
+        (the retained meta.json has served its purpose for status polling), or
+      - it has not been touched in > CHUNK_STALE_SECONDS (abandoned upload).
+    """
     base = chunks_base()
-    cutoff = datetime.now(timezone.utc).timestamp() - CHUNK_STALE_SECONDS
+    now = time.time()
+    mtime_cutoff = now - CHUNK_STALE_SECONDS
+    result_ttl = finalize_result_ttl_seconds()
     try:
-        for name in os.listdir(base):
-            if not UPLOAD_UUID_RE.match(name):
-                continue
-            path = os.path.join(base, name)
-            try:
-                if os.stat(path).st_mtime < cutoff:
-                    shutil.rmtree(path, ignore_errors=True)
-            except OSError:
-                pass
+        names = os.listdir(base)
     except OSError:
-        pass
+        return
+    for name in names:
+        if not UPLOAD_UUID_RE.match(name):
+            continue
+        path = os.path.join(base, name)
+        try:
+            meta = _read_meta_dir(path)
+            if meta and meta.get('finalize_state') in (FINALIZE_DONE, FINALIZE_FAILED):
+                finalized_at = meta.get('finalized_at', 0)
+                if now - finalized_at > result_ttl:
+                    shutil.rmtree(path, ignore_errors=True)
+                continue
+            if os.stat(path).st_mtime < mtime_cutoff:
+                shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            pass
 
 
 def init_chunk_session(meta: dict) -> str:
@@ -157,6 +218,39 @@ def read_meta(upload_uuid: str) -> dict | None:
         raise ChunkSessionCorrupt(str(exc)) from exc
 
 
+def _read_meta_dir(cdir: str) -> dict | None:
+    """Load meta.json from a resolved session directory (no app context needed).
+
+    Returns None if the directory or meta.json is missing/unreadable.  Used by
+    the finalise machinery and the heartbeat thread, which run off the request
+    context and operate on an already-resolved absolute path.
+    """
+    try:
+        with open(os.path.join(cdir, 'meta.json')) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _write_meta_dir(cdir: str, meta: dict) -> None:
+    """Atomically replace meta.json in a resolved session directory.
+
+    Writes to a temp file in the same directory and os.replace()s it into place
+    so a concurrent reader (or a crash mid-write) never observes a partial file.
+    """
+    fd, tmp = tempfile.mkstemp(dir=cdir, prefix='.meta-', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(meta, f)
+        os.replace(tmp, os.path.join(cdir, 'meta.json'))
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def write_chunk(upload_uuid: str, chunk_index: int, data: bytes) -> None:
     """Write a single numbered chunk into the session directory.
 
@@ -187,17 +281,22 @@ def missing_chunks(upload_uuid: str, total_chunks: int) -> list[int]:
 
 
 def assemble_to_storage(upload_uuid: str, original_filename: str, *,
-                        total_chunks: int, max_size: int) -> AssembledUpload:
+                        total_chunks: int, max_size: int,
+                        cleanup: bool = True) -> AssembledUpload:
     """Assemble all chunks into the storage backend and hash them.
 
     Concatenates chunks 0..total_chunks-1 into a tempfile (computing MD5 and
     SHA-256 inline), enforces *max_size* authoritatively, pushes the assembled
-    file to the storage backend, then removes the session directory and purges
-    stale sessions.
+    file to the storage backend, then (when *cleanup*) removes the session
+    directory and purges stale sessions.
+
+    Pass ``cleanup=False`` from the asynchronous finalise runner, which keeps
+    the session directory so meta.json can record the outcome for status
+    polling and manages chunk-file removal itself.
 
     Raises UploadTooLarge if the real size exceeds *max_size* (the session
-    directory is removed first), and StorageUnavailable if the backend rejects
-    the upload.
+    directory is removed first only when *cleanup*), and StorageUnavailable if
+    the backend rejects the upload.
     """
     cdir = chunk_dir(upload_uuid)
     chunk_files = [os.path.join(cdir, f'{i:06d}') for i in range(total_chunks)]
@@ -233,7 +332,8 @@ def assemble_to_storage(upload_uuid: str, original_filename: str, *,
                     break
 
         if oversize:
-            shutil.rmtree(cdir, ignore_errors=True)
+            if cleanup:
+                shutil.rmtree(cdir, ignore_errors=True)
             raise UploadTooLarge(max_size)
 
         # Push assembled file to storage backend
@@ -248,9 +348,11 @@ def assemble_to_storage(upload_uuid: str, original_filename: str, *,
         except OSError:
             pass
 
-    # Clean up chunk directory and purge any stale sessions
-    shutil.rmtree(cdir, ignore_errors=True)
-    purge_stale_chunks()
+    # Clean up chunk directory and purge any stale sessions.  The async finalise
+    # runner passes cleanup=False and owns the session lifecycle itself.
+    if cleanup:
+        shutil.rmtree(cdir, ignore_errors=True)
+        purge_stale_chunks()
 
     return AssembledUpload(
         storage_name=storage_name,
@@ -258,5 +360,209 @@ def assemble_to_storage(upload_uuid: str, original_filename: str, *,
         md5=md5_hash.hexdigest(),
         sha256=sha256_hash.hexdigest(),
     )
+
+
+# =============================================================================
+# Asynchronous finalise
+#
+# Finalise (assemble + hash + store + ingest) is multi-minute work for a large
+# upload and must not run on the HTTP request thread (it would blow the gunicorn
+# timeout and surface as a 504).  When a client opts in, /complete claims the
+# session and submits the work to a small per-process thread pool, then returns
+# immediately; the client polls /complete/status for the result.
+#
+# Job state lives in the session's meta.json (on the persisted CHUNK_DIR
+# volume), so it survives a web-container restart and a finalise orphaned by a
+# redeploy is re-driven when the client next polls.  See doc/CHUNKED_UPLOADS.md.
+# =============================================================================
+
+
+def _delete_chunk_files(cdir: str, total_chunks: int) -> None:
+    """Remove the numbered chunk files, keeping the session dir + meta.json."""
+    for i in range(total_chunks):
+        try:
+            os.unlink(os.path.join(cdir, f'{i:06d}'))
+        except OSError:
+            pass
+
+
+def _get_executor() -> ThreadPoolExecutor:
+    """Lazily create the per-process finalise thread pool."""
+    global _executor
+    if _executor is None:
+        with _executor_lock:
+            if _executor is None:
+                _executor = ThreadPoolExecutor(
+                    max_workers=finalize_concurrency(),
+                    thread_name_prefix='finalize')
+    return _executor
+
+
+def finalize_status(upload_uuid: str) -> dict | None:
+    """Return the finalise state for a session, or None if it does not exist.
+
+    The returned dict always carries 'state' (one of the FINALIZE_* constants,
+    or 'pending' when finalise has not been claimed yet) and, depending on
+    state, 'artefact_uuid' (done) or 'error'/'error_code' (failed).
+    """
+    meta = read_meta(upload_uuid)
+    if meta is None:
+        return None
+    state = meta.get('finalize_state') or 'pending'
+    out = {'state': state}
+    if state == FINALIZE_DONE:
+        out['artefact_uuid'] = meta.get('artefact_uuid')
+    elif state == FINALIZE_FAILED:
+        out['error'] = meta.get('error')
+        out['error_code'] = meta.get('error_code')
+    return out
+
+
+def finalize_is_stale(upload_uuid: str) -> bool:
+    """True if an 'assembling' session's heartbeat is old enough to re-drive."""
+    meta = read_meta(upload_uuid)
+    if meta is None or meta.get('finalize_state') != FINALIZE_ASSEMBLING:
+        return False
+    return (time.time() - meta.get('heartbeat_at', 0)) > finalize_stale_seconds()
+
+
+def claim_finalize(upload_uuid: str) -> bool:
+    """Atomically claim a session for finalise, transitioning it to 'assembling'.
+
+    Returns True to the single caller that wins the claim; that caller must then
+    submit_finalize().  Claimable when the session is not yet finalised
+    (no finalize_state / 'pending') or is a stale 'assembling' (the previous
+    runner died — a redeploy or crash).  A live 'assembling', 'done' or 'failed'
+    session is not claimable.  This single-winner transition is what prevents a
+    double finalise (and hence duplicate artefacts).
+    """
+    cdir = chunk_dir(upload_uuid)
+    stale_seconds = finalize_stale_seconds()
+    with _finalize_lock:
+        meta = _read_meta_dir(cdir)
+        if meta is None:
+            return False
+        state = meta.get('finalize_state')
+        if state == FINALIZE_ASSEMBLING:
+            if (time.time() - meta.get('heartbeat_at', 0)) <= stale_seconds:
+                return False  # a live runner holds it
+            # else: stale heartbeat — the previous runner is gone, re-drive
+        elif state in (FINALIZE_DONE, FINALIZE_FAILED):
+            return False
+        # state is None / 'pending' (fresh) or stale 'assembling' (re-drive)
+        now = time.time()
+        meta['finalize_state'] = FINALIZE_ASSEMBLING
+        meta['heartbeat_at'] = now
+        meta['attempts'] = meta.get('attempts', 0) + 1
+        meta.pop('error', None)
+        meta.pop('error_code', None)
+        _write_meta_dir(cdir, meta)
+        return True
+
+
+def _set_finalize_result(cdir: str, **fields) -> None:
+    """Merge result fields into meta.json under the finalise lock."""
+    with _finalize_lock:
+        meta = _read_meta_dir(cdir)
+        if meta is None:
+            return
+        meta.update(fields)
+        _write_meta_dir(cdir, meta)
+
+
+def _heartbeat_loop(cdir: str, interval: int, stop: threading.Event) -> None:
+    """Refresh heartbeat_at every *interval* seconds until *stop* is set.
+
+    Runs in its own thread without an app context, operating on the already
+    resolved session directory, so a live finalise never looks stale to a
+    concurrent re-drive check.
+    """
+    while not stop.wait(interval):
+        with _finalize_lock:
+            meta = _read_meta_dir(cdir)
+            if meta is None or meta.get('finalize_state') != FINALIZE_ASSEMBLING:
+                return
+            meta['heartbeat_at'] = time.time()
+            _write_meta_dir(cdir, meta)
+
+
+def run_finalize(upload_uuid: str, finalize_fn) -> None:
+    """Assemble, ingest, and record the outcome for a claimed session.
+
+    *finalize_fn(assembled)* performs the blueprint-specific ingest (resolving
+    the item, calling ingest_uploaded_artefact, applying the right auth/queue
+    mode) and returns the created artefact's UUID string.  Must be called only
+    after a successful claim_finalize(); runs inside an app context.
+    """
+    cdir = chunk_dir(upload_uuid)
+    meta = read_meta(upload_uuid)
+    if meta is None:
+        return
+    total_chunks = meta.get('total_chunks')
+    original_filename = meta.get('filename') or 'unnamed'
+
+    stop = threading.Event()
+    hb = threading.Thread(
+        target=_heartbeat_loop,
+        args=(cdir, finalize_heartbeat_seconds(), stop),
+        daemon=True)
+    hb.start()
+    try:
+        assembled = assemble_to_storage(
+            upload_uuid, original_filename,
+            total_chunks=total_chunks, max_size=max_upload_size(),
+            cleanup=False)
+        artefact_uuid = finalize_fn(assembled)
+        _set_finalize_result(
+            cdir, finalize_state=FINALIZE_DONE,
+            artefact_uuid=artefact_uuid, finalized_at=time.time())
+        _delete_chunk_files(cdir, total_chunks)
+    except UploadTooLarge as exc:
+        _set_finalize_result(
+            cdir, finalize_state=FINALIZE_FAILED,
+            error=str(exc), error_code='too_large', finalized_at=time.time())
+    except StorageUnavailable as exc:
+        _set_finalize_result(
+            cdir, finalize_state=FINALIZE_FAILED,
+            error=f'Storage backend unavailable: {exc}', error_code='storage',
+            finalized_at=time.time())
+    except Exception:
+        current_app.logger.exception(
+            'Chunked-upload finalise failed for session %s', upload_uuid)
+        _set_finalize_result(
+            cdir, finalize_state=FINALIZE_FAILED,
+            error='Internal error during finalise', error_code='internal',
+            finalized_at=time.time())
+    finally:
+        stop.set()
+        purge_stale_chunks()
+
+
+def submit_finalize(upload_uuid: str, finalize_fn) -> None:
+    """Submit a claimed session's finalise to the thread pool.
+
+    Captures the real app object so the pool thread can push its own app
+    context (the request context that issued the submit will be gone).
+    """
+    app = current_app._get_current_object()
+
+    def _job():
+        with app.app_context():
+            try:
+                run_finalize(upload_uuid, finalize_fn)
+            except Exception:
+                app.logger.exception(
+                    'Unhandled error in finalise job %s', upload_uuid)
+
+    _get_executor().submit(_job)
+
+
+def shutdown_executor(wait: bool = False) -> None:
+    """Tear down the finalise pool (used by tests).  Orphaned jobs re-drive."""
+    global _executor
+    with _executor_lock:
+        if _executor is not None:
+            _executor.shutdown(wait=wait)
+            _executor = None
 
 # vim: ts=4 sw=4 et
