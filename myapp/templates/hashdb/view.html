@@ -282,7 +282,7 @@
             </td>
             <td class="text-muted small">{{ product.description or '' }}</td>
             <td>
-                <span class="badge bg-secondary" title="Known files in this product">{{ product.known_files|length }}</span>
+                <span class="badge bg-secondary" title="Known files in this product">{{ file_counts.get(product.id, 0) }}</span>
                 {% set pmc = product_match_counts.get(product.id, 0) %}
                 {% if pmc %}
                 <span class="badge bg-success ms-1" title="Extracted files matching any known file in this product">
@@ -301,56 +301,13 @@
                 </a>
             </td>
         </tr>
-        <tr class="product-files-row collapse" id="pf-{{ product.id }}">
+        <tr class="product-files-row collapse" id="pf-{{ product.id }}"
+            data-files-url="{{ url_for('myapp_blueprints_hashdb.product_files', id=database.id, pid=product.id) }}">
             <td colspan="4">
                 <div class="inner">
-                {% if product.known_files %}
-                <table class="table table-sm table-bordered mb-0" style="font-size:0.82em">
-                    <thead class="table-light">
-                        <tr>
-                            <th>Filename</th>
-                            <th>Rel. path</th>
-                            <th>Req.</th>
-                            <th>Size</th>
-                            <th>MD5</th>
-                            <th>SHA1</th>
-                            <th>SHA256</th>
-                            <th>CRC32</th>
-                            <th title="Extracted files matching this known file">Matches</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                    {% for kf in product.known_files %}
-                    <tr>
-                        <td><code>{{ kf.filename }}</code></td>
-                        <td class="text-muted">{{ kf.relative_path or '' }}</td>
-                        <td>
-                            {% if kf.is_required %}
-                            <span class="badge bg-danger">Req</span>
-                            {% else %}
-                            <span class="badge bg-secondary">Opt</span>
-                            {% endif %}
-                        </td>
-                        <td class="text-muted">{% if kf.file_size is not none %}<span title="{{ kf.file_size }} bytes">{{ kf.file_size | format_filesize }}</span>{% else %}—{% endif %}</td>
-                        <td><code class="text-break">{{ kf.md5 or '—' }}</code></td>
-                        <td><code class="text-break">{{ kf.sha1 or '—' }}</code></td>
-                        <td><code class="text-break">{{ kf.sha256 or '—' }}</code></td>
-                        <td><code>{{ kf.crc32 or '—' }}</code></td>
-                        <td>
-                            {% set c = match_counts.get(kf.id, 0) %}
-                            {% if c %}
-                            <span class="badge bg-success">{{ c }}</span>
-                            {% else %}
-                            <span class="text-muted">—</span>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                    </tbody>
-                </table>
-                {% else %}
-                <span class="text-muted small">No files in this product yet.</span>
-                {% endif %}
+                    <div class="files-placeholder text-muted small py-2">
+                        <span class="spinner-border spinner-border-sm" role="status"></span> Loading files…
+                    </div>
                 </div>
             </td>
         </tr>
@@ -376,6 +333,29 @@
         try { localStorage.setItem(KEY, JSON.stringify(ids)); } catch(e) {}
     }
 
+    // Fetch and inject a product's file table the first time it is expanded.
+    function loadFiles(el) {
+        if (!el || el.dataset.loaded) return;
+        el.dataset.loaded = '1';
+        var inner = el.querySelector('.inner');
+        fetch(el.dataset.filesUrl, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.text();
+            })
+            .then(function (html) { inner.innerHTML = html; })
+            .catch(function () {
+                el.dataset.loaded = '';
+                inner.innerHTML = '<div class="text-danger small py-2">' +
+                    'Failed to load files. <a href="#" class="retry-files">Retry</a></div>';
+                var retry = inner.querySelector('.retry-files');
+                if (retry) retry.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    loadFiles(el);
+                });
+            });
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
         // Restore previously open products via the Bootstrap API so its
         // internal state stays in sync with the DOM.
@@ -383,6 +363,7 @@
         open.forEach(function (pid) {
             var el = document.getElementById('pf-' + pid);
             if (el) {
+                loadFiles(el);
                 bootstrap.Collapse.getOrCreateInstance(el, { toggle: false }).show();
                 var row = document.querySelector('[data-product-id="' + pid + '"]');
                 if (row) row.classList.add('open');
@@ -406,6 +387,7 @@
         document.querySelectorAll('.product-files-row').forEach(function (el) {
             var pid = el.id.replace('pf-', '');
             el.addEventListener('show.bs.collapse', function () {
+                loadFiles(el);
                 var open = getOpen();
                 if (open.indexOf(pid) < 0) open.push(pid);
                 setOpen(open);
