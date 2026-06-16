@@ -405,6 +405,52 @@ class TestSearchIndexAndViewer(unittest.TestCase):
             self.assertIsNone(detail['poster_url'])
             self._db.session.rollback()
 
+    def test_replay_groups_are_grid_groups(self):
+        """_viewer_replay_groups yields is_replay groups keyed by file path so
+        they interleave with the converted-output groups."""
+        from myapp.blueprints.artefacts import _viewer_replay_groups
+        with self.app.app_context():
+            art, mov = self._fixture()
+            mov.poster_path = 'item_x/art_y/abc.jpg'
+            mov.mp4_output_path = 'item_x/art_y/abc.mp4'
+            self._db.session.flush()
+            with self.app.test_request_context():
+                groups = _viewer_replay_groups([art.id], '')
+            self.assertEqual(len(groups), 1)
+            g = groups[0]
+            self.assertTrue(g['is_replay'])
+            # Keyed by the extracted-file path so it sorts/filters with the rest.
+            self.assertEqual(g['source_file'], 'Movies/Demo')
+            self.assertEqual(g['label'], 'Movies/Demo')
+            self.assertEqual(g['outputs'], [])
+            self.assertFalse(g['replay']['sound_only'])  # video_format=1
+            self.assertTrue(g['replay']['has_mp4'])
+            self.assertIn('abc.jpg', g['replay']['poster_url'])
+            self._db.session.rollback()
+
+    def test_replay_groups_sound_only_flag(self):
+        """video_format == 0 marks the movie sound-only (drives the audio icon)."""
+        from myapp.blueprints.artefacts import _viewer_replay_groups
+        with self.app.app_context():
+            art, mov = self._fixture()
+            mov.video_format = 0
+            self._db.session.flush()
+            with self.app.test_request_context():
+                groups = _viewer_replay_groups([art.id], '')
+            self.assertTrue(groups[0]['replay']['sound_only'])
+            self.assertFalse(groups[0]['replay']['has_mp4'])  # not transcoded
+            self._db.session.rollback()
+
+    def test_replay_groups_respect_path_filter(self):
+        """The ?path= subdirectory filter prunes movies outside the prefix."""
+        from myapp.blueprints.artefacts import _viewer_replay_groups
+        with self.app.app_context():
+            art, mov = self._fixture()
+            with self.app.test_request_context():
+                self.assertEqual(len(_viewer_replay_groups([art.id], 'Movies/')), 1)
+                self.assertEqual(len(_viewer_replay_groups([art.id], 'Other/')), 0)
+            self._db.session.rollback()
+
 
 class TestHandlerOrdering(unittest.TestCase):
     def test_transcode_handler_after_process(self):

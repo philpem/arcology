@@ -78,7 +78,8 @@ its parsed metadata is left untouched.
 | `mp4_output_path` / `poster_path` columns | `ReplayMovie` in `myapp/database.py` |
 | Search-index update | `handle_replay_transcode` in `myapp/services/search_index.py` |
 | Player card + download toolbar (media / poster / original) | `myapp/templates/artefacts/viewer.html` |
-| Poster thumbnails + media-type badge (Movie/Sound) in the viewer grid | `_viewer_replay_posters` + `viewer.html` |
+| Poster thumbnails + centred play/audio overlay, interleaved into the unified viewer grid by filename | `_viewer_replay_groups` (blueprint) + `replay_card` / `replay_thumb` macros in `viewer.html` |
+| File-list / search icon: `bi-film` (video) vs `bi-music-note-beamed` (sound-only) | `file_viewer_metadata_icons` in `myapp/templates/_macros.html` |
 | MP4 / poster / original-file URLs | `_viewer_replay_detail` in `myapp/blueprints/artefacts.py` |
 | `.mp4` MIME registration | `arcology_shared/storage.py` |
 

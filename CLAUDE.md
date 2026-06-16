@@ -364,9 +364,12 @@ gate markup; do not hand-write the overlay / blur / locked-placeholder HTML:
 >    can be explicit/restricted while its root is not.
 >
 > The Acorn Replay viewer is the worked example: `content_gate_flags()` in
-> `_viewer_replay_detail` / `_viewer_replay_posters` (blueprint) and the
-> `replay_detail` / `replay_posters` blocks (template, via the
-> `_content_gates.html` macros). Covered by `ci/test_output_restrictions.py`
+> `_viewer_replay_detail` / `_viewer_replay_groups` (blueprint) and the
+> `replay_detail` card plus the interleaved `replay_card` / `replay_thumb`
+> macros (template, via the `_content_gates.html` macros). Replay movies are
+> folded into `output_groups` as `is_replay` groups so they sort, facet,
+> paginate and thumbnail-bundle alongside the converted outputs (rather than a
+> separate trailing section). Covered by `ci/test_output_restrictions.py`
 > (`*_replay_*` tests).
 
 ### OIDC role for STAFF tier
