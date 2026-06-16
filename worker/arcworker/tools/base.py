@@ -4,7 +4,6 @@ Base utilities for running external tools.
 
 import contextlib
 import hashlib
-import mmap
 import os
 import subprocess
 import sys
@@ -19,11 +18,10 @@ from ..utils.text import sanitize_filename
 
 # Upper bound on how many bytes any single helper will pull into RAM at once.
 # Disc images are gigabytes; the parsers that legitimately read a whole file
-# (sprites, RISC OS modules, IMD floppies, text, and the mmap fallback) all
-# operate on inherently small files, so this cap turns an unexpectedly huge
-# input (corrupt metadata, a hostile upload, a misdetected type) into a clean
-# error instead of an OOM/DoS.  256 MiB is far above any legitimate such file
-# yet well under a worker's memory budget.
+# (sprites, RISC OS modules, IMD floppies, text) all operate on inherently small
+# files, so this cap turns an unexpectedly huge input (corrupt metadata, a
+# hostile upload, a misdetected type) into a clean error instead of an OOM/DoS.
+# 256 MiB is far above any legitimate such file yet well under a worker's budget.
 MAX_INMEM_BYTES = 256 * 1024 * 1024
 
 
@@ -383,46 +381,55 @@ def read_file_capped(path: Path, max_bytes: int = MAX_INMEM_BYTES) -> bytes:
 
 
 @contextlib.contextmanager
-def mmap_readonly(path: Path):
-    """Memory-map a file read-only for random access without loading it into RAM.
+def open_sector_reader(path: Path):
+    """Open *path* and yield a :class:`SectorReader` over it.
 
-    Disc images and other artefacts catalogued here can be many gigabytes;
-    reading one whole with ``Path.read_bytes()`` allocates the entire file on the
-    Python heap and has OOM-killed workers (a 6 GB ADFS hard-disc image during an
-    inline ARMlock probe).  A read-only mmap exposes the same byte-buffer
-    interface (``buf[i]`` -> int, ``buf[a:b]`` -> bytes, ``len(buf)``) while only
-    the pages actually touched are faulted into memory.
-
-    Yields an :class:`mmap.mmap` for a non-empty file, or an empty ``bytes``
-    object for an empty file (mmap cannot map a zero-length file).
-
-    If mmap is unavailable for the file (rare — e.g. some network or special
-    filesystems return ENODEV), falls back to a full read *only* when the file
-    is within ``MAX_INMEM_BYTES``; a larger file raises :class:`FileTooLargeError`
-    rather than reintroducing the OOM the mmap was guarding against.  In practice
-    the worker only mmaps regular local files (inputs are downloaded to a local
-    work dir), where mmap does not fail.
+    Random read-only access to a (potentially multi-GB) file via seek/read,
+    without mmapping it or loading it into RAM.  Use for disc images whose
+    parsers index/slice the buffer at scattered offsets but only ever touch a
+    handful of sectors (e.g. the ARMlock FileCore-chain probe).
     """
     with open(path, 'rb') as f:
         size = f.seek(0, os.SEEK_END)
         f.seek(0)
-        if size == 0:
-            yield b''
-            return
-        try:
-            buf = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-        except (OSError, ValueError) as e:
-            if size > MAX_INMEM_BYTES:
-                raise FileTooLargeError(
-                    f"mmap unavailable for {path} and the file is too large to "
-                    f"read into memory ({size} bytes > {MAX_INMEM_BYTES}-byte cap)"
-                ) from e
-            log.warning("mmap unavailable for %s (%s); falling back to full read", path, e)
-            yield f.read()
-            return
-        try:
-            yield buf
-        finally:
-            buf.close()
+        yield SectorReader(f, size)
+
+
+class SectorReader:
+    """Read-only random-access view over an open file using seek/read.
+
+    Supports ``len()``, integer indexing (``buf[i]`` -> int) and slice indexing
+    (``buf[a:b]`` -> bytes), reading only the requested range from disk.  This
+    lets buffer-oriented parsers address a huge file with a few sector-sized
+    reads instead of holding the whole thing in memory.
+
+    Single-threaded use only: it seeks a shared file handle, so concurrent
+    access would interleave seeks.  ``struct.unpack_from`` does NOT accept a
+    SectorReader (no buffer protocol) — slice first, then unpack the bytes.
+    """
+
+    __slots__ = ('_f', '_size')
+
+    def __init__(self, f, size: int):
+        self._f = f
+        self._size = size
+
+    def __len__(self) -> int:
+        return self._size
+
+    def __getitem__(self, key):
+        if isinstance(key, slice):
+            start, stop, step = key.indices(self._size)
+            if start >= stop:
+                return b''
+            self._f.seek(start)
+            data = self._f.read(stop - start)
+            return data if step == 1 else data[::step]
+        if key < 0:
+            key += self._size
+        if not 0 <= key < self._size:
+            raise IndexError('SectorReader index out of range')
+        self._f.seek(key)
+        return self._f.read(1)[0]
 
 # vim: ts=4 sw=4 et
