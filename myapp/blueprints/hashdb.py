@@ -104,35 +104,8 @@ def _existing_known_file(database_id: int, product_id: int, md5: str | None, sha
 
 def _post_known_file_changes(database: HashDatabase, new_kf_list: list[KnownFile]):
     """Run shared hash-rescan and recognition queueing after new file imports."""
-    if not database.is_active or not new_kf_list:
-        return
-
-    from ..services.hash_rescan import (
-        queue_product_recognition_for_partitions,
-        rescan_hashes_for_new_known_files,
-    )
-
-    rescan_hashes_for_new_known_files(new_kf_list)
-
-    if not database.enable_product_recognition:
-        return
-
-    md5s = [kf.md5 for kf in new_kf_list if kf.md5]
-    sha1s = [kf.sha1 for kf in new_kf_list if kf.sha1]
-    conditions = ([ExtractedFile.md5.in_(md5s)] if md5s else []) + (
-        [ExtractedFile.sha1.in_(sha1s)] if sha1s else []
-    )
-    if not conditions:
-        return
-
-    partition_ids = {
-        row[0] for row in
-        ExtractedFile.query
-        .with_entities(ExtractedFile.partition_id)
-        .filter(or_(*conditions))
-        .all()
-    }
-    queue_product_recognition_for_partitions(partition_ids)
+    from ..services.hash_rescan import link_new_known_files
+    link_new_known_files(database, new_kf_list)
 
 blueprint = Blueprint(ROUTENAME, __name__, url_prefix='/hashdb', template_folder='templates')
 
