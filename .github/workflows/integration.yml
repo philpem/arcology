@@ -25,6 +25,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The worker image is large (it compiles HxCFE, Fluxfox, DiscImageManager,
+      # …) and `load: true` keeps both the export tarball and the loaded image,
+      # so the default runner (~14 GB free) runs out of space.  Reclaim the
+      # preinstalled toolchains we don't use (~25 GB).  Done manually rather than
+      # via a third-party action to avoid a supply-chain dependency.
+      - name: Free disk space
+        run: |
+          echo "Before:"; df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+                      /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          sudo docker image prune --all --force || true
+          echo "After:"; df -h /
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
