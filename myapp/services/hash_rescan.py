@@ -601,4 +601,38 @@ def rescan_hashes_for_new_known_files(kf_list, batch_size=500):
     )
     return rescan_hashes_for_queryset(query, batch_size=batch_size)
 
+
+def link_new_known_files(database, new_kf_list):
+    """Link existing extracted files to freshly-imported KnownFiles, and queue
+    PRODUCT_RECOGNITION for affected partitions when the database enables it.
+
+    Shared by the web import route and the REST API bulk-add endpoint so that
+    both entry points link the collection after an import.  Without this, an
+    imported database shows zero matches until a manual rescan is triggered.
+    """
+    if not database.is_active or not new_kf_list:
+        return
+
+    rescan_hashes_for_new_known_files(new_kf_list)
+
+    if not database.enable_product_recognition:
+        return
+
+    md5s = [kf.md5 for kf in new_kf_list if kf.md5]
+    sha1s = [kf.sha1 for kf in new_kf_list if kf.sha1]
+    conditions = ([ExtractedFile.md5.in_(md5s)] if md5s else []) + (
+        [ExtractedFile.sha1.in_(sha1s)] if sha1s else []
+    )
+    if not conditions:
+        return
+
+    partition_ids = {
+        row[0] for row in
+        ExtractedFile.query
+        .with_entities(ExtractedFile.partition_id)
+        .filter(or_(*conditions))
+        .all()
+    }
+    queue_product_recognition_for_partitions(partition_ids)
+
 # vim: ts=4 sw=4 et

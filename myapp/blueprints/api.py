@@ -65,7 +65,11 @@ from ..services.downloads import (
     serve_extracted_file,
     serve_output_file,
 )
-from ..services.hash_rescan import find_known_file, find_known_files_for_records
+from ..services.hash_rescan import (
+    find_known_file,
+    find_known_files_for_records,
+    link_new_known_files,
+)
 from ..services.restrictions import (
     artefact_contained_file_restrictions,
     collect_all_file_restrictions,
@@ -2429,7 +2433,7 @@ def add_known_files_bulk(db_id, pid):
     files = data if isinstance(data, list) else data.get('files', [])
     if not files:
         return error_response('files array is required')
-    added = 0
+    new_kf_list = []
     for f in files:
         if not f.get('filename'):
             continue
@@ -2447,10 +2451,16 @@ def add_known_files_bulk(db_id, pid):
             description=f.get('description'),
         )
         db.session.add(kf)
-        added += 1
-    database.file_count = (database.file_count or 0) + added
+        new_kf_list.append(kf)
+    database.file_count = (database.file_count or 0) + len(new_kf_list)
     db.session.commit()
-    return jsonify({'added': added}), 201
+
+    # Link existing extracted files to the new KnownFiles (and queue product
+    # recognition when enabled) so an imported database matches the collection
+    # immediately, matching the web import route's behaviour.
+    link_new_known_files(database, new_kf_list)
+
+    return jsonify({'added': len(new_kf_list)}), 201
 
 
 @blueprint.route('/hash-databases/recognition-config', methods=['GET'])
