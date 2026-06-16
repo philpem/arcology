@@ -171,17 +171,18 @@ def index():
     run = bool(q) and query_error is None
     results = _run_search(tokens, page=page, per_page=per_page) if run else None
     if results:
-        results.pop('has_next', None)
-        totals = results.pop('totals', {'files': 0, 'artefacts': 0, 'items': 0})
-        max_total = max(totals.values()) if totals else 0
+        has_next = results.pop('has_next', False)
+        # Sentinel total: tells ListPagination whether a next page exists without
+        # running a separate COUNT query.
+        sentinel_total = page * per_page + (1 if has_next else 0)
     else:
-        totals = {'files': 0, 'artefacts': 0, 'items': 0}
-        max_total = 0
+        sentinel_total = 0
 
-    # Build a Pagination-compatible object across the largest result bucket so
-    # search shares the common pagination macro.  range() keeps this O(1) — the
-    # shim only needs the count, not the rows (those live in `results`).
-    pagination = ListPagination(range(max_total), page, per_page)
+    totals = {'files': 0, 'artefacts': 0, 'items': 0}
+
+    # Build a Pagination-compatible object so search shares the common macro.
+    # range() keeps this O(1); the shim only needs the count, not the rows.
+    pagination = ListPagination(range(sentinel_total), page, per_page)
     pagination_args = {k: v for k, v in request.args.items() if k != 'page'}
 
     # Module / Replay viewer icons for the file results (parallel to the
@@ -402,7 +403,7 @@ def _search_files(tokens, page=1, per_page=PER_PAGE):
         per_key.setdefault('ext', []).append(ExtractedFile.extension == v.lower())
 
     if not per_key:
-        return [], 0
+        return [], False
 
     neg = _negated_clauses(tokens, {
         'md5':      lambda v: _hash_filter(ExtractedFile.md5, v, 32),
@@ -414,7 +415,7 @@ def _search_files(tokens, page=1, per_page=PER_PAGE):
         'ext':      lambda v: ExtractedFile.extension == v.lower(),
     })
     combined = and_(*[or_(*clauses) for clauses in per_key.values()], *neg)
-    base_q = (
+    fetched = (
         db.session.query(ExtractedFile, Partition, Artefact, Item)
         .join(Partition, ExtractedFile.partition_id == Partition.id)
         .join(Artefact, Partition.artefact_id == Artefact.id)
@@ -422,12 +423,13 @@ def _search_files(tokens, page=1, per_page=PER_PAGE):
         .filter(combined)
         .filter(ExtractedFile.is_directory == False)
         .filter(artefact_visibility_clause(current_user))
+        .order_by(func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path))
+        .offset((page - 1) * per_page)
+        .limit(per_page + 1)
+        .all()
     )
-    total = base_q.count()
-    q = base_q.order_by(
-        func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path)
-    ).offset((page - 1) * per_page).limit(per_page).all()
-    return q, total
+    has_more = len(fetched) > per_page
+    return fetched[:per_page], has_more
 
 
 def _search_partitions(tokens, page=1, per_page=PER_PAGE):
@@ -447,7 +449,7 @@ def _search_partitions(tokens, page=1, per_page=PER_PAGE):
         per_key.setdefault('fs', []).append(_fs_clause(v))
 
     if not per_key:
-        return [], 0
+        return [], False
 
     neg = _negated_clauses(tokens, {
         'label': lambda v: _ilike(Partition.label, v),
@@ -455,74 +457,79 @@ def _search_partitions(tokens, page=1, per_page=PER_PAGE):
         'fs':    _fs_clause,
     })
     combined = and_(*[or_(*clauses) for clauses in per_key.values()], *neg)
-    base_q = (
+    fetched = (
         db.session.query(Partition, Artefact, Item)
         .join(Artefact, Partition.artefact_id == Artefact.id)
         .join(Item, Artefact.item_id == Item.id)
         .filter(combined)
         .filter(artefact_visibility_clause(current_user))
+        .order_by(func.lower(Item.name), func.lower(Artefact.label), Partition.partition_index)
+        .offset((page - 1) * per_page)
+        .limit(per_page + 1)
+        .all()
     )
-    total = base_q.count()
-    q = base_q.order_by(
-        func.lower(Item.name), func.lower(Artefact.label), Partition.partition_index
-    ).offset((page - 1) * per_page).limit(per_page).all()
-    return q, total
+    has_more = len(fetched) > per_page
+    return fetched[:per_page], has_more
 
 
 def _search_protection(tokens, page=1, per_page=PER_PAGE):
     """Search ArtefactProtection by protection type."""
     values = [v.lower() for v in tokens.get('protection', [])]
     if not values:
-        return [], 0
+        return [], False
 
     filters = [ArtefactProtection.protection_type.in_(values)]
     neg_values = [v.lower() for v in _neg(tokens, 'protection')]
     if neg_values:
         filters.append(_negate(ArtefactProtection.protection_type.in_(neg_values)))
 
-    base_q = (
+    fetched = (
         db.session.query(ArtefactProtection, Artefact, Item)
         .join(Artefact, ArtefactProtection.artefact_id == Artefact.id)
         .join(Item, Artefact.item_id == Item.id)
         .filter(and_(*filters))
         .filter(artefact_visibility_clause(current_user))
+        .order_by(func.lower(Item.name), func.lower(Artefact.label))
+        .offset((page - 1) * per_page)
+        .limit(per_page + 1)
+        .all()
     )
-    total = base_q.count()
-    q = base_q.order_by(func.lower(Item.name), func.lower(Artefact.label)) \
-              .offset((page - 1) * per_page).limit(per_page).all()
-    deduped = _dedup_by_artefact(q)
+    has_more = len(fetched) > per_page
+    deduped = _dedup_by_artefact(fetched[:per_page])
     return [
         {'type': 'protection', 'protection_type': p.protection_type, 'artefact': a, 'item': i}
         for p, a, i in deduped
-    ], total
+    ], has_more
 
 
 def _search_mastering(tokens, page=1, per_page=PER_PAGE):
     """Search ArtefactMastering by mastering type."""
     values = [v.lower() for v in tokens.get('mastering', [])]
     if not values:
-        return [], 0
+        return [], False
 
     filters = [ArtefactMastering.mastering_type.in_(values)]
     neg_values = [v.lower() for v in _neg(tokens, 'mastering')]
     if neg_values:
         filters.append(_negate(ArtefactMastering.mastering_type.in_(neg_values)))
 
-    base_q = (
+    fetched = (
         db.session.query(ArtefactMastering, Artefact, Item)
         .join(Artefact, ArtefactMastering.artefact_id == Artefact.id)
         .join(Item, Artefact.item_id == Item.id)
         .filter(and_(*filters))
         .filter(artefact_visibility_clause(current_user))
+        .order_by(func.lower(Item.name), func.lower(Artefact.label))
+        .offset((page - 1) * per_page)
+        .limit(per_page + 1)
+        .all()
     )
-    total = base_q.count()
-    q = base_q.order_by(func.lower(Item.name), func.lower(Artefact.label)) \
-              .offset((page - 1) * per_page).limit(per_page).all()
-    deduped = _dedup_by_artefact(q)
+    has_more = len(fetched) > per_page
+    deduped = _dedup_by_artefact(fetched[:per_page])
     return [
         {'type': 'mastering', 'mastering_type': m.mastering_type, 'artefact': a, 'item': i}
         for m, a, i in deduped
-    ], total
+    ], has_more
 
 
 def _search_riscos_module_files(tokens, key, clause_for, page=1, per_page=PER_PAGE):
@@ -534,12 +541,12 @@ def _search_riscos_module_files(tokens, key, clause_for, page=1, per_page=PER_PA
     """
     values = tokens.get(key, [])
     if not values:
-        return [], 0
+        return [], False
 
     module_filter = [or_(*[clause_for(v) for v in values])]
     module_filter += [_negate(clause_for(v)) for v in _neg(tokens, key)]
 
-    base_q = (
+    fetched = (
         db.session.query(ExtractedFile, Partition, Artefact, Item)
         .join(Partition, ExtractedFile.partition_id == Partition.id)
         .join(Artefact, Partition.artefact_id == Artefact.id)
@@ -550,12 +557,13 @@ def _search_riscos_module_files(tokens, key, clause_for, page=1, per_page=PER_PA
         .filter(and_(*module_filter))
         .filter(ExtractedFile.is_directory == False)
         .filter(artefact_visibility_clause(current_user))
+        .order_by(func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path))
+        .offset((page - 1) * per_page)
+        .limit(per_page + 1)
+        .all()
     )
-    total = base_q.count()
-    q = base_q.order_by(
-        func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path)
-    ).offset((page - 1) * per_page).limit(per_page).all()
-    return q, total
+    has_more = len(fetched) > per_page
+    return fetched[:per_page], has_more
 
 
 def _search_modules(tokens, page=1, per_page=PER_PAGE):
@@ -626,10 +634,10 @@ def _search_replay_movies(tokens, page=1, per_page=PER_PAGE):
             per_key.setdefault(key, []).append(_numeric_filter(col, v, is_float=True))
 
     if not per_key:
-        return [], 0
+        return [], False
 
     combined = and_(*[or_(*clauses) for clauses in per_key.values()])
-    base_q = (
+    fetched = (
         db.session.query(ExtractedFile, Partition, Artefact, Item)
         .join(Partition, ExtractedFile.partition_id == Partition.id)
         .join(Artefact, Partition.artefact_id == Artefact.id)
@@ -640,38 +648,41 @@ def _search_replay_movies(tokens, page=1, per_page=PER_PAGE):
         .filter(combined)
         .filter(ExtractedFile.is_directory == False)
         .filter(artefact_visibility_clause(current_user))
+        .order_by(func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path))
+        .offset((page - 1) * per_page)
+        .limit(per_page + 1)
+        .all()
     )
-    total = base_q.count()
-    q = base_q.order_by(
-        func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path)
-    ).offset((page - 1) * per_page).limit(per_page).all()
-    return q, total
+    has_more = len(fetched) > per_page
+    return fetched[:per_page], has_more
 
 
 def _search_tags(tokens, page=1, per_page=PER_PAGE):
     """Search artefacts by tag name."""
     values = tokens.get('tag', [])
     if not values:
-        return [], 0
+        return [], False
 
     tag_filter = [or_(*[_ilike(Tag.name, v) for v in values])]
     tag_filter += [_negate(_ilike(Tag.name, v)) for v in _neg(tokens, 'tag')]
 
-    base_q = (
+    fetched = (
         db.session.query(Artefact, Item, Tag.name)
         .join(Item, Artefact.item_id == Item.id)
         .join(artefact_tags, artefact_tags.c.artefact_id == Artefact.id)
         .join(Tag, artefact_tags.c.tag_id == Tag.id)
         .filter(and_(*tag_filter))
         .filter(artefact_visibility_clause(current_user))
+        .order_by(func.lower(Item.name), func.lower(Artefact.label))
+        .offset((page - 1) * per_page)
+        .limit(per_page + 1)
+        .all()
     )
-    total = base_q.count()
-    q = base_q.order_by(func.lower(Item.name), func.lower(Artefact.label)) \
-              .offset((page - 1) * per_page).limit(per_page).all()
+    has_more = len(fetched) > per_page
     return [
         {'type': 'tag', 'tag_name': tag_name, 'artefact': a, 'item': i}
-        for a, i, tag_name in q
-    ], total
+        for a, i, tag_name in fetched[:per_page]
+    ], has_more
 
 
 def _search_artefact_hashes(tokens, page=1, per_page=PER_PAGE):
@@ -683,7 +694,7 @@ def _search_artefact_hashes(tokens, page=1, per_page=PER_PAGE):
         art_filters.append(_hash_filter(Artefact.sha256, h, 64))
 
     if not art_filters:
-        return [], 0
+        return [], False
 
     hash_filter = [or_(*art_filters)]
     hash_filter += _negated_clauses(tokens, {
@@ -691,19 +702,21 @@ def _search_artefact_hashes(tokens, page=1, per_page=PER_PAGE):
         'sha256': lambda v: _hash_filter(Artefact.sha256, v, 64),
     })
 
-    base_q = (
+    fetched = (
         db.session.query(Artefact, Item)
         .join(Item, Artefact.item_id == Item.id)
         .filter(and_(*hash_filter))
         .filter(artefact_visibility_clause(current_user))
+        .order_by(func.lower(Item.name), func.lower(Artefact.label))
+        .offset((page - 1) * per_page)
+        .limit(per_page + 1)
+        .all()
     )
-    total = base_q.count()
-    q = base_q.order_by(func.lower(Item.name), func.lower(Artefact.label)) \
-              .offset((page - 1) * per_page).limit(per_page).all()
+    has_more = len(fetched) > per_page
     return [
         {'type': 'artefact_hash', 'artefact': a, 'item': i}
-        for a, i in q
-    ], total
+        for a, i in fetched[:per_page]
+    ], has_more
 
 
 def _search_text_items(tokens, page=1, per_page=PER_PAGE):
@@ -715,7 +728,7 @@ def _search_text_items(tokens, page=1, per_page=PER_PAGE):
         text_filters.append(Item.description.ilike(pattern))
 
     if not text_filters:
-        return [], 0
+        return [], False
 
     item_filter = [or_(*text_filters)]
     for v in _neg(tokens, 'text'):
@@ -723,15 +736,17 @@ def _search_text_items(tokens, page=1, per_page=PER_PAGE):
         item_filter.append(_negate(or_(
             Item.name.ilike(pattern), Item.description.ilike(pattern))))
 
-    base_q = (
+    fetched = (
         Item.query
         .filter(and_(*item_filter))
         .filter(item_visibility_clause(current_user))
+        .order_by(func.lower(Item.name))
+        .offset((page - 1) * per_page)
+        .limit(per_page + 1)
+        .all()
     )
-    total = base_q.count()
-    q = base_q.order_by(func.lower(Item.name)) \
-              .offset((page - 1) * per_page).limit(per_page).all()
-    return q, total
+    has_more = len(fetched) > per_page
+    return fetched[:per_page], has_more
 
 
 def _search_text_artefacts(tokens, page=1, per_page=PER_PAGE):
@@ -743,7 +758,7 @@ def _search_text_artefacts(tokens, page=1, per_page=PER_PAGE):
         art_text_filters.append(Artefact.description.ilike(pattern))
 
     if not art_text_filters:
-        return [], 0
+        return [], False
 
     art_filter = [or_(*art_text_filters)]
     for v in _neg(tokens, 'text'):
@@ -751,19 +766,21 @@ def _search_text_artefacts(tokens, page=1, per_page=PER_PAGE):
         art_filter.append(_negate(or_(
             Artefact.label.ilike(pattern), Artefact.description.ilike(pattern))))
 
-    base_q = (
+    fetched = (
         db.session.query(Artefact, Item)
         .join(Item, Artefact.item_id == Item.id)
         .filter(and_(*art_filter))
         .filter(artefact_visibility_clause(current_user))
+        .order_by(func.lower(Item.name), func.lower(Artefact.label))
+        .offset((page - 1) * per_page)
+        .limit(per_page + 1)
+        .all()
     )
-    total = base_q.count()
-    q = base_q.order_by(func.lower(Item.name), func.lower(Artefact.label)) \
-              .offset((page - 1) * per_page).limit(per_page).all()
+    has_more = len(fetched) > per_page
     return [
         {'type': 'artefact_text', 'artefact': a, 'item': i}
-        for a, i in q
-    ], total
+        for a, i in fetched[:per_page]
+    ], has_more
 
 
 def _check_query_warnings(tokens: dict) -> list:
@@ -864,12 +881,11 @@ def _check_query_warnings(tokens: dict) -> list:
 
 
 def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE) -> dict:
-    """Execute queries and return result buckets with per-bucket totals."""
+    """Execute queries and return result buckets."""
     results = {
         'files':           [],
         'artefacts':       [],
         'catalogue_items': [],
-        'totals':          {'files': 0, 'artefacts': 0, 'items': 0},
         'has_next':        False,
     }
 
@@ -877,74 +893,72 @@ def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE) -> dict:
     has_disc_terms = any(k in tokens for k in ('label', 'ident', 'fs'))
     has_text = 'text' in tokens
 
-    def _add(bucket, rows, total, totals_key=None):
-        """Accumulate one sub-search: rows into *bucket*, count into totals."""
+    def _add(bucket, rows, has_more):
         if rows:
             results[bucket].extend(rows)
-        results['totals'][totals_key or bucket] += total
-        if total > page * per_page:
+        if has_more:
             results['has_next'] = True
 
     # File search
     if has_file_terms:
-        files, total = _search_files(tokens, page=page, per_page=per_page)
-        _add('files', files, total)
+        files, has_more = _search_files(tokens, page=page, per_page=per_page)
+        _add('files', files, has_more)
 
     # Disc/partition search
     if has_disc_terms:
-        partitions, total = _search_partitions(tokens, page=page, per_page=per_page)
+        partitions, has_more = _search_partitions(tokens, page=page, per_page=per_page)
         _add('artefacts', [
             {'type': 'partition', 'partition': p, 'artefact': a, 'item': i}
             for p, a, i in partitions
-        ], total)
+        ], has_more)
 
     # Protection indicator search
     if 'protection' in tokens:
-        prot_results, total = _search_protection(tokens, page=page, per_page=per_page)
-        _add('artefacts', prot_results, total)
+        prot_results, has_more = _search_protection(tokens, page=page, per_page=per_page)
+        _add('artefacts', prot_results, has_more)
 
     # Mastering indicator search
     if 'mastering' in tokens:
-        mast_results, total = _search_mastering(tokens, page=page, per_page=per_page)
-        _add('artefacts', mast_results, total)
+        mast_results, has_more = _search_mastering(tokens, page=page, per_page=per_page)
+        _add('artefacts', mast_results, has_more)
 
     # RISC OS module search
     if 'module' in tokens:
-        mod_results, total = _search_modules(tokens, page=page, per_page=per_page)
-        _add('files', mod_results, total)
+        mod_results, has_more = _search_modules(tokens, page=page, per_page=per_page)
+        _add('files', mod_results, has_more)
 
     # Star command search
     if 'command' in tokens:
-        cmd_results, total = _search_commands(tokens, page=page, per_page=per_page)
-        _add('files', cmd_results, total)
+        cmd_results, has_more = _search_commands(tokens, page=page, per_page=per_page)
+        _add('files', cmd_results, has_more)
 
     # SWI name search
     if 'swi' in tokens:
-        swi_results, total = _search_swis(tokens, page=page, per_page=per_page)
-        _add('files', swi_results, total)
+        swi_results, has_more = _search_swis(tokens, page=page, per_page=per_page)
+        _add('files', swi_results, has_more)
 
     # Acorn Replay / ARMovie metadata search
     if any(k.startswith('replay_') for k in tokens):
-        replay_results, total = _search_replay_movies(tokens, page=page, per_page=per_page)
-        _add('files', replay_results, total)
+        replay_results, has_more = _search_replay_movies(tokens, page=page, per_page=per_page)
+        _add('files', replay_results, has_more)
 
     # Tag search
     if 'tag' in tokens:
-        tag_results, total = _search_tags(tokens, page=page, per_page=per_page)
-        _add('artefacts', tag_results, total)
+        tag_results, has_more = _search_tags(tokens, page=page, per_page=per_page)
+        _add('artefacts', tag_results, has_more)
 
     # Artefact hash search
     if any(k in tokens for k in ('md5', 'sha256')):
-        hash_results, total = _search_artefact_hashes(tokens, page=page, per_page=per_page)
-        _add('artefacts', hash_results, total)
+        hash_results, has_more = _search_artefact_hashes(tokens, page=page, per_page=per_page)
+        _add('artefacts', hash_results, has_more)
 
     # Free-text search
     if has_text:
-        items, total = _search_text_items(tokens, page=page, per_page=per_page)
-        _add('catalogue_items', items, total, totals_key='items')
+        items, has_more = _search_text_items(tokens, page=page, per_page=per_page)
+        _add('catalogue_items', items, has_more)
 
-        art_text_results, total = _search_text_artefacts(tokens, page=page, per_page=per_page)
-        _add('artefacts', art_text_results, total)
+        art_text_results, has_more = _search_text_artefacts(tokens, page=page, per_page=per_page)
+        _add('artefacts', art_text_results, has_more)
 
     # Deduplicate file results
     seen_file_ids = set()
