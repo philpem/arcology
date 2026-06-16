@@ -103,7 +103,12 @@ jobs:
         run: python ci/check_imports.py
 
       - name: Unit tests (app-level)
-        run: python -m unittest discover -s ci -p "test_*.py" -v
+        # run_app_tests.py escalates SQLAlchemy warnings (e.g. cartesian-product
+        # joins) to test failures so they cannot slip through unnoticed.  A bare
+        # `python -W error::sqlalchemy.exc.SAWarning` does not work — the
+        # category cannot be resolved at interpreter startup.  See
+        # myapp/utils/warnings.py and ci/test_cartesian_join.py.
+        run: python ci/run_app_tests.py
 
   test-migrations:
     name: Migration Tests (PostgreSQL)
