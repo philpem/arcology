@@ -86,7 +86,7 @@ class TestUserPreferenceModel(unittest.TestCase):
         self.user.set_preference('per_page', 100)
         self.db.session.commit()
         # Re-query from DB
-        reloaded = self.User.query.get(self.user.id)
+        reloaded = self.db.session.get(self.User, self.user.id)
         self.assertEqual(reloaded.get_preference('per_page'), 100)
 
 
@@ -129,7 +129,7 @@ class TestResolvePerPage(unittest.TestCase):
     def test_explicit_param_used(self):
         """Explicit per_page query param takes priority."""
         with self.app.test_request_context('/?per_page=100'):
-            user = self.User.query.get(self.test_user_id)
+            user = self.db.session.get(self.User, self.test_user_id)
             self._login_user(user)
             per_page, page, view_all = self.resolve_per_page('ITEMS_PER_PAGE', 25)
             self.assertEqual(per_page, 100)
@@ -138,7 +138,7 @@ class TestResolvePerPage(unittest.TestCase):
     def test_explicit_param_saves_preference(self):
         """Selecting a per_page value saves it to the user's preferences."""
         with self.app.test_request_context('/?per_page=50'):
-            user = self.User.query.get(self.test_user_id)
+            user = self.db.session.get(self.User, self.test_user_id)
             user.preferences = None  # reset
             self.db.session.commit()
             self._login_user(user)
@@ -148,7 +148,7 @@ class TestResolvePerPage(unittest.TestCase):
     def test_saved_preference_used_as_default(self):
         """When no per_page param, the saved preference is used."""
         with self.app.test_request_context('/'):
-            user = self.User.query.get(self.test_user_id)
+            user = self.db.session.get(self.User, self.test_user_id)
             user.set_preference('per_page', 100)
             self.db.session.commit()
             self._login_user(user)
@@ -158,7 +158,7 @@ class TestResolvePerPage(unittest.TestCase):
     def test_config_fallback_when_no_preference(self):
         """When no per_page param and no preference, config default is used."""
         with self.app.test_request_context('/'):
-            user = self.User.query.get(self.test_user_id)
+            user = self.db.session.get(self.User, self.test_user_id)
             user.preferences = None
             self.db.session.commit()
             self._login_user(user)
@@ -168,7 +168,7 @@ class TestResolvePerPage(unittest.TestCase):
     def test_view_all_not_saved(self):
         """per_page=0 (view all) should NOT be saved as a preference."""
         with self.app.test_request_context('/?per_page=0'):
-            user = self.User.query.get(self.test_user_id)
+            user = self.db.session.get(self.User, self.test_user_id)
             user.set_preference('per_page', 50)
             self.db.session.commit()
             self._login_user(user)
@@ -182,7 +182,7 @@ class TestResolvePerPage(unittest.TestCase):
     def test_invalid_saved_preference_falls_back_to_config(self):
         """An invalid stored preference value falls through to config."""
         with self.app.test_request_context('/'):
-            user = self.User.query.get(self.test_user_id)
+            user = self.db.session.get(self.User, self.test_user_id)
             user.set_preference('per_page', 999)
             self.db.session.commit()
             self._login_user(user)
@@ -192,7 +192,7 @@ class TestResolvePerPage(unittest.TestCase):
     def test_invalid_param_falls_back_to_preference(self):
         """An invalid per_page param falls through to saved preference."""
         with self.app.test_request_context('/?per_page=77'):
-            user = self.User.query.get(self.test_user_id)
+            user = self.db.session.get(self.User, self.test_user_id)
             user.set_preference('per_page', 100)
             self.db.session.commit()
             self._login_user(user)

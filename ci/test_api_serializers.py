@@ -22,6 +22,9 @@ os.environ.setdefault('SECRET_KEY', 'ci-api-serializer-test-secret-key')
 os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 
 
+from myapp.extensions import db  # noqa: E402  (Query.get -> Session.get migration)
+
+
 class TestArtefactToDictSlugs(unittest.TestCase):
     """artefact_to_dict() must expose artefact.slug and artefact.item.slug."""
 
@@ -63,7 +66,7 @@ class TestArtefactToDictSlugs(unittest.TestCase):
         from myapp.utils.api_serializers import artefact_to_dict
 
         with self.app.app_context():
-            artefact = Artefact.query.get(self.artefact_id)
+            artefact = db.session.get(Artefact, self.artefact_id)
             d = artefact_to_dict(artefact)
 
         self.assertIn('slug', d)
@@ -74,7 +77,7 @@ class TestArtefactToDictSlugs(unittest.TestCase):
         from myapp.utils.api_serializers import artefact_to_dict
 
         with self.app.app_context():
-            artefact = Artefact.query.get(self.artefact_id)
+            artefact = db.session.get(Artefact, self.artefact_id)
             d = artefact_to_dict(artefact)
 
         self.assertIn('item_slug', d)
@@ -85,7 +88,7 @@ class TestArtefactToDictSlugs(unittest.TestCase):
         from myapp.utils.api_serializers import analysis_tree_node
 
         with self.app.app_context():
-            artefact = Artefact.query.get(self.artefact_id)
+            artefact = db.session.get(Artefact, self.artefact_id)
             node = analysis_tree_node(artefact)
 
         self.assertIn('slug', node)
@@ -96,7 +99,7 @@ class TestArtefactToDictSlugs(unittest.TestCase):
         from myapp.utils.api_serializers import artefact_to_dict
 
         with self.app.app_context():
-            artefact = Artefact.query.get(self.artefact_id)
+            artefact = db.session.get(Artefact, self.artefact_id)
             d = artefact_to_dict(artefact)
 
         self.assertNotIn('storage_path', d)
@@ -107,7 +110,7 @@ class TestArtefactToDictSlugs(unittest.TestCase):
         from myapp.utils.api_serializers import artefact_to_dict
 
         with self.app.app_context():
-            artefact = Artefact.query.get(self.artefact_id)
+            artefact = db.session.get(Artefact, self.artefact_id)
             d = artefact_to_dict(artefact, include_storage=True)
 
         self.assertEqual(d['storage_path'], 'disc1.img')
@@ -164,7 +167,7 @@ class TestAnalysisToDictArtefactShape(unittest.TestCase):
         from myapp.utils.api_serializers import analysis_to_dict
 
         with self.app.app_context():
-            analysis = Analysis.query.get(self.analysis_id)
+            analysis = db.session.get(Analysis, self.analysis_id)
             d = analysis_to_dict(
                 analysis, include_artefact=True, include_artefact_storage=True
             )
@@ -189,7 +192,7 @@ class TestAnalysisToDictArtefactShape(unittest.TestCase):
         from myapp.utils.api_serializers import analysis_to_dict
 
         with self.app.app_context():
-            analysis = Analysis.query.get(self.analysis_id)
+            analysis = db.session.get(Analysis, self.analysis_id)
             d = analysis_to_dict(analysis, include_artefact=True)
 
         art = d['artefact']
@@ -265,8 +268,8 @@ class TestOrphanEnumSerialization(unittest.TestCase):
         from myapp.database import Analysis, Artefact
 
         with self.app.app_context():
-            analysis = Analysis.query.get(self.analysis_id)
-            artefact = Artefact.query.get(self.artefact_id)
+            analysis = db.session.get(Analysis, self.analysis_id)
+            artefact = db.session.get(Artefact, self.artefact_id)
             self.assertIsNone(analysis.analysis_type)
             self.assertIsNone(artefact.artefact_type)
 
@@ -276,7 +279,7 @@ class TestOrphanEnumSerialization(unittest.TestCase):
         from myapp.utils.api_serializers import analysis_to_dict
 
         with self.app.app_context():
-            analysis = Analysis.query.get(self.analysis_id)
+            analysis = db.session.get(Analysis, self.analysis_id)
             d = analysis_to_dict(
                 analysis, include_artefact=True, include_artefact_storage=True
             )
@@ -291,7 +294,7 @@ class TestOrphanEnumSerialization(unittest.TestCase):
         from myapp.utils.api_serializers import artefact_to_dict
 
         with self.app.app_context():
-            artefact = Artefact.query.get(self.artefact_id)
+            artefact = db.session.get(Artefact, self.artefact_id)
             d = artefact_to_dict(artefact)
 
         self.assertIsNone(d['artefact_type'])

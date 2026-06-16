@@ -30,6 +30,9 @@ os.environ.setdefault('SECRET_KEY', 'ci-fk-test-secret-key-not-for-production')
 os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 
 
+from myapp.extensions import db  # noqa: E402  (Query.get -> Session.get migration)
+
+
 def _enable_sqlite_fks(app, _db):
     """Enable SQLite foreign key enforcement so tests match PostgreSQL behaviour."""
     from sqlalchemy import event
@@ -154,7 +157,7 @@ class TestItemCascadeDelete(unittest.TestCase):
             self.db.session.commit()
 
             # Tag should survive
-            self.assertIsNotNone(Tag.query.get(tag_id))
+            self.assertIsNotNone(db.session.get(Tag, tag_id))
 
 
 class TestArtefactCascadeDelete(unittest.TestCase):
@@ -371,7 +374,7 @@ class TestArtefactCascadeDelete(unittest.TestCase):
             self.db.session.commit()
 
             # Tag should survive
-            self.assertIsNotNone(Tag.query.get(tag_id))
+            self.assertIsNotNone(db.session.get(Tag, tag_id))
 
 
 class TestDeepCascadeDelete(unittest.TestCase):
@@ -531,7 +534,7 @@ class TestTaxonomyDeleteDefensiveChecks(unittest.TestCase):
 
         with self.app.app_context():
             from myapp.database import Platform
-            self.assertIsNotNone(Platform.query.get(plat_id),
+            self.assertIsNotNone(db.session.get(Platform, plat_id),
                                 'Platform should not have been deleted')
 
     def test_delete_platform_with_children_rejected(self):
@@ -555,7 +558,7 @@ class TestTaxonomyDeleteDefensiveChecks(unittest.TestCase):
 
         with self.app.app_context():
             from myapp.database import Platform
-            self.assertIsNotNone(Platform.query.get(parent_id),
+            self.assertIsNotNone(db.session.get(Platform, parent_id),
                                 'Parent platform should not have been deleted')
 
     def test_delete_category_with_items_rejected(self):
@@ -584,7 +587,7 @@ class TestTaxonomyDeleteDefensiveChecks(unittest.TestCase):
 
         with self.app.app_context():
             from myapp.database import Category
-            self.assertIsNotNone(Category.query.get(cat_id),
+            self.assertIsNotNone(db.session.get(Category, cat_id),
                                 'Category should not have been deleted')
 
     def test_delete_category_with_children_rejected(self):
@@ -608,7 +611,7 @@ class TestTaxonomyDeleteDefensiveChecks(unittest.TestCase):
 
         with self.app.app_context():
             from myapp.database import Category
-            self.assertIsNotNone(Category.query.get(parent_id),
+            self.assertIsNotNone(db.session.get(Category, parent_id),
                                 'Parent category should not have been deleted')
 
     def test_delete_external_system_with_references_rejected(self):
@@ -642,7 +645,7 @@ class TestTaxonomyDeleteDefensiveChecks(unittest.TestCase):
 
         with self.app.app_context():
             from myapp.database import ExternalSystem
-            self.assertIsNotNone(ExternalSystem.query.get(sys_id),
+            self.assertIsNotNone(db.session.get(ExternalSystem, sys_id),
                                 'External system should not have been deleted')
 
 
@@ -966,7 +969,7 @@ class TestNullableFKEdgeCases(unittest.TestCase):
             self.db.session.commit()
 
             # ExtractedFile should survive (the delete must not cascade to it)
-            ef_after = ExtractedFile.query.get(ef_id)
+            ef_after = db.session.get(ExtractedFile, ef_id)
             self.assertIsNotNone(ef_after,
                                  'ExtractedFile should survive KnownFile deletion')
 
@@ -997,7 +1000,7 @@ class TestNullableFKEdgeCases(unittest.TestCase):
             self.db.session.delete(platform)
             self.db.session.commit()
 
-            hdb_after = HashDatabase.query.get(hdb_id)
+            hdb_after = db.session.get(HashDatabase, hdb_id)
             self.assertIsNotNone(hdb_after,
                                  'HashDatabase should survive Platform deletion')
 
@@ -1060,7 +1063,7 @@ class TestNullableFKEdgeCases(unittest.TestCase):
             self.db.session.delete(parent_ef)
             self.db.session.commit()
 
-            child_after = ExtractedFile.query.get(child_ef_id)
+            child_after = db.session.get(ExtractedFile, child_ef_id)
             if child_after is not None:
                 # If child survived, parent_file_id should be NULL
                 self.assertIsNone(child_after.parent_file_id,
@@ -1386,7 +1389,7 @@ class TestBulkDeleteItem(unittest.TestCase):
             # an identity for ..." SAWarning).  In production the delete runs in
             # its own request with a clean session.
             self.db.session.expunge_all()
-            item = Item.query.get(item_id)
+            item = db.session.get(Item, item_id)
 
             # Verify records exist
             self.assertEqual(Artefact.query.filter_by(item_id=item_id).count(), 2)
@@ -1396,7 +1399,7 @@ class TestBulkDeleteItem(unittest.TestCase):
             bulk_delete_item(item)
 
             # Verify everything is gone
-            self.assertIsNone(Item.query.get(item_id))
+            self.assertIsNone(db.session.get(Item, item_id))
             self.assertEqual(Artefact.query.filter_by(item_id=item_id).count(), 0)
             self.assertEqual(Analysis.query.filter_by(artefact_id=artefact_id).count(), 0)
             self.assertEqual(Partition.query.filter_by(artefact_id=derived_id).count(), 0)
@@ -1409,8 +1412,8 @@ class TestBulkDeleteItem(unittest.TestCase):
             self.assertEqual(ArtefactRestriction.query.filter_by(artefact_id=artefact_id).count(), 0)
             self.assertEqual(ExternalReference.query.filter_by(item_id=item_id).count(), 0)
             # Tags and external system should survive
-            self.assertIsNotNone(Tag.query.get(tag_id))
-            self.assertIsNotNone(Tag.query.get(art_tag_id))
+            self.assertIsNotNone(db.session.get(Tag, tag_id))
+            self.assertIsNotNone(db.session.get(Tag, art_tag_id))
             self.assertIsNotNone(ExternalSystem.query.filter_by(name='Bulk Del System').first())
 
     def test_bulk_delete_empty_item(self):
@@ -1430,7 +1433,7 @@ class TestBulkDeleteItem(unittest.TestCase):
 
             bulk_delete_item(item)
 
-            self.assertIsNone(Item.query.get(item_id))
+            self.assertIsNone(db.session.get(Item, item_id))
 
 
 if __name__ == '__main__':

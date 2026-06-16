@@ -28,6 +28,9 @@ os.environ.setdefault('SECRET_KEY', 'ci-url-id-test-secret-key')
 os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 
 
+from myapp.extensions import db  # noqa: E402  (Query.get -> Session.get migration)
+
+
 def _make_item(db, name='Test Item', platform_id=None, category_id=None):
     from myapp.database import Item
     item = Item(name=name, platform_id=platform_id, category_id=category_id)
@@ -140,7 +143,7 @@ class TestArtefactLookup(unittest.TestCase):
         from myapp.database import Item
         from myapp.utils.slugs import lookup_artefact_by_id
         with self.app.app_context():
-            item = Item.query.get(item_id)
+            item = db.session.get(Item, item_id)
             return lookup_artefact_by_id(item, artefact_id)
 
     def _lookup_404(self, item_id, artefact_id):
@@ -148,7 +151,7 @@ class TestArtefactLookup(unittest.TestCase):
         from myapp.database import Item
         from myapp.utils.slugs import lookup_artefact_by_id
         with self.app.app_context():
-            item = Item.query.get(item_id)
+            item = db.session.get(Item, item_id)
             with self.assertRaises(NotFound):
                 lookup_artefact_by_id(item, artefact_id)
 
@@ -266,7 +269,7 @@ class TestPrefixCollisionLookupArtefact(unittest.TestCase):
         from myapp.database import Item
         from myapp.utils.slugs import lookup_artefact_by_id
         with self.app.app_context():
-            item = Item.query.get(self.item_id)
+            item = db.session.get(Item, self.item_id)
             return lookup_artefact_by_id(item, artefact_id)
 
     def _lookup_404(self, artefact_id):
@@ -274,7 +277,7 @@ class TestPrefixCollisionLookupArtefact(unittest.TestCase):
         from myapp.database import Item
         from myapp.utils.slugs import lookup_artefact_by_id
         with self.app.app_context():
-            item = Item.query.get(self.item_id)
+            item = db.session.get(Item, self.item_id)
             with self.assertRaises(NotFound):
                 lookup_artefact_by_id(item, artefact_id)
 
@@ -327,26 +330,26 @@ class TestUrlIdProperty(unittest.TestCase):
     def test_item_url_id_with_slug(self):
         with self.app.app_context():
             from myapp.database import Item
-            item = Item.query.get(self.item_with_slug_id)
+            item = db.session.get(Item, self.item_with_slug_id)
             expected = f"{self.item_with_slug_uuid[:8]}-slug-item"
             self.assertEqual(item.url_id, expected)
 
     def test_item_url_id_without_slug(self):
         with self.app.app_context():
             from myapp.database import Item
-            item = Item.query.get(self.item_no_slug_id)
+            item = db.session.get(Item, self.item_no_slug_id)
             self.assertEqual(item.url_id, self.item_no_slug_uuid[:8])
 
     def test_artefact_url_slug_with_slug(self):
         with self.app.app_context():
             from myapp.database import Artefact
-            art = Artefact.query.get(self.art_with_slug_id)
+            art = db.session.get(Artefact, self.art_with_slug_id)
             self.assertEqual(art.url_slug, 'art-with-slug')
 
     def test_artefact_url_slug_without_slug(self):
         with self.app.app_context():
             from myapp.database import Artefact
-            art = Artefact.query.get(self.art_no_slug_id)
+            art = db.session.get(Artefact, self.art_no_slug_id)
             self.assertEqual(art.url_slug, self.art_no_slug_uuid[:8])
 
 
@@ -485,29 +488,29 @@ class TestRootArtefactProperty(unittest.TestCase):
     def test_root_artefact_of_root_is_self(self):
         from myapp.database import Artefact
         with self.app.app_context():
-            root = Artefact.query.get(self.root_id)
+            root = db.session.get(Artefact, self.root_id)
             self.assertIs(root.root_artefact, root)
 
     def test_root_artefact_of_child(self):
         from myapp.database import Artefact
         with self.app.app_context():
-            child = Artefact.query.get(self.child_id)
-            root = Artefact.query.get(self.root_id)
+            child = db.session.get(Artefact, self.child_id)
+            root = db.session.get(Artefact, self.root_id)
             self.assertEqual(child.root_artefact.id, root.id)
 
     def test_root_artefact_of_grandchild(self):
         from myapp.database import Artefact
         with self.app.app_context():
-            grandchild = Artefact.query.get(self.grandchild_id)
-            root = Artefact.query.get(self.root_id)
+            grandchild = db.session.get(Artefact, self.grandchild_id)
+            root = db.session.get(Artefact, self.root_id)
             self.assertEqual(grandchild.root_artefact.id, root.id)
 
     def test_artefact_url_root_has_no_root_id_segment(self):
         """artefact_url() for a root artefact should NOT include root_id."""
         from myapp.database import Artefact, Item
         with self.app.app_context():
-            root = Artefact.query.get(self.root_id)
-            item = Item.query.get(self.item_id)
+            root = db.session.get(Artefact, self.root_id)
+            item = db.session.get(Item, self.item_id)
             with self.app.test_request_context():
                 from flask import url_for
                 expected = url_for('myapp_blueprints_artefacts.view',
@@ -521,8 +524,8 @@ class TestRootArtefactProperty(unittest.TestCase):
         """artefact_url() for a derived artefact should include the root slug."""
         from myapp.database import Artefact
         with self.app.app_context():
-            child = Artefact.query.get(self.child_id)
-            root = Artefact.query.get(self.root_id)
+            child = db.session.get(Artefact, self.child_id)
+            root = db.session.get(Artefact, self.root_id)
             with self.app.test_request_context():
                 result = self.app.jinja_env.globals['artefact_url'](child)
                 # Should contain the root slug and the child slug as path segments
@@ -533,9 +536,9 @@ class TestRootArtefactProperty(unittest.TestCase):
         """artefact_url() for a grandchild should use the root (not the immediate parent)."""
         from myapp.database import Artefact
         with self.app.app_context():
-            grandchild = Artefact.query.get(self.grandchild_id)
-            root = Artefact.query.get(self.root_id)
-            child = Artefact.query.get(self.child_id)
+            grandchild = db.session.get(Artefact, self.grandchild_id)
+            root = db.session.get(Artefact, self.root_id)
+            child = db.session.get(Artefact, self.child_id)
             with self.app.test_request_context():
                 result = self.app.jinja_env.globals['artefact_url'](grandchild)
                 self.assertIn(f'/{root.url_slug}/', result)

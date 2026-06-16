@@ -144,7 +144,7 @@ def key_created():
 @blueprint.route('/keys/<int:key_id>/revoke', methods=['POST'])
 @login_required
 def revoke_key(key_id):
-    key = ApiKey.query.get_or_404(key_id)
+    key = db.get_or_404(ApiKey, key_id)
     if key.user_id != current_user.id:
         abort(403)
     key.is_active = False

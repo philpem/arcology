@@ -31,6 +31,9 @@ os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 # Unit tests: parse_query (no database required)
 # =============================================================================
 
+from myapp.extensions import db  # noqa: E402  (Query.get -> Session.get migration)
+
+
 class TestParseQuery(unittest.TestCase):
     """Unit tests for the query parser — no app context or database needed."""
 
@@ -1410,7 +1413,7 @@ class TestHashDBSearch(unittest.TestCase):
             if file_id:
                 kf_filter = ExtractedFile.known_file_id == file_id
             elif product_id:
-                product = KnownProduct.query.get(product_id)
+                product = db.session.get(KnownProduct, product_id)
                 kf_ids = [kf.id for kf in product.known_files]
                 if not kf_ids:
                     return []

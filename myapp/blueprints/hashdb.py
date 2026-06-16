@@ -272,7 +272,7 @@ def new():
 @blueprint.route('/<int:id>')
 @login_required
 def view(id):
-    database = HashDatabase.query.get_or_404(id)
+    database = db.get_or_404(HashDatabase, id)
     # Load only the product rows here — the per-product file tables (which can
     # run to tens of thousands of rows) are fetched lazily on expand via
     # product_files() so the initial page stays small.
@@ -342,7 +342,7 @@ def product_files(id, pid):
     bytes for a product's (potentially huge) file list are only produced on
     demand rather than for every product on initial page load.
     """
-    HashDatabase.query.get_or_404(id)
+    db.get_or_404(HashDatabase, id)
     product = KnownProduct.query.filter_by(id=pid, database_id=id).first_or_404()
     files = (
         KnownFile.query
@@ -379,7 +379,7 @@ SEARCH_LIMIT = 200
 @login_required
 def search(id):
     """Search the collection for artefacts containing files from this database."""
-    database = HashDatabase.query.get_or_404(id)
+    database = db.get_or_404(HashDatabase, id)
 
     product_id = request.args.get('product_id', type=int)
     file_id = request.args.get('file_id', type=int)
@@ -447,7 +447,7 @@ def search(id):
 @blueprint.route('/<int:id>/<int:pid>')
 @login_required
 def view_product(id, pid):
-    database = HashDatabase.query.get_or_404(id)
+    database = db.get_or_404(HashDatabase, id)
     product = KnownProduct.query.filter_by(id=pid, database_id=id).first_or_404()
 
     kf_ids = [kf.id for kf in product.known_files]
@@ -477,7 +477,7 @@ def view_product(id, pid):
 @login_required
 @require_permission('read_write')
 def edit(id):
-    database = HashDatabase.query.get_or_404(id)
+    database = db.get_or_404(HashDatabase, id)
     form = HashDatabaseForm(obj=database)
     _prepare_database_form(form)
     if form.validate_on_submit():
@@ -495,7 +495,7 @@ def edit(id):
 @login_required
 @require_permission('read_write')
 def delete(id):
-    database = HashDatabase.query.get_or_404(id)
+    database = db.get_or_404(HashDatabase, id)
     name = database.name
     is_active = database.is_active
 
@@ -540,7 +540,7 @@ def delete(id):
 @login_required
 @require_permission('read_write')
 def toggle_recognition(id):
-    database = HashDatabase.query.get_or_404(id)
+    database = db.get_or_404(HashDatabase, id)
     database.enable_product_recognition = not database.enable_product_recognition
     db.session.commit()
     state = 'enabled' if database.enable_product_recognition else 'disabled'
@@ -567,7 +567,7 @@ def toggle_recognition(id):
 @login_required
 @require_permission('read_write')
 def toggle_active(id):
-    database = HashDatabase.query.get_or_404(id)
+    database = db.get_or_404(HashDatabase, id)
     database.is_active = not database.is_active
     db.session.commit()
     state = 'enabled' if database.is_active else 'disabled'
@@ -612,7 +612,7 @@ def _safe_download_name(name: str, suffix: str) -> str:
 @blueprint.route('/<int:id>/export')
 @login_required
 def export(id):
-    database = HashDatabase.query.get_or_404(id)
+    database = db.get_or_404(HashDatabase, id)
     fmt = request.args.get('format', 'json').lower()
     products = KnownProduct.query.filter_by(database_id=id).order_by(func.lower(KnownProduct.title)).all()
 
@@ -866,7 +866,7 @@ def rescan_all():
 @require_permission('read_write')
 def rescan(id):
     """Queue HASH_RESCAN worker jobs (from a database view page)."""
-    HashDatabase.query.get_or_404(id)
+    db.get_or_404(HashDatabase, id)
     n = _queue_hash_rescan_jobs()
     if n:
         flash(f'Hash rescan queued: {n} artefact(s) will be processed by the worker.', 'info')
@@ -883,7 +883,7 @@ def rescan(id):
 @login_required
 @require_permission('read_write')
 def new_known_product(db_id):
-    HashDatabase.query.get_or_404(db_id)
+    db.get_or_404(HashDatabase, db_id)
     title = request.form.get('title', '').strip()
     if not title:
         flash('Product title is required.', 'danger')

@@ -183,7 +183,7 @@ def edit_user(user_id):
     if user_id == current_user.id:
         flash('You cannot edit your own account. Use your profile page instead.', 'error')
         return _route_redirect('index')
-    user = User.query.get_or_404(user_id)
+    user = db.get_or_404(User, user_id)
 
     if request.method == 'GET':
         form = EditUserForm(
@@ -259,7 +259,7 @@ def delete_user(user_id):
     if user_id == current_user.id:
         flash('You cannot delete your own account.', 'error')
         return _route_redirect('index')
-    user = User.query.get_or_404(user_id)
+    user = db.get_or_404(User, user_id)
     username = user.username
     item_count = Item.query.filter_by(owner_id=user.id).count()
     artefact_count = Artefact.query.filter_by(owner_id=user.id).count()
@@ -280,7 +280,7 @@ def delete_user(user_id):
 
 @blueprint.route('/users/<int:user_id>/set-permission', methods=['POST'])
 def set_permission(user_id):
-    user = User.query.get_or_404(user_id)
+    user = db.get_or_404(User, user_id)
     if user.oidc_managed:
         flash(f'Permissions for "{user.username}" are managed by SSO and cannot be changed here.', 'error')
         return _route_redirect('index')
@@ -297,7 +297,7 @@ def set_permission(user_id):
 
 @blueprint.route('/users/<int:user_id>/toggle-api', methods=['POST'])
 def toggle_api(user_id):
-    user = User.query.get_or_404(user_id)
+    user = db.get_or_404(User, user_id)
     if user.oidc_managed:
         flash(f'API access for "{user.username}" is managed by SSO and cannot be changed here.', 'error')
         return _route_redirect('index')
@@ -349,7 +349,7 @@ def create_group():
 @blueprint.route('/groups/<int:group_id>/edit', methods=['GET', 'POST'])
 def edit_group(group_id):
     """Edit a group's name and description."""
-    group = Group.query.get_or_404(group_id)
+    group = db.get_or_404(Group, group_id)
     if request.method == 'GET' and group.source == 'oidc':
         flash('This group is managed by the identity provider — its name cannot be changed here.', 'warning')
     form = GroupForm(obj=group)
@@ -377,7 +377,7 @@ def edit_group(group_id):
 @blueprint.route('/groups/<int:group_id>/delete', methods=['POST'])
 def delete_group(group_id):
     """Delete a group."""
-    group = Group.query.get_or_404(group_id)
+    group = db.get_or_404(Group, group_id)
     name = group.name
     db.session.delete(group)
     db.session.commit()
@@ -388,7 +388,7 @@ def delete_group(group_id):
 @blueprint.route('/groups/<int:group_id>/members/add', methods=['POST'])
 def add_group_member(group_id):
     """Add a user to a group."""
-    group = Group.query.get_or_404(group_id)
+    group = db.get_or_404(Group, group_id)
     if group.source == 'oidc':
         flash(f'Group "{group.name}" is managed by the identity provider. Membership is synced automatically on login.', 'error')
         return _route_redirect('groups')
@@ -396,7 +396,7 @@ def add_group_member(group_id):
     if not user_id:
         flash('Please select a user.', 'error')
         return _route_redirect('groups')
-    user = User.query.get_or_404(user_id)
+    user = db.get_or_404(User, user_id)
     if user not in group.members:
         group.members.append(user)
         db.session.commit()
@@ -409,11 +409,11 @@ def add_group_member(group_id):
 @blueprint.route('/groups/<int:group_id>/members/<int:user_id>/remove', methods=['POST'])
 def remove_group_member(group_id, user_id):
     """Remove a user from a group."""
-    group = Group.query.get_or_404(group_id)
+    group = db.get_or_404(Group, group_id)
     if group.source == 'oidc':
         flash(f'Group "{group.name}" is managed by the identity provider. Membership is synced automatically on login.', 'error')
         return _route_redirect('groups')
-    user = User.query.get_or_404(user_id)
+    user = db.get_or_404(User, user_id)
     if user in group.members:
         group.members.remove(user)
         db.session.commit()
