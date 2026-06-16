@@ -57,6 +57,19 @@ class ProgressReporter:
         self.alive = True
         self._last_emit = 0.0  # monotonic time of last emit; 0 == never emitted
 
+    def start(self, total: int | None = None, label: str | None = None):
+        """Set the total and/or label once the work size is known.
+
+        Handy when the framework injects a reporter before the handler knows
+        how many items it will process: ``self.progress.start(total=n,
+        label='Hashing').update(0)``.  Returns ``self`` so it can be chained.
+        """
+        if total is not None:
+            self.total = total
+        if label is not None:
+            self.label = label
+        return self
+
     def _format(self, done: int | None) -> str:
         if done is not None and self.total:
             pct = int(done * 100 / self.total)
@@ -65,12 +78,13 @@ class ProgressReporter:
             return f'{self.label}: {done}'
         return self.label
 
-    def update(self, done: int | None = None, *, summary: str | None = None,
+    def update(self, done: int | None = None, *, message: str | None = None,
                force: bool = False) -> bool:
-        """Maybe emit a progress summary; return :attr:`alive`.
+        """Maybe emit progress (message + current/total); return :attr:`alive`.
 
         Throttled to one emit per *min_interval* seconds unless *force* is set
-        (the first call always emits).  Pass *summary* to override the
+        (the first call always emits).  *done* feeds both the formatted message
+        and the numeric ``progress_current``; pass *message* to override the
         auto-formatted ``"<label>: <done> of <total> (<pct>%)"`` text.
         """
         if not self.alive:
@@ -79,8 +93,10 @@ class ProgressReporter:
         if not force and self._last_emit and (now - self._last_emit) < self.min_interval:
             return True
         self._last_emit = now
-        text = summary if summary is not None else self._format(done)
-        if self.worker.report_progress(self.analysis_id, text) is False:
+        text = message if message is not None else self._format(done)
+        if self.worker.report_progress(
+                self.analysis_id, message=text,
+                current=done, total=self.total) is False:
             self.alive = False
         return self.alive
 

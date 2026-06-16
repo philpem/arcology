@@ -24,12 +24,7 @@ from pathlib import Path
 from arcology_shared.enums import AnalysisType
 from arcology_shared.hints import HintKey
 from ..config import log
-from ._common import ProgressReporter, analysis_handler
-
-# Emit a progress summary at most this often while deleting, so a large
-# cleanup (hundreds of keys/prefixes) shows live progress instead of an
-# opaque "In progress…" spinner.
-_PROGRESS_INTERVAL_SECONDS = 5.0
+from ._common import analysis_handler
 
 
 @analysis_handler("storage cleanup", AnalysisType.CLEANUP)
@@ -52,11 +47,9 @@ def process_cleanup(self, analysis: dict, artefact: dict, work_dir: Path):
     errors = 0
     processed = 0
     total = len(keys) + len(prefixes)
-    reporter = ProgressReporter(
-        self, analysis_id, total=total,
-        min_interval=_PROGRESS_INTERVAL_SECONDS,
-        label='Deleting storage objects',
-    )
+    # Framework-injected reporter; a large cleanup (hundreds of keys/prefixes)
+    # then shows live progress instead of an opaque "In progress…" spinner.
+    reporter = self.progress.start(total=total, label='Deleting storage objects')
 
     for key in keys:
         try:

@@ -27,6 +27,7 @@ except ImportError:
     sentry_sdk = None
 
 from . import analyses as _analyses
+from .analyses._common import ProgressReporter
 from .api import ArcologyAPI
 from .cache_keys import artefact_cache_prefix, partition_cache_relpath
 from .compression import decompress_if_needed
@@ -78,6 +79,12 @@ def _inner_format_extension(filename: str) -> str:
 
 class AnalysisWorker:
     """Main worker class that processes analysis jobs."""
+
+    # Per-job progress reporter, (re)created in process_analysis() before each
+    # handler runs.  Declared at class level so it always resolves (handlers may
+    # call self.progress.update(...)) and so test doubles built with
+    # MagicMock(spec=AnalysisWorker) expose it.
+    progress: "ProgressReporter | None" = None
 
     def __init__(self, api_url: str, upload_dir: Path, output_dir: Path,
                  api_key: str = '', storage=None,
@@ -289,13 +296,20 @@ class AnalysisWorker:
                     pass  # not cached yet; fall through to get_input_path
         return self.get_input_path(artefact, work_dir)
 
-    def report_progress(self, analysis_id: int, summary: str) -> bool:
-        """Report interim progress for a still-running analysis.
+    def report_progress(self, analysis_id: int, *, message: str | None = None,
+                        current: int | None = None, total: int | None = None,
+                        heartbeat: bool = False) -> bool:
+        """Report interim progress (or a bare heartbeat) for a running analysis.
 
-        Writes *summary* to the analysis without changing its status, so a
-        long-running job (e.g. a large CLEANUP, or any handler that loops over
-        many items) shows live progress in the queue/detail UI instead of an
-        opaque spinner.
+        Writes the structured progress fields (and bumps the server-side
+        progress_updated_at) without changing status, so a long-running job
+        (a large CLEANUP, a multi-thousand-file extraction, ...) shows live
+        progress in the queue/detail UI instead of an opaque spinner — and is
+        not mistaken for a stuck job by heartbeat-based stale detection.
+
+        Pass ``heartbeat=True`` with no fields to refresh the liveness
+        timestamp only (used by the cancellation-monitor thread to cover
+        black-box phases where the handler reports nothing).
 
         Best-effort: a failed progress update must never fail an otherwise
         healthy job, so transient API errors are swallowed and logged at debug
@@ -303,8 +317,19 @@ class AnalysisWorker:
         deleted server-side, e.g. by a re-analyse race) so callers can stop
         early; True otherwise.
         """
+        payload: dict = {}
+        if message is not None:
+            payload['progress_message'] = message
+        if current is not None:
+            payload['progress_current'] = current
+        if total is not None:
+            payload['progress_total'] = total
+        if heartbeat:
+            payload['heartbeat'] = True
+        if not payload:
+            return True
         try:
-            return self.api.update_analysis(analysis_id, summary=summary)
+            return self.api.update_analysis(analysis_id, **payload)
         except Exception as e:
             log.debug(f"Progress update for analysis {analysis_id} failed (ignored): {e}")
             return True
@@ -578,12 +603,18 @@ class AnalysisWorker:
     # Job Processing
     # =========================================================================
 
-    def _monitor_cancellation(self, analysis_uuid: str, stop_event: threading.Event) -> None:
+    def _monitor_cancellation(self, analysis_uuid: str, analysis_id: int,
+                              stop_event: threading.Event) -> None:
         """Daemon thread: poll API every CANCEL_CHECK_INTERVAL seconds.
 
         Sets the module-level cancel event when the job is gone (404) or is no
         longer in 'running' state, so that run_tool() / stream_to_file() can
         abort the current subprocess promptly.
+
+        While the job is still running, also sends a best-effort heartbeat so
+        that a long job which reports no item-level progress (e.g. a black-box
+        extraction or ffmpeg pass) is not mistaken for a stuck job by
+        heartbeat-based stale detection.
         """
         while not stop_event.wait(timeout=CANCEL_CHECK_INTERVAL):
             try:
@@ -618,6 +649,8 @@ class AnalysisWorker:
                     )
                     set_cancel_event()
                     return
+                # Still running — refresh the liveness timestamp.
+                self.report_progress(analysis_id, heartbeat=True)
             # Any other HTTP status: don't cancel.
 
     def process_analysis(self, analysis: dict):
@@ -633,13 +666,21 @@ class AnalysisWorker:
 
         # Status is already RUNNING from the atomic claim in claim_and_process().
 
+        # Framework-injected progress reporter for this job.  Handlers report
+        # item-level progress via self.progress.start(total=...).update(done);
+        # those that don't still get the auto-heartbeat from the monitor thread.
+        # Safe as instance state because each worker process runs exactly one
+        # job at a time (horizontal scaling is multiple worker containers).
+        self.progress = ProgressReporter(self, analysis_id)
+
         # Clear any stale cancel signal from a previous job, then start the
-        # monitoring thread that will re-set it if this job is cancelled remotely.
+        # monitoring thread that will re-set it if this job is cancelled remotely
+        # (and heartbeats the job so a long run isn't reset as stale).
         clear_cancel_event()
         stop_monitor = threading.Event()
         monitor_thread = threading.Thread(
             target=self._monitor_cancellation,
-            args=(analysis_uuid, stop_monitor),
+            args=(analysis_uuid, analysis_id, stop_monitor),
             daemon=True,
             name=f'cancel-monitor-{analysis_id}',
         )
@@ -690,6 +731,7 @@ class AnalysisWorker:
         finally:
             stop_monitor.set()
             monitor_thread.join(timeout=5.0)
+            self.progress = None
 
     def claim_and_process(self) -> int:
         """

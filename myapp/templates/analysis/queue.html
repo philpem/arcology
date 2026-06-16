@@ -16,15 +16,23 @@
     {% if running %}
     <div class="list-group list-group-flush">
         {% for a in running %}
-        {% set is_stale = a.started_at and a.started_at < stale_cutoff %}
-        <div class="list-group-item d-flex justify-content-between{% if is_stale %} list-group-item-warning{% endif %}">
-            <span>
-                <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=a.uuid) }}">#{{ a.id }}</a> {{ a.analysis_type|format_analysis_type }} - {% if a.artefact %}{{ a.artefact.label }}{% else %}<span class="text-muted fst-italic">system job</span>{% endif %}
-                {% if a.summary %}<br><small class="text-muted"><i class="bi bi-hourglass-split"></i> {{ a.summary }}</small>{% endif %}
-            </span>
-            <span class="text-muted">
-                Started {{ a.started_at.strftime('%Y-%m-%d %H:%M:%S') if a.started_at else 'unknown' }}{% if is_stale %} <span class="badge bg-warning text-dark">stale</span>{% endif %}
-            </span>
+        {% set is_stale = a.last_activity_at and a.last_activity_at < stale_cutoff %}
+        {% set pct = ((a.progress_current or 0) * 100 // a.progress_total) if a.progress_total else 0 %}
+        <div id="run-{{ a.id }}" data-analysis-id="{{ a.id }}" class="list-group-item{% if is_stale %} list-group-item-warning{% endif %}">
+            <div class="d-flex justify-content-between">
+                <span>
+                    <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=a.uuid) }}">#{{ a.id }}</a> {{ a.analysis_type|format_analysis_type }} - {% if a.artefact %}{{ a.artefact.label }}{% else %}<span class="text-muted fst-italic">system job</span>{% endif %}
+                </span>
+                <span class="text-muted">
+                    Started {{ a.started_at.strftime('%Y-%m-%d %H:%M:%S') if a.started_at else 'unknown' }}{% if is_stale %} <span class="badge bg-warning text-dark">stale</span>{% endif %}
+                </span>
+            </div>
+            <div class="d-flex align-items-center mt-1">
+                <small class="text-muted text-truncate js-progress-msg" style="max-width: 55%;" title="{{ a.progress_message or '' }}">{% if a.progress_message %}<i class="bi bi-hourglass-split"></i> {{ a.progress_message|truncate(60, true, '…') }}{% endif %}</small>
+                <div class="progress ms-2 flex-grow-1 js-progress-wrap" style="height: 0.4rem;{% if not a.progress_total %} display: none;{% endif %}">
+                    <div class="progress-bar js-progress-bar" role="progressbar" style="width: {{ pct }}%;"></div>
+                </div>
+            </div>
         </div>
         {% endfor %}
         {% if running_total > queue_limit %}
@@ -79,11 +87,53 @@
 {% block scripts %}
 {{ super() }}
 {% if pending_total or running_total %}
-{% from '_polling.html' import analysis_status_poller %}
-{{ analysis_status_poller(
-    url_for('myapp_blueprints_analysis.queue_status_json'),
-    known_pending=pending_total,
-    known_running=running_total
-) }}
+<script>
+(function () {
+    // Live queue poller: updates each running row's progress bar/message in
+    // place, and reloads the page when the set of pending/running jobs changes
+    // (a job appears or finishes) so rows are added/removed.
+    var POLL_INTERVAL = 8000;
+    var statusUrl = {{ url_for('myapp_blueprints_analysis.queue_status_json') | tojson }};
+    var knownPending = {{ pending_total }};
+    var knownRunning = {{ running_total }};
+    var reloadScheduled = false;
+
+    function updateRow(job) {
+        var row = document.getElementById('run-' + job.id);
+        if (!row) return;
+        var msgEl = row.querySelector('.js-progress-msg');
+        var wrap = row.querySelector('.js-progress-wrap');
+        var bar = row.querySelector('.js-progress-bar');
+        if (msgEl && job.progress_message) {
+            var text = job.progress_message;
+            if (text.length > 60) text = text.slice(0, 59) + '…';
+            msgEl.textContent = text;
+            msgEl.setAttribute('title', job.progress_message);
+        }
+        if (wrap && bar && job.progress_total) {
+            var pct = Math.floor((job.progress_current || 0) * 100 / job.progress_total);
+            wrap.style.display = '';
+            bar.style.width = pct + '%';
+        }
+    }
+
+    function poll() {
+        fetch(statusUrl, {cache: 'no-store'}).then(function (r) {
+            if (!r.ok) return;
+            return r.json();
+        }).then(function (d) {
+            if (!d || reloadScheduled) return;
+            if (d.pending !== knownPending || d.running !== knownRunning) {
+                reloadScheduled = true;
+                setTimeout(function () { window.location.reload(); }, 500);
+                return;
+            }
+            (d.jobs || []).forEach(updateRow);
+        }).catch(function () {});
+    }
+
+    setInterval(poll, POLL_INTERVAL);
+})();
+</script>
 {% endif %}
 {% endblock %}

@@ -746,7 +746,17 @@ class Analysis(db.Model):
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     details: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON for structured results
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    
+
+    # Live progress for long-running jobs (set by the worker while RUNNING,
+    # cleared on completion).  Kept separate from `summary` (the final result)
+    # so the UI can show a real progress bar, and so progress_updated_at can
+    # drive heartbeat-based stale-job detection: a job still reporting progress
+    # (or heartbeating) is not stuck, even past STALE_JOB_TIMEOUT_SECONDS.
+    progress_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    progress_current: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    progress_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    progress_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     # Queue priority: higher value = picked up sooner (see ANALYSIS_PRIORITY_* constants).
     # No single-column index: ix_analyses_status_priority_created covers queue scans.
     priority: Mapped[int] = mapped_column(Integer, default=ANALYSIS_PRIORITY_NORMAL, server_default=sa_text('0'))
@@ -765,6 +775,15 @@ class Analysis(db.Model):
         foreign_keys="Artefact.derived_from_analysis_id",
         viewonly=True
     )
+
+    @property
+    def last_activity_at(self):
+        """Most recent sign of life: last progress/heartbeat, else start time.
+
+        Templates use this for the "stale" indicator; SQL paths use the
+        equivalent ``func.coalesce(progress_updated_at, started_at)``.
+        """
+        return self.progress_updated_at or self.started_at
 
 
 # =============================================================================

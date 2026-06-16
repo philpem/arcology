@@ -96,6 +96,10 @@ def _reset_for_retry(analysis):
     analysis.success = None
     analysis.summary = None
     analysis.details = None
+    analysis.progress_message = None
+    analysis.progress_current = None
+    analysis.progress_total = None
+    analysis.progress_updated_at = None
 
 
 def _status_sort_order():
@@ -262,7 +266,9 @@ def status_json(uuid):
     analysis = _get_analysis_or_404(uuid)
     return jsonify(
         status=analysis.status.value,
-        summary=analysis.summary,
+        progress_message=analysis.progress_message,
+        progress_current=analysis.progress_current,
+        progress_total=analysis.progress_total,
     )
 
 
@@ -296,7 +302,7 @@ def reset_stale():
     cutoff = _stale_cutoff()
     stale = Analysis.query.filter(
         Analysis.status == AnalysisStatus.RUNNING,
-        Analysis.started_at < cutoff,
+        func.coalesce(Analysis.progress_updated_at, Analysis.started_at) < cutoff,
     ).all()
     for analysis in stale:
         _reset_for_retry(analysis)
@@ -361,10 +367,28 @@ def queue():
 @blueprint.route('/queue/status.json')
 @login_required
 def queue_status_json():
-    """Return pending/running counts for the queue page JS poller."""
+    """Return queue counts plus per-running-job progress for the queue poller.
+
+    Counts stay global (operational load); the per-job ``jobs`` list is
+    visibility-filtered via _visible_analyses_query() and capped at
+    QUEUE_DISPLAY_LIMIT so the poller can update each running row's progress
+    bar in place without a full page reload.
+    """
     pending = Analysis.query.filter(Analysis.status == AnalysisStatus.PENDING).count()
     running = Analysis.query.filter(Analysis.status == AnalysisStatus.RUNNING).count()
-    return jsonify(pending=pending, running=running)
+    jobs = _visible_analyses_query().filter(
+        Analysis.status == AnalysisStatus.RUNNING
+    ).order_by(Analysis.started_at).limit(QUEUE_DISPLAY_LIMIT).all()
+    return jsonify(
+        pending=pending,
+        running=running,
+        jobs=[{
+            'id': a.id,
+            'progress_message': a.progress_message,
+            'progress_current': a.progress_current,
+            'progress_total': a.progress_total,
+        } for a in jobs],
+    )
 
 
 # vim: ts=4 sw=4 et

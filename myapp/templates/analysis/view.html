@@ -102,9 +102,13 @@
                         {% if analysis.output_url %}<dt>Output</dt><dd><a href="{{ analysis.output_url }}" target="_blank">{{ analysis.output_url }}</a></dd>{% endif %}
                     </dl>
                 {% elif analysis.status.value == 'running' %}
-                    <div class="d-flex align-items-center">
+                    <div class="d-flex align-items-center mb-2">
                         <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">In progress…</span></div>
-                        <span id="analysis-progress">{{ analysis.summary or 'In progress...' }}</span>
+                        <span id="analysis-progress-msg">{{ analysis.progress_message or 'In progress...' }}</span>
+                    </div>
+                    {% set pct = ((analysis.progress_current or 0) * 100 // analysis.progress_total) if analysis.progress_total else 0 %}
+                    <div id="analysis-progress-bar-wrap" class="progress" style="height: 0.5rem;{% if not analysis.progress_total %} display: none;{% endif %}">
+                        <div id="analysis-progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: {{ pct }}%;" aria-valuenow="{{ pct }}" aria-valuemin="0" aria-valuemax="100"></div>
                     </div>
                 {% else %}
                     <p class="text-muted mb-0">Waiting in queue...</p>
@@ -290,7 +294,9 @@
 (function () {
     var POLL_INTERVAL = 5000;
     var statusUrl = {{ url_for('myapp_blueprints_analysis.status_json', uuid=analysis.uuid) | tojson }};
-    var progressEl = document.getElementById('analysis-progress');
+    var msgEl = document.getElementById('analysis-progress-msg');
+    var barWrap = document.getElementById('analysis-progress-bar-wrap');
+    var barEl = document.getElementById('analysis-progress-bar');
     var reloadScheduled = false;
 
     function poll() {
@@ -305,8 +311,14 @@
                 setTimeout(function () { window.location.reload(); }, 500);
                 return;
             }
-            if (progressEl && d.summary) {
-                progressEl.textContent = d.summary;
+            if (msgEl && d.progress_message) {
+                msgEl.textContent = d.progress_message;
+            }
+            if (barWrap && barEl && d.progress_total) {
+                var pct = Math.floor((d.progress_current || 0) * 100 / d.progress_total);
+                barWrap.style.display = '';
+                barEl.style.width = pct + '%';
+                barEl.setAttribute('aria-valuenow', pct);
             }
         }).catch(function () {});
     }

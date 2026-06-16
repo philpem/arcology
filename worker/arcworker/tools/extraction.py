@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import tempfile
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from ..utils.text import normalize_extracted_filenames
@@ -260,6 +261,7 @@ def enumerate_extracted_files(
     extraction_depth: int | None = None,
     filetype_map: dict[str, str] | None = None,
     inf_metadata: dict[str, dict] | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[dict]:
     """
     Enumerate files in an extraction directory and return structured file list.
@@ -284,6 +286,10 @@ def enumerate_extracted_files(
             dicts (from :func:`process_inf_sidecars`).  Keys are
             ``load_address``, ``exec_address``, and optionally
             ``risc_os_filetype`` and ``attributes``.
+        progress_callback: Optional ``callback(done, total)`` invoked after each
+            file is hashed.  Hashing every extracted file is the dominant cost
+            of this function, so this lets long extractions report live
+            progress.  *total* comes from a cheap pre-count pass.
 
     Returns:
         List of file dicts with path, size, hashes, and optional
@@ -295,6 +301,14 @@ def enumerate_extracted_files(
         acorn = _has_acorn_filetypes(output_dir)
 
     files = []
+
+    # Cheap pre-count for progress totals (a tree walk with no hashing — small
+    # next to hashing every file).  Skipped entirely when no callback is given.
+    total_files = (
+        sum(1 for p in output_dir.rglob('*') if p.is_file())
+        if progress_callback is not None else 0
+    )
+    done_files = 0
 
     for file_path in output_dir.rglob('*'):
         if not file_path.is_file():
@@ -382,6 +396,10 @@ def enumerate_extracted_files(
             _log.warning(f"Could not hash extracted file {file_path}: {e}")
 
         files.append(file_entry)
+
+        if progress_callback is not None:
+            done_files += 1
+            progress_callback(done_files, total_files)
 
     # Detect empty directories (no files underneath) and record them explicitly.
     # Without this, empty directories are invisible in the file listing because

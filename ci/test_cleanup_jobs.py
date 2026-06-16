@@ -182,11 +182,15 @@ class TestWorkerProcessCleanup(unittest.TestCase):
     """Worker-side handler, exercised with a mocked AnalysisWorker."""
 
     def _run(self, hints):
+        from worker.arcworker.analyses._common import ProgressReporter
         from worker.arcworker.analyses.cleanup import process_cleanup
         from worker.arcworker.analysis import AnalysisWorker
 
         worker = MagicMock(spec=AnalysisWorker)
         worker.storage = MagicMock()
+        # The framework injects self.progress per job; give the handler a real
+        # reporter so its update() calls flow through to worker.report_progress.
+        worker.progress = ProgressReporter(worker, 42)
         analysis = {'id': 42, 'uuid': 'job-uuid', 'hints': json.dumps(hints)}
         process_cleanup(worker, analysis, {}, Path('/tmp'))
         return worker
@@ -240,10 +244,11 @@ class TestWorkerProcessCleanup(unittest.TestCase):
             'output_dir_prefixes': ['outputs/item/art/'],
         })
         worker.report_progress.assert_called()
-        # The summary text counts against the combined key+prefix total.
-        _id, text = worker.report_progress.call_args[0]
-        self.assertEqual(_id, 42)
-        self.assertIn('of 3', text)
+        # The message counts against the combined key+prefix total of 3.
+        args, kwargs = worker.report_progress.call_args
+        self.assertEqual(args[0], 42)
+        self.assertEqual(kwargs['total'], 3)
+        self.assertIn('of 3', kwargs['message'])
 
 
 class TestProgressReporter(unittest.TestCase):
@@ -260,7 +265,18 @@ class TestProgressReporter(unittest.TestCase):
         worker = self._worker()
         reporter = ProgressReporter(worker, 1, total=10, label='Deleting')
         self.assertTrue(reporter.update(1))
-        worker.report_progress.assert_called_once_with(1, 'Deleting: 1 of 10 (10%)')
+        worker.report_progress.assert_called_once_with(
+            1, message='Deleting: 1 of 10 (10%)', current=1, total=10)
+
+    def test_start_sets_total_and_label(self):
+        from worker.arcworker.analyses._common import ProgressReporter
+
+        worker = self._worker()
+        reporter = ProgressReporter(worker, 1)
+        self.assertIs(reporter.start(total=4, label='Hashing'), reporter)
+        reporter.update(1)
+        worker.report_progress.assert_called_once_with(
+            1, message='Hashing: 1 of 4 (25%)', current=1, total=4)
 
     def test_throttles_within_interval(self):
         from worker.arcworker.analyses import _common
@@ -289,12 +305,13 @@ class TestProgressReporter(unittest.TestCase):
             reporter.update(2, force=True)
             self.assertEqual(worker.report_progress.call_count, 2)
 
-    def test_summary_override(self):
+    def test_message_override(self):
         from worker.arcworker.analyses._common import ProgressReporter
 
         worker = self._worker()
-        ProgressReporter(worker, 7).update(summary='Custom text')
-        worker.report_progress.assert_called_once_with(7, 'Custom text')
+        ProgressReporter(worker, 7).update(message='Custom text')
+        worker.report_progress.assert_called_once_with(
+            7, message='Custom text', current=None, total=None)
 
     def test_gone_signal_stops_further_updates(self):
         from worker.arcworker.analyses._common import ProgressReporter

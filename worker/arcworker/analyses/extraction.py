@@ -757,6 +757,8 @@ def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path
         acorn=acorn_mode,
         filetype_map=iso_filetype_map,
         inf_metadata=inf_metadata,
+        progress_callback=lambda done, total: self.progress.start(
+            total=total, label='Hashing extracted files').update(done),
     )
 
     # Write ISO metadata sidecar AFTER enumerate_extracted_files so it is
@@ -839,6 +841,8 @@ def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path
         label=disc_name,
         container_format=container_format,
         partition_index=partition_index,
+        progress_callback=lambda posted, total: self.progress.start(
+            total=total, label='Registering files').update(posted),
     )
 
     # Upload extraction tree to storage (no-op in local mode)
@@ -908,7 +912,9 @@ def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path)
     depth_limit_exceeded = 0
     compressor_count = 0
 
-    for file_data in files:
+    total_files = len(files)
+    for scanned, file_data in enumerate(files, start=1):
+        self.progress.start(total=total_files, label='Scanning for archives').update(scanned)
         filetype = file_data.get('risc_os_filetype')
         filename = file_data.get('filename', '')
 
@@ -1190,11 +1196,17 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
         parent_file_id=file_id,
         extraction_depth=extraction_depth,
         inf_metadata=result.get('inf_metadata'),
+        progress_callback=lambda done, total: self.progress.start(
+            total=total, label='Hashing extracted files').update(done),
     )
 
     # Register extracted files in the same partition with parent_file_id
     if files:
-        self.api.post_file_records(partition_uuid, files)
+        self.api.post_file_records(
+            partition_uuid, files,
+            progress_callback=lambda posted, total: self.progress.start(
+                total=total, label='Registering files').update(posted),
+        )
 
     # If the archive carried a comment (e.g. ZIP archive-wide comment),
     # attach it to the outer ExtractedFile so the UI can show it next to
