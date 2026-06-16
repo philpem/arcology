@@ -156,7 +156,7 @@ def new_platform():
 @login_required
 @require_permission('read_write')
 def edit_platform(id):
-    platform = Platform.query.get_or_404(id)
+    platform = db.get_or_404(Platform, id)
     form = PlatformForm(obj=platform)
 
     exclude_ids = {platform.id} | _collect_descendant_ids(platform)
@@ -175,7 +175,7 @@ def edit_platform(id):
 @login_required
 @require_permission('read_write')
 def delete_platform(id):
-    platform = Platform.query.get_or_404(id)
+    platform = db.get_or_404(Platform, id)
     return _delete_with_guards(platform, 'platforms', 'Platform', [
         (bool(platform.items), 'Cannot delete platform with associated items.'),
         (bool(platform.children), 'Cannot delete platform with child platforms.'),
@@ -224,7 +224,7 @@ def new_category():
 @login_required
 @require_permission('read_write')
 def edit_category(id):
-    category = Category.query.get_or_404(id)
+    category = db.get_or_404(Category, id)
     form = CategoryForm(obj=category)
     
     exclude_ids = {category.id} | _collect_descendant_ids(category)
@@ -243,7 +243,7 @@ def edit_category(id):
 @login_required
 @require_permission('read_write')
 def delete_category(id):
-    category = Category.query.get_or_404(id)
+    category = db.get_or_404(Category, id)
     return _delete_with_guards(category, 'categories', 'Category', [
         (bool(category.items), 'Cannot delete category with associated items.'),
         (bool(category.children), 'Cannot delete category with child categories.'),
@@ -284,7 +284,7 @@ def new_tag():
 @login_required
 @require_permission('read_write')
 def edit_tag(id):
-    tag = Tag.query.get_or_404(id)
+    tag = db.get_or_404(Tag, id)
     form = TagForm(obj=tag)
 
     if form.validate_on_submit():
@@ -300,7 +300,7 @@ def edit_tag(id):
 @login_required
 @require_permission('read_write')
 def delete_tag(id):
-    tag = Tag.query.get_or_404(id)
+    tag = db.get_or_404(Tag, id)
     return _delete_with_guards(tag, 'tags', 'Tag', [])
 
 
@@ -336,7 +336,7 @@ def new_external_system():
 @login_required
 @require_permission('read_write')
 def edit_external_system(id):
-    system = ExternalSystem.query.get_or_404(id)
+    system = db.get_or_404(ExternalSystem, id)
     form = ExternalSystemForm(obj=system)
     
     if form.validate_on_submit():
@@ -352,7 +352,7 @@ def edit_external_system(id):
 @login_required
 @require_permission('read_write')
 def delete_external_system(id):
-    system = ExternalSystem.query.get_or_404(id)
+    system = db.get_or_404(ExternalSystem, id)
     return _delete_with_guards(system, 'external_systems', 'External system', [
         (bool(system.references), 'Cannot delete external system with associated references.'),
     ])

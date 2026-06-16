@@ -35,6 +35,9 @@ _WORKER_KEY = os.environ['WORKER_API_KEY']
 _AUTH = {'X-API-Key': _WORKER_KEY}
 
 
+from myapp.extensions import db  # noqa: E402  (Query.get -> Session.get migration)
+
+
 def _make_fixtures(db):
     """Create Platform -> Item -> Artefact fixture. Returns (item, artefact)."""
     from arcology_shared.enums import ArtefactType
@@ -328,7 +331,7 @@ class TestResolveExtractedFilePathConfinement(unittest.TestCase):
         from myapp.database import ExtractedFile
         from myapp.services.artefact_storage import resolve_extracted_file_path
         with self.app.app_context():
-            ef = ExtractedFile.query.get(self.ef_id)
+            ef = db.session.get(ExtractedFile, self.ef_id)
             result = resolve_extracted_file_path(ef)
         self.assertIsNone(result, f"Expected None but got {result!r}")
 
@@ -403,7 +406,7 @@ class TestDeleteItemFilesConfinement(unittest.TestCase):
         from myapp.database import Item
         from myapp.services.artefact_lifecycle import delete_item_files
         with self.app.app_context():
-            item = Item.query.get(self.item_id)
+            item = db.session.get(Item, self.item_id)
             delete_item_files(item)
         self.assertTrue(
             os.path.exists(self.outside_file),

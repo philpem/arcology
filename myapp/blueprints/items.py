@@ -598,7 +598,7 @@ def add_reference(uuid, item):
 @require_visible_item('item_uuid', contribute=True)
 def delete_reference(item_uuid, ref_id, item):
     """Delete an external reference."""
-    ref = ExternalReference.query.get_or_404(ref_id)
+    ref = db.get_or_404(ExternalReference, ref_id)
 
     if ref.item_id != item.id:
         flash('Invalid reference.', 'error')

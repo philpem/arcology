@@ -33,6 +33,9 @@ _WORKER_KEY = os.environ['WORKER_API_KEY']
 _AUTH = {'X-API-Key': _WORKER_KEY}
 
 
+from myapp.extensions import db  # noqa: E402  (Query.get -> Session.get migration)
+
+
 def _make_fixtures(db, app):
     """Create a minimal set of DB fixtures: Platform -> Item -> Artefact.
 
@@ -136,7 +139,7 @@ class TestRequestAnalysisIdempotency(unittest.TestCase):
         # Transition to RUNNING
         with self.app.app_context():
             from myapp.database import Analysis, AnalysisStatus
-            a = Analysis.query.get(analysis_id)
+            a = db.session.get(Analysis, analysis_id)
             a.status = AnalysisStatus.RUNNING
             self.db.session.commit()
 
@@ -152,7 +155,7 @@ class TestRequestAnalysisIdempotency(unittest.TestCase):
 
         with self.app.app_context():
             from myapp.database import Analysis, AnalysisStatus
-            a = Analysis.query.get(first_id)
+            a = db.session.get(Analysis, first_id)
             a.status = AnalysisStatus.COMPLETED
             self.db.session.commit()
 
@@ -168,7 +171,7 @@ class TestRequestAnalysisIdempotency(unittest.TestCase):
 
         with self.app.app_context():
             from myapp.database import Analysis, AnalysisStatus
-            a = Analysis.query.get(first_id)
+            a = db.session.get(Analysis, first_id)
             a.status = AnalysisStatus.FAILED
             self.db.session.commit()
 
@@ -207,7 +210,7 @@ class TestProduceArtefactIdempotency(unittest.TestCase):
             from myapp.database import Analysis, AnalysisStatus, Artefact
 
             # Remove artefacts derived from previous test analyses
-            art = Artefact.query.get(self.artefact_id)
+            art = db.session.get(Artefact, self.artefact_id)
             for derived in list(art.derived_artefacts):
                 self.db.session.delete(derived)
             Analysis.query.filter_by(artefact_id=self.artefact_id).delete()
@@ -318,7 +321,7 @@ class TestUniqueConstraintEnforced(unittest.TestCase):
 
             def _make_derived(path):
                 return Artefact(
-                    item_id=Artefact.query.get(self.artefact_id).item_id,
+                    item_id=db.session.get(Artefact, self.artefact_id).item_id,
                     label='Dup Test',
                     artefact_type=ArtefactType.RAW_SECTOR,
                     original_filename='dup.img',
@@ -342,7 +345,7 @@ class TestUniqueConstraintEnforced(unittest.TestCase):
             from arcology_shared.enums import ArtefactType
             from myapp.database import Artefact
 
-            item_id = Artefact.query.get(self.artefact_id).item_id
+            item_id = db.session.get(Artefact, self.artefact_id).item_id
 
             def _make_original(label):
                 return Artefact(

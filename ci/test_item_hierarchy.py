@@ -29,6 +29,9 @@ os.environ.setdefault('SECRET_KEY', 'ci-hierarchy-test-secret')
 os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 
 
+from myapp.extensions import db  # noqa: E402  (Query.get -> Session.get migration)
+
+
 def _create_app_and_db():
     from myapp.app import create_app
     from myapp.extensions import db as _db
@@ -171,9 +174,9 @@ class TestItemHierarchyModel(unittest.TestCase):
             self.db.session.delete(root)
             self.db.session.commit()
 
-            self.assertIsNone(Item.query.get(root_id))
-            self.assertIsNone(Item.query.get(child_id))
-            self.assertIsNone(Item.query.get(grandchild_id))
+            self.assertIsNone(db.session.get(Item, root_id))
+            self.assertIsNone(db.session.get(Item, child_id))
+            self.assertIsNone(db.session.get(Item, grandchild_id))
 
 
 # =============================================================================

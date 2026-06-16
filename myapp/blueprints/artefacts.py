@@ -2311,7 +2311,7 @@ def add_to_hashdb(uuid):
         except (ValueError, TypeError):
             flash('Select a hash database.', 'danger')
             return redirect(url_for(f'{ROUTENAME}.view', **redirect_kwargs))
-        database = HashDatabase.query.get_or_404(database_id)
+        database = db.get_or_404(HashDatabase, database_id)
 
     # Create or fetch the product
     if product_id:
@@ -2343,7 +2343,7 @@ def add_to_hashdb(uuid):
     valid_artefact_ids = {artefact.id} | set(get_all_derived_artefact_ids(artefact))
 
     for file_id in file_ids:
-        ef = ExtractedFile.query.get(file_id)
+        ef = db.session.get(ExtractedFile, file_id)
         if ef is None or ef.partition.artefact_id not in valid_artefact_ids:
             continue
         if ef.is_directory:
@@ -2463,7 +2463,7 @@ def upload(item_id):
     form.platform_id.choices = [(0, '-- No hint --')] + [(p.id, p.name) for p in platforms]
 
     if form.validate_on_submit():
-        target_item = Item.query.get(form.item_id.data) or item
+        target_item = db.session.get(Item, form.item_id.data) or item
         if not can_view_item(target_item, current_user):
             abort(404)
         if target_item.private_effective and not can_contribute_to_item(target_item, current_user):
@@ -2496,7 +2496,7 @@ def upload(item_id):
         # Analysis hints from the form fields
         hints = {}
         if form.platform_id.data and form.platform_id.data != 0:
-            platform = Platform.query.get(form.platform_id.data)
+            platform = db.session.get(Platform, form.platform_id.data)
             if platform:
                 hints['platform'] = platform.name
         if form.dfi_clock_mhz.data:
@@ -3015,7 +3015,7 @@ def grant_bypass(item_id=None, artefact_id=None, root_id=None):
     if rtype not in grantable_bypass_rtypes(artefact):
         flash(f'This artefact has no {rtype.label} restriction to bypass.', 'danger')
         return _redirect_to_artefact_view(artefact)
-    target_user = User.query.get_or_404(user_id)
+    target_user = db.get_or_404(User, user_id)
     existing = UserArtefactBypass.query.filter_by(
         user_id=target_user.id, artefact_id=artefact.id, restriction_type=rtype
     ).first()
@@ -3178,7 +3178,7 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
     if form.validate_on_submit():
         hints = {}
         if form.platform_id.data and form.platform_id.data != 0:
-            platform = Platform.query.get(form.platform_id.data)
+            platform = db.session.get(Platform, form.platform_id.data)
             if platform:
                 hints['platform'] = platform.name
         if form.filesystem_hint.data:

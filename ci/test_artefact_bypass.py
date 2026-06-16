@@ -30,6 +30,9 @@ os.environ.setdefault('SECRET_KEY', 'ci-bypass-test-secret-key-not-for-productio
 os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 
 
+from myapp.extensions import db  # noqa: E402  (Query.get -> Session.get migration)
+
+
 def _enable_sqlite_fks(app, _db):
     """Enable SQLite foreign key enforcement so cascades match PostgreSQL."""
     from sqlalchemy import event
@@ -229,7 +232,7 @@ class TestBypassCascade(unittest.TestCase):
             self.db.session.commit()
             artefact_id = artefact.id
 
-            self.db.session.delete(Artefact.query.get(artefact_id))
+            self.db.session.delete(db.session.get(Artefact, artefact_id))
             self.db.session.commit()
 
             self.assertEqual(
@@ -253,7 +256,7 @@ class TestBypassCascade(unittest.TestCase):
             self.db.session.commit()
             user_id = user.id
 
-            self.db.session.delete(User.query.get(user_id))
+            self.db.session.delete(db.session.get(User, user_id))
             self.db.session.commit()
 
             self.assertEqual(

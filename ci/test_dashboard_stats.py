@@ -25,6 +25,9 @@ _WORKER_KEY = os.environ['WORKER_API_KEY']
 _AUTH = {'X-API-Key': _WORKER_KEY}
 
 
+from myapp.extensions import db  # noqa: E402  (Query.get -> Session.get migration)
+
+
 class TestDashboardStats(unittest.TestCase):
     """Verify dashboard statistics reflect analysis status transitions."""
 
@@ -130,7 +133,7 @@ class TestDashboardStats(unittest.TestCase):
             from myapp.database import Analysis, AnalysisStatus
 
             # Transition to RUNNING
-            a = Analysis.query.get(analysis_id)
+            a = db.session.get(Analysis, analysis_id)
             a.status = AnalysisStatus.RUNNING
             self.db.session.commit()
 
@@ -141,7 +144,7 @@ class TestDashboardStats(unittest.TestCase):
         # The specific analysis we just completed should not be counted as running
         with self.app.app_context():
             from myapp.database import Analysis, AnalysisStatus
-            a = Analysis.query.get(analysis_id)
+            a = db.session.get(Analysis, analysis_id)
             self.assertEqual(a.status, AnalysisStatus.COMPLETED)
 
     def test_claim_via_api_sets_running(self):

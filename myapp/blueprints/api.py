@@ -1665,7 +1665,7 @@ def add_files(uuid):
         path = f['path']
         parent_file_id = f.get('parent_file_id')
         if parent_file_id:
-            parent_file = ExtractedFile.query.get(parent_file_id)
+            parent_file = db.session.get(ExtractedFile, parent_file_id)
             if parent_file and parent_file.is_archive:
                 if not path.startswith(parent_file.path + '/'):
                     path = parent_file.path + '/' + path
@@ -2512,7 +2512,7 @@ def report_recognised_products(uuid):
         folder_path = entry.get('folder_path', '')
         if not product_id or not folder_path:
             continue
-        product = KnownProduct.query.get(product_id)
+        product = db.session.get(KnownProduct, product_id)
         if not product:
             continue
         rp = RecognisedProduct(
