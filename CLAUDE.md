@@ -122,7 +122,7 @@ Configuration: `~/.config/arcology/config.ini`, `ARCOLOGY_URL`/`ARCOLOGY_API_KEY
 ### Docker (full stack)
 
 ```bash
-mkdir -p data/uploads data/outputs data/db
+mkdir -p data/uploads data/outputs data/db data/chunks
 docker compose up --build -d       # Build and start
 docker compose up -d --scale worker=4  # Multiple workers
 docker compose logs -f web         # Web logs

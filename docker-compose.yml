@@ -3,7 +3,7 @@
 # Runs the web application and analysis worker(s) together.
 #
 # Usage:
-#   mkdir -p data/uploads data/outputs data/db data/jinja_cache  # Create directories first
+#   mkdir -p data/uploads data/outputs data/db data/jinja_cache data/chunks  # Create directories first
 #   docker-compose up -d                        # Start with 1 worker
 #   docker-compose up -d --scale worker=4       # Start with 4 workers
 #   docker-compose logs -f worker               # Watch worker logs
@@ -37,6 +37,12 @@ services:
     volumes:
       - ./data/uploads:/app/instance/uploads
       - ./data/outputs:/app/instance/outputs
+      # Stage in-progress chunked uploads on a persisted volume rather than the
+      # container's ephemeral writable layer. Without this, large uploads land
+      # on the container rootfs (potentially small, or even tmpfs/RAM) and a
+      # container recreate discards resumable sessions. This is the default
+      # CHUNK_DIR (instance/.chunks).
+      - ./data/chunks:/app/instance/.chunks
       - ./data/db:/var/lib/myapp
       # Persist compiled Jinja template bytecode across container recreation so
       # workers never recompile templates after a redeploy (#447). This is the

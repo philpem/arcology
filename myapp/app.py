@@ -66,6 +66,7 @@ def create_app(config_name=None):
                     'OIDC_SINGLE_LOGOUT', 'OIDC_SYNC_INTERVAL', 'OIDC_AUTO_REDIRECT',
                     'PUBLIC_MODE', 'PUBLIC_DOWNLOADS',
                     'JINJA_BYTECODE_CACHE', 'JINJA_BYTECODE_CACHE_DIR', 'JINJA_PREWARM',
+                    'CHUNK_DIR',
                     'SENTRY_DSN'):
         env_val = os.environ.get(env_key)
         if env_val:
