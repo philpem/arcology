@@ -2566,49 +2566,6 @@ def create_known_product(db_id):
     return jsonify({'id': product.id, 'title': product.title}), 201
 
 
-@blueprint.route('/hash-databases/<int:db_id>/products/<int:pid>/files', methods=['POST'])
-@require_auth('read_write')
-def add_known_files_bulk(db_id, pid):
-    database = _get_hash_database_or_404(db_id)
-    _get_known_product_or_404(db_id, pid)
-    data = _json_data(force=True)
-    if data is None:
-        data = {}
-    if not isinstance(data, (dict, list)):
-        return error_response('JSON object or array required')
-    files = data if isinstance(data, list) else data.get('files', [])
-    if not files:
-        return error_response('files array is required')
-    new_kf_list = []
-    for f in files:
-        if not f.get('filename'):
-            continue
-        kf = KnownFile(
-            database_id=db_id,
-            product_id=pid,
-            filename=f['filename'],
-            file_size=f.get('file_size'),
-            md5=f.get('md5', '').lower() or None,
-            sha1=f.get('sha1', '').lower() or None,
-            sha256=f.get('sha256', '').lower() or None,
-            crc32=f.get('crc32', '').lower() or None,
-            is_required=bool(f.get('is_required', True)),
-            relative_path=f.get('relative_path'),
-            description=f.get('description'),
-        )
-        db.session.add(kf)
-        new_kf_list.append(kf)
-    database.file_count = (database.file_count or 0) + len(new_kf_list)
-    db.session.commit()
-
-    # Link existing extracted files to the new KnownFiles (and queue product
-    # recognition when enabled) so an imported database matches the collection
-    # immediately, matching the web import route's behaviour.
-    link_new_known_files(database, new_kf_list)
-
-    return jsonify({'added': len(new_kf_list)}), 201
-
-
 def _build_known_file(db_id: int, product_id: int, f: dict) -> "KnownFile | None":
     """Construct a KnownFile from an import payload entry, or None if invalid."""
     if not f.get('filename'):
@@ -2626,6 +2583,37 @@ def _build_known_file(db_id: int, product_id: int, f: dict) -> "KnownFile | None
         relative_path=f.get('relative_path'),
         description=f.get('description'),
     )
+
+
+@blueprint.route('/hash-databases/<int:db_id>/products/<int:pid>/files', methods=['POST'])
+@require_auth('read_write')
+def add_known_files_bulk(db_id, pid):
+    database = _get_hash_database_or_404(db_id)
+    _get_known_product_or_404(db_id, pid)
+    data = _json_data(force=True)
+    if data is None:
+        data = {}
+    if not isinstance(data, (dict, list)):
+        return error_response('JSON object or array required')
+    files = data if isinstance(data, list) else data.get('files', [])
+    if not files:
+        return error_response('files array is required')
+    new_kf_list = []
+    for f in files:
+        kf = _build_known_file(db_id, pid, f)
+        if kf is None:
+            continue
+        db.session.add(kf)
+        new_kf_list.append(kf)
+    database.file_count = (database.file_count or 0) + len(new_kf_list)
+    db.session.commit()
+
+    # Link existing extracted files to the new KnownFiles (and queue product
+    # recognition when enabled) so an imported database matches the collection
+    # immediately, matching the web import route's behaviour.
+    link_new_known_files(database, new_kf_list)
+
+    return jsonify({'added': len(new_kf_list)}), 201
 
 
 @blueprint.route('/hash-databases/<int:db_id>/import', methods=['POST'])
