@@ -221,6 +221,19 @@ def index():
 # =============================================================================
 
 
+def _hash_filter(col, val, full_len: int):
+    """Match a hash column: exact equality at full length, prefix ILIKE otherwise.
+
+    A value shorter than *full_len* is treated as a prefix — e.g. md5:deadbeef
+    (8 chars) matches any row whose md5 starts with 'deadbeef'.  Values at the
+    full expected length use strict equality.
+    """
+    v = val.lower()
+    if len(v) < full_len:
+        return col.ilike(f'{v}%')
+    return col == v
+
+
 def _ilike(col, val):
     """Case-insensitive substring filter, with * as wildcard."""
     pattern = val.replace('*', '%')
@@ -374,11 +387,11 @@ def _search_files(tokens, page=1, per_page=PER_PAGE):
     """Search ExtractedFile by hash, filename, path, type, or extension."""
     per_key = {}
     for h in tokens.get('md5', []):
-        per_key.setdefault('md5', []).append(ExtractedFile.md5 == h.lower())
+        per_key.setdefault('md5', []).append(_hash_filter(ExtractedFile.md5, h, 32))
     for h in tokens.get('sha1', []):
-        per_key.setdefault('sha1', []).append(ExtractedFile.sha1 == h.lower())
+        per_key.setdefault('sha1', []).append(_hash_filter(ExtractedFile.sha1, h, 40))
     for h in tokens.get('sha256', []):
-        per_key.setdefault('sha256', []).append(ExtractedFile.sha256 == h.lower())
+        per_key.setdefault('sha256', []).append(_hash_filter(ExtractedFile.sha256, h, 64))
     for v in tokens.get('filename', []):
         per_key.setdefault('filename', []).append(_ilike_path(ExtractedFile.filename, v))
     for v in tokens.get('path', []):
@@ -392,9 +405,9 @@ def _search_files(tokens, page=1, per_page=PER_PAGE):
         return [], 0
 
     neg = _negated_clauses(tokens, {
-        'md5':      lambda v: ExtractedFile.md5 == v.lower(),
-        'sha1':     lambda v: ExtractedFile.sha1 == v.lower(),
-        'sha256':   lambda v: ExtractedFile.sha256 == v.lower(),
+        'md5':      lambda v: _hash_filter(ExtractedFile.md5, v, 32),
+        'sha1':     lambda v: _hash_filter(ExtractedFile.sha1, v, 40),
+        'sha256':   lambda v: _hash_filter(ExtractedFile.sha256, v, 64),
         'filename': lambda v: _ilike_path(ExtractedFile.filename, v),
         'path':     lambda v: _ilike(ExtractedFile.path, v),
         'type':     _resolve_riscos_type,
@@ -665,17 +678,17 @@ def _search_artefact_hashes(tokens, page=1, per_page=PER_PAGE):
     """Search artefact-level hashes (md5, sha256)."""
     art_filters = []
     for h in tokens.get('md5', []):
-        art_filters.append(Artefact.md5 == h.lower())
+        art_filters.append(_hash_filter(Artefact.md5, h, 32))
     for h in tokens.get('sha256', []):
-        art_filters.append(Artefact.sha256 == h.lower())
+        art_filters.append(_hash_filter(Artefact.sha256, h, 64))
 
     if not art_filters:
         return [], 0
 
     hash_filter = [or_(*art_filters)]
     hash_filter += _negated_clauses(tokens, {
-        'md5':    lambda v: Artefact.md5 == v.lower(),
-        'sha256': lambda v: Artefact.sha256 == v.lower(),
+        'md5':    lambda v: _hash_filter(Artefact.md5, v, 32),
+        'sha256': lambda v: _hash_filter(Artefact.sha256, v, 64),
     })
 
     base_q = (
@@ -827,17 +840,24 @@ def _check_query_warnings(tokens: dict) -> list:
                     f"<code>{escape(v)}</code> will never match anything."
                 ))
 
-    # Hash value format / length validation
+    # Hash value format / length validation.
+    # Shorter-than-full values are valid prefix matches (e.g. md5:deadbeef).
+    # Warn only when the value is longer than the full hash or contains non-hex chars.
     _hash_lengths = {'md5': 32, 'sha1': 40, 'sha256': 64}
     _hex_re = re.compile(r'^[0-9a-f]+$', re.IGNORECASE)
     for hkey, expected in _hash_lengths.items():
         for v in tokens.get(hkey, []) + negated.get(hkey, []):
             if '*' in v or '%' in v:
                 continue  # already warned above
-            if not _hex_re.match(v) or len(v) != expected:
+            if not _hex_re.match(v):
                 warnings.append(Markup(
                     f"<code>{escape(hkey)}:{escape(v)}</code>: "
-                    f"expected a {expected}-character hex string."
+                    "hash values must be hexadecimal characters only."
+                ))
+            elif len(v) > expected:
+                warnings.append(Markup(
+                    f"<code>{escape(hkey)}:{escape(v)}</code>: "
+                    f"too long — {escape(hkey)} hashes are {expected} hex characters."
                 ))
 
     return warnings
