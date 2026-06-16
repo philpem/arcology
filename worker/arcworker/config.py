@@ -66,6 +66,14 @@ API_RETRIES = _int_env('API_RETRIES', '3')
 # Lower values detect cancellation sooner; higher values reduce API load.
 CANCEL_CHECK_INTERVAL = _int_env('CANCEL_CHECK_INTERVAL', '30')
 
+# How often (in seconds) the worker asks the server to re-queue stale RUNNING
+# jobs (those orphaned by a crash or a SIGKILL past the stop grace period).
+# The server only re-queues jobs older than STALE_JOB_TIMEOUT_SECONDS, so this
+# is cheap and safe to run on every live worker; it just bounds how long an
+# orphaned job waits past that timeout before being retried. Set to 0 to
+# disable the periodic check (recovery then only happens on worker startup).
+STALE_RESET_INTERVAL = _int_env('STALE_RESET_INTERVAL', '300')
+
 # Acorn Replay / ARMovie transcoding (REPLAY_TRANSCODE analysis).
 # Directory containing RISC OS Replay decompressor modules (Decomp*/Decompress,ffd),
 # passed to scotch's replay-transcode as --modules-dir.  Compressed Replay codecs
