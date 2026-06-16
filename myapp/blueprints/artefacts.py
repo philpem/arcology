@@ -1262,9 +1262,17 @@ def _render_viewer(artefact):
     prefs_dirty = prefs_dirty or thumb_dirty
 
     module_detail = _viewer_module_detail(file_filter, all_artefact_ids)
-    replay_detail = _viewer_replay_detail(file_filter, all_artefact_ids)
+    # Replay player/poster are renderings of the same content as the MP4/poster
+    # outputs, so suppress them when the artefact's outputs are restricted —
+    # matching how image/Draw outputs are hidden (the bytes are independently
+    # gated by get_output_file, but we must not show a broken player either).
+    _outputs_restricted = viewer_status == 'restricted'
+    replay_detail = None if _outputs_restricted else _viewer_replay_detail(file_filter, all_artefact_ids)
     # Poster grid only when not already drilled into a single movie's player card.
-    replay_posters = [] if file_filter else _viewer_replay_posters(all_artefact_ids)
+    replay_posters = (
+        [] if (file_filter or _outputs_restricted)
+        else _viewer_replay_posters(all_artefact_ids)
+    )
 
     _viewer_stamp_stable_ids(artefact, output_groups)
 
