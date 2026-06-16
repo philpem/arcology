@@ -310,7 +310,14 @@ async function refreshItemChoices(selectId) {
     var CHUNK_SIZE = parseInt(form.dataset.chunkSize, 10) || (50 * 1024 * 1024);
     var INIT_URL = form.dataset.chunkInitUrl;
     var BASE_URL = INIT_URL.replace(/\/init$/, '');
-    var MAX_CHUNK_RETRIES = 4;
+    // Patient per-chunk retry so a brief server outage (e.g. a redeploy
+    // mid-upload) is ridden out rather than failing the whole upload.
+    var MAX_CHUNK_RETRIES = 7;
+    var MAX_RETRY_BACKOFF_MS = 15000;
+    // Async-finalise polling.
+    var FINALIZE_POLL_MIN_MS = 2000;
+    var FINALIZE_POLL_MAX_MS = 10000;
+    var FINALIZE_POLL_TIMEOUT_MS = 4 * 3600 * 1000;
 
     var alertEl = document.getElementById('chunk-upload-alert');
     var progressEl = document.getElementById('chunk-upload-progress');
@@ -346,6 +353,19 @@ async function refreshItemChoices(selectId) {
 
     function sessionKey(file) {
         return 'arco_chunk_' + file.name + '_' + file.size + '_' + file.lastModified;
+    }
+
+    // Resume bookkeeping lives in localStorage so an interrupted upload can be
+    // resumed even after a browser restart (the server keeps the chunks on its
+    // persisted volume).  Wrapped so private-mode storage failures are silent.
+    function resumeGet(key) {
+        try { return window.localStorage.getItem(key); } catch (e) { return null; }
+    }
+    function resumeSet(key, val) {
+        try { window.localStorage.setItem(key, val); } catch (e) { /* ignore */ }
+    }
+    function resumeDel(key) {
+        try { window.localStorage.removeItem(key); } catch (e) { /* ignore */ }
     }
 
     function delay(ms) {
@@ -431,7 +451,7 @@ async function refreshItemChoices(selectId) {
         // Retry network errors and 5xx with exponential backoff; a 4xx is a
         // permanent failure (e.g. session gone, bad index) so fail fast.
         for (var attempt = 0; attempt <= MAX_CHUNK_RETRIES; attempt++) {
-            if (attempt > 0) await delay(Math.pow(2, attempt) * 500);
+            if (attempt > 0) await delay(Math.min(Math.pow(2, attempt) * 500, MAX_RETRY_BACKOFF_MS));
             var resp;
             try {
                 resp = await fetch(url, {
@@ -454,9 +474,47 @@ async function refreshItemChoices(selectId) {
     }
 
     async function completeSession(uploadUuid) {
-        var resp = await postJSON(BASE_URL + '/' + uploadUuid + '/complete', {});
+        // Drive finalise asynchronously: /complete returns immediately and we
+        // poll for the result, so a large server-side assembly never trips the
+        // request timeout (and an assembly orphaned by a redeploy is re-driven
+        // on the next poll).
+        var resp = await postJSON(BASE_URL + '/' + uploadUuid + '/complete', { async: true });
+        if (resp.status === 201) {
+            return (await resp.json()).redirect;  // old server: synchronous
+        }
         if (!resp.ok) throw new Error(await errorMessage(resp));
-        return (await resp.json()).redirect;
+        return await pollFinalize(uploadUuid);
+    }
+
+    async function pollFinalize(uploadUuid) {
+        if (statusEl) statusEl.textContent = 'Assembling on server…';
+        var interval = FINALIZE_POLL_MIN_MS;
+        var deadline = Date.now() + FINALIZE_POLL_TIMEOUT_MS;
+        var url = BASE_URL + '/' + uploadUuid + '/complete/status';
+        while (Date.now() < deadline) {
+            var resp;
+            try {
+                resp = await fetch(url, { headers: { 'X-CSRFToken': csrfToken() } });
+            } catch (e) {
+                // Network error (server may be redeploying): keep waiting.
+                await delay(interval);
+                interval = Math.min(interval * 2, FINALIZE_POLL_MAX_MS);
+                continue;
+            }
+            if (resp.status === 404) {
+                throw new Error('Upload session expired before finishing');
+            }
+            if (resp.status === 200 || resp.status === 202) {
+                var body = await resp.json();
+                if (body.state === 'done') return body.redirect;
+                if (body.state === 'failed') {
+                    throw new Error(body.error || 'Server failed to finalise the upload');
+                }
+            }
+            await delay(interval);
+            interval = Math.min(interval * 2, FINALIZE_POLL_MAX_MS);
+        }
+        throw new Error('Timed out waiting for the server to finalise the upload');
     }
 
     async function runChunkedUpload(file) {
@@ -466,20 +524,20 @@ async function refreshItemChoices(selectId) {
         var received = [];
 
         // Try to resume a previous interrupted upload of the same file.
-        var saved = sessionStorage.getItem(storageKey);
+        var saved = resumeGet(storageKey);
         if (saved) {
             var got = await fetchReceived(saved);
             if (got !== null) {
                 uploadUuid = saved;
                 received = got;
             } else {
-                sessionStorage.removeItem(storageKey);
+                resumeDel(storageKey);
             }
         }
 
         if (!uploadUuid) {
             uploadUuid = await initSession(file, totalChunks);
-            sessionStorage.setItem(storageKey, uploadUuid);
+            resumeSet(storageKey, uploadUuid);
         }
 
         var receivedSet = {};
@@ -496,7 +554,7 @@ async function refreshItemChoices(selectId) {
 
         if (statusEl) statusEl.textContent = 'Finishing…';
         var redirect = await completeSession(uploadUuid);
-        sessionStorage.removeItem(storageKey);
+        resumeDel(storageKey);
 
         if (fieldChecked('upload_more')) {
             window.location = window.location.pathname + '?upload_more=1';
