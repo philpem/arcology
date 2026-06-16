@@ -107,8 +107,14 @@ Meta fields: `finalize_state`, `artefact_uuid`, `error`, `error_code`
 
 - `claim_finalize(upload_uuid) -> bool` — atomic compare-and-set. Succeeds only
   if state is `pending`, or `assembling` with `heartbeat_at` older than
-  `FINALIZE_STALE_SECONDS` (the re-drive case). Guarded by a per-process lock
-  keyed on `upload_uuid` plus the atomic meta rewrite.
+  `FINALIZE_STALE_SECONDS` (the re-drive case). The read-modify-write runs under
+  **both** an in-process `threading.Lock` *and* a per-session `flock`
+  (`_claim_flock` on `<session>/.finalize.lock`), so the single-winner property
+  holds across gunicorn worker **processes**, not just threads — a second worker
+  serialises behind the flock and then observes the just-written `assembling` +
+  fresh heartbeat and backs off. (`flock` is advisory/local-filesystem, so this
+  assumes the documented single-host web deployment; it is released by the OS if
+  the holder dies, so a crashed owner never wedges a re-drive.)
 - `run_finalize(upload_uuid, finalize_fn)` — the worker body: mark
   `assembling`, start a heartbeat ticker, call `assemble_to_storage()` then the
   blueprint-supplied `finalize_fn` (the ingest closure), then write
@@ -125,11 +131,15 @@ context (resolved `item`, artefact type, auth/queue mode) and the existing
 
 ### Chunk-directory lifecycle
 
-On **successful** finalise the numbered chunk files are deleted but the session
-directory + `meta.json` (now `done`+`artefact_uuid`) are retained so
+On **either** terminal outcome (success or failure) the numbered chunk files are
+deleted — neither `done` nor `failed` is re-claimable, so the staged bytes (up
+to `max_upload_size`) are dead weight — while the session directory + `meta.json`
+(now `done`+`artefact_uuid` or `failed`+`error`) are retained so
 `/complete/status` can still answer. Completed/failed sessions are reaped by
 `purge_stale_chunks()` once older than `FINALIZE_RESULT_TTL_SECONDS` (default
-1 h), with the existing 24 h sweep as a fallback.
+1 h), with the existing 24 h sweep as a fallback. `purge_stale_chunks()` stats
+each directory first and only parses `meta.json` for ones recent enough to still
+be inside their TTL, so the sweep stays cheap on the request path.
 
 ### Correctness: no double artefact
 
@@ -138,6 +148,9 @@ dedups the *file*, not the row), so finalise must never run twice concurrently.
 This is prevented by:
 
 1. a single atomic `pending -> assembling` transition — only one runner wins;
+   the transition is serialised both within a process (`threading.Lock`) and
+   across worker processes (the per-session `flock`), so two gunicorn workers
+   cannot both claim the same session;
 2. the heartbeat — a live runner keeps the entry non-stale, so a concurrent
    poller's re-drive check will not fire;
 3. re-drive only when `heartbeat_at` is older than `FINALIZE_STALE_SECONDS`
@@ -158,10 +171,13 @@ The chunks received so far are safe on the volume and `meta.json` is intact.
 Resume = "ask the server which chunks it already has and send only the rest":
 
 - **Web UI** resumes via `localStorage` (`sessionKey()` / `resumeGet/Set/Del`)
-  so a resume survives even a browser restart, calls `/status`
-  (`fetchReceived()`), and skips received chunks (`runChunkedUpload()`). The
-  per-chunk retry loop (`sendChunk()`) retries network/5xx errors with capped
-  backoff (7 attempts), riding out a short outage.
+  so a resume survives even a browser restart. It first checks
+  `/complete/status` (`finalizeState()`): a `done` session redirects straight to
+  the artefact, an `assembling` one just polls, a `failed`/missing one starts
+  fresh, and only a `pending` one falls through to `/status` (`fetchReceived()`)
+  to skip received chunks (`runChunkedUpload()`) — so it never re-uploads into a
+  finished session (which would 409). The per-chunk retry loop (`sendChunk()`)
+  retries network/5xx errors with capped backoff (7 attempts).
 - **CLI** resumes via a `~/.config/arcology/resume.json` sidecar keyed by file
   identity (server + target item + path + size + mtime + chunk count). On
   `arco upload`, if a saved session exists the client inspects the server
@@ -180,9 +196,12 @@ The finalise background thread dies with the old container. The chunks and
 `meta.json` (`assembling`, now-stale `heartbeat_at`) persist. Recovery is
 **lazy re-drive on poll**: when the client's next `/complete/status` lands on
 the new container and finds a stale `assembling` entry, the handler
-`claim_finalize()`s it and resubmits finalise on a fresh pool thread. The user
-never re-uploads. This is race-free across gunicorn workers (atomic claim +
-stale-heartbeat check) and needs no leader election: a status poll reads the
+**re-authorises the target item** (the same manage/contribution check `/complete`
+performs — re-drive ingests the artefact, so it must not rely on session
+ownership alone) and then `claim_finalize()`s it and resubmits finalise on a
+fresh pool thread. The user never re-uploads. This is race-free across gunicorn
+workers (flock-guarded claim + stale-heartbeat check) and needs no leader
+election: a status poll reads the
 same `meta.json` regardless of which worker answers, and a *live* finalise
 keeps its heartbeat fresh so only a genuinely orphaned one is re-driven.
 

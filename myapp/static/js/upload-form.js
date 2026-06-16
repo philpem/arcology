@@ -517,20 +517,64 @@ async function refreshItemChoices(selectId) {
         throw new Error('Timed out waiting for the server to finalise the upload');
     }
 
+    function goAfterUpload(redirect) {
+        if (fieldChecked('upload_more')) {
+            window.location = window.location.pathname + '?upload_more=1';
+        } else {
+            window.location = redirect;
+        }
+    }
+
+    async function finalizeState(uploadUuid) {
+        // Parsed /complete/status body, or null if the session is gone/unreachable.
+        try {
+            var resp = await fetch(BASE_URL + '/' + uploadUuid + '/complete/status', {
+                headers: { 'X-CSRFToken': csrfToken() },
+            });
+            if (resp.status === 200 || resp.status === 202) return await resp.json();
+            return null;
+        } catch (e) {
+            return null;
+        }
+    }
+
     async function runChunkedUpload(file) {
         var totalChunks = Math.ceil(file.size / CHUNK_SIZE) || 1;
         var storageKey = sessionKey(file);
         var uploadUuid = null;
         var received = [];
 
-        // Try to resume a previous interrupted upload of the same file.
+        // Resume a previous interrupted upload of the same file.  Check the
+        // finalise state first: an already-finished session must not re-upload
+        // chunks (the server deleted them and now rejects writes with 409), and
+        // a failed session must be restarted rather than retried forever.
         var saved = resumeGet(storageKey);
         if (saved) {
-            var got = await fetchReceived(saved);
-            if (got !== null) {
-                uploadUuid = saved;
-                received = got;
+            var fstate = await finalizeState(saved);
+            if (fstate && fstate.state === 'done') {
+                resumeDel(storageKey);
+                goAfterUpload(fstate.redirect);
+                return;
+            }
+            if (fstate && fstate.state === 'assembling') {
+                // All chunks are in and finalise is already running — just wait.
+                if (statusEl) statusEl.textContent = 'Assembling on server…';
+                var redirectA = await pollFinalize(saved);
+                resumeDel(storageKey);
+                goAfterUpload(redirectA);
+                return;
+            }
+            if (fstate && fstate.state === 'pending') {
+                // Still uploading — skip the chunks the server already holds.
+                var got = await fetchReceived(saved);
+                if (got !== null) {
+                    uploadUuid = saved;
+                    received = got;
+                } else {
+                    resumeDel(storageKey);
+                }
             } else {
+                // 'failed', or the session is gone: discard and start fresh.
                 resumeDel(storageKey);
             }
         }
@@ -555,12 +599,7 @@ async function refreshItemChoices(selectId) {
         if (statusEl) statusEl.textContent = 'Finishing…';
         var redirect = await completeSession(uploadUuid);
         resumeDel(storageKey);
-
-        if (fieldChecked('upload_more')) {
-            window.location = window.location.pathname + '?upload_more=1';
-        } else {
-            window.location = redirect;
-        }
+        goAfterUpload(redirect);
     }
 
     form.addEventListener('submit', function (e) {

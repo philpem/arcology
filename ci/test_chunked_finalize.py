@@ -140,6 +140,7 @@ class TestChunkedFinalizeCore(unittest.TestCase):
 
     def test_claim_then_run_produces_done_and_one_artefact(self):
         from myapp.database import Artefact
+        from myapp.extensions import db
         from myapp.services import chunked_upload as _chunked
         calls = []
         with self.app.app_context():
@@ -153,7 +154,8 @@ class TestChunkedFinalizeCore(unittest.TestCase):
             art_uuid = status['artefact_uuid']
             self.assertRegex(art_uuid, r'^[0-9a-f]{32}$')
 
-            arts = Artefact.query.filter_by(label='RunOnce').all()
+            arts = db.session.scalars(
+                db.select(Artefact).filter_by(label='RunOnce')).all()
             self.assertEqual(len(arts), 1)
             self.assertEqual(arts[0].uuid, art_uuid)
             self.assertEqual(len(calls), 1)
@@ -222,6 +224,11 @@ class TestChunkedFinalizeCore(unittest.TestCase):
                 status = _chunked.finalize_status(uuid_)
                 self.assertEqual(status['state'], 'failed')
                 self.assertEqual(status['error_code'], 'too_large')
+                # Chunk files must be dropped on failure (only meta is retained),
+                # not left pinning disk until the result-TTL purge.
+                cdir = _chunked.chunk_dir(uuid_)
+                self.assertTrue(os.path.exists(os.path.join(cdir, 'meta.json')))
+                self.assertFalse(os.path.exists(os.path.join(cdir, '000000')))
             finally:
                 self.app.config.pop('MAX_UPLOAD_SIZE', None)
 
@@ -245,6 +252,7 @@ class TestChunkedFinalizeCore(unittest.TestCase):
 
     def test_submit_finalize_runs_via_pool(self):
         from myapp.database import Artefact
+        from myapp.extensions import db
         from myapp.services import chunked_upload as _chunked
         with self.app.app_context():
             uuid_ = self._make_session(label='ViaPool')
@@ -260,7 +268,8 @@ class TestChunkedFinalizeCore(unittest.TestCase):
                 time.sleep(0.05)
             self.assertEqual(_chunked.finalize_status(uuid_)['state'], 'done')
             self.assertEqual(
-                Artefact.query.filter_by(label='ViaPool').count(), 1)
+                len(db.session.scalars(
+                    db.select(Artefact).filter_by(label='ViaPool')).all()), 1)
 
 
 class TestChunkedFinalizeAPIEndpoints(unittest.TestCase):
@@ -365,6 +374,23 @@ class TestChunkedFinalizeAPIEndpoints(unittest.TestCase):
         # A late chunk write must be refused (409) regardless of finalise state.
         self.assertEqual(self._chunk(uuid_, 0, b'XXXX').status_code, 409)
         self._poll(uuid_)  # drain to done so teardown is clean
+
+    def test_stale_assembling_redriven_via_status(self):
+        from myapp.services import chunked_upload as _chunked
+        uuid_ = self._init(total_chunks=1, label='Redrive')
+        self._chunk(uuid_, 0, b'data')
+        # Simulate a finalise orphaned by a restart: claim it (-> assembling) but
+        # never submit, then age the heartbeat past the stale threshold.
+        with self.app.app_context():
+            self.assertTrue(_chunked.claim_finalize(uuid_))
+            cdir = _chunked.chunk_dir(uuid_)
+            meta = _chunked._read_meta_dir(cdir)
+            meta['heartbeat_at'] = time.time() - (_chunked.finalize_stale_seconds() + 60)
+            _chunked._write_meta_dir(cdir, meta)
+        # A status poll must re-authorise and re-drive it to completion.
+        code, body = self._poll(uuid_)
+        self.assertEqual(code, 200)
+        self.assertEqual(body['state'], 'done')
 
     def test_status_404_for_unknown(self):
         r = self.client.get(
