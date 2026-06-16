@@ -67,6 +67,15 @@
       "type": "riscos_module_parse"
     },
     {
+      "artefact": "it-art-0000",
+      "call": "queue_analysis",
+      "hints": {
+        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract",
+        "partition_uuid": "it-part-0001"
+      },
+      "type": "replay_process"
+    },
+    {
       "call": "update_analysis",
       "details": {
         "archive_type": "zip",
@@ -123,7 +132,7 @@
       "artefact": "it-art-0000",
       "call": "queue_analysis",
       "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0006_archive-extract/partition_0_0",
+        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0007_archive-extract/partition_0_0",
         "partition_uuid": "it-part-0001",
         "path_prefix": "inner.zip"
       },
@@ -141,7 +150,7 @@
       "artefact": "it-art-0000",
       "call": "queue_analysis",
       "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0006_archive-extract/partition_0_0",
+        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0007_archive-extract/partition_0_0",
         "partition_uuid": "it-part-0001",
         "path_prefix": "inner.zip"
       },
@@ -151,7 +160,7 @@
       "artefact": "it-art-0000",
       "call": "queue_analysis",
       "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0006_archive-extract/partition_0_0",
+        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0007_archive-extract/partition_0_0",
         "partition_uuid": "it-part-0001",
         "path_prefix": "inner.zip"
       },
@@ -166,7 +175,7 @@
         "unzip": {}
       },
       "error_message": null,
-      "output_path": "it-item_it-item/it-art-0000_root/it-an-0006_archive-extract/partition_0_0",
+      "output_path": "it-item_it-item/it-art-0000_root/it-an-0007_archive-extract/partition_0_0",
       "status": "complete",
       "summary": "Extracted 1 files from ZIP Archive archive",
       "tool_name": "unzip",
@@ -214,6 +223,14 @@
     {
       "artefact": "it-art-0000",
       "hints": {
+        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract",
+        "partition_uuid": "it-part-0001"
+      },
+      "type": "replay_process"
+    },
+    {
+      "artefact": "it-art-0000",
+      "hints": {
         "partition_uuid": "it-part-0001"
       },
       "type": "product_recognition"
@@ -221,7 +238,7 @@
     {
       "artefact": "it-art-0000",
       "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0006_archive-extract/partition_0_0",
+        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0007_archive-extract/partition_0_0",
         "partition_uuid": "it-part-0001",
         "path_prefix": "inner.zip"
       },
@@ -230,7 +247,7 @@
     {
       "artefact": "it-art-0000",
       "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0006_archive-extract/partition_0_0",
+        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0007_archive-extract/partition_0_0",
         "partition_uuid": "it-part-0001",
         "path_prefix": "inner.zip"
       },
@@ -241,7 +258,7 @@
     "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract/data/numbers.bin",
     "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract/inner.zip",
     "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract/readme.txt",
-    "it-item_it-item/it-art-0000_root/it-an-0006_archive-extract/partition_0_0/inner/secret.txt"
+    "it-item_it-item/it-art-0000_root/it-an-0007_archive-extract/partition_0_0/inner/secret.txt"
   ],
   "partitions": [
     {
