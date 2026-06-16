@@ -23,6 +23,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
@@ -219,6 +220,40 @@ class TestPostFileRecordsProgressCallback(unittest.TestCase):
         )
         self.assertEqual(total, 250)
         self.assertEqual(calls, [(100, 250), (200, 250), (250, 250)])
+
+
+class TestMonitorHeartbeatCap(unittest.TestCase):
+    """The cancellation monitor heartbeats only while under HEARTBEAT_MAX_SECONDS.
+
+    Past the cap, process-liveness alone must not keep a wedged (non-progressing)
+    job fresh forever — the heartbeat stops so stale reset can recover it.
+    """
+
+    def _run_one_iteration(self, cap):
+        from worker.arcworker import analysis as analysis_mod
+        from worker.arcworker.analysis import AnalysisWorker
+
+        fake_self = MagicMock()
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {'status': 'running'}
+        fake_self.api._request_response.return_value = resp
+
+        stop_event = MagicMock()
+        stop_event.wait.side_effect = [False, True]  # exactly one loop iteration
+        stop_event.is_set.return_value = False
+
+        with patch.object(analysis_mod, 'HEARTBEAT_MAX_SECONDS', cap):
+            AnalysisWorker._monitor_cancellation(fake_self, 'uuid', 7, stop_event)
+        return fake_self
+
+    def test_heartbeat_sent_within_cap(self):
+        fake_self = self._run_one_iteration(cap=9999)
+        fake_self.report_progress.assert_called_once_with(7, heartbeat=True)
+
+    def test_heartbeat_suppressed_past_cap(self):
+        fake_self = self._run_one_iteration(cap=0)
+        fake_self.report_progress.assert_not_called()
 
 
 if __name__ == '__main__':

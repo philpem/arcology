@@ -63,11 +63,18 @@ class ProgressReporter:
         Handy when the framework injects a reporter before the handler knows
         how many items it will process: ``self.progress.start(total=n,
         label='Hashing').update(0)``.  Returns ``self`` so it can be chained.
+
+        A change of *label* marks a new phase (e.g. Hashing → Registering on the
+        same reused reporter): the throttle is reset so the next ``update`` emits
+        immediately, otherwise a phase shorter than *min_interval* could be
+        entirely throttled out and the UI would keep showing the previous
+        phase's label/percentage.
         """
         if total is not None:
             self.total = total
-        if label is not None:
+        if label is not None and label != self.label:
             self.label = label
+            self._last_emit = 0.0  # new phase → let the next update emit at once
         return self
 
     def _format(self, done: int | None) -> str:

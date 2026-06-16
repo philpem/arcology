@@ -294,6 +294,30 @@ class TestProgressReporter(unittest.TestCase):
             reporter.update(3)                       # interval elapsed -> emits
             self.assertEqual(worker.report_progress.call_count, 2)
 
+    def test_label_change_resets_throttle(self):
+        """A new phase label makes the next update emit even within the interval.
+
+        Otherwise a phase shorter than min_interval (Hashing → Registering on the
+        same reused reporter) could be throttled out entirely, leaving the UI on
+        the previous phase's label/percentage.
+        """
+        from worker.arcworker.analyses import _common
+        from worker.arcworker.analyses._common import ProgressReporter
+
+        worker = self._worker()
+        with patch.object(_common.time, 'monotonic') as mono:
+            mono.return_value = 100.0
+            reporter = ProgressReporter(worker, 1, total=10, min_interval=5.0, label='Hashing')
+            reporter.update(1)                       # first call emits
+            mono.return_value = 101.0
+            reporter.update(2)                       # same label, within interval -> throttled
+            self.assertEqual(worker.report_progress.call_count, 1)
+            reporter.start(label='Registering')      # new phase
+            reporter.update(3)                       # emits despite being within interval
+            self.assertEqual(worker.report_progress.call_count, 2)
+            _, kwargs = worker.report_progress.call_args
+            self.assertEqual(kwargs['message'], 'Registering: 3 of 10 (30%)')
+
     def test_force_bypasses_throttle(self):
         from worker.arcworker.analyses import _common
         from worker.arcworker.analyses._common import ProgressReporter

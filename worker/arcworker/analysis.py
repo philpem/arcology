@@ -33,6 +33,7 @@ from .cache_keys import artefact_cache_prefix, partition_cache_relpath
 from .compression import decompress_if_needed
 from .config import (
     CANCEL_CHECK_INTERVAL,
+    HEARTBEAT_MAX_SECONDS,
     POLL_BACKOFF_CEILING,
     POLL_BACKOFF_FLOOR,
     STALE_RESET_INTERVAL,
@@ -614,8 +615,15 @@ class AnalysisWorker:
         While the job is still running, also sends a best-effort heartbeat so
         that a long job which reports no item-level progress (e.g. a black-box
         extraction or ffmpeg pass) is not mistaken for a stuck job by
-        heartbeat-based stale detection.
+        heartbeat-based stale detection.  This heartbeat is capped at
+        HEARTBEAT_MAX_SECONDS: it only proves the *process* is alive, not that
+        the handler is progressing, so a handler wedged on an unbounded call must
+        not be kept "fresh" forever — past the cap the heartbeat stops and the
+        server's stale reset can recover the job.  Handlers that are genuinely
+        progressing bump progress_updated_at directly (ProgressReporter), so the
+        cap never causes a falsely-progressing job to be reset.
         """
+        monitor_started = time.monotonic()
         while not stop_event.wait(timeout=CANCEL_CHECK_INTERVAL):
             try:
                 resp = self.api._request_response('get', f'/analysis/{analysis_uuid}')
@@ -649,8 +657,11 @@ class AnalysisWorker:
                     )
                     set_cancel_event()
                     return
-                # Still running — refresh the liveness timestamp.
-                self.report_progress(analysis_id, heartbeat=True)
+                # Still running — refresh the liveness timestamp, but only while
+                # under the heartbeat cap (process-liveness alone must not keep a
+                # wedged, non-progressing job alive indefinitely).
+                if time.monotonic() - monitor_started < HEARTBEAT_MAX_SECONDS:
+                    self.report_progress(analysis_id, heartbeat=True)
             # Any other HTTP status: don't cancel.
 
     def process_analysis(self, analysis: dict):
