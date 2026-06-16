@@ -22,6 +22,7 @@ raises, so a coverage gap fails loudly instead of silently mis-simulating.
 
 import json
 import re
+from urllib.parse import parse_qsl, urlsplit
 from arcworker.api import ArcologyAPI
 from arcology_shared.enums import ArtefactType
 from .analysis_map import IT_ANALYSIS_MAP
@@ -85,12 +86,14 @@ class FakeServerAPI(ArcologyAPI):
         self.partitions: dict[str, dict] = {}
         self.analyses: dict[int, dict] = {}
         self.files: list[dict] = []
+        self.files_by_id: dict[int, dict] = {}
         self.pending: list[int] = []      # FIFO of analysis ids awaiting a run
         self.events: list[dict] = []      # ordered recording
 
         self._art_seq = 0
         self._an_seq = 0
         self._part_seq = 0
+        self._file_seq = 0
 
     # ── id helpers ──────────────────────────────────────────────────────
     def _next_artefact_uuid(self) -> str:
@@ -155,23 +158,29 @@ class FakeServerAPI(ArcologyAPI):
     # ── the single overridden seam ──────────────────────────────────────
     def _request_response(self, method, endpoint, *, data=None):
         method = method.lower()
-        handler = self._route(method, endpoint)
+        split = urlsplit(endpoint)
+        path = split.path
+        query = dict(parse_qsl(split.query))
+        handler = self._route(method, path)
         if handler is None:
-            return FakeResponse(500, {'error': f'unrouted {method} {endpoint}'})
-        status, payload = handler(data or {})
+            return FakeResponse(500, {'error': f'unrouted {method} {path}'})
+        status, payload = handler(data or {}, query)
         return FakeResponse(status, payload)
 
-    def _route(self, method, endpoint):
+    def _route(self, method, path):
         for pattern, verb, fn in self._ROUTES:
             if verb != method:
                 continue
-            m = pattern.match(endpoint)
+            m = pattern.match(path)
             if m:
-                return lambda data, _m=m, _fn=fn: _fn(self, data, *_m.groups())
+                return lambda data, query, _m=m, _fn=fn: _fn(self, data, query, *_m.groups())
         return None
 
     # ── endpoint handlers ───────────────────────────────────────────────
-    def _put_analysis(self, data, analysis_id):
+    # Each takes (data, query, *path_groups).  Read endpoints (GET) do not
+    # record an event — only state-changing calls and queue operations do, so
+    # the golden's event log stays focused on behaviour rather than queries.
+    def _put_analysis(self, data, query, analysis_id):
         analysis = self.analyses.get(int(analysis_id))
         if analysis is None:
             return 404, {'error': 'analysis not found'}
@@ -192,7 +201,7 @@ class FakeServerAPI(ArcologyAPI):
         })
         return 200, dict(analysis)
 
-    def _post_partition(self, data, artefact_uuid):
+    def _post_partition(self, data, query, artefact_uuid):
         uuid = self._next_partition_uuid()
         partition = {
             'uuid': uuid,
@@ -217,20 +226,110 @@ class FakeServerAPI(ArcologyAPI):
         })
         return 200, dict(partition)
 
-    def _post_files(self, data, partition_uuid):
+    def _post_files(self, data, query, partition_uuid):
+        # Mirror the web app's add_files: prefix a child file's path with its
+        # parent archive's path (when the parent is_archive), dedup by
+        # (partition, path), and assign an integer id.  Records are sorted by
+        # final path before id assignment so ids are deterministic across runs
+        # (the worker enumerates via rglob, whose order is not stable, but ids
+        # are opaque and used only relationally, so ordering them by path is a
+        # harmless way to make the golden reproducible).
         records = data.get('files', [])
+        existing_paths = {f['path'] for f in self.files
+                          if f['partition_uuid'] == partition_uuid}
+        prepared = []
         for rec in records:
-            stored = dict(rec)
-            stored['partition_uuid'] = partition_uuid
-            self.files.append(stored)
-        self.events.append({
-            'call': 'post_files',
-            'partition': partition_uuid,
-            'count': len(records),
-        })
-        return 200, {'count': len(records)}
+            path = rec['path']
+            parent_id = rec.get('parent_file_id')
+            if parent_id is not None:
+                parent = self.files_by_id.get(int(parent_id))
+                if parent and parent.get('is_archive'):
+                    if not path.startswith(parent['path'] + '/'):
+                        path = parent['path'] + '/' + path
+            prepared.append((path, rec))
 
-    def _post_queue_analysis(self, data, artefact_uuid):
+        added = 0
+        skipped = 0
+        for path, rec in sorted(prepared, key=lambda pr: pr[0]):
+            if path in existing_paths:
+                skipped += 1
+                continue
+            existing_paths.add(path)
+            self._file_seq += 1
+            stored = dict(rec)
+            stored['id'] = self._file_seq
+            stored['path'] = path
+            stored['partition_uuid'] = partition_uuid
+            stored['is_archive'] = False
+            stored.setdefault('archive_format', None)
+            stored.setdefault('archive_comment', None)
+            stored.setdefault('is_known', False)
+            stored.setdefault('extraction_depth', rec.get('extraction_depth', 0))
+            self.files.append(stored)
+            self.files_by_id[stored['id']] = stored
+            added += 1
+
+        event = {'call': 'post_files', 'partition': partition_uuid, 'added': added}
+        if skipped:
+            event['skipped'] = skipped
+        self.events.append(event)
+        response = {'added': added}
+        if skipped:
+            response['skipped'] = skipped
+        return 200, response
+
+    def _get_partition_files(self, data, query, partition_uuid):
+        files = [f for f in self.files if f['partition_uuid'] == partition_uuid]
+        if query.get('show_known', 'false').lower() != 'true':
+            files = [f for f in files if not f.get('is_known')]
+        if 'is_archive' in query:
+            want = query['is_archive'].lower() == 'true'
+            files = [f for f in files if bool(f.get('is_archive')) == want]
+        if 'path_prefix' in query:
+            prefix = query['path_prefix'] + '/'
+            files = [f for f in files if f['path'].startswith(prefix)]
+        if 'extraction_depth' in query:
+            depth = int(query['extraction_depth'])
+            files = [f for f in files if f.get('extraction_depth', 0) == depth]
+        files = sorted(files, key=lambda f: f['path'])
+        return 200, {
+            'files': [dict(f) for f in files],
+            'total': len(files),
+            'page': 1,
+            'per_page': len(files) or 1,
+            'pages': 1,
+        }
+
+    def _get_partition(self, data, query, partition_uuid):
+        partition = self.partitions.get(partition_uuid)
+        if partition is None:
+            return 404, {'error': 'partition not found'}
+        return 200, {'partition': dict(partition)}
+
+    def _get_file(self, data, query, file_id):
+        f = self.files_by_id.get(int(file_id))
+        if f is None:
+            return 404, {'error': 'file not found'}
+        return 200, dict(f)
+
+    def _post_mark_archive(self, data, query, file_id):
+        f = self.files_by_id.get(int(file_id))
+        if f is None:
+            return 404, {'error': 'file not found'}
+        f['is_archive'] = data.get('is_archive', True)
+        if 'archive_format' in data:
+            f['archive_format'] = data.get('archive_format')
+        if 'archive_comment' in data:
+            f['archive_comment'] = data.get('archive_comment')
+        self.events.append({
+            'call': 'mark_archive',
+            'path': f['path'],
+            'archive_format': f.get('archive_format'),
+            'archive_comment': f.get('archive_comment'),
+        })
+        return 200, dict(f)
+
+    def _post_queue_analysis(self, data, query, artefact_uuid):
         analysis_type = data.get('analysis_type')
         hints_json = data.get('hints')   # already a JSON string on the wire
         analysis = self._new_analysis(artefact_uuid, analysis_type, hints_json)
@@ -242,7 +341,7 @@ class FakeServerAPI(ArcologyAPI):
         })
         return 200, dict(analysis)
 
-    def _post_produce_artefact(self, data, analysis_id):
+    def _post_produce_artefact(self, data, query, analysis_id):
         uuid = self._next_artefact_uuid()
         artefact = {
             'uuid': uuid,
@@ -283,6 +382,10 @@ class FakeServerAPI(ArcologyAPI):
         (re.compile(r'^/artefacts/([^/]+)/partitions$'), 'post', _post_partition),
         (re.compile(r'^/artefacts/([^/]+)/analysis$'), 'post', _post_queue_analysis),
         (re.compile(r'^/partitions/([^/]+)/files$'), 'post', _post_files),
+        (re.compile(r'^/partitions/([^/]+)/files$'), 'get', _get_partition_files),
+        (re.compile(r'^/partitions/([^/]+)$'), 'get', _get_partition),
+        (re.compile(r'^/files/(\d+)$'), 'get', _get_file),
+        (re.compile(r'^/files/(\d+)/mark_archive$'), 'post', _post_mark_archive),
     ]
 
 # vim: ts=4 sw=4 et
