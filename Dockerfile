@@ -12,6 +12,7 @@ RUN set -e; \
 	&& apk add --no-cache curl \
 	&& pip install --no-cache-dir -r /requirements.txt \
 	&& pip install gunicorn \
+	&& pip install py-tlsh \
 	&& apk del .build-deps
 
 # Uncomment this if you want to use sqltap to inspect the SQL query workload

@@ -1,0 +1,45 @@
+{% extends "_base.html" %}
+{% block page_title %}Near-duplicate files{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ artefact_url(source.partition.artefact) }}">{{ source.partition.artefact.label }}</a></li>
+        <li class="breadcrumb-item active">Near-duplicate files</li>
+    </ol>
+</nav>
+
+<h1 class="mb-1">Near-duplicate files</h1>
+<p class="text-muted">
+    <code>{{ source.path }}</code>
+    {% if source.file_size is not none %}<span class="ms-2">{{ source.file_size | format_filesize }}</span>{% endif %}
+</p>
+<p class="text-muted small">
+    Files whose <em>content</em> is close but not identical (TLSH fuzzy-hash
+    distance — lower is more similar). Exact copies are listed under
+    <a href="{{ url_for('myapp_blueprints_artefacts.file_duplicates', uuid=source.uuid) }}">duplicates</a> instead.
+</p>
+
+{% if matches %}
+<div class="table-responsive">
+    <table class="table table-sm table-hover align-middle">
+        <thead>
+            <tr><th>Distance</th><th>Item</th><th>Artefact</th><th>Path</th><th>Size</th></tr>
+        </thead>
+        <tbody>
+        {% for file, artefact, distance in matches %}
+            <tr>
+                <td><span class="badge {% if distance <= 30 %}bg-success{% elif distance <= 80 %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ distance }}</span></td>
+                <td><a href="{{ url_for('myapp_blueprints_items.view', uuid=artefact.item.url_id) }}">{{ artefact.item.name }}</a></td>
+                <td><a href="{{ artefact_url(artefact) }}">{{ artefact.label }}</a></td>
+                <td><a href="{{ artefact_url(artefact) }}?path={{ file.browse_path | urlencode }}#file-row-{{ file.id }}"><code>{{ file.path }}</code></a></td>
+                <td>{% if file.file_size is not none %}{{ file.file_size | format_filesize }}{% endif %}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="text-muted">No near-duplicate files found. (Fuzzy hashing requires the optional <code>py-tlsh</code> library and a computed digest on this file.)</p>
+{% endif %}
+{% endblock %}

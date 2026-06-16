@@ -16,6 +16,7 @@ import tempfile
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
+from arcology_shared.fuzzyhash import compute_tlsh
 from ..utils.text import normalize_extracted_filenames
 from .base import exception_result, run_tool_with_output, tool_result
 from .partition import read_fat_volume_label
@@ -390,6 +391,12 @@ def enumerate_extracted_files(
             file_entry['md5'] = md5_h.hexdigest()
             file_entry['sha1'] = sha1_h.hexdigest()
             file_entry['sha256'] = sha256_h.hexdigest()
+            # Optional fuzzy hash for near-duplicate detection (None if py-tlsh
+            # is unavailable or the file is too small).  Leaf-file bytes only
+            # exist here, so this is the one place to compute them.
+            tlsh_digest = compute_tlsh(file_path)
+            if tlsh_digest:
+                file_entry['tlsh'] = tlsh_digest
         except OSError as e:
             # The record is still registered, just without hashes — log it so
             # a transient I/O error is distinguishable from "never hashed".

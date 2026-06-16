@@ -95,6 +95,17 @@ STALE_JOB_TIMEOUT_SECONDS = 3600
 # cursor so the worker just continues.)
 WORKER_STEP_DEADLINE_SECONDS = 20
 
+# When True (default), an artefact's content-set similarity cache is refreshed
+# automatically after each file/archive extraction completes, so "Similar
+# Artefacts" appears without a manual `flask rebuild-similarity`.  Set False to
+# refresh only via the CLI command (e.g. on very large collections).
+#SIMILARITY_AUTO_REFRESH = True
+
+# When True, similarity scores are rarity-weighted (IDF): files common across
+# many artefacts contribute less, so shared boilerplate inflates scores less.
+# Off by default; changing it requires a full `flask rebuild-similarity`.
+#SIMILARITY_USE_IDF = False
+
 # Priority assigned to analyses queued via the web UI (uploads, re-analyse
 # button).  Workers pick up jobs in order of priority DESC, created_at ASC.
 # Default 10 (ANALYSIS_PRIORITY_HIGH) keeps interactive web uploads ahead

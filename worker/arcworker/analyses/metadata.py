@@ -15,6 +15,7 @@ Covers:
 import json
 from pathlib import Path
 from arcology_shared.enums import AnalysisType, ArtefactType
+from arcology_shared.fuzzyhash import compute_tlsh
 from arcology_shared.hints import HintKey
 from ..config import REPLAY_MODULES_DIR, log
 from ..tools import (
@@ -48,6 +49,14 @@ _MAX_POSTER_SPRITE_BYTES = 16 * 1024 * 1024
 # request rather than a fixed size.
 PARTITION_RECOGNITION_STEP_LIMIT = 25
 
+# Flux artefact types whose raw bytes carry timing noise — a byte-level fuzzy
+# hash (TLSH) is meaningless for them, so it is skipped.
+_TLSH_SKIP_TYPES = frozenset({
+    ArtefactType.SCP.value,
+    ArtefactType.DFI.value,
+    ArtefactType.A2R.value,
+})
+
 
 @analysis_handler("checksum computation", AnalysisType.CHECKSUM_COMPUTE)
 def process_checksum_compute(self, analysis: dict, artefact: dict, work_dir: Path):
@@ -56,12 +65,19 @@ def process_checksum_compute(self, analysis: dict, artefact: dict, work_dir: Pat
     input_path = self.get_input_path(artefact, work_dir)
 
     md5, sha256, size = compute_file_hash(input_path)
-    self.api.update_artefact_hashes(artefact['uuid'], md5, sha256)
+    # Byte-level fuzzy hash for near-duplicate detection, skipped for flux types.
+    tlsh = None
+    if artefact.get('artefact_type') not in _TLSH_SKIP_TYPES:
+        tlsh = compute_tlsh(input_path)
+    self.api.update_artefact_hashes(artefact['uuid'], md5, sha256, tlsh=tlsh)
 
+    details = {'md5': md5, 'sha256': sha256, 'size': size}
+    if tlsh:
+        details['tlsh'] = tlsh
     self.complete_analysis(
         analysis_id,
         summary=f'MD5: {md5}  SHA256: {sha256}',
-        details=json.dumps({'md5': md5, 'sha256': sha256, 'size': size}),
+        details=json.dumps(details),
     )
 
 

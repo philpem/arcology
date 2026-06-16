@@ -201,9 +201,12 @@ class ArcologyAPI:
         """
         self.patch(f"/artefacts/{artefact_uuid}", {'artefact_type': artefact_type})
 
-    def update_artefact_hashes(self, artefact_uuid: str, md5: str, sha256: str):
-        """Write computed MD5 and SHA256 hashes back to the artefact record."""
-        self.patch(f"/artefacts/{artefact_uuid}", {'md5': md5, 'sha256': sha256})
+    def update_artefact_hashes(self, artefact_uuid: str, md5: str, sha256: str, tlsh: str | None = None):
+        """Write computed MD5/SHA256 (and optional TLSH) back to the artefact."""
+        payload = {'md5': md5, 'sha256': sha256}
+        if tlsh is not None:
+            payload['tlsh'] = tlsh
+        self.patch(f"/artefacts/{artefact_uuid}", payload)
 
     def update_artefact_media_metadata(self, artefact_uuid: str, metadata: dict):
         """

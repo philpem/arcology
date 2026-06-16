@@ -1,0 +1,90 @@
+{% extends "_base.html" %}
+{% block page_title %}Similar artefacts{% endblock %}
+
+{% macro score_badge(score) %}
+{% set pct = (score * 100) | round(0, 'floor') | int %}
+<span class="badge
+    {%- if score >= 0.9 %} bg-success
+    {%- elif score >= 0.7 %} bg-warning text-dark
+    {%- else %} bg-secondary{% endif %}">{{ pct }}%</span>
+{% endmacro %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ artefact_url(artefact) }}">{{ artefact.label }}</a></li>
+        <li class="breadcrumb-item active">Similar artefacts</li>
+    </ol>
+</nav>
+
+<h1 class="mb-1">Similar artefacts</h1>
+<p class="text-muted">
+    Ranked by size-weighted content overlap (shared bytes &divide; combined bytes).
+    Container encoding (compression, flux capture) is ignored &mdash; only the
+    decoded file content is compared.
+</p>
+
+<h2 class="h5 mt-4">Whole artefact</h2>
+{% if matches %}
+<div class="table-responsive">
+    <table class="table table-sm table-hover align-middle">
+        <thead>
+            <tr>
+                <th>Item</th><th>Artefact</th><th>Similarity</th>
+                <th>Shared / total files</th><th>Shared / total bytes</th><th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for other, sim in matches %}
+            <tr>
+                <td><a href="{{ url_for('myapp_blueprints_items.view', uuid=other.item.url_id) }}">{{ other.item.name }}</a></td>
+                <td><a href="{{ artefact_url(other) }}">{{ other.label }}</a></td>
+                <td>{{ score_badge(sim.score) }}</td>
+                <td>{{ sim.shared_files }} / {{ sim.union_files }}</td>
+                <td>{{ sim.shared_bytes | format_filesize }} / {{ sim.union_bytes | format_filesize }}</td>
+                <td class="text-end">
+                    <a href="{{ artefact_url(other) }}" class="btn btn-sm btn-outline-secondary py-0 px-2">View</a>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="text-muted">No similar artefacts found above the similarity threshold.</p>
+{% endif %}
+
+<h2 class="h5 mt-4">Shared components</h2>
+<p class="text-muted small">
+    Directory subtrees (e.g. RISC OS <code>!Apps</code> or top-level folders) that
+    appear, substantially the same, on other artefacts &mdash; even when the discs
+    as a whole differ.
+</p>
+{% if components %}
+    {% for local, others in components %}
+    <div class="card mb-3">
+        <div class="card-header py-2">
+            <i class="bi bi-folder"></i> <code>{{ local.root_path }}</code>
+            <span class="text-muted small">&middot; {{ local.file_count }} files, {{ local.total_bytes | format_filesize }}</span>
+        </div>
+        <ul class="list-group list-group-flush">
+            {% for other_comp, other_art, sim in others %}
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                <span class="text-truncate me-2">
+                    <a href="{{ artefact_url(other_art) }}">{{ other_art.label }}</a>
+                    <span class="text-muted">&rarr;</span>
+                    <a href="{{ artefact_url(other_art) }}?path={{ (other_comp.root_path ~ '/') | urlencode }}"><code>{{ other_comp.root_path }}</code></a>
+                </span>
+                <span class="d-flex align-items-center gap-2 flex-shrink-0">
+                    <span class="text-muted small">{{ sim.shared_files }} / {{ sim.union_files }} files</span>
+                    {{ score_badge(sim.score) }}
+                </span>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endfor %}
+{% else %}
+<p class="text-muted">No shared components found.</p>
+{% endif %}
+{% endblock %}

@@ -757,6 +757,8 @@ def update_artefact(uuid):
             logical_storage_path=artefact.storage_path,
             obsolete_storage_paths=obsolete_storage_paths,
         )
+    if 'tlsh' in data:
+        artefact.tlsh = data['tlsh'] or None
     if 'artefact_type' in data and not artefact.type_overridden:
         try:
             artefact.artefact_type = ArtefactType(data['artefact_type'])
@@ -1252,12 +1254,49 @@ def update_analysis(id):
         # return 404 so the worker's existing 404 handler discards the result.
         db.session.rollback()
         return error_response('Analysis was deleted during update', 404)
+
+    # After extraction populates the file listing, refresh this artefact's
+    # similarity cache so matches appear without a manual rebuild-similarity.
+    if data.get('status') == 'completed' and data.get('success'):
+        _refresh_similarity(analysis)
+
     return jsonify(analysis_to_dict(analysis))
 
 
 def _populate_search_index(analysis):
     from ..services.search_index import populate_search_index_from_analysis
     populate_search_index_from_analysis(analysis)
+
+
+# Analysis types that change an artefact's extracted-file set and therefore its
+# content-set similarity to other artefacts.
+_SIMILARITY_REFRESH_TYPES = frozenset({
+    AnalysisType.FILE_EXTRACTION,
+    AnalysisType.ARCHIVE_EXTRACT,
+})
+
+
+def _refresh_similarity(analysis):
+    """Incrementally refresh the similarity cache for a just-extracted artefact.
+
+    Best-effort: a failure here must never fail the worker's result POST, so it
+    is wrapped and logged.  Disabled when SIMILARITY_AUTO_REFRESH is false.
+    """
+    if not current_app.config.get('SIMILARITY_AUTO_REFRESH', True):
+        return
+    if analysis.analysis_type not in _SIMILARITY_REFRESH_TYPES:
+        return
+    artefact = analysis.artefact
+    if artefact is None:
+        return
+    try:
+        from ..services.similarity import recompute_for_artefact
+        recompute_for_artefact(artefact)
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            'Similarity refresh failed for artefact %s', getattr(artefact, 'uuid', '?')
+        )
 
 
 @blueprint.route('/analysis/pending', methods=['GET'])
@@ -1789,6 +1828,7 @@ def add_files(uuid):
             md5=f.get('md5'),
             sha1=f.get('sha1'),
             sha256=f.get('sha256'),
+            tlsh=f.get('tlsh'),
             # Archive support fields
             is_directory=f.get('is_directory', False),
             risc_os_filetype=f.get('risc_os_filetype'),

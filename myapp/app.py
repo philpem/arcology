@@ -35,6 +35,7 @@ _ENV_BOOL_KEYS = (
     'OIDC_ENABLED', 'LOCAL_LOGIN_ENABLED', 'OIDC_REQUIRE_ROLE',
     'OIDC_AUTO_REDIRECT', 'OIDC_SINGLE_LOGOUT',
     'OIDC_GROUP_SYNC_ENABLED', 'OIDC_GROUP_LINK_LOCAL',
+    'SIMILARITY_AUTO_REFRESH', 'SIMILARITY_USE_IDF',
 )
 _ENV_INT_KEYS = (
     'WEB_UI_ANALYSIS_PRIORITY', 'STALE_JOB_TIMEOUT_SECONDS',
@@ -491,18 +492,21 @@ def _register_error_handlers(app):
 def _register_cli_commands(app):
     from .cli.backfill_blobs import backfill_blobs
     from .cli.backfill_slugs import backfill_slugs
+    from .cli.backfill_tlsh import backfill_tlsh
     from .cli.cancel_analysis import cancel_analysis
     from .cli.create_admin import create_admin
     from .cli.dedup_artefacts import dedup_artefacts
     from .cli.reanalyse import reanalyse
     from .cli.reassign_ownership import reassign_ownership
     from .cli.rebuild_search_index import rebuild_search_index
+    from .cli.rebuild_similarity import rebuild_similarity
     from .cli.reconcile_counts import reconcile_counts
     from .cli.rescan_hashes import rescan_hashes
     from .cli.set_password import set_password
 
     app.cli.add_command(create_admin)
     app.cli.add_command(rebuild_search_index)
+    app.cli.add_command(rebuild_similarity)
     app.cli.add_command(rescan_hashes)
     app.cli.add_command(reconcile_counts)
     app.cli.add_command(reanalyse)
@@ -511,6 +515,7 @@ def _register_cli_commands(app):
     app.cli.add_command(reassign_ownership)
     app.cli.add_command(backfill_slugs)
     app.cli.add_command(backfill_blobs)
+    app.cli.add_command(backfill_tlsh)
     app.cli.add_command(set_password)
 
 
