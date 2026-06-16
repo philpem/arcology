@@ -90,6 +90,50 @@ class TestParseRunObey(unittest.TestCase):
         text = "Run <Obey$Dir>.!RunImage\nRun <Obey$Dir>.!RunImage\n"
         self.assertEqual(parse_run_obey(text), ['!runimage'])
 
+    def test_set_app_dir_indirection(self):
+        text = (
+            "Set App$Dir <Obey$Dir>\n"
+            "WimpSlot -min 256k -max 256k\n"
+            "Run <App$Dir>.!RunImage\n"
+        )
+        self.assertEqual(parse_run_obey(text), ['!runimage'])
+
+    def test_set_app_dir_subdirectory(self):
+        text = (
+            "Set App$Dir <Obey$Dir>.Bin\n"
+            "Run <App$Dir>.loader\n"
+        )
+        self.assertEqual(parse_run_obey(text), ['bin/loader'])
+
+    def test_set_chained_variables(self):
+        text = (
+            "Set A$Dir <Obey$Dir>\n"
+            "Set B$Dir <A$Dir>.sub\n"
+            "Run <B$Dir>.prog\n"
+        )
+        self.assertEqual(parse_run_obey(text), ['sub/prog'])
+
+    def test_setmacro_indirection(self):
+        text = (
+            "SetMacro App$Dir <Obey$Dir>\n"
+            "*BASIC -quit <App$Dir>.!RunImage\n"
+        )
+        self.assertEqual(parse_run_obey(text), ['!runimage'])
+
+    def test_external_system_var_excluded(self):
+        text = (
+            "RMEnsure SharedMod 1.00 RMLoad <System$Dir>.Modules.SharedMod\n"
+            "Run <Obey$Dir>.!RunImage\n"
+        )
+        # The System$Dir module is not an in-app file; only !RunImage remains.
+        self.assertEqual(parse_run_obey(text), ['!runimage'])
+
+    def test_unknown_dir_var_assumed_in_app(self):
+        # No Set line for Foo$Dir: an unknown *$Dir is assumed to be the app dir
+        # (backward-compatible with the previous naive behaviour).
+        text = "Run <Foo$Dir>.!RunImage\n"
+        self.assertEqual(parse_run_obey(text), ['!runimage'])
+
 
 class TestClassifyAppFiles(unittest.TestCase):
     def _unique_always(self):

@@ -116,6 +116,22 @@ def find_app_directories(files: list[dict], root_mode: str,
 
 _LAUNCH_CMDS = {'run', 'rmrun', 'rmload'}
 
+# Sentinel standing in for the application (Obey) directory during expansion.
+_ROOT = '\x00'
+
+# System variables that always resolve to the application directory.
+_OBEY_VARS = {'obey$dir', 'obey$path'}
+
+# Well-known system variables that point *outside* the application; a file
+# referenced through one of these is not an in-app file and is ignored.
+_EXTERNAL_VARS = {
+    'system$dir', 'system$path', 'boot$dir', 'resources$dir',
+    'choices$dir', 'choices$write', 'wimp$scrapdir', 'scrap$dir',
+}
+
+_SET_RE = re.compile(r'^Set(?:Macro|Eval)?\s+(\S+)\s+(.+)$', re.IGNORECASE)
+_VAR_RE = re.compile(r'<([^>]+)>')
+
 
 def _strip_quotes(token: str) -> str:
     if len(token) >= 2 and token[0] == token[-1] and token[0] in ('"', "'"):
@@ -123,48 +139,95 @@ def _strip_quotes(token: str) -> str:
     return token
 
 
-def _resolve_obey_path(token: str) -> str | None:
+def _build_var_map(lines: list[str]) -> dict[str, str]:
+    """Collect `Set <name> <value>` assignments (case-insensitive names)."""
+    varmap: dict[str, str] = {}
+    for line in lines:
+        m = _SET_RE.match(line)
+        if m:
+            varmap[m.group(1).lower()] = _strip_quotes(m.group(2).strip())
+    return varmap
+
+
+def _expand(token: str, varmap: dict[str, str], depth: int = 0) -> str:
+    """Expand <var> references, anchoring application-directory variables on the
+    _ROOT sentinel.  Handles the `Set App$Dir <Obey$Dir>` indirection pattern
+    (and chains/subdirectories thereof).
+    """
+    if depth > 16:  # guard against pathological/circular definitions
+        return token
+
+    def repl(m):
+        name = m.group(1).lower()
+        if name in _OBEY_VARS:
+            return _ROOT
+        if name in varmap:
+            return _expand(varmap[name], varmap, depth + 1)
+        if name in _EXTERNAL_VARS:
+            return m.group(0)  # external: leave unresolved
+        if name.endswith('$dir') or name.endswith('$path'):
+            return _ROOT       # unknown directory variable: assume app dir
+        return m.group(0)      # unknown: leave unresolved
+
+    return _VAR_RE.sub(repl, token)
+
+
+def _resolve_obey_path(token: str, varmap: dict[str, str] | None = None) -> str | None:
     """Resolve an Obey file reference to a path relative to the app directory.
 
-    '<Obey$Dir>.!RunImage'   -> '!RunImage'
-    '<App$Dir>.bin.loader'   -> 'bin/loader'
+    '<Obey$Dir>.!RunImage'                      -> '!RunImage'
+    '<App$Dir>.bin.loader'                       -> 'bin/loader'
+    '<App$Dir>.loader' with Set App$Dir=<..>.Bin -> 'bin/loader'
+    '<System$Dir>.Modules.Foo'                   -> None (external)
 
-    Returns None for tokens that are clearly not file references (options,
-    argument placeholders).
+    Returns None for tokens that are not in-app file references (options,
+    argument placeholders, external/unresolved variables).
     """
     token = _strip_quotes(token).strip()
-    if not token:
-        return None
-    if token.startswith('-') or token.startswith('%'):
+    if not token or token.startswith('-') or token.startswith('%'):
         return None
 
-    m = re.match(r'^<[^>]+>\.(.+)$', token)
-    rest = m.group(1) if m else token
-
-    # RISC OS uses '.' as its path separator.
-    return rest.replace('.', '/')
+    expanded = _expand(token, varmap or {})
+    if _ROOT in expanded:
+        rest = expanded.split(_ROOT, 1)[1].lstrip('.')
+        return rest.replace('.', '/') or None
+    if '<' not in token:
+        # A bare relative path (no variable) is taken to be app-relative.
+        return token.replace('.', '/')
+    # An unresolved/external variable reference is not an in-app file.
+    return None
 
 
 def parse_run_obey(text: str) -> list[str]:
     """Parse a RISC OS !Run Obey file, returning the app-relative paths of the
     files it launches (lowercased, '/'-separated).  Best-effort.
+
+    A first pass collects `Set`/`SetMacro` variable assignments so that path
+    references built from them (the common `Set App$Dir <Obey$Dir>` idiom, and
+    subdirectory/chained variants) resolve to the correct app-relative path.
     """
-    targets: list[str] = []
-
-    def add(token):
-        if not token:
-            return
-        rel = _resolve_obey_path(token)
-        if rel:
-            targets.append(rel.lower())
-
+    cleaned: list[str] = []
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith('|'):  # blank or comment
             continue
         if line.startswith('*'):              # explicit star command
             line = line[1:].strip()
+        if line:
+            cleaned.append(line)
 
+    varmap = _build_var_map(cleaned)
+
+    targets: list[str] = []
+
+    def add(token):
+        if not token:
+            return
+        rel = _resolve_obey_path(token, varmap)
+        if rel:
+            targets.append(rel.lower())
+
+    for line in cleaned:
         tokens = line.split()
         if not tokens:
             continue
