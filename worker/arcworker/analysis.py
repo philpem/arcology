@@ -14,6 +14,7 @@ import signal
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 from arcology_shared.enums import AnalysisStatus
 from arcology_shared.hints import HintKey
@@ -29,7 +30,13 @@ from . import analyses as _analyses
 from .api import ArcologyAPI
 from .cache_keys import artefact_cache_prefix, partition_cache_relpath
 from .compression import decompress_if_needed
-from .config import CANCEL_CHECK_INTERVAL, POLL_BACKOFF_CEILING, POLL_BACKOFF_FLOOR, log
+from .config import (
+    CANCEL_CHECK_INTERVAL,
+    POLL_BACKOFF_CEILING,
+    POLL_BACKOFF_FLOOR,
+    STALE_RESET_INTERVAL,
+    log,
+)
 from .exceptions import JobCancelledException
 from .tools.base import clear_cancel_event, set_cancel_event
 from .utils.text import make_latin1_fspath
@@ -763,11 +770,23 @@ class AnalysisWorker:
 
         # Recover any jobs left in RUNNING state by a previous worker crash
         self.api.reset_stale_analyses()
+        last_stale_reset = time.monotonic()
 
         current_delay = POLL_BACKOFF_FLOOR
 
         while not self._shutdown.is_set():
             try:
+                # Periodically re-queue jobs orphaned mid-run (e.g. a worker
+                # SIGKILL'd past the stop grace period leaves its job stuck in
+                # RUNNING). The startup reset above only catches jobs that were
+                # already stale at boot; without this a stranded job would wait
+                # for the next restart. The server applies STALE_JOB_TIMEOUT so
+                # this never disturbs a job still running on a live worker.
+                if STALE_RESET_INTERVAL > 0 and (
+                        time.monotonic() - last_stale_reset >= STALE_RESET_INTERVAL):
+                    self.api.reset_stale_analyses()
+                    last_stale_reset = time.monotonic()
+
                 processed = self.claim_and_process()
 
                 # A shutdown signal may have arrived while the job ran; check
