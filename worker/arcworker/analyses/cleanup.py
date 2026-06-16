@@ -45,6 +45,11 @@ def process_cleanup(self, analysis: dict, artefact: dict, work_dir: Path):
 
     deleted = 0
     errors = 0
+    processed = 0
+    total = len(keys) + len(prefixes)
+    # Framework-injected reporter; a large cleanup (hundreds of keys/prefixes)
+    # then shows live progress instead of an opaque "In progress…" spinner.
+    reporter = self.progress.start(total=total, label='Deleting storage objects')
 
     for key in keys:
         try:
@@ -55,6 +60,8 @@ def process_cleanup(self, analysis: dict, artefact: dict, work_dir: Path):
         except Exception as e:
             errors += 1
             log.warning(f"Cleanup: failed to delete key {key!r}: {e}")
+        processed += 1
+        reporter.update(processed)
 
     for prefix in prefixes:
         try:
@@ -65,6 +72,8 @@ def process_cleanup(self, analysis: dict, artefact: dict, work_dir: Path):
         except Exception as e:
             errors += 1
             log.warning(f"Cleanup: failed to delete prefix {prefix!r}: {e}")
+        processed += 1
+        reporter.update(processed)
 
     summary = f'{deleted} of {len(keys) + len(prefixes)} keys/prefixes deleted'
     if errors:

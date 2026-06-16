@@ -9,6 +9,7 @@ import hashlib
 import shutil
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urlencode
 import requests
@@ -408,6 +409,7 @@ class ArcologyAPI:
         container_format: str = None,
         partition_index: int = 0,
         archive_comment: str | None = None,
+        progress_callback: Callable[[int, int], None] | None = None,
     ):
         """
         Register extracted file listing in API.
@@ -452,7 +454,7 @@ class ArcologyAPI:
 
         partition_uuid = partition_resp.get('uuid')
 
-        self.post_file_records(partition_uuid, files)
+        self.post_file_records(partition_uuid, files, progress_callback=progress_callback)
 
         return partition_resp
 
@@ -461,6 +463,7 @@ class ArcologyAPI:
         partition_uuid: str,
         files: list[dict],
         batch_size: int = 100,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> int:
         """
         Convert a file list from enumerate_extracted_files() into API records
@@ -470,6 +473,8 @@ class ArcologyAPI:
             partition_uuid: UUID of the target partition (must already exist).
             files: List of file dicts as returned by enumerate_extracted_files().
             batch_size: Number of records per POST request (default 100).
+            progress_callback: Optional ``callback(posted, total)`` invoked after
+                each batch is posted, for live progress on large listings.
 
         Returns:
             Total number of file records submitted.
@@ -527,6 +532,8 @@ class ArcologyAPI:
                     f"(batch starting at record {i}, {len(batch)} records)"
                 )
             total += len(batch)
+            if progress_callback is not None:
+                progress_callback(total, len(files))
         return total
 
     def queue_analysis(

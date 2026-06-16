@@ -1153,7 +1153,7 @@ def update_analysis(id):
 
     nul_error = _nul_error(data, [
         'tool_name', 'tool_version', 'output_url', 'output_path',
-        'summary', 'details', 'error_message',
+        'summary', 'details', 'error_message', 'progress_message',
     ])
     if nul_error:
         return nul_error
@@ -1165,6 +1165,7 @@ def update_analysis(id):
     _WORKER_ONLY_FIELDS = {
         'output_path', 'status', 'success', 'details',
         'tool_name', 'tool_version', 'summary', 'error_message', 'output_url',
+        'progress_message', 'progress_current', 'progress_total',
     }
     worker = _is_worker_request()
     for _f in _WORKER_ONLY_FIELDS:
@@ -1203,7 +1204,8 @@ def update_analysis(id):
             return error_response('Invalid status')
 
     for field in ['tool_name', 'tool_version', 'output_url', 'output_path',
-                  'success', 'summary', 'details', 'error_message']:
+                  'success', 'summary', 'details', 'error_message',
+                  'progress_message', 'progress_current', 'progress_total']:
         if field in data:
             setattr(analysis, field, data[field])
 
@@ -1211,6 +1213,24 @@ def update_analysis(id):
         analysis.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
     if data.get('status') in ('completed', 'failed'):
         analysis.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    # Progress/heartbeat bookkeeping.  The server stamps progress_updated_at
+    # (not the worker clock, matching started_at/completed_at) whenever a
+    # running job reports progress or sends a bare heartbeat — this timestamp
+    # is what heartbeat-based stale detection compares against, so an actively
+    # progressing job is never reset as stuck.  On completion the live-progress
+    # fields are cleared so finished rows don't carry a stale bar.
+    has_progress = any(
+        f in data for f in ('progress_message', 'progress_current', 'progress_total')
+    )
+    if worker and analysis.status == AnalysisStatus.RUNNING and (
+            has_progress or data.get('heartbeat')):
+        analysis.progress_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    if data.get('status') in ('completed', 'failed'):
+        analysis.progress_message = None
+        analysis.progress_current = None
+        analysis.progress_total = None
+        analysis.progress_updated_at = None
 
     # On successful completion of specific analysis types, extract structured
     # data from the JSON details blob into indexed search tables.
@@ -1332,7 +1352,11 @@ def reset_stale_analyses():
     result = db.session.execute(
         update(Analysis)
         .where(Analysis.status == AnalysisStatus.RUNNING)
-        .where(Analysis.started_at < cutoff)
+        # Heartbeat-based staleness: a job is stuck only if it has shown no sign
+        # of life (progress update or heartbeat, else its start) for the whole
+        # timeout window.  An actively-progressing long job keeps bumping
+        # progress_updated_at and is therefore never reset.
+        .where(func.coalesce(Analysis.progress_updated_at, Analysis.started_at) < cutoff)
         .values(
             status=AnalysisStatus.PENDING,
             error_message=None,
@@ -1345,6 +1369,10 @@ def reset_stale_analyses():
             success=None,
             summary=None,
             details=None,
+            progress_message=None,
+            progress_current=None,
+            progress_total=None,
+            progress_updated_at=None,
         )
     )
     db.session.commit()
