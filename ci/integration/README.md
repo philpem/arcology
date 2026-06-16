@@ -84,17 +84,25 @@ imports Flask and cannot load in the worker container; `ci/test_integration_anal
     identifies it via pure-Python BPB parsing (sfdisk finds no table, the
     `file(1)` clause is normalised away) and queues `FILE_EXTRACTION` with the
     `fat12` hint, asserted in `final_queue`.
+  - `mbr_2part` — 4 MB image with a 2-partition MBR table (FAT16 + FAT32, no
+    real filesystems).  sfdisk reads the table; each partition is carved into a
+    derived `RAW_SECTOR` artefact with `FILE_EXTRACTION` queued (asserted in
+    `final_queue`); the inter/post-partition zero gaps are omitted with a note,
+    and the MBR-bearing pre-partition region is registered as an `UNKNOWN` gap
+    artefact.
 
-Next iterations add MBR multi-partition and ADFS fixtures, and the container-only
-archive formats (7z, RISC OS); the harness is already generic over those.
+Next iterations add an ADFS fixture and the container-only archive formats
+(7z, RISC OS); the harness is already generic over those.
 
 ### Note on tool-built fixtures and version stability
 
-`fat_720k`'s `disk.img` is built with `mkfs.vfat` + `mcopy` (see
-`devtools/make_fixtures.py make_fat_720k`) and **committed as a binary** — CI
-reads it, never rebuilds it, so the image bytes are independent of the host's
-dosfstools version.  The build is byte-reproducible (fixed volume id via `-i`,
-fixed source mtimes).  The golden's tool-output fields are normalised: nested
+The tool-built disc images (`fat_720k` via `mkfs.vfat` + `mcopy`; `mbr_2part`
+via `sfdisk`) are **committed as binaries** — CI reads them, never rebuilds
+them, so the image bytes are independent of the host's dosfstools/util-linux
+version.  Each build is byte-reproducible: `fat_720k` pins the volume id (`-i`)
+and source mtimes; `mbr_2part` pins the MBR disk signature (`label-id`) that
+sfdisk would otherwise randomise.  The golden's tool-output fields are
+normalised: nested
 `process_output` is dropped at any depth, the `file(1)` type string is dropped,
 and the `[file: …]` summary clause is stripped.  The surviving `sfdisk` fields
 (`success`, `table_type`, `sector_size`, `partitions`) are derived from the

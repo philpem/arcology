@@ -193,11 +193,60 @@ def make_fat_720k() -> None:
     })
 
 
+def make_mbr_2part() -> None:
+    """Build a 4MB image with a 2-partition MBR table (no real filesystems).
+
+    sfdisk reads the partition *table*, not partition contents, so the
+    partitions are left zero-filled — PARTITION_DETECT carves each as a derived
+    RAW_SECTOR artefact (FILE_EXTRACTION queued per partition, asserted in
+    final_queue) using the filesystem implied by the MBR type byte.  The
+    inter/post-partition gaps are uniform zero fill and are omitted with a note;
+    the pre-partition region (containing the MBR) is non-uniform and is
+    registered as an UNKNOWN gap artefact.
+
+    Byte-reproducible: a fixed ``label-id`` pins the MBR disk signature that
+    sfdisk would otherwise randomise.
+    """
+    _require('sfdisk')
+    case_dir = FIXTURES / 'mbr_2part'
+    case_dir.mkdir(parents=True, exist_ok=True)
+    image = case_dir / 'disk.img'
+
+    with tempfile.TemporaryDirectory() as td:
+        img = Path(td) / 'disk.img'
+        with open(img, 'wb') as fh:
+            fh.write(b'\x00' * (8192 * 512))  # 4 MB
+        script = (
+            'label: dos\n'
+            'label-id: 0x12345678\n'
+            'unit: sectors\n'
+            'start=2048, size=2048, type=06\n'   # FAT16
+            'start=6144, size=1024, type=0b\n'   # FAT32
+        )
+        sfdisk = shutil.which('sfdisk') or '/usr/sbin/sfdisk'
+        subprocess.run([sfdisk, str(img)], input=script.encode(),
+                       check=True, capture_output=True)
+        shutil.copy(img, image)
+
+    _write_manifest('mbr_2part', {
+        'input': 'disk.img',
+        'original_filename': 'disk.img',
+        'artefact_type': 'RAW_SECTOR',
+        'seed_analyses': [{'type': 'partition_detect'}],
+        # Detect only; the per-partition FILE_EXTRACTION jobs are asserted in
+        # final_queue rather than executed.
+        'run_types': ['partition_detect'],
+        'required_tools': ['sfdisk', 'file'],
+        'max_steps': 20,
+    })
+
+
 _FIXTURES = {
     'zip_plain': make_zip_plain,
     'tar_gz': make_tar_gz,
     'zip_promote': make_zip_promote,
     'fat_720k': make_fat_720k,
+    'mbr_2part': make_mbr_2part,
 }
 
 # Pure-Python fixtures buildable anywhere; `all` builds only these.  Tool-built

@@ -23,6 +23,11 @@ _CASES = {
     # no partition table and the file(1) clause is normalised away.  Detection
     # queues FILE_EXTRACTION, which is asserted in final_queue (not executed).
     'fat_720k': ['sfdisk', 'file'],
+    # MBR with two partitions (FAT16 + FAT32): sfdisk reads the table, each
+    # partition is carved into a derived RAW_SECTOR artefact with FILE_EXTRACTION
+    # queued; uniform zero gaps are omitted with a note, the MBR-bearing
+    # pre-partition gap is registered as an UNKNOWN artefact.
+    'mbr_2part': ['sfdisk', 'file'],
 }
 
 
@@ -33,6 +38,9 @@ class TestPartitionDetect(unittest.TestCase):
 
     def test_fat_720k(self):
         self._run('fat_720k')
+
+    def test_mbr_2part(self):
+        self._run('mbr_2part')
 
 
 if __name__ == '__main__':
