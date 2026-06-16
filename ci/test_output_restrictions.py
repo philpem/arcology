@@ -135,6 +135,25 @@ class TestOutputRestrictionGate(unittest.TestCase):
                 poster_path=cls.replay_poster_path,
             ))
 
+            # ── Explicit (NSFW) Replay scenario ──────────────────────────────
+            # An EXPLICIT-restricted artefact carrying a transcoded movie: a
+            # non-bypass user gets a hard block; a bypass user (admin) sees the
+            # poster behind the blur/reveal consent gate.
+            expl = Artefact(item_id=item.id, label='nsfw', artefact_type=ArtefactType.HFE,
+                            original_filename='nsfw.hfe', storage_path='uploads/nsfw.hfe',
+                            owner_id=owner.id)
+            db.session.add(expl)
+            db.session.flush()
+            db.session.add(ArtefactRestriction(
+                artefact_id=expl.id, restriction_type=RestrictionType.EXPLICIT, reason='test'))
+            cls.explicit_poster_path = f'pub-item/{expl.uuid}_nsfw/clip_poster.png'
+            db.session.add(ReplayMovie(
+                artefact_id=expl.id, file_path='Clips/Nsfw', title='Nsfw',
+                video_format=1, width=320, height=256,
+                mp4_output_path=f'pub-item/{expl.uuid}_nsfw/clip.mp4',
+                poster_path=cls.explicit_poster_path,
+            ))
+
             # ── Mode 2 aggregate scenario ────────────────────────────────────
             # An UNRESTRICTED container artefact (ZIP) whose DERIVED child is
             # COPYRIGHT-restricted and has an image FORMAT_CONVERT output.  The
@@ -169,6 +188,7 @@ class TestOutputRestrictionGate(unittest.TestCase):
             cls.item_url = item.url_id
             cls.art_slug = art.url_slug
             cls.container_slug = container.url_slug
+            cls.explicit_art_slug = expl.url_slug
 
     @classmethod
     def tearDownClass(cls):
@@ -251,6 +271,27 @@ class TestOutputRestrictionGate(unittest.TestCase):
         r = self.client.get(f'/items/{self.item_url}/artefacts/{self.art_slug}/viewer')
         self.assertEqual(r.status_code, 200, r.data)
         self.assertIn(self.replay_poster_path.encode(), r.data)
+
+    # ---- Explicit (NSFW) Replay media ----
+    def test_explicit_replay_blurred_for_bypass_user(self):
+        # Admin bypasses EXPLICIT: the poster is present but wrapped in the
+        # blur/reveal consent gate (not shown outright).
+        self._login(self.admin_id)
+        r = self.client.get(
+            f'/items/{self.item_url}/artefacts/{self.explicit_art_slug}/viewer')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIn(self.explicit_poster_path.encode(), r.data)
+        self.assertIn(b'explicit-content-blur', r.data)
+        self.assertIn(b'revealExplicit', r.data)
+
+    def test_explicit_replay_hidden_for_non_bypass_user(self):
+        # Non-bypass viewer: EXPLICIT is a hard block — no poster, restriction notice.
+        self._login(self.viewer_id)
+        r = self.client.get(
+            f'/items/{self.item_url}/artefacts/{self.explicit_art_slug}/viewer')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertNotIn(self.explicit_poster_path.encode(), r.data)
+        self.assertIn(b'download restriction', r.data)
 
 
 if __name__ == '__main__':

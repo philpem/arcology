@@ -293,6 +293,62 @@ see `_visible_analyses_query()` in `myapp/blueprints/analysis.py` for the patter
 > leak, hashdb match counts, `analysis/artefact` derived-tree leak, unguarded
 > analysis outputs, CSV export injection.
 
+### Download restrictions and explicit (NSFW) content
+
+Restrictions are an access gate **distinct from visibility/privacy**. Visibility
+controls who can *see that an artefact exists* (private items are 404 to
+outsiders, but the worker may still read them to analyse). Restrictions control
+who can *download the bytes* — including any rendering of those bytes.
+
+`RestrictionType` (`myapp/enums.py`): `MALWARE`, `PII`, `COPYRIGHT`,
+`LEGAL_HOLD`, `EXPLICIT`, `CORRUPTED`. They attach to an artefact
+(`ArtefactRestriction`) or an extracted file (`ExtractedFileRestriction`).
+
+**Bypass model** — a user may pass a restriction via either a global per-type
+grant (`User.can_bypass_restriction(type)`) or a per-artefact grant
+(`UserArtefactBypass`) that **cascades down the derived-from chain** (a grant on
+an original upload covers artefacts derived from it). Admins bypass everything.
+Anonymous and the worker key never bypass.
+
+**The two helpers are the single source of truth** (`myapp/visibility.py`) — use
+them, don't hand-roll:
+- `can_download_despite_restrictions(user, restrictions, artefact)` — gates raw
+  download routes (`download`, `download_file`) and the REST API equivalents.
+- `output_blocked_for(user, artefact)` — its inversion over
+  `artefact.effective_restrictions`. **Analysis outputs are renderings of the
+  restricted bytes** (converted images, text, SVG, the Replay MP4/poster), so
+  every route that serves or links an output must apply it: `get_output_file`
+  (web) and `api.get_output_file` both `abort(403)` on it, and the viewer must
+  not emit `<img>`/`<video>`/`<audio>`/poster URLs for a blocked artefact (they
+  would 403 → broken element) — show a locked placeholder / restricted notice
+  instead.
+
+**`EXPLICIT` is special — a *soft* gate layered on the hard one.** For a user
+who **cannot** bypass it, it behaves like any restriction (hard block). For a
+user who **can** bypass it, the content is shown but **blurred behind a
+"click to reveal" consent overlay** rather than served outright. This is the
+`.explicit-gate` / `.explicit-content-blur` / `revealExplicit()` machinery in
+`myapp/templates/artefacts/viewer.html`, driven by `_viewer_explicit_gate()` in
+`myapp/blueprints/artefacts.py` (sets `group['explicit']` / `group['restricted']`
+and returns `user_can_bypass_explicit`).
+
+> **Recurring requirement — any viewer surface that renders restricted bytes
+> must wire up *both* gates.** When you add a new kind of rendered media to the
+> viewer (image output, module render, Replay player/poster, …):
+> 1. compute, per owning artefact, `restricted = output_blocked_for(user, art)`
+>    (hard lock) and `explicit = (not restricted) and can_bypass and art is
+>    EXPLICIT` (soft blur);
+> 2. in the template, render a locked placeholder when `restricted`, wrap the
+>    media in the `.explicit-gate` blur/reveal markup when `explicit`, otherwise
+>    render normally;
+> 3. gate per **owning** artefact, not just the viewed root — a *derived* movie
+>    can be explicit/restricted while its root is not.
+>
+> The Acorn Replay viewer is the worked example: `_replay_gate_flags()` +
+> `_viewer_replay_detail` / `_viewer_replay_posters` (blueprint) and the
+> `replay_detail` / `replay_posters` blocks (template). Covered by
+> `ci/test_output_restrictions.py` (`*_replay_*` tests).
+
 ### OIDC role for STAFF tier
 
 Set `OIDC_ROLE_STAFF` (default `arcology-staff`) in the IdP to map SSO users to the STAFF permission tier.
