@@ -163,15 +163,7 @@
         "archive_type": "zip",
         "extraction_depth": 1,
         "file_count": 1,
-        "unzip": {
-          "process_output": {
-            "command": "unzip -F -q <outputs>/it-item_it-item/it-art-0000_root/it-an-0001_archive-extract/inner.zip -d <work>/it-an-0006/archive_contents",
-            "duration_seconds": 0.0,
-            "returncode": 0,
-            "stderr": "",
-            "stdout": ""
-          }
-        }
+        "unzip": {}
       },
       "error_message": null,
       "output_path": "it-item_it-item/it-art-0000_root/it-an-0006_archive-extract/partition_0_0",

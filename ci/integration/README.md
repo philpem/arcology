@@ -79,8 +79,27 @@ imports Flask and cannot load in the worker container; `ci/test_integration_anal
   - `zip_promote` — promotion of an extracted disc image to a derived
     `RAW_SECTOR` artefact, whose `PARTITION_DETECT` is queued (and appears in
     `final_queue` since it is not in this case's `run_types`).
+- `it_partition_detect.py`:
+  - `fat_720k` — whole-disc FAT12 image (no partition table).  `PARTITION_DETECT`
+    identifies it via pure-Python BPB parsing (sfdisk finds no table, the
+    `file(1)` clause is normalised away) and queues `FILE_EXTRACTION` with the
+    `fat12` hint, asserted in `final_queue`.
 
-Next iterations add partition/filesystem detection and container-built fixtures
-(7z, FAT, MBR, ADFS); the harness is already generic over those.
+Next iterations add MBR multi-partition and ADFS fixtures, and the container-only
+archive formats (7z, RISC OS); the harness is already generic over those.
+
+### Note on tool-built fixtures and version stability
+
+`fat_720k`'s `disk.img` is built with `mkfs.vfat` + `mcopy` (see
+`devtools/make_fixtures.py make_fat_720k`) and **committed as a binary** — CI
+reads it, never rebuilds it, so the image bytes are independent of the host's
+dosfstools version.  The build is byte-reproducible (fixed volume id via `-i`,
+fixed source mtimes).  The golden's tool-output fields are normalised: nested
+`process_output` is dropped at any depth, the `file(1)` type string is dropped,
+and the `[file: …]` summary clause is stripped.  The surviving `sfdisk` fields
+(`success`, `table_type`, `sector_size`, `partitions`) are derived from the
+committed image bytes, not the tool version, so they should be stable across
+util-linux releases — but if a future base-image bump changes them, regenerate
+the golden and review the diff.
 
 <!-- vim: ts=4 sw=4 et -->

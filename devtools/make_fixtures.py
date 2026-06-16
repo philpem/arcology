@@ -14,14 +14,21 @@ Usage:
 import gzip
 import io
 import json
+import os
+import shutil
+import subprocess
 import sys
 import tarfile
+import tempfile
 import zipfile
 from pathlib import Path
 
 FIXTURES = Path(__file__).resolve().parent.parent / 'ci' / 'integration' / 'fixtures'
 
 _ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
+# Fixed mtime embedded in tool-built filesystem images (mcopy stamps FAT
+# directory entries from the source file's mtime) so rebuilds are byte-stable.
+_FS_EPOCH = 631152000  # 1990-01-01 00:00:00 UTC
 
 
 def _write_manifest(case: str, manifest: dict) -> None:
@@ -123,20 +130,89 @@ def make_zip_promote() -> None:
     })
 
 
+def _require(*tools: str) -> None:
+    missing = [t for t in tools if shutil.which(t) is None
+               and not Path(f'/usr/sbin/{t}').exists()]
+    if missing:
+        raise SystemExit(
+            f"missing tools to build this fixture: {', '.join(missing)}. "
+            f"The committed binary is authoritative; only rebuild where these "
+            f"tools are available (e.g. the worker container)."
+        )
+
+
+def make_fat_720k() -> None:
+    """Build a 720K whole-disc FAT12 image (no partition table).
+
+    Tool-built (mkfs.vfat + mcopy) and committed as a binary; this builder
+    documents its provenance and is byte-reproducible thanks to a fixed volume
+    id (``-i``) and fixed source-file mtimes (mcopy stamps directory entries
+    from them).  PARTITION_DETECT identifies it via pure-Python BPB parsing;
+    sfdisk reports no table and the file(1) clause is normalised away.
+    """
+    _require('mkfs.vfat', 'mcopy')
+    case_dir = FIXTURES / 'fat_720k'
+    case_dir.mkdir(parents=True, exist_ok=True)
+    image = case_dir / 'disk.img'
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        img = tmp / 'disk.img'
+        with open(img, 'wb') as fh:
+            fh.write(b'\x00' * (720 * 1024))
+        subprocess.run(
+            ['mkfs.vfat', '-F', '12', '-i', 'DEADBEEF', '-n', 'ARCOLOGY', str(img)],
+            check=True, capture_output=True,
+        )
+        # Deterministic content with fixed mtimes so mcopy's stamps are stable.
+        members = {
+            'README.TXT': b'arcology fat12 fixture\n',
+            'DATA.BIN': bytes(range(64)) * 2,
+        }
+        env = {**os.environ, 'MTOOLS_SKIP_CHECK': '1'}
+        for name, data in members.items():
+            src = tmp / name
+            src.write_bytes(data)
+            os.utime(src, (_FS_EPOCH, _FS_EPOCH))
+            subprocess.run(
+                ['mcopy', '-i', str(img), str(src), f'::/{name}'],
+                check=True, capture_output=True, env=env,
+            )
+        shutil.copy(img, image)
+
+    _write_manifest('fat_720k', {
+        'input': 'disk.img',
+        'original_filename': 'disk.img',
+        'artefact_type': 'RAW_SECTOR',
+        'seed_analyses': [{'type': 'partition_detect'}],
+        # Detect only; FILE_EXTRACTION is queued by the handler and asserted in
+        # final_queue (running it would need the in-container 7z/mtools path).
+        'run_types': ['partition_detect'],
+        'required_tools': ['sfdisk', 'file'],
+        'max_steps': 20,
+    })
+
+
 _FIXTURES = {
     'zip_plain': make_zip_plain,
     'tar_gz': make_tar_gz,
     'zip_promote': make_zip_promote,
+    'fat_720k': make_fat_720k,
 }
+
+# Pure-Python fixtures buildable anywhere; `all` builds only these.  Tool-built
+# fixtures (FAT, MBR, …) must be named explicitly and need external tools.
+_PURE_PYTHON = ('zip_plain', 'tar_gz', 'zip_promote')
 
 
 def main(argv):
     if not argv or argv[0] in ('-h', '--help'):
         print(__doc__)
-        print('cases:', ', '.join(sorted(_FIXTURES)), 'all')
+        print('cases:', ', '.join(sorted(_FIXTURES)))
+        print('all   :', ', '.join(_PURE_PYTHON), '(pure-Python only)')
         return 0
     target = argv[0]
-    cases = sorted(_FIXTURES) if target == 'all' else [target]
+    cases = sorted(_PURE_PYTHON) if target == 'all' else [target]
     for case in cases:
         if case not in _FIXTURES:
             print(f"unknown fixture: {case}", file=sys.stderr)

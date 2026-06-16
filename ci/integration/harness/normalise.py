@@ -18,9 +18,19 @@ placeholder rewriting is needed.
 """
 
 import json
+import re
 
-_VOLATILE_DETAIL_KEYS = ('process_output', 'exception_trace', 'file_output',
-                         'file_type_raw')
+# Keys whose values vary by tool/library version or run, dropped at ANY depth
+# (PARTITION_DETECT nests sfdisk/file output deep inside `details`).
+_VOLATILE_DETAIL_KEYS = frozenset((
+    'process_output', 'exception_trace', 'file_output', 'file_type_raw',
+    'file_type',        # `file(1)` / libmagic output — version-dependent string
+    'modified_time', 'created_time',
+))
+
+# `... [file: <libmagic output>]` clause appended to some summaries; the magic
+# string drifts across libmagic versions, so strip from `[file:` to end.
+_FILE_CLAUSE_RE = re.compile(r'\s*\[file:.*$')
 
 
 def _replace_roots(text: str, roots: dict[str, str]) -> str:
@@ -47,23 +57,26 @@ def _decode_maybe_json(value):
 
 
 def _clean_details(details, roots):
-    obj = _decode_maybe_json(details)
-    if isinstance(obj, dict):
-        cleaned = {}
-        for key, val in obj.items():
-            if key in _VOLATILE_DETAIL_KEYS:
-                continue
-            cleaned[key] = _clean_value(val, roots)
-        return cleaned
-    return _clean_value(obj, roots)
+    return _clean_value(_decode_maybe_json(details), roots)
 
 
 def _clean_value(value, roots):
+    """Recursively replace roots and drop volatile keys at any depth."""
     if isinstance(value, dict):
-        return {k: _clean_value(v, roots) for k, v in value.items()}
+        return {
+            k: _clean_value(v, roots)
+            for k, v in value.items()
+            if k not in _VOLATILE_DETAIL_KEYS
+        }
     if isinstance(value, list):
         return [_clean_value(v, roots) for v in value]
     return _clean_scalar(value, roots)
+
+
+def _clean_summary(summary, roots):
+    if not isinstance(summary, str):
+        return summary
+    return _replace_roots(_FILE_CLAUSE_RE.sub('', summary), roots)
 
 
 def _clean_event(event, roots):
@@ -73,6 +86,8 @@ def _clean_event(event, roots):
             cleaned[key] = _clean_details(val, roots) if val is not None else None
         elif key == 'hints':
             cleaned[key] = _clean_value(_decode_maybe_json(val), roots)
+        elif key == 'summary':
+            cleaned[key] = _clean_summary(val, roots)
         else:
             cleaned[key] = _clean_value(val, roots)
     return cleaned
