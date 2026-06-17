@@ -69,7 +69,7 @@ def upgrade():
         ), {'enabled': True})
     ]
     if enabled_db_ids:
-        op.execute(sa.text("""
+        bind.execute(sa.text("""
             UPDATE hash_databases
             SET product_recognition_status = 'PENDING',
                 product_recognition_error = NULL
