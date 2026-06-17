@@ -23,6 +23,12 @@ Classification (Mandatory == is_required, Optional == not is_required):
   * If !Run cannot be parsed, a filetype heuristic is used as a fallback to pick
     Mandatory candidates (still gated by uniqueness).
 
+Applications that appear on many artefacts (the original distribution plus copies
+bundled elsewhere — !ArcFS, !System, !Fonts, !Scrap, !Boot, SerialDev, …) can be
+pinned to a "golden" source with --canonical-sources (a "<app-dir> <regex>" rule
+file); copies on non-matching artefacts are dropped.  --dump-canonical writes an
+editable starting point listing every application found on more than one artefact.
+
 This tool is RISC OS-specific but not collection-specific: use it for the arcarc
 archive, a batch of museum disc images, or any other RISC OS material.
 """
@@ -639,6 +645,157 @@ def diagnose_no_mandatory(app_dir_name: str, app_files: list[dict],
 
 
 # ---------------------------------------------------------------------------
+# Canonical sources ("golden" copy disambiguation)
+# ---------------------------------------------------------------------------
+#
+# Some applications (!ArcFS, !System, !Fonts, !Scrap, !Boot, SerialDev, …)
+# legitimately appear across many artefacts: the original "golden" distribution,
+# plus copies bundled on magazine cover discs or inside other utilities.  Their
+# byte-identical launch targets then look "shared" and are demoted to Optional,
+# and the bundled copies generate junk products (e.g. "!ArcFS - RiscCAD 8").
+#
+# A canonical-sources file names, per application directory, a regex that the
+# artefact's product name (or raw label) must match for that copy to be kept.
+# Copies on non-matching artefacts are dropped entirely — removed from the
+# uniqueness map (so the golden launch target becomes unique again) and from the
+# product output.  Application directories with no rule are unaffected.
+#
+# File format: one rule per line, "<app-dir> <regex>", split on the first run of
+# whitespace (so the regex may contain spaces).  Blank lines and lines starting
+# with '#' are ignored.  Repeated lines for the same app-dir are OR'd.  The regex
+# is anchored at the start (re.match) and matched case-insensitively.
+
+
+def parse_canonical_sources(text: str) -> dict[str, list]:
+    """Parse canonical-sources text into {app_dir_lower: [compiled_regex, ...]}.
+
+    Raises ValueError on a malformed line or invalid regex.
+    """
+    rules: dict[str, list] = {}
+    for lineno, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith('#'):
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            raise ValueError(
+                f'line {lineno}: expected "<app-dir> <regex>", got: {raw!r}')
+        app_dir, pattern = parts
+        try:
+            compiled = re.compile(pattern, re.IGNORECASE)
+        except re.error as exc:
+            raise ValueError(
+                f'line {lineno}: invalid regex {pattern!r}: {exc}') from exc
+        rules.setdefault(app_dir.lower(), []).append(compiled)
+    return rules
+
+
+def load_canonical_sources(path: str) -> dict[str, list]:
+    """Load and parse a canonical-sources file."""
+    with open(path, encoding='utf-8') as fh:
+        return parse_canonical_sources(fh.read())
+
+
+def canonical_accepts(rules: dict[str, list], app_dir_name: str,
+                      clean_name: str, label: str) -> bool | None:
+    """Decide whether an app-dir copy on a given artefact is the canonical one.
+
+    Returns None if the app-dir has no rule (unaffected), True if it matches a
+    rule (golden copy: keep), False if it has a rule but matches none (reject).
+    Matches the regex against *either* the cleaned product name or the raw label.
+    """
+    pats = rules.get(app_dir_name.lower())
+    if not pats:
+        return None
+    for pat in pats:
+        if (clean_name and pat.match(clean_name)) or (label and pat.match(label)):
+            return True
+    return False
+
+
+def apply_canonical_filter(gathered: list, rules: dict[str, list]) -> tuple[int, set]:
+    """Drop non-canonical app-dir copies from *gathered* in place.
+
+    Returns ``(dropped_count, matched_rule_keys)`` so the caller can report how
+    many copies were rejected and warn about rules that matched nothing.
+    """
+    dropped = 0
+    matched_keys: set = set()
+    for g in gathered:
+        for ar in g['artefact_results']:
+            clean = ar.get('clean_name') or ''
+            label = ar.get('label') or ''
+            kept = {}
+            for name, files in ar['app_dirs'].items():
+                verdict = canonical_accepts(rules, name, clean, label)
+                if verdict is False:
+                    dropped += 1
+                    continue
+                if verdict is True:
+                    matched_keys.add(name.lower())
+                kept[name] = files
+            ar['app_dirs'] = kept
+    return dropped, matched_keys
+
+
+def collect_canonical_candidates(gathered: list) -> dict[str, list]:
+    """Find app-dirs that appear on more than one artefact across the selection.
+
+    Returns ``{app_dir_name: [product_name_per_occurrence, ...]}`` — the
+    ambiguous applications a curator may want to pin to a golden source.  App-dir
+    names containing whitespace (e.g. synthetic root/disc keys) are skipped as
+    the rule-file format cannot represent them.
+    """
+    occ: dict[str, list] = {}
+    for g in gathered:
+        for ar in g['artefact_results']:
+            disp = (ar.get('clean_name') or ar.get('label') or '').strip()
+            for name in ar['app_dirs']:
+                if any(c.isspace() for c in name):
+                    continue
+                occ.setdefault(name, []).append(disp)
+    return {name: names for name, names in occ.items() if len(names) > 1}
+
+
+def render_canonical_candidates(candidates: dict[str, list]) -> str:
+    """Render ambiguous-app candidates as an editable canonical-sources file.
+
+    For each app, the artefact whose product name starts with the app's base
+    name (the likely golden distribution) is left as an active rule; the others
+    are emitted commented-out so the curator keeps/edits the right one.
+    """
+    out = [
+        '# Canonical sources candidates — generated by',
+        '#   arco hashdb generate-riscos ... --dump-canonical',
+        '#',
+        '# Keep ONE rule line per app (or several, for multiple golden versions),',
+        '# comment (#) or delete the rest, then pass this file via',
+        '# --canonical-sources.  The regex is matched (case-insensitively, anchored',
+        '# at the start) against the artefact product name or raw label.',
+        '#',
+        '# Format: <app-dir> <regex>',
+        '',
+    ]
+    if not candidates:
+        out.append('# (no ambiguous applications found in the selection)')
+        return '\n'.join(out) + '\n'
+
+    for name in sorted(candidates):
+        occ = candidates[name]
+        uniq = sorted(set(occ))
+        base = name[1:] if name.startswith('!') else name
+        guess_re = re.compile(r'^' + re.escape(base) + r'(\b|\s|$)', re.IGNORECASE)
+        out.append(f'# {name} — appears on {len(occ)} artefact(s):')
+        for n in uniq:
+            # Escape regex metacharacters but keep spaces readable.
+            pat = re.escape(n).replace('\\ ', ' ') if n else '.*'
+            prefix = '' if (n and guess_re.match(n)) else '#'
+            out.append(f'{prefix}{name}    {pat}')
+        out.append('')
+    return '\n'.join(out) + '\n'
+
+
+# ---------------------------------------------------------------------------
 # Item gathering and product building
 # ---------------------------------------------------------------------------
 
@@ -880,6 +1037,16 @@ def cmd_hashdb_generate_riscos(client: ArcologyClient, args):
     filter_tags = list(args.tag or [])
     jobs = max(1, getattr(args, 'jobs', 1) or 1)
 
+    canonical_rules: dict[str, list] = {}
+    if getattr(args, 'canonical_sources', None):
+        try:
+            canonical_rules = load_canonical_sources(args.canonical_sources)
+        except (OSError, ValueError) as exc:
+            log.error('--canonical-sources: %s', exc)
+            sys.exit(1)
+        log.info('Loaded %d canonical-source rule(s) for %d application(s)',
+                 sum(len(v) for v in canonical_rules.values()), len(canonical_rules))
+
     items = _select_items(client, args)
     if not items:
         log.error('No items matched the selection.')
@@ -913,6 +1080,29 @@ def cmd_hashdb_generate_riscos(client: ArcologyClient, args):
         g = _gather_item(client, item, filter_tags, args.root_files, jobs)
         if g['artefact_results']:
             gathered.append(g)
+
+    # Apply canonical-source rules: drop non-golden copies before they enter the
+    # uniqueness map or product output.
+    if canonical_rules:
+        dropped, matched = apply_canonical_filter(gathered, canonical_rules)
+        log.info('Canonical sources: dropped %d non-canonical application copy(ies)',
+                 dropped)
+        never = sorted(set(canonical_rules) - matched)
+        if never:
+            log.warning('Canonical rules that matched nothing in the selection: %s',
+                        ', '.join(never))
+
+    # --dump-canonical: write an editable candidates file and stop.  Run after
+    # canonical filtering so already-resolved apps drop out (iterative workflow).
+    if getattr(args, 'dump_canonical', None):
+        candidates = collect_canonical_candidates(gathered)
+        with open(args.dump_canonical, 'w', encoding='utf-8') as fh:
+            fh.write(render_canonical_candidates(candidates))
+        log.info('Wrote %d ambiguous application(s) to %s',
+                 len(candidates), args.dump_canonical)
+        log.info('Edit it (keep the golden source per app), then pass it via '
+                 '--canonical-sources.')
+        return
 
     # Build the cross-collection uniqueness map: md5 -> {(item_uuid, app_dir)}.
     md5_appkeys: dict[str, set] = {}

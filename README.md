@@ -231,6 +231,13 @@ arco hashdb generate-riscos --item <uuid> --db-name "Apps" --output apps.json --
 # Uniqueness is scoped to the selected items by default. --global-check also
 # requires launch targets to be unique across the entire catalogue.
 arco hashdb generate-riscos --tag arcarc --db-name "Apps" --output apps.json --global-check
+
+# Apps like !ArcFS / !System appear on many discs. Pin each to its "golden"
+# source: dump an editable candidates file, edit it, then feed it back so the
+# bundled copies are dropped (and the golden launch target becomes mandatory).
+arco hashdb generate-riscos --item <uuid> --db-name "Apps" --dump-canonical canonical.txt
+arco hashdb generate-riscos --item <uuid> --db-name "Apps" --output apps.json \
+    --canonical-sources canonical.txt
 ```
 
 Run `arco --help` or `arco <command> --help` for full usage details.
