@@ -141,6 +141,43 @@ class TestHashdbBatchImport(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 400, resp.data)
 
+    def test_batch_import_can_skip_immediate_link(self):
+        import myapp.blueprints.api as api_mod
+        from myapp.database import HashDatabase
+
+        with self.app.app_context():
+            hdb = HashDatabase(name='No Immediate Link')
+            self.db.session.add(hdb)
+            self.db.session.commit()
+            db_id = hdb.id
+
+        calls = {'n': 0}
+        original = api_mod.link_new_known_files
+
+        def _spy(database, new_kf_list):
+            calls['n'] += 1
+            return original(database, new_kf_list)
+
+        api_mod.link_new_known_files = _spy
+        try:
+            resp = self.client.post(
+                f'/api/hash-databases/{db_id}/import',
+                json={
+                    'link': False,
+                    'products': [
+                        {'title': '!NoLink', 'files': [
+                            {'filename': '!RunImage', 'file_size': 123, 'md5': _MD5},
+                        ]},
+                    ],
+                },
+                headers={'X-API-Key': _WORKER_KEY},
+            )
+        finally:
+            api_mod.link_new_known_files = original
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(calls['n'], 0)
+
 
 if __name__ == '__main__':
     unittest.main()
