@@ -93,4 +93,11 @@ class HashRescanStatus(enum.Enum):
     COMPLETED = "completed"
     FAILED    = "failed"
 
+
+class ProductRecognitionStatus(enum.Enum):
+    PENDING   = "pending"
+    RUNNING   = "running"
+    COMPLETED = "completed"
+    FAILED    = "failed"
+
 # vim: ts=4 sw=4 et

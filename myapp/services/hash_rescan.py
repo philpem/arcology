@@ -2,8 +2,8 @@
 
 Provides find_known_file() and the rescan helpers that re-link
 ExtractedFile rows to active hash databases without re-analysing.
-Also provides queue_product_recognition_for_partitions() to re-trigger
-the worker's folder-level product recognition after hash database changes.
+Also queues partition-level recognition for newly processed artefacts and
+database-level recognition backfills after HashDB content changes.
 """
 
 import json
@@ -17,7 +17,10 @@ from ..database import (
     ExtractedFileRestriction,
     HashDatabase,
     KnownFile,
+    KnownProduct,
     Partition,
+    ProductRecognitionStatus,
+    RecognisedProduct,
 )
 from ..extensions import db
 
@@ -536,9 +539,8 @@ def rescan_links_for_known_file_id(kf_id):
 def queue_product_recognition_for_partitions(partition_ids):
     """Queue PRODUCT_RECOGNITION analyses for the given partition IDs.
 
-    Called after hash database changes (new files, edits, deletes,
-    imports, enable_product_recognition toggled on) so that the worker
-    re-runs folder-level product matching against the updated database.
+    Called after artefact extraction or hash rescans so that the worker
+    re-runs folder-level product matching for newly processed partitions.
 
     One Analysis record is created per partition.  To avoid flooding the
     queue, partitions whose artefact already has a PENDING or RUNNING
@@ -574,6 +576,112 @@ def queue_product_recognition_for_partitions(partition_ids):
     return queued
 
 
+def _queue_system_analysis_once(
+        analysis_type,
+        hints,
+        statuses=(AnalysisStatus.PENDING, AnalysisStatus.RUNNING),
+        *,
+        commit=True):
+    """Queue a system Analysis job once for a stable hints payload.
+
+    A new job is suppressed only when an existing one already sits in one of
+    *statuses*.  The default dedups against PENDING or RUNNING jobs; recognition
+    backfills pass ``statuses=(PENDING,)`` so a content change mid-run can queue
+    a fresh follow-up even while an earlier backfill is still RUNNING.
+    """
+    hints_json = json.dumps(hints, sort_keys=True)
+    existing = (
+        Analysis.query
+        .filter_by(
+            artefact_id=None,
+            analysis_type=analysis_type,
+            hints=hints_json,
+        )
+        .filter(Analysis.status.in_(list(statuses)))
+        .first()
+    )
+    if existing:
+        return existing, False
+
+    analysis = Analysis(
+        artefact_id=None,
+        analysis_type=analysis_type,
+        status=AnalysisStatus.PENDING,
+        hints=hints_json,
+    )
+    db.session.add(analysis)
+    if commit:
+        db.session.commit()
+    return analysis, True
+
+
+def queue_hashdb_link_job(database_id):
+    """Queue a worker-driven relink job for one HashDB."""
+    return _queue_system_analysis_once(
+        AnalysisType.HASHDB_LINK,
+        {'database_id': database_id},
+    )
+
+
+def queue_hashdb_recognition_job(database_id, *, commit=True):
+    """Queue a worker-driven product-recognition backfill for one HashDB."""
+    return _queue_system_analysis_once(
+        AnalysisType.HASHDB_RECOGNITION,
+        {'database_id': database_id},
+        statuses=(AnalysisStatus.PENDING,),
+        commit=commit,
+    )
+
+
+def has_pending_recognition_job(database_id):
+    """True if a PENDING HASHDB_RECOGNITION backfill is queued for this HashDB.
+
+    A backfill claimed by the worker is RUNNING, so a PENDING row is always a
+    genuine follow-up requested after the current run started — meaning the
+    current run's results are already stale and must not be reported COMPLETED.
+    """
+    hints_json = json.dumps({'database_id': database_id}, sort_keys=True)
+    return (
+        Analysis.query
+        .filter_by(
+            artefact_id=None,
+            analysis_type=AnalysisType.HASHDB_RECOGNITION,
+            hints=hints_json,
+            status=AnalysisStatus.PENDING,
+        )
+        .first()
+    ) is not None
+
+
+def mark_hashdb_recognition_pending(database):
+    """Mark a HashDB's product-recognition counts stale and waiting for backfill."""
+    database.product_recognition_status = ProductRecognitionStatus.PENDING
+    database.product_recognition_error = None
+    database.product_recognition_updated_at = None
+
+
+def clear_hashdb_recognition(database):
+    """Remove recognised-product rows and status for a HashDB."""
+    product_id_query = (
+        db.session.query(KnownProduct.id)
+        .filter(KnownProduct.database_id == database.id)
+    )
+    RecognisedProduct.query.filter(
+        RecognisedProduct.product_id.in_(product_id_query)
+    ).delete(synchronize_session=False)
+    database.product_recognition_status = None
+    database.product_recognition_updated_at = None
+    database.product_recognition_error = None
+
+
+def queue_hashdb_recognition_backfill(database):
+    """Persist a pending status and queue one HashDB recognition backfill."""
+    mark_hashdb_recognition_pending(database)
+    analysis, queued = queue_hashdb_recognition_job(database.id, commit=False)
+    db.session.commit()
+    return analysis, queued
+
+
 def rescan_hashes_for_new_known_files(kf_list, batch_size=500):
     """Targeted rescan after a bulk import: scan unlinked files whose
     md5 or sha1 appears in *kf_list*.
@@ -604,7 +712,7 @@ def rescan_hashes_for_new_known_files(kf_list, batch_size=500):
 
 def link_new_known_files(database, new_kf_list):
     """Link existing extracted files to freshly-imported KnownFiles, and queue
-    PRODUCT_RECOGNITION for affected partitions when the database enables it.
+    a HashDB recognition backfill when the database enables product recognition.
 
     Shared by the web import route and the REST API bulk-add endpoint so that
     both entry points link the collection after an import.  Without this, an
@@ -618,21 +726,6 @@ def link_new_known_files(database, new_kf_list):
     if not database.enable_product_recognition:
         return
 
-    md5s = [kf.md5 for kf in new_kf_list if kf.md5]
-    sha1s = [kf.sha1 for kf in new_kf_list if kf.sha1]
-    conditions = ([ExtractedFile.md5.in_(md5s)] if md5s else []) + (
-        [ExtractedFile.sha1.in_(sha1s)] if sha1s else []
-    )
-    if not conditions:
-        return
-
-    partition_ids = {
-        row[0] for row in
-        ExtractedFile.query
-        .with_entities(ExtractedFile.partition_id)
-        .filter(or_(*conditions))
-        .all()
-    }
-    queue_product_recognition_for_partitions(partition_ids)
+    queue_hashdb_recognition_backfill(database)
 
 # vim: ts=4 sw=4 et
