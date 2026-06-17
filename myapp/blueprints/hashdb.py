@@ -232,16 +232,41 @@ def new():
 @blueprint.route('/<int:id>')
 @login_required
 def view(id):
+    from ..utils.pagination import (
+        VALID_PER_PAGE,
+        compute_letter_pages,
+        resolve_per_page,
+    )
+
     database = db.get_or_404(HashDatabase, id)
-    # Load only the product rows here — the per-product file tables (which can
-    # run to tens of thousands of rows) are fetched lazily on expand via
-    # product_files() so the initial page stays small.
-    products = (
+
+    # Products are paginated (a NIST-scale database has hundreds of thousands):
+    # only the current page's rows are loaded, and the per-product file tables
+    # are fetched lazily on expand via product_files().
+    per_page, page, view_all = resolve_per_page('ITEMS_PER_PAGE', 25)
+    products_query = (
         KnownProduct.query
         .filter_by(database_id=id)
         .order_by(func.lower(KnownProduct.title))
-        .all()
     )
+    products_pagination = products_query.paginate(
+        page=page, per_page=per_page, max_per_page=per_page)
+    products = products_pagination.items
+    page_product_ids = [p.id for p in products]
+
+    # A-Z jump bar (skip the extra grouping query when it all fits on one page).
+    if products_pagination.pages > 1:
+        letter_pages, current_letter = compute_letter_pages(
+            products_query, func.lower(KnownProduct.title),
+            per_page, current_page=products_pagination.page)
+    else:
+        letter_pages, current_letter = {}, ''
+
+    # Preserve per_page across page/letter navigation.
+    pagination_args = {}
+    if request.args.get('per_page'):
+        pagination_args['per_page'] = request.args.get('per_page')
+
     platforms = Platform.query.order_by(func.lower(Platform.name)).all()
     rescan_job = (
         HashRescanJob.query
@@ -255,21 +280,32 @@ def view(id):
         Analysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.RUNNING]),
     ).count()
 
-    # Per-product known-file counts (the badge shown on each collapsed row) —
-    # aggregated in SQL so we never have to load the KnownFile rows themselves.
-    file_counts = dict(
-        db.session.query(KnownFile.product_id, func.count(KnownFile.id))
-        .filter(KnownFile.database_id == id)
-        .group_by(KnownFile.product_id)
-        .all()
-    )
+    # Per-product known-file counts and which products lack a mandatory file
+    # (those are ignored by the matcher) — scoped to the current page.
+    file_counts = {}
+    no_mandatory_ids = set()
+    if page_product_ids:
+        file_counts = dict(
+            db.session.query(KnownFile.product_id, func.count(KnownFile.id))
+            .filter(KnownFile.product_id.in_(page_product_ids))
+            .group_by(KnownFile.product_id)
+            .all()
+        )
+        with_mandatory = {
+            row[0] for row in
+            db.session.query(KnownFile.product_id)
+            .filter(KnownFile.product_id.in_(page_product_ids),
+                    KnownFile.is_required == True)  # noqa: E712
+            .distinct()
+            .all()
+        }
+        no_mandatory_ids = set(page_product_ids) - with_mandatory
 
-    # Per-product recognition counts.  These are true product-level matches
-    # (all required files found) rather than loose "any file hash hit" counts,
-    # and use the derived recognition table so the product list does not run a
-    # large extracted_files join on every page load.
+    # Per-product recognition counts (page only).  These are true product-level
+    # matches (all required files found), from the derived recognition table.
     product_recognition_counts = {}
     if (
+            page_product_ids and
             database.enable_product_recognition and
             database.product_recognition_status == ProductRecognitionStatus.COMPLETED):
         product_recognition_counts = dict(
@@ -280,6 +316,7 @@ def view(id):
             .join(Item, Artefact.item_id == Item.id)
             .join(KnownProduct, RecognisedProduct.product_id == KnownProduct.id)
             .filter(KnownProduct.database_id == id)
+            .filter(RecognisedProduct.product_id.in_(page_product_ids))
             .filter(artefact_visibility_clause(current_user))
             .group_by(RecognisedProduct.product_id)
             .all()
@@ -288,11 +325,18 @@ def view(id):
     return render_template('hashdb/view.html',
                            database=database,
                            products=products,
+                           products_pagination=products_pagination,
+                           letter_pages=letter_pages,
+                           current_letter=current_letter,
+                           pagination_args=pagination_args,
+                           valid_per_page=VALID_PER_PAGE,
+                           view_all=view_all,
                            platforms=platforms,
                            RestrictionType=RestrictionType,
                            rescan_job=rescan_job,
                            pending_rescan=pending_rescan,
                            file_counts=file_counts,
+                           no_mandatory_ids=no_mandatory_ids,
                            product_recognition_counts=product_recognition_counts,
                            ProductRecognitionStatus=ProductRecognitionStatus)
 
@@ -955,13 +999,27 @@ def rescan_all():
 @login_required
 @require_permission('read_write')
 def rescan(id):
-    """Queue HASH_RESCAN worker jobs (from a database view page)."""
-    db.get_or_404(HashDatabase, id)
-    n = _queue_hash_rescan_jobs()
-    if n:
-        flash(f'Hash rescan queued: {n} artefact(s) will be processed by the worker.', 'info')
+    """Relink the collection against this one database (single worker job).
+
+    Scoped to *id*: queues one HASHDB_LINK analysis (the same bounded-step
+    relink the import path uses) rather than fanning out a per-artefact
+    HASH_RESCAN across the whole collection against every database — that
+    enqueues thousands of rows synchronously and is not specific to this DB.
+    A recognition backfill is queued automatically by the link job when it
+    finishes (if this database has product recognition enabled).
+    """
+    from ..services.hash_rescan import queue_hashdb_link_job
+    database = db.get_or_404(HashDatabase, id)
+    if not database.is_active:
+        flash('This database is inactive, so it is excluded from hash linking. '
+              'Activate it first to relink artefacts.', 'warning')
+        return redirect(url_for(f'{ROUTENAME}.view', id=id))
+    _, queued = queue_hashdb_link_job(database.id)
+    if queued:
+        flash('Relink queued: extracted files will be matched against this '
+              'database by the worker.', 'info')
     else:
-        flash('No artefacts with extracted files found, or all are already queued.', 'warning')
+        flash('A relink for this database is already queued or running.', 'warning')
     return redirect(url_for(f'{ROUTENAME}.view', id=id))
 
 
