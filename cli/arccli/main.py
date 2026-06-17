@@ -270,6 +270,11 @@ def main():
 	                             'add a mandatory file by hand.')
 	hashdb_gen.add_argument('--no-global-check', action='store_false', dest='global_check',
 	                        help='Skip the cross-catalogue /hash-lookup uniqueness check')
+	hashdb_gen.add_argument('--include-known', action='store_true', dest='include_known',
+	                        help='Allow files already present in an active hash database '
+	                             'to be marked mandatory. Use when regenerating a database '
+	                             'whose own files are, by definition, already known — '
+	                             'otherwise every such application produces no mandatory file.')
 	hashdb_gen.add_argument('-j', '--jobs', type=int, default=8,
 	                        help='Concurrent API requests (default: 8; 1 = serial)')
 	hashdb_gen.add_argument('-v', '--verbose', action='store_true')

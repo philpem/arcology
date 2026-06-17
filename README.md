@@ -223,6 +223,10 @@ arco hashdb import riscos-hashdb.json
 # Add --explain to find out why some applications produced no mandatory file
 # (no launch target found, target already in a hash database, shared, etc.).
 arco hashdb generate-riscos --item <uuid> --db-name "Apps" --output apps.json --explain
+
+# Regenerating a database whose own files are already known? --include-known
+# stops those files being excluded for being in an active hash database.
+arco hashdb generate-riscos --item <uuid> --db-name "Apps" --output apps.json --include-known
 ```
 
 Run `arco --help` or `arco <command> --help` for full usage details.

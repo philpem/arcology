@@ -336,6 +336,30 @@ class TestLocalUniquenessFailure(unittest.TestCase):
         m = {'abc': {('i', '!A')}}
         self.assertIsNone(local_uniqueness_failure({'md5': 'ABC'}, m))
 
+    def test_include_known_ignores_is_known(self):
+        m = {'abc': {('i', '!A')}}
+        f = {'md5': 'abc', 'is_known': True}
+        self.assertEqual(local_uniqueness_failure(f, m), 'known')
+        self.assertIsNone(local_uniqueness_failure(f, m, include_known=True))
+
+    def test_include_known_still_enforces_uniqueness(self):
+        # include_known drops only the is_known disqualifier, not the rest.
+        m = {'abc': {('i', '!A'), ('i', '!B')}}
+        self.assertEqual(
+            local_uniqueness_failure({'md5': 'abc', 'is_known': True}, m,
+                                     include_known=True),
+            'shared')
+        self.assertEqual(
+            local_uniqueness_failure({'md5': None, 'is_known': True}, m,
+                                     include_known=True),
+            'no-md5')
+
+    def test_include_known_makes_known_file_unique(self):
+        m = {'abc': {('i', '!A')}}
+        is_unique = make_is_unique(None, m, global_check=False,
+                                   include_known=True)
+        self.assertTrue(is_unique({'md5': 'abc', 'is_known': True}))
+
     def test_agrees_with_make_is_unique_local_portion(self):
         # local_uniqueness_failure is None iff make_is_unique (no global) is True.
         m = {'abc': {('i', '!A')}}
