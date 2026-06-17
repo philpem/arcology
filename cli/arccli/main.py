@@ -291,9 +291,10 @@ def main():
 	                             '--dump-canonical.')
 	hashdb_gen.add_argument('--dump-canonical', dest='dump_canonical', metavar='FILE',
 	                        help='Write an editable canonical-sources candidates file '
-	                             '(every application that appears on more than one artefact) '
-	                             'and exit without generating a database. Edit it, then pass '
-	                             'it back via --canonical-sources.')
+	                             '(applications appearing with DIFFERING content on more '
+	                             'than one artefact; byte-identical copies are merged '
+	                             'automatically and omitted) and exit without generating a '
+	                             'database. Edit it, then pass it back via --canonical-sources.')
 	hashdb_gen.add_argument('--no-merge-duplicates', action='store_false', dest='merge_duplicates',
 	                        help='Do not collapse byte-identical copies of the same app '
 	                             '(e.g. Equasor bundled with several Impression releases) '

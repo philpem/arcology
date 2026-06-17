@@ -483,16 +483,17 @@ class TestCanonicalSources(unittest.TestCase):
             canonical_accepts(rules, '!ArcFS', 'ArcFS', 'ArcFS 0.52 (1994)'), True)
 
     def _gathered(self):
-        # Two artefacts: the golden ArcFS distro and a bundled copy in RiscCAD.
+        # Two artefacts: the golden ArcFS distro and a *differing* (e.g. patched)
+        # copy bundled in RiscCAD — distinct content so it's a real candidate.
         return [{
             'item': {'uuid': 'i'},
             'artefact_results': [
                 {'clean_name': 'ArcFS 0.52', 'label': 'ArcFS 0.52',
-                 'app_dirs': {'!ArcFS': [_f('!ArcFS/!RunImage')],
+                 'app_dirs': {'!ArcFS': [_f('!ArcFS/!RunImage', md5='arcfs_a')],
                               '!Boot': [_f('!Boot/!Run')]}},
                 {'clean_name': 'RiscCAD 8', 'label': 'RiscCAD 8',
                  'app_dirs': {'!RiscCAD': [_f('!RiscCAD/!RunImage')],
-                              '!ArcFS': [_f('!ArcFS/!RunImage')]}},
+                              '!ArcFS': [_f('!ArcFS/!RunImage', md5='arcfs_b')]}},
             ],
         }]
 
@@ -513,12 +514,27 @@ class TestCanonicalSources(unittest.TestCase):
         _dropped, matched = apply_canonical_filter(gathered, rules)
         self.assertEqual(sorted(set(rules) - matched), ['!nonexist'])
 
-    def test_collect_candidates_only_multi_artefact(self):
+    def test_collect_candidates_only_multi_artefact_with_differing_content(self):
         gathered = self._gathered()
         cands = collect_canonical_candidates(gathered)
-        # !ArcFS is on both artefacts; the others on one each.
+        # !ArcFS is on both artefacts with differing content; others on one each.
         self.assertEqual(set(cands), {'!ArcFS'})
         self.assertEqual(sorted(cands['!ArcFS']), ['ArcFS 0.52', 'RiscCAD 8'])
+
+    def test_collect_candidates_skips_identical_copies(self):
+        # Equasor bundled identically with several products: byte-identical
+        # everywhere -> merged automatically -> NOT a canonical candidate.
+        gathered = [{
+            'item': {'uuid': 'i'},
+            'artefact_results': [
+                {'clean_name': 'Equasor 1.04', 'label': 'Equasor 1.04',
+                 'app_dirs': {'!Equasor': [_f('!Equasor/!RunImage', md5='eq')]}},
+                {'clean_name': 'Impression Publisher 4.09',
+                 'label': 'Impression Publisher 4.09',
+                 'app_dirs': {'!Equasor': [_f('!Equasor/!RunImage', md5='eq')]}},
+            ],
+        }]
+        self.assertEqual(collect_canonical_candidates(gathered), {})
 
     def test_render_marks_single_golden_active_others_commented(self):
         cands = {'!ArcFS': ['ArcFS 0.52', 'RiscCAD 8']}
