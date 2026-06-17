@@ -37,6 +37,7 @@ from ..database import (
     KnownProduct,
     Partition,
     Platform,
+    ProductRecognitionStatus,
     RecognisedProduct,
     StorageDirectory,
     Tag,
@@ -69,6 +70,8 @@ from ..services.hash_rescan import (
     find_known_file,
     find_known_files_for_records,
     link_new_known_files,
+    queue_hashdb_recognition_job,
+    rescan_hashes_for_new_known_files,
 )
 from ..services.restrictions import (
     artefact_contained_file_restrictions,
@@ -2517,6 +2520,9 @@ def list_hash_databases():
         'version': db_.version,
         'file_count': db_.file_count or 0,
         'enable_product_recognition': db_.enable_product_recognition,
+        'product_recognition_status': (
+            db_.product_recognition_status.value if db_.product_recognition_status else None
+        ),
     } for db_ in databases])
 
 
@@ -2532,6 +2538,9 @@ def get_hash_database(id):
         'version': database.version,
         'source_url': database.source_url,
         'enable_product_recognition': database.enable_product_recognition,
+        'product_recognition_status': (
+            database.product_recognition_status.value if database.product_recognition_status else None
+        ),
         'products': [
             {
                 'id': p.id,
@@ -2671,6 +2680,7 @@ def import_known_database(db_id):
     products = data.get('products')
     if not isinstance(products, list):
         return error_response('products array is required')
+    link_after_import = bool(data.get('link', True))
 
     new_kf_list = []
     products_added = 0
@@ -2697,11 +2707,301 @@ def import_known_database(db_id):
     database.file_count = (database.file_count or 0) + len(new_kf_list)
     db.session.commit()
 
-    # Run the collection-linking / product-recognition pass once for the whole
-    # batch, mirroring the web import route's single end-of-import call.
-    link_new_known_files(database, new_kf_list)
+    # Older clients expect imported batches to link immediately.  Newer CLI
+    # clients pass link=false for every batch and queue one worker-driven relink
+    # after the full import, avoiding repeated expensive relink passes.
+    if link_after_import:
+        link_new_known_files(database, new_kf_list)
 
     return jsonify({'products': products_added, 'files': len(new_kf_list)}), 201
+
+
+@blueprint.route('/hash-databases/<int:db_id>/link', methods=['POST'])
+@require_auth('read_write')
+def queue_hash_database_link(db_id):
+    """Queue a worker-driven relink for all KnownFiles in a hash database."""
+    database = _get_hash_database_or_404(db_id)
+    if not database.is_active:
+        return jsonify({'status': 'skipped', 'reason': 'database inactive'})
+    from ..services.hash_rescan import queue_hashdb_link_job
+    _, queued = queue_hashdb_link_job(database.id)
+    return jsonify({'status': 'queued' if queued else 'already_queued'})
+
+
+@blueprint.route('/hash-databases/<int:db_id>/link-step', methods=['POST'])
+@require_auth('read_write')
+def hash_database_link_step(db_id):
+    """Worker-only bounded relink step for one HashDB."""
+    if not _is_worker_request():
+        return error_response('Only the worker may run hashdb link steps', 403)
+    database = _get_hash_database_or_404(db_id)
+    data, error = _json_object()
+    if error:
+        return error
+    last_id = int(data.get('last_id') or 0)
+    limit = max(1, min(int(data.get('limit') or 500), 2000))
+
+    batch = (
+        KnownFile.query
+        .filter(KnownFile.database_id == database.id, KnownFile.id > last_id)
+        .order_by(KnownFile.id)
+        .limit(limit)
+        .all()
+    )
+    if not batch:
+        queued_recognition = False
+        if database.enable_product_recognition:
+            database.product_recognition_status = ProductRecognitionStatus.PENDING
+            database.product_recognition_error = None
+            db.session.commit()
+            _, queued_recognition = queue_hashdb_recognition_job(database.id)
+        return jsonify({
+            'done': True,
+            'processed': 0,
+            'updated': 0,
+            'next_id': last_id,
+            'recognition_queued': queued_recognition,
+        })
+
+    updated, total = rescan_hashes_for_new_known_files(batch)
+    next_id = batch[-1].id
+    remaining = (
+        KnownFile.query
+        .filter(KnownFile.database_id == database.id, KnownFile.id > next_id)
+        .count()
+    )
+    queued_recognition = False
+    if remaining == 0 and database.enable_product_recognition:
+        database.product_recognition_status = ProductRecognitionStatus.PENDING
+        database.product_recognition_error = None
+        db.session.commit()
+        _, queued_recognition = queue_hashdb_recognition_job(database.id)
+    return jsonify({
+        'done': remaining == 0,
+        'processed': len(batch),
+        'matched_files_scanned': total,
+        'updated': updated,
+        'next_id': next_id,
+        'remaining': remaining,
+        'recognition_queued': queued_recognition,
+    })
+
+
+def _file_hash_matches_known_file(file_hash, known_file):
+    md5, sha1 = file_hash
+    return (
+        (known_file.md5 and md5 == known_file.md5.lower()) or
+        (known_file.sha1 and sha1 == known_file.sha1.lower())
+    )
+
+
+def _verify_product_in_folder(product, folder, idx):
+    folder_hashes = idx['hashes']
+    path_map = idx['path_map']
+    folder_lower = folder.lower()
+    folder_prefix = folder_lower + '/' if folder_lower else ''
+
+    required = [kf for kf in product.known_files if kf.is_required]
+    optional = [kf for kf in product.known_files if not kf.is_required]
+    if not required and not optional:
+        return None
+
+    required_matched = 0
+    for kf in required:
+        rel_path = (kf.relative_path or '').lower()
+        if product.path_match_enabled and rel_path:
+            rel_path_in_folder = rel_path[len(folder_prefix):] if (
+                folder_prefix and rel_path.startswith(folder_prefix)
+            ) else rel_path
+            if rel_path_in_folder in path_map and _file_hash_matches_known_file(
+                    path_map[rel_path_in_folder], kf):
+                required_matched += 1
+        else:
+            if any(_file_hash_matches_known_file(h, kf) for h in folder_hashes):
+                required_matched += 1
+
+    if required and required_matched < len(required):
+        return None
+
+    optional_matched = 0
+    for kf in optional:
+        rel_path = (kf.relative_path or '').lower()
+        if product.path_match_enabled and rel_path:
+            rel_path_in_folder = rel_path[len(folder_prefix):] if (
+                folder_prefix and rel_path.startswith(folder_prefix)
+            ) else rel_path
+            if rel_path_in_folder in path_map and _file_hash_matches_known_file(
+                    path_map[rel_path_in_folder], kf):
+                optional_matched += 1
+        else:
+            if any(_file_hash_matches_known_file(h, kf) for h in folder_hashes):
+                optional_matched += 1
+
+    if not required and optional_matched == 0:
+        return None
+    return required_matched, len(required), optional_matched, len(optional)
+
+
+@blueprint.route('/hash-databases/<int:db_id>/recognition-step', methods=['POST'])
+@require_auth('read_write')
+def hash_database_recognition_step(db_id):
+    """Worker-only bounded product-recognition backfill for one HashDB."""
+    if not _is_worker_request():
+        return error_response('Only the worker may run hashdb recognition steps', 403)
+    database = _get_hash_database_or_404(db_id)
+    data, error = _json_object()
+    if error:
+        return error
+    last_product_id = int(data.get('last_product_id') or 0)
+    limit = max(1, min(int(data.get('limit') or 25), 200))
+
+    if not database.enable_product_recognition:
+        database.product_recognition_status = None
+        database.product_recognition_updated_at = None
+        database.product_recognition_error = None
+        db.session.commit()
+        return jsonify({'done': True, 'processed': 0, 'matches': 0, 'next_product_id': last_product_id})
+
+    database.product_recognition_status = ProductRecognitionStatus.RUNNING
+    database.product_recognition_error = None
+
+    products = (
+        KnownProduct.query
+        .filter(
+            KnownProduct.database_id == database.id,
+            KnownProduct.id > last_product_id,
+        )
+        .options(selectinload(KnownProduct.known_files))
+        .order_by(KnownProduct.id)
+        .limit(limit)
+        .all()
+    )
+    if not products:
+        database.product_recognition_status = ProductRecognitionStatus.COMPLETED
+        database.product_recognition_updated_at = datetime.now(timezone.utc)
+        db.session.commit()
+        return jsonify({'done': True, 'processed': 0, 'matches': 0, 'next_product_id': last_product_id})
+
+    product_ids = [p.id for p in products]
+    RecognisedProduct.query.filter(
+        RecognisedProduct.product_id.in_(product_ids)
+    ).delete(synchronize_session=False)
+
+    md5s = set()
+    sha1s = set()
+    for product in products:
+        candidate_files = [kf for kf in product.known_files if kf.is_required] or list(product.known_files)
+        for kf in candidate_files:
+            if kf.md5:
+                md5s.add(kf.md5.lower())
+            if kf.sha1:
+                sha1s.add(kf.sha1.lower())
+
+    candidate_folders = set()
+    if md5s or sha1s:
+        conditions = []
+        if md5s:
+            conditions.append(ExtractedFile.md5.in_(md5s))
+        if sha1s:
+            conditions.append(ExtractedFile.sha1.in_(sha1s))
+        rows = (
+            ExtractedFile.query
+            .with_entities(ExtractedFile.partition_id, ExtractedFile.path)
+            .filter(ExtractedFile.is_directory == False, or_(*conditions))
+            .all()
+        )
+        for partition_id, path in rows:
+            folder = path.rsplit('/', 1)[0] if path and '/' in path else ''
+            candidate_folders.add((partition_id, folder))
+
+    folders_by_partition = {}
+    for partition_id, folder in candidate_folders:
+        folders_by_partition.setdefault(partition_id, set()).add(folder)
+
+    folder_index = {}
+    if folders_by_partition:
+        file_rows = (
+            ExtractedFile.query
+            .filter(
+                ExtractedFile.partition_id.in_(folders_by_partition.keys()),
+                ExtractedFile.is_directory == False,
+            )
+            .all()
+        )
+        for f in file_rows:
+            path = f.path or ''
+            folder = path.rsplit('/', 1)[0] if '/' in path else ''
+            if folder not in folders_by_partition.get(f.partition_id, set()):
+                continue
+            rel = path.rsplit('/', 1)[1] if '/' in path else path
+            idx = folder_index.setdefault(
+                (f.partition_id, folder),
+                {'hashes': set(), 'path_map': {}},
+            )
+            md5 = (f.md5 or '').lower()
+            sha1 = (f.sha1 or '').lower()
+            if md5 or sha1:
+                idx['hashes'].add((md5, sha1))
+                idx['path_map'][rel.lower()] = (md5, sha1)
+
+    matches = 0
+    for product in products:
+        for (partition_id, folder), idx in folder_index.items():
+            verified = _verify_product_in_folder(product, folder, idx)
+            if verified is None:
+                continue
+            required_matched, required_total, optional_matched, optional_total = verified
+            db.session.add(RecognisedProduct(
+                partition_id=partition_id,
+                product_id=product.id,
+                folder_path=folder if folder else '/',
+                required_matched=required_matched,
+                required_total=required_total,
+                optional_matched=optional_matched,
+                optional_total=optional_total,
+            ))
+            matches += 1
+
+    next_product_id = products[-1].id
+    remaining = (
+        KnownProduct.query
+        .filter(KnownProduct.database_id == database.id, KnownProduct.id > next_product_id)
+        .count()
+    )
+    if remaining == 0:
+        database.product_recognition_status = ProductRecognitionStatus.COMPLETED
+        database.product_recognition_updated_at = datetime.now(timezone.utc)
+    db.session.commit()
+    return jsonify({
+        'done': remaining == 0,
+        'processed': len(products),
+        'matches': matches,
+        'next_product_id': next_product_id,
+        'remaining': remaining,
+    })
+
+
+@blueprint.route('/hash-databases/<int:db_id>/recognition-status', methods=['POST'])
+@require_auth('read_write')
+def update_hash_database_recognition_status(db_id):
+    """Worker-only status update for HashDB recognition backfills."""
+    if not _is_worker_request():
+        return error_response('Only the worker may update hashdb recognition status', 403)
+    database = _get_hash_database_or_404(db_id)
+    data, error = _json_object()
+    if error:
+        return error
+    status_value = data.get('status')
+    try:
+        status = ProductRecognitionStatus(status_value)
+    except ValueError:
+        return error_response('Invalid recognition status')
+    database.product_recognition_status = status
+    database.product_recognition_error = data.get('error')
+    if status in (ProductRecognitionStatus.COMPLETED, ProductRecognitionStatus.FAILED):
+        database.product_recognition_updated_at = datetime.now(timezone.utc)
+    db.session.commit()
+    return jsonify({'status': status.value})
 
 
 @blueprint.route('/hash-databases/recognition-config', methods=['GET'])

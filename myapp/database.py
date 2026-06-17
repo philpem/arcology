@@ -37,6 +37,7 @@ from .enums import (  # noqa: F401 — re-exported for backward-compat call site
     ApiKeyPermission,
     FilesystemType,
     HashRescanStatus,
+    ProductRecognitionStatus,
     RestrictionType,
     StorageDirectory,
     UserPermission,
@@ -1114,6 +1115,12 @@ class HashDatabase(db.Model):
     platform_id: Mapped[int | None] = mapped_column(ForeignKey("platforms.id", ondelete="SET NULL"), nullable=True)
     file_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     enable_product_recognition: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default=sa_false())
+    product_recognition_status: Mapped[ProductRecognitionStatus | None] = mapped_column(
+        SQLEnum(ProductRecognitionStatus, name="productrecognitionstatus"),
+        nullable=True,
+    )
+    product_recognition_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    product_recognition_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default=sa_true())
     restriction_type: Mapped[RestrictionType | None] = mapped_column(
         SQLEnum(RestrictionType), nullable=True

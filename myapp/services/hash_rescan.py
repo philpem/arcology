@@ -574,6 +574,49 @@ def queue_product_recognition_for_partitions(partition_ids):
     return queued
 
 
+def _queue_system_analysis_once(analysis_type, hints):
+    """Queue a system Analysis job once for a stable hints payload."""
+    hints_json = json.dumps(hints, sort_keys=True)
+    existing = (
+        Analysis.query
+        .filter_by(
+            artefact_id=None,
+            analysis_type=analysis_type,
+            hints=hints_json,
+        )
+        .filter(Analysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.RUNNING]))
+        .first()
+    )
+    if existing:
+        return existing, False
+
+    analysis = Analysis(
+        artefact_id=None,
+        analysis_type=analysis_type,
+        status=AnalysisStatus.PENDING,
+        hints=hints_json,
+    )
+    db.session.add(analysis)
+    db.session.commit()
+    return analysis, True
+
+
+def queue_hashdb_link_job(database_id):
+    """Queue a worker-driven relink job for one HashDB."""
+    return _queue_system_analysis_once(
+        AnalysisType.HASHDB_LINK,
+        {'database_id': database_id},
+    )
+
+
+def queue_hashdb_recognition_job(database_id):
+    """Queue a worker-driven product-recognition backfill for one HashDB."""
+    return _queue_system_analysis_once(
+        AnalysisType.HASHDB_RECOGNITION,
+        {'database_id': database_id},
+    )
+
+
 def rescan_hashes_for_new_known_files(kf_list, batch_size=500):
     """Targeted rescan after a bulk import: scan unlinked files whose
     md5 or sha1 appears in *kf_list*.
