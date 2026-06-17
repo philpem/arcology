@@ -210,6 +210,7 @@ def cmd_hashdb_import(client: ArcologyClient, args):
     BATCH_SIZE = 200
     total_files = 0
     use_batch = True
+    deferred_link = False
 
     for start in range(0, len(products), BATCH_SIZE):
         batch = products[start:start + BATCH_SIZE]
@@ -221,6 +222,7 @@ def cmd_hashdb_import(client: ArcologyClient, args):
                           flush=True)
                 t0 = time.monotonic()
                 result = client.import_hash_database_products(db_id, batch, link=False)
+                deferred_link = True
                 added = result.get('files', sum(len(p.get('files', [])) for p in batch))
                 total_files += added
                 if not args.json:
@@ -255,7 +257,7 @@ def cmd_hashdb_import(client: ArcologyClient, args):
                 if not args.json:
                     print(f'  Product "{title}": {added} file(s) added')
 
-    if use_batch:
+    if deferred_link:
         try:
             result = client.queue_hash_database_link(db_id)
             if not args.json:
@@ -263,9 +265,10 @@ def cmd_hashdb_import(client: ArcologyClient, args):
                 print(f'  Hash linking/product recognition updates {status}.')
         except ArcologyError as e:
             if e.status_code == 404:
-                if not args.json:
-                    print('  (server lacks async hash linking; batches were linked inline)',
-                          file=sys.stderr)
+                print('Error: imported one or more batches with deferred hash linking, '
+                      'but the server does not support queueing the final link job.',
+                      file=sys.stderr)
+                sys.exit(1)
             else:
                 raise
 

@@ -613,10 +613,30 @@ def queue_hashdb_link_job(database_id):
 
 def queue_hashdb_recognition_job(database_id):
     """Queue a worker-driven product-recognition backfill for one HashDB."""
-    return _queue_system_analysis_once(
-        AnalysisType.HASHDB_RECOGNITION,
-        {'database_id': database_id},
+    hints = {'database_id': database_id}
+    hints_json = json.dumps(hints, sort_keys=True)
+    pending = (
+        Analysis.query
+        .filter_by(
+            artefact_id=None,
+            analysis_type=AnalysisType.HASHDB_RECOGNITION,
+            hints=hints_json,
+            status=AnalysisStatus.PENDING,
+        )
+        .first()
     )
+    if pending:
+        return pending, False
+
+    analysis = Analysis(
+        artefact_id=None,
+        analysis_type=AnalysisType.HASHDB_RECOGNITION,
+        status=AnalysisStatus.PENDING,
+        hints=hints_json,
+    )
+    db.session.add(analysis)
+    db.session.commit()
+    return analysis, True
 
 
 def mark_hashdb_recognition_pending(database):

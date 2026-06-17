@@ -10,7 +10,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from flask import Blueprint, abort, current_app, g, jsonify, request
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import and_, func, not_, or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import contains_eager, joinedload, selectinload
 from sqlalchemy.orm.exc import StaleDataError
@@ -2789,6 +2789,55 @@ def _file_hash_matches_known_file(file_hash, known_file):
     )
 
 
+def _insert_recognised_product_rows(rows):
+    """Insert recognition rows, ignoring duplicates from overlapping workers."""
+    if not rows:
+        return
+
+    now = datetime.now(timezone.utc)
+    for row in rows:
+        row.setdefault('created_at', now)
+
+    table = RecognisedProduct.__table__
+    dialect = db.session.get_bind().dialect.name
+    if dialect == 'postgresql':
+        from sqlalchemy.dialects.postgresql import insert
+        stmt = insert(table).values(rows).on_conflict_do_nothing(
+            index_elements=['partition_id', 'product_id', 'folder_path'],
+        )
+    elif dialect == 'sqlite':
+        from sqlalchemy.dialects.sqlite import insert
+        stmt = insert(table).values(rows).on_conflict_do_nothing(
+            index_elements=['partition_id', 'product_id', 'folder_path'],
+        )
+    else:
+        stmt = table.insert().values(rows)
+    db.session.execute(stmt)
+
+
+def _sql_like_escape(value):
+    return (
+        value
+        .replace('\\', '\\\\')
+        .replace('%', '\\%')
+        .replace('_', '\\_')
+    )
+
+
+def _folder_file_condition(partition_id, folder):
+    if folder:
+        folder_prefix = _sql_like_escape(folder) + '/'
+        return and_(
+            ExtractedFile.partition_id == partition_id,
+            ExtractedFile.path.like(folder_prefix + '%', escape='\\'),
+            not_(ExtractedFile.path.like(folder_prefix + '%/%', escape='\\')),
+        )
+    return and_(
+        ExtractedFile.partition_id == partition_id,
+        not_(ExtractedFile.path.like('%/%', escape='\\')),
+    )
+
+
 def _verify_product_in_folder(product, folder, idx):
     folder_md5s = idx['md5s']
     folder_sha1s = idx['sha1s']
@@ -2934,11 +2983,16 @@ def hash_database_recognition_step(db_id):
 
     folder_index = {}
     if folders_by_partition:
+        folder_conditions = [
+            _folder_file_condition(partition_id, folder)
+            for partition_id, folders in folders_by_partition.items()
+            for folder in folders
+        ]
         file_rows = (
             ExtractedFile.query
             .filter(
-                ExtractedFile.partition_id.in_(folders_by_partition.keys()),
                 ExtractedFile.is_directory == False,
+                or_(*folder_conditions),
             )
             .all()
         )
@@ -2950,12 +3004,11 @@ def hash_database_recognition_step(db_id):
             rel = path.rsplit('/', 1)[1] if '/' in path else path
             idx = folder_index.setdefault(
                 (f.partition_id, folder),
-                {'hashes': set(), 'md5s': set(), 'sha1s': set(), 'path_map': {}},
+                {'md5s': set(), 'sha1s': set(), 'path_map': {}},
             )
             md5 = (f.md5 or '').lower()
             sha1 = (f.sha1 or '').lower()
             if md5 or sha1:
-                idx['hashes'].add((md5, sha1))
                 if md5:
                     idx['md5s'].add(md5)
                 if sha1:
@@ -2963,6 +3016,7 @@ def hash_database_recognition_step(db_id):
                 idx['path_map'][rel.lower()] = (md5, sha1)
 
     matches = 0
+    rows_to_insert = []
     for (partition_id, folder), idx in folder_index.items():
         for product_id in folder_product_ids.get((partition_id, folder), set()):
             product = products_by_id[product_id]
@@ -2970,16 +3024,17 @@ def hash_database_recognition_step(db_id):
             if verified is None:
                 continue
             required_matched, required_total, optional_matched, optional_total = verified
-            db.session.add(RecognisedProduct(
-                partition_id=partition_id,
-                product_id=product.id,
-                folder_path=folder if folder else '/',
-                required_matched=required_matched,
-                required_total=required_total,
-                optional_matched=optional_matched,
-                optional_total=optional_total,
-            ))
+            rows_to_insert.append({
+                'partition_id': partition_id,
+                'product_id': product.id,
+                'folder_path': folder if folder else '/',
+                'required_matched': required_matched,
+                'required_total': required_total,
+                'optional_matched': optional_matched,
+                'optional_total': optional_total,
+            })
             matches += 1
+    _insert_recognised_product_rows(rows_to_insert)
 
     next_product_id = products[-1].id
     remaining = (
@@ -3078,6 +3133,7 @@ def report_recognised_products(uuid):
     RecognisedProduct.query.filter_by(partition_id=partition.id).delete()
 
     seen_results = set()
+    rows_to_insert = []
     for entry in data:
         product_id = entry.get('product_id')
         folder_path = entry.get('folder_path', '')
@@ -3094,17 +3150,17 @@ def report_recognised_products(uuid):
         product = db.session.get(KnownProduct, product_id)
         if not product:
             continue
-        rp = RecognisedProduct(
-            partition_id=partition.id,
-            product_id=product_id,
-            folder_path=folder_path,
-            required_matched=int(entry.get('required_matched', 0)),
-            required_total=int(entry.get('required_total', 0)),
-            optional_matched=int(entry.get('optional_matched', 0)),
-            optional_total=int(entry.get('optional_total', 0)),
-        )
-        db.session.add(rp)
+        rows_to_insert.append({
+            'partition_id': partition.id,
+            'product_id': product_id,
+            'folder_path': folder_path,
+            'required_matched': int(entry.get('required_matched', 0)),
+            'required_total': int(entry.get('required_total', 0)),
+            'optional_matched': int(entry.get('optional_matched', 0)),
+            'optional_total': int(entry.get('optional_total', 0)),
+        })
 
+    _insert_recognised_product_rows(rows_to_insert)
     db.session.commit()
     return jsonify({'status': 'ok'})
 

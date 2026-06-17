@@ -103,6 +103,14 @@ def upgrade():
 
 def downgrade():
     bind = op.get_bind()
+    op.execute(sa.text("""
+        UPDATE artefacts
+        SET derived_from_analysis_id = NULL
+        WHERE derived_from_analysis_id IN (
+            SELECT id FROM analyses
+            WHERE analysis_type IN ('HASHDB_LINK', 'HASHDB_RECOGNITION')
+        )
+    """))
     op.execute(sa.text(
         "DELETE FROM analyses WHERE analysis_type IN "
         "('HASHDB_LINK', 'HASHDB_RECOGNITION')"

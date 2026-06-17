@@ -76,6 +76,15 @@ class _FallbackClient(_BatchClient):
         raise ArcologyError('Not found.', 404)
 
 
+class _RollingDeployClient(_BatchClient):
+    """Fake client where a later batch hits an older server."""
+
+    def import_hash_database_products(self, db_id, products, link=True):
+        if self.batch_calls:
+            raise ArcologyError('Not found.', 404)
+        return super().import_hash_database_products(db_id, products, link=link)
+
+
 def _args(input_file):
     return SimpleNamespace(input_file=input_file, format='json',
                            name=None, merge=False, json=False)
@@ -109,6 +118,26 @@ class TestCliHashdbImport(unittest.TestCase):
         kinds = [c[0] for c in client.per_product_calls]
         self.assertEqual(kinds.count('product'), 2)
         self.assertEqual(kinds.count('files'), 2)
+
+    def test_later_batch_404_still_queues_deferred_link(self):
+        doc = {
+            'database': {'name': 'CLI DB'},
+            'products': [
+                {'title': f'!App{i:03d}', 'files': [{'filename': '!RunImage', 'md5': f'{i:032x}'}]}
+                for i in range(201)
+            ],
+        }
+        with open(self.path, 'w') as fh:
+            json.dump(doc, fh)
+
+        client = _RollingDeployClient()
+        cmd_hashdb_import(client, _args(self.path))
+
+        self.assertEqual(len(client.batch_calls), 1)
+        self.assertEqual(client.link_calls, [7])
+        kinds = [c[0] for c in client.per_product_calls]
+        self.assertEqual(kinds.count('product'), 1)
+        self.assertEqual(kinds.count('files'), 1)
 
 
 if __name__ == '__main__':
