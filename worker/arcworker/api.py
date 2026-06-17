@@ -673,4 +673,38 @@ class ArcologyAPI:
         response = self.post(f'/partitions/{partition_uuid}/recognised-products', results)
         return response is not None
 
+    def hashdb_link_step(self, db_id: int, *, last_id: int = 0, limit: int = 500) -> dict | None:
+        """Run one bounded HashDB relink step."""
+        return self.post(
+            f'/hash-databases/{db_id}/link-step',
+            {'last_id': last_id, 'limit': limit},
+        )
+
+    def hashdb_recognition_step(
+        self,
+        db_id: int,
+        *,
+        last_product_id: int = 0,
+        limit: int = 25,
+    ) -> dict | None:
+        """Run one bounded HashDB product-recognition backfill step."""
+        return self.post(
+            f'/hash-databases/{db_id}/recognition-step',
+            {'last_product_id': last_product_id, 'limit': limit},
+        )
+
+    def update_hashdb_recognition_status(
+        self,
+        db_id: int,
+        status: str,
+        *,
+        error: str | None = None,
+    ) -> bool:
+        """Update HashDB recognition status after worker-side failure/completion."""
+        response = self.post(
+            f'/hash-databases/{db_id}/recognition-status',
+            {'status': status, 'error': error},
+        )
+        return response is not None
+
 # vim: ts=4 sw=4 et

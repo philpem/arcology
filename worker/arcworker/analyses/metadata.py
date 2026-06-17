@@ -239,7 +239,7 @@ def process_product_recognition(self, analysis: dict, artefact: dict, work_dir: 
         self.complete_analysis(analysis_id, summary='No extracted files in partition')
         return
 
-    # Build index: folder_path -> {hash_set, relative_path_map}
+    # Build index: folder_path -> {hash_set, hash membership sets, relative_path_map}
     # folder_path is the parent directory of each file (i.e. path up to last '/')
     # hash_set: set of (md5, sha1) tuples (lowercased)
     # path_map: relative_path_within_folder -> (md5, sha1)
@@ -256,109 +256,132 @@ def process_product_recognition(self, analysis: dict, artefact: dict, work_dir: 
             rel = path
 
         if folder not in folder_index:
-            folder_index[folder] = {'hashes': set(), 'path_map': {}}
+            folder_index[folder] = {
+                'hashes': set(),
+                'md5s': set(),
+                'sha1s': set(),
+                'path_map': {},
+            }
 
         md5 = (f.get('md5') or '').lower()
         sha1 = (f.get('sha1') or '').lower()
         if md5 or sha1:
             folder_index[folder]['hashes'].add((md5, sha1))
+            if md5:
+                folder_index[folder]['md5s'].add(md5)
+            if sha1:
+                folder_index[folder]['sha1s'].add(sha1)
             folder_index[folder]['path_map'][rel.lower()] = (md5, sha1)
 
-    # Check each product across all databases against each folder
+    # Build hash -> candidate products so each folder only verifies products
+    # that share at least one required (or optional-only) file hash.
     results = []
     total_products = sum(len(db.get('products', [])) for db in config)
+    products_by_id = {}
+    product_ids_by_md5 = {}
+    product_ids_by_sha1 = {}
 
     for db in config:
         for product in db.get('products', []):
             product_id = product['product_id']
+            required_files = product.get('required_files', [])
+            optional_files = product.get('optional_files', [])
+            if not required_files and not optional_files:
+                continue
+            products_by_id[product_id] = product
+            candidate_files = required_files or optional_files
+            for known in candidate_files:
+                md5 = (known.get('md5') or '').lower()
+                sha1 = (known.get('sha1') or '').lower()
+                if md5:
+                    product_ids_by_md5.setdefault(md5, set()).add(product_id)
+                if sha1:
+                    product_ids_by_sha1.setdefault(sha1, set()).add(product_id)
+
+    for folder, idx in folder_index.items():
+        folder_hashes = idx['hashes']
+        folder_md5s = idx['md5s']
+        folder_sha1s = idx['sha1s']
+        path_map = idx['path_map']
+        candidate_product_ids = set()
+        for md5, sha1 in folder_hashes:
+            if md5:
+                candidate_product_ids.update(product_ids_by_md5.get(md5, set()))
+            if sha1:
+                candidate_product_ids.update(product_ids_by_sha1.get(sha1, set()))
+
+        if not candidate_product_ids:
+            continue
+
+        # When path matching is enabled, relative_path in the product config is
+        # the full root-relative path (e.g. '!ArcFS/ArcFS'), but path_map keys
+        # are only the filename within the folder (e.g. 'arcfs').
+        folder_lower = folder.lower()
+        folder_prefix = folder_lower + '/' if folder_lower else ''
+
+        for product_id in candidate_product_ids:
+            product = products_by_id[product_id]
             path_match_enabled = product.get('path_match_enabled', False)
             required_files = product.get('required_files', [])
             optional_files = product.get('optional_files', [])
 
-            if not required_files and not optional_files:
+            required_matched = 0
+            for req in required_files:
+                md5 = (req.get('md5') or '').lower()
+                sha1 = (req.get('sha1') or '').lower()
+                rel_path = (req.get('relative_path') or '').lower()
+
+                matched = False
+                if path_match_enabled and rel_path:
+                    if folder_prefix and rel_path.startswith(folder_prefix):
+                        rel_path_in_folder = rel_path[len(folder_prefix):]
+                    else:
+                        rel_path_in_folder = rel_path
+                    if rel_path_in_folder in path_map:
+                        file_md5, file_sha1 = path_map[rel_path_in_folder]
+                        matched = (
+                            (md5 and file_md5 == md5) or
+                            (sha1 and file_sha1 == sha1)
+                        )
+                else:
+                    matched = (md5 and md5 in folder_md5s) or (sha1 and sha1 in folder_sha1s)
+
+                if matched:
+                    required_matched += 1
+
+            if required_files and required_matched < len(required_files):
                 continue
 
-            for folder, idx in folder_index.items():
-                folder_hashes = idx['hashes']
-                path_map = idx['path_map']
+            optional_matched = 0
+            for opt in optional_files:
+                md5 = (opt.get('md5') or '').lower()
+                sha1 = (opt.get('sha1') or '').lower()
+                rel_path = (opt.get('relative_path') or '').lower()
 
-                # Check required files (all must match)
-                # When path matching is enabled, relative_path in the product
-                # config is the full root-relative path (e.g. '!ArcFS/ArcFS'),
-                # but path_map keys are only the filename within the folder
-                # (e.g. 'arcfs').  Pre-compute the folder prefix to strip.
-                folder_lower = folder.lower()
-                folder_prefix = folder_lower + '/' if folder_lower else ''
-
-                required_matched = 0
-                for req in required_files:
-                    md5 = (req.get('md5') or '').lower()
-                    sha1 = (req.get('sha1') or '').lower()
-                    rel_path = (req.get('relative_path') or '').lower()
-
-                    matched = False
-                    if path_match_enabled and rel_path:
-                        # Must match both hash AND relative path.
-                        # Strip the folder prefix so '!arcfs/arcfs' becomes
-                        # 'arcfs' before looking up in path_map.
-                        if folder_prefix and rel_path.startswith(folder_prefix):
-                            rel_path_in_folder = rel_path[len(folder_prefix):]
-                        else:
-                            rel_path_in_folder = rel_path
-                        if rel_path_in_folder in path_map:
-                            file_md5, file_sha1 = path_map[rel_path_in_folder]
-                            matched = (
-                                (md5 and file_md5 == md5) or
-                                (sha1 and file_sha1 == sha1)
-                            )
+                if path_match_enabled and rel_path:
+                    if folder_prefix and rel_path.startswith(folder_prefix):
+                        rel_path_in_folder = rel_path[len(folder_prefix):]
                     else:
-                        # Hash-only match: any file in the folder with this hash
-                        matched = any(
-                            (md5 and h[0] == md5) or (sha1 and h[1] == sha1)
-                            for h in folder_hashes
-                        )
-
-                    if matched:
-                        required_matched += 1
-
-                if required_files and required_matched < len(required_files):
-                    continue  # Not a match — not all required files found
-
-                # Count optional matches
-                optional_matched = 0
-                for opt in optional_files:
-                    md5 = (opt.get('md5') or '').lower()
-                    sha1 = (opt.get('sha1') or '').lower()
-                    rel_path = (opt.get('relative_path') or '').lower()
-
-                    if path_match_enabled and rel_path:
-                        if folder_prefix and rel_path.startswith(folder_prefix):
-                            rel_path_in_folder = rel_path[len(folder_prefix):]
-                        else:
-                            rel_path_in_folder = rel_path
-                        if rel_path_in_folder in path_map:
-                            file_md5, file_sha1 = path_map[rel_path_in_folder]
-                            if (md5 and file_md5 == md5) or (sha1 and file_sha1 == sha1):
-                                optional_matched += 1
-                    else:
-                        if any(
-                            (md5 and h[0] == md5) or (sha1 and h[1] == sha1)
-                            for h in folder_hashes
-                        ):
+                        rel_path_in_folder = rel_path
+                    if rel_path_in_folder in path_map:
+                        file_md5, file_sha1 = path_map[rel_path_in_folder]
+                        if (md5 and file_md5 == md5) or (sha1 and file_sha1 == sha1):
                             optional_matched += 1
+                else:
+                    if (md5 and md5 in folder_md5s) or (sha1 and sha1 in folder_sha1s):
+                        optional_matched += 1
 
-                # For optional-only products, require at least one match
-                if not required_files and optional_matched == 0:
-                    continue
+            if not required_files and optional_matched == 0:
+                continue
 
-                results.append({
-                    'product_id': product_id,
-                    'folder_path': folder if folder else '/',
-                    'required_matched': required_matched,
-                    'required_total': len(required_files),
-                    'optional_matched': optional_matched,
-                    'optional_total': len(optional_files),
-                })
+            results.append({
+                'product_id': product_id,
+                'folder_path': folder if folder else '/',
+                'required_matched': required_matched,
+                'required_total': len(required_files),
+                'optional_matched': optional_matched,
+                'optional_total': len(optional_files),
+            })
 
     self.api.report_recognised_products(partition_uuid, results)
 

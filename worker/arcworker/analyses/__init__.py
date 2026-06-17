@@ -44,7 +44,7 @@ from .flux import (
     process_flux_decode,
     process_flux_visualisation,
 )
-from .hashdb import process_hash_rescan
+from .hashdb import process_hash_rescan, process_hashdb_link, process_hashdb_recognition
 from .images import (
     _EXT_VIEWABLE,
     _RISCOS_HEX_VIEWABLE,
@@ -105,5 +105,7 @@ __all__ = [
     'process_partition_detect',
     # Hash rescan
     'process_hash_rescan',
+    'process_hashdb_link',
+    'process_hashdb_recognition',
 ]
 # vim: ts=4 sw=4 et
