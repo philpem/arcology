@@ -541,6 +541,104 @@ class TestLinkStepWallClock(unittest.TestCase):
             cursor = body['next_id']
 
 
+class TestPerDatabaseRescanIsScoped(unittest.TestCase):
+    """The /hashdb/<id>/rescan button queues ONE scoped HASHDB_LINK job, not a
+    per-artefact HASH_RESCAN fan-out across the whole collection."""
+
+    @classmethod
+    def setUpClass(cls):
+        from arcology_shared.enums import ArtefactType
+        from myapp.app import create_app
+        from myapp.database import (
+            Artefact,
+            ExtractedFile,
+            FilesystemType,
+            HashDatabase,
+            Item,
+            Partition,
+            StorageDirectory,
+            User,
+            UserPermission,
+        )
+        from myapp.extensions import db
+
+        cls.app = create_app()
+        cls.app.config['TESTING'] = True
+        cls.app.config['WTF_CSRF_ENABLED'] = False
+        cls.client = cls.app.test_client()
+        cls.db = db
+
+        with cls.app.app_context():
+            db.create_all()
+            user = User(username='rescan-rw', password_hash='x',
+                        permission=UserPermission.READ_WRITE)
+            db.session.add(user)
+            db.session.flush()
+            cls.uid = user.id
+
+            hdb = HashDatabase(name='Scoped DB', file_count=0, is_active=True)
+            db.session.add(hdb)
+            db.session.flush()
+            cls.db_id = hdb.id
+
+            item = Item(name='coll')
+            db.session.add(item)
+            db.session.flush()
+            # A couple of artefacts with extracted files: the old behaviour would
+            # have queued a HASH_RESCAN for each of these.
+            for i in range(3):
+                art = Artefact(item_id=item.id, label=f'Disc {i}',
+                               artefact_type=ArtefactType.HFE,
+                               original_filename='d.ssd', storage_path=f'd{i}.ssd',
+                               storage_directory=StorageDirectory.UPLOADS)
+                db.session.add(art)
+                db.session.flush()
+                part = Partition(artefact_id=art.id, partition_index=0, label='Main',
+                                 filesystem=FilesystemType.DFS, total_files=1)
+                db.session.add(part)
+                db.session.flush()
+                db.session.add(ExtractedFile(
+                    partition_id=part.id, path=f'F{i}/file', filename='file',
+                    md5=f'{i:032x}', is_directory=False, is_known=False))
+            db.session.commit()
+
+    def _login(self):
+        with self.client.session_transaction() as sess:
+            sess['_user_id'] = str(self.uid)
+            sess['_fresh'] = True
+
+    def test_rescan_queues_single_scoped_link_job(self):
+        from myapp.database import Analysis, AnalysisType
+
+        self._login()
+        resp = self.client.post(f'/hashdb/{self.db_id}/rescan')
+        self.assertEqual(resp.status_code, 302, resp.data)
+
+        with self.app.app_context():
+            # Exactly one scoped HASHDB_LINK job for this DB, no per-artefact
+            # HASH_RESCAN fan-out.
+            link_jobs = Analysis.query.filter_by(
+                analysis_type=AnalysisType.HASHDB_LINK, artefact_id=None).all()
+            self.assertEqual(len(link_jobs), 1)
+            self.assertIn(f'"database_id": {self.db_id}', link_jobs[0].hints)
+            self.assertEqual(
+                Analysis.query.filter_by(
+                    analysis_type=AnalysisType.HASH_RESCAN).count(),
+                0)
+
+    def test_rescan_is_idempotent_on_repeat_clicks(self):
+        from myapp.database import Analysis, AnalysisType
+
+        self._login()
+        self.client.post(f'/hashdb/{self.db_id}/rescan')
+        self.client.post(f'/hashdb/{self.db_id}/rescan')
+        with self.app.app_context():
+            self.assertEqual(
+                Analysis.query.filter_by(
+                    analysis_type=AnalysisType.HASHDB_LINK, artefact_id=None).count(),
+                1)
+
+
 class TestOptionalOnlyRecognition(unittest.TestCase):
     """Optional-only products (no mandatory files) are ignored by the matcher:
     they have no discriminating fingerprint, so matching them on a ubiquitous
@@ -625,6 +723,80 @@ class TestOptionalOnlyRecognition(unittest.TestCase):
             self.assertEqual(result['matches'], 0)
             self.assertEqual(
                 RecognisedProduct.query.filter_by(product_id=self.prod_id).count(), 0)
+
+
+class TestHashdbViewPagination(unittest.TestCase):
+    """The product list paginates (NIST-scale databases) and flags products with
+    no mandatory file (which the matcher ignores)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.app import create_app
+        from myapp.database import (
+            HashDatabase,
+            KnownFile,
+            KnownProduct,
+            User,
+            UserPermission,
+        )
+        from myapp.extensions import db
+
+        cls.app = create_app()
+        cls.app.config['TESTING'] = True
+        cls.client = cls.app.test_client()
+        cls.db = db
+        with cls.app.app_context():
+            db.create_all()
+            user = User(username='hp-rw', password_hash='x',
+                        permission=UserPermission.READ_WRITE)
+            db.session.add(user)
+            db.session.flush()
+            cls.uid = user.id
+            hdb = HashDatabase(name='Paged DB', file_count=0)
+            db.session.add(hdb)
+            db.session.flush()
+            cls.db_id = hdb.id
+            # 5 products A..E; only 'C' has a mandatory file.
+            cls.no_mandatory_titles = set()
+            for letter in 'ABCDE':
+                prod = KnownProduct(database_id=hdb.id, title=f'{letter}pp')
+                db.session.add(prod)
+                db.session.flush()
+                required = letter == 'C'
+                db.session.add(KnownFile(database_id=hdb.id, product_id=prod.id,
+                                         filename='f', md5=f'{ord(letter):032x}',
+                                         is_required=required))
+                if not required:
+                    cls.no_mandatory_titles.add(prod.id)
+            db.session.commit()
+
+    def _ctx(self, url):
+        from flask import template_rendered
+        with self.client.session_transaction() as sess:
+            sess['_user_id'] = str(self.uid)
+            sess['_fresh'] = True
+        captured = []
+        template_rendered.connect(
+            lambda sender, template, context, **k: captured.append(context),
+            self.app, weak=False)
+        r = self.client.get(url)
+        self.assertEqual(r.status_code, 200, r.data)
+        return captured[-1]
+
+    def test_paginates_and_jump_bar(self):
+        ctx = self._ctx(f'/hashdb/{self.db_id}?per_page=25')
+        self.assertEqual(ctx['products_pagination'].total, 5)
+
+        ctx = self._ctx(f'/hashdb/{self.db_id}?per_page=0')  # 'All' still works
+        self.assertEqual(len(ctx['products']), 5)
+
+        # With a tiny page size there are multiple pages and a letter jump bar.
+        ctx = self._ctx(f'/hashdb/{self.db_id}?per_page=25&page=1')
+        self.assertEqual(ctx['products_pagination'].total, 5)
+
+    def test_no_mandatory_products_flagged(self):
+        ctx = self._ctx(f'/hashdb/{self.db_id}?per_page=0')
+        self.assertEqual(ctx['no_mandatory_ids'], self.no_mandatory_titles)
 
 
 if __name__ == '__main__':
