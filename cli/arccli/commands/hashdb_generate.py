@@ -689,7 +689,7 @@ def _build_products(client: ArcologyClient, g: dict, args, is_unique,
         return {
             'title': product_title,
             'description': build_product_title(app_dir_name, full_context, disc_number),
-            'path_match_enabled': True,
+            'path_match_enabled': bool(getattr(args, 'path_match', False)),
             'files': pfiles,
         }
 
@@ -810,6 +810,7 @@ def cmd_hashdb_generate_riscos(client: ArcologyClient, args):
             'name': args.db_name,
             'description': args.db_description or '',
             'version': args.db_version or date.today().isoformat(),
+            'enable_product_recognition': True,
         },
         'products': all_products,
     }

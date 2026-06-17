@@ -60,6 +60,8 @@ class TestHashdbCountVisibility(unittest.TestCase):
             KnownFile,
             KnownProduct,
             Partition,
+            ProductRecognitionStatus,
+            RecognisedProduct,
             StorageDirectory,
             User,
             UserPermission,
@@ -83,7 +85,11 @@ class TestHashdbCountVisibility(unittest.TestCase):
             db.session.flush()
             cls.viewer_id, cls.admin_id = viewer.id, admin.id
 
-            hdb = HashDatabase(name='Test HashDB')
+            hdb = HashDatabase(
+                name='Test HashDB',
+                enable_product_recognition=True,
+                product_recognition_status=ProductRecognitionStatus.COMPLETED,
+            )
             db.session.add(hdb)
             db.session.flush()
             prod = KnownProduct(database_id=hdb.id, title='Secret Product')
@@ -113,6 +119,10 @@ class TestHashdbCountVisibility(unittest.TestCase):
             db.session.add(ExtractedFile(
                 partition_id=part.id, path='SecretFile', filename='SecretFile',
                 md5='aa' * 16, is_directory=False, known_file_id=kf.id, is_known=True))
+            db.session.add(RecognisedProduct(
+                partition_id=part.id, product_id=prod.id, folder_path='/',
+                required_matched=1, required_total=1,
+                optional_matched=0, optional_total=0))
             recompute_item_privacy(item)
             db.session.commit()
 
@@ -137,11 +147,11 @@ class TestHashdbCountVisibility(unittest.TestCase):
     def test_view_product_count_hidden_from_non_owner(self):
         ctx = self._context_for(f'/hashdb/{self.db_id}', self.viewer_id)
         # The only match is inside a private artefact the viewer cannot see.
-        self.assertEqual(ctx['product_match_counts'].get(self.product_id, 0), 0)
+        self.assertEqual(ctx['product_recognition_counts'].get(self.product_id, 0), 0)
 
     def test_view_product_count_visible_to_admin(self):
         ctx = self._context_for(f'/hashdb/{self.db_id}', self.admin_id)
-        self.assertEqual(ctx['product_match_counts'].get(self.product_id, 0), 1)
+        self.assertEqual(ctx['product_recognition_counts'].get(self.product_id, 0), 1)
 
     # The lazily-loaded per-file fragment must apply the same visibility filter.
     def test_product_files_count_hidden_from_non_owner(self):
