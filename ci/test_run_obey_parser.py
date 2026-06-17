@@ -15,7 +15,9 @@ from cli.arccli.commands.hashdb_generate import (  # noqa: E402
     build_product_files,
     build_product_title,
     classify_app_files,
+    diagnose_no_mandatory,
     get_launched_set,
+    local_uniqueness_failure,
     make_is_unique,
     parse_artefact_label,
     parse_run_obey,
@@ -314,6 +316,96 @@ class TestMakeIsUnique(unittest.TestCase):
         m = {'abc': {('item1', '!Foo')}}
         is_unique = make_is_unique(C(), m, global_check=True)
         self.assertTrue(is_unique({'md5': 'abc'}))
+
+
+class TestLocalUniquenessFailure(unittest.TestCase):
+    def test_known_file(self):
+        self.assertEqual(
+            local_uniqueness_failure({'md5': 'abc', 'is_known': True}, {}),
+            'known',
+        )
+
+    def test_no_md5(self):
+        self.assertEqual(local_uniqueness_failure({'md5': None}, {}), 'no-md5')
+
+    def test_shared(self):
+        m = {'abc': {('i', '!A'), ('i', '!B')}}
+        self.assertEqual(local_uniqueness_failure({'md5': 'abc'}, m), 'shared')
+
+    def test_locally_unique_returns_none(self):
+        m = {'abc': {('i', '!A')}}
+        self.assertIsNone(local_uniqueness_failure({'md5': 'ABC'}, m))
+
+    def test_agrees_with_make_is_unique_local_portion(self):
+        # local_uniqueness_failure is None iff make_is_unique (no global) is True.
+        m = {'abc': {('i', '!A')}}
+        is_unique = make_is_unique(None, m, global_check=False)
+        for f in (
+            {'md5': 'abc'},
+            {'md5': 'abc', 'is_known': True},
+            {'md5': None},
+            {'md5': 'def'},  # not in map -> shared/absent
+        ):
+            self.assertEqual(
+                local_uniqueness_failure(f, m) is None,
+                is_unique(f),
+                msg=f,
+            )
+
+
+class TestDiagnoseNoMandatory(unittest.TestCase):
+    def _unique(self, md5_appkeys, global_check=False):
+        # A real predicate so the carried attributes are present.
+        return make_is_unique(None, md5_appkeys, global_check=global_check)
+
+    def test_no_launch_target(self):
+        # No parsed !Run target, and no executable filetype on any file.
+        # (Note: !SpritesN would match the app-sprites rule, so use a plain
+        # data file with a non-executable filetype here.)
+        files = [_f('!Foo/!Run'), _f('!Foo/readme', risc_os_filetype='fff')]
+        reason = diagnose_no_mandatory('!Foo', files, set(), self._unique({}))
+        self.assertEqual(reason, 'no-launch-target')
+
+    def test_launched_target_is_known(self):
+        files = [
+            _f('!Foo/!Run'),
+            _f('!Foo/!RunImage', md5='m1', risc_os_filetype='ff8', is_known=True),
+        ]
+        m = {'m1': {('i', '!Foo')}}
+        reason = diagnose_no_mandatory('!Foo', files, {'!runimage'},
+                                       self._unique(m))
+        self.assertEqual(reason, 'known')
+
+    def test_launched_target_shared(self):
+        files = [
+            _f('!Foo/!Run'),
+            _f('!Foo/!RunImage', md5='m1', risc_os_filetype='ff8'),
+        ]
+        m = {'m1': {('i', '!Foo'), ('i', '!Bar')}}
+        reason = diagnose_no_mandatory('!Foo', files, {'!runimage'},
+                                       self._unique(m))
+        self.assertEqual(reason, 'shared')
+
+    def test_globally_rejected_when_locally_unique(self):
+        # Locally unique, global_check on -> the only way it could fail is global.
+        files = [
+            _f('!Foo/!Run'),
+            _f('!Foo/!RunImage', md5='m1', risc_os_filetype='ff8'),
+        ]
+        m = {'m1': {('i', '!Foo')}}
+        reason = diagnose_no_mandatory('!Foo', files, {'!runimage'},
+                                       self._unique(m, global_check=True))
+        self.assertEqual(reason, 'global')
+
+    def test_fallback_filetype_candidate_known(self):
+        # No !Run target parsed; a file with an executable filetype is the
+        # candidate, and it is is_known.
+        files = [
+            _f('!Foo/!RunImage', md5='m1', risc_os_filetype='ffb', is_known=True),
+        ]
+        m = {'m1': {('i', '!Foo')}}
+        reason = diagnose_no_mandatory('!Foo', files, set(), self._unique(m))
+        self.assertEqual(reason, 'known')
 
 
 class TestBuildProductFiles(unittest.TestCase):

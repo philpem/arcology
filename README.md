@@ -219,6 +219,10 @@ arco hashdb import riscos_apps.json
 # the launched executable Mandatory, and emits import-ready JSON.
 arco hashdb generate-riscos --tag arcarc --db-name "Arcarc RISC OS" --output riscos-hashdb.json
 arco hashdb import riscos-hashdb.json
+
+# Add --explain to find out why some applications produced no mandatory file
+# (no launch target found, target already in a hash database, shared, etc.).
+arco hashdb generate-riscos --item <uuid> --db-name "Apps" --output apps.json --explain
 ```
 
 Run `arco --help` or `arco <command> --help` for full usage details.

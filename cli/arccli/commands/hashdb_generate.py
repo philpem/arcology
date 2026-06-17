@@ -29,6 +29,7 @@ import json
 import logging
 import re
 import sys
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from ..client import ArcologyClient
@@ -500,6 +501,51 @@ def build_product_title(app_dir_name: str, context: str | None = None,
 # Uniqueness
 # ---------------------------------------------------------------------------
 
+# Diagnostic reason codes for why an application produced no Mandatory file,
+# in priority order, with the human-readable label shown by --explain.
+NO_MANDATORY_REASONS = (
+    ('no-launch-target',
+     'no launch target found (!Run not parsed in a recognised form and no '
+     'RISC OS executable filetype metadata on any file)'),
+    ('known',
+     'launch target already present in an active hash database (is_known)'),
+    ('shared',
+     'launch target content shared across applications (not unique)'),
+    ('global',
+     'launch target also present elsewhere in the catalogue '
+     '(cross-catalogue --global-check)'),
+    ('no-md5',
+     'launch target has no MD5 hash (uniqueness is judged on MD5)'),
+    ('unknown', 'undetermined'),
+)
+
+
+_REASON_LABELS = dict(NO_MANDATORY_REASONS)
+
+
+def _reason_label(code: str | None) -> str:
+    """Human-readable label for a NO_MANDATORY_REASONS code."""
+    return _REASON_LABELS.get(code, code or 'undetermined')
+
+
+def local_uniqueness_failure(f: dict, md5_appkeys: dict[str, set]) -> str | None:
+    """Return the *local* reason a file cannot be Mandatory, or None if it is
+    locally eligible (in which case only the global check could still reject it).
+
+    Mirrors the local portion of make_is_unique()'s predicate exactly so the
+    --explain diagnosis agrees with the actual classification.
+    """
+    if f.get('is_known'):
+        return 'known'
+    md5 = (f.get('md5') or '').lower()
+    if not md5:
+        return 'no-md5'
+    keys = md5_appkeys.get(md5)
+    if keys is None or len(keys) != 1:
+        return 'shared'
+    return None
+
+
 def make_is_unique(client: ArcologyClient, md5_appkeys: dict[str, set],
                    global_check: bool):
     """Build the is_unique() predicate.
@@ -509,15 +555,13 @@ def make_is_unique(client: ArcologyClient, md5_appkeys: dict[str, set],
     uniqueness is judged from *md5_appkeys* (built across the scanned set); when
     *global_check* is on, /hash-lookup confirms the file does not also appear in
     other items across the whole catalogue.
+
+    The returned callable carries *md5_appkeys* and *global_check* as attributes
+    so the --explain diagnosis can reproduce the local reasoning without the
+    closure having to be unpacked.
     """
     def is_unique(f: dict) -> bool:
-        if f.get('is_known'):
-            return False
-        md5 = (f.get('md5') or '').lower()
-        if not md5:
-            return False
-        keys = md5_appkeys.get(md5)
-        if keys is None or len(keys) != 1:
+        if local_uniqueness_failure(f, md5_appkeys) is not None:
             return False
         if global_check:
             try:
@@ -531,7 +575,53 @@ def make_is_unique(client: ArcologyClient, md5_appkeys: dict[str, set],
                 return False
         return True
 
+    is_unique.md5_appkeys = md5_appkeys
+    is_unique.global_check = global_check
     return is_unique
+
+
+def diagnose_no_mandatory(app_dir_name: str, app_files: list[dict],
+                          launched_set: set[str], is_unique) -> str:
+    """Explain why an application directory produced no Mandatory file.
+
+    Returns one of the reason codes in NO_MANDATORY_REASONS.  Uses the same
+    launch-target identification as classify_app_files() (parsed !Run targets,
+    or the executable-filetype fallback), then reports the dominant reason those
+    candidates were rejected by the uniqueness gate.
+    """
+    md5_appkeys = getattr(is_unique, 'md5_appkeys', {})
+    global_check = getattr(is_unique, 'global_check', False)
+
+    candidates: list[dict] = []
+    for f in app_files:
+        if f.get('is_directory'):
+            continue
+        leaf = f.get('filename', '').lower()
+        if leaf in ('!run', '!boot'):
+            continue
+        rel = _app_relative(app_dir_name, f.get('path', '')).lower()
+        is_launched = rel in launched_set or any(
+            t.rsplit('/', 1)[-1] == leaf for t in launched_set
+        )
+        if is_launched or _filetype_mandatory(f):
+            candidates.append(f)
+
+    if not candidates:
+        return 'no-launch-target'
+
+    reasons = set()
+    for f in candidates:
+        r = local_uniqueness_failure(f, md5_appkeys)
+        if r is None:
+            # Locally eligible -> only the global check could have rejected it.
+            reasons.add('global' if global_check else 'unknown')
+        else:
+            reasons.add(r)
+
+    for code, _label in NO_MANDATORY_REASONS:
+        if code in reasons:
+            return code
+    return 'unknown'
 
 
 # ---------------------------------------------------------------------------
@@ -620,8 +710,13 @@ def _gather_item(client: ArcologyClient, item: dict, filter_tags: list[str],
 
 
 def _build_products(client: ArcologyClient, g: dict, args, is_unique,
-                    jobs: int) -> list[dict]:
-    """Build HashDB product dicts for one gathered item."""
+                    jobs: int) -> tuple[list[dict], 'Counter']:
+    """Build HashDB product dicts for one gathered item.
+
+    Returns ``(products, reasons)`` where *reasons* is a Counter of the
+    NO_MANDATORY_REASONS codes for every application that produced no Mandatory
+    file (whether emitted or dropped by --require-mandatory).
+    """
     artefact_results = g['artefact_results']
     is_multi_disc = len(artefact_results) > 1
     item_name = g['item_name']
@@ -674,6 +769,8 @@ def _build_products(client: ArcologyClient, g: dict, args, is_unique,
                           merged_context[app_dir_name],
                           merged_full_context[app_dir_name]))
 
+    explain = getattr(args, 'explain', False)
+
     def make_product(task):
         app_dir_name, app_files, disc_number, suffix, short_context, full_context = task
         launched = get_launched_set(client, app_files, verbose=args.verbose)
@@ -681,25 +778,43 @@ def _build_products(client: ArcologyClient, g: dict, args, is_unique,
                                         is_unique, verbose=args.verbose)
         pfiles = build_product_files(classified, verbose=args.verbose)
         if not pfiles:
-            return None
+            return (None, None)
         mandatory = sum(1 for f in pfiles if f['is_required'])
         product_title = build_product_title(app_dir_name, short_context, disc_number) + suffix
+
+        reason = None
+        if mandatory == 0:
+            reason = diagnose_no_mandatory(app_dir_name, app_files, launched, is_unique)
+
         # A product with no mandatory file has no discriminating fingerprint and
         # is ignored by the matcher.  With --require-mandatory, drop it here
         # rather than emitting an unmatchable product.
         if mandatory == 0 and getattr(args, 'require_mandatory', False):
-            log.info('    %s: skipped (no mandatory file)', product_title)
-            return None
-        log.info('    %s: %3d mandatory, %3d optional',
-                 product_title, mandatory, len(pfiles) - mandatory)
-        return {
+            if explain:
+                log.info('    %s: skipped (no mandatory file: %s)',
+                         product_title, _reason_label(reason))
+            else:
+                log.info('    %s: skipped (no mandatory file)', product_title)
+            return (None, reason)
+
+        if explain and mandatory == 0:
+            log.info('    %s: %3d mandatory, %3d optional  [%s]',
+                     product_title, mandatory, len(pfiles) - mandatory,
+                     _reason_label(reason))
+        else:
+            log.info('    %s: %3d mandatory, %3d optional',
+                     product_title, mandatory, len(pfiles) - mandatory)
+        return ({
             'title': product_title,
             'description': build_product_title(app_dir_name, full_context, disc_number),
             'path_match_enabled': bool(getattr(args, 'path_match', False)),
             'files': pfiles,
-        }
+        }, reason)
 
-    return [p for p in _run_jobs(make_product, tasks, jobs) if p]
+    results = _run_jobs(make_product, tasks, jobs)
+    products = [p for p, _r in results if p]
+    reasons = Counter(r for _p, r in results if r)
+    return products, reasons
 
 
 # ---------------------------------------------------------------------------
@@ -804,8 +919,10 @@ def cmd_hashdb_generate_riscos(client: ArcologyClient, args):
     log.info('Building products from %d application instance(s)...', n_apps)
     all_products = []
     items_with_products = 0
+    no_mandatory_reasons: Counter = Counter()
     for g in gathered:
-        products = _build_products(client, g, args, is_unique, jobs)
+        products, reasons = _build_products(client, g, args, is_unique, jobs)
+        no_mandatory_reasons.update(reasons)
         if products:
             all_products.extend(products)
             items_with_products += 1
@@ -827,6 +944,7 @@ def cmd_hashdb_generate_riscos(client: ArcologyClient, args):
     mandatory_files = sum(sum(1 for f in p['files'] if f['is_required'])
                           for p in all_products)
     optional_files = total_files - mandatory_files
+    products_no_mandatory = sum(no_mandatory_reasons.values())
 
     with open(args.output, 'w', encoding='utf-8') as fh:
         json.dump(output_data, fh, indent=2, default=str)
@@ -838,6 +956,16 @@ def cmd_hashdb_generate_riscos(client: ArcologyClient, args):
     log.info('Products:         %d', len(all_products))
     log.info('Files:            %d (%d mandatory, %d optional)',
              total_files, mandatory_files, optional_files)
+    if products_no_mandatory:
+        log.info('No mandatory:     %d application(s) produced no mandatory file',
+                 products_no_mandatory)
+        if getattr(args, 'explain', False):
+            for code, _label in NO_MANDATORY_REASONS:
+                n = no_mandatory_reasons.get(code, 0)
+                if n:
+                    log.info('  %5d  %s', n, _reason_label(code))
+        else:
+            log.info('                  (re-run with --explain to see why)')
     log.info('Output:           %s', args.output)
     log.info('')
     log.info('Import with:  arco hashdb import %s', args.output)
@@ -852,6 +980,8 @@ def cmd_hashdb_generate_riscos(client: ArcologyClient, args):
             'files': total_files,
             'mandatory_files': mandatory_files,
             'optional_files': optional_files,
+            'products_no_mandatory': products_no_mandatory,
+            'no_mandatory_reasons': dict(no_mandatory_reasons),
         })
 
 # vim: ts=4 sw=4 et
