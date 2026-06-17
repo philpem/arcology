@@ -108,7 +108,8 @@ class ProgressReporter:
         return self.alive
 
 
-def run_step_loop(step, *, cursor_key, reporter=None):
+def run_step_loop(step, *, cursor_key, reporter=None, initial_limit=None,
+                  min_limit=1):
     """Drive a worker-triggered, server-side **bounded-step** job to completion.
 
     This is the worker half of a recurring pattern in this codebase: work that
@@ -125,6 +126,19 @@ def run_step_loop(step, *, cursor_key, reporter=None):
     other than the cursor is summed across steps into *totals*; the running
     ``processed`` total drives the optional *reporter*.
 
+    **Adaptive batch size.**  When *initial_limit* is given the step is invoked
+    as ``step(cursor, limit)`` and the loop adapts the batch to server
+    back-pressure (AIMD-style): a step that returns ``{'timed_out': True}`` — the
+    server aborted an over-long batch — is retried at the *same* cursor with
+    *limit* halved, down to *min_limit*; each successful step doubles *limit*
+    back up toward *initial_limit* so throughput recovers after a slow patch.
+    At *min_limit* the server is expected to make progress itself (e.g. skip a
+    single un-processable unit and advance the cursor); a step that *still*
+    reports ``timed_out`` at *min_limit* cannot be subdivided and fails the loop
+    (``last_result`` of ``None``).  When *initial_limit* is None the step is
+    invoked as ``step(cursor)`` and a ``timed_out`` result is an unrecoverable
+    failure.
+
     Termination is guarded defensively: a step that returns a non-dict body, or
     that fails to advance the cursor without signalling ``done``, is treated as
     a failed step (``last_result`` of ``None``) rather than spinning the worker
@@ -136,13 +150,31 @@ def run_step_loop(step, *, cursor_key, reporter=None):
     backfills, how to report a failed status).
     """
     cursor = 0
+    limit = initial_limit
     totals: dict[str, int] = {}
     while True:
-        result = step(cursor)
+        result = step(cursor, limit) if limit is not None else step(cursor)
         if not isinstance(result, dict):
             return None, totals
+        if result.get('timed_out'):
+            if limit is None or limit <= min_limit:
+                # Cannot subdivide further — a single batch element is too slow
+                # to process within the server's step time limit.  Fail rather
+                # than retry the same over-long batch forever.
+                return None, totals
+            limit = max(min_limit, limit // 2)
+            continue  # retry the same cursor with a smaller batch
+        # The server may supply a human-readable progress label and total (e.g.
+        # the database name and product count) so the status line can read
+        # "Recognising products in HashDB 'Arcarc Apps': 625 of 3456".  These are
+        # relayed to the reporter, not summed into totals.
+        if reporter is not None:
+            if result.get('progress_label'):
+                reporter.label = result['progress_label']
+            if result.get('progress_total') is not None:
+                reporter.total = result['progress_total']
         for key, value in result.items():
-            if key == cursor_key:
+            if key in (cursor_key, 'progress_label', 'progress_total'):
                 continue
             if isinstance(value, int) and not isinstance(value, bool):
                 totals[key] = totals.get(key, 0) + value
@@ -150,6 +182,12 @@ def run_step_loop(step, *, cursor_key, reporter=None):
             reporter.update(totals.get('processed', 0))
         if result.get('done'):
             return result, totals
+        # A step succeeded (it advanced or signalled a server-side skip), so ramp
+        # the batch back up toward initial_limit.  Without this the limit would
+        # stay stuck at the size it was halved to — e.g. 1 product per request
+        # for the rest of a backfill after one slow product forced a skip.
+        if limit is not None and limit < initial_limit:
+            limit = min(initial_limit, limit * 2)
         next_cursor = result.get(cursor_key, cursor)
         if next_cursor == cursor:
             # The cursor failed to advance and the step did not signal done:

@@ -684,6 +684,12 @@ def _build_products(client: ArcologyClient, g: dict, args, is_unique,
             return None
         mandatory = sum(1 for f in pfiles if f['is_required'])
         product_title = build_product_title(app_dir_name, short_context, disc_number) + suffix
+        # A product with no mandatory file has no discriminating fingerprint and
+        # is ignored by the matcher.  With --require-mandatory, drop it here
+        # rather than emitting an unmatchable product.
+        if mandatory == 0 and getattr(args, 'require_mandatory', False):
+            log.info('    %s: skipped (no mandatory file)', product_title)
+            return None
         log.info('    %s: %3d mandatory, %3d optional',
                  product_title, mandatory, len(pfiles) - mandatory)
         return {

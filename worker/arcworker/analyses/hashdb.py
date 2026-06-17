@@ -11,6 +11,12 @@ from pathlib import Path
 from arcology_shared.enums import AnalysisType
 from ._common import analysis_handler, run_step_loop
 
+# Starting batch sizes for the bounded relink / recognition steps.  run_step_loop
+# halves these on a server-signalled step timeout, so they are the *maximum* per
+# request, not fixed sizes.
+RECOGNITION_STEP_LIMIT = 25
+LINK_STEP_LIMIT = 500
+
 
 @analysis_handler("hash rescan", AnalysisType.HASH_RESCAN)
 def process_hash_rescan(self, analysis: dict, artefact: dict, work_dir: Path):
@@ -50,9 +56,10 @@ def process_hashdb_link(self, analysis: dict, artefact: dict, work_dir: Path):
 
     reporter = self.progress.start(label='Linking known files')
     result, totals = run_step_loop(
-        lambda cursor: self.api.hashdb_link_step(db_id, last_id=cursor),
+        lambda cursor, limit: self.api.hashdb_link_step(db_id, last_id=cursor, limit=limit),
         cursor_key='next_id',
         reporter=reporter,
+        initial_limit=LINK_STEP_LIMIT,
     )
     if result is None:
         self.fail_analysis(analysis_id, 'HashDB link API call failed')
@@ -90,16 +97,17 @@ def process_hashdb_recognition(self, analysis: dict, artefact: dict, work_dir: P
     reporter = self.progress.start(label='Recognising products')
     try:
         result, totals = run_step_loop(
-            lambda cursor: self.api.hashdb_recognition_step(
-                db_id, last_product_id=cursor),
+            lambda cursor, limit: self.api.hashdb_recognition_step(
+                db_id, last_product_id=cursor, limit=limit),
             cursor_key='next_product_id',
             reporter=reporter,
+            initial_limit=RECOGNITION_STEP_LIMIT,
         )
         if result is None:
-            self.api.update_hashdb_recognition_status(
-                db_id, 'failed', error='HashDB recognition API call failed'
-            )
-            self.fail_analysis(analysis_id, 'HashDB recognition API call failed')
+            msg = ('HashDB recognition could not complete (API failure, or a '
+                   'product batch too large to process within the step time limit)')
+            self.api.update_hashdb_recognition_status(db_id, 'failed', error=msg)
+            self.fail_analysis(analysis_id, msg)
             return
     except Exception as exc:
         self.api.update_hashdb_recognition_status(
@@ -108,14 +116,20 @@ def process_hashdb_recognition(self, analysis: dict, artefact: dict, work_dir: P
         raise
     processed = totals.get('processed', 0)
     matches = totals.get('matches', 0)
+    skipped = totals.get('skipped', 0)
 
+    summary = f'{processed} product(s) checked; {matches} recognition match(es) found'
+    if skipped:
+        summary += (f'; {skipped} product(s) skipped (too slow to process within '
+                    f'the step time limit)')
     self.complete_analysis(
         analysis_id,
-        summary=f'{processed} product(s) checked; {matches} recognition match(es) found',
+        summary=summary,
         details=json.dumps({
             'database_id': db_id,
             'products_processed': processed,
             'matches': matches,
+            'products_skipped': skipped,
         }),
     )
 

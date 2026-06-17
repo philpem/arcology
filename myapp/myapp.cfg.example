@@ -84,6 +84,17 @@ WORKER_API_KEY = ""
 # longest expected analysis run time.  Default: 3600 (1 hour).
 STALE_JOB_TIMEOUT_SECONDS = 3600
 
+# Maximum time (in seconds) a single worker-driven HashDB step may run on the
+# server: the per-request PostgreSQL statement_timeout for recognition steps,
+# and the wall-clock budget for link steps (which run many short statements and
+# so cannot be bounded by statement_timeout alone).  This MUST stay below the
+# worker's API read timeout (API_TIMEOUT, default 30s) — otherwise the worker
+# abandons the request before the server can return a partial/retry result, and
+# the step appears to fail.  Default: 20.  (Recognition steps additionally fail
+# fast and let the worker retry a smaller batch; link steps return an advanced
+# cursor so the worker just continues.)
+WORKER_STEP_DEADLINE_SECONDS = 20
+
 # Priority assigned to analyses queued via the web UI (uploads, re-analyse
 # button).  Workers pick up jobs in order of priority DESC, created_at ASC.
 # Default 10 (ANALYSIS_PRIORITY_HIGH) keeps interactive web uploads ahead

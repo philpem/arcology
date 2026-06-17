@@ -168,6 +168,7 @@ class TestHashdbRecognitionStep(unittest.TestCase):
         self.assertTrue(body['done'])
         self.assertNotIn('remaining', body)
 
+
     # ---- fix 2: finishing step defers COMPLETED on a stale follow-up ------
 
     def test_finishing_step_stays_pending_when_followup_queued(self):
@@ -190,6 +191,157 @@ class TestHashdbRecognitionStep(unittest.TestCase):
             self.assertEqual(hdb.product_recognition_status,
                              ProductRecognitionStatus.PENDING)
             self.assertIsNone(hdb.product_recognition_updated_at)
+
+    # ---- status RUNNING is committed before the (long) scan, not held -----
+
+    def test_running_status_committed_before_scan(self):
+        """The RUNNING marker must be committed in its own transaction.
+
+        Regression: previously the ``status = RUNNING`` write stayed pending
+        until the final commit, so autoflush held a row lock on hash_databases
+        across the whole recognition scan — the worker's follow-up
+        /recognition-status call then blocked on the same row and timed out.
+
+        We prove the early commit indirectly: if the scan raises, the request
+        rolls back, but a *separately committed* RUNNING status survives.  With
+        the old single-transaction code the status would roll back to PENDING.
+        """
+        from unittest.mock import patch
+        from myapp.database import HashDatabase, ProductRecognitionStatus
+
+        self._reset_status(ProductRecognitionStatus.PENDING)
+        self._drain_pending_recognition()
+
+        boom = RuntimeError('scan exploded')
+        with patch('myapp.blueprints.api.recognise_products_step', side_effect=boom):
+            with self.assertRaises(RuntimeError):
+                self._post('/recognition-step', {'last_product_id': 0, 'limit': 50})
+
+        with self.app.app_context():
+            hdb = self.db.session.get(HashDatabase, self.db_id)
+            self.assertEqual(hdb.product_recognition_status,
+                             ProductRecognitionStatus.RUNNING)
+
+    # ---- candidate-folder verification is chunked (bounded statement) ------
+
+    def test_recognition_matches_across_folder_query_batches(self):
+        """Matching is correct when candidate folders span multiple chunks."""
+        from unittest.mock import patch
+        from myapp.database import ProductRecognitionStatus, RecognisedProduct
+
+        self._reset_status(ProductRecognitionStatus.PENDING)
+        self._drain_pending_recognition()
+
+        # Force the chunk size below the number of candidate folders (3) so the
+        # verification query runs in more than one batch.
+        with patch('myapp.services.recognition._FOLDER_QUERY_BATCH', 1):
+            resp = self._post('/recognition-step', {'last_product_id': 0, 'limit': 50})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        body = resp.get_json()
+        self.assertTrue(body['done'])
+        # All three products still match despite the tiny chunk size.
+        self.assertEqual(body['matches'], 3)
+        with self.app.app_context():
+            self.assertEqual(RecognisedProduct.query.count(), 3)
+
+    def test_statement_timeout_helper_noop_on_sqlite(self):
+        """The PostgreSQL statement-timeout guard is a safe no-op elsewhere."""
+        from myapp.blueprints.api import _apply_statement_timeout
+        with self.app.app_context():
+            # Must not raise on SQLite, and tolerate bad/zero values.
+            _apply_statement_timeout(120)
+            _apply_statement_timeout(0)
+            _apply_statement_timeout(None)
+            _apply_statement_timeout('nope')
+
+    # ---- a timed-out step returns a retry signal, not a 500 ---------------
+
+    def _make_statement_timeout(self):
+        from sqlalchemy.exc import OperationalError
+
+        class _Orig(Exception):
+            pgcode = '57014'  # query_canceled (statement_timeout)
+
+        return OperationalError('SELECT ...', {}, _Orig())
+
+    def test_step_timeout_returns_retry_signal_and_keeps_running(self):
+        from unittest.mock import patch
+        from myapp.database import HashDatabase, ProductRecognitionStatus
+
+        self._reset_status(ProductRecognitionStatus.PENDING)
+        self._drain_pending_recognition()
+
+        with patch('myapp.blueprints.api.recognise_products_step',
+                   side_effect=self._make_statement_timeout()):
+            resp = self._post('/recognition-step', {'last_product_id': 7, 'limit': 50})
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        body = resp.get_json()
+        self.assertTrue(body['timed_out'])
+        self.assertFalse(body['done'])
+        # Cursor is unchanged so the worker retries the same batch (smaller).
+        self.assertEqual(body['next_product_id'], 7)
+        with self.app.app_context():
+            hdb = self.db.session.get(HashDatabase, self.db_id)
+            # Status stays RUNNING — the run is not failed, just throttled.
+            self.assertEqual(hdb.product_recognition_status,
+                             ProductRecognitionStatus.RUNNING)
+
+    def test_wall_clock_deadline_returns_timed_out(self):
+        # A step that overruns the wall-clock budget returns timed_out even when
+        # no single statement_timeout fires, so the worker retries a smaller
+        # batch.  Drive the service directly with a deadline already in the past.
+        import time
+        from myapp.services.recognition import recognise_products_step
+
+        with self.app.app_context():
+            result = recognise_products_step(
+                database_id=self.db_id, last_product_id=0, limit=50,
+                deadline=time.monotonic() - 1)
+        self.assertTrue(result['timed_out'])
+        self.assertFalse(result['done'])
+        # Reports the attempted batch's last product id so a single un-processable
+        # product can be skipped at the worker's floor.
+        self.assertGreater(result['next_product_id'], 0)
+
+    def test_single_product_timeout_is_skipped_not_failed(self):
+        # At the worker's floor (limit=1) a product that still times out is
+        # skipped (cursor advances past it) rather than failing the backfill.
+        from unittest.mock import patch
+        from myapp.database import HashDatabase, ProductRecognitionStatus
+
+        self._reset_status(ProductRecognitionStatus.PENDING)
+        self._drain_pending_recognition()
+
+        with patch('myapp.blueprints.api.recognise_products_step',
+                   return_value={'timed_out': True}):
+            resp = self._post('/recognition-step', {'last_product_id': 0, 'limit': 1})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        body = resp.get_json()
+        self.assertNotIn('timed_out', body)
+        self.assertFalse(body['done'])
+        self.assertEqual(body['skipped'], 1)
+        self.assertGreater(body['next_product_id'], 0)  # advanced past the product
+        with self.app.app_context():
+            hdb = self.db.session.get(HashDatabase, self.db_id)
+            self.assertEqual(hdb.product_recognition_status,
+                             ProductRecognitionStatus.RUNNING)
+
+    def test_non_timeout_operational_error_propagates(self):
+        from unittest.mock import patch
+        from sqlalchemy.exc import OperationalError
+        from myapp.database import ProductRecognitionStatus
+
+        self._reset_status(ProductRecognitionStatus.PENDING)
+        self._drain_pending_recognition()
+
+        class _Orig(Exception):
+            pgcode = '40001'  # serialization_failure — not a statement timeout
+
+        with patch('myapp.blueprints.api.recognise_products_step',
+                   side_effect=OperationalError('x', {}, _Orig())):
+            with self.assertRaises(OperationalError):
+                self._post('/recognition-step', {'last_product_id': 0, 'limit': 50})
 
     def test_backfill_queue_commits_pending_status_when_job_already_pending(self):
         from myapp.database import HashDatabase, ProductRecognitionStatus
@@ -326,6 +478,153 @@ class TestRecognitionBestHashAndPartition(unittest.TestCase):
         with self.app.app_context():
             second = RecognisedProduct.query.filter_by(partition_id=self.part_id).count()
         self.assertEqual(first, second)
+
+
+class TestLinkStepWallClock(unittest.TestCase):
+    """The link step is bounded by wall-clock time (it runs many short
+    statements with commits, so statement_timeout can't bound it).  When the
+    soft deadline is hit it returns done=False with an advanced cursor so the
+    worker simply continues — it must never exceed the worker's read timeout."""
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.app import create_app
+        from myapp.database import HashDatabase, KnownFile, KnownProduct
+        from myapp.extensions import db
+
+        cls.app = create_app()
+        cls.app.config['TESTING'] = True
+        cls.client = cls.app.test_client()
+        cls.db = db
+        with cls.app.app_context():
+            db.create_all()
+            hdb = HashDatabase(name='Link DB', file_count=0, is_active=True)
+            db.session.add(hdb)
+            db.session.flush()
+            cls.db_id = hdb.id
+            prod = KnownProduct(database_id=hdb.id, title='!Many')
+            db.session.add(prod)
+            db.session.flush()
+            for i in range(120):
+                db.session.add(KnownFile(database_id=hdb.id, product_id=prod.id,
+                                         filename=f'f{i}', md5=f'{i:032x}'))
+            db.session.commit()
+
+    def _post(self, payload):
+        return self.client.post(f'/api/hash-databases/{self.db_id}/link-step',
+                                json=payload, headers={'X-API-Key': _WORKER_KEY})
+
+    def test_deadline_returns_partial_progress_with_advanced_cursor(self):
+        # A zero budget stops after the first 50-file chunk.
+        self.app.config['WORKER_STEP_DEADLINE_SECONDS'] = 0
+        try:
+            resp = self._post({'last_id': 0, 'limit': 2000})
+        finally:
+            self.app.config['WORKER_STEP_DEADLINE_SECONDS'] = 20
+        self.assertEqual(resp.status_code, 200, resp.data)
+        body = resp.get_json()
+        self.assertFalse(body['done'])
+        self.assertEqual(body['processed'], 50)      # one chunk
+        self.assertGreater(body['next_id'], 0)       # cursor advanced
+
+    def test_resumes_to_completion_across_steps(self):
+        # With a normal budget the whole database links in bounded steps.
+        cursor = 0
+        guard = 0
+        while True:
+            guard += 1
+            self.assertLess(guard, 50, 'link loop did not terminate')
+            body = self._post({'last_id': cursor, 'limit': 2000}).get_json()
+            if body['done']:
+                break
+            self.assertGreater(body['next_id'], cursor)
+            cursor = body['next_id']
+
+
+class TestOptionalOnlyRecognition(unittest.TestCase):
+    """Optional-only products (no mandatory files) are ignored by the matcher:
+    they have no discriminating fingerprint, so matching them on a ubiquitous
+    shared file would just be noise.  They produce zero recognition rows."""
+
+    @classmethod
+    def setUpClass(cls):
+        from arcology_shared.enums import ArtefactType
+        from myapp.app import create_app
+        from myapp.database import (
+            Artefact,
+            ExtractedFile,
+            FilesystemType,
+            HashDatabase,
+            Item,
+            KnownFile,
+            KnownProduct,
+            Partition,
+            StorageDirectory,
+        )
+        from myapp.extensions import db
+
+        cls.app = create_app()
+        cls.app.config['TESTING'] = True
+        cls.client = cls.app.test_client()
+        cls.db = db
+
+        with cls.app.app_context():
+            db.create_all()
+            hdb = HashDatabase(name='OptOnly DB', file_count=0,
+                               enable_product_recognition=True)
+            db.session.add(hdb)
+            db.session.flush()
+            cls.db_id = hdb.id
+
+            # An optional-only product: a !Boot (the ubiquitous file) plus another
+            # optional file, both is_required=False.
+            prod = KnownProduct(database_id=hdb.id, title='!App')
+            db.session.add(prod)
+            db.session.flush()
+            cls.prod_id = prod.id
+            db.session.add(KnownFile(database_id=hdb.id, product_id=prod.id,
+                                     filename='!Boot', md5='ab' * 16, is_required=False))
+            db.session.add(KnownFile(database_id=hdb.id, product_id=prod.id,
+                                     filename='!Run', md5='cd' * 16, is_required=False))
+
+            item = Item(name='coll')
+            db.session.add(item)
+            db.session.flush()
+            art = Artefact(item_id=item.id, label='Disc', artefact_type=ArtefactType.HFE,
+                           original_filename='d.ssd', storage_path='d.ssd',
+                           storage_directory=StorageDirectory.UPLOADS)
+            db.session.add(art)
+            db.session.flush()
+            # The ubiquitous !Boot appears in many unrelated folders.
+            for i in range(5):
+                part = Partition(artefact_id=art.id, partition_index=i, label=f'P{i}',
+                                 filesystem=FilesystemType.DFS)
+                db.session.add(part)
+                db.session.flush()
+                db.session.add(ExtractedFile(
+                    partition_id=part.id, path=f'Folder{i}/!Boot', filename='!Boot',
+                    md5='ab' * 16, is_directory=False, is_known=False))
+            db.session.commit()
+
+    def test_optional_only_product_is_ignored(self):
+        from unittest.mock import patch
+        from myapp.database import RecognisedProduct
+        from myapp.services.recognition import recognise_products_step
+
+        # An all-optional product is skipped before any folder work, so the
+        # per-folder fetch is never even reached (patched to raise to prove it).
+        def _boom(*a, **k):
+            raise AssertionError('optional-only product must not be processed')
+
+        with self.app.app_context():
+            with patch('myapp.services.recognition._folder_file_condition',
+                       side_effect=_boom):
+                result = recognise_products_step(
+                    database_id=self.db_id, last_product_id=0, limit=50)
+            self.assertTrue(result['done'])
+            self.assertEqual(result['matches'], 0)
+            self.assertEqual(
+                RecognisedProduct.query.filter_by(product_id=self.prod_id).count(), 0)
 
 
 if __name__ == '__main__':
