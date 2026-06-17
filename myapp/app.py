@@ -1,4 +1,5 @@
 
+import json
 import os
 import secrets
 from urllib.parse import urlsplit
@@ -7,7 +8,93 @@ from flask_login import current_user
 from werkzeug.middleware.proxy_fix import ProxyFix
 from .database import UserPermission
 from .extensions import bootstrap, csrf, db, login_manager, migrate
-from .utils.config import bool_config
+from .utils.config import bool_config, parse_bool
+
+# Every setting that can live in myapp.cfg is also overridable from the
+# environment, so a Docker deployment can delete myapp.cfg entirely with no ill
+# effects.  Keys are grouped by the type each must be coerced to, since env
+# values always arrive as strings.  When adding a config key to
+# myapp.cfg.example, add it here too (CI's test_env_config guards the pairing).
+_ENV_STR_KEYS = (
+    'SECRET_KEY', 'SQLALCHEMY_DATABASE_URI', 'WORKER_API_KEY',
+    'STORAGE_BACKEND', 'S3_ENDPOINT_URL', 'S3_BUCKET',
+    'S3_ACCESS_KEY', 'S3_SECRET_KEY', 'S3_REGION', 'S3_PUBLIC_URL',
+    'UPLOAD_FOLDER', 'OUTPUT_FOLDER', 'CHUNK_DIR',
+    'CSP_HEADER',
+    'OIDC_PROVIDER_NAME', 'OIDC_DISCOVERY_URL', 'OIDC_CLIENT_ID',
+    'OIDC_CLIENT_SECRET', 'OIDC_SCOPES', 'OIDC_MATCH_CLAIM',
+    'OIDC_ROLE_ADMIN', 'OIDC_ROLE_READ_WRITE', 'OIDC_ROLE_READ_ONLY',
+    'OIDC_ROLE_STAFF', 'OIDC_ROLE_API_ACCESS', 'OIDC_GROUP_SYNC_CLAIM',
+    'JINJA_BYTECODE_CACHE', 'JINJA_BYTECODE_CACHE_DIR', 'JINJA_PREWARM',
+    'SENTRY_DSN', 'WORKER_SENTRY_DSN',
+)
+_ENV_BOOL_KEYS = (
+    'DEBUG', 'DEBUG_DB_LOG', 'DEBUG_DB_PROFILING',
+    'SQLALCHEMY_TRACK_MODIFICATIONS',
+    'PUBLIC_MODE', 'PUBLIC_DOWNLOADS',
+    'OIDC_ENABLED', 'LOCAL_LOGIN_ENABLED', 'OIDC_REQUIRE_ROLE',
+    'OIDC_AUTO_REDIRECT', 'OIDC_SINGLE_LOGOUT',
+    'OIDC_GROUP_SYNC_ENABLED', 'OIDC_GROUP_LINK_LOCAL',
+)
+_ENV_INT_KEYS = (
+    'WEB_UI_ANALYSIS_PRIORITY', 'STALE_JOB_TIMEOUT_SECONDS',
+    'WORKER_STEP_DEADLINE_SECONDS',
+    'MAX_CONTENT_LENGTH', 'MAX_UPLOAD_SIZE',
+    'CHUNKED_UPLOAD_THRESHOLD', 'CHUNKED_UPLOAD_CHUNK_SIZE',
+    'FINALIZE_CONCURRENCY', 'FINALIZE_HEARTBEAT_SECONDS',
+    'FINALIZE_STALE_SECONDS', 'FINALIZE_RESULT_TTL_SECONDS',
+    'ITEMS_PER_PAGE', 'FILES_PER_PAGE', 'ANALYSES_SHOWN',
+    'PERMANENT_SESSION_LIFETIME', 'OIDC_SYNC_INTERVAL',
+)
+_ENV_FLOAT_KEYS = (
+    'SENTRY_TRACES_SAMPLE_RATE', 'SENTRY_PROFILES_SAMPLE_RATE',
+    'WORKER_SENTRY_TRACES_SAMPLE_RATE', 'WORKER_SENTRY_PROFILES_SAMPLE_RATE',
+)
+# Dict-valued keys, supplied as a JSON object in the env var.
+_ENV_JSON_KEYS = (
+    'SQLALCHEMY_ENGINE_OPTIONS',
+)
+# String keys for which an explicit empty value is meaningful (not "unset").
+# CSP_HEADER='' disables the Content-Security-Policy header.
+_ENV_STR_EMPTY_OK = frozenset({'CSP_HEADER'})
+
+
+def _load_config_from_env(app):
+    """Override app.config from environment variables (see the key groups above).
+
+    For most string keys an empty value is treated as "unset" (so a passed-but-
+    empty compose variable does not clobber a configured value); keys in
+    ``_ENV_STR_EMPTY_OK`` honour an explicit empty string.
+    """
+    for key in _ENV_STR_KEYS:
+        val = os.environ.get(key)
+        if val or (val is not None and key in _ENV_STR_EMPTY_OK):
+            app.config[key] = val
+    for key in _ENV_BOOL_KEYS:
+        val = os.environ.get(key)
+        if val is not None:
+            app.config[key] = parse_bool(val)
+    for key in _ENV_INT_KEYS:
+        val = os.environ.get(key)
+        if val is not None:
+            try:
+                app.config[key] = int(val)
+            except ValueError:
+                app.logger.warning(f'{key} env var is not an integer: {val!r}')
+    for key in _ENV_FLOAT_KEYS:
+        val = os.environ.get(key)
+        if val is not None:
+            try:
+                app.config[key] = float(val)
+            except ValueError:
+                app.logger.warning(f'{key} env var is not a number: {val!r}')
+    for key in _ENV_JSON_KEYS:
+        val = os.environ.get(key)
+        if val is not None:
+            try:
+                app.config[key] = json.loads(val)
+            except ValueError:
+                app.logger.warning(f'{key} env var is not valid JSON: {val!r}')
 
 
 def _s3_public_origin(config):
@@ -53,46 +140,9 @@ def create_app(config_name=None):
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
     app.config.from_pyfile(config_name or 'myapp.cfg', silent=True)
 
-    # Load settings from environment, overriding config file where set
-    for env_key in ('SECRET_KEY', 'SQLALCHEMY_DATABASE_URI', 'WORKER_API_KEY',
-                    'STORAGE_BACKEND', 'S3_ENDPOINT_URL', 'S3_BUCKET',
-                    'S3_ACCESS_KEY', 'S3_SECRET_KEY', 'S3_REGION',
-                    'S3_PUBLIC_URL',
-                    'OIDC_ENABLED', 'LOCAL_LOGIN_ENABLED', 'OIDC_PROVIDER_NAME',
-                    'OIDC_DISCOVERY_URL', 'OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET',
-                    'OIDC_SCOPES', 'OIDC_MATCH_CLAIM',
-                    'OIDC_ROLE_ADMIN', 'OIDC_ROLE_READ_WRITE', 'OIDC_ROLE_READ_ONLY',
-                    'OIDC_ROLE_STAFF', 'OIDC_ROLE_API_ACCESS', 'OIDC_REQUIRE_ROLE',
-                    'OIDC_SINGLE_LOGOUT', 'OIDC_SYNC_INTERVAL', 'OIDC_AUTO_REDIRECT',
-                    'PUBLIC_MODE', 'PUBLIC_DOWNLOADS',
-                    'JINJA_BYTECODE_CACHE', 'JINJA_BYTECODE_CACHE_DIR', 'JINJA_PREWARM',
-                    'CHUNK_DIR',
-                    'SENTRY_DSN'):
-        env_val = os.environ.get(env_key)
-        if env_val:
-            app.config[env_key] = env_val
-
-    # Integer env vars — loaded separately so they're stored as int, not str.
-    for int_key in ('WEB_UI_ANALYSIS_PRIORITY', 'STALE_JOB_TIMEOUT_SECONDS',
-                    'MAX_UPLOAD_SIZE',
-                    'CHUNKED_UPLOAD_THRESHOLD', 'CHUNKED_UPLOAD_CHUNK_SIZE',
-                    'FINALIZE_CONCURRENCY', 'FINALIZE_HEARTBEAT_SECONDS',
-                    'FINALIZE_STALE_SECONDS', 'FINALIZE_RESULT_TTL_SECONDS'):
-        env_val = os.environ.get(int_key)
-        if env_val is not None:
-            try:
-                app.config[int_key] = int(env_val)
-            except ValueError:
-                app.logger.warning(f'{int_key} env var is not an integer: {env_val!r}')
-
-    # Float env vars — loaded separately so they're stored as float, not str.
-    for float_key in ('SENTRY_TRACES_SAMPLE_RATE', 'SENTRY_PROFILES_SAMPLE_RATE'):
-        env_val = os.environ.get(float_key)
-        if env_val is not None:
-            try:
-                app.config[float_key] = float(env_val)
-            except ValueError:
-                app.logger.warning(f'{float_key} env var is not a number: {env_val!r}')
+    # Load settings from the environment, overriding the config file where set,
+    # so myapp.cfg is entirely optional in Docker.
+    _load_config_from_env(app)
 
     # Abort if no database URI is configured
     if not app.config.get('SQLALCHEMY_DATABASE_URI'):
