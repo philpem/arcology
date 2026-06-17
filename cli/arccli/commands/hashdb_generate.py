@@ -528,14 +528,18 @@ def _reason_label(code: str | None) -> str:
     return _REASON_LABELS.get(code, code or 'undetermined')
 
 
-def local_uniqueness_failure(f: dict, md5_appkeys: dict[str, set]) -> str | None:
+def local_uniqueness_failure(f: dict, md5_appkeys: dict[str, set],
+                             include_known: bool = False) -> str | None:
     """Return the *local* reason a file cannot be Mandatory, or None if it is
     locally eligible (in which case only the global check could still reject it).
 
     Mirrors the local portion of make_is_unique()'s predicate exactly so the
-    --explain diagnosis agrees with the actual classification.
+    --explain diagnosis agrees with the actual classification.  When
+    *include_known* is set, a file already present in an active hash database is
+    not disqualified on that basis (used when regenerating a database whose own
+    files are flagged is_known).
     """
-    if f.get('is_known'):
+    if f.get('is_known') and not include_known:
         return 'known'
     md5 = (f.get('md5') or '').lower()
     if not md5:
@@ -547,7 +551,7 @@ def local_uniqueness_failure(f: dict, md5_appkeys: dict[str, set]) -> str | None
 
 
 def make_is_unique(client: ArcologyClient, md5_appkeys: dict[str, set],
-                   global_check: bool):
+                   global_check: bool, include_known: bool = False):
     """Build the is_unique() predicate.
 
     A file is Mandatory-eligible when it is not already in an active hash
@@ -556,19 +560,24 @@ def make_is_unique(client: ArcologyClient, md5_appkeys: dict[str, set],
     *global_check* is on, /hash-lookup confirms the file does not also appear in
     other items across the whole catalogue.
 
-    The returned callable carries *md5_appkeys* and *global_check* as attributes
-    so the --explain diagnosis can reproduce the local reasoning without the
-    closure having to be unpacked.
+    When *include_known* is set, the "already in a hash database" disqualifier
+    is dropped (both the local is_known flag and the global /hash-lookup
+    known_file match) — required when regenerating a database whose own files
+    are, by definition, already known.
+
+    The returned callable carries *md5_appkeys*, *global_check* and
+    *include_known* as attributes so the --explain diagnosis can reproduce the
+    local reasoning without the closure having to be unpacked.
     """
     def is_unique(f: dict) -> bool:
-        if local_uniqueness_failure(f, md5_appkeys) is not None:
+        if local_uniqueness_failure(f, md5_appkeys, include_known) is not None:
             return False
         if global_check:
             try:
                 data = client.hash_lookup(md5=f.get('md5'), sha1=f.get('sha1'))
             except Exception:  # noqa: BLE001 - network hiccup: trust local result
                 return True
-            if data.get('known_file'):
+            if data.get('known_file') and not include_known:
                 return False
             item_ids = {fi.get('item_id') for fi in data.get('found_in', [])}
             if len(item_ids) > 1:
@@ -577,6 +586,7 @@ def make_is_unique(client: ArcologyClient, md5_appkeys: dict[str, set],
 
     is_unique.md5_appkeys = md5_appkeys
     is_unique.global_check = global_check
+    is_unique.include_known = include_known
     return is_unique
 
 
@@ -591,6 +601,7 @@ def diagnose_no_mandatory(app_dir_name: str, app_files: list[dict],
     """
     md5_appkeys = getattr(is_unique, 'md5_appkeys', {})
     global_check = getattr(is_unique, 'global_check', False)
+    include_known = getattr(is_unique, 'include_known', False)
 
     candidates: list[dict] = []
     for f in app_files:
@@ -611,7 +622,7 @@ def diagnose_no_mandatory(app_dir_name: str, app_files: list[dict],
 
     reasons = set()
     for f in candidates:
-        r = local_uniqueness_failure(f, md5_appkeys)
+        r = local_uniqueness_failure(f, md5_appkeys, include_known)
         if r is None:
             # Locally eligible -> only the global check could have rejected it.
             reasons.add('global' if global_check else 'unknown')
@@ -912,7 +923,8 @@ def cmd_hashdb_generate_riscos(client: ArcologyClient, args):
                     if md5:
                         md5_appkeys.setdefault(md5, set()).add(key)
 
-    is_unique = make_is_unique(client, md5_appkeys, args.global_check)
+    is_unique = make_is_unique(client, md5_appkeys, args.global_check,
+                               include_known=getattr(args, 'include_known', False))
 
     # Pass 2: build products.
     n_apps = sum(len(ar['app_dirs']) for g in gathered for ar in g['artefact_results'])
