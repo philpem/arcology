@@ -24,6 +24,7 @@ Matching rules (preserved from the pre-refactor duplicated implementations):
 
 from datetime import datetime, timezone
 from sqlalchemy import and_, not_, or_
+from sqlalchemy.orm import selectinload
 from ..database import (
     ExtractedFile,
     HashDatabase,
@@ -207,8 +208,6 @@ def recognise_products_step(*, database_id=None, partition_id=None,
 
     Returns ``{'done', 'processed', 'matches', 'next_product_id'}``.
     """
-    from sqlalchemy.orm import selectinload
-
     query = KnownProduct.query.options(selectinload(KnownProduct.known_files))
     if database_id is not None:
         query = query.filter(KnownProduct.database_id == database_id)
@@ -245,15 +244,15 @@ def recognise_products_step(*, database_id=None, partition_id=None,
     # that share at least one matching file hash.
     hash_sets = {'md5': set(), 'sha1': set(), 'sha256': set()}
     product_ids_by_hash = {'md5': {}, 'sha1': {}, 'sha256': {}}
-    for product in products:
-        candidates = [kf for kf in product.known_files if kf.is_required] or \
-            list(product.known_files)
-        for kf in candidates:
-            kind, value = select_best_hash(kf.md5, kf.sha1, kf.sha256)
+    for pid, pdict in product_dicts.items():
+        candidates = pdict['required_files'] or pdict['optional_files']
+        for entry in candidates:
+            kind, value = select_best_hash(
+                entry['md5'], entry['sha1'], entry['sha256'])
             if not value:
                 continue
             hash_sets[kind].add(value)
-            product_ids_by_hash[kind].setdefault(value, set()).add(product.id)
+            product_ids_by_hash[kind].setdefault(value, set()).add(pid)
 
     # Find candidate folders: any folder holding a file whose hash matches a
     # candidate hash of some product in this batch.

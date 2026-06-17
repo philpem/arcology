@@ -108,7 +108,7 @@ class ProgressReporter:
         return self.alive
 
 
-def run_step_loop(step, *, cursor_key, reporter=None, count_key='processed'):
+def run_step_loop(step, *, cursor_key, reporter=None):
     """Drive a worker-triggered, server-side **bounded-step** job to completion.
 
     This is the worker half of a recurring pattern in this codebase: work that
@@ -123,7 +123,13 @@ def run_step_loop(step, *, cursor_key, reporter=None, count_key='processed'):
     the server's JSON result dict, or ``None`` on transport failure.  The
     ``next_<...>`` cursor field is named by *cursor_key*.  Every integer field
     other than the cursor is summed across steps into *totals*; the running
-    *count_key* total drives the optional *reporter*.
+    ``processed`` total drives the optional *reporter*.
+
+    Termination is guarded defensively: a step that returns a non-dict body, or
+    that fails to advance the cursor without signalling ``done``, is treated as
+    a failed step (``last_result`` of ``None``) rather than spinning the worker
+    thread forever or crashing it — the contract is owned by the server
+    endpoints, but a buggy/contract-violating response must not hang the job.
 
     Returns ``(last_result, totals)``.  ``last_result`` is ``None`` when a step
     failed — the caller decides how to fail the analysis (and, for recognition
@@ -133,18 +139,23 @@ def run_step_loop(step, *, cursor_key, reporter=None, count_key='processed'):
     totals: dict[str, int] = {}
     while True:
         result = step(cursor)
-        if result is None:
+        if not isinstance(result, dict):
             return None, totals
         for key, value in result.items():
             if key == cursor_key:
                 continue
             if isinstance(value, int) and not isinstance(value, bool):
                 totals[key] = totals.get(key, 0) + value
-        cursor = result.get(cursor_key, cursor)
         if reporter is not None:
-            reporter.update(totals.get(count_key, 0))
+            reporter.update(totals.get('processed', 0))
         if result.get('done'):
             return result, totals
+        next_cursor = result.get(cursor_key, cursor)
+        if next_cursor == cursor:
+            # The cursor failed to advance and the step did not signal done:
+            # a contract violation that would otherwise loop forever.
+            return None, totals
+        cursor = next_cursor
 
 
 def analysis_handler(description: str, analysis_type: AnalysisType | None = None):
