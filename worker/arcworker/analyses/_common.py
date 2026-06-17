@@ -108,6 +108,56 @@ class ProgressReporter:
         return self.alive
 
 
+def run_step_loop(step, *, cursor_key, reporter=None):
+    """Drive a worker-triggered, server-side **bounded-step** job to completion.
+
+    This is the worker half of a recurring pattern in this codebase: work that
+    is pure database access (relinking known files, product recognition) lives
+    server-side next to the data, and the worker drives it as a cursor loop so
+    that no single web request runs long.  Each call processes one capped batch
+    and returns ``done`` plus a ``next_<...>`` cursor; the worker keeps calling
+    until ``done``.  See ``myapp/services/recognition.py`` and the
+    ``*-step`` endpoints in ``myapp/blueprints/api.py``.
+
+    *step* is invoked as ``step(cursor)`` (cursor starts at 0) and must return
+    the server's JSON result dict, or ``None`` on transport failure.  The
+    ``next_<...>`` cursor field is named by *cursor_key*.  Every integer field
+    other than the cursor is summed across steps into *totals*; the running
+    ``processed`` total drives the optional *reporter*.
+
+    Termination is guarded defensively: a step that returns a non-dict body, or
+    that fails to advance the cursor without signalling ``done``, is treated as
+    a failed step (``last_result`` of ``None``) rather than spinning the worker
+    thread forever or crashing it — the contract is owned by the server
+    endpoints, but a buggy/contract-violating response must not hang the job.
+
+    Returns ``(last_result, totals)``.  ``last_result`` is ``None`` when a step
+    failed — the caller decides how to fail the analysis (and, for recognition
+    backfills, how to report a failed status).
+    """
+    cursor = 0
+    totals: dict[str, int] = {}
+    while True:
+        result = step(cursor)
+        if not isinstance(result, dict):
+            return None, totals
+        for key, value in result.items():
+            if key == cursor_key:
+                continue
+            if isinstance(value, int) and not isinstance(value, bool):
+                totals[key] = totals.get(key, 0) + value
+        if reporter is not None:
+            reporter.update(totals.get('processed', 0))
+        if result.get('done'):
+            return result, totals
+        next_cursor = result.get(cursor_key, cursor)
+        if next_cursor == cursor:
+            # The cursor failed to advance and the step did not signal done:
+            # a contract violation that would otherwise loop forever.
+            return None, totals
+        cursor = next_cursor
+
+
 def analysis_handler(description: str, analysis_type: AnalysisType | None = None):
     """
     Decorator for analysis handler methods.

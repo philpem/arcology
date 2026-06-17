@@ -9,7 +9,7 @@ the worker simply triggers it via the API and records the result.
 import json
 from pathlib import Path
 from arcology_shared.enums import AnalysisType
-from ._common import analysis_handler
+from ._common import analysis_handler, run_step_loop
 
 
 @analysis_handler("hash rescan", AnalysisType.HASH_RESCAN)
@@ -48,23 +48,18 @@ def process_hashdb_link(self, analysis: dict, artefact: dict, work_dir: Path):
         self.fail_analysis(analysis_id, 'No database_id in analysis hints')
         return
 
-    last_id = 0
-    processed = 0
-    updated = 0
-    scanned = 0
     reporter = self.progress.start(label='Linking known files')
-    while True:
-        result = self.api.hashdb_link_step(db_id, last_id=last_id)
-        if result is None:
-            self.fail_analysis(analysis_id, 'HashDB link API call failed')
-            return
-        processed += int(result.get('processed') or 0)
-        updated += int(result.get('updated') or 0)
-        scanned += int(result.get('matched_files_scanned') or 0)
-        last_id = int(result.get('next_id') or last_id)
-        reporter.update(processed)
-        if result.get('done'):
-            break
+    result, totals = run_step_loop(
+        lambda cursor: self.api.hashdb_link_step(db_id, last_id=cursor),
+        cursor_key='next_id',
+        reporter=reporter,
+    )
+    if result is None:
+        self.fail_analysis(analysis_id, 'HashDB link API call failed')
+        return
+    processed = totals.get('processed', 0)
+    updated = totals.get('updated', 0)
+    scanned = totals.get('matched_files_scanned', 0)
 
     parts = [f'{processed} known files checked', f'{updated}/{scanned} extracted files linked']
     if result.get('recognition_queued'):
@@ -92,33 +87,27 @@ def process_hashdb_recognition(self, analysis: dict, artefact: dict, work_dir: P
         self.fail_analysis(analysis_id, 'No database_id in analysis hints')
         return
 
-    last_product_id = 0
-    processed = 0
-    matches = 0
     reporter = self.progress.start(label='Recognising products')
     try:
-        while True:
-            result = self.api.hashdb_recognition_step(
-                db_id,
-                last_product_id=last_product_id,
+        result, totals = run_step_loop(
+            lambda cursor: self.api.hashdb_recognition_step(
+                db_id, last_product_id=cursor),
+            cursor_key='next_product_id',
+            reporter=reporter,
+        )
+        if result is None:
+            self.api.update_hashdb_recognition_status(
+                db_id, 'failed', error='HashDB recognition API call failed'
             )
-            if result is None:
-                self.api.update_hashdb_recognition_status(
-                    db_id, 'failed', error='HashDB recognition API call failed'
-                )
-                self.fail_analysis(analysis_id, 'HashDB recognition API call failed')
-                return
-            processed += int(result.get('processed') or 0)
-            matches += int(result.get('matches') or 0)
-            last_product_id = int(result.get('next_product_id') or last_product_id)
-            reporter.update(processed)
-            if result.get('done'):
-                break
+            self.fail_analysis(analysis_id, 'HashDB recognition API call failed')
+            return
     except Exception as exc:
         self.api.update_hashdb_recognition_status(
             db_id, 'failed', error=str(exc)[:1000]
         )
         raise
+    processed = totals.get('processed', 0)
+    matches = totals.get('matches', 0)
 
     self.complete_analysis(
         analysis_id,

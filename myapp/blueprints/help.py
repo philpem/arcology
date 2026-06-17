@@ -21,6 +21,7 @@ PAGES = [
     ('analysis',         'Analysis Pipeline'),
     ('searching',        'Searching'),
     ('permissions',      'Permissions & Access'),
+    ('hash-databases',   'Hash Databases'),
 ]
 
 _CONTENT_DIR = os.path.join(os.path.dirname(__file__), '..', 'help_content')

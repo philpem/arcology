@@ -1,12 +1,11 @@
 """
-Tests that POST /api/partitions/<uuid>/recognised-products is worker-only.
+Tests that POST /api/partitions/<uuid>/recognise-step is worker-only.
 
-This endpoint is a worker callback that *overwrites* a partition's product-
-recognition results: it deletes the existing RecognisedProduct rows and inserts
-the ones in the request body.  It was gated only at @require_auth('read_write')
-and only checked view-visibility of the partition — not content-management
-permission — so any read_write user could wipe or falsify recognition results
-on artefacts they do not own (and can merely view).
+This endpoint runs server-side product recognition for a partition and
+*overwrites* its RecognisedProduct rows (delete + insert).  It is gated at
+@require_auth('read_write') and additionally checks ``_is_worker_request()``
+— without that worker-only gate any read_write user could wipe or falsify
+recognition results on artefacts they do not own (and can merely view).
 
 Run:
     SQLALCHEMY_DATABASE_URI=sqlite:///:memory: SECRET_KEY=test WORKER_API_KEY=test \\
@@ -103,21 +102,22 @@ class TestRecognisedProductsAuth(unittest.TestCase):
         with self.app.app_context():
             return self._RecognisedProduct.query.filter_by(partition_id=self.part_id).count()
 
-    def test_read_write_user_cannot_wipe_results(self):
-        # Attacker POSTs an empty list (which would delete all rows).
-        r = self.client.post(f'/api/partitions/{self.part_uuid}/recognised-products',
-                             headers={'X-API-Key': self.attacker_key}, json=[])
+    def test_read_write_user_cannot_run_recognition(self):
+        # A non-worker read_write user must not be able to drive the step
+        # (which would delete/rewrite this partition's recognition rows).
+        r = self.client.post(f'/api/partitions/{self.part_uuid}/recognise-step',
+                             headers={'X-API-Key': self.attacker_key},
+                             json={'last_product_id': 0, 'limit': 25})
         self.assertEqual(r.status_code, 403, r.data)
         # The pre-existing recognition row must survive.
         self.assertEqual(self._count(), 1)
 
-    def test_worker_can_report(self):
-        r = self.client.post(f'/api/partitions/{self.part_uuid}/recognised-products',
+    def test_worker_can_run_recognition(self):
+        r = self.client.post(f'/api/partitions/{self.part_uuid}/recognise-step',
                              headers={'X-API-Key': _WORKER_KEY},
-                             json=[{'product_id': self.product_id, 'folder_path': '/x',
-                                    'required_matched': 1, 'required_total': 1}])
+                             json={'last_product_id': 0, 'limit': 25})
         self.assertEqual(r.status_code, 200, r.data)
-        self.assertEqual(self._count(), 1)
+        self.assertTrue(r.get_json()['done'])
 
 
 if __name__ == '__main__':

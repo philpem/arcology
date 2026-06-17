@@ -732,41 +732,6 @@ components:
           type: string
       required: [filename]
 
-    RecognitionConfigFile:
-      type: object
-      properties:
-        md5:
-          type: string
-          nullable: true
-        sha1:
-          type: string
-          nullable: true
-        sha256:
-          type: string
-          nullable: true
-        relative_path:
-          type: string
-          nullable: true
-
-    RecognitionConfigProduct:
-      type: object
-      properties:
-        product_id:
-          type: integer
-        title:
-          type: string
-        path_match_enabled:
-          type: boolean
-        required_files:
-          type: array
-          items:
-            $ref: '#/components/schemas/RecognitionConfigFile'
-        optional_files:
-          type: array
-          items:
-            $ref: '#/components/schemas/RecognitionConfigFile'
-      required: [product_id, title, path_match_enabled, required_files, optional_files]
-
     ProcessingPathTree:
       type: object
       description: >
@@ -851,20 +816,6 @@ components:
                     type: array
                     items:
                       $ref: '#/components/schemas/AnalysisTreeNode'
-
-    RecognitionConfig:
-      type: object
-      description: Product-recognition configuration for one hash database.
-      properties:
-        database_id:
-          type: integer
-        name:
-          type: string
-        products:
-          type: array
-          items:
-            $ref: '#/components/schemas/RecognitionConfigProduct'
-      required: [database_id, name, products]
 
 paths:
 
@@ -2075,7 +2026,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
 
-  /partitions/{uuid}/recognised-products:
+  /partitions/{uuid}/recognise-step:
     parameters:
       - name: uuid
         in: path
@@ -2084,52 +2035,48 @@ paths:
           type: string
         description: Partition UUID.
     post:
-      operationId: report_recognised_products
-      summary: Report product recognition results
+      operationId: partition_recognise_step
+      summary: Run one bounded product-recognition step for a partition
       description: >
-        Record which known products were matched in this partition.
-        **Worker only** — requires the pre-shared `WORKER_API_KEY`.
-        Any previous recognition results for this partition are replaced.
+        Match the products of every recognition-enabled hash database against
+        this partition's extracted files, processing one capped batch of
+        products per call.  Matching runs server-side (shared with the HashDB
+        backfill); the worker drives this as a cursor loop until `done` so no
+        single request runs long.  Recognition rows for the processed product
+        batch are replaced.  **Worker only** — requires the pre-shared
+        `WORKER_API_KEY`.
       tags: [Partitions]
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
             schema:
-              type: array
-              items:
-                type: object
-                properties:
-                  product_id:
-                    type: integer
-                  folder_path:
-                    type: string
-                  required_matched:
-                    type: integer
-                  required_total:
-                    type: integer
-                  optional_matched:
-                    type: integer
-                  optional_total:
-                    type: integer
-                required:
-                  - product_id
-                  - folder_path
-                  - required_matched
-                  - required_total
-                  - optional_matched
-                  - optional_total
+              type: object
+              properties:
+                last_product_id:
+                  type: integer
+                  description: Cursor; pass `next_product_id` from the previous step.
+                  default: 0
+                limit:
+                  type: integer
+                  description: Max products per step (1–200).
+                  default: 25
       responses:
         "200":
-          description: Results recorded.
+          description: Step processed.
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  status:
-                    type: string
-                    example: ok
+                  done:
+                    type: boolean
+                  processed:
+                    type: integer
+                  matches:
+                    type: integer
+                  next_product_id:
+                    type: integer
         "400":
           $ref: '#/components/responses/BadRequest'
         "401":
@@ -2467,27 +2414,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-
-  /hash-databases/recognition-config:
-    get:
-      operationId: hash_database_recognition_config
-      summary: Get recognition configuration
-      description: >
-        Returns full product and file-hash data for all databases that have
-        `enable_product_recognition` set to true. Used by workers to load
-        matching rules at startup.
-      tags: [Hash Databases]
-      responses:
-        "200":
-          description: Recognition configuration for all enabled databases.
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/RecognitionConfig'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
 
   /hash-databases/{id}:
     parameters:
