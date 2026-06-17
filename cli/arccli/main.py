@@ -273,6 +273,11 @@ def main():
 	hashdb_gen.add_argument('-j', '--jobs', type=int, default=8,
 	                        help='Concurrent API requests (default: 8; 1 = serial)')
 	hashdb_gen.add_argument('-v', '--verbose', action='store_true')
+	hashdb_gen.add_argument('--explain', action='store_true',
+	                        help='For every application that produced no mandatory '
+	                             'file, report why (per-app reason and a summary '
+	                             'breakdown): no launch target found, target already '
+	                             'in a hash database, shared across apps, etc.')
 	hashdb_gen.add_argument('--dry-run', action='store_true',
 	                        help='List selected items only; generate nothing')
 
