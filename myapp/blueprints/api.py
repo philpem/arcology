@@ -10,7 +10,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from flask import Blueprint, abort, current_app, g, jsonify, request
-from sqlalchemy import and_, func, not_, or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import contains_eager, joinedload, selectinload
 from sqlalchemy.orm.exc import StaleDataError
@@ -38,7 +38,6 @@ from ..database import (
     Partition,
     Platform,
     ProductRecognitionStatus,
-    RecognisedProduct,
     StorageDirectory,
     Tag,
     User,
@@ -74,6 +73,7 @@ from ..services.hash_rescan import (
     queue_hashdb_recognition_backfill,
     rescan_hashes_for_new_known_files,
 )
+from ..services.recognition import recognise_products_step
 from ..services.restrictions import (
     artefact_contained_file_restrictions,
     collect_all_file_restrictions,
@@ -2780,113 +2780,6 @@ def hash_database_link_step(db_id):
     })
 
 
-def _file_hash_matches_known_file(file_hash, known_file):
-    md5, sha1 = file_hash
-    return (
-        (known_file.md5 and md5 == known_file.md5.lower()) or
-        (known_file.sha1 and sha1 == known_file.sha1.lower())
-    )
-
-
-def _insert_recognised_product_rows(rows):
-    """Insert recognition rows, ignoring duplicates from overlapping workers."""
-    if not rows:
-        return
-
-    now = datetime.now(timezone.utc)
-    for row in rows:
-        row.setdefault('created_at', now)
-
-    table = RecognisedProduct.__table__
-    dialect = db.session.get_bind().dialect.name
-    if dialect == 'postgresql':
-        from sqlalchemy.dialects.postgresql import insert
-        stmt = insert(table).values(rows).on_conflict_do_nothing(
-            index_elements=['partition_id', 'product_id', 'folder_path'],
-        )
-    elif dialect == 'sqlite':
-        from sqlalchemy.dialects.sqlite import insert
-        stmt = insert(table).values(rows).on_conflict_do_nothing(
-            index_elements=['partition_id', 'product_id', 'folder_path'],
-        )
-    else:
-        stmt = table.insert().values(rows)
-    db.session.execute(stmt)
-
-
-def _sql_like_escape(value):
-    return (
-        value
-        .replace('\\', '\\\\')
-        .replace('%', '\\%')
-        .replace('_', '\\_')
-    )
-
-
-def _folder_file_condition(partition_id, folder):
-    if folder:
-        folder_prefix = _sql_like_escape(folder) + '/'
-        return and_(
-            ExtractedFile.partition_id == partition_id,
-            ExtractedFile.path.like(folder_prefix + '%', escape='\\'),
-            not_(ExtractedFile.path.like(folder_prefix + '%/%', escape='\\')),
-        )
-    return and_(
-        ExtractedFile.partition_id == partition_id,
-        not_(ExtractedFile.path.like('%/%', escape='\\')),
-    )
-
-
-def _verify_product_in_folder(product, folder, idx):
-    folder_md5s = idx['md5s']
-    folder_sha1s = idx['sha1s']
-    path_map = idx['path_map']
-    folder_lower = folder.lower()
-    folder_prefix = folder_lower + '/' if folder_lower else ''
-
-    required = [kf for kf in product.known_files if kf.is_required]
-    optional = [kf for kf in product.known_files if not kf.is_required]
-    if not required and not optional:
-        return None
-
-    required_matched = 0
-    for kf in required:
-        rel_path = (kf.relative_path or '').lower()
-        if product.path_match_enabled and rel_path:
-            rel_path_in_folder = rel_path[len(folder_prefix):] if (
-                folder_prefix and rel_path.startswith(folder_prefix)
-            ) else rel_path
-            if rel_path_in_folder in path_map and _file_hash_matches_known_file(
-                    path_map[rel_path_in_folder], kf):
-                required_matched += 1
-        else:
-            if ((kf.md5 and kf.md5.lower() in folder_md5s) or
-                    (kf.sha1 and kf.sha1.lower() in folder_sha1s)):
-                required_matched += 1
-
-    if required and required_matched < len(required):
-        return None
-
-    optional_matched = 0
-    for kf in optional:
-        rel_path = (kf.relative_path or '').lower()
-        if product.path_match_enabled and rel_path:
-            rel_path_in_folder = rel_path[len(folder_prefix):] if (
-                folder_prefix and rel_path.startswith(folder_prefix)
-            ) else rel_path
-            if rel_path_in_folder in path_map and _file_hash_matches_known_file(
-                    path_map[rel_path_in_folder], kf):
-                optional_matched += 1
-        else:
-            if ((kf.md5 and kf.md5.lower() in folder_md5s) or
-                    (kf.sha1 and kf.sha1.lower() in folder_sha1s)):
-                optional_matched += 1
-
-    if not required and optional_matched == 0:
-        return None
-    return required_matched, len(required), optional_matched, len(optional)
-
-
 def _finalise_recognition_status(database):
     """Mark a finished backfill COMPLETED unless a fresh follow-up is queued.
 
@@ -2926,144 +2819,15 @@ def hash_database_recognition_step(db_id):
     database.product_recognition_status = ProductRecognitionStatus.RUNNING
     database.product_recognition_error = None
 
-    products = (
-        KnownProduct.query
-        .filter(
-            KnownProduct.database_id == database.id,
-            KnownProduct.id > last_product_id,
-        )
-        .options(selectinload(KnownProduct.known_files))
-        .order_by(KnownProduct.id)
-        .limit(limit)
-        .all()
+    result = recognise_products_step(
+        database_id=database.id,
+        last_product_id=last_product_id,
+        limit=limit,
     )
-    if not products:
-        _finalise_recognition_status(database)
-        db.session.commit()
-        return jsonify({'done': True, 'processed': 0, 'matches': 0, 'next_product_id': last_product_id})
-
-    product_ids = [p.id for p in products]
-    RecognisedProduct.query.filter(
-        RecognisedProduct.product_id.in_(product_ids)
-    ).delete(synchronize_session=False)
-
-    md5s = set()
-    sha1s = set()
-    products_by_id = {}
-    product_ids_by_md5 = {}
-    product_ids_by_sha1 = {}
-    for product in products:
-        products_by_id[product.id] = product
-        candidate_files = [kf for kf in product.known_files if kf.is_required] or list(product.known_files)
-        for kf in candidate_files:
-            if kf.md5:
-                md5 = kf.md5.lower()
-                md5s.add(md5)
-                product_ids_by_md5.setdefault(md5, set()).add(product.id)
-            if kf.sha1:
-                sha1 = kf.sha1.lower()
-                sha1s.add(sha1)
-                product_ids_by_sha1.setdefault(sha1, set()).add(product.id)
-
-    candidate_folders = set()
-    folder_product_ids = {}
-    if md5s or sha1s:
-        conditions = []
-        if md5s:
-            conditions.append(ExtractedFile.md5.in_(md5s))
-        if sha1s:
-            conditions.append(ExtractedFile.sha1.in_(sha1s))
-        rows = (
-            ExtractedFile.query
-            .with_entities(ExtractedFile.partition_id, ExtractedFile.path, ExtractedFile.md5, ExtractedFile.sha1)
-            .filter(ExtractedFile.is_directory == False, or_(*conditions))
-            .all()
-        )
-        for partition_id, path, file_md5, file_sha1 in rows:
-            folder = path.rsplit('/', 1)[0] if path and '/' in path else ''
-            folder_key = (partition_id, folder)
-            candidate_folders.add(folder_key)
-            product_candidates = folder_product_ids.setdefault(folder_key, set())
-            md5 = (file_md5 or '').lower()
-            sha1 = (file_sha1 or '').lower()
-            if md5:
-                product_candidates.update(product_ids_by_md5.get(md5, set()))
-            if sha1:
-                product_candidates.update(product_ids_by_sha1.get(sha1, set()))
-
-    folders_by_partition = {}
-    for partition_id, folder in candidate_folders:
-        folders_by_partition.setdefault(partition_id, set()).add(folder)
-
-    folder_index = {}
-    if folders_by_partition:
-        folder_conditions = [
-            _folder_file_condition(partition_id, folder)
-            for partition_id, folders in folders_by_partition.items()
-            for folder in folders
-        ]
-        file_rows = (
-            ExtractedFile.query
-            .filter(
-                ExtractedFile.is_directory == False,
-                or_(*folder_conditions),
-            )
-            .all()
-        )
-        for f in file_rows:
-            path = f.path or ''
-            folder = path.rsplit('/', 1)[0] if '/' in path else ''
-            if folder not in folders_by_partition.get(f.partition_id, set()):
-                continue
-            rel = path.rsplit('/', 1)[1] if '/' in path else path
-            idx = folder_index.setdefault(
-                (f.partition_id, folder),
-                {'md5s': set(), 'sha1s': set(), 'path_map': {}},
-            )
-            md5 = (f.md5 or '').lower()
-            sha1 = (f.sha1 or '').lower()
-            if md5 or sha1:
-                if md5:
-                    idx['md5s'].add(md5)
-                if sha1:
-                    idx['sha1s'].add(sha1)
-                idx['path_map'][rel.lower()] = (md5, sha1)
-
-    matches = 0
-    rows_to_insert = []
-    for (partition_id, folder), idx in folder_index.items():
-        for product_id in folder_product_ids.get((partition_id, folder), set()):
-            product = products_by_id[product_id]
-            verified = _verify_product_in_folder(product, folder, idx)
-            if verified is None:
-                continue
-            required_matched, required_total, optional_matched, optional_total = verified
-            rows_to_insert.append({
-                'partition_id': partition_id,
-                'product_id': product.id,
-                'folder_path': folder if folder else '/',
-                'required_matched': required_matched,
-                'required_total': required_total,
-                'optional_matched': optional_matched,
-                'optional_total': optional_total,
-            })
-            matches += 1
-    _insert_recognised_product_rows(rows_to_insert)
-
-    next_product_id = products[-1].id
-    # A short batch means the cursor reached the end; a full batch may have more,
-    # so the worker makes one extra call that hits the empty-batch branch above.
-    # This avoids a COUNT over the remaining tail on every step.
-    done = len(products) < limit
-    if done:
+    if result['done']:
         _finalise_recognition_status(database)
     db.session.commit()
-    return jsonify({
-        'done': done,
-        'processed': len(products),
-        'matches': matches,
-        'next_product_id': next_product_id,
-    })
+    return jsonify(result)
 
 
 @blueprint.route('/hash-databases/<int:db_id>/recognition-status', methods=['POST'])
@@ -3089,91 +2853,38 @@ def update_hash_database_recognition_status(db_id):
     return jsonify({'status': status.value})
 
 
-@blueprint.route('/hash-databases/recognition-config', methods=['GET'])
-@require_auth('read_only')
-def hash_database_recognition_config():
-    """Return all hash databases with enable_product_recognition=True, with full product/file data for the worker."""
-    databases = HashDatabase.query.filter_by(enable_product_recognition=True).all()
-    result = []
-    for database in databases:
-        products = KnownProduct.query.filter_by(database_id=database.id).all()
-        db_entry = {
-            'database_id': database.id,
-            'name': database.name,
-            'products': [],
-        }
-        for product in products:
-            required = [kf for kf in product.known_files if kf.is_required]
-            optional = [kf for kf in product.known_files if not kf.is_required]
-            db_entry['products'].append({
-                'product_id': product.id,
-                'title': product.title,
-                'path_match_enabled': product.path_match_enabled,
-                'required_files': [
-                    {'md5': kf.md5, 'sha1': kf.sha1, 'sha256': kf.sha256, 'relative_path': kf.relative_path}
-                    for kf in required
-                ],
-                'optional_files': [
-                    {'md5': kf.md5, 'sha1': kf.sha1, 'sha256': kf.sha256, 'relative_path': kf.relative_path}
-                    for kf in optional
-                ],
-            })
-        result.append(db_entry)
-    return jsonify(result)
-
-
-@blueprint.route('/partitions/<uuid>/recognised-products', methods=['POST'])
+@blueprint.route('/partitions/<uuid>/recognise-step', methods=['POST'])
 @require_auth('read_write')
-def report_recognised_products(uuid):
-    """Worker reports product recognition results for a partition."""
-    # Worker-only: this callback overwrites a partition's product-recognition
-    # results (it deletes the existing rows and inserts the supplied ones).  It
-    # is gated only on view-visibility of the partition, not on content-
-    # management permission, so without this check any read_write user could
+def partition_recognise_step(uuid):
+    """Worker-only bounded product-recognition step for one partition.
+
+    Matches the products of every recognition-enabled HashDB against this one
+    partition, one capped product batch per call.  Replaces the old
+    worker-computed ``/recognised-products`` callback: matching now runs
+    server-side via the single ``recognise_products_step`` implementation, so
+    the worker only drives the bounded loop.
+    """
+    # Worker-only: this rewrites a partition's recognition rows (delete + insert)
+    # and is gated only on view-visibility of the partition, not on content-
+    # management permission — so without this check any read_write user could
     # wipe or falsify recognition results on artefacts they do not own.
-    # Matches the worker-only gate on add_partition / add_files.
     if not _is_worker_request():
-        return error_response('Only the worker may report recognised products', 403)
+        return error_response('Only the worker may run partition recognition steps', 403)
 
     partition = _get_partition_or_404(uuid)
-    data, error = _json_array(force=True)
+    data, error = _json_object()
     if error:
         return error
+    last_product_id = int(data.get('last_product_id') or 0)
+    limit = max(1, min(int(data.get('limit') or 25), 200))
 
-    # Delete existing recognition results for this partition (re-scan replaces old results)
-    RecognisedProduct.query.filter_by(partition_id=partition.id).delete()
-
-    seen_results = set()
-    rows_to_insert = []
-    for entry in data:
-        product_id = entry.get('product_id')
-        folder_path = entry.get('folder_path', '')
-        if not product_id or not folder_path:
-            continue
-        try:
-            product_id = int(product_id)
-        except (TypeError, ValueError):
-            continue
-        result_key = (product_id, folder_path)
-        if result_key in seen_results:
-            continue
-        seen_results.add(result_key)
-        product = db.session.get(KnownProduct, product_id)
-        if not product:
-            continue
-        rows_to_insert.append({
-            'partition_id': partition.id,
-            'product_id': product_id,
-            'folder_path': folder_path,
-            'required_matched': int(entry.get('required_matched', 0)),
-            'required_total': int(entry.get('required_total', 0)),
-            'optional_matched': int(entry.get('optional_matched', 0)),
-            'optional_total': int(entry.get('optional_total', 0)),
-        })
-
-    _insert_recognised_product_rows(rows_to_insert)
+    result = recognise_products_step(
+        partition_id=partition.id,
+        last_product_id=last_product_id,
+        limit=limit,
+    )
     db.session.commit()
-    return jsonify({'status': 'ok'})
+    return jsonify(result)
 
 
 # =============================================================================
