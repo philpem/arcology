@@ -238,6 +238,10 @@ arco hashdb generate-riscos --tag arcarc --db-name "Apps" --output apps.json --g
 arco hashdb generate-riscos --item <uuid> --db-name "Apps" --dump-canonical canonical.txt
 arco hashdb generate-riscos --item <uuid> --db-name "Apps" --output apps.json \
     --canonical-sources canonical.txt
+
+# Byte-identical copies of an app bundled with several products (e.g. Equasor in
+# Impression Publisher/Style and standalone) are merged into one product by
+# default; --no-merge-duplicates keeps them separate.
 ```
 
 Run `arco --help` or `arco <command> --help` for full usage details.

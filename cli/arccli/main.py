@@ -294,6 +294,10 @@ def main():
 	                             '(every application that appears on more than one artefact) '
 	                             'and exit without generating a database. Edit it, then pass '
 	                             'it back via --canonical-sources.')
+	hashdb_gen.add_argument('--no-merge-duplicates', action='store_false', dest='merge_duplicates',
+	                        help='Do not collapse byte-identical copies of the same app '
+	                             '(e.g. Equasor bundled with several Impression releases) '
+	                             'into a single product. By default they are merged.')
 	hashdb_gen.add_argument('-j', '--jobs', type=int, default=8,
 	                        help='Concurrent API requests (default: 8; 1 = serial)')
 	hashdb_gen.add_argument('-v', '--verbose', action='store_true')
