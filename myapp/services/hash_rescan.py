@@ -576,8 +576,15 @@ def queue_product_recognition_for_partitions(partition_ids):
     return queued
 
 
-def _queue_system_analysis_once(analysis_type, hints):
-    """Queue a system Analysis job once for a stable hints payload."""
+def _queue_system_analysis_once(analysis_type, hints,
+                                statuses=(AnalysisStatus.PENDING, AnalysisStatus.RUNNING)):
+    """Queue a system Analysis job once for a stable hints payload.
+
+    A new job is suppressed only when an existing one already sits in one of
+    *statuses*.  The default dedups against PENDING or RUNNING jobs; recognition
+    backfills pass ``statuses=(PENDING,)`` so a content change mid-run can queue
+    a fresh follow-up even while an earlier backfill is still RUNNING.
+    """
     hints_json = json.dumps(hints, sort_keys=True)
     existing = (
         Analysis.query
@@ -586,7 +593,7 @@ def _queue_system_analysis_once(analysis_type, hints):
             analysis_type=analysis_type,
             hints=hints_json,
         )
-        .filter(Analysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.RUNNING]))
+        .filter(Analysis.status.in_(list(statuses)))
         .first()
     )
     if existing:
@@ -613,9 +620,22 @@ def queue_hashdb_link_job(database_id):
 
 def queue_hashdb_recognition_job(database_id):
     """Queue a worker-driven product-recognition backfill for one HashDB."""
-    hints = {'database_id': database_id}
-    hints_json = json.dumps(hints, sort_keys=True)
-    pending = (
+    return _queue_system_analysis_once(
+        AnalysisType.HASHDB_RECOGNITION,
+        {'database_id': database_id},
+        statuses=(AnalysisStatus.PENDING,),
+    )
+
+
+def has_pending_recognition_job(database_id):
+    """True if a PENDING HASHDB_RECOGNITION backfill is queued for this HashDB.
+
+    A backfill claimed by the worker is RUNNING, so a PENDING row is always a
+    genuine follow-up requested after the current run started — meaning the
+    current run's results are already stale and must not be reported COMPLETED.
+    """
+    hints_json = json.dumps({'database_id': database_id}, sort_keys=True)
+    return (
         Analysis.query
         .filter_by(
             artefact_id=None,
@@ -624,19 +644,7 @@ def queue_hashdb_recognition_job(database_id):
             status=AnalysisStatus.PENDING,
         )
         .first()
-    )
-    if pending:
-        return pending, False
-
-    analysis = Analysis(
-        artefact_id=None,
-        analysis_type=AnalysisType.HASHDB_RECOGNITION,
-        status=AnalysisStatus.PENDING,
-        hints=hints_json,
-    )
-    db.session.add(analysis)
-    db.session.commit()
-    return analysis, True
+    ) is not None
 
 
 def mark_hashdb_recognition_pending(database):

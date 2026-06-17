@@ -69,6 +69,7 @@ from ..services.downloads import (
 from ..services.hash_rescan import (
     find_known_file,
     find_known_files_for_records,
+    has_pending_recognition_job,
     link_new_known_files,
     queue_hashdb_recognition_backfill,
     rescan_hashes_for_new_known_files,
@@ -2762,21 +2763,19 @@ def hash_database_link_step(db_id):
 
     updated, total = rescan_hashes_for_new_known_files(batch)
     next_id = batch[-1].id
-    remaining = (
-        KnownFile.query
-        .filter(KnownFile.database_id == database.id, KnownFile.id > next_id)
-        .count()
-    )
+    # A short batch means the cursor reached the end; a full batch may have more,
+    # so the worker makes one extra call that hits the empty-batch branch above.
+    # This avoids a COUNT over the remaining tail on every step.
+    done = len(batch) < limit
     queued_recognition = False
-    if remaining == 0 and database.enable_product_recognition:
+    if done and database.enable_product_recognition:
         _, queued_recognition = queue_hashdb_recognition_backfill(database)
     return jsonify({
-        'done': remaining == 0,
+        'done': done,
         'processed': len(batch),
         'matched_files_scanned': total,
         'updated': updated,
         'next_id': next_id,
-        'remaining': remaining,
         'recognition_queued': queued_recognition,
     })
 
@@ -2888,6 +2887,22 @@ def _verify_product_in_folder(product, folder, idx):
     return required_matched, len(required), optional_matched, len(optional)
 
 
+def _finalise_recognition_status(database):
+    """Mark a finished backfill COMPLETED unless a fresh follow-up is queued.
+
+    A PENDING HASHDB_RECOGNITION for the same database means a content change
+    landed after this run started, so its counts are already stale.  Leave the
+    status at PENDING in that case so the view does not surface stale results as
+    authoritative; the queued follow-up will refresh and complete them.
+    """
+    if has_pending_recognition_job(database.id):
+        database.product_recognition_status = ProductRecognitionStatus.PENDING
+        database.product_recognition_updated_at = None
+    else:
+        database.product_recognition_status = ProductRecognitionStatus.COMPLETED
+        database.product_recognition_updated_at = datetime.now(timezone.utc)
+
+
 @blueprint.route('/hash-databases/<int:db_id>/recognition-step', methods=['POST'])
 @require_auth('read_write')
 def hash_database_recognition_step(db_id):
@@ -2923,8 +2938,7 @@ def hash_database_recognition_step(db_id):
         .all()
     )
     if not products:
-        database.product_recognition_status = ProductRecognitionStatus.COMPLETED
-        database.product_recognition_updated_at = datetime.now(timezone.utc)
+        _finalise_recognition_status(database)
         db.session.commit()
         return jsonify({'done': True, 'processed': 0, 'matches': 0, 'next_product_id': last_product_id})
 
@@ -3037,21 +3051,18 @@ def hash_database_recognition_step(db_id):
     _insert_recognised_product_rows(rows_to_insert)
 
     next_product_id = products[-1].id
-    remaining = (
-        KnownProduct.query
-        .filter(KnownProduct.database_id == database.id, KnownProduct.id > next_product_id)
-        .count()
-    )
-    if remaining == 0:
-        database.product_recognition_status = ProductRecognitionStatus.COMPLETED
-        database.product_recognition_updated_at = datetime.now(timezone.utc)
+    # A short batch means the cursor reached the end; a full batch may have more,
+    # so the worker makes one extra call that hits the empty-batch branch above.
+    # This avoids a COUNT over the remaining tail on every step.
+    done = len(products) < limit
+    if done:
+        _finalise_recognition_status(database)
     db.session.commit()
     return jsonify({
-        'done': remaining == 0,
+        'done': done,
         'processed': len(products),
         'matches': matches,
         'next_product_id': next_product_id,
-        'remaining': remaining,
     })
 
 
