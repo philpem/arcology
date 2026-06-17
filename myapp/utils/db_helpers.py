@@ -1,6 +1,16 @@
 """Shared database query helpers."""
 
 
+def is_statement_timeout(exc):
+    """True if *exc* is a PostgreSQL statement_timeout abort (SQLSTATE 57014)."""
+    return getattr(getattr(exc, 'orig', None), 'pgcode', None) == '57014'
+
+
+def is_deadlock(exc):
+    """True if *exc* is a PostgreSQL deadlock abort (SQLSTATE 40P01)."""
+    return getattr(getattr(exc, 'orig', None), 'pgcode', None) == '40P01'
+
+
 def _query_with_options(model, *load_options):
     """Return a model query with optional eager-load directives applied."""
     query = model.query

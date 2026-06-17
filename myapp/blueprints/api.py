@@ -7,10 +7,11 @@ RESTful API for external integrations.
 import hmac
 import json
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from flask import Blueprint, abort, current_app, g, jsonify, request
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import contains_eager, joinedload, selectinload
 from sqlalchemy.orm.exc import StaleDataError
@@ -73,7 +74,7 @@ from ..services.hash_rescan import (
     queue_hashdb_recognition_backfill,
     rescan_hashes_for_new_known_files,
 )
-from ..services.recognition import recognise_products_step
+from ..services.recognition import recognise_products_step, recognition_batch_last_id
 from ..services.restrictions import (
     artefact_contained_file_restrictions,
     collect_all_file_restrictions,
@@ -92,6 +93,7 @@ from ..utils.api_serializers import (
 from ..utils.blobs import artefact_blob, artefact_blob_storage_path, assign_blob
 from ..utils.db_helpers import get_by_id_or_404 as _get_by_id_or_404
 from ..utils.db_helpers import get_by_uuid_or_404 as _get_by_uuid_or_404
+from ..utils.db_helpers import is_statement_timeout
 from ..utils.enum_display import enum_value
 from ..utils.item_helpers import assign_item_fields, assign_item_tags
 from ..utils.privacy import recompute_item_privacy
@@ -2761,23 +2763,104 @@ def hash_database_link_step(db_id):
             'recognition_queued': queued_recognition,
         })
 
-    updated, total = rescan_hashes_for_new_known_files(batch)
-    next_id = batch[-1].id
-    # A short batch means the cursor reached the end; a full batch may have more,
-    # so the worker makes one extra call that hits the empty-batch branch above.
-    # This avoids a COUNT over the remaining tail on every step.
-    done = len(batch) < limit
+    # The relink work is many short statements with a commit per extracted-file
+    # batch (rescan_hashes_for_queryset), so a single statement_timeout cannot
+    # bound it — and the worker abandons the request at its read timeout (30s)
+    # long before any 120s server cap.  Instead bound the step by wall-clock:
+    # process the fetched known files in small chunks until a soft deadline
+    # (kept below the worker read timeout), then return done=False with the
+    # cursor advanced to the last chunk processed so the worker simply continues.
+    deadline = time.monotonic() + current_app.config.get('WORKER_STEP_DEADLINE_SECONDS', 20)
+    chunk_size = 50
+    updated = 0
+    total = 0
+    processed = 0
+    next_id = last_id
+    for i in range(0, len(batch), chunk_size):
+        chunk = batch[i:i + chunk_size]
+        u, t = rescan_hashes_for_new_known_files(chunk)
+        updated += u
+        total += t
+        processed += len(chunk)
+        next_id = chunk[-1].id
+        if processed < len(batch) and time.monotonic() >= deadline:
+            break  # out of time budget — stop early, worker resumes at next_id
+
+    # Done only when the whole fetched page was processed *and* it was a short
+    # page (fewer than limit rows, i.e. the cursor reached the end).
+    done = processed == len(batch) and len(batch) < limit
     queued_recognition = False
     if done and database.enable_product_recognition:
         _, queued_recognition = queue_hashdb_recognition_backfill(database)
     return jsonify({
         'done': done,
-        'processed': len(batch),
+        'processed': processed,
         'matched_files_scanned': total,
         'updated': updated,
         'next_id': next_id,
         'recognition_queued': queued_recognition,
+        'progress_label': f"Linking files in HashDB '{database.name}'",
+        'progress_total': database.file_count or 0,
     })
+
+
+def _timed_out_response(**cursor):
+    """The structured result a step returns when its statement timeout fired.
+
+    The worker driver (``run_step_loop``) recognises ``timed_out`` and retries
+    the same cursor with a smaller batch rather than failing the whole job, so
+    an over-long batch degrades to slower progress instead of a dead job.  The
+    caller passes the step's cursor field (e.g. ``next_product_id=...`` or
+    ``next_id=...``) so the body still carries an unchanged cursor.
+    """
+    return jsonify({'timed_out': True, 'done': False, **cursor})
+
+
+def _recognition_timeout_or_skip(*, database_id, last_product_id, limit, subject):
+    """Roll back a timed-out recognition step and return the worker's next move.
+
+    While the batch can still be subdivided (limit > 1) the worker should retry
+    the *same* cursor with a smaller batch, so we relay ``timed_out``.  Once it is
+    down to a single product that *still* overruns the budget, subdividing can't
+    help — skip that product (advance the cursor past it) so the backfill
+    completes rather than failing the whole database's recognition.  A skipped
+    product simply gets no recognition matches (it is almost always one with a
+    very common file hash that matches a huge number of folders).
+    """
+    db.session.rollback()
+    if limit <= 1:
+        skip_id = recognition_batch_last_id(database_id, last_product_id, 1)
+        if skip_id is not None and skip_id > last_product_id:
+            current_app.logger.warning(
+                '%s recognition: skipping product %s — a single product could '
+                'not be processed within the %ss step budget; it will have no '
+                'recognition matches', subject, skip_id,
+                current_app.config.get('WORKER_STEP_DEADLINE_SECONDS', 20))
+            return jsonify({'done': False, 'processed': 0, 'matches': 0,
+                            'skipped': 1, 'next_product_id': skip_id})
+    current_app.logger.warning(
+        '%s recognition step timed out at limit=%s (cursor=%s); worker will '
+        'retry with a smaller batch', subject, limit, last_product_id)
+    return _timed_out_response(next_product_id=last_product_id)
+
+
+def _apply_statement_timeout(seconds):
+    """Bound the current transaction's query time (PostgreSQL only).
+
+    ``SET LOCAL`` scopes the timeout to the active transaction, so it applies
+    to the recognition scan that follows and is discarded at commit/rollback.
+    A non-positive value disables the guard.  No-op on backends without
+    ``statement_timeout`` (e.g. SQLite under the test suite).
+    """
+    try:
+        seconds = int(seconds)
+    except (TypeError, ValueError):
+        return
+    if seconds <= 0:
+        return
+    if db.session.get_bind().dialect.name != 'postgresql':
+        return
+    db.session.execute(text(f'SET LOCAL statement_timeout = {seconds * 1000}'))
 
 
 def _finalise_recognition_status(database):
@@ -2816,17 +2899,50 @@ def hash_database_recognition_step(db_id):
         db.session.commit()
         return jsonify({'done': True, 'processed': 0, 'matches': 0, 'next_product_id': last_product_id})
 
-    database.product_recognition_status = ProductRecognitionStatus.RUNNING
-    database.product_recognition_error = None
+    # Mark RUNNING in its own short transaction.  If we leave this write pending
+    # until the final commit, autoflush takes a row lock on hash_databases
+    # before the (potentially long) scan below and holds it for the whole
+    # request — so the worker's own follow-up /recognition-status call, which
+    # updates the same row, blocks behind it and times out too.  Committing now
+    # releases the lock immediately.
+    if database.product_recognition_status != ProductRecognitionStatus.RUNNING:
+        database.product_recognition_status = ProductRecognitionStatus.RUNNING
+        database.product_recognition_error = None
+        db.session.commit()
 
-    result = recognise_products_step(
-        database_id=database.id,
-        last_product_id=last_product_id,
-        limit=limit,
-    )
+    # Defence in depth: a pathological step (an unforeseen slow query) must fail
+    # fast and release its resources rather than tie up a gthread worker for the
+    # full gunicorn --timeout while the worker client has already given up.  A
+    # statement timeout aborts the query; the worker sees a 500, reports the
+    # backfill failed, and the job is re-driven cleanly.
+    budget = current_app.config.get('WORKER_STEP_DEADLINE_SECONDS', 20)
+    _apply_statement_timeout(budget)
+
+    try:
+        result = recognise_products_step(
+            database_id=database.id,
+            last_product_id=last_product_id,
+            limit=limit,
+            deadline=time.monotonic() + budget if budget else None,
+        )
+    except OperationalError as exc:
+        db.session.rollback()
+        if not is_statement_timeout(exc):
+            raise
+        result = {'timed_out': True}
+    if result.get('timed_out'):
+        # Leave the status at RUNNING (committed above); retry smaller, or skip a
+        # single un-processable product so the backfill still completes.
+        return _recognition_timeout_or_skip(
+            database_id=database.id, last_product_id=last_product_id,
+            limit=limit, subject=f'HashDB {db_id}')
     if result['done']:
         _finalise_recognition_status(database)
     db.session.commit()
+    result['progress_label'] = f"Recognising products in HashDB '{database.name}'"
+    if last_product_id == 0:  # first step: report the total once (cheap COUNT)
+        result['progress_total'] = (
+            KnownProduct.query.filter_by(database_id=db_id).count())
     return jsonify(result)
 
 
@@ -2878,11 +2994,27 @@ def partition_recognise_step(uuid):
     last_product_id = int(data.get('last_product_id') or 0)
     limit = max(1, min(int(data.get('limit') or 25), 200))
 
-    result = recognise_products_step(
-        partition_id=partition.id,
-        last_product_id=last_product_id,
-        limit=limit,
-    )
+    budget = current_app.config.get('WORKER_STEP_DEADLINE_SECONDS', 20)
+    _apply_statement_timeout(budget)
+
+    try:
+        result = recognise_products_step(
+            partition_id=partition.id,
+            last_product_id=last_product_id,
+            limit=limit,
+            deadline=time.monotonic() + budget if budget else None,
+        )
+    except OperationalError as exc:
+        db.session.rollback()
+        if not is_statement_timeout(exc):
+            raise
+        result = {'timed_out': True}
+    if result.get('timed_out'):
+        # database_id=None: the per-partition path matches every recognition-
+        # enabled database's products, so the skip cursor spans them all.
+        return _recognition_timeout_or_skip(
+            database_id=None, last_product_id=last_product_id,
+            limit=limit, subject=f'Partition {uuid}')
     db.session.commit()
     return jsonify(result)
 

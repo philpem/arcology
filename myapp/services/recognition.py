@@ -12,16 +12,20 @@ data rather than being shipped over the API to the worker.  The worker drives a
 bounded **step loop**: each call processes one capped batch of products and
 returns a cursor, so no single web request runs long (see ``recognise_products_step``).
 
-Matching rules (preserved from the pre-refactor duplicated implementations):
+Matching rules:
+  * a product is only matchable if it has at least one *mandatory* (required)
+    file — a product with no required file has no discriminating fingerprint and
+    is ignored by the matcher (the web UI flags such products so a curator can
+    add a mandatory file);
   * all *required* files must match;
-  * *optional* files are counted but not mandatory;
-  * an *optional-only* product needs at least one optional match;
+  * *optional* files add confidence and are counted, but never gate a match;
   * when ``path_match_enabled`` is set, the file's path relative to the matched
     folder is compared (the folder prefix is stripped first);
   * hash comparison uses the **best hash available** per known file —
     SHA-256, then SHA-1, then MD5 (issue #620).
 """
 
+import time
 from datetime import datetime, timezone
 from sqlalchemy import and_, not_, or_
 from sqlalchemy.orm import selectinload
@@ -32,6 +36,11 @@ from ..database import (
     RecognisedProduct,
 )
 from ..extensions import db
+
+# Maximum number of per-folder LIKE conditions OR'd into a single verification
+# query.  Bounds statement size (and keeps the planner on the (partition_id,
+# path) index) when a product batch resolves to many candidate folders.
+_FOLDER_QUERY_BATCH = 100
 
 
 def select_best_hash(md5, sha1, sha256):
@@ -188,8 +197,48 @@ def _product_to_dict(product):
     }
 
 
+def _recognition_products_query(database_id, last_product_id, limit, *,
+                                with_files=False):
+    """The cursor-paged KnownProduct query both step paths use.
+
+    ``database_id`` scopes to one HashDB (backfill); ``None`` selects products of
+    every recognition-enabled database (the per-partition path).  ``partition_id``
+    only scopes the extracted-file side, never the product selection, so it is
+    not a parameter here.
+    """
+    query = KnownProduct.query
+    if with_files:
+        query = query.options(selectinload(KnownProduct.known_files))
+    if database_id is not None:
+        query = query.filter(KnownProduct.database_id == database_id)
+    else:
+        query = query.join(
+            HashDatabase, HashDatabase.id == KnownProduct.database_id
+        ).filter(HashDatabase.enable_product_recognition.is_(True))
+    return (
+        query
+        .filter(KnownProduct.id > last_product_id)
+        .order_by(KnownProduct.id)
+        .limit(limit)
+    )
+
+
+def recognition_batch_last_id(database_id=None, last_product_id=0, limit=25):
+    """Return the last product id of the batch a step *would* process, or None.
+
+    Used by the endpoints to compute a skip cursor when a step is aborted by the
+    PostgreSQL statement timeout (which raises before the step can report its
+    own ``next_product_id``)."""
+    rows = (
+        _recognition_products_query(database_id, last_product_id, limit)
+        .with_entities(KnownProduct.id)
+        .all()
+    )
+    return rows[-1][0] if rows else None
+
+
 def recognise_products_step(*, database_id=None, partition_id=None,
-                            last_product_id=0, limit=25):
+                            last_product_id=0, limit=25, deadline=None):
     """Run one bounded recognition step and persist the resulting rows.
 
     Exactly one scope is used:
@@ -206,27 +255,35 @@ def recognise_products_step(*, database_id=None, partition_id=None,
 
     Does **not** commit — the caller owns the transaction.
 
-    Returns ``{'done', 'processed', 'matches', 'next_product_id'}``.
-    """
-    query = KnownProduct.query.options(selectinload(KnownProduct.known_files))
-    if database_id is not None:
-        query = query.filter(KnownProduct.database_id == database_id)
-    else:
-        # All recognition-enabled databases (per-partition path).
-        query = query.join(
-            HashDatabase, HashDatabase.id == KnownProduct.database_id
-        ).filter(HashDatabase.enable_product_recognition.is_(True))
+    *deadline* is an optional ``time.monotonic()`` value: a soft wall-clock
+    budget so a step that runs many sub-statements (each individually under the
+    statement timeout) cannot collectively overrun the worker's read timeout.
+    When it is exceeded mid-step the function abandons the batch and returns
+    ``{'timed_out': True, ...}`` (the caller rolls back and the worker retries a
+    smaller batch).  The per-statement PostgreSQL ``statement_timeout`` set by
+    the endpoint still guards a single runaway query.
 
+    Returns ``{'done', 'processed', 'matches', 'next_product_id'}`` — or
+    ``{'timed_out': True, 'done': False, 'next_product_id': last_product_id}``
+    when the deadline was hit.
+    """
     products = (
-        query
-        .filter(KnownProduct.id > last_product_id)
-        .order_by(KnownProduct.id)
-        .limit(limit)
+        _recognition_products_query(database_id, last_product_id, limit,
+                                    with_files=True)
         .all()
     )
     if not products:
         return {'done': True, 'processed': 0, 'matches': 0,
                 'next_product_id': last_product_id}
+
+    def _timed_out():
+        # Report the attempted batch's last product id as the cursor: at the
+        # worker's minimum batch size (one product) this lets the caller skip a
+        # single un-processable product and continue, rather than failing the
+        # whole backfill.  While the batch is larger the caller ignores this and
+        # retries the same cursor with a smaller batch.
+        return {'timed_out': True, 'done': False, 'processed': 0, 'matches': 0,
+                'next_product_id': products[-1].id}
 
     product_dicts = {p.id: _product_to_dict(p) for p in products}
     product_ids = list(product_dicts.keys())
@@ -239,25 +296,39 @@ def recognise_products_step(*, database_id=None, partition_id=None,
         delete_q = delete_q.filter(RecognisedProduct.partition_id == partition_id)
     delete_q.delete(synchronize_session=False)
 
-    # Index each product's *candidate* files (required, or all when there are
-    # no required files) by their best hash, so a folder only verifies products
-    # that share at least one matching file hash.
+    # Only products with mandatory (required) files can be recognised.  A
+    # product with no required file has no discriminating fingerprint, so the
+    # matcher ignores it entirely — otherwise a single ubiquitous shared file (a
+    # common !Boot or !System module) would make such a product "match" thousands
+    # of unrelated folders.  The web UI flags these products so a curator can add
+    # a mandatory file to make them matchable.
+    matchable = {pid: pd for pid, pd in product_dicts.items() if pd['required_files']}
+    if not matchable:
+        return {
+            'done': len(products) < limit,
+            'processed': len(products),
+            'matches': 0,
+            'next_product_id': products[-1].id,
+        }
+
+    # Seed candidate folders on each product's MANDATORY hashes (the
+    # discriminating files), so a product is only considered in folders that
+    # already contain a required file of it.
+    required_pids_by_hash = {'md5': {}, 'sha1': {}, 'sha256': {}}
     hash_sets = {'md5': set(), 'sha1': set(), 'sha256': set()}
-    product_ids_by_hash = {'md5': {}, 'sha1': {}, 'sha256': {}}
-    for pid, pdict in product_dicts.items():
-        candidates = pdict['required_files'] or pdict['optional_files']
-        for entry in candidates:
+    for pid, pdict in matchable.items():
+        for entry in pdict['required_files']:
             kind, value = select_best_hash(
                 entry['md5'], entry['sha1'], entry['sha256'])
             if not value:
                 continue
             hash_sets[kind].add(value)
-            product_ids_by_hash[kind].setdefault(value, set()).add(pid)
+            required_pids_by_hash[kind].setdefault(value, set()).add(pid)
 
-    # Find candidate folders: any folder holding a file whose hash matches a
-    # candidate hash of some product in this batch.
-    candidate_folders = set()
-    folder_product_ids = {}
+    # One query finds every folder holding a product's mandatory file, with the
+    # candidate (folder -> products) map.  Each matched file is an immediate
+    # child of its folder (folder = parent of path).
+    candidate_folders = {}  # (part_id, folder) -> set(product_id)
     if any(hash_sets.values()):
         conditions = []
         if hash_sets['md5']:
@@ -278,78 +349,87 @@ def recognise_products_step(*, database_id=None, partition_id=None,
             rows_q = rows_q.filter(ExtractedFile.partition_id == partition_id)
 
         for part_id, path, f_md5, f_sha1, f_sha256 in rows_q.all():
-            folder = path.rsplit('/', 1)[0] if path and '/' in path else ''
-            folder_key = (part_id, folder)
-            candidate_folders.add(folder_key)
-            candidates = folder_product_ids.setdefault(folder_key, set())
-            for kind, value in (('md5', f_md5), ('sha1', f_sha1), ('sha256', f_sha256)):
+            if not path:
+                continue
+            md5 = (f_md5 or '').lower()
+            sha1 = (f_sha1 or '').lower()
+            sha256 = (f_sha256 or '').lower()
+            folder, _, _rel = path.rpartition('/')  # '' folder for a top-level file
+            pids = candidate_folders.setdefault((part_id, folder), set())
+            for kind, value in (('md5', md5), ('sha1', sha1), ('sha256', sha256)):
                 if value:
-                    candidates.update(
-                        product_ids_by_hash[kind].get(value.lower(), set()))
+                    pids.update(required_pids_by_hash[kind].get(value, set()))
 
-    # Fetch the immediate files of every candidate folder and build per-folder
-    # hash indexes for exact verification.
+    if deadline is not None and time.monotonic() > deadline:
+        return _timed_out()
+
+    # Fetch the immediate files of just those candidate folders (few, because
+    # mandatories are discriminating) and verify each candidate product fully:
+    # confirm its whole required set, then count optionals.
+    matches = 0
+    rows_to_insert = []
     folders_by_partition = {}
     for part_id, folder in candidate_folders:
         folders_by_partition.setdefault(part_id, set()).add(folder)
 
-    folder_index = {}
     if folders_by_partition:
         folder_conditions = [
             _folder_file_condition(part_id, folder)
             for part_id, folders in folders_by_partition.items()
             for folder in folders
         ]
-        file_rows = (
-            ExtractedFile.query
-            .filter(
-                ExtractedFile.is_directory == False,  # noqa: E712
-                or_(*folder_conditions),
+        full_index = {}
+        for i in range(0, len(folder_conditions), _FOLDER_QUERY_BATCH):
+            if deadline is not None and time.monotonic() > deadline:
+                return _timed_out()
+            chunk = folder_conditions[i:i + _FOLDER_QUERY_BATCH]
+            file_rows = (
+                ExtractedFile.query
+                .with_entities(
+                    ExtractedFile.partition_id, ExtractedFile.path,
+                    ExtractedFile.md5, ExtractedFile.sha1, ExtractedFile.sha256)
+                .filter(ExtractedFile.is_directory == False, or_(*chunk))  # noqa: E712
+                .all()
             )
-            .all()
-        )
-        for f in file_rows:
-            path = f.path or ''
-            folder = path.rsplit('/', 1)[0] if '/' in path else ''
-            if folder not in folders_by_partition.get(f.partition_id, set()):
-                continue
-            rel = path.rsplit('/', 1)[1] if '/' in path else path
-            idx = folder_index.setdefault(
-                (f.partition_id, folder),
-                {'md5s': set(), 'sha1s': set(), 'sha256s': set(), 'path_map': {}},
-            )
-            md5 = (f.md5 or '').lower()
-            sha1 = (f.sha1 or '').lower()
-            sha256 = (f.sha256 or '').lower()
-            if not (md5 or sha1 or sha256):
-                continue
-            if md5:
-                idx['md5s'].add(md5)
-            if sha1:
-                idx['sha1s'].add(sha1)
-            if sha256:
-                idx['sha256s'].add(sha256)
-            idx['path_map'][rel.lower()] = {'md5': md5, 'sha1': sha1, 'sha256': sha256}
+            for part_id, path, f_md5, f_sha1, f_sha256 in file_rows:
+                if not path:
+                    continue
+                folder, _, rel = path.rpartition('/')
+                if folder not in folders_by_partition.get(part_id, ()):
+                    continue
+                md5 = (f_md5 or '').lower()
+                sha1 = (f_sha1 or '').lower()
+                sha256 = (f_sha256 or '').lower()
+                if not (md5 or sha1 or sha256):
+                    continue
+                idx = full_index.setdefault(
+                    (part_id, folder),
+                    {'md5s': set(), 'sha1s': set(), 'sha256s': set(), 'path_map': {}})
+                if md5:
+                    idx['md5s'].add(md5)
+                if sha1:
+                    idx['sha1s'].add(sha1)
+                if sha256:
+                    idx['sha256s'].add(sha256)
+                idx['path_map'][rel.lower()] = {'md5': md5, 'sha1': sha1, 'sha256': sha256}
 
-    # Verify candidate (folder, product) pairs and collect rows.
-    matches = 0
-    rows_to_insert = []
-    for (part_id, folder), idx in folder_index.items():
-        for product_id in folder_product_ids.get((part_id, folder), set()):
-            verified = verify_product_in_folder(product_dicts[product_id], idx, folder)
-            if verified is None:
-                continue
-            required_matched, required_total, optional_matched, optional_total = verified
-            rows_to_insert.append({
-                'partition_id': part_id,
-                'product_id': product_id,
-                'folder_path': folder if folder else '/',
-                'required_matched': required_matched,
-                'required_total': required_total,
-                'optional_matched': optional_matched,
-                'optional_total': optional_total,
-            })
-            matches += 1
+        for (part_id, folder), idx in full_index.items():
+            for product_id in candidate_folders.get((part_id, folder), ()):
+                verified = verify_product_in_folder(matchable[product_id], idx, folder)
+                if verified is None:
+                    continue
+                required_matched, required_total, optional_matched, optional_total = verified
+                rows_to_insert.append({
+                    'partition_id': part_id,
+                    'product_id': product_id,
+                    'folder_path': folder if folder else '/',
+                    'required_matched': required_matched,
+                    'required_total': required_total,
+                    'optional_matched': optional_matched,
+                    'optional_total': optional_total,
+                })
+                matches += 1
+
     insert_recognised_product_rows(rows_to_insert)
 
     # A short batch means the cursor reached the end; a full batch may have

@@ -43,6 +43,11 @@ from ._common import (
 # the poster rather than read the bytes into RAM.
 _MAX_POSTER_SPRITE_BYTES = 16 * 1024 * 1024
 
+# Starting product batch size for per-partition recognition steps.  Halved by
+# run_step_loop on a server-signalled step timeout, so it is the maximum per
+# request rather than a fixed size.
+PARTITION_RECOGNITION_STEP_LIMIT = 25
+
 
 @analysis_handler("checksum computation", AnalysisType.CHECKSUM_COMPUTE)
 def process_checksum_compute(self, analysis: dict, artefact: dict, work_dir: Path):
@@ -224,13 +229,17 @@ def process_product_recognition(self, analysis: dict, artefact: dict, work_dir: 
 
     reporter = self.progress.start(label='Recognising products')
     last, totals = run_step_loop(
-        lambda cursor: self.api.recognise_partition_step(
-            partition_uuid, last_product_id=cursor),
+        lambda cursor, limit: self.api.recognise_partition_step(
+            partition_uuid, last_product_id=cursor, limit=limit),
         cursor_key='next_product_id',
         reporter=reporter,
+        initial_limit=PARTITION_RECOGNITION_STEP_LIMIT,
     )
     if last is None:
-        self.fail_analysis(analysis_id, 'Partition recognition API call failed')
+        self.fail_analysis(
+            analysis_id,
+            'Partition recognition could not complete (API failure, or a '
+            'product batch too large to process within the step time limit)')
         return
 
     processed = totals.get('processed', 0)
