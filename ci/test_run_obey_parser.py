@@ -521,6 +521,38 @@ class TestCanonicalSources(unittest.TestCase):
         self.assertEqual(set(cands), {'!ArcFS'})
         self.assertEqual(sorted(cands['!ArcFS']), ['ArcFS 0.52', 'RiscCAD 8'])
 
+    def test_collect_candidates_skips_all_app_named_versions(self):
+        # All copies named after the app (own version discs) -> keep all, no rule.
+        gathered = [{
+            'item': {'uuid': 'i'},
+            'artefact_results': [
+                {'clean_name': '65Host 1.14', 'label': '65Host 1.14',
+                 'app_dirs': {'!65Host': [_f('!65Host/!RunImage', md5='a')]}},
+                {'clean_name': '65Host 1.20', 'label': '65Host 1.20',
+                 'app_dirs': {'!65Host': [_f('!65Host/!RunImage', md5='b')]}},
+            ],
+        }]
+        self.assertEqual(collect_canonical_candidates(gathered), {})
+
+    def test_collect_candidates_case_insensitive_grouping(self):
+        # !ARCFS and !ArcFS are the same app (Filecore is case-insensitive).
+        gathered = [{
+            'item': {'uuid': 'i'},
+            'artefact_results': [
+                {'clean_name': 'ArcFS 0.73a', 'label': 'ArcFS 0.73a',
+                 'app_dirs': {'!ARCFS': [_f('!ARCFS/!RunImage', md5='a')]}},
+                {'clean_name': 'ArcFS 0.62', 'label': 'ArcFS 0.62',
+                 'app_dirs': {'!ArcFS': [_f('!ArcFS/!RunImage', md5='b')]}},
+                {'clean_name': 'RiscCAD 8', 'label': 'RiscCAD 8',
+                 'app_dirs': {'!ArcFS': [_f('!ArcFS/!RunImage', md5='c')]}},
+            ],
+        }]
+        cands = collect_canonical_candidates(gathered)
+        # One grouped entry (the more common spelling !ArcFS), 3 occurrences,
+        # listed because the RiscCAD copy isn't named after the app.
+        self.assertEqual(set(cands), {'!ArcFS'})
+        self.assertEqual(len(cands['!ArcFS']), 3)
+
     def test_collect_candidates_skips_identical_copies(self):
         # Equasor bundled identically with several products: byte-identical
         # everywhere -> merged automatically -> NOT a canonical candidate.
@@ -546,16 +578,27 @@ class TestCanonicalSources(unittest.TestCase):
         self.assertIs(canonical_accepts(rules, '!ArcFS', 'ArcFS 0.52', ''), True)
         self.assertIs(canonical_accepts(rules, '!ArcFS', 'RiscCAD 8', ''), False)
 
-    def test_render_multiple_base_matches_all_commented(self):
-        # Both names start with the base "BCF" -> ambiguous -> comment all,
-        # so feeding it back unedited can't silently keep both copies.
-        cands = {'!BCF': ['BCF Cryptosystem, The - 25',
-                          'BCF Cryptosystem, The/BCF Cryptosystem. The - 29']}
+    def test_render_keeps_all_app_named_versions_active(self):
+        # Several versions of an app, all named after it -> all kept active so
+        # the curator doesn't have to uncomment each by hand.
+        cands = {'!65Host': ['65Host 1.14', '65Host 1.17', '65Host 1.20']}
         text = render_canonical_candidates(cands)
-        active = [ln for ln in text.splitlines()
-                  if ln.startswith('!BCF')]
-        self.assertEqual(active, [], 'no line should be pre-activated when ambiguous')
-        self.assertIn('multiple possible golden sources', text)
+        active = [ln for ln in text.splitlines() if ln.startswith('!65Host')]
+        self.assertEqual(len(active), 3)
+
+    def test_render_keeps_versions_comments_bundles(self):
+        # App-named copies kept; copies on unrelated products commented out.
+        cands = {'!ArcFS': ['ArcFS 2 read-only 0.62', 'ArcFS 2 read-only 0.73a',
+                            'Killer 2.000', 'RiscCAD 8.02']}
+        text = render_canonical_candidates(cands)
+        active = sorted(ln for ln in text.splitlines() if ln.startswith('!ArcFS'))
+        commented = sorted(ln for ln in text.splitlines() if ln.startswith('#!ArcFS'))
+        self.assertEqual(len(active), 2)     # the two ArcFS releases
+        self.assertEqual(len(commented), 2)  # Killer + RiscCAD bundles
+        # Round-trips: ArcFS releases accepted, bundles rejected.
+        rules = parse_canonical_sources(text)
+        self.assertIs(canonical_accepts(rules, '!ArcFS', 'ArcFS 2 read-only 0.62', ''), True)
+        self.assertIs(canonical_accepts(rules, '!ArcFS', 'Killer 2.000', ''), False)
 
     def test_render_no_base_match_all_commented(self):
         # App-dir name unrelated to product names (e.g. !Commander / 'Disc
@@ -629,6 +672,16 @@ class TestMergeIdenticalProducts(unittest.TestCase):
         out, merged = merge_identical_products(prods)
         self.assertEqual(merged, 0)
         self.assertEqual(len(out), 2)
+
+    def test_case_insensitive_app_dir_merge(self):
+        # Identical content under !ARCFS and !ArcFS -> same app -> merged.
+        prods = [
+            self._prod('!ARCFS', 'ArcFS 0.73a', ['h']),
+            self._prod('!ArcFS', 'ArcFS 0.73a (copy)', ['h']),
+        ]
+        out, merged = merge_identical_products(prods)
+        self.assertEqual(merged, 1)
+        self.assertEqual(len(out), 1)
 
     def test_order_preserved(self):
         prods = [
