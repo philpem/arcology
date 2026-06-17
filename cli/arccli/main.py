@@ -261,6 +261,8 @@ def main():
 	hashdb_gen.add_argument('--root-files', choices=['include', 'skip', 'flag'],
 	                        default='skip', dest='root_files',
 	                        help='Root-level (non-application) file handling (default: skip)')
+	hashdb_gen.add_argument('--path-match', action='store_true', dest='path_match',
+	                        help='Require generated products to match relative paths as well as hashes')
 	hashdb_gen.add_argument('--no-global-check', action='store_false', dest='global_check',
 	                        help='Skip the cross-catalogue /hash-lookup uniqueness check')
 	hashdb_gen.add_argument('-j', '--jobs', type=int, default=8,
