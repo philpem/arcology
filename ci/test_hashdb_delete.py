@@ -135,6 +135,87 @@ class TestHashdbDelete(unittest.TestCase):
         self.assertIsNone(ef_after.known_file_id)
         self.assertFalse(ef_after.is_known)
 
+    def test_delete_product_removes_recognitions_and_unlinks(self):
+        # A ubiquitous product (e.g. !System) recognised in many partitions:
+        # deleting it must remove all its recognised_products rows and known
+        # files, and unlink the extracted files that referenced them.
+        from arcology_shared.enums import ArtefactType
+        from myapp.database import (
+            Artefact,
+            ExtractedFile,
+            FilesystemType,
+            HashDatabase,
+            Item,
+            KnownFile,
+            KnownProduct,
+            Partition,
+            RecognisedProduct,
+            StorageDirectory,
+        )
+
+        db = self.db
+
+        hdb = HashDatabase(name='Apps', is_active=True,
+                           enable_product_recognition=False)
+        db.session.add(hdb)
+        db.session.flush()
+        prod = KnownProduct(database_id=hdb.id, title='!System')
+        db.session.add(prod)
+        db.session.flush()
+        kf = KnownFile(database_id=hdb.id, product_id=prod.id,
+                       filename='Modules', md5='cc' * 16, file_size=42)
+        db.session.add(kf)
+        db.session.flush()
+
+        item = Item(name='coll')
+        db.session.add(item)
+        db.session.flush()
+        art = Artefact(item_id=item.id, label='Disc', artefact_type=ArtefactType.HFE,
+                       original_filename='d.ssd', storage_path='d.ssd',
+                       storage_directory=StorageDirectory.UPLOADS)
+        db.session.add(art)
+        db.session.flush()
+
+        ef_ids = []
+        # The product is recognised across many partitions.
+        for i in range(5):
+            part = Partition(artefact_id=art.id, partition_index=i, label=f'P{i}',
+                             filesystem=FilesystemType.DFS)
+            db.session.add(part)
+            db.session.flush()
+            db.session.add(RecognisedProduct(partition_id=part.id,
+                                             product_id=prod.id,
+                                             folder_path='!System'))
+            ef = ExtractedFile(partition_id=part.id, path='!System/Modules',
+                               filename='Modules', md5='cc' * 16, file_size=42,
+                               is_directory=False, is_known=True,
+                               known_file_id=kf.id)
+            db.session.add(ef)
+            db.session.flush()
+            ef_ids.append(ef.id)
+
+        db_id, pid = hdb.id, prod.id
+        db.session.commit()
+
+        resp = self.client.post(f'/hashdb/{db_id}/products/{pid}/delete',
+                                follow_redirects=False)
+        self.assertIn(resp.status_code, (301, 302))
+        db.session.expire_all()
+
+        self.assertIsNone(db.session.get(KnownProduct, pid))
+        self.assertEqual(
+            db.session.query(KnownFile).filter_by(product_id=pid).count(), 0)
+        self.assertEqual(
+            db.session.query(RecognisedProduct).filter_by(product_id=pid).count(), 0)
+        # The database itself is untouched.
+        self.assertIsNotNone(db.session.get(HashDatabase, db_id))
+        # Extracted files survive but are unlinked.
+        for ef_id in ef_ids:
+            ef_after = db.session.get(ExtractedFile, ef_id)
+            self.assertIsNotNone(ef_after)
+            self.assertIsNone(ef_after.known_file_id)
+            self.assertFalse(ef_after.is_known)
+
 
 if __name__ == '__main__':
     unittest.main()
