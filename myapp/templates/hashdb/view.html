@@ -215,9 +215,27 @@
 <div class="d-flex justify-content-between align-items-center mb-2">
     <h5 class="mb-0"><i class="bi bi-boxes"></i> Products</h5>
     {% if user_can_write %}
-    <button class="btn btn-primary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#newProductForm">
-        <i class="bi bi-plus-lg"></i> New Product
-    </button>
+    <div class="btn-group btn-group-sm">
+        <button class="btn btn-primary" type="button" data-bs-toggle="collapse" data-bs-target="#newProductForm">
+            <i class="bi bi-plus-lg"></i> New Product
+        </button>
+        <button class="btn btn-outline-secondary dropdown-toggle dropdown-toggle-split" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false">
+            <span class="visually-hidden">Product actions</span>
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end">
+            <li>
+                <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#enablePathMatchModal">
+                    <i class="bi bi-signpost-split"></i> Enable path matching for all
+                </button>
+            </li>
+            <li>
+                <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#disablePathMatchModal">
+                    <i class="bi bi-signpost"></i> Disable path matching for all
+                </button>
+            </li>
+        </ul>
+    </div>
     {% endif %}
 </div>
 
@@ -283,11 +301,21 @@
             <td class="text-muted small">{{ product.description or '' }}</td>
             <td>
                 <span class="badge bg-secondary" title="Known files in this product">{{ file_counts.get(product.id, 0) }}</span>
-                {% set pmc = product_match_counts.get(product.id, 0) %}
-                {% if pmc %}
-                <span class="badge bg-success ms-1" title="Extracted files matching any known file in this product">
-                    <i class="bi bi-check2"></i> {{ pmc }}
-                </span>
+                {% if database.enable_product_recognition %}
+                    {% if database.product_recognition_status == ProductRecognitionStatus.COMPLETED %}
+                        {% set rpc = product_recognition_counts.get(product.id, 0) %}
+                        <span class="badge bg-success ms-1" title="Recognised product matches">
+                            <i class="bi bi-check2"></i> {{ rpc }}
+                        </span>
+                    {% elif database.product_recognition_status == ProductRecognitionStatus.FAILED %}
+                        <span class="badge bg-warning text-dark ms-1" title="{{ database.product_recognition_error or 'Recognition counts failed' }}">
+                            <i class="bi bi-exclamation-triangle"></i>
+                        </span>
+                    {% else %}
+                        <span class="badge bg-secondary ms-1" title="Recognition counts pending">
+                            <i class="bi bi-hourglass-split"></i>
+                        </span>
+                    {% endif %}
                 {% endif %}
             </td>
             <td class="product-actions text-end text-nowrap">
@@ -416,6 +444,26 @@
 <div class="alert alert-danger mb-0">
     <i class="bi bi-exclamation-triangle-fill"></i> This will also permanently delete all product records and file hashes.
     <strong>This action cannot be undone.</strong>
+</div>
+{% endcall %}
+{% call danger_modal('enablePathMatchModal', 'Enable Path Matching',
+    url_for('myapp_blueprints_hashdb.bulk_path_matching', id=database.id, state='enable'), csrf_token(),
+    confirm_label='Enable for All', confirm_class='btn-warning', confirm_icon='bi-signpost-split',
+    header_class='bg-warning text-dark', border_class='border-warning') %}
+<p>Enable path matching for every product in this hash database?</p>
+<p class="fw-bold fs-5 text-break">{{ database.name }}</p>
+<div class="alert alert-warning mb-0">
+    Product recognition results will be refreshed asynchronously if recognition is enabled.
+</div>
+{% endcall %}
+{% call danger_modal('disablePathMatchModal', 'Disable Path Matching',
+    url_for('myapp_blueprints_hashdb.bulk_path_matching', id=database.id, state='disable'), csrf_token(),
+    confirm_label='Disable for All', confirm_class='btn-warning', confirm_icon='bi-signpost',
+    header_class='bg-warning text-dark', border_class='border-warning') %}
+<p>Disable path matching for every product in this hash database?</p>
+<p class="fw-bold fs-5 text-break">{{ database.name }}</p>
+<div class="alert alert-warning mb-0">
+    Product recognition results will be refreshed asynchronously if recognition is enabled.
 </div>
 {% endcall %}
 {% endif %}
