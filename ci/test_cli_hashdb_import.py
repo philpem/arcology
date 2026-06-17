@@ -40,6 +40,7 @@ class _BatchClient:
     def __init__(self):
         self.created_dbs = []
         self.batch_calls = []
+        self.link_calls = []
         self.per_product_calls = []
 
     def list_hash_databases(self):
@@ -49,10 +50,14 @@ class _BatchClient:
         self.created_dbs.append(data)
         return {'id': 7}
 
-    def import_hash_database_products(self, db_id, products):
-        self.batch_calls.append((db_id, products))
+    def import_hash_database_products(self, db_id, products, link=True):
+        self.batch_calls.append((db_id, products, link))
         return {'products': len(products),
                 'files': sum(len(p.get('files', [])) for p in products)}
+
+    def queue_hash_database_link(self, db_id):
+        self.link_calls.append(db_id)
+        return {'status': 'queued'}
 
     # Per-product endpoints should NOT be hit on the batch path.
     def create_hash_database_product(self, db_id, **data):
@@ -67,7 +72,7 @@ class _BatchClient:
 class _FallbackClient(_BatchClient):
     """Fake client whose batch endpoint 404s (old server)."""
 
-    def import_hash_database_products(self, db_id, products):
+    def import_hash_database_products(self, db_id, products, link=True):
         raise ArcologyError('Not found.', 404)
 
 
@@ -90,9 +95,11 @@ class TestCliHashdbImport(unittest.TestCase):
         client = _BatchClient()
         cmd_hashdb_import(client, _args(self.path))
         self.assertEqual(len(client.batch_calls), 1)
-        db_id, products = client.batch_calls[0]
+        db_id, products, link = client.batch_calls[0]
         self.assertEqual(db_id, 7)
         self.assertEqual(len(products), 2)
+        self.assertFalse(link)
+        self.assertEqual(client.link_calls, [7])
         self.assertEqual(client.per_product_calls, [])  # batch path only
 
     def test_fallback_on_404(self):

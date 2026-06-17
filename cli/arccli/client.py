@@ -600,13 +600,21 @@ class ArcologyClient:
 	def add_product_files(self, db_id: int, product_id: int, files: list) -> dict:
 		return self.post_json(f'hash-databases/{db_id}/products/{product_id}/files', files)
 
-	def import_hash_database_products(self, db_id: int, products: list) -> dict:
+	def import_hash_database_products(self, db_id: int, products: list,
+	                                  link: bool = True) -> dict:
 		"""Batch-import products (each with a ``files`` list) in one request.
 
 		Raises ArcologyError(status_code=404) against servers that predate the
 		batch import endpoint, so callers can fall back to the per-product path.
 		"""
-		return self.post_json(f'hash-databases/{db_id}/import', {'products': products})
+		return self.post_json(
+			f'hash-databases/{db_id}/import',
+			{'products': products, 'link': link},
+		)
+
+	def queue_hash_database_link(self, db_id: int) -> dict:
+		"""Queue a worker-side relink job for a hash database."""
+		return self.post_json(f'hash-databases/{db_id}/link', {})
 
 	def hash_lookup(self, md5: str = None, sha1: str = None) -> dict:
 		"""Look up a file by hash: returns any matching KnownFile and every

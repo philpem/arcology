@@ -6,6 +6,7 @@ import csv
 import json
 import os
 import sys
+import time
 from io import StringIO
 from ..client import ArcologyClient, ArcologyError
 
@@ -78,6 +79,7 @@ def cmd_hashdb_export(client: ArcologyClient, args):
                 'description': data.get('description'),
                 'version': data.get('version'),
                 'source_url': data.get('source_url'),
+                'enable_product_recognition': data.get('enable_product_recognition', False),
             },
             'products': [
                 {
@@ -188,6 +190,9 @@ def cmd_hashdb_import(client: ArcologyClient, args):
                 description=import_data.get('database', {}).get('description'),
                 version=import_data.get('database', {}).get('version'),
                 source_url=import_data.get('database', {}).get('source_url'),
+                enable_product_recognition=bool(
+                    import_data.get('database', {}).get('enable_product_recognition', False)
+                ),
             )
             db_id = result['id']
             if not args.json:
@@ -210,12 +215,17 @@ def cmd_hashdb_import(client: ArcologyClient, args):
         batch = products[start:start + BATCH_SIZE]
         if use_batch:
             try:
-                result = client.import_hash_database_products(db_id, batch)
+                if not args.json:
+                    end = start + len(batch)
+                    print(f'  Importing products {start + 1}-{end} of {len(products)}...',
+                          flush=True)
+                t0 = time.monotonic()
+                result = client.import_hash_database_products(db_id, batch, link=False)
                 added = result.get('files', sum(len(p.get('files', [])) for p in batch))
                 total_files += added
                 if not args.json:
                     print(f'  Imported {result.get("products", len(batch))} '
-                          f'product(s), {added} file(s)')
+                          f'product(s), {added} file(s) in {time.monotonic() - t0:.1f}s')
                 continue
             except ArcologyError as e:
                 if e.status_code != 404:
@@ -244,6 +254,20 @@ def cmd_hashdb_import(client: ArcologyClient, args):
                 total_files += added
                 if not args.json:
                     print(f'  Product "{title}": {added} file(s) added')
+
+    if use_batch:
+        try:
+            result = client.queue_hash_database_link(db_id)
+            if not args.json:
+                status = result.get('status', 'queued')
+                print(f'  Hash linking/product recognition updates {status}.')
+        except ArcologyError as e:
+            if e.status_code == 404:
+                if not args.json:
+                    print('  (server lacks async hash linking; batches were linked inline)',
+                          file=sys.stderr)
+            else:
+                raise
 
     if args.json:
         from ..formatting import print_json
