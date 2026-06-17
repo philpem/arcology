@@ -268,8 +268,15 @@ def main():
 	                             'have no discriminating fingerprint and are ignored by the '
 	                             'matcher; by default they are still emitted so a curator can '
 	                             'add a mandatory file by hand.')
+	hashdb_gen.add_argument('--global-check', action='store_true', dest='global_check',
+	                        default=False,
+	                        help='Also require launch targets to be unique across the '
+	                             'ENTIRE catalogue (via /hash-lookup), not just the '
+	                             'selected items. Off by default: uniqueness is already '
+	                             'judged across the selected items, and a copy living in '
+	                             'an unrelated item elsewhere should not exclude it here.')
 	hashdb_gen.add_argument('--no-global-check', action='store_false', dest='global_check',
-	                        help='Skip the cross-catalogue /hash-lookup uniqueness check')
+	                        help=argparse.SUPPRESS)  # deprecated: now off by default
 	hashdb_gen.add_argument('--include-known', action='store_true', dest='include_known',
 	                        help='Allow files already present in an active hash database '
 	                             'to be marked mandatory. Use when regenerating a database '

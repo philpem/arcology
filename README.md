@@ -227,6 +227,10 @@ arco hashdb generate-riscos --item <uuid> --db-name "Apps" --output apps.json --
 # Regenerating a database whose own files are already known? --include-known
 # stops those files being excluded for being in an active hash database.
 arco hashdb generate-riscos --item <uuid> --db-name "Apps" --output apps.json --include-known
+
+# Uniqueness is scoped to the selected items by default. --global-check also
+# requires launch targets to be unique across the entire catalogue.
+arco hashdb generate-riscos --tag arcarc --db-name "Apps" --output apps.json --global-check
 ```
 
 Run `arco --help` or `arco <command> --help` for full usage details.

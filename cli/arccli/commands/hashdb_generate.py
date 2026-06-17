@@ -12,7 +12,9 @@ Classification (Mandatory == is_required, Optional == not is_required):
   * The file(s) launched by !Run — an Absolute/Module run via Run/RMRun/RMLoad,
     or a BASIC image via `BASIC -quit <file>` — are marked **Mandatory**,
     provided the file is *unique*: it appears in only one application across the
-    scanned set and is not already present in an active hash database.
+    selected items, and is not already present in an active hash database
+    (unless --include-known).  With --global-check, uniqueness is additionally
+    required across the entire catalogue, not just the selected items.
   * !Run and !Boot themselves are always **Optional**: their bytes legitimately
     vary (e.g. innoculation against the Extend virus appends a commented 0xFF
     byte at EOF), so they must never gate a product match.
@@ -556,9 +558,10 @@ def make_is_unique(client: ArcologyClient, md5_appkeys: dict[str, set],
 
     A file is Mandatory-eligible when it is not already in an active hash
     database (is_known) and its content is unique to one application.  Local
-    uniqueness is judged from *md5_appkeys* (built across the scanned set); when
-    *global_check* is on, /hash-lookup confirms the file does not also appear in
-    other items across the whole catalogue.
+    uniqueness is judged from *md5_appkeys* (built across the selected items, so
+    uniqueness is already scoped to the selection); when the opt-in
+    *global_check* is on, /hash-lookup additionally confirms the file does not
+    also appear in other items across the whole catalogue.
 
     When *include_known* is set, the "already in a hash database" disqualifier
     is dropped (both the local is_known flag and the global /hash-lookup
