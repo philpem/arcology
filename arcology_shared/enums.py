@@ -115,6 +115,7 @@ class AnalysisType(enum.Enum):
     PRODUCT_RECOGNITION    = "product_recognition"    # Match extracted files against known-product definitions
     HASHDB_LINK            = "hashdb_link"             # Link extracted files against a hash database in worker-driven chunks
     HASHDB_RECOGNITION     = "hashdb_recognition"      # Backfill product recognition for a hash database
+    HASHDB_DELETE          = "hashdb_delete"           # Reap a soft-deleted hash database in worker-driven chunks
 
     # Format conversion / viewing
     FORMAT_CONVERT         = "format_convert"         # Convert native formats to portable equivalents (Sprite→PNG, Draw→PNG/SVG, Text→UTF-8)

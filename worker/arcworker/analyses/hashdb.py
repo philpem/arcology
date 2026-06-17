@@ -84,6 +84,48 @@ def process_hashdb_link(self, analysis: dict, artefact: dict, work_dir: Path):
     )
 
 
+@analysis_handler("hashdb delete", AnalysisType.HASHDB_DELETE)
+def process_hashdb_delete(self, analysis: dict, artefact: dict, work_dir: Path):
+    """Reap a soft-deleted HashDB in bounded API steps.
+
+    The web route already marked the database is_deleting / is_active=False and
+    cancelled its own pending jobs; here we drive the server-side delete-step to
+    completion (unlink extracted files, delete recognised_products / known_files
+    / known_products, drop the database row, queue relinks of freed files).
+    """
+    analysis_id = analysis['id']
+    hints = json.loads(analysis.get('hints') or '{}')
+    db_id = hints.get('database_id')
+    if not db_id:
+        self.fail_analysis(analysis_id, 'No database_id in analysis hints')
+        return
+
+    reporter = self.progress.start(label='Deleting hash database')
+    result, totals = run_step_loop(
+        lambda cursor: self.api.hashdb_delete_step(db_id, cursor=cursor),
+        cursor_key='cursor',
+        reporter=reporter,
+    )
+    if result is None:
+        self.fail_analysis(analysis_id, 'HashDB delete API call failed')
+        return
+
+    deleted = totals.get('deleted', 0)
+    relinked = result.get('relinked_databases', 0)
+    parts = [f'{deleted} row(s) deleted']
+    if relinked:
+        parts.append(f're-linking freed files against {relinked} other database(s)')
+    self.complete_analysis(
+        analysis_id,
+        summary=', '.join(parts),
+        details=json.dumps({
+            'database_id': db_id,
+            'rows_deleted': deleted,
+            'relinked_databases': relinked,
+        }),
+    )
+
+
 @analysis_handler("hashdb recognition", AnalysisType.HASHDB_RECOGNITION)
 def process_hashdb_recognition(self, analysis: dict, artefact: dict, work_dir: Path):
     """Backfill product recognition for one HashDB in bounded API steps."""

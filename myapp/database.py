@@ -1122,6 +1122,12 @@ class HashDatabase(db.Model):
     product_recognition_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     product_recognition_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default=sa_true())
+    # Soft-delete marker: set together with is_active=False when a (potentially
+    # huge) database is scheduled for background reaping by a HASHDB_DELETE
+    # worker job.  is_active=False removes it from all matching/restriction
+    # queries for free; is_deleting additionally hides it from listings and
+    # blocks management routes while the worker drains its rows.
+    is_deleting: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default=sa_false())
     restriction_type: Mapped[RestrictionType | None] = mapped_column(
         SQLEnum(RestrictionType), nullable=True
     )  # If set, artefacts matching this DB's files are automatically restricted

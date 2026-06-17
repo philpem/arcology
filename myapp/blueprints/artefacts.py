@@ -2040,6 +2040,7 @@ def _view_hashdb_context(hashdb_mode):
         from sqlalchemy.orm import joinedload as _jl2
         hash_databases = (
             HashDatabase.query
+            .filter(HashDatabase.is_deleting.is_(False))
             .options(_jl2(HashDatabase.known_products))
             .order_by(HashDatabase.name)
             .all()

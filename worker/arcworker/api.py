@@ -671,6 +671,13 @@ class ArcologyAPI:
             {'last_id': last_id, 'limit': limit},
         )
 
+    def hashdb_delete_step(self, db_id: int, *, cursor: int = 0) -> dict | None:
+        """Run one bounded HashDB background-delete (reap) step."""
+        return self.post(
+            f'/hash-databases/{db_id}/delete-step',
+            {'cursor': cursor},
+        )
+
     def hashdb_recognition_step(
         self,
         db_id: int,

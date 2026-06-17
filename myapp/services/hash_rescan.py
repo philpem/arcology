@@ -623,6 +623,19 @@ def queue_hashdb_link_job(database_id):
     )
 
 
+def queue_hashdb_delete_job(database_id):
+    """Queue a worker-driven background delete (reap) job for one HashDB.
+
+    The web delete route marks the database is_deleting=True / is_active=False
+    and queues this; the worker drains its rows in bounded steps via the
+    /hash-databases/<id>/delete-step endpoint so no web request runs long.
+    """
+    return _queue_system_analysis_once(
+        AnalysisType.HASHDB_DELETE,
+        {'database_id': database_id},
+    )
+
+
 def queue_hashdb_recognition_job(database_id, *, commit=True):
     """Queue a worker-driven product-recognition backfill for one HashDB."""
     return _queue_system_analysis_once(

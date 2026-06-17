@@ -39,6 +39,7 @@ from ..database import (
     Partition,
     Platform,
     ProductRecognitionStatus,
+    RecognisedProduct,
     StorageDirectory,
     Tag,
     User,
@@ -93,7 +94,7 @@ from ..utils.api_serializers import (
 from ..utils.blobs import artefact_blob, artefact_blob_storage_path, assign_blob
 from ..utils.db_helpers import get_by_id_or_404 as _get_by_id_or_404
 from ..utils.db_helpers import get_by_uuid_or_404 as _get_by_uuid_or_404
-from ..utils.db_helpers import is_statement_timeout
+from ..utils.db_helpers import is_deadlock, is_statement_timeout
 from ..utils.enum_display import enum_value
 from ..utils.item_helpers import assign_item_fields, assign_item_tags
 from ..utils.privacy import recompute_item_privacy
@@ -2515,7 +2516,12 @@ def run_hash_rescan(uuid):
 @blueprint.route('/hash-databases', methods=['GET'])
 @require_auth('read_only')
 def list_hash_databases():
-    databases = HashDatabase.query.order_by(HashDatabase.name).all()
+    databases = (
+        HashDatabase.query
+        .filter(HashDatabase.is_deleting.is_(False))
+        .order_by(HashDatabase.name)
+        .all()
+    )
     return jsonify([{
         'id': db_.id,
         'name': db_.name,
@@ -2579,7 +2585,11 @@ def create_hash_database():
         return error
     if not data.get('name'):
         return error_response('name is required')
-    if HashDatabase.query.filter_by(name=data['name']).first():
+    existing = HashDatabase.query.filter_by(name=data['name']).first()
+    if existing and existing.is_deleting:
+        return error_response(
+            f"Database '{data['name']}' is being deleted; retry shortly", 409)
+    if existing:
         return error_response(f"Database '{data['name']}' already exists", 409)
     database = HashDatabase(
         name=data['name'],
@@ -2849,6 +2859,187 @@ def hash_database_link_step(db_id):
         'progress_label': f"Linking files in HashDB '{database.name}'",
         'progress_total': database.file_count or 0,
     })
+
+
+# Per-statement chunk sizes for the bounded delete step.  Small enough that any
+# single statement stays well under the worker read timeout even on a database
+# matching a large slice of the collection; the step loops over chunks until a
+# wall-clock deadline, so throughput is set by the deadline, not these.
+_DELETE_UNLINK_CHUNK = 5000      # extracted_files unlinked per statement
+_DELETE_RECOGNISED_CHUNK = 5000  # recognised_products deleted per statement
+_DELETE_KNOWN_FILE_CHUNK = 5000  # known_files deleted per statement
+
+
+def _delete_chunk_with_retry(fn):
+    """Run one bounded delete statement, retrying briefly on deadlock.
+
+    The reap step still races a worker relink/recognition step that may hold
+    locks on the same rows in the opposite order.  PostgreSQL aborts one side;
+    the small chunk size means the other side releases promptly, so a short
+    retry succeeds rather than failing the whole step.  Returns the rowcount.
+    """
+    attempts = 4
+    for attempt in range(attempts):
+        try:
+            count = fn()
+            db.session.commit()
+            return count
+        except OperationalError as exc:
+            db.session.rollback()
+            if not is_deadlock(exc) or attempt == attempts - 1:
+                raise
+            time.sleep(0.25 * (attempt + 1))
+
+
+@blueprint.route('/hash-databases/<int:db_id>/delete-step', methods=['POST'])
+@require_auth('read_write')
+def hash_database_delete_step(db_id):
+    """Worker-only bounded reap step for a soft-deleted HashDB.
+
+    Drives the deletion of one is_deleting database in small, lock-friendly,
+    wall-clock-bounded batches so no web request runs long and the worker can
+    resume after a crash.  The step is a stateless state machine derived from
+    the current row counts, run in FK-safe phase order:
+
+      A. unlink extracted_files still pointing at this DB's known_files
+         (clearing is_known, which ON DELETE SET NULL would leave stuck) —
+         must complete before any known_files are deleted;
+      B/C. delete recognised_products (by product) and known_files;
+      D. (final) delete known_products, delete the hash_databases row, and
+         queue HASHDB_LINK for every other active DB so freed files re-match.
+
+    Each call returns ``cursor = incoming + rows_touched`` (strictly advancing
+    until the final step) to satisfy run_step_loop's anti-hang contract, and
+    ``done=True`` only once the database row is gone.
+    """
+    if not _is_worker_request():
+        return error_response('Only the worker may run hashdb delete steps', 403)
+    database = _get_hash_database_or_404(db_id)
+    data, error = _json_object()
+    if error:
+        return error
+    cursor = int(data.get('cursor') or 0)
+
+    kf_id_query = db.session.query(KnownFile.id).filter(KnownFile.database_id == db_id)
+    product_id_query = db.session.query(KnownProduct.id).filter(KnownProduct.database_id == db_id)
+
+    deadline = time.monotonic() + current_app.config.get('WORKER_STEP_DEADLINE_SECONDS', 20)
+    touched = 0
+
+    while True:
+        # Always do at least one unit of work per call before yielding on the
+        # deadline (mirroring link-step, which processes one chunk before its
+        # deadline check).  Checking the deadline at the top instead would let a
+        # non-positive WORKER_STEP_DEADLINE_SECONDS return cursor+1/done=False
+        # with zero work done — forever, since the advancing cursor hides the
+        # stall from run_step_loop.  Only break once we've actually made progress.
+        if touched and time.monotonic() >= deadline:
+            break
+
+        # Phase A: unlink extracted_files linked to this DB (until none remain).
+        # Bounded by id so the correlated subquery stays index-friendly.  is_known
+        # must be cleared explicitly — the FK's ON DELETE SET NULL would null the
+        # link once known_files go but leave is_known stuck True.
+        ef_ids = (
+            db.session.query(ExtractedFile.id)
+            .filter(ExtractedFile.known_file_id.in_(kf_id_query))
+            .order_by(ExtractedFile.id)
+            .limit(_DELETE_UNLINK_CHUNK)
+        )
+        n = _delete_chunk_with_retry(lambda ids=ef_ids: (
+            ExtractedFile.query
+            .filter(ExtractedFile.id.in_(ids))
+            .update({'known_file_id': None, 'is_known': False},
+                    synchronize_session=False)
+        ))
+        if n:
+            touched += n
+            continue
+
+        # Phase B: delete recognised_products for this DB's products.
+        rp_ids = (
+            db.session.query(RecognisedProduct.id)
+            .filter(RecognisedProduct.product_id.in_(product_id_query))
+            .order_by(RecognisedProduct.id)
+            .limit(_DELETE_RECOGNISED_CHUNK)
+        )
+        n = _delete_chunk_with_retry(lambda ids=rp_ids: (
+            RecognisedProduct.query
+            .filter(RecognisedProduct.id.in_(ids))
+            .delete(synchronize_session=False)
+        ))
+        if n:
+            touched += n
+            continue
+
+        # Phase C: delete known_files for this DB.
+        kf_ids = (
+            db.session.query(KnownFile.id)
+            .filter(KnownFile.database_id == db_id)
+            .order_by(KnownFile.id)
+            .limit(_DELETE_KNOWN_FILE_CHUNK)
+        )
+        n = _delete_chunk_with_retry(lambda ids=kf_ids: (
+            KnownFile.query
+            .filter(KnownFile.id.in_(ids))
+            .delete(synchronize_session=False)
+        ))
+        if n:
+            touched += n
+            continue
+
+        # Phase D (final): no child rows remain — drop known_products and the
+        # database row, then queue relinks of the freed files against other
+        # active databases, mirroring the old inline delete's tail.
+        _delete_chunk_with_retry(lambda: (
+            KnownProduct.query.filter(KnownProduct.database_id == db_id)
+            .delete(synchronize_session=False)
+        ))
+        relinked = _finalise_hashdb_delete(db_id)
+        return jsonify({
+            'done': True,
+            'cursor': cursor + touched,
+            'deleted': touched,
+            'relinked_databases': relinked,
+            'progress_label': f"Deleting HashDB '{database.name}'",
+        })
+
+    # Deadline reached after making progress this call: report it and continue.
+    # touched > 0 is guaranteed (the deadline break above requires it), so the
+    # cursor advances honestly without a max(..., 1) fudge.
+    return jsonify({
+        'done': False,
+        'cursor': cursor + touched,
+        'deleted': touched,
+        'progress_label': f"Deleting HashDB '{database.name}'",
+    })
+
+
+def _finalise_hashdb_delete(db_id):
+    """Delete the HashDatabase row and queue relinks against other active DBs.
+
+    Returns the number of other active databases for which a HASHDB_LINK job
+    was newly queued.  The freed extracted_files are now is_known=False, so each
+    other database's bounded relink picks up any that match it.
+    """
+    from ..services.hash_rescan import queue_hashdb_link_job
+
+    # Deadlock-retry the final row delete too — it races a worker relink the
+    # same way the chunk deletes do; the helper commits and retries on deadlock.
+    _delete_chunk_with_retry(
+        lambda: db.session.delete(db.session.get(HashDatabase, db_id)))
+
+    relinked = 0
+    other_active = (
+        HashDatabase.query
+        .filter(HashDatabase.is_active.is_(True), HashDatabase.id != db_id)
+        .all()
+    )
+    for other in other_active:
+        _, queued = queue_hashdb_link_job(other.id)
+        if queued:
+            relinked += 1
+    return relinked
 
 
 def _timed_out_response(**cursor):
