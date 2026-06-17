@@ -40,6 +40,7 @@ class _BatchClient:
     def __init__(self):
         self.created_dbs = []
         self.batch_calls = []
+        self.link_calls = []
         self.per_product_calls = []
 
     def list_hash_databases(self):
@@ -49,10 +50,14 @@ class _BatchClient:
         self.created_dbs.append(data)
         return {'id': 7}
 
-    def import_hash_database_products(self, db_id, products):
-        self.batch_calls.append((db_id, products))
+    def import_hash_database_products(self, db_id, products, link=True):
+        self.batch_calls.append((db_id, products, link))
         return {'products': len(products),
                 'files': sum(len(p.get('files', [])) for p in products)}
+
+    def queue_hash_database_link(self, db_id):
+        self.link_calls.append(db_id)
+        return {'status': 'queued'}
 
     # Per-product endpoints should NOT be hit on the batch path.
     def create_hash_database_product(self, db_id, **data):
@@ -67,8 +72,17 @@ class _BatchClient:
 class _FallbackClient(_BatchClient):
     """Fake client whose batch endpoint 404s (old server)."""
 
-    def import_hash_database_products(self, db_id, products):
+    def import_hash_database_products(self, db_id, products, link=True):
         raise ArcologyError('Not found.', 404)
+
+
+class _RollingDeployClient(_BatchClient):
+    """Fake client where a later batch hits an older server."""
+
+    def import_hash_database_products(self, db_id, products, link=True):
+        if self.batch_calls:
+            raise ArcologyError('Not found.', 404)
+        return super().import_hash_database_products(db_id, products, link=link)
 
 
 def _args(input_file):
@@ -90,9 +104,11 @@ class TestCliHashdbImport(unittest.TestCase):
         client = _BatchClient()
         cmd_hashdb_import(client, _args(self.path))
         self.assertEqual(len(client.batch_calls), 1)
-        db_id, products = client.batch_calls[0]
+        db_id, products, link = client.batch_calls[0]
         self.assertEqual(db_id, 7)
         self.assertEqual(len(products), 2)
+        self.assertFalse(link)
+        self.assertEqual(client.link_calls, [7])
         self.assertEqual(client.per_product_calls, [])  # batch path only
 
     def test_fallback_on_404(self):
@@ -102,6 +118,26 @@ class TestCliHashdbImport(unittest.TestCase):
         kinds = [c[0] for c in client.per_product_calls]
         self.assertEqual(kinds.count('product'), 2)
         self.assertEqual(kinds.count('files'), 2)
+
+    def test_later_batch_404_still_queues_deferred_link(self):
+        doc = {
+            'database': {'name': 'CLI DB'},
+            'products': [
+                {'title': f'!App{i:03d}', 'files': [{'filename': '!RunImage', 'md5': f'{i:032x}'}]}
+                for i in range(201)
+            ],
+        }
+        with open(self.path, 'w') as fh:
+            json.dump(doc, fh)
+
+        client = _RollingDeployClient()
+        cmd_hashdb_import(client, _args(self.path))
+
+        self.assertEqual(len(client.batch_calls), 1)
+        self.assertEqual(client.link_calls, [7])
+        kinds = [c[0] for c in client.per_product_calls]
+        self.assertEqual(kinds.count('product'), 1)
+        self.assertEqual(kinds.count('files'), 1)
 
 
 if __name__ == '__main__':
