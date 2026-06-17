@@ -28,6 +28,7 @@ from ..database import (
     KnownProduct,
     Partition,
     Platform,
+    RecognisedProduct,
     RestrictionType,
 )
 from ..extensions import db
@@ -472,27 +473,52 @@ def delete(id):
     name = database.name
     is_active = database.is_active
 
-    # Collect all KnownFile IDs that will be cascade-deleted so we can clear
-    # ExtractedFile.known_file_id references first (FK has no ON DELETE action).
-    kf_ids = [
-        kf.id
-        for product in database.known_products
-        for kf in product.known_files
-    ]
-    affected_ef_ids = []
-    if kf_ids:
-        affected_ef_ids = [
-            row[0] for row in
-            ExtractedFile.query
-            .with_entities(ExtractedFile.id)
-            .filter(ExtractedFile.known_file_id.in_(kf_ids))
-            .all()
-        ]
-        if affected_ef_ids:
-            ExtractedFile.query.filter(
-                ExtractedFile.id.in_(affected_ef_ids)
-            ).update({'known_file_id': None, 'is_known': False}, synchronize_session=False)
+    # A hash database can hold hundreds of thousands of KnownFile rows. The ORM
+    # cascade (relationship cascade="all, delete-orphan") loads every related
+    # KnownProduct/KnownFile into the session and issues a DELETE per row, and
+    # walking database.known_products[*].known_files is an N+1 query on top of
+    # that — together these make deleting a large database hang for minutes.
+    # Instead, do the work as a handful of bulk statements.
 
+    # ExtractedFiles currently linked to one of this database's known files.
+    # Capture their IDs (so we can re-evaluate them afterwards) and unlink them.
+    # KnownFile.database_id has no ON DELETE action, so this must happen before
+    # the known_files rows are removed.
+    kf_id_query = (
+        db.session.query(KnownFile.id)
+        .filter(KnownFile.database_id == id)
+    )
+    affected_ef_ids = [
+        row[0] for row in
+        ExtractedFile.query
+        .with_entities(ExtractedFile.id)
+        .filter(ExtractedFile.known_file_id.in_(kf_id_query))
+        .all()
+    ]
+    if affected_ef_ids:
+        ExtractedFile.query.filter(
+            ExtractedFile.id.in_(affected_ef_ids)
+        ).update({'known_file_id': None, 'is_known': False}, synchronize_session=False)
+
+    # Bulk-delete in FK-safe order: recognised_products (referenced products),
+    # then known_files (no ON DELETE action on its database_id FK), then
+    # known_products, then the database row itself.  Doing this explicitly keeps
+    # it correct regardless of whether the backend enforces the recognised_products
+    # -> known_products ON DELETE CASCADE (PostgreSQL does; SQLite only with
+    # PRAGMA foreign_keys=ON), matching what the old ORM cascade guaranteed.
+    product_id_query = (
+        db.session.query(KnownProduct.id)
+        .filter(KnownProduct.database_id == id)
+    )
+    RecognisedProduct.query.filter(
+        RecognisedProduct.product_id.in_(product_id_query)
+    ).delete(synchronize_session=False)
+    KnownFile.query.filter(
+        KnownFile.database_id == id
+    ).delete(synchronize_session=False)
+    KnownProduct.query.filter(
+        KnownProduct.database_id == id
+    ).delete(synchronize_session=False)
     db.session.delete(database)
     db.session.commit()
     flash(f'Hash database "{name}" deleted.', 'success')
@@ -977,17 +1003,26 @@ def delete_known_product(db_id, pid):
     is_active = database.is_active
     enable_recognition = database.enable_product_recognition
 
-    kf_ids = [kf.id for kf in product.known_files]
+    # A product's own known_files list is small, but a ubiquitous application
+    # directory (!System, !Scrap, !Fonts, …) can be recognised in thousands of
+    # partitions.  Deleting via the ORM (db.session.delete(product)) would load
+    # every recognised_products row through the recognised_in delete-orphan
+    # cascade and DELETE them one at a time — the same pathological aggregate as
+    # the whole-database delete (issue #618).  Do the work as bulk statements.
+    kf_id_query = (
+        db.session.query(KnownFile.id)
+        .filter(KnownFile.product_id == pid)
+    )
 
     # Collect affected ExtractedFile IDs and partition IDs before unlinking.
-    if kf_ids:
-        affected_ef_ids = [
-            row[0] for row in
-            ExtractedFile.query
-            .with_entities(ExtractedFile.id)
-            .filter(ExtractedFile.known_file_id.in_(kf_ids))
-            .all()
-        ]
+    affected_ef_ids = [
+        row[0] for row in
+        ExtractedFile.query
+        .with_entities(ExtractedFile.id)
+        .filter(ExtractedFile.known_file_id.in_(kf_id_query))
+        .all()
+    ]
+    if affected_ef_ids:
         if is_active and enable_recognition:
             pre_delete_partition_ids = {
                 row[0] for row in
@@ -995,19 +1030,29 @@ def delete_known_product(db_id, pid):
                 .with_entities(ExtractedFile.partition_id)
                 .filter(ExtractedFile.id.in_(affected_ef_ids))
                 .all()
-            } if affected_ef_ids else set()
+            }
         else:
             pre_delete_partition_ids = set()
-        # Clear FK references so the cascade delete cannot violate the constraint.
-        if affected_ef_ids:
-            ExtractedFile.query.filter(
-                ExtractedFile.id.in_(affected_ef_ids)
-            ).update({'known_file_id': None, 'is_known': False}, synchronize_session=False)
+        # Clear FK references so the delete cannot violate the constraint.
+        ExtractedFile.query.filter(
+            ExtractedFile.id.in_(affected_ef_ids)
+        ).update({'known_file_id': None, 'is_known': False}, synchronize_session=False)
     else:
-        affected_ef_ids = []
         pre_delete_partition_ids = set()
 
-    db.session.delete(product)
+    # Bulk-delete in FK-safe order: recognised_products (referenced this
+    # product) and known_files, then the product row.  Deleting
+    # recognised_products explicitly keeps it correct regardless of whether the
+    # backend enforces the ON DELETE CASCADE FK (see delete() above).
+    RecognisedProduct.query.filter(
+        RecognisedProduct.product_id == pid
+    ).delete(synchronize_session=False)
+    KnownFile.query.filter(
+        KnownFile.product_id == pid
+    ).delete(synchronize_session=False)
+    KnownProduct.query.filter(
+        KnownProduct.id == pid
+    ).delete(synchronize_session=False)
     db.session.commit()
     flash(f'Product "{title}" deleted.', 'success')
 
