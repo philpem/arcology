@@ -647,31 +647,22 @@ class ArcologyAPI:
             log.error(f"Failed to claim analysis {analysis_id}: {e}")
             return False
 
-    def get_recognition_config(self) -> list[dict]:
-        """
-        Fetch hash databases with product recognition enabled, with full product/file data.
+    def recognise_partition_step(
+        self,
+        partition_uuid: str,
+        *,
+        last_product_id: int = 0,
+        limit: int = 25,
+    ) -> dict | None:
+        """Run one bounded per-partition product-recognition step.
 
-        Returns:
-            List of database dicts, or empty list on error
+        Matching runs server-side (shared with the HashDB backfill); this is
+        one capped product batch.  Returns the result dict, or None on error.
         """
-        response = self.get('/hash-databases/recognition-config')
-        if not response:
-            return []
-        return response if isinstance(response, list) else []
-
-    def report_recognised_products(self, partition_uuid: str, results: list[dict]) -> bool:
-        """
-        Report product recognition results for a partition.
-
-        Args:
-            partition_uuid: UUID of the partition
-            results: List of match dicts with product_id, folder_path, counts
-
-        Returns:
-            True on success, False otherwise
-        """
-        response = self.post(f'/partitions/{partition_uuid}/recognised-products', results)
-        return response is not None
+        return self.post(
+            f'/partitions/{partition_uuid}/recognise-step',
+            {'last_product_id': last_product_id, 'limit': limit},
+        )
 
     def hashdb_link_step(self, db_id: int, *, last_id: int = 0, limit: int = 500) -> dict | None:
         """Run one bounded HashDB relink step."""

@@ -108,6 +108,45 @@ class ProgressReporter:
         return self.alive
 
 
+def run_step_loop(step, *, cursor_key, reporter=None, count_key='processed'):
+    """Drive a worker-triggered, server-side **bounded-step** job to completion.
+
+    This is the worker half of a recurring pattern in this codebase: work that
+    is pure database access (relinking known files, product recognition) lives
+    server-side next to the data, and the worker drives it as a cursor loop so
+    that no single web request runs long.  Each call processes one capped batch
+    and returns ``done`` plus a ``next_<...>`` cursor; the worker keeps calling
+    until ``done``.  See ``myapp/services/recognition.py`` and the
+    ``*-step`` endpoints in ``myapp/blueprints/api.py``.
+
+    *step* is invoked as ``step(cursor)`` (cursor starts at 0) and must return
+    the server's JSON result dict, or ``None`` on transport failure.  The
+    ``next_<...>`` cursor field is named by *cursor_key*.  Every integer field
+    other than the cursor is summed across steps into *totals*; the running
+    *count_key* total drives the optional *reporter*.
+
+    Returns ``(last_result, totals)``.  ``last_result`` is ``None`` when a step
+    failed — the caller decides how to fail the analysis (and, for recognition
+    backfills, how to report a failed status).
+    """
+    cursor = 0
+    totals: dict[str, int] = {}
+    while True:
+        result = step(cursor)
+        if result is None:
+            return None, totals
+        for key, value in result.items():
+            if key == cursor_key:
+                continue
+            if isinstance(value, int) and not isinstance(value, bool):
+                totals[key] = totals.get(key, 0) + value
+        cursor = result.get(cursor_key, cursor)
+        if reporter is not None:
+            reporter.update(totals.get(count_key, 0))
+        if result.get('done'):
+            return result, totals
+
+
 def analysis_handler(description: str, analysis_type: AnalysisType | None = None):
     """
     Decorator for analysis handler methods.
