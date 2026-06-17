@@ -226,8 +226,11 @@ def cmd_hashdb_import(client: ArcologyClient, args):
                 added = result.get('files', sum(len(p.get('files', [])) for p in batch))
                 total_files += added
                 if not args.json:
-                    print(f'  Imported {result.get("products", len(batch))} '
-                          f'product(s), {added} file(s) in {time.monotonic() - t0:.1f}s')
+                    reused = result.get('products_reused', 0)
+                    reused_note = f' ({reused} existing product(s) reused)' if reused else ''
+                    print(f'  Imported {result.get("products", len(batch))} new '
+                          f'product(s), {added} new file(s){reused_note} '
+                          f'in {time.monotonic() - t0:.1f}s')
                 continue
             except ArcologyError as e:
                 if e.status_code != 404:

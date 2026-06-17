@@ -2614,6 +2614,16 @@ def create_known_product(db_id):
     return jsonify({'id': product.id, 'title': product.title}), 201
 
 
+def _known_file_identity(kf):
+    """Dedup key for a KnownFile: filename + hashes + relative path.
+
+    Used so a re-import / merge into an existing database skips files it already
+    holds rather than inserting duplicates.  Hashes are already lower-cased by
+    ``_build_known_file`` / the importer, so the key is comparable across runs.
+    """
+    return (kf.filename, kf.md5, kf.sha1, kf.sha256, kf.relative_path)
+
+
 def _build_known_file(db_id: int, product_id: int, f: dict) -> "KnownFile | None":
     """Construct a KnownFile from an import payload entry, or None if invalid."""
     if not f.get('filename'):
@@ -2685,25 +2695,58 @@ def import_known_database(db_id):
         return error_response('products array is required')
     link_after_import = bool(data.get('link', True))
 
+    # Deduplicate against what is already in the database so re-importing or
+    # merging (arco hashdb import --merge) into an existing database does not
+    # create duplicate products and files.  For a fresh database these lookups
+    # are empty, so import behaviour is unchanged.  A product is matched by
+    # title; a file by (filename, md5, sha1, sha256, relative_path).
+    existing_products = {
+        p.title: p
+        for p in KnownProduct.query.filter_by(database_id=db_id).all()
+    }
+    existing_file_keys: dict[int, set] = {}
+
+    def _file_keys(product_id):
+        keys = existing_file_keys.get(product_id)
+        if keys is None:
+            keys = {
+                _known_file_identity(kf)
+                for kf in KnownFile.query.filter_by(product_id=product_id).all()
+            }
+            existing_file_keys[product_id] = keys
+        return keys
+
     new_kf_list = []
     products_added = 0
+    products_reused = 0
     for p in products:
         title = (p.get('title') or '').strip()
         if not title:
             continue
-        product = KnownProduct(
-            database_id=db_id,
-            title=title,
-            description=p.get('description'),
-            path_match_enabled=bool(p.get('path_match_enabled', False)),
-        )
-        db.session.add(product)
-        db.session.flush()  # assign product.id for the KnownFile rows
-        products_added += 1
+        product = existing_products.get(title)
+        if product is None:
+            product = KnownProduct(
+                database_id=db_id,
+                title=title,
+                description=p.get('description'),
+                path_match_enabled=bool(p.get('path_match_enabled', False)),
+            )
+            db.session.add(product)
+            db.session.flush()  # assign product.id for the KnownFile rows
+            existing_products[title] = product
+            existing_file_keys[product.id] = set()
+            products_added += 1
+        else:
+            products_reused += 1
+        keys = _file_keys(product.id)
         for f in p.get('files') or []:
             kf = _build_known_file(db_id, product.id, f)
             if kf is None:
                 continue
+            identity = _known_file_identity(kf)
+            if identity in keys:
+                continue  # already present (re-import / merge) — skip duplicate
+            keys.add(identity)
             db.session.add(kf)
             new_kf_list.append(kf)
 
@@ -2716,7 +2759,11 @@ def import_known_database(db_id):
     if link_after_import:
         link_new_known_files(database, new_kf_list)
 
-    return jsonify({'products': products_added, 'files': len(new_kf_list)}), 201
+    return jsonify({
+        'products': products_added,
+        'products_reused': products_reused,
+        'files': len(new_kf_list),
+    }), 201
 
 
 @blueprint.route('/hash-databases/<int:db_id>/link', methods=['POST'])
