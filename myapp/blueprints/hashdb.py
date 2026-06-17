@@ -8,10 +8,12 @@ import csv
 import io
 import json
 import re
+import time
 from flask import Blueprint, Response, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
 from sqlalchemy import func, or_
+from sqlalchemy.exc import OperationalError
 from wtforms import BooleanField, SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Length, Optional
 from ..database import (
@@ -34,7 +36,7 @@ from ..database import (
 )
 from ..extensions import db
 from ..permissions import require_permission
-from ..utils.db_helpers import model_choice_list, normalize_hash
+from ..utils.db_helpers import is_deadlock, model_choice_list, normalize_hash
 from ..utils.web_forms import redirect_local
 from ..visibility import artefact_visibility_clause
 
@@ -463,39 +465,63 @@ def edit(id):
     return _route_redirect('view', id=id)
 
 
-@blueprint.route('/<int:id>/delete', methods=['POST'])
-@login_required
-@require_permission('read_write')
-def delete(id):
-    database = db.get_or_404(HashDatabase, id)
-    name = database.name
-    is_active = database.is_active
+def _cancel_pending_hashdb_jobs(db_id):
+    """Cancel a database's own queued relink/recognition backfill jobs.
 
-    # A hash database can hold hundreds of thousands of KnownFile rows. The ORM
-    # cascade (relationship cascade="all, delete-orphan") loads every related
-    # KnownProduct/KnownFile into the session and issues a DELETE per row, and
-    # walking database.known_products[*].known_files is an N+1 query on top of
-    # that — together these make deleting a large database hang for minutes.
-    # Instead, do the work as a handful of bulk statements.
+    Run before deleting the database so a worker doesn't start (or continue)
+    writing to its known_files/extracted_files while we delete them — a
+    concurrent writer in the opposite lock order is what produced the
+    "deadlock detected" abort mid-delete.  Only PENDING jobs are removed; a
+    job already claimed (RUNNING) is left to the deadlock retry below and the
+    step's own statement timeout.
+    """
+    hints_json = json.dumps({'database_id': db_id}, sort_keys=True)
+    Analysis.query.filter(
+        Analysis.artefact_id.is_(None),
+        Analysis.analysis_type.in_([AnalysisType.HASHDB_LINK,
+                                    AnalysisType.HASHDB_RECOGNITION]),
+        Analysis.hints == hints_json,
+        Analysis.status == AnalysisStatus.PENDING,
+    ).delete(synchronize_session=False)
+    db.session.commit()
 
-    # ExtractedFiles currently linked to one of this database's known files.
-    # Capture their IDs (so we can re-evaluate them afterwards) and unlink them.
-    # KnownFile.database_id has no ON DELETE action, so this must happen before
-    # the known_files rows are removed.
+
+def _delete_hashdb_rows(db_id):
+    """Unlink referencing files and bulk-delete one HashDB's rows.
+
+    A hash database can hold hundreds of thousands of KnownFile rows. The ORM
+    cascade (relationship cascade="all, delete-orphan") loads every related
+    KnownProduct/KnownFile into the session and issues a DELETE per row, and
+    walking database.known_products[*].known_files is an N+1 query on top of
+    that — together these make deleting a large database hang for minutes.
+    Instead, do the work as a handful of bulk statements.
+
+    Returns whether any extracted files were linked to this database.
+    """
     kf_id_query = (
         db.session.query(KnownFile.id)
-        .filter(KnownFile.database_id == id)
+        .filter(KnownFile.database_id == db_id)
     )
-    affected_ef_ids = [
-        row[0] for row in
-        ExtractedFile.query
-        .with_entities(ExtractedFile.id)
+
+    # Were any extracted files linked to this database?  A cheap LIMIT 1
+    # existence check (index on known_file_id) — we only need to know whether a
+    # background re-link is worth queuing, not the (potentially tens of
+    # thousands of) IDs themselves.
+    had_links = (
+        db.session.query(ExtractedFile.id)
         .filter(ExtractedFile.known_file_id.in_(kf_id_query))
-        .all()
-    ]
-    if affected_ef_ids:
+        .first()
+    ) is not None
+
+    # Unlink the affected files in a single correlated UPDATE.  Materialising
+    # every affected id into a Python list and feeding it back as a giant IN(...)
+    # was itself slow (and could blow past parameter limits) on a database that
+    # matched a large slice of the collection.  is_known must be cleared
+    # explicitly: the known_file_id FK's ON DELETE SET NULL nulls the link but
+    # would leave is_known stuck True.
+    if had_links:
         ExtractedFile.query.filter(
-            ExtractedFile.id.in_(affected_ef_ids)
+            ExtractedFile.known_file_id.in_(kf_id_query)
         ).update({'known_file_id': None, 'is_known': False}, synchronize_session=False)
 
     # Bulk-delete in FK-safe order: recognised_products (referenced products),
@@ -506,26 +532,70 @@ def delete(id):
     # PRAGMA foreign_keys=ON), matching what the old ORM cascade guaranteed.
     product_id_query = (
         db.session.query(KnownProduct.id)
-        .filter(KnownProduct.database_id == id)
+        .filter(KnownProduct.database_id == db_id)
     )
     RecognisedProduct.query.filter(
         RecognisedProduct.product_id.in_(product_id_query)
     ).delete(synchronize_session=False)
     KnownFile.query.filter(
-        KnownFile.database_id == id
+        KnownFile.database_id == db_id
     ).delete(synchronize_session=False)
     KnownProduct.query.filter(
-        KnownProduct.database_id == id
+        KnownProduct.database_id == db_id
     ).delete(synchronize_session=False)
-    db.session.delete(database)
+    db.session.delete(db.session.get(HashDatabase, db_id))
     db.session.commit()
-    flash(f'Hash database "{name}" deleted.', 'success')
+    return had_links
 
-    # Re-evaluate unlinked files so they may link to another active database.
-    if is_active and affected_ef_ids:
-        from ..services.hash_rescan import rescan_hashes_for_queryset
-        rescan_hashes_for_queryset(ExtractedFile.query.filter(ExtractedFile.id.in_(affected_ef_ids)))
 
+@blueprint.route('/<int:id>/delete', methods=['POST'])
+@login_required
+@require_permission('read_write')
+def delete(id):
+    from ..services.hash_rescan import queue_hashdb_link_job
+    database = db.get_or_404(HashDatabase, id)
+    name = database.name
+    is_active = database.is_active
+
+    _cancel_pending_hashdb_jobs(id)
+
+    # The delete races the worker's bounded relink/recognition steps on the same
+    # known_files/extracted_files rows (in the opposite lock order), which can
+    # deadlock.  PostgreSQL aborts one side; retry the loser a few times — the
+    # step's statement timeout guarantees the other side releases its locks
+    # promptly, so a retry succeeds rather than 500ing.
+    attempts = 4
+    for attempt in range(attempts):
+        try:
+            had_links = _delete_hashdb_rows(id)
+            break
+        except OperationalError as exc:
+            db.session.rollback()
+            if not is_deadlock(exc) or attempt == attempts - 1:
+                raise
+            time.sleep(0.25 * (attempt + 1))
+
+    # Re-link the now-unlinked files against the remaining active databases in
+    # the background rather than running a long inline rescan that makes the
+    # delete request time out.  The files are now is_known=False, so each other
+    # database's bounded-step HASHDB_LINK job will pick up any that match it.
+    relinked_dbs = 0
+    if is_active and had_links:
+        other_active = (
+            HashDatabase.query
+            .filter(HashDatabase.is_active == True, HashDatabase.id != id)  # noqa: E712
+            .all()
+        )
+        for other in other_active:
+            _, queued = queue_hashdb_link_job(other.id)
+            if queued:
+                relinked_dbs += 1
+
+    msg = f'Hash database "{name}" deleted.'
+    if relinked_dbs:
+        msg += (f' Re-linking affected files against {relinked_dbs} other '
+                f'database(s) in the background.')
+    flash(msg, 'success')
     return _route_redirect('index')
 
 
