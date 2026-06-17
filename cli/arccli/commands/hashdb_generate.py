@@ -806,12 +806,12 @@ def cmd_hashdb_generate_riscos(client: ArcologyClient, args):
 
     output_data = {
         'schema_version': 1,
-	        'database': {
-	            'name': args.db_name,
-	            'description': args.db_description or '',
-	            'version': args.db_version or date.today().isoformat(),
-	            'enable_product_recognition': True,
-	        },
+        'database': {
+            'name': args.db_name,
+            'description': args.db_description or '',
+            'version': args.db_version or date.today().isoformat(),
+            'enable_product_recognition': True,
+        },
         'products': all_products,
     }
     if args.source_url:

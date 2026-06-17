@@ -2,8 +2,8 @@
 
 Provides find_known_file() and the rescan helpers that re-link
 ExtractedFile rows to active hash databases without re-analysing.
-Also provides queue_product_recognition_for_partitions() to re-trigger
-the worker's folder-level product recognition after hash database changes.
+Also queues partition-level recognition for newly processed artefacts and
+database-level recognition backfills after HashDB content changes.
 """
 
 import json
@@ -17,7 +17,10 @@ from ..database import (
     ExtractedFileRestriction,
     HashDatabase,
     KnownFile,
+    KnownProduct,
     Partition,
+    ProductRecognitionStatus,
+    RecognisedProduct,
 )
 from ..extensions import db
 
@@ -536,9 +539,8 @@ def rescan_links_for_known_file_id(kf_id):
 def queue_product_recognition_for_partitions(partition_ids):
     """Queue PRODUCT_RECOGNITION analyses for the given partition IDs.
 
-    Called after hash database changes (new files, edits, deletes,
-    imports, enable_product_recognition toggled on) so that the worker
-    re-runs folder-level product matching against the updated database.
+    Called after artefact extraction or hash rescans so that the worker
+    re-runs folder-level product matching for newly processed partitions.
 
     One Analysis record is created per partition.  To avoid flooding the
     queue, partitions whose artefact already has a PENDING or RUNNING
@@ -617,6 +619,34 @@ def queue_hashdb_recognition_job(database_id):
     )
 
 
+def mark_hashdb_recognition_pending(database):
+    """Mark a HashDB's product-recognition counts stale and waiting for backfill."""
+    database.product_recognition_status = ProductRecognitionStatus.PENDING
+    database.product_recognition_error = None
+    database.product_recognition_updated_at = None
+
+
+def clear_hashdb_recognition(database):
+    """Remove recognised-product rows and status for a HashDB."""
+    product_id_query = (
+        db.session.query(KnownProduct.id)
+        .filter(KnownProduct.database_id == database.id)
+    )
+    RecognisedProduct.query.filter(
+        RecognisedProduct.product_id.in_(product_id_query)
+    ).delete(synchronize_session=False)
+    database.product_recognition_status = None
+    database.product_recognition_updated_at = None
+    database.product_recognition_error = None
+
+
+def queue_hashdb_recognition_backfill(database):
+    """Persist a pending status and queue one HashDB recognition backfill."""
+    mark_hashdb_recognition_pending(database)
+    db.session.commit()
+    return queue_hashdb_recognition_job(database.id)
+
+
 def rescan_hashes_for_new_known_files(kf_list, batch_size=500):
     """Targeted rescan after a bulk import: scan unlinked files whose
     md5 or sha1 appears in *kf_list*.
@@ -647,7 +677,7 @@ def rescan_hashes_for_new_known_files(kf_list, batch_size=500):
 
 def link_new_known_files(database, new_kf_list):
     """Link existing extracted files to freshly-imported KnownFiles, and queue
-    PRODUCT_RECOGNITION for affected partitions when the database enables it.
+    a HashDB recognition backfill when the database enables product recognition.
 
     Shared by the web import route and the REST API bulk-add endpoint so that
     both entry points link the collection after an import.  Without this, an
@@ -661,21 +691,6 @@ def link_new_known_files(database, new_kf_list):
     if not database.enable_product_recognition:
         return
 
-    md5s = [kf.md5 for kf in new_kf_list if kf.md5]
-    sha1s = [kf.sha1 for kf in new_kf_list if kf.sha1]
-    conditions = ([ExtractedFile.md5.in_(md5s)] if md5s else []) + (
-        [ExtractedFile.sha1.in_(sha1s)] if sha1s else []
-    )
-    if not conditions:
-        return
-
-    partition_ids = {
-        row[0] for row in
-        ExtractedFile.query
-        .with_entities(ExtractedFile.partition_id)
-        .filter(or_(*conditions))
-        .all()
-    }
-    queue_product_recognition_for_partitions(partition_ids)
+    queue_hashdb_recognition_backfill(database)
 
 # vim: ts=4 sw=4 et

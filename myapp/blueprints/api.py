@@ -70,7 +70,7 @@ from ..services.hash_rescan import (
     find_known_file,
     find_known_files_for_records,
     link_new_known_files,
-    queue_hashdb_recognition_job,
+    queue_hashdb_recognition_backfill,
     rescan_hashes_for_new_known_files,
 )
 from ..services.restrictions import (
@@ -2751,10 +2751,7 @@ def hash_database_link_step(db_id):
     if not batch:
         queued_recognition = False
         if database.enable_product_recognition:
-            database.product_recognition_status = ProductRecognitionStatus.PENDING
-            database.product_recognition_error = None
-            db.session.commit()
-            _, queued_recognition = queue_hashdb_recognition_job(database.id)
+            _, queued_recognition = queue_hashdb_recognition_backfill(database)
         return jsonify({
             'done': True,
             'processed': 0,
@@ -2772,10 +2769,7 @@ def hash_database_link_step(db_id):
     )
     queued_recognition = False
     if remaining == 0 and database.enable_product_recognition:
-        database.product_recognition_status = ProductRecognitionStatus.PENDING
-        database.product_recognition_error = None
-        db.session.commit()
-        _, queued_recognition = queue_hashdb_recognition_job(database.id)
+        _, queued_recognition = queue_hashdb_recognition_backfill(database)
     return jsonify({
         'done': remaining == 0,
         'processed': len(batch),
@@ -2796,7 +2790,8 @@ def _file_hash_matches_known_file(file_hash, known_file):
 
 
 def _verify_product_in_folder(product, folder, idx):
-    folder_hashes = idx['hashes']
+    folder_md5s = idx['md5s']
+    folder_sha1s = idx['sha1s']
     path_map = idx['path_map']
     folder_lower = folder.lower()
     folder_prefix = folder_lower + '/' if folder_lower else ''
@@ -2817,7 +2812,8 @@ def _verify_product_in_folder(product, folder, idx):
                     path_map[rel_path_in_folder], kf):
                 required_matched += 1
         else:
-            if any(_file_hash_matches_known_file(h, kf) for h in folder_hashes):
+            if ((kf.md5 and kf.md5.lower() in folder_md5s) or
+                    (kf.sha1 and kf.sha1.lower() in folder_sha1s)):
                 required_matched += 1
 
     if required and required_matched < len(required):
@@ -2834,7 +2830,8 @@ def _verify_product_in_folder(product, folder, idx):
                     path_map[rel_path_in_folder], kf):
                 optional_matched += 1
         else:
-            if any(_file_hash_matches_known_file(h, kf) for h in folder_hashes):
+            if ((kf.md5 and kf.md5.lower() in folder_md5s) or
+                    (kf.sha1 and kf.sha1.lower() in folder_sha1s)):
                 optional_matched += 1
 
     if not required and optional_matched == 0:
@@ -2889,15 +2886,24 @@ def hash_database_recognition_step(db_id):
 
     md5s = set()
     sha1s = set()
+    products_by_id = {}
+    product_ids_by_md5 = {}
+    product_ids_by_sha1 = {}
     for product in products:
+        products_by_id[product.id] = product
         candidate_files = [kf for kf in product.known_files if kf.is_required] or list(product.known_files)
         for kf in candidate_files:
             if kf.md5:
-                md5s.add(kf.md5.lower())
+                md5 = kf.md5.lower()
+                md5s.add(md5)
+                product_ids_by_md5.setdefault(md5, set()).add(product.id)
             if kf.sha1:
-                sha1s.add(kf.sha1.lower())
+                sha1 = kf.sha1.lower()
+                sha1s.add(sha1)
+                product_ids_by_sha1.setdefault(sha1, set()).add(product.id)
 
     candidate_folders = set()
+    folder_product_ids = {}
     if md5s or sha1s:
         conditions = []
         if md5s:
@@ -2906,13 +2912,21 @@ def hash_database_recognition_step(db_id):
             conditions.append(ExtractedFile.sha1.in_(sha1s))
         rows = (
             ExtractedFile.query
-            .with_entities(ExtractedFile.partition_id, ExtractedFile.path)
+            .with_entities(ExtractedFile.partition_id, ExtractedFile.path, ExtractedFile.md5, ExtractedFile.sha1)
             .filter(ExtractedFile.is_directory == False, or_(*conditions))
             .all()
         )
-        for partition_id, path in rows:
+        for partition_id, path, file_md5, file_sha1 in rows:
             folder = path.rsplit('/', 1)[0] if path and '/' in path else ''
-            candidate_folders.add((partition_id, folder))
+            folder_key = (partition_id, folder)
+            candidate_folders.add(folder_key)
+            product_candidates = folder_product_ids.setdefault(folder_key, set())
+            md5 = (file_md5 or '').lower()
+            sha1 = (file_sha1 or '').lower()
+            if md5:
+                product_candidates.update(product_ids_by_md5.get(md5, set()))
+            if sha1:
+                product_candidates.update(product_ids_by_sha1.get(sha1, set()))
 
     folders_by_partition = {}
     for partition_id, folder in candidate_folders:
@@ -2936,17 +2950,22 @@ def hash_database_recognition_step(db_id):
             rel = path.rsplit('/', 1)[1] if '/' in path else path
             idx = folder_index.setdefault(
                 (f.partition_id, folder),
-                {'hashes': set(), 'path_map': {}},
+                {'hashes': set(), 'md5s': set(), 'sha1s': set(), 'path_map': {}},
             )
             md5 = (f.md5 or '').lower()
             sha1 = (f.sha1 or '').lower()
             if md5 or sha1:
                 idx['hashes'].add((md5, sha1))
+                if md5:
+                    idx['md5s'].add(md5)
+                if sha1:
+                    idx['sha1s'].add(sha1)
                 idx['path_map'][rel.lower()] = (md5, sha1)
 
     matches = 0
-    for product in products:
-        for (partition_id, folder), idx in folder_index.items():
+    for (partition_id, folder), idx in folder_index.items():
+        for product_id in folder_product_ids.get((partition_id, folder), set()):
+            product = products_by_id[product_id]
             verified = _verify_product_in_folder(product, folder, idx)
             if verified is None:
                 continue
@@ -3058,11 +3077,20 @@ def report_recognised_products(uuid):
     # Delete existing recognition results for this partition (re-scan replaces old results)
     RecognisedProduct.query.filter_by(partition_id=partition.id).delete()
 
+    seen_results = set()
     for entry in data:
         product_id = entry.get('product_id')
         folder_path = entry.get('folder_path', '')
         if not product_id or not folder_path:
             continue
+        try:
+            product_id = int(product_id)
+        except (TypeError, ValueError):
+            continue
+        result_key = (product_id, folder_path)
+        if result_key in seen_results:
+            continue
+        seen_results.add(result_key)
         product = db.session.get(KnownProduct, product_id)
         if not product:
             continue

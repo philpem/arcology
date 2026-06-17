@@ -41,25 +41,6 @@ from ..visibility import artefact_visibility_clause
 ROUTENAME = __name__.replace('.', '_')
 
 
-def _partition_ids_for_hashes(md5, sha1, file_size=None):
-    """Return a set of partition_ids for ExtractedFiles matching md5 or sha1."""
-    conditions = []
-    if md5:
-        conditions.append(ExtractedFile.md5 == md5)
-    if sha1:
-        conditions.append(ExtractedFile.sha1 == sha1)
-    if not conditions:
-        return set()
-    query = (
-        ExtractedFile.query
-        .with_entities(ExtractedFile.partition_id)
-        .filter(or_(*conditions))
-    )
-    if file_size is not None:
-        query = query.filter(ExtractedFile.file_size == file_size)
-    return {row[0] for row in query.all()}
-
-
 def _route_redirect(endpoint: str, **values):
     """Redirect to a local HashDB endpoint."""
     return redirect_local(ROUTENAME, endpoint, **values)
@@ -467,24 +448,13 @@ def edit(id):
         db.session.commit()
         flash('Hash database updated.', 'success')
         if database.enable_product_recognition and not was_enabled:
-            database.product_recognition_status = ProductRecognitionStatus.PENDING
-            database.product_recognition_error = None
-            db.session.commit()
-            from ..services.hash_rescan import queue_hashdb_recognition_job
-            _, queued = queue_hashdb_recognition_job(database.id)
+            from ..services.hash_rescan import queue_hashdb_recognition_backfill
+            _, queued = queue_hashdb_recognition_backfill(database)
             if queued:
                 flash('Queued product recognition backfill.', 'info')
         elif was_enabled and not database.enable_product_recognition:
-            product_id_query = (
-                db.session.query(KnownProduct.id)
-                .filter(KnownProduct.database_id == database.id)
-            )
-            RecognisedProduct.query.filter(
-                RecognisedProduct.product_id.in_(product_id_query)
-            ).delete(synchronize_session=False)
-            database.product_recognition_status = None
-            database.product_recognition_updated_at = None
-            database.product_recognition_error = None
+            from ..services.hash_rescan import clear_hashdb_recognition
+            clear_hashdb_recognition(database)
             db.session.commit()
     else:
         for field, errors in form.errors.items():
@@ -571,25 +541,14 @@ def toggle_recognition(id):
     database.enable_product_recognition = not database.enable_product_recognition
     state = 'enabled' if database.enable_product_recognition else 'disabled'
     if database.enable_product_recognition:
-        database.product_recognition_status = ProductRecognitionStatus.PENDING
-        database.product_recognition_error = None
-        db.session.commit()
-        from ..services.hash_rescan import queue_hashdb_recognition_job
-        _, queued = queue_hashdb_recognition_job(database.id)
+        from ..services.hash_rescan import queue_hashdb_recognition_backfill
+        _, queued = queue_hashdb_recognition_backfill(database)
         flash(f'Folder recognition {state} for "{database.name}".', 'success')
         if queued:
             flash('Queued product recognition backfill.', 'info')
     else:
-        product_id_query = (
-            db.session.query(KnownProduct.id)
-            .filter(KnownProduct.database_id == database.id)
-        )
-        RecognisedProduct.query.filter(
-            RecognisedProduct.product_id.in_(product_id_query)
-        ).delete(synchronize_session=False)
-        database.product_recognition_status = None
-        database.product_recognition_updated_at = None
-        database.product_recognition_error = None
+        from ..services.hash_rescan import clear_hashdb_recognition
+        clear_hashdb_recognition(database)
         db.session.commit()
         flash(f'Folder recognition {state} for "{database.name}".', 'success')
     return _route_redirect('view', id=id)
@@ -612,12 +571,10 @@ def bulk_path_matching(id, state):
 
     queued = False
     if database.enable_product_recognition:
-        database.product_recognition_status = ProductRecognitionStatus.PENDING
-        database.product_recognition_error = None
-    db.session.commit()
-    if database.enable_product_recognition:
-        from ..services.hash_rescan import queue_hashdb_recognition_job
-        _, queued = queue_hashdb_recognition_job(database.id)
+        from ..services.hash_rescan import queue_hashdb_recognition_backfill
+        _, queued = queue_hashdb_recognition_backfill(database)
+    else:
+        db.session.commit()
 
     label = 'enabled' if enabled else 'disabled'
     flash(f'Path matching {label} for all products in "{database.name}".', 'success')
@@ -990,7 +947,7 @@ def save_all_files(db_id, pid):
     Rejects the whole submission if any file would end up with no hashes.
     """
     from ..services.hash_rescan import (
-        queue_product_recognition_for_partitions,
+        queue_hashdb_recognition_backfill,
         rescan_hashes_for_known_file,
         rescan_links_for_known_file_id,
     )
@@ -1045,14 +1002,11 @@ def save_all_files(db_id, pid):
         flash('No changes.', 'info')
 
     if is_active and changed_for_rescan:
-        partition_ids = set()
         for kf in changed_for_rescan:
             rescan_links_for_known_file_id(kf.id)
             rescan_hashes_for_known_file(kf)
-            if enable_recognition:
-                partition_ids |= _partition_ids_for_hashes(kf.md5, kf.sha1, kf.file_size)
-        if enable_recognition and partition_ids:
-            queue_product_recognition_for_partitions(partition_ids)
+        if enable_recognition:
+            queue_hashdb_recognition_backfill(product.database)
 
     return redirect(url_for(f'{ROUTENAME}.view_product', id=db_id, pid=pid))
 
@@ -1078,7 +1032,7 @@ def delete_known_product(db_id, pid):
         .filter(KnownFile.product_id == pid)
     )
 
-    # Collect affected ExtractedFile IDs and partition IDs before unlinking.
+    # Collect affected ExtractedFile IDs before unlinking.
     affected_ef_ids = [
         row[0] for row in
         ExtractedFile.query
@@ -1087,22 +1041,10 @@ def delete_known_product(db_id, pid):
         .all()
     ]
     if affected_ef_ids:
-        if is_active and enable_recognition:
-            pre_delete_partition_ids = {
-                row[0] for row in
-                ExtractedFile.query
-                .with_entities(ExtractedFile.partition_id)
-                .filter(ExtractedFile.id.in_(affected_ef_ids))
-                .all()
-            }
-        else:
-            pre_delete_partition_ids = set()
         # Clear FK references so the delete cannot violate the constraint.
         ExtractedFile.query.filter(
             ExtractedFile.id.in_(affected_ef_ids)
         ).update({'known_file_id': None, 'is_known': False}, synchronize_session=False)
-    else:
-        pre_delete_partition_ids = set()
 
     # Bulk-delete in FK-safe order: recognised_products (referenced this
     # product) and known_files, then the product row.  Deleting
@@ -1121,11 +1063,11 @@ def delete_known_product(db_id, pid):
     flash(f'Product "{title}" deleted.', 'success')
 
     if is_active and affected_ef_ids:
-        from ..services.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_queryset
+        from ..services.hash_rescan import queue_hashdb_recognition_backfill, rescan_hashes_for_queryset
         # Re-evaluate the unlinked files; they may match another active database.
         rescan_hashes_for_queryset(ExtractedFile.query.filter(ExtractedFile.id.in_(affected_ef_ids)))
-        if enable_recognition and pre_delete_partition_ids:
-            queue_product_recognition_for_partitions(pre_delete_partition_ids)
+        if enable_recognition:
+            queue_hashdb_recognition_backfill(database)
 
     return _route_redirect('view', id=db_id)
 
@@ -1170,11 +1112,10 @@ def add_known_file(db_id, pid):
     db.session.commit()
     flash(f'File "{filename}" added to "{product.title}".', 'success')
     if product.database.is_active:
-        from ..services.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_known_file
+        from ..services.hash_rescan import queue_hashdb_recognition_backfill, rescan_hashes_for_known_file
         rescan_hashes_for_known_file(kf)
         if product.database.enable_product_recognition:
-            partition_ids = _partition_ids_for_hashes(kf.md5, kf.sha1, kf.file_size)
-            queue_product_recognition_for_partitions(partition_ids)
+            queue_hashdb_recognition_backfill(product.database)
     return redirect(url_for(f'{ROUTENAME}.view_product', id=db_id, pid=pid))
 
 
@@ -1204,7 +1145,7 @@ def edit_known_file(db_id, pid, fid):
     flash(f'File "{kf.filename}" updated.', 'success')
     if is_active:
         from ..services.hash_rescan import (
-            queue_product_recognition_for_partitions,
+            queue_hashdb_recognition_backfill,
             rescan_hashes_for_known_file,
             rescan_links_for_known_file_id,
         )
@@ -1213,8 +1154,7 @@ def edit_known_file(db_id, pid, fid):
         rescan_links_for_known_file_id(kf_id)
         rescan_hashes_for_known_file(kf)
         if enable_recognition:
-            partition_ids = _partition_ids_for_hashes(kf.md5, kf.sha1, kf.file_size)
-            queue_product_recognition_for_partitions(partition_ids)
+            queue_hashdb_recognition_backfill(kf.database)
     return redirect(url_for(f'{ROUTENAME}.view_product', id=db_id, pid=pid))
 
 
@@ -1238,17 +1178,6 @@ def delete_known_file(db_id, pid, fid):
         .filter(ExtractedFile.known_file_id == kf_id)
         .all()
     ]
-    if is_active and enable_recognition:
-        pre_delete_partition_ids = {
-            row[0] for row in
-            ExtractedFile.query
-            .with_entities(ExtractedFile.partition_id)
-            .filter(ExtractedFile.id.in_(affected_ef_ids))
-            .all()
-        } if affected_ef_ids else set()
-    else:
-        pre_delete_partition_ids = set()
-
     # Clear FK references before deletion to avoid constraint violation.
     if affected_ef_ids:
         ExtractedFile.query.filter(
@@ -1262,11 +1191,11 @@ def delete_known_file(db_id, pid, fid):
     flash(f'File "{filename}" deleted.', 'success')
 
     if is_active and affected_ef_ids:
-        from ..services.hash_rescan import queue_product_recognition_for_partitions, rescan_hashes_for_queryset
+        from ..services.hash_rescan import queue_hashdb_recognition_backfill, rescan_hashes_for_queryset
         # Re-evaluate unlinked files; they may match another active database.
         rescan_hashes_for_queryset(ExtractedFile.query.filter(ExtractedFile.id.in_(affected_ef_ids)))
-        if enable_recognition and pre_delete_partition_ids:
-            queue_product_recognition_for_partitions(pre_delete_partition_ids)
+        if enable_recognition:
+            queue_hashdb_recognition_backfill(database)
 
     return redirect(url_for(f'{ROUTENAME}.view_product', id=db_id, pid=pid))
 

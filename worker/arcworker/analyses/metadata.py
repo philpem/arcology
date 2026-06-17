@@ -239,7 +239,7 @@ def process_product_recognition(self, analysis: dict, artefact: dict, work_dir: 
         self.complete_analysis(analysis_id, summary='No extracted files in partition')
         return
 
-    # Build index: folder_path -> {hash_set, relative_path_map}
+    # Build index: folder_path -> {hash_set, hash membership sets, relative_path_map}
     # folder_path is the parent directory of each file (i.e. path up to last '/')
     # hash_set: set of (md5, sha1) tuples (lowercased)
     # path_map: relative_path_within_folder -> (md5, sha1)
@@ -256,12 +256,21 @@ def process_product_recognition(self, analysis: dict, artefact: dict, work_dir: 
             rel = path
 
         if folder not in folder_index:
-            folder_index[folder] = {'hashes': set(), 'path_map': {}}
+            folder_index[folder] = {
+                'hashes': set(),
+                'md5s': set(),
+                'sha1s': set(),
+                'path_map': {},
+            }
 
         md5 = (f.get('md5') or '').lower()
         sha1 = (f.get('sha1') or '').lower()
         if md5 or sha1:
             folder_index[folder]['hashes'].add((md5, sha1))
+            if md5:
+                folder_index[folder]['md5s'].add(md5)
+            if sha1:
+                folder_index[folder]['sha1s'].add(sha1)
             folder_index[folder]['path_map'][rel.lower()] = (md5, sha1)
 
     # Build hash -> candidate products so each folder only verifies products
@@ -291,6 +300,8 @@ def process_product_recognition(self, analysis: dict, artefact: dict, work_dir: 
 
     for folder, idx in folder_index.items():
         folder_hashes = idx['hashes']
+        folder_md5s = idx['md5s']
+        folder_sha1s = idx['sha1s']
         path_map = idx['path_map']
         candidate_product_ids = set()
         for md5, sha1 in folder_hashes:
@@ -333,10 +344,7 @@ def process_product_recognition(self, analysis: dict, artefact: dict, work_dir: 
                             (sha1 and file_sha1 == sha1)
                         )
                 else:
-                    matched = any(
-                        (md5 and h[0] == md5) or (sha1 and h[1] == sha1)
-                        for h in folder_hashes
-                    )
+                    matched = (md5 and md5 in folder_md5s) or (sha1 and sha1 in folder_sha1s)
 
                 if matched:
                     required_matched += 1
@@ -360,10 +368,7 @@ def process_product_recognition(self, analysis: dict, artefact: dict, work_dir: 
                         if (md5 and file_md5 == md5) or (sha1 and file_sha1 == sha1):
                             optional_matched += 1
                 else:
-                    if any(
-                        (md5 and h[0] == md5) or (sha1 and h[1] == sha1)
-                        for h in folder_hashes
-                    ):
+                    if (md5 and md5 in folder_md5s) or (sha1 and sha1 in folder_sha1s):
                         optional_matched += 1
 
             if not required_files and optional_matched == 0:

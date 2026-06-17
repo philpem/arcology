@@ -96,23 +96,29 @@ def process_hashdb_recognition(self, analysis: dict, artefact: dict, work_dir: P
     processed = 0
     matches = 0
     reporter = self.progress.start(label='Recognising products')
-    while True:
-        result = self.api.hashdb_recognition_step(
-            db_id,
-            last_product_id=last_product_id,
-        )
-        if result is None:
-            self.api.update_hashdb_recognition_status(
-                db_id, 'failed', error='HashDB recognition API call failed'
+    try:
+        while True:
+            result = self.api.hashdb_recognition_step(
+                db_id,
+                last_product_id=last_product_id,
             )
-            self.fail_analysis(analysis_id, 'HashDB recognition API call failed')
-            return
-        processed += int(result.get('processed') or 0)
-        matches += int(result.get('matches') or 0)
-        last_product_id = int(result.get('next_product_id') or last_product_id)
-        reporter.update(processed)
-        if result.get('done'):
-            break
+            if result is None:
+                self.api.update_hashdb_recognition_status(
+                    db_id, 'failed', error='HashDB recognition API call failed'
+                )
+                self.fail_analysis(analysis_id, 'HashDB recognition API call failed')
+                return
+            processed += int(result.get('processed') or 0)
+            matches += int(result.get('matches') or 0)
+            last_product_id = int(result.get('next_product_id') or last_product_id)
+            reporter.update(processed)
+            if result.get('done'):
+                break
+    except Exception as exc:
+        self.api.update_hashdb_recognition_status(
+            db_id, 'failed', error=str(exc)[:1000]
+        )
+        raise
 
     self.complete_analysis(
         analysis_id,

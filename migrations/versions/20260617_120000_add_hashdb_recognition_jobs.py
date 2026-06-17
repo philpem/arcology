@@ -48,6 +48,20 @@ def upgrade():
         'hash_databases',
         sa.Column('product_recognition_error', sa.Text(), nullable=True),
     )
+    op.execute(sa.text("""
+        DELETE FROM recognised_products
+        WHERE id NOT IN (
+            SELECT MIN(id)
+            FROM recognised_products
+            GROUP BY partition_id, product_id, folder_path
+        )
+    """))
+    op.create_index(
+        'uq_recognised_products_partition_product_folder',
+        'recognised_products',
+        ['partition_id', 'product_id', 'folder_path'],
+        unique=True,
+    )
 
     enabled_db_ids = [
         row[0] for row in bind.execute(sa.text(
@@ -96,6 +110,10 @@ def downgrade():
     op.drop_column('hash_databases', 'product_recognition_error')
     op.drop_column('hash_databases', 'product_recognition_updated_at')
     op.drop_column('hash_databases', 'product_recognition_status')
+    op.drop_index(
+        'uq_recognised_products_partition_product_folder',
+        table_name='recognised_products',
+    )
 
     if bind.dialect.name == 'postgresql':
         sa.Enum(*_RECOGNITION_STATUS, name='productrecognitionstatus').drop(

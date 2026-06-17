@@ -1231,6 +1231,13 @@ class RecognisedProduct(db.Model):
 
     __table_args__ = (
         Index("ix_recognised_products_partition_product", "partition_id", "product_id"),
+        Index(
+            "uq_recognised_products_partition_product_folder",
+            "partition_id",
+            "product_id",
+            "folder_path",
+            unique=True,
+        ),
     )
 
 
