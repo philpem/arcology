@@ -22,6 +22,7 @@ from cli.arccli.commands.hashdb_generate import (  # noqa: E402
     get_launched_set,
     local_uniqueness_failure,
     make_is_unique,
+    merge_identical_products,
     parse_artefact_label,
     parse_canonical_sources,
     parse_run_obey,
@@ -519,20 +520,109 @@ class TestCanonicalSources(unittest.TestCase):
         self.assertEqual(set(cands), {'!ArcFS'})
         self.assertEqual(sorted(cands['!ArcFS']), ['ArcFS 0.52', 'RiscCAD 8'])
 
-    def test_render_marks_golden_active_others_commented(self):
+    def test_render_marks_single_golden_active_others_commented(self):
         cands = {'!ArcFS': ['ArcFS 0.52', 'RiscCAD 8']}
         text = render_canonical_candidates(cands)
-        # The ArcFS-named artefact is the active (uncommented) rule.
+        # Exactly one base-prefix match -> that line is active.
         self.assertIn('\n!ArcFS    ArcFS 0\\.52\n', text)
         self.assertIn('\n#!ArcFS    RiscCAD 8\n', text)
-        # Round-trips through the parser.
         rules = parse_canonical_sources(text)
         self.assertIs(canonical_accepts(rules, '!ArcFS', 'ArcFS 0.52', ''), True)
         self.assertIs(canonical_accepts(rules, '!ArcFS', 'RiscCAD 8', ''), False)
 
+    def test_render_multiple_base_matches_all_commented(self):
+        # Both names start with the base "BCF" -> ambiguous -> comment all,
+        # so feeding it back unedited can't silently keep both copies.
+        cands = {'!BCF': ['BCF Cryptosystem, The - 25',
+                          'BCF Cryptosystem, The/BCF Cryptosystem. The - 29']}
+        text = render_canonical_candidates(cands)
+        active = [ln for ln in text.splitlines()
+                  if ln.startswith('!BCF')]
+        self.assertEqual(active, [], 'no line should be pre-activated when ambiguous')
+        self.assertIn('multiple possible golden sources', text)
+
+    def test_render_no_base_match_all_commented(self):
+        # App-dir name unrelated to product names (e.g. !Commander / 'Disc
+        # Commander', !AudioCtrl / 'AudioWorks') -> nothing pre-activated.
+        cands = {'!Commander': ['Disc Commander', 'Disc Commander 1.33'],
+                 '!AudioCtrl': ['AudioWorks', 'AudioWorks 1.30']}
+        text = render_canonical_candidates(cands)
+        active = [ln for ln in text.splitlines()
+                  if ln and not ln.startswith('#')]
+        self.assertEqual(active, [])
+
+    def test_render_hyphens_readable(self):
+        cands = {'!BCF': ['BCF Cryptosystem, The - 25']}
+        text = render_canonical_candidates(cands)
+        self.assertIn('BCF Cryptosystem, The - 25', text)  # not 'The \\- 25'
+
     def test_render_empty(self):
         text = render_canonical_candidates({})
         self.assertIn('no ambiguous applications', text)
+
+
+class TestMergeIdenticalProducts(unittest.TestCase):
+    def _prod(self, app, context, hashes, required=None):
+        # hashes: list of md5 strings; required: matching list of bools.
+        required = required or [True] + [False] * (len(hashes) - 1)
+        files = [{'md5': h, 'is_required': r}
+                 for h, r in zip(hashes, required, strict=True)]
+        return {'title': f'{app} - {context}', 'description': f'{app} - {context}',
+                'files': files, '_app_dir': app, '_context': context}
+
+    def test_identical_copies_merge_to_one(self):
+        # Equasor, identical content, bundled with Impression releases + standalone.
+        prods = [
+            self._prod('!Equasor', 'Impression Publisher 4.09', ['e1', 'e2']),
+            self._prod('!Equasor', 'Equasor 1.04', ['e1', 'e2']),
+            self._prod('!Equasor', 'Impression Style 3.05N', ['e1', 'e2']),
+        ]
+        out, merged = merge_identical_products(prods)
+        self.assertEqual(merged, 2)
+        self.assertEqual(len(out), 1)
+        # The standalone "Equasor ..." copy is chosen as the representative.
+        self.assertEqual(out[0]['_context'], 'Equasor 1.04')
+        self.assertIn('also in:', out[0]['description'])
+        self.assertIn('Impression Publisher 4.09', out[0]['description'])
+
+    def test_differing_content_kept_separate(self):
+        prods = [
+            self._prod('!Equasor', 'Equasor 1.04', ['v104']),
+            self._prod('!Equasor', 'Equasor 1.10', ['v110']),
+        ]
+        out, merged = merge_identical_products(prods)
+        self.assertEqual(merged, 0)
+        self.assertEqual(len(out), 2)
+
+    def test_different_apps_not_merged(self):
+        # Same hashes but different app-dir -> not merged.
+        prods = [
+            self._prod('!Foo', 'Foo 1', ['h']),
+            self._prod('!Bar', 'Bar 1', ['h']),
+        ]
+        out, merged = merge_identical_products(prods)
+        self.assertEqual(merged, 0)
+        self.assertEqual(len(out), 2)
+
+    def test_required_flag_part_of_fingerprint(self):
+        # Same hash but one marks it mandatory, the other optional -> distinct.
+        prods = [
+            self._prod('!Foo', 'Foo A', ['h'], required=[True]),
+            self._prod('!Foo', 'Foo B', ['h'], required=[False]),
+        ]
+        out, merged = merge_identical_products(prods)
+        self.assertEqual(merged, 0)
+        self.assertEqual(len(out), 2)
+
+    def test_order_preserved(self):
+        prods = [
+            self._prod('!A', 'A 1', ['a']),
+            self._prod('!Equasor', 'Impression Publisher 4.09', ['e']),
+            self._prod('!Equasor', 'Equasor 1.04', ['e']),
+            self._prod('!Z', 'Z 1', ['z']),
+        ]
+        out, _merged = merge_identical_products(prods)
+        self.assertEqual([p['_app_dir'] for p in out], ['!A', '!Equasor', '!Z'])
 
 
 class TestBuildProductFiles(unittest.TestCase):
