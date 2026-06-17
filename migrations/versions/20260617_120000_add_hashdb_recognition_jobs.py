@@ -5,6 +5,9 @@ Revises: 00006a3194e4
 Create Date: 2026-06-17 12:00:00 UTC
 """
 
+import json
+import uuid
+from datetime import datetime
 import sqlalchemy as sa
 from alembic import op
 
@@ -46,18 +49,55 @@ def upgrade():
         sa.Column('product_recognition_error', sa.Text(), nullable=True),
     )
 
+    enabled_db_ids = [
+        row[0] for row in bind.execute(sa.text(
+            "SELECT id FROM hash_databases WHERE enable_product_recognition = :enabled"
+        ), {'enabled': True})
+    ]
+    if enabled_db_ids:
+        op.execute(sa.text("""
+            UPDATE hash_databases
+            SET product_recognition_status = 'PENDING',
+                product_recognition_error = NULL
+            WHERE enable_product_recognition = :enabled
+        """), {'enabled': True})
+
+        analyses = sa.table(
+            'analyses',
+            sa.column('uuid', sa.String),
+            sa.column('artefact_id', sa.Integer),
+            sa.column('analysis_type', sa.String),
+            sa.column('status', sa.String),
+            sa.column('hints', sa.Text),
+            sa.column('created_at', sa.DateTime),
+            sa.column('priority', sa.Integer),
+        )
+        now = datetime.utcnow()
+        op.bulk_insert(analyses, [
+            {
+                'uuid': uuid.uuid4().hex,
+                'artefact_id': None,
+                'analysis_type': 'HASHDB_RECOGNITION',
+                'status': 'PENDING',
+                'hints': json.dumps({'database_id': db_id}, sort_keys=True),
+                'created_at': now,
+                'priority': 0,
+            }
+            for db_id in enabled_db_ids
+        ])
+
 
 def downgrade():
     bind = op.get_bind()
+    op.execute(sa.text(
+        "DELETE FROM analyses WHERE analysis_type IN "
+        "('HASHDB_LINK', 'HASHDB_RECOGNITION')"
+    ))
     op.drop_column('hash_databases', 'product_recognition_error')
     op.drop_column('hash_databases', 'product_recognition_updated_at')
     op.drop_column('hash_databases', 'product_recognition_status')
 
     if bind.dialect.name == 'postgresql':
-        op.execute(sa.text(
-            "DELETE FROM analyses WHERE analysis_type IN "
-            "('HASHDB_LINK', 'HASHDB_RECOGNITION')"
-        ))
         sa.Enum(*_RECOGNITION_STATUS, name='productrecognitionstatus').drop(
             bind, checkfirst=True
         )
