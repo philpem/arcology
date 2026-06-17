@@ -12,15 +12,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from cli.arccli.commands.hashdb_generate import (  # noqa: E402
     _product_context,
     _resolve_obey_path,
+    apply_canonical_filter,
     build_product_files,
     build_product_title,
+    canonical_accepts,
     classify_app_files,
+    collect_canonical_candidates,
     diagnose_no_mandatory,
     get_launched_set,
     local_uniqueness_failure,
     make_is_unique,
     parse_artefact_label,
+    parse_canonical_sources,
     parse_run_obey,
+    render_canonical_candidates,
 )
 
 
@@ -430,6 +435,104 @@ class TestDiagnoseNoMandatory(unittest.TestCase):
         m = {'m1': {('i', '!Foo')}}
         reason = diagnose_no_mandatory('!Foo', files, set(), self._unique(m))
         self.assertEqual(reason, 'known')
+
+
+class TestCanonicalSources(unittest.TestCase):
+    def test_parse_basic(self):
+        rules = parse_canonical_sources(
+            '# comment\n\n!ArcFS    ArcFS .*\nSerialDev  SerialDev .*\n')
+        self.assertEqual(set(rules), {'!arcfs', 'serialdev'})
+        self.assertEqual(len(rules['!arcfs']), 1)
+
+    def test_parse_regex_with_spaces(self):
+        rules = parse_canonical_sources('!System   RISC OS 3\\.(1[0-9]|7) .*\n')
+        self.assertTrue(rules['!system'][0].match('RISC OS 3.11 (Acorn)'))
+
+    def test_parse_repeated_app_dir_ored(self):
+        rules = parse_canonical_sources('!ArcFS ArcFS .*\n!ArcFS ArcFS+ .*\n')
+        self.assertEqual(len(rules['!arcfs']), 2)
+
+    def test_parse_malformed_line(self):
+        with self.assertRaises(ValueError):
+            parse_canonical_sources('!ArcFS\n')
+
+    def test_parse_invalid_regex(self):
+        with self.assertRaises(ValueError):
+            parse_canonical_sources('!ArcFS [unterminated\n')
+
+    def test_accepts_match(self):
+        rules = parse_canonical_sources('!ArcFS ArcFS .*\n')
+        # Golden artefact: accept.
+        self.assertIs(canonical_accepts(rules, '!ArcFS', 'ArcFS 0.52', 'ArcFS 0.52'),
+                      True)
+        # Bundled copy: reject.
+        self.assertIs(canonical_accepts(rules, '!ArcFS', 'RiscCAD 8', 'RiscCAD 8'),
+                      False)
+        # No rule: unaffected.
+        self.assertIsNone(canonical_accepts(rules, '!Draw', 'Draw 1.0', 'Draw 1.0'))
+
+    def test_accepts_case_insensitive_app_dir(self):
+        rules = parse_canonical_sources('!arcfs ArcFS .*\n')
+        self.assertIs(canonical_accepts(rules, '!ArcFS', 'ArcFS 0.52', ''), True)
+
+    def test_accepts_matches_either_clean_or_label(self):
+        rules = parse_canonical_sources('!ArcFS ArcFS 0\\.52.*\n')
+        # clean name doesn't match, but raw label does -> accept.
+        self.assertIs(
+            canonical_accepts(rules, '!ArcFS', 'ArcFS', 'ArcFS 0.52 (1994)'), True)
+
+    def _gathered(self):
+        # Two artefacts: the golden ArcFS distro and a bundled copy in RiscCAD.
+        return [{
+            'item': {'uuid': 'i'},
+            'artefact_results': [
+                {'clean_name': 'ArcFS 0.52', 'label': 'ArcFS 0.52',
+                 'app_dirs': {'!ArcFS': [_f('!ArcFS/!RunImage')],
+                              '!Boot': [_f('!Boot/!Run')]}},
+                {'clean_name': 'RiscCAD 8', 'label': 'RiscCAD 8',
+                 'app_dirs': {'!RiscCAD': [_f('!RiscCAD/!RunImage')],
+                              '!ArcFS': [_f('!ArcFS/!RunImage')]}},
+            ],
+        }]
+
+    def test_apply_filter_drops_non_canonical(self):
+        gathered = self._gathered()
+        rules = parse_canonical_sources('!ArcFS ArcFS .*\n')
+        dropped, matched = apply_canonical_filter(gathered, rules)
+        self.assertEqual(dropped, 1)            # the RiscCAD copy of !ArcFS
+        self.assertEqual(matched, {'!arcfs'})
+        ar0, ar1 = gathered[0]['artefact_results']
+        self.assertIn('!ArcFS', ar0['app_dirs'])   # golden kept
+        self.assertNotIn('!ArcFS', ar1['app_dirs'])  # bundled dropped
+        self.assertIn('!RiscCAD', ar1['app_dirs'])   # unruled app untouched
+
+    def test_apply_filter_reports_unmatched_rules(self):
+        gathered = self._gathered()
+        rules = parse_canonical_sources('!ArcFS ArcFS .*\n!Nonexist Foo .*\n')
+        _dropped, matched = apply_canonical_filter(gathered, rules)
+        self.assertEqual(sorted(set(rules) - matched), ['!nonexist'])
+
+    def test_collect_candidates_only_multi_artefact(self):
+        gathered = self._gathered()
+        cands = collect_canonical_candidates(gathered)
+        # !ArcFS is on both artefacts; the others on one each.
+        self.assertEqual(set(cands), {'!ArcFS'})
+        self.assertEqual(sorted(cands['!ArcFS']), ['ArcFS 0.52', 'RiscCAD 8'])
+
+    def test_render_marks_golden_active_others_commented(self):
+        cands = {'!ArcFS': ['ArcFS 0.52', 'RiscCAD 8']}
+        text = render_canonical_candidates(cands)
+        # The ArcFS-named artefact is the active (uncommented) rule.
+        self.assertIn('\n!ArcFS    ArcFS 0\\.52\n', text)
+        self.assertIn('\n#!ArcFS    RiscCAD 8\n', text)
+        # Round-trips through the parser.
+        rules = parse_canonical_sources(text)
+        self.assertIs(canonical_accepts(rules, '!ArcFS', 'ArcFS 0.52', ''), True)
+        self.assertIs(canonical_accepts(rules, '!ArcFS', 'RiscCAD 8', ''), False)
+
+    def test_render_empty(self):
+        text = render_canonical_candidates({})
+        self.assertIn('no ambiguous applications', text)
 
 
 class TestBuildProductFiles(unittest.TestCase):

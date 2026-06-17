@@ -282,6 +282,18 @@ def main():
 	                             'to be marked mandatory. Use when regenerating a database '
 	                             'whose own files are, by definition, already known — '
 	                             'otherwise every such application produces no mandatory file.')
+	hashdb_gen.add_argument('--canonical-sources', dest='canonical_sources', metavar='FILE',
+	                        help='Disambiguate apps that appear on multiple artefacts '
+	                             '(!ArcFS, !System, !Fonts, !Scrap, !Boot, SerialDev, ...). '
+	                             'A text file of "<app-dir> <regex>" rules; a copy is kept '
+	                             'only on an artefact whose product name/label matches the '
+	                             'regex, others are dropped. Generate a starting point with '
+	                             '--dump-canonical.')
+	hashdb_gen.add_argument('--dump-canonical', dest='dump_canonical', metavar='FILE',
+	                        help='Write an editable canonical-sources candidates file '
+	                             '(every application that appears on more than one artefact) '
+	                             'and exit without generating a database. Edit it, then pass '
+	                             'it back via --canonical-sources.')
 	hashdb_gen.add_argument('-j', '--jobs', type=int, default=8,
 	                        help='Concurrent API requests (default: 8; 1 = serial)')
 	hashdb_gen.add_argument('-v', '--verbose', action='store_true')
