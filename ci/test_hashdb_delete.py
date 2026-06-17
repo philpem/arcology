@@ -135,6 +135,91 @@ class TestHashdbDelete(unittest.TestCase):
         self.assertIsNone(ef_after.known_file_id)
         self.assertFalse(ef_after.is_known)
 
+    def test_delete_defers_relink_to_background_link_jobs(self):
+        # Deleting a database that had linked files queues a bounded HASHDB_LINK
+        # job for each *other* active database (so the unlinked files re-link in
+        # the background) instead of running a long inline rescan in the request.
+        import json
+        from arcology_shared.enums import ArtefactType
+        from myapp.database import (
+            Analysis,
+            AnalysisType,
+            Artefact,
+            ExtractedFile,
+            FilesystemType,
+            HashDatabase,
+            Item,
+            KnownFile,
+            KnownProduct,
+            Partition,
+            StorageDirectory,
+        )
+
+        db = self.db
+
+        # Two active databases; we delete the first.
+        victim = HashDatabase(name='Victim', is_active=True)
+        other = HashDatabase(name='Other', is_active=True)
+        inactive = HashDatabase(name='Inactive', is_active=False)
+        db.session.add_all([victim, other, inactive])
+        db.session.flush()
+        prod = KnownProduct(database_id=victim.id, title='!Foo')
+        db.session.add(prod)
+        db.session.flush()
+        kf = KnownFile(database_id=victim.id, product_id=prod.id,
+                       filename='!RunImage', md5='dd' * 16, file_size=7)
+        db.session.add(kf)
+        db.session.flush()
+
+        item = Item(name='coll')
+        db.session.add(item)
+        db.session.flush()
+        art = Artefact(item_id=item.id, label='Disc', artefact_type=ArtefactType.HFE,
+                       original_filename='d.ssd', storage_path='d.ssd',
+                       storage_directory=StorageDirectory.UPLOADS)
+        db.session.add(art)
+        db.session.flush()
+        part = Partition(artefact_id=art.id, partition_index=0, label='Main',
+                         filesystem=FilesystemType.DFS)
+        db.session.add(part)
+        db.session.flush()
+        db.session.add(ExtractedFile(
+            partition_id=part.id, path='!Foo/!RunImage', filename='!RunImage',
+            md5='dd' * 16, file_size=7, is_directory=False, is_known=True,
+            known_file_id=kf.id))
+        victim_id, other_id, inactive_id = victim.id, other.id, inactive.id
+        db.session.commit()
+
+        resp = self.client.post(f'/hashdb/{victim_id}/delete', follow_redirects=False)
+        self.assertIn(resp.status_code, (301, 302))
+        db.session.expire_all()
+
+        link_jobs = Analysis.query.filter_by(
+            analysis_type=AnalysisType.HASHDB_LINK, artefact_id=None).all()
+        linked_db_ids = {json.loads(a.hints)['database_id'] for a in link_jobs}
+        # A link job for the other active DB only — not the deleted one, not the
+        # inactive one.
+        self.assertEqual(linked_db_ids, {other_id})
+        self.assertNotIn(victim_id, linked_db_ids)
+        self.assertNotIn(inactive_id, linked_db_ids)
+
+    def test_delete_without_links_queues_no_relink(self):
+        from myapp.database import Analysis, AnalysisType, HashDatabase
+
+        db = self.db
+        victim = HashDatabase(name='Empty', is_active=True)
+        other = HashDatabase(name='Other', is_active=True)
+        db.session.add_all([victim, other])
+        db.session.commit()
+        victim_id = victim.id
+
+        resp = self.client.post(f'/hashdb/{victim_id}/delete', follow_redirects=False)
+        self.assertIn(resp.status_code, (301, 302))
+        # No extracted files were linked, so no background re-link is queued.
+        self.assertEqual(
+            Analysis.query.filter_by(analysis_type=AnalysisType.HASHDB_LINK).count(),
+            0)
+
     def test_delete_product_removes_recognitions_and_unlinks(self):
         # A ubiquitous product (e.g. !System) recognised in many partitions:
         # deleting it must remove all its recognised_products rows and known
@@ -215,6 +300,76 @@ class TestHashdbDelete(unittest.TestCase):
             self.assertIsNotNone(ef_after)
             self.assertIsNone(ef_after.known_file_id)
             self.assertFalse(ef_after.is_known)
+
+    def test_delete_cancels_own_pending_jobs(self):
+        # A queued relink/recognition backfill for this database is cancelled up
+        # front so the worker does not race the delete (which deadlocked).
+        from myapp.database import Analysis, AnalysisType, HashDatabase
+        from myapp.services.hash_rescan import (
+            queue_hashdb_link_job,
+            queue_hashdb_recognition_job,
+        )
+
+        db = self.db
+        victim = HashDatabase(name='Busy', is_active=True,
+                              enable_product_recognition=True)
+        other = HashDatabase(name='Bystander', is_active=True)
+        db.session.add_all([victim, other])
+        db.session.flush()
+        victim_id, other_id = victim.id, other.id
+        queue_hashdb_link_job(victim_id)
+        queue_hashdb_recognition_job(victim_id)
+        # A pending job for an unrelated database must survive.
+        queue_hashdb_link_job(other_id)
+        db.session.commit()
+
+        resp = self.client.post(f'/hashdb/{victim_id}/delete', follow_redirects=False)
+        self.assertIn(resp.status_code, (301, 302))
+        db.session.expire_all()
+
+        # The deleted database's pending jobs are gone; the bystander's remains.
+        self.assertEqual(
+            Analysis.query.filter(
+                Analysis.hints.like(f'%"database_id": {victim_id}%')).count(),
+            0)
+        self.assertEqual(
+            Analysis.query.filter_by(
+                analysis_type=AnalysisType.HASHDB_LINK).filter(
+                Analysis.hints.like(f'%"database_id": {other_id}%')).count(),
+            1)
+
+    def test_delete_retries_on_deadlock(self):
+        # A deadlock abort mid-delete is retried rather than surfaced as a 500.
+        from unittest.mock import patch
+        from sqlalchemy.exc import OperationalError
+        import myapp.blueprints.hashdb as hashdb_bp
+        from myapp.database import HashDatabase
+
+        db = self.db
+        victim = HashDatabase(name='Deadlocky', is_active=True)
+        db.session.add(victim)
+        db.session.commit()
+        victim_id = victim.id
+
+        real = hashdb_bp._delete_hashdb_rows
+        calls = {'n': 0}
+
+        class _Orig(Exception):
+            pgcode = '40P01'  # deadlock_detected
+
+        def flaky(db_id):
+            calls['n'] += 1
+            if calls['n'] == 1:
+                raise OperationalError('DELETE ...', {}, _Orig())
+            return real(db_id)
+
+        with patch.object(hashdb_bp, '_delete_hashdb_rows', side_effect=flaky):
+            resp = self.client.post(f'/hashdb/{victim_id}/delete',
+                                    follow_redirects=False)
+        self.assertIn(resp.status_code, (301, 302))
+        self.assertEqual(calls['n'], 2)  # failed once, retried, succeeded
+        db.session.expire_all()
+        self.assertIsNone(db.session.get(HashDatabase, victim_id))
 
 
 if __name__ == '__main__':
