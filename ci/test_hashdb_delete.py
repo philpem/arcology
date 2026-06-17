@@ -1,20 +1,30 @@
 """
-Regression test: deleting a hash database must be a small number of bulk SQL
-statements, not an ORM cascade that loads every KnownFile/KnownProduct row and
-walks an N+1 query over the product->files relationship (GitHub issue #618,
-"Deleting hash databases takes a very long time").
+Deleting a hash database is offloaded to a worker-driven bounded-step
+HASHDB_DELETE job (GitHub issue #618, "Deleting hash databases takes a very
+long time", and the follow-up that the inline bulk delete still hung the web
+thread on a collection-scale database).
 
-Verifies that delete():
-  - removes the database, its products, its known files, and any
-    recognised_products rows that referenced those products (DB-level cascade);
-  - unlinks ExtractedFile rows that pointed at the deleted known files
-    (known_file_id -> NULL, is_known -> False) rather than orphaning them.
+The web delete route now only soft-deletes (is_deleting=True, is_active=False)
+and queues the reap job; the worker drives the /api/hash-databases/<id>/delete-step
+endpoint to drain rows in small, lock-friendly batches.
+
+Verifies:
+  - delete() returns immediately, marks the DB is_deleting/inactive, cancels its
+    own pending link/recognition jobs, and queues exactly one HASHDB_DELETE job;
+  - a soft-deleting DB is hidden from the index, the REST list, and matching;
+  - driving delete-step to completion removes the database, its products, its
+    known files, and the recognised_products that referenced them, unlinks the
+    ExtractedFile rows that pointed at the deleted known files, and queues a
+    HASHDB_LINK relink for every other active database;
+  - the step is worker-only and its cursor strictly advances;
+  - per-product deletion (a separate route) is unchanged.
 
 Run:
     SQLALCHEMY_DATABASE_URI=sqlite:///:memory: SECRET_KEY=test WORKER_API_KEY=test \\
         python -m unittest ci.test_hashdb_delete -v
 """
 
+import json
 import os
 import sys
 import unittest
@@ -27,8 +37,10 @@ os.environ.setdefault('SQLALCHEMY_DATABASE_URI', 'sqlite:///:memory:')
 os.environ.setdefault('SECRET_KEY', 'ci-hashdb-delete-test-key')
 os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 
+_WORKER_KEY = os.environ['WORKER_API_KEY']
 
-class TestHashdbDelete(unittest.TestCase):
+
+class _HashdbDeleteBase(unittest.TestCase):
 
     def setUp(self):
         from myapp.app import create_app
@@ -46,7 +58,7 @@ class TestHashdbDelete(unittest.TestCase):
 
         from myapp.database import User, UserPermission
         user = User(username='deleter', password_hash='x',
-                    permission=UserPermission.READ_WRITE)
+                    permission=UserPermission.READ_WRITE, can_use_api=True)
         db.session.add(user)
         db.session.commit()
         self.uid = user.id
@@ -59,7 +71,28 @@ class TestHashdbDelete(unittest.TestCase):
         self.db.drop_all()
         self.ctx.pop()
 
-    def test_delete_removes_cascade_and_unlinks_extracted_files(self):
+    def _drive_delete_step(self, db_id, max_steps=200):
+        """Drive the worker delete-step to completion; return the final body."""
+        cursor = 0
+        last = None
+        for _ in range(max_steps):
+            resp = self.client.post(
+                f'/api/hash-databases/{db_id}/delete-step',
+                json={'cursor': cursor}, headers={'X-API-Key': _WORKER_KEY})
+            self.assertEqual(resp.status_code, 200, resp.data)
+            last = resp.get_json()
+            if last['done']:
+                return last
+            self.assertGreater(last['cursor'], cursor,
+                               'delete-step cursor must strictly advance')
+            cursor = last['cursor']
+        self.fail('delete-step did not finish within max_steps')
+
+    def _seed_linked_db(self, name='Arcarc Apps', md5='bb' * 16, n_files=1,
+                        with_recognition=True):
+        """Create a HashDatabase with a product, known file(s), and an extracted
+        file linked to each, plus a recognised_products row.  Returns (db_id,
+        [extracted_file_ids])."""
         from arcology_shared.enums import ArtefactType
         from myapp.database import (
             Artefact,
@@ -73,28 +106,21 @@ class TestHashdbDelete(unittest.TestCase):
             RecognisedProduct,
             StorageDirectory,
         )
-
         db = self.db
 
-        hdb = HashDatabase(name='Arcarc Apps', is_active=True)
+        hdb = HashDatabase(name=name, is_active=True,
+                           enable_product_recognition=with_recognition)
         db.session.add(hdb)
         db.session.flush()
-
         prod = KnownProduct(database_id=hdb.id, title='!Foo')
         db.session.add(prod)
         db.session.flush()
 
-        kf = KnownFile(database_id=hdb.id, product_id=prod.id,
-                       filename='!RunImage', md5='bb' * 16, file_size=123)
-        db.session.add(kf)
-        db.session.flush()
-
-        # Collection objects that reference the database's rows.
-        item = Item(name='coll')
+        item = Item(name='coll-' + name)
         db.session.add(item)
         db.session.flush()
         art = Artefact(item_id=item.id, label='Disc', artefact_type=ArtefactType.HFE,
-                       original_filename='d.ssd', storage_path='d.ssd',
+                       original_filename='d.ssd', storage_path=f'{name}.ssd',
                        storage_directory=StorageDirectory.UPLOADS)
         db.session.add(art)
         db.session.flush()
@@ -103,127 +129,241 @@ class TestHashdbDelete(unittest.TestCase):
         db.session.add(part)
         db.session.flush()
 
-        ef = ExtractedFile(partition_id=part.id, path='!Foo/!RunImage',
-                           filename='!RunImage', md5='bb' * 16, file_size=123,
-                           is_directory=False, is_known=True, known_file_id=kf.id)
-        db.session.add(ef)
-        rp = RecognisedProduct(partition_id=part.id, product_id=prod.id,
-                               folder_path='!Foo')
-        db.session.add(rp)
-        db.session.flush()
-
-        db_id, ef_id = hdb.id, ef.id
+        ef_ids = []
+        for i in range(n_files):
+            file_md5 = md5 if n_files == 1 else f'{i:032x}'
+            kf = KnownFile(database_id=hdb.id, product_id=prod.id,
+                           filename=f'!RunImage{i}', md5=file_md5, file_size=123)
+            db.session.add(kf)
+            db.session.flush()
+            ef = ExtractedFile(partition_id=part.id, path=f'!Foo/!RunImage{i}',
+                               filename=f'!RunImage{i}', md5=file_md5, file_size=123,
+                               is_directory=False, is_known=True, known_file_id=kf.id)
+            db.session.add(ef)
+            db.session.flush()
+            ef_ids.append(ef.id)
+        db.session.add(RecognisedProduct(partition_id=part.id, product_id=prod.id,
+                                         folder_path='!Foo'))
         db.session.commit()
+        return hdb.id, ef_ids
+
+
+class TestHashdbDeleteRoute(_HashdbDeleteBase):
+
+    def test_delete_soft_marks_and_queues_job(self):
+        from myapp.database import (
+            Analysis,
+            AnalysisStatus,
+            AnalysisType,
+            HashDatabase,
+        )
+        db_id, _ = self._seed_linked_db()
 
         resp = self.client.post(f'/hashdb/{db_id}/delete', follow_redirects=False)
         self.assertIn(resp.status_code, (301, 302))
+        self.db.session.expire_all()
 
-        # Drop any identity-map cache so we re-read committed state from the DB.
+        # The row is NOT gone yet — it is soft-deleted and hidden from matching.
+        hdb = self.db.session.get(HashDatabase, db_id)
+        self.assertIsNotNone(hdb)
+        self.assertTrue(hdb.is_deleting)
+        self.assertFalse(hdb.is_active)
+
+        # Exactly one HASHDB_DELETE reap job is queued for this DB.
+        jobs = Analysis.query.filter_by(
+            analysis_type=AnalysisType.HASHDB_DELETE, artefact_id=None,
+            status=AnalysisStatus.PENDING).all()
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(json.loads(jobs[0].hints)['database_id'], db_id)
+
+    def test_delete_is_idempotent_on_repeat(self):
+        from myapp.database import Analysis, AnalysisType
+        db_id, _ = self._seed_linked_db()
+
+        self.client.post(f'/hashdb/{db_id}/delete')
+        self.client.post(f'/hashdb/{db_id}/delete')
+        self.db.session.expire_all()
+        self.assertEqual(
+            Analysis.query.filter_by(
+                analysis_type=AnalysisType.HASHDB_DELETE).count(), 1)
+
+    def test_delete_cancels_own_pending_link_recognition_jobs(self):
+        from myapp.database import Analysis, AnalysisType, HashDatabase
+        from myapp.services.hash_rescan import (
+            queue_hashdb_link_job,
+            queue_hashdb_recognition_job,
+        )
+        db = self.db
+        victim = HashDatabase(name='Busy', is_active=True,
+                              enable_product_recognition=True)
+        other = HashDatabase(name='Bystander', is_active=True)
+        db.session.add_all([victim, other])
+        db.session.flush()
+        victim_id, other_id = victim.id, other.id
+        queue_hashdb_link_job(victim_id)
+        queue_hashdb_recognition_job(victim_id)
+        queue_hashdb_link_job(other_id)
+        db.session.commit()
+
+        resp = self.client.post(f'/hashdb/{victim_id}/delete')
+        self.assertIn(resp.status_code, (301, 302))
         db.session.expire_all()
 
-        # Database and all its dependent rows are gone.
-        self.assertIsNone(db.session.get(HashDatabase, db_id))
+        # The victim's link/recognition backfills are cancelled (only its
+        # HASHDB_DELETE job remains); the bystander's link job survives.
         self.assertEqual(
-            db.session.query(KnownFile).filter_by(database_id=db_id).count(), 0)
+            Analysis.query.filter(
+                Analysis.analysis_type.in_(
+                    [AnalysisType.HASHDB_LINK, AnalysisType.HASHDB_RECOGNITION]),
+                Analysis.hints.like(f'%"database_id": {victim_id}%')).count(),
+            0)
         self.assertEqual(
-            db.session.query(KnownProduct).filter_by(database_id=db_id).count(), 0)
-        self.assertEqual(db.session.query(RecognisedProduct).count(), 0)
+            Analysis.query.filter_by(
+                analysis_type=AnalysisType.HASHDB_LINK).filter(
+                Analysis.hints.like(f'%"database_id": {other_id}%')).count(),
+            1)
 
-        # The extracted file survives, but is unlinked and no longer "known".
-        ef_after = db.session.get(ExtractedFile, ef_id)
-        self.assertIsNotNone(ef_after)
-        self.assertIsNone(ef_after.known_file_id)
-        self.assertFalse(ef_after.is_known)
 
-    def test_delete_defers_relink_to_background_link_jobs(self):
-        # Deleting a database that had linked files queues a bounded HASHDB_LINK
-        # job for each *other* active database (so the unlinked files re-link in
-        # the background) instead of running a long inline rescan in the request.
-        import json
-        from arcology_shared.enums import ArtefactType
+class TestHashdbDeleteStep(_HashdbDeleteBase):
+
+    def test_step_completes_cascade_and_unlinks(self):
         from myapp.database import (
             Analysis,
             AnalysisType,
-            Artefact,
             ExtractedFile,
-            FilesystemType,
             HashDatabase,
-            Item,
             KnownFile,
             KnownProduct,
-            Partition,
-            StorageDirectory,
+            RecognisedProduct,
         )
-
+        from myapp.database import HashDatabase as HDB
         db = self.db
 
-        # Two active databases; we delete the first.
-        victim = HashDatabase(name='Victim', is_active=True)
-        other = HashDatabase(name='Other', is_active=True)
-        inactive = HashDatabase(name='Inactive', is_active=False)
-        db.session.add_all([victim, other, inactive])
-        db.session.flush()
-        prod = KnownProduct(database_id=victim.id, title='!Foo')
-        db.session.add(prod)
-        db.session.flush()
-        kf = KnownFile(database_id=victim.id, product_id=prod.id,
-                       filename='!RunImage', md5='dd' * 16, file_size=7)
-        db.session.add(kf)
-        db.session.flush()
-
-        item = Item(name='coll')
-        db.session.add(item)
-        db.session.flush()
-        art = Artefact(item_id=item.id, label='Disc', artefact_type=ArtefactType.HFE,
-                       original_filename='d.ssd', storage_path='d.ssd',
-                       storage_directory=StorageDirectory.UPLOADS)
-        db.session.add(art)
-        db.session.flush()
-        part = Partition(artefact_id=art.id, partition_index=0, label='Main',
-                         filesystem=FilesystemType.DFS)
-        db.session.add(part)
-        db.session.flush()
-        db.session.add(ExtractedFile(
-            partition_id=part.id, path='!Foo/!RunImage', filename='!RunImage',
-            md5='dd' * 16, file_size=7, is_directory=False, is_known=True,
-            known_file_id=kf.id))
-        victim_id, other_id, inactive_id = victim.id, other.id, inactive.id
+        db_id, ef_ids = self._seed_linked_db(n_files=4, with_recognition=False)
+        # A second active DB so we can assert a relink job is queued for it.
+        other = HDB(name='Other', is_active=True)
+        db.session.add(other)
         db.session.commit()
+        other_id = other.id
 
-        resp = self.client.post(f'/hashdb/{victim_id}/delete', follow_redirects=False)
-        self.assertIn(resp.status_code, (301, 302))
+        # Soft-delete, then drive the reap job to completion.
+        self.client.post(f'/hashdb/{db_id}/delete')
+        final = self._drive_delete_step(db_id)
         db.session.expire_all()
 
+        self.assertTrue(final['done'])
+        self.assertIsNone(db.session.get(HashDatabase, db_id))
+        self.assertEqual(
+            KnownFile.query.filter_by(database_id=db_id).count(), 0)
+        self.assertEqual(
+            KnownProduct.query.filter_by(database_id=db_id).count(), 0)
+        self.assertEqual(RecognisedProduct.query.count(), 0)
+
+        for ef_id in ef_ids:
+            ef = db.session.get(ExtractedFile, ef_id)
+            self.assertIsNotNone(ef)
+            self.assertIsNone(ef.known_file_id)
+            self.assertFalse(ef.is_known)
+
+        # A relink job is queued for the other active DB (so freed files re-match).
         link_jobs = Analysis.query.filter_by(
             analysis_type=AnalysisType.HASHDB_LINK, artefact_id=None).all()
-        linked_db_ids = {json.loads(a.hints)['database_id'] for a in link_jobs}
-        # A link job for the other active DB only — not the deleted one, not the
-        # inactive one.
-        self.assertEqual(linked_db_ids, {other_id})
-        self.assertNotIn(victim_id, linked_db_ids)
-        self.assertNotIn(inactive_id, linked_db_ids)
+        linked = {json.loads(a.hints)['database_id'] for a in link_jobs}
+        self.assertEqual(linked, {other_id})
 
-    def test_delete_without_links_queues_no_relink(self):
-        from myapp.database import Analysis, AnalysisType, HashDatabase
+    def test_step_requires_worker(self):
+        from myapp.database import ApiKey, ApiKeyPermission
+        db_id, _ = self._seed_linked_db()
+        self.client.post(f'/hashdb/{db_id}/delete')
+        # A valid non-worker read/write API key authenticates but is not the
+        # worker -> the worker-only gate returns 403.
+        key, raw = ApiKey.create(self.uid, 'rw-key', ApiKeyPermission.READ_WRITE)
+        self.db.session.add(key)
+        self.db.session.commit()
+        resp = self.client.post(f'/api/hash-databases/{db_id}/delete-step',
+                                json={'cursor': 0}, headers={'X-API-Key': raw})
+        self.assertEqual(resp.status_code, 403, resp.data)
 
-        db = self.db
-        victim = HashDatabase(name='Empty', is_active=True)
-        other = HashDatabase(name='Other', is_active=True)
-        db.session.add_all([victim, other])
-        db.session.commit()
-        victim_id = victim.id
+    def test_step_cursor_advances_under_tight_deadline(self):
+        db_id, _ = self._seed_linked_db(n_files=6, with_recognition=False)
+        self.client.post(f'/hashdb/{db_id}/delete')
+        # A zero wall-clock budget returns done=False with an advanced cursor.
+        self.app.config['WORKER_STEP_DEADLINE_SECONDS'] = 0
+        try:
+            resp = self.client.post(f'/api/hash-databases/{db_id}/delete-step',
+                                    json={'cursor': 0},
+                                    headers={'X-API-Key': _WORKER_KEY})
+        finally:
+            self.app.config['WORKER_STEP_DEADLINE_SECONDS'] = 20
+        self.assertEqual(resp.status_code, 200, resp.data)
+        body = resp.get_json()
+        self.assertFalse(body['done'])
+        self.assertGreater(body['cursor'], 0)
 
-        resp = self.client.post(f'/hashdb/{victim_id}/delete', follow_redirects=False)
-        self.assertIn(resp.status_code, (301, 302))
-        # No extracted files were linked, so no background re-link is queued.
-        self.assertEqual(
-            Analysis.query.filter_by(analysis_type=AnalysisType.HASHDB_LINK).count(),
-            0)
+    def test_zero_deadline_still_makes_progress_to_completion(self):
+        # Regression: a non-positive WORKER_STEP_DEADLINE_SECONDS must not make
+        # the step return done=False with zero work forever (the advancing
+        # cursor would hide the stall from run_step_loop).  Each call does at
+        # least one chunk of work, so driving the step terminates.
+        from myapp.database import HashDatabase
+        db_id, _ = self._seed_linked_db(n_files=6, with_recognition=False)
+        self.client.post(f'/hashdb/{db_id}/delete')
+        self.app.config['WORKER_STEP_DEADLINE_SECONDS'] = 0
+        try:
+            final = self._drive_delete_step(db_id)
+        finally:
+            self.app.config['WORKER_STEP_DEADLINE_SECONDS'] = 20
+        self.assertTrue(final['done'])
+        self.db.session.expire_all()
+        self.assertIsNone(self.db.session.get(HashDatabase, db_id))
+
+
+class TestHashdbDeleteHidesAndExcludes(_HashdbDeleteBase):
+
+    def test_soft_deleting_hidden_from_index(self):
+        from flask import template_rendered
+        db_id, _ = self._seed_linked_db(name='Visible')
+        self.client.post(f'/hashdb/{db_id}/delete')
+
+        captured = []
+        template_rendered.connect(
+            lambda sender, template, context, **k: captured.append(context),
+            self.app, weak=False)
+        r = self.client.get('/hashdb/')
+        self.assertEqual(r.status_code, 200, r.data)
+        listed = {d.id for d in captured[-1]['databases']}
+        self.assertNotIn(db_id, listed)
+
+    def test_soft_deleting_hidden_from_api_list(self):
+        db_id, _ = self._seed_linked_db(name='ApiVisible')
+        self.client.post(f'/hashdb/{db_id}/delete')
+        resp = self.client.get('/api/hash-databases',
+                               headers={'X-API-Key': _WORKER_KEY})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        ids = {row['id'] for row in resp.get_json()}
+        self.assertNotIn(db_id, ids)
+
+    def test_soft_deleting_route_is_404(self):
+        db_id, _ = self._seed_linked_db(name='Gone')
+        self.client.post(f'/hashdb/{db_id}/delete')
+        self.assertEqual(self.client.get(f'/hashdb/{db_id}').status_code, 404)
+
+    def test_soft_deleting_excluded_from_matching(self):
+        # is_active=False (set alongside is_deleting) drops the DB out of the
+        # active-known-file matching query for free.
+        from myapp.services.hash_rescan import find_known_file
+        db_id, _ = self._seed_linked_db(name='NoMatch', md5='ee' * 16)
+        self.assertIsNotNone(find_known_file(md5='ee' * 16))  # matches before
+        self.client.post(f'/hashdb/{db_id}/delete')
+        self.db.session.expire_all()
+        self.assertIsNone(find_known_file(md5='ee' * 16))      # excluded after
+
+
+class TestHashdbProductDeleteUnchanged(_HashdbDeleteBase):
 
     def test_delete_product_removes_recognitions_and_unlinks(self):
-        # A ubiquitous product (e.g. !System) recognised in many partitions:
-        # deleting it must remove all its recognised_products rows and known
-        # files, and unlink the extracted files that referenced them.
+        # The per-product delete route is independent of the async DB delete and
+        # still removes a product's recognitions / known files inline.
         from arcology_shared.enums import ArtefactType
         from myapp.database import (
             Artefact,
@@ -237,9 +377,7 @@ class TestHashdbDelete(unittest.TestCase):
             RecognisedProduct,
             StorageDirectory,
         )
-
         db = self.db
-
         hdb = HashDatabase(name='Apps', is_active=True,
                            enable_product_recognition=False)
         db.session.add(hdb)
@@ -262,7 +400,6 @@ class TestHashdbDelete(unittest.TestCase):
         db.session.flush()
 
         ef_ids = []
-        # The product is recognised across many partitions.
         for i in range(5):
             part = Partition(artefact_id=art.id, partition_index=i, label=f'P{i}',
                              filesystem=FilesystemType.DFS)
@@ -278,7 +415,6 @@ class TestHashdbDelete(unittest.TestCase):
             db.session.add(ef)
             db.session.flush()
             ef_ids.append(ef.id)
-
         db_id, pid = hdb.id, prod.id
         db.session.commit()
 
@@ -289,87 +425,15 @@ class TestHashdbDelete(unittest.TestCase):
 
         self.assertIsNone(db.session.get(KnownProduct, pid))
         self.assertEqual(
-            db.session.query(KnownFile).filter_by(product_id=pid).count(), 0)
+            KnownFile.query.filter_by(product_id=pid).count(), 0)
         self.assertEqual(
-            db.session.query(RecognisedProduct).filter_by(product_id=pid).count(), 0)
-        # The database itself is untouched.
+            RecognisedProduct.query.filter_by(product_id=pid).count(), 0)
         self.assertIsNotNone(db.session.get(HashDatabase, db_id))
-        # Extracted files survive but are unlinked.
         for ef_id in ef_ids:
-            ef_after = db.session.get(ExtractedFile, ef_id)
-            self.assertIsNotNone(ef_after)
-            self.assertIsNone(ef_after.known_file_id)
-            self.assertFalse(ef_after.is_known)
-
-    def test_delete_cancels_own_pending_jobs(self):
-        # A queued relink/recognition backfill for this database is cancelled up
-        # front so the worker does not race the delete (which deadlocked).
-        from myapp.database import Analysis, AnalysisType, HashDatabase
-        from myapp.services.hash_rescan import (
-            queue_hashdb_link_job,
-            queue_hashdb_recognition_job,
-        )
-
-        db = self.db
-        victim = HashDatabase(name='Busy', is_active=True,
-                              enable_product_recognition=True)
-        other = HashDatabase(name='Bystander', is_active=True)
-        db.session.add_all([victim, other])
-        db.session.flush()
-        victim_id, other_id = victim.id, other.id
-        queue_hashdb_link_job(victim_id)
-        queue_hashdb_recognition_job(victim_id)
-        # A pending job for an unrelated database must survive.
-        queue_hashdb_link_job(other_id)
-        db.session.commit()
-
-        resp = self.client.post(f'/hashdb/{victim_id}/delete', follow_redirects=False)
-        self.assertIn(resp.status_code, (301, 302))
-        db.session.expire_all()
-
-        # The deleted database's pending jobs are gone; the bystander's remains.
-        self.assertEqual(
-            Analysis.query.filter(
-                Analysis.hints.like(f'%"database_id": {victim_id}%')).count(),
-            0)
-        self.assertEqual(
-            Analysis.query.filter_by(
-                analysis_type=AnalysisType.HASHDB_LINK).filter(
-                Analysis.hints.like(f'%"database_id": {other_id}%')).count(),
-            1)
-
-    def test_delete_retries_on_deadlock(self):
-        # A deadlock abort mid-delete is retried rather than surfaced as a 500.
-        from unittest.mock import patch
-        from sqlalchemy.exc import OperationalError
-        import myapp.blueprints.hashdb as hashdb_bp
-        from myapp.database import HashDatabase
-
-        db = self.db
-        victim = HashDatabase(name='Deadlocky', is_active=True)
-        db.session.add(victim)
-        db.session.commit()
-        victim_id = victim.id
-
-        real = hashdb_bp._delete_hashdb_rows
-        calls = {'n': 0}
-
-        class _Orig(Exception):
-            pgcode = '40P01'  # deadlock_detected
-
-        def flaky(db_id):
-            calls['n'] += 1
-            if calls['n'] == 1:
-                raise OperationalError('DELETE ...', {}, _Orig())
-            return real(db_id)
-
-        with patch.object(hashdb_bp, '_delete_hashdb_rows', side_effect=flaky):
-            resp = self.client.post(f'/hashdb/{victim_id}/delete',
-                                    follow_redirects=False)
-        self.assertIn(resp.status_code, (301, 302))
-        self.assertEqual(calls['n'], 2)  # failed once, retried, succeeded
-        db.session.expire_all()
-        self.assertIsNone(db.session.get(HashDatabase, victim_id))
+            ef = db.session.get(ExtractedFile, ef_id)
+            self.assertIsNotNone(ef)
+            self.assertIsNone(ef.known_file_id)
+            self.assertFalse(ef.is_known)
 
 
 if __name__ == '__main__':

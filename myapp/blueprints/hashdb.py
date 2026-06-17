@@ -8,12 +8,10 @@ import csv
 import io
 import json
 import re
-import time
-from flask import Blueprint, Response, flash, jsonify, redirect, render_template, request, url_for
+from flask import Blueprint, Response, abort, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
 from sqlalchemy import func, or_
-from sqlalchemy.exc import OperationalError
 from wtforms import BooleanField, SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Length, Optional
 from ..database import (
@@ -36,7 +34,7 @@ from ..database import (
 )
 from ..extensions import db
 from ..permissions import require_permission
-from ..utils.db_helpers import is_deadlock, model_choice_list, normalize_hash
+from ..utils.db_helpers import model_choice_list, normalize_hash
 from ..utils.web_forms import redirect_local
 from ..visibility import artefact_visibility_clause
 
@@ -46,6 +44,20 @@ ROUTENAME = __name__.replace('.', '_')
 def _route_redirect(endpoint: str, **values):
     """Redirect to a local HashDB endpoint."""
     return redirect_local(ROUTENAME, endpoint, **values)
+
+
+def _get_database_or_404(id):
+    """Fetch a HashDatabase, treating a soft-deleting one as already gone.
+
+    A database marked is_deleting is being reaped by a background worker job
+    and must not be viewed, edited, exported, or re-linked — its rows are
+    disappearing underneath any such operation.  It is also hidden from
+    listings, so 404 is the consistent "no longer here" response.
+    """
+    database = db.get_or_404(HashDatabase, id)
+    if database.is_deleting:
+        abort(404)
+    return database
 
 
 def _view_anchor(db_id: int, anchor: str | None = None):
@@ -182,7 +194,12 @@ def _queue_hash_rescan_jobs():
 @blueprint.route('/')
 @login_required
 def index():
-    databases = HashDatabase.query.order_by(func.lower(HashDatabase.name)).all()
+    databases = (
+        HashDatabase.query
+        .filter(HashDatabase.is_deleting.is_(False))
+        .order_by(func.lower(HashDatabase.name))
+        .all()
+    )
     rescan_job = HashRescanJob.query.order_by(HashRescanJob.id.desc()).first()
     pending_rescan = Analysis.query.filter(
         Analysis.analysis_type == AnalysisType.HASH_RESCAN,
@@ -238,7 +255,7 @@ def view(id):
         resolve_per_page,
     )
 
-    database = db.get_or_404(HashDatabase, id)
+    database = _get_database_or_404(id)
 
     # Products are paginated (a NIST-scale database has hundreds of thousands):
     # only the current page's rows are loaded, and the per-product file tables
@@ -350,7 +367,7 @@ def product_files(id, pid):
     bytes for a product's (potentially huge) file list are only produced on
     demand rather than for every product on initial page load.
     """
-    db.get_or_404(HashDatabase, id)
+    _get_database_or_404(id)
     product = KnownProduct.query.filter_by(id=pid, database_id=id).first_or_404()
     files = (
         KnownFile.query
@@ -387,7 +404,7 @@ SEARCH_LIMIT = 200
 @login_required
 def search(id):
     """Search the collection for artefacts containing files from this database."""
-    database = db.get_or_404(HashDatabase, id)
+    database = _get_database_or_404(id)
 
     product_id = request.args.get('product_id', type=int)
     file_id = request.args.get('file_id', type=int)
@@ -455,7 +472,7 @@ def search(id):
 @blueprint.route('/<int:id>/<int:pid>')
 @login_required
 def view_product(id, pid):
-    database = db.get_or_404(HashDatabase, id)
+    database = _get_database_or_404(id)
     product = KnownProduct.query.filter_by(id=pid, database_id=id).first_or_404()
 
     kf_ids = [kf.id for kf in product.known_files]
@@ -485,7 +502,7 @@ def view_product(id, pid):
 @login_required
 @require_permission('read_write')
 def edit(id):
-    database = db.get_or_404(HashDatabase, id)
+    database = _get_database_or_404(id)
     form = HashDatabaseForm(obj=database)
     _prepare_database_form(form)
     if form.validate_on_submit():
@@ -530,116 +547,40 @@ def _cancel_pending_hashdb_jobs(db_id):
     db.session.commit()
 
 
-def _delete_hashdb_rows(db_id):
-    """Unlink referencing files and bulk-delete one HashDB's rows.
-
-    A hash database can hold hundreds of thousands of KnownFile rows. The ORM
-    cascade (relationship cascade="all, delete-orphan") loads every related
-    KnownProduct/KnownFile into the session and issues a DELETE per row, and
-    walking database.known_products[*].known_files is an N+1 query on top of
-    that — together these make deleting a large database hang for minutes.
-    Instead, do the work as a handful of bulk statements.
-
-    Returns whether any extracted files were linked to this database.
-    """
-    kf_id_query = (
-        db.session.query(KnownFile.id)
-        .filter(KnownFile.database_id == db_id)
-    )
-
-    # Were any extracted files linked to this database?  A cheap LIMIT 1
-    # existence check (index on known_file_id) — we only need to know whether a
-    # background re-link is worth queuing, not the (potentially tens of
-    # thousands of) IDs themselves.
-    had_links = (
-        db.session.query(ExtractedFile.id)
-        .filter(ExtractedFile.known_file_id.in_(kf_id_query))
-        .first()
-    ) is not None
-
-    # Unlink the affected files in a single correlated UPDATE.  Materialising
-    # every affected id into a Python list and feeding it back as a giant IN(...)
-    # was itself slow (and could blow past parameter limits) on a database that
-    # matched a large slice of the collection.  is_known must be cleared
-    # explicitly: the known_file_id FK's ON DELETE SET NULL nulls the link but
-    # would leave is_known stuck True.
-    if had_links:
-        ExtractedFile.query.filter(
-            ExtractedFile.known_file_id.in_(kf_id_query)
-        ).update({'known_file_id': None, 'is_known': False}, synchronize_session=False)
-
-    # Bulk-delete in FK-safe order: recognised_products (referenced products),
-    # then known_files (no ON DELETE action on its database_id FK), then
-    # known_products, then the database row itself.  Doing this explicitly keeps
-    # it correct regardless of whether the backend enforces the recognised_products
-    # -> known_products ON DELETE CASCADE (PostgreSQL does; SQLite only with
-    # PRAGMA foreign_keys=ON), matching what the old ORM cascade guaranteed.
-    product_id_query = (
-        db.session.query(KnownProduct.id)
-        .filter(KnownProduct.database_id == db_id)
-    )
-    RecognisedProduct.query.filter(
-        RecognisedProduct.product_id.in_(product_id_query)
-    ).delete(synchronize_session=False)
-    KnownFile.query.filter(
-        KnownFile.database_id == db_id
-    ).delete(synchronize_session=False)
-    KnownProduct.query.filter(
-        KnownProduct.database_id == db_id
-    ).delete(synchronize_session=False)
-    db.session.delete(db.session.get(HashDatabase, db_id))
-    db.session.commit()
-    return had_links
-
-
 @blueprint.route('/<int:id>/delete', methods=['POST'])
 @login_required
 @require_permission('read_write')
 def delete(id):
-    from ..services.hash_rescan import queue_hashdb_link_job
+    from ..services.hash_rescan import queue_hashdb_delete_job
     database = db.get_or_404(HashDatabase, id)
     name = database.name
-    is_active = database.is_active
 
+    if database.is_deleting:
+        # Already scheduled — just make sure the reap job is queued (a no-op if
+        # one is already pending/running) and report the in-progress state.
+        queue_hashdb_delete_job(id)
+        flash(f'Hash database "{name}" is already being deleted in the '
+              f'background.', 'info')
+        return _route_redirect('index')
+
+    # Deleting a large database (hundreds of thousands of known_files, plus a
+    # collection-wide unlink of extracted_files and delete of recognised_products)
+    # is far too slow to run inline — it hangs the web thread and deadlock-races
+    # the worker.  Instead soft-delete the row and hand the heavy work to a
+    # worker-driven bounded-step HASHDB_DELETE job.  Setting is_active=False at
+    # the same time removes the half-deleted database from all matching /
+    # restriction / recognition queries (which already gate on is_active) for
+    # free; is_deleting hides it from listings and blocks management routes.
     _cancel_pending_hashdb_jobs(id)
+    database.is_deleting = True
+    database.is_active = False
+    db.session.commit()
 
-    # The delete races the worker's bounded relink/recognition steps on the same
-    # known_files/extracted_files rows (in the opposite lock order), which can
-    # deadlock.  PostgreSQL aborts one side; retry the loser a few times — the
-    # step's statement timeout guarantees the other side releases its locks
-    # promptly, so a retry succeeds rather than 500ing.
-    attempts = 4
-    for attempt in range(attempts):
-        try:
-            had_links = _delete_hashdb_rows(id)
-            break
-        except OperationalError as exc:
-            db.session.rollback()
-            if not is_deadlock(exc) or attempt == attempts - 1:
-                raise
-            time.sleep(0.25 * (attempt + 1))
+    queue_hashdb_delete_job(id)
 
-    # Re-link the now-unlinked files against the remaining active databases in
-    # the background rather than running a long inline rescan that makes the
-    # delete request time out.  The files are now is_known=False, so each other
-    # database's bounded-step HASHDB_LINK job will pick up any that match it.
-    relinked_dbs = 0
-    if is_active and had_links:
-        other_active = (
-            HashDatabase.query
-            .filter(HashDatabase.is_active == True, HashDatabase.id != id)  # noqa: E712
-            .all()
-        )
-        for other in other_active:
-            _, queued = queue_hashdb_link_job(other.id)
-            if queued:
-                relinked_dbs += 1
-
-    msg = f'Hash database "{name}" deleted.'
-    if relinked_dbs:
-        msg += (f' Re-linking affected files against {relinked_dbs} other '
-                f'database(s) in the background.')
-    flash(msg, 'success')
+    flash(f'Hash database "{name}" is being deleted in the background. '
+          f'Affected files will be re-linked against other databases '
+          f'automatically.', 'success')
     return _route_redirect('index')
 
 
@@ -651,7 +592,7 @@ def delete(id):
 @login_required
 @require_permission('read_write')
 def toggle_recognition(id):
-    database = db.get_or_404(HashDatabase, id)
+    database = _get_database_or_404(id)
     database.enable_product_recognition = not database.enable_product_recognition
     state = 'enabled' if database.enable_product_recognition else 'disabled'
     if database.enable_product_recognition:
@@ -672,7 +613,7 @@ def toggle_recognition(id):
 @login_required
 @require_permission('read_write')
 def bulk_path_matching(id, state):
-    database = db.get_or_404(HashDatabase, id)
+    database = _get_database_or_404(id)
     if state not in ('enable', 'disable'):
         flash('Unknown path matching action.', 'danger')
         return _route_redirect('view', id=id)
@@ -701,7 +642,7 @@ def bulk_path_matching(id, state):
 @login_required
 @require_permission('read_write')
 def toggle_active(id):
-    database = db.get_or_404(HashDatabase, id)
+    database = _get_database_or_404(id)
     database.is_active = not database.is_active
     db.session.commit()
     state = 'enabled' if database.is_active else 'disabled'
@@ -746,7 +687,7 @@ def _safe_download_name(name: str, suffix: str) -> str:
 @blueprint.route('/<int:id>/export')
 @login_required
 def export(id):
-    database = db.get_or_404(HashDatabase, id)
+    database = _get_database_or_404(id)
     fmt = request.args.get('format', 'json').lower()
     products = KnownProduct.query.filter_by(database_id=id).order_by(func.lower(KnownProduct.title)).all()
 
@@ -857,6 +798,11 @@ def import_database():
             return _route_redirect('index')
 
         database = HashDatabase.query.filter_by(name=db_name).first()
+        if database and database.is_deleting:
+            flash(f'"{db_name}" is currently being deleted in the background. '
+                  f'Wait for that to finish before importing under the same name.',
+                  'danger')
+            return _route_redirect('index')
         if database and not merge:
             flash(f'"{db_name}" already exists. Tick "Merge into existing" to add to it.', 'danger')
             return _route_redirect('index')
@@ -922,6 +868,11 @@ def import_database():
             return _route_redirect('index')
 
         database = HashDatabase.query.filter_by(name=db_name).first()
+        if database and database.is_deleting:
+            flash(f'"{db_name}" is currently being deleted in the background. '
+                  f'Wait for that to finish before importing under the same name.',
+                  'danger')
+            return _route_redirect('index')
         if database and not merge:
             flash(f'"{db_name}" already exists. Tick "Merge into existing" to add to it.', 'danger')
             return _route_redirect('index')
@@ -1009,7 +960,7 @@ def rescan(id):
     finishes (if this database has product recognition enabled).
     """
     from ..services.hash_rescan import queue_hashdb_link_job
-    database = db.get_or_404(HashDatabase, id)
+    database = _get_database_or_404(id)
     if not database.is_active:
         flash('This database is inactive, so it is excluded from hash linking. '
               'Activate it first to relink artefacts.', 'warning')
@@ -1031,7 +982,7 @@ def rescan(id):
 @login_required
 @require_permission('read_write')
 def new_known_product(db_id):
-    db.get_or_404(HashDatabase, db_id)
+    _get_database_or_404(db_id)
     title = request.form.get('title', '').strip()
     if not title:
         flash('Product title is required.', 'danger')
