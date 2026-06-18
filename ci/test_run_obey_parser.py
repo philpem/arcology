@@ -640,6 +640,16 @@ class TestCanonicalSources(unittest.TestCase):
         self.assertIsNone(ov0)
         self.assertEqual(ov1, 'FormEd 2.45 (from Acorn C R3)')
 
+    def test_parse_title_override_whitespace_flexible(self):
+        # Any amount of whitespace around -> is accepted.
+        for sep in ('  ->  ', '\t->\t', ' ->  '):
+            with self.subTest(sep=repr(sep)):
+                rules = parse_canonical_sources(
+                    f'!FormEd    ANSI C Release 3{sep}FormEd 2.45 (from Acorn C R3)\n'
+                )
+                _, override = rules['!formed'][0]
+                self.assertEqual(override, 'FormEd 2.45 (from Acorn C R3)')
+
     def test_accepts_returns_title_override(self):
         rules = parse_canonical_sources(
             '!FormEd    ANSI C Release 3 -> FormEd 2.45 (from Acorn C R3)\n'
