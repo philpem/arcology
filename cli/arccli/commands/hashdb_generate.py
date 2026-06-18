@@ -688,10 +688,9 @@ def parse_canonical_sources(text: str) -> dict[str, list]:
             raise ValueError(
                 f'line {lineno}: expected "<app-dir> <regex>", got: {raw!r}')
         app_dir, rest = parts
-        if ' -> ' in rest:
-            pattern, title_override = rest.split(' -> ', 1)
-            pattern = pattern.rstrip()
-            title_override = title_override.strip() or None
+        arrow_split = re.split(r'\s+->\s+', rest, maxsplit=1)
+        if len(arrow_split) == 2:
+            pattern, title_override = arrow_split[0], arrow_split[1].strip() or None
         else:
             pattern = rest
             title_override = None
