@@ -119,9 +119,33 @@ RUN git clone "${WFMRS_REPO}" && \
 
 
 #################
+# Build DiscImageManager - toolchain layer
+#
+# Installs Lazarus/FPC and its ~700 packages.  No version-specific ARGs are
+# declared here, so Docker can cache this layer independently of the DIM
+# source SHA/repo.  Changing the git hash or repo URL only invalidates the
+# build stage below, not this one.
+#################
+FROM ubuntu:24.04 AS build-dim-toolchain
+
+# If 1, install Lazarus for a source build; if 0, only wget/unzip are needed.
+ARG DISCIMAGEMANAGER_SOURCEBUILD=1
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+	apt -y update && apt -y upgrade && \
+	apt -y install unzip wget && \
+	if [ "${DISCIMAGEMANAGER_SOURCEBUILD}" = "1" ]; then \
+		apt -y install git lazarus ; \
+	fi
+
+
+#################
 # Build DiscImageManager
 #################
-FROM ubuntu:24.04 AS build-discimagemanager
+FROM build-dim-toolchain AS build-discimagemanager
 
 # If 1, build from source
 ARG DISCIMAGEMANAGER_SOURCEBUILD=1
@@ -146,22 +170,10 @@ ARG DISCIMAGEMANAGER_GJHCC_VERSION=9f1397c7cb69aa117cfebf687eee701866f9da7c
 ARG DISCIMAGEMANAGER_BINARY_VERSION=1.49
 ARG DISCIMAGEMANAGER_URL=https://github.com/geraldholdsworth/DiscImageManager/releases/download/${DISCIMAGEMANAGER_BINARY_VERSION}/Disc.Image.Manager.${DISCIMAGEMANAGER_BINARY_VERSION}.Linux.64.bit.Intel.zip
 
-# Disable prompt during package installation
 ARG DEBIAN_FRONTEND=noninteractive
 
-# This is split into two stages because the source build needs Lazarus,
-# which in turn needs about 700 packages and a full X server.
-# It takes a long time to download and install these.
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-	apt -y update && apt -y upgrade && \
-	apt -y install unzip wget && \
-	if [ ${DISCIMAGEMANAGER_SOURCEBUILD} -eq 1 ]; then \
-		apt -y install git lazarus ;  \
-	fi
-
 RUN	\
-	if [ ${DISCIMAGEMANAGER_SOURCEBUILD} -eq 1 ]; then \
+	if [ "${DISCIMAGEMANAGER_SOURCEBUILD}" = "1" ]; then \
 		echo "Source build of DiscImageManager --" ; \
 		echo "  DIM   branch: ${DISCIMAGEMANAGER_VERSION}" ; \
 		echo "  STB   branch: ${DISCIMAGEMANAGER_STB_VERSION}" ; \
@@ -186,7 +198,7 @@ RUN	\
 		cp ./lib-cli/Release/x86_64-linux/DiscImageManagerCLI /usr/local/bin/DiscImageManager && \
 		echo ; \
 	else	\
-		echo "Binary of DiscImageManager -- version ${DISCIMAGEMANAGER_VERSION}" ; \
+		echo "Binary of DiscImageManager -- version ${DISCIMAGEMANAGER_BINARY_VERSION}" ; \
 		wget ${DISCIMAGEMANAGER_URL} -O discimagemanager.zip && \
 		unzip discimagemanager.zip && \
 		cp DiscImageManager /usr/local/bin && \
