@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Minimal Lazarus project used only to warm up the FPC RTL and Lazarus base
+     packages during the Docker build.  The compiled output goes to
+     /root/.lazarus/ and is cached in the build-dim-toolchain layer so that
+     build-discimagemanager does not pay the first-run compilation cost. -->
+<CONFIG>
+  <ProjectOptions>
+    <Version Value="12"/>
+    <PathDelim Value="/"/>
+    <General>
+      <Flags>
+        <MainUnitHasCreateFormStatements Value="False"/>
+        <MainUnitHasTitleStatement Value="False"/>
+        <MainUnitHasScaledStatement Value="False"/>
+      </Flags>
+      <SessionStorage Value="InProjectDir"/>
+      <MainUnit Value="0"/>
+    </General>
+    <Units Count="1">
+      <Unit0>
+        <Filename Value="warmup.lpr"/>
+        <IsPartOfProject Value="True"/>
+      </Unit0>
+    </Units>
+    <CompilerOptions>
+      <Version Value="11"/>
+      <Target>
+        <Filename Value="warmup"/>
+      </Target>
+      <SearchPaths>
+        <IncludeFiles Value="$(ProjOutDir)"/>
+      </SearchPaths>
+      <Other>
+        <CompilerPath Value="$(CompPath)"/>
+      </Other>
+    </CompilerOptions>
+  </ProjectOptions>
+</CONFIG>

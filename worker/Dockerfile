@@ -141,6 +141,24 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 		apt -y install git lazarus ; \
 	fi
 
+# Pre-compile the FPC RTL and Lazarus base packages (LazUtils etc.) so they
+# are frozen into this layer.  Without this, lazbuild does a full first-run
+# compilation inside build-discimagemanager on every rebuild that changes the
+# DIM source SHA, even though the toolchain itself hasn't changed.
+#
+# Step 1: compile a trivial FPC program — forces RTL .ppu files to be written
+#         (a no-op if apt already installed pre-compiled units, which is fine).
+# Step 2: build a minimal Lazarus project — forces LazUtils and the other base
+#         packages to be compiled and cached under /root/.lazarus/.
+COPY worker/lazarus-warmup /tmp/lazwarmup
+RUN if [ "${DISCIMAGEMANAGER_SOURCEBUILD}" = "1" ]; then \
+	printf 'begin end.\n' > /tmp/fpcwarmup.pas && \
+	fpc /tmp/fpcwarmup.pas -o/tmp/fpcwarmup && \
+	rm -f /tmp/fpcwarmup.pas /tmp/fpcwarmup /tmp/fpcwarmup.o && \
+	cd /tmp/lazwarmup && lazbuild warmup.lpi && \
+	rm -rf /tmp/lazwarmup /tmp/fpcwarmup* ; \
+fi
+
 
 #################
 # Build DiscImageManager
