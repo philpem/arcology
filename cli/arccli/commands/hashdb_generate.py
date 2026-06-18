@@ -667,7 +667,14 @@ def diagnose_no_mandatory(app_dir_name: str, app_files: list[dict],
 
 
 def parse_canonical_sources(text: str) -> dict[str, list]:
-    """Parse canonical-sources text into {app_dir_lower: [compiled_regex, ...]}.
+    """Parse canonical-sources text into {app_dir_lower: [(regex, title_override|None), ...]}.
+
+    Each rule line has the form ``<app-dir> <regex> [-> title-override]``.  The
+    optional title override is introduced by `` -> `` (space, arrow, space) and
+    is a literal string that replaces the auto-derived product title context when
+    that copy is kept.  Use it to give bundled copies a descriptive name, e.g.:
+
+        !FormEd    ANSI C Release 3 -> FormEd 2.45 (from Acorn C R3)
 
     Raises ValueError on a malformed line or invalid regex.
     """
@@ -680,13 +687,20 @@ def parse_canonical_sources(text: str) -> dict[str, list]:
         if len(parts) != 2:
             raise ValueError(
                 f'line {lineno}: expected "<app-dir> <regex>", got: {raw!r}')
-        app_dir, pattern = parts
+        app_dir, rest = parts
+        if ' -> ' in rest:
+            pattern, title_override = rest.split(' -> ', 1)
+            pattern = pattern.rstrip()
+            title_override = title_override.strip() or None
+        else:
+            pattern = rest
+            title_override = None
         try:
             compiled = re.compile(pattern, re.IGNORECASE)
         except re.error as exc:
             raise ValueError(
                 f'line {lineno}: invalid regex {pattern!r}: {exc}') from exc
-        rules.setdefault(app_dir.lower(), []).append(compiled)
+        rules.setdefault(app_dir.lower(), []).append((compiled, title_override))
     return rules
 
 
@@ -697,20 +711,24 @@ def load_canonical_sources(path: str) -> dict[str, list]:
 
 
 def canonical_accepts(rules: dict[str, list], app_dir_name: str,
-                      clean_name: str, label: str) -> bool | None:
+                      clean_name: str, label: str) -> tuple[bool | None, str | None]:
     """Decide whether an app-dir copy on a given artefact is the canonical one.
 
-    Returns None if the app-dir has no rule (unaffected), True if it matches a
-    rule (golden copy: keep), False if it has a rule but matches none (reject).
+    Returns ``(verdict, title_override)``:
+    - ``(None, None)``  — no rule covers this app-dir (unaffected)
+    - ``(True, str|None)`` — rule matched; title_override is the literal
+      third-column string when present, else None (use the auto-derived context)
+    - ``(False, None)`` — rules exist but none matched (reject this copy)
+
     Matches the regex against *either* the cleaned product name or the raw label.
     """
     pats = rules.get(app_dir_name.lower())
     if not pats:
-        return None
-    for pat in pats:
+        return None, None
+    for pat, override in pats:
         if (clean_name and pat.match(clean_name)) or (label and pat.match(label)):
-            return True
-    return False
+            return True, override
+    return False, None
 
 
 def apply_canonical_filter(gathered: list, rules: dict[str, list]) -> tuple[int, set]:
@@ -727,12 +745,14 @@ def apply_canonical_filter(gathered: list, rules: dict[str, list]) -> tuple[int,
             label = ar.get('label') or ''
             kept = {}
             for name, files in ar['app_dirs'].items():
-                verdict = canonical_accepts(rules, name, clean, label)
+                verdict, override = canonical_accepts(rules, name, clean, label)
                 if verdict is False:
                     dropped += 1
                     continue
                 if verdict is True:
                     matched_keys.add(name.lower())
+                    if override:
+                        ar.setdefault('title_overrides', {})[name] = override
                 kept[name] = files
             ar['app_dirs'] = kept
     return dropped, matched_keys
@@ -820,7 +840,14 @@ def render_canonical_candidates(candidates: dict[str, list]) -> str:
         '# --canonical-sources.',
         '#',
         '# The regex is matched case-insensitively, anchored at the start, against',
-        '# the artefact product name or raw label.  Format: <app-dir> <regex>',
+        '# the artefact product name or raw label.',
+        '#',
+        '# Format: <app-dir> <regex> [-> title-override]',
+        '#',
+        '# An optional title override introduced by " -> " replaces the auto-derived',
+        '# product title context (normally the artefact label).  Use it for bundled',
+        '# copies whose host artefact label would produce a misleading name, e.g.:',
+        '#   !FormEd    ANSI C Release 3 -> FormEd 2.45 (from Acorn C R3)',
         '',
     ]
     if not candidates:
@@ -1025,9 +1052,11 @@ def _build_products(client: ArcologyClient, g: dict, args, is_unique,
     if args.multi_disc in ('separate', 'both'):
         for ar in artefact_results:
             disc_num = ar['disc_number'] if is_multi_disc else None
-            short_ctx = _product_context(ar.get('clean_name'), item_name)
-            full_ctx = _product_context(ar.get('full_name'), item_name)
+            overrides = ar.get('title_overrides', {})
             for app_dir_name, app_files in ar['app_dirs'].items():
+                override = overrides.get(app_dir_name)
+                short_ctx = override or _product_context(ar.get('clean_name'), item_name)
+                full_ctx = override or _product_context(ar.get('full_name'), item_name)
                 tasks.append((app_dir_name, app_files, disc_num, '', short_ctx, full_ctx))
 
     if args.multi_disc in ('merge', 'both'):
@@ -1036,9 +1065,11 @@ def _build_products(client: ArcologyClient, g: dict, args, is_unique,
         merged_full_context: dict[str, str] = {}
         for ar in artefact_results:
             disc_num = ar['disc_number']
-            short_ctx = _product_context(ar.get('clean_name'), item_name)
-            full_ctx = _product_context(ar.get('full_name'), item_name)
+            overrides = ar.get('title_overrides', {})
             for app_dir_name, app_files in ar['app_dirs'].items():
+                override = overrides.get(app_dir_name)
+                short_ctx = override or _product_context(ar.get('clean_name'), item_name)
+                full_ctx = override or _product_context(ar.get('full_name'), item_name)
                 merged_context.setdefault(app_dir_name, short_ctx)
                 merged_full_context.setdefault(app_dir_name, full_ctx)
                 bucket = merged.setdefault(app_dir_name, [])

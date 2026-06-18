@@ -447,11 +447,16 @@ class TestCanonicalSources(unittest.TestCase):
 
     def test_parse_regex_with_spaces(self):
         rules = parse_canonical_sources('!System   RISC OS 3\\.(1[0-9]|7) .*\n')
-        self.assertTrue(rules['!system'][0].match('RISC OS 3.11 (Acorn)'))
+        pat, override = rules['!system'][0]
+        self.assertTrue(pat.match('RISC OS 3.11 (Acorn)'))
+        self.assertIsNone(override)
 
     def test_parse_repeated_app_dir_ored(self):
         rules = parse_canonical_sources('!ArcFS ArcFS .*\n!ArcFS ArcFS+ .*\n')
         self.assertEqual(len(rules['!arcfs']), 2)
+        for pat, override in rules['!arcfs']:
+            self.assertIsNotNone(pat)
+            self.assertIsNone(override)
 
     def test_parse_malformed_line(self):
         with self.assertRaises(ValueError):
@@ -463,24 +468,29 @@ class TestCanonicalSources(unittest.TestCase):
 
     def test_accepts_match(self):
         rules = parse_canonical_sources('!ArcFS ArcFS .*\n')
-        # Golden artefact: accept.
-        self.assertIs(canonical_accepts(rules, '!ArcFS', 'ArcFS 0.52', 'ArcFS 0.52'),
-                      True)
+        # Golden artefact: accept, no override.
+        verdict, override = canonical_accepts(rules, '!ArcFS', 'ArcFS 0.52', 'ArcFS 0.52')
+        self.assertIs(verdict, True)
+        self.assertIsNone(override)
         # Bundled copy: reject.
-        self.assertIs(canonical_accepts(rules, '!ArcFS', 'RiscCAD 8', 'RiscCAD 8'),
-                      False)
+        verdict, override = canonical_accepts(rules, '!ArcFS', 'RiscCAD 8', 'RiscCAD 8')
+        self.assertIs(verdict, False)
+        self.assertIsNone(override)
         # No rule: unaffected.
-        self.assertIsNone(canonical_accepts(rules, '!Draw', 'Draw 1.0', 'Draw 1.0'))
+        verdict, override = canonical_accepts(rules, '!Draw', 'Draw 1.0', 'Draw 1.0')
+        self.assertIsNone(verdict)
+        self.assertIsNone(override)
 
     def test_accepts_case_insensitive_app_dir(self):
         rules = parse_canonical_sources('!arcfs ArcFS .*\n')
-        self.assertIs(canonical_accepts(rules, '!ArcFS', 'ArcFS 0.52', ''), True)
+        verdict, _ = canonical_accepts(rules, '!ArcFS', 'ArcFS 0.52', '')
+        self.assertIs(verdict, True)
 
     def test_accepts_matches_either_clean_or_label(self):
         rules = parse_canonical_sources('!ArcFS ArcFS 0\\.52.*\n')
         # clean name doesn't match, but raw label does -> accept.
-        self.assertIs(
-            canonical_accepts(rules, '!ArcFS', 'ArcFS', 'ArcFS 0.52 (1994)'), True)
+        verdict, _ = canonical_accepts(rules, '!ArcFS', 'ArcFS', 'ArcFS 0.52 (1994)')
+        self.assertIs(verdict, True)
 
     def _gathered(self):
         # Two artefacts: the golden ArcFS distro and a *differing* (e.g. patched)
@@ -575,8 +585,8 @@ class TestCanonicalSources(unittest.TestCase):
         self.assertIn('\n!ArcFS    ArcFS 0\\.52\n', text)
         self.assertIn('\n#!ArcFS    RiscCAD 8\n', text)
         rules = parse_canonical_sources(text)
-        self.assertIs(canonical_accepts(rules, '!ArcFS', 'ArcFS 0.52', ''), True)
-        self.assertIs(canonical_accepts(rules, '!ArcFS', 'RiscCAD 8', ''), False)
+        self.assertIs(canonical_accepts(rules, '!ArcFS', 'ArcFS 0.52', '')[0], True)
+        self.assertIs(canonical_accepts(rules, '!ArcFS', 'RiscCAD 8', '')[0], False)
 
     def test_render_keeps_all_app_named_versions_active(self):
         # Several versions of an app, all named after it -> all kept active so
@@ -597,8 +607,8 @@ class TestCanonicalSources(unittest.TestCase):
         self.assertEqual(len(commented), 2)  # Killer + RiscCAD bundles
         # Round-trips: ArcFS releases accepted, bundles rejected.
         rules = parse_canonical_sources(text)
-        self.assertIs(canonical_accepts(rules, '!ArcFS', 'ArcFS 2 read-only 0.62', ''), True)
-        self.assertIs(canonical_accepts(rules, '!ArcFS', 'Killer 2.000', ''), False)
+        self.assertIs(canonical_accepts(rules, '!ArcFS', 'ArcFS 2 read-only 0.62', '')[0], True)
+        self.assertIs(canonical_accepts(rules, '!ArcFS', 'Killer 2.000', '')[0], False)
 
     def test_render_no_base_match_all_commented(self):
         # App-dir name unrelated to product names (e.g. !Commander / 'Disc
@@ -618,6 +628,69 @@ class TestCanonicalSources(unittest.TestCase):
     def test_render_empty(self):
         text = render_canonical_candidates({})
         self.assertIn('no ambiguous applications', text)
+
+    def test_parse_title_override_column(self):
+        # " -> " separator splits regex from literal title override.
+        rules = parse_canonical_sources(
+            '!FormEd    FormEd 1\\.01\n'
+            '!FormEd    ANSI C Release 3 -> FormEd 2.45 (from Acorn C R3)\n'
+        )
+        pat0, ov0 = rules['!formed'][0]
+        pat1, ov1 = rules['!formed'][1]
+        self.assertIsNone(ov0)
+        self.assertEqual(ov1, 'FormEd 2.45 (from Acorn C R3)')
+
+    def test_accepts_returns_title_override(self):
+        rules = parse_canonical_sources(
+            '!FormEd    ANSI C Release 3 -> FormEd 2.45 (from Acorn C R3)\n'
+        )
+        verdict, override = canonical_accepts(
+            rules, '!FormEd', 'ANSI C Release 3', 'ANSI C Release 3')
+        self.assertIs(verdict, True)
+        self.assertEqual(override, 'FormEd 2.45 (from Acorn C R3)')
+
+    def test_accepts_no_override_returns_none(self):
+        rules = parse_canonical_sources('!FormEd    FormEd .*\n')
+        verdict, override = canonical_accepts(rules, '!FormEd', 'FormEd 1.01', '')
+        self.assertIs(verdict, True)
+        self.assertIsNone(override)
+
+    def test_apply_filter_stores_title_override(self):
+        gathered = [{
+            'item': {'uuid': 'i'},
+            'artefact_results': [
+                {'clean_name': 'ANSI C Release 3', 'label': 'ANSI C Release 3',
+                 'full_name': 'ANSI C Release 3',
+                 'disc_number': None, 'version': None,
+                 'app_dirs': {'!FormEd': [_f('!FormEd/!RunImage', md5='fe_a')]}},
+            ],
+        }]
+        rules = parse_canonical_sources(
+            '!FormEd    ANSI C Release 3 -> FormEd 2.45 (from Acorn C R3)\n'
+        )
+        apply_canonical_filter(gathered, rules)
+        ar = gathered[0]['artefact_results'][0]
+        self.assertIn('!FormEd', ar['app_dirs'])
+        self.assertEqual(
+            ar.get('title_overrides', {}).get('!FormEd'),
+            'FormEd 2.45 (from Acorn C R3)',
+        )
+
+    def test_apply_filter_no_override_no_title_overrides_key(self):
+        gathered = [{
+            'item': {'uuid': 'i'},
+            'artefact_results': [
+                {'clean_name': 'FormEd 1.01', 'label': 'FormEd 1.01',
+                 'full_name': 'FormEd 1.01',
+                 'disc_number': None, 'version': None,
+                 'app_dirs': {'!FormEd': [_f('!FormEd/!RunImage', md5='fe_b')]}},
+            ],
+        }]
+        rules = parse_canonical_sources('!FormEd    FormEd .*\n')
+        apply_canonical_filter(gathered, rules)
+        ar = gathered[0]['artefact_results'][0]
+        # No title override -> key absent (or empty dict).
+        self.assertFalse(ar.get('title_overrides', {}).get('!FormEd'))
 
 
 class TestMergeIdenticalProducts(unittest.TestCase):
