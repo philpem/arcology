@@ -702,6 +702,70 @@ class TestCanonicalSources(unittest.TestCase):
         # No title override -> key absent (or empty dict).
         self.assertFalse(ar.get('title_overrides', {}).get('!FormEd'))
 
+    def test_parse_arrow_no_spaces(self):
+        # -> without surrounding whitespace must still split correctly.
+        rules = parse_canonical_sources(
+            '!FormEd    ANSI C Release 3->FormEd 2.45 (from Acorn C R3)\n'
+        )
+        _, override = rules['!formed'][0]
+        self.assertEqual(override, 'FormEd 2.45 (from Acorn C R3)')
+
+    def test_parse_arrow_empty_title_raises(self):
+        # -> with nothing (or only whitespace) after it is a parse error.
+        with self.assertRaises(ValueError):
+            parse_canonical_sources('!FormEd    ANSI C Release 3 -> \n')
+        with self.assertRaises(ValueError):
+            parse_canonical_sources('!FormEd    ANSI C Release 3 ->\n')
+
+    def test_merge_override_priority_over_no_override(self):
+        # In the merge path, an override from a later artefact must win over the
+        # auto-derived context from an earlier artefact with no override.
+        # Simulate what _build_products' merge loop does: iterate artefact_results,
+        # compute short_ctx/full_ctx, and commit via the override-priority logic.
+        artefact_results = [
+            # Disc 1 — no override for !FormEd
+            {'clean_name': 'ANSI C Release 3', 'full_name': 'ANSI C Release 3 (1994)(Acorn)',
+             'disc_number': 1, 'title_overrides': {},
+             'app_dirs': {'!FormEd': []}},
+            # Disc 2 — has override
+            {'clean_name': 'ANSI C Release 3', 'full_name': 'ANSI C Release 3 (1994)(Acorn)',
+             'disc_number': 2,
+             'title_overrides': {'!FormEd': 'FormEd 2.45 (from Acorn C R3)'},
+             'app_dirs': {'!FormEd': []}},
+        ]
+        item_name = 'ANSI C Release 3'
+        merged_context: dict = {}
+        merged_full_context: dict = {}
+        for ar in artefact_results:
+            overrides = ar.get('title_overrides', {})
+            for app_dir_name in ar['app_dirs']:
+                override = overrides.get(app_dir_name)
+                short_ctx = override or _product_context(ar.get('clean_name'), item_name)
+                full_ctx = _product_context(ar.get('full_name'), item_name)
+                if override or app_dir_name not in merged_context:
+                    merged_context[app_dir_name] = short_ctx
+                    merged_full_context[app_dir_name] = full_ctx
+        self.assertEqual(
+            merged_context['!FormEd'], 'FormEd 2.45 (from Acorn C R3)',
+            'override from disc 2 should win over auto-derived context from disc 1',
+        )
+
+    def test_full_ctx_not_replaced_by_override(self):
+        # When an override is present, short_ctx uses it but full_ctx still comes
+        # from full_name so year/publisher detail is preserved in the description.
+        ar = {
+            'clean_name': 'ANSI C Release 3',
+            'full_name': 'ANSI C Release 3 (1994)(Acorn)',
+            'title_overrides': {'!FormEd': 'FormEd 2.45 (from Acorn C R3)'},
+        }
+        item_name = 'ANSI C Release 3'
+        override = ar['title_overrides']['!FormEd']
+        short_ctx = override or _product_context(ar.get('clean_name'), item_name)
+        full_ctx = _product_context(ar.get('full_name'), item_name)
+        self.assertEqual(short_ctx, 'FormEd 2.45 (from Acorn C R3)')
+        self.assertEqual(full_ctx, 'ANSI C Release 3 (1994)(Acorn)',
+                         'year/publisher from full_name must not be replaced by override')
+
 
 class TestMergeIdenticalProducts(unittest.TestCase):
     def _prod(self, app, context, hashes, required=None):
