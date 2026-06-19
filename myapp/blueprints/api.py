@@ -1289,13 +1289,16 @@ def _refresh_similarity(analysis):
     artefact = analysis.artefact
     if artefact is None:
         return
+    # Capture the uuid now: after a rollback the instance is expired, and a
+    # concurrently-deleted artefact would raise on lazy-load inside the except.
+    artefact_uuid = artefact.uuid
     try:
         from ..services.similarity import recompute_for_artefact
         recompute_for_artefact(artefact)
     except Exception:
         db.session.rollback()
         current_app.logger.exception(
-            'Similarity refresh failed for artefact %s', getattr(artefact, 'uuid', '?')
+            'Similarity refresh failed for artefact %s', artefact_uuid
         )
 
 

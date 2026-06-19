@@ -379,25 +379,37 @@ def _files_for_artefact(artefact_id):
     return _file_rows_query().filter(Partition.artefact_id == artefact_id).all()
 
 
-def _artefact_member_set(artefact_id) -> dict:
-    """Content set ``{hash: size}`` for one artefact (union of its partitions)."""
+def _files_for_artefacts(artefact_ids):
+    """File rows for several artefacts in one (chunked) query.
+
+    One round-trip instead of one per artefact; the caller derives both
+    artefact-level and component-level content sets from these rows.
+    """
+    rows = []
+    ids = list(artefact_ids)
+    for i in range(0, len(ids), 500):  # stay under SQLite's bound-variable limit
+        chunk = ids[i:i + 500]
+        rows.extend(_file_rows_query().filter(Partition.artefact_id.in_(chunk)).all())
+    return rows
+
+
+def _member_set_from_rows(rows) -> dict:
+    """Content set ``{hash: size}`` from ``(_, _, path, hash, size)`` file rows."""
     member: dict[str, int] = {}
-    for _aid, _pid, _path, h, size in _files_for_artefact(artefact_id):
+    for _aid, _pid, _path, h, size in rows:
         if h not in member:
             member[h] = size or 0
     return member
 
 
-def _component_member_set(partition_id, root_path) -> dict:
-    """Reconstruct a component's content set from current ExtractedFile rows.
+def _component_set(files, root_path) -> dict:
+    """Content set ``{hash: size}`` of the files under ``root_path``.
 
-    Lets incremental refresh compare against existing component rows without
-    storing their membership.
+    ``files`` is a list of ``(path, hash, size)`` for the component's partition.
     """
     prefix = root_path + "/"
-    rows = _file_rows_query().filter(ExtractedFile.partition_id == partition_id).all()
     return {
-        h: (size or 0) for _aid, _pid, path, h, size in rows
+        h: (size or 0) for (path, h, size) in files
         if path == root_path or path.startswith(prefix)
     }
 
@@ -441,14 +453,26 @@ def recompute_for_artefact(artefact) -> dict:
         or_(ArtefactSimilarity.artefact_a_id == aid, ArtefactSimilarity.artefact_b_id == aid)
     ).delete(synchronize_session=False)
 
-    my_set = _artefact_member_set(aid)
+    my_rows = _files_for_artefact(aid)
+    my_set = _member_set_from_rows(my_rows)
     # Document frequencies for this artefact's hashes drive both the
     # ubiquitous-file cap (candidate selection) and optional IDF weighting.
     df = _document_frequencies(my_set.keys()) if my_set else {}
     distinctive = _distinctive_hashes(df)
     candidate_ids = _candidate_artefact_ids(aid, distinctive) if distinctive else set()
 
-    cand_sets = {oid: _artefact_member_set(oid) for oid in candidate_ids}
+    # Fetch every candidate artefact's files once, then derive both the
+    # artefact-level sets and (below) the per-component sets from them — avoids a
+    # query per candidate and a further query per candidate component.
+    cand_rows = _files_for_artefacts(candidate_ids) if candidate_ids else []
+    cand_sets: dict[int, dict] = {}          # artefact_id -> {hash: size}
+    cand_partition_files: dict[int, list] = {}  # partition_id -> [(path, hash, size)]
+    for artefact_id, partition_id, path, h, size in cand_rows:
+        s = cand_sets.setdefault(artefact_id, {})
+        if h not in s:
+            s[h] = size or 0
+        cand_partition_files.setdefault(partition_id, []).append((path, h, size or 0))
+
     weights = None
     if _use_idf() and my_set:
         # Extend df to every hash that appears in any candidate so union weights
@@ -462,7 +486,7 @@ def recompute_for_artefact(artefact) -> dict:
 
     artefact_pairs = 0
     for oid in candidate_ids:
-        metrics = weighted_jaccard(my_set, cand_sets[oid], weights)
+        metrics = weighted_jaccard(my_set, cand_sets.get(oid, {}), weights)
         if metrics is None or metrics["score"] < MIN_STORE_SCORE:
             continue
         lo, hi = (aid, oid) if aid < oid else (oid, aid)
@@ -482,7 +506,7 @@ def recompute_for_artefact(artefact) -> dict:
         db.session.flush()
 
     my_components = []  # (comp_row, member)
-    for partition_id, _aid2, root, name, member in _components_from_rows(_files_for_artefact(aid)):
+    for partition_id, _aid2, root, name, member in _components_from_rows(my_rows):
         comp = ArtefactComponent(
             artefact_id=aid,
             partition_id=partition_id,
@@ -500,7 +524,10 @@ def recompute_for_artefact(artefact) -> dict:
         cand_comps = ArtefactComponent.query.filter(
             ArtefactComponent.artefact_id.in_(candidate_ids)
         ).all()
-        comp_sets = {c.id: _component_member_set(c.partition_id, c.root_path) for c in cand_comps}
+        comp_sets = {
+            c.id: _component_set(cand_partition_files.get(c.partition_id, []), c.root_path)
+            for c in cand_comps
+        }
         for comp, member in my_components:
             for cc in cand_comps:
                 metrics = weighted_jaccard(member, comp_sets[cc.id], weights)
