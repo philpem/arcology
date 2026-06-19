@@ -247,6 +247,114 @@ class TestArtefactSimilarity(_SimilarityBase):
         self.assertEqual(len(similar_artefacts(a, None)), 1)
         self.assertEqual(len(similar_artefacts(b, None)), 1)
 
+    def test_chunked_step_matches_single_pass(self):
+        """Driving similarity_match_step one candidate at a time equals one pass."""
+        from myapp.database import ArtefactSimilarity
+        from myapp.services.similarity import (
+            recompute_for_artefact,
+            similarity_match_step,
+            similarity_reset,
+        )
+        common = [('GAME', 'g', 100000), ('LOADER', 'l', 5000)]
+        a = _add_artefact(self.db, self.item, 'A', common + [('UA', 'ua', 100)])
+        for i in range(3):
+            _add_artefact(self.db, self.item, f'B{i}', common + [(f'U{i}', f'u{i}', 100)])
+
+        # Reference: one full recompute.
+        recompute_for_artefact(a)
+        full = {(s.artefact_a_id, s.artefact_b_id): round(s.score, 6)
+                for s in ArtefactSimilarity.query.all()}
+
+        # Wipe a's rows, then drive the step loop with limit=1 (forces chunking).
+        ArtefactSimilarity.query.delete()
+        self.db.session.commit()
+        similarity_reset(a.id)
+        cursor = 0
+        for _ in range(20):
+            r = similarity_match_step(a.id, cursor, limit=1)
+            self.db.session.commit()
+            if r['done']:
+                break
+            cursor = r['next_cursor']
+        chunked = {(s.artefact_a_id, s.artefact_b_id): round(s.score, 6)
+                   for s in ArtefactSimilarity.query.all()}
+        self.assertEqual(full, chunked)
+        self.assertTrue(full)  # there is at least one match to compare
+
+    def test_step_cursor_stable_when_candidate_appears_midway(self):
+        """A candidate inserted between steps is picked up without a duplicate crash."""
+        from myapp.services.similarity import (
+            similar_artefacts,
+            similarity_match_step,
+            similarity_reset,
+        )
+        common = [('GAME', 'g', 100000), ('LOADER', 'l', 5000)]
+        a = _add_artefact(self.db, self.item, 'A', common + [('UA', 'ua', 100)])
+        # Two initial candidates so the refresh spans multiple steps (limit=1).
+        _add_artefact(self.db, self.item, 'B0', common + [('U0', 'u0', 100)])
+        _add_artefact(self.db, self.item, 'B1', common + [('U1', 'u1', 100)])
+
+        similarity_reset(a.id)
+        r = similarity_match_step(a.id, 0, limit=1)  # process the first candidate
+        self.db.session.commit()
+        cursor = r['next_cursor']
+
+        # A new sharing artefact appears mid-refresh (a higher id than the cursor).
+        _add_artefact(self.db, self.item, 'B2', common + [('U2', 'u2', 100)])
+
+        # Drive to completion from the id cursor: must not re-insert an already
+        # processed candidate (which would violate uq_artefact_similarity_pair),
+        # and must pick up the newly-appeared B2.
+        for _ in range(8):
+            if r['done']:
+                break
+            r = similarity_match_step(a.id, cursor, limit=1)
+            self.db.session.commit()
+            cursor = r['next_cursor']
+        self.assertEqual(len(similar_artefacts(a, None)), 3)
+
+    def test_queue_similarity_refresh_dedups(self):
+        from myapp.database import Analysis, AnalysisStatus, AnalysisType
+        from myapp.services.similarity import queue_similarity_refresh
+        a = _add_artefact(self.db, self.item, 'Q', [('A', 'a', 1000), ('B', 'b', 2000)])
+        first, created1 = queue_similarity_refresh(a.id)
+        self.assertTrue(created1)
+        second, created2 = queue_similarity_refresh(a.id)
+        self.assertFalse(created2)
+        self.assertEqual(first.id, second.id)
+        n = (Analysis.query
+             .filter_by(artefact_id=a.id, analysis_type=AnalysisType.SIMILARITY_REFRESH)
+             .filter(Analysis.status == AnalysisStatus.PENDING).count())
+        self.assertEqual(n, 1)
+
+    def test_similarity_step_endpoint_drives_to_done(self):
+        """The worker-only step endpoint chunks to completion and caches matches."""
+        from myapp.services.similarity import similar_artefacts
+        files = [('A', 'a', 1000), ('B', 'b', 2000), ('C', 'c', 3000)]
+        a = _add_artefact(self.db, self.item, 'E1', files)
+        _add_artefact(self.db, self.item, 'E2', files)
+        client = self.app.test_client()
+        auth = {'X-API-Key': os.environ['WORKER_API_KEY']}
+        cursor, done = 0, False
+        for _ in range(10):
+            resp = client.post(f'/api/artefacts/{a.uuid}/similarity-step',
+                               json={'cursor': cursor, 'limit': 1}, headers=auth)
+            self.assertEqual(resp.status_code, 200, resp.data)
+            body = resp.get_json()
+            if body.get('done'):
+                done = True
+                break
+            cursor = body['next_cursor']
+        self.assertTrue(done)
+        self.assertEqual(len(similar_artefacts(a, None)), 1)
+
+    def test_similarity_step_endpoint_requires_worker(self):
+        a = _add_artefact(self.db, self.item, 'W', [('A', 'a', 1000), ('B', 'b', 2000)])
+        # No worker key → rejected (401 unauthenticated, or 403 worker-only).
+        resp = self.app.test_client().post(
+            f'/api/artefacts/{a.uuid}/similarity-step', json={'cursor': 0})
+        self.assertIn(resp.status_code, (401, 403))
+
     def test_ubiquitous_file_does_not_create_pairs(self):
         """A hash shared by many artefacts must not, alone, link them as similar."""
         from myapp.services import similarity

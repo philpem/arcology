@@ -439,53 +439,98 @@ def _distinctive_hashes(df: dict) -> set:
     return {h for h, count in df.items() if count <= MAX_HASH_ARTEFACTS}
 
 
-def recompute_for_artefact(artefact) -> dict:
-    """Incrementally refresh all similarity rows involving one artefact.
+# Number of candidate artefacts compared per bounded similarity step.
+SIMILARITY_STEP_CANDIDATES = 200
 
-    Deletes the artefact's existing artefact- and component-level rows, then
-    recomputes them against the artefacts that share at least one file hash.
-    Cheaper than a full ``rebuild_all`` and safe to call after each extraction.
+
+def similarity_reset(artefact_id) -> None:
+    """Clear an artefact's cached similarity rows and (re)create its components.
+
+    The first phase of an incremental refresh: idempotent, commits its own
+    transaction (so locks release before the matching scan, and so a restarted
+    job re-runs cleanly from cursor 0).  Matching is then done by
+    :func:`similarity_match_step`.
     """
-    aid = artefact.id
-
-    # --- artefact level ---
+    aid = artefact_id
     ArtefactSimilarity.query.filter(
         or_(ArtefactSimilarity.artefact_a_id == aid, ArtefactSimilarity.artefact_b_id == aid)
     ).delete(synchronize_session=False)
 
+    comp_ids = [c.id for c in ArtefactComponent.query.filter_by(artefact_id=aid).all()]
+    if comp_ids:
+        ComponentSimilarity.query.filter(
+            or_(
+                ComponentSimilarity.component_a_id.in_(comp_ids),
+                ComponentSimilarity.component_b_id.in_(comp_ids),
+            )
+        ).delete(synchronize_session=False)
+        ArtefactComponent.query.filter_by(artefact_id=aid).delete(synchronize_session=False)
+        db.session.flush()
+
+    for partition_id, _aid, root, name, member in _components_from_rows(_files_for_artefact(aid)):
+        db.session.add(ArtefactComponent(
+            artefact_id=aid,
+            partition_id=partition_id,
+            root_path=root,
+            name=name,
+            file_count=len(member),
+            total_bytes=sum(member.values()),
+        ))
+    db.session.commit()
+
+
+def similarity_match_step(artefact_id, cursor=0, *, limit=SIMILARITY_STEP_CANDIDATES) -> dict:
+    """Match one artefact against the next batch of candidate artefacts.
+
+    Bounded second phase of an incremental refresh: inserts the
+    ``ArtefactSimilarity`` and ``ComponentSimilarity`` rows for the next batch of
+    candidate artefacts and returns ``{done, next_cursor, processed,
+    artefact_pairs, component_pairs, progress_total}``.  Does **not** commit —
+    the caller owns the transaction (so a server statement_timeout still scopes
+    the whole scan).  ``similarity_reset`` must have run first (cursor 0).
+
+    ``cursor`` is the highest candidate **artefact id** already processed (not an
+    index into the candidate list).  Artefact ids are stable, so a candidate
+    added or removed between steps cannot shift the window and make a pair be
+    processed twice — a re-insert would violate the ``uq_*_pair`` constraints.
+    At worst a candidate that appears mid-refresh is skipped this run, and its
+    own refresh creates the pair from the other (symmetric) side.
+    """
+    aid = artefact_id
     my_rows = _files_for_artefact(aid)
     my_set = _member_set_from_rows(my_rows)
-    # Document frequencies for this artefact's hashes drive both the
-    # ubiquitous-file cap (candidate selection) and optional IDF weighting.
-    df = _document_frequencies(my_set.keys()) if my_set else {}
-    distinctive = _distinctive_hashes(df)
-    candidate_ids = _candidate_artefact_ids(aid, distinctive) if distinctive else set()
+    if not my_set:
+        return {"done": True, "next_cursor": cursor, "processed": 0,
+                "artefact_pairs": 0, "component_pairs": 0, "progress_total": 0}
 
-    # Fetch every candidate artefact's files once, then derive both the
-    # artefact-level sets and (below) the per-component sets from them — avoids a
-    # query per candidate and a further query per candidate component.
-    cand_rows = _files_for_artefacts(candidate_ids) if candidate_ids else []
-    cand_sets: dict[int, dict] = {}          # artefact_id -> {hash: size}
-    cand_partition_files: dict[int, list] = {}  # partition_id -> [(path, hash, size)]
-    for artefact_id, partition_id, path, h, size in cand_rows:
-        s = cand_sets.setdefault(artefact_id, {})
+    df = _document_frequencies(my_set.keys())
+    distinctive = _distinctive_hashes(df)
+    candidate_ids = sorted(_candidate_artefact_ids(aid, distinctive)) if distinctive else []
+    total = len(candidate_ids)
+    remaining = [cid for cid in candidate_ids if cid > cursor]
+    batch = remaining[:limit]
+    if not batch:
+        return {"done": True, "next_cursor": cursor, "processed": 0,
+                "artefact_pairs": 0, "component_pairs": 0, "progress_total": total}
+
+    # Fetch the batch's files once; derive artefact- and component-level sets.
+    cand_sets: dict[int, dict] = {}
+    cand_partition_files: dict[int, list] = {}
+    for cand_id, partition_id, path, h, size in _files_for_artefacts(batch):
+        s = cand_sets.setdefault(cand_id, {})
         if h not in s:
             s[h] = size or 0
         cand_partition_files.setdefault(partition_id, []).append((path, h, size or 0))
 
     weights = None
-    if _use_idf() and my_set:
-        # Extend df to every hash that appears in any candidate so union weights
-        # are correct, then build IDF weights.
-        extra = set()
-        for s in cand_sets.values():
-            extra.update(k for k in s if k not in df)
+    if _use_idf():
+        extra = {k for s in cand_sets.values() for k in s if k not in df}
         if extra:
-            df.update(_document_frequencies(extra))
+            df = {**df, **_document_frequencies(extra)}
         weights = _idf_weights(df, _total_artefact_docs())
 
     artefact_pairs = 0
-    for oid in candidate_ids:
+    for oid in batch:
         metrics = weighted_jaccard(my_set, cand_sets.get(oid, {}), weights)
         if metrics is None or metrics["score"] < MIN_STORE_SCORE:
             continue
@@ -493,36 +538,19 @@ def recompute_for_artefact(artefact) -> dict:
         db.session.add(ArtefactSimilarity(artefact_a_id=lo, artefact_b_id=hi, **metrics))
         artefact_pairs += 1
 
-    # --- component level ---
-    my_comp_ids = [c.id for c in ArtefactComponent.query.filter_by(artefact_id=aid).all()]
-    if my_comp_ids:
-        ComponentSimilarity.query.filter(
-            or_(
-                ComponentSimilarity.component_a_id.in_(my_comp_ids),
-                ComponentSimilarity.component_b_id.in_(my_comp_ids),
-            )
-        ).delete(synchronize_session=False)
-        ArtefactComponent.query.filter_by(artefact_id=aid).delete(synchronize_session=False)
-        db.session.flush()
-
-    my_components = []  # (comp_row, member)
-    for partition_id, _aid2, root, name, member in _components_from_rows(my_rows):
-        comp = ArtefactComponent(
-            artefact_id=aid,
-            partition_id=partition_id,
-            root_path=root,
-            name=name,
-            file_count=len(member),
-            total_bytes=sum(member.values()),
-        )
-        db.session.add(comp)
-        db.session.flush()
-        my_components.append((comp, member))
-
+    # Component level: this artefact's components (created by similarity_reset)
+    # against the batch's components.
+    my_partition_files: dict[int, list] = {}
+    for _a, partition_id, path, h, size in my_rows:
+        my_partition_files.setdefault(partition_id, []).append((path, h, size or 0))
+    my_components = [
+        (c, _component_set(my_partition_files.get(c.partition_id, []), c.root_path))
+        for c in ArtefactComponent.query.filter_by(artefact_id=aid).all()
+    ]
     component_pairs = 0
-    if my_components and candidate_ids:
+    if my_components:
         cand_comps = ArtefactComponent.query.filter(
-            ArtefactComponent.artefact_id.in_(candidate_ids)
+            ArtefactComponent.artefact_id.in_(batch)
         ).all()
         comp_sets = {
             c.id: _component_set(cand_partition_files.get(c.partition_id, []), c.root_path)
@@ -537,8 +565,57 @@ def recompute_for_artefact(artefact) -> dict:
                 db.session.add(ComponentSimilarity(component_a_id=lo, component_b_id=hi, **metrics))
                 component_pairs += 1
 
-    db.session.commit()
+    return {"done": len(batch) == len(remaining), "next_cursor": batch[-1],
+            "processed": len(batch), "artefact_pairs": artefact_pairs,
+            "component_pairs": component_pairs, "progress_total": total}
+
+
+def recompute_for_artefact(artefact) -> dict:
+    """Incrementally refresh all similarity rows involving one artefact, in full.
+
+    Synchronous wrapper over :func:`similarity_reset` + :func:`similarity_match_step`
+    used by the CLI rebuild and the tests; the worker drives the same two phases
+    in bounded chunks via the ``/artefacts/<uuid>/similarity-step`` endpoint.
+    """
+    aid = artefact.id
+    similarity_reset(aid)
+    cursor = 0
+    artefact_pairs = component_pairs = 0
+    while True:
+        result = similarity_match_step(aid, cursor, limit=10 ** 9)
+        db.session.commit()
+        artefact_pairs += result["artefact_pairs"]
+        component_pairs += result["component_pairs"]
+        if result["done"]:
+            break
+        cursor = result["next_cursor"]
     return {"artefact_pairs": artefact_pairs, "component_pairs": component_pairs}
+
+
+def queue_similarity_refresh(artefact_id, *, commit=True):
+    """Queue a worker-driven SIMILARITY_REFRESH job for one artefact (deduped).
+
+    A new job is suppressed when one is already PENDING/RUNNING for the artefact.
+    Returns ``(analysis, created)``.
+    """
+    from ..database import Analysis, AnalysisStatus, AnalysisType
+    existing = (
+        Analysis.query
+        .filter_by(artefact_id=artefact_id, analysis_type=AnalysisType.SIMILARITY_REFRESH)
+        .filter(Analysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.RUNNING]))
+        .first()
+    )
+    if existing:
+        return existing, False
+    analysis = Analysis(
+        artefact_id=artefact_id,
+        analysis_type=AnalysisType.SIMILARITY_REFRESH,
+        status=AnalysisStatus.PENDING,
+    )
+    db.session.add(analysis)
+    if commit:
+        db.session.commit()
+    return analysis, True
 
 
 # ---------------------------------------------------------------------------

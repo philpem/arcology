@@ -63,10 +63,12 @@ from .metadata import (
     process_riscos_module_parse,
 )
 from .partition import process_partition_detect
+from .similarity import process_similarity_refresh
 
 __all__ = [
     'HANDLERS',
     'process_cleanup',
+    'process_similarity_refresh',
     # Flux
     'process_flux_visualisation',
     'process_detect_track_density',

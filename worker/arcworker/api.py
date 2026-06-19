@@ -695,6 +695,13 @@ class ArcologyAPI:
             {'last_product_id': last_product_id, 'limit': limit},
         )
 
+    def similarity_step(self, artefact_uuid: str, *, cursor: int = 0, limit: int = 200) -> dict | None:
+        """Run one bounded content-set similarity refresh step for an artefact."""
+        return self.post(
+            f'/artefacts/{artefact_uuid}/similarity-step',
+            {'cursor': cursor, 'limit': limit},
+        )
+
     def update_hashdb_recognition_status(
         self,
         db_id: int,

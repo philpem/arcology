@@ -65,9 +65,17 @@ Results are cached in three tables (`artefact_similarity`,
 
 - **Full rebuild** — `flask rebuild-similarity` recomputes everything.
 - **Incremental** — after each `FILE_EXTRACTION` / `ARCHIVE_EXTRACT` completes,
-  the API refreshes just that artefact's rows (`recompute_for_artefact`). Gated
-  by `SIMILARITY_AUTO_REFRESH` (default on); a failure here never fails the
-  worker's result post.
+  the API **queues a `SIMILARITY_REFRESH` job** for that artefact (gated by
+  `SIMILARITY_AUTO_REFRESH`, default on; deduped per artefact). The recompute
+  itself runs as a **worker-driven bounded job**, not on the extraction
+  result-POST, so it can't saturate web workers — the same pattern the hashdb
+  link/recognition/delete jobs use. The worker drives the
+  `/artefacts/<uuid>/similarity-step` endpoint as a cursor loop
+  (`run_step_loop`); each step matches a batch of candidate artefacts under a
+  PostgreSQL `statement_timeout`, and `similarity_reset` (cursor 0) clears the
+  artefact's rows and recreates its components so a restarted job re-runs
+  cleanly. `recompute_for_artefact` remains the synchronous wrapper used by the
+  CLI rebuild and tests.
 
 Comparison is exact (no MinHash/LSH). At evaluation-collection scale this is
 fine; the cap bounds the work. MinHash/LSH is the lever to reach for only if a

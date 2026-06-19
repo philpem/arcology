@@ -1277,28 +1277,27 @@ _SIMILARITY_REFRESH_TYPES = frozenset({
 
 
 def _refresh_similarity(analysis):
-    """Incrementally refresh the similarity cache for a just-extracted artefact.
+    """Queue a worker-driven similarity refresh for a just-extracted artefact.
 
-    Best-effort: a failure here must never fail the worker's result POST, so it
-    is wrapped and logged.  Disabled when SIMILARITY_AUTO_REFRESH is false.
+    The actual recompute runs as a bounded SIMILARITY_REFRESH job (driven by the
+    worker via /artefacts/<uuid>/similarity-step), so no DB-heavy work runs on
+    this worker result-POST.  Best-effort: queueing must never fail the POST.
+    Disabled when SIMILARITY_AUTO_REFRESH is false.
     """
     if not current_app.config.get('SIMILARITY_AUTO_REFRESH', True):
         return
     if analysis.analysis_type not in _SIMILARITY_REFRESH_TYPES:
         return
-    artefact = analysis.artefact
-    if artefact is None:
+    if analysis.artefact_id is None:
         return
-    # Capture the uuid now: after a rollback the instance is expired, and a
-    # concurrently-deleted artefact would raise on lazy-load inside the except.
-    artefact_uuid = artefact.uuid
+    artefact_id = analysis.artefact_id
     try:
-        from ..services.similarity import recompute_for_artefact
-        recompute_for_artefact(artefact)
+        from ..services.similarity import queue_similarity_refresh
+        queue_similarity_refresh(artefact_id)
     except Exception:
         db.session.rollback()
         current_app.logger.exception(
-            'Similarity refresh failed for artefact %s', artefact_uuid
+            'Failed to queue similarity refresh for artefact id %s', artefact_id
         )
 
 
@@ -3223,6 +3222,45 @@ def hash_database_recognition_step(db_id):
     if last_product_id == 0:  # first step: report the total once (cheap COUNT)
         result['progress_total'] = (
             KnownProduct.query.filter_by(database_id=db_id).count())
+    return jsonify(result)
+
+
+@blueprint.route('/artefacts/<string:uuid>/similarity-step', methods=['POST'])
+@require_auth('read_write')
+def artefact_similarity_step(uuid):
+    """Worker-only bounded step of an artefact's content-set similarity refresh.
+
+    cursor 0 also resets the artefact's cached rows and recreates its components;
+    every step then matches the next ``limit`` candidate artefacts.  Bounded by a
+    PostgreSQL statement_timeout so a pathological scan fails fast (worker halves
+    the batch and retries, per run_step_loop).
+    """
+    if not _is_worker_request():
+        return error_response('Only the worker may run similarity steps', 403)
+    artefact = _get_artefact_or_404(uuid)
+    data, error = _json_object()
+    if error:
+        return error
+    cursor = int(data.get('cursor') or 0)
+    limit = max(1, min(int(data.get('limit') or 200), 2000))
+
+    from ..services.similarity import similarity_match_step, similarity_reset
+    if cursor == 0:
+        # Clear + recreate this artefact's components in its own transaction so
+        # the row locks release before the (timeout-bounded) matching scan.
+        similarity_reset(artefact.id)
+
+    budget = current_app.config.get('WORKER_STEP_DEADLINE_SECONDS', 20)
+    _apply_statement_timeout(budget)
+    try:
+        result = similarity_match_step(artefact.id, cursor, limit=limit)
+    except OperationalError as exc:
+        db.session.rollback()
+        if not is_statement_timeout(exc):
+            raise
+        return jsonify({'timed_out': True})
+    db.session.commit()
+    result['progress_label'] = f"Finding similar artefacts for '{artefact.label}'"
     return jsonify(result)
 
 
