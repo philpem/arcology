@@ -141,3 +141,97 @@ as an anonymous "92% similar to ⟨hidden⟩".
 
 See `doc/ADMIN_COMMANDS.md` for the `rebuild-similarity` and `backfill-tlsh`
 command reference.
+
+## Roadmap (post-evaluation enhancements)
+
+What's described above is implemented. The items below refine it for large
+collections and add a discovery feature. They split two distinct problems that
+whole-disk matching has on big hard-disc images: **cost** (loading/comparing a
+100k-file disc is slow and usually finds nothing) and **signal** (a disc derived
+from a master — e.g. an Acorn J233 install — legitimately matches every other
+J233 because they share the base OS, which is usually noise). `MAX_HASH_ARTEFACTS`
+already caps the "many near-identical discs all match" explosion; these phases
+address the rest.
+
+### Phase 0 — Evaluate on real data (prerequisite, no code)
+
+Run `flask rebuild-similarity` on the real collection and measure before tuning:
+match precision (useful vs. noise), large-disc compute time, the distribution of
+disc sizes / file counts, and how often whole-disc matches are *only* base-OS
+overlap. **Every threshold in the later phases is a number only this can set** —
+measure first, then choose.
+
+### Phase 1 — Base-system hashdb exclusion (primary signal fix)
+
+Deterministically ignore operating-system / runtime files when judging
+similarity, so two J233s match on *user* content, not the stock install.
+
+- Add `exclude_from_similarity` flag to `HashDatabase` (migration + model + a
+  toggle on the hashdb edit page).
+- In the similarity content-set query (`_file_rows_query`), drop `ExtractedFile`s
+  whose linked `KnownFile` belongs to an excluded database (a join on the
+  existing `known_file_id` / `is_known` link). Applies to both granularities, so
+  an all-OS `!System` shrinks to nothing while a user's `!ArtWorks` (not in the
+  OS DB) still matches.
+- Reserve the flag for the **base OS**, not application software — "you both have
+  ArtWorks" is signal worth keeping.
+- Re-importing or re-flagging a base DB should invalidate/refresh affected
+  similarity (or document that a full rebuild is required).
+- **Reference data:** generate base-system hashdbs from the pristine J233 image +
+  the RISC OS application discs via `arco hashdb generate-riscos`; a curated
+  NSRL/NIST *OS-files subset* covers PC operating systems (the full RDS is too
+  large to import wholesale). This is content/ops, not code.
+- Depends on files being linked first (existing hashdb link pipeline).
+
+### Phase 2 — Large-disc cost control
+
+Keep the valuable cases (re-image, same-master, shared apps) while removing the
+cost and noise of monolithic whole-disc comparison on big discs.
+
+- **Size/file-count gate:** above `SIMILARITY_MAX_WHOLE_DISK_FILES`, skip the
+  whole-file-set Jaccard and instead **derive the artefact score from component
+  matches**, weighted by each matched component's `file_count` / `total_bytes`
+  (both already stored) — "78% of this disc's notable folders also appear on
+  that disc". Bounded by the component caps, not total file count.
+- **Count/size pre-gate:** only run the full set comparison for a candidate pair
+  when their stored file-count and total-bytes are within
+  `SIMILARITY_WHOLE_DISK_COUNT_RATIO` — re-images / same-master discs have
+  near-identical counts; a disc merely sharing a few apps is skipped cheaply.
+- **Exact-content fallback:** still emit a whole-disc match for true re-images
+  via the existing blob SHA-256 (so gating never loses the "imaged twice" case).
+- Component matching stays on for every disc — it is the cross-disc value and is
+  already bounded.
+
+### Phase 3 — Distinctiveness ("what's unusual about this disc")
+
+The inverse lens of similarity, reusing the document-frequency machinery
+(`_document_frequencies` / the rebuild inverted index): surface what a disc has
+that others don't. Cheapest first:
+
+- **"Unique to this image"** — files with `df == 1` (present on no other
+  artefact): "47 files (3.2 MB) found nowhere else." Trivial from the inverted
+  index.
+- **"Distinctive contents" panel** — top-N highest-IDF files/folders on the
+  artefact page, so a curator sees the interesting bits of an otherwise-stock
+  disc at a glance.
+- **Artefact-level distinctiveness metric** — weighted fraction of the disc that
+  is rare; a fully-low-IDF disc is "just a stock install".
+- Cache alongside similarity (df is collection-relative and moves as the
+  collection grows); gate the UI on a minimum artefact count (small collections
+  make everything look distinctive). High-IDF recurring files are good
+  candidates to *add* to a hashdb.
+
+### Phase 4 — MinHash/LSH (optional, only if Phase 0 shows it's needed)
+
+If exact pairing proves too slow at the collection's scale, precompute a
+fixed-size MinHash signature per artefact and LSH-bucket candidate pairs, so
+whole-disc comparison stops scaling with file count while still catching
+near-identical images. Largest effort; deferred until the data says it's needed.
+
+### IDF weighting — disposition
+
+`SIMILARITY_USE_IDF` stays as an implemented, **default-off** statistical
+fallback for collections without a base-system DB loaded (it down-weights
+*un-catalogued* boilerplate that Phase 1 can't know about). Phase 3 is its
+stronger justification — as a distinctiveness signal rather than a scoring tweak.
+Do not make it default-on by guess; it's an A/B lever for Phase 0.
