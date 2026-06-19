@@ -77,6 +77,9 @@ MAX_HASH_ARTEFACTS = 50
 # Cap on extracted-file candidates scanned for a TLSH near-duplicate lookup.
 TLSH_CANDIDATE_LIMIT = 5000
 
+# Emit a rebuild progress line every this many candidate pairs compared.
+_PROGRESS_EVERY = 5000
+
 
 # ---------------------------------------------------------------------------
 # Core metric
@@ -274,8 +277,17 @@ def _document_frequencies(hashes) -> dict:
 # Rebuild
 # ---------------------------------------------------------------------------
 
-def rebuild_all() -> dict:
-    """Recompute the entire similarity cache from extracted-file data."""
+def rebuild_all(progress=None) -> dict:
+    """Recompute the entire similarity cache from extracted-file data.
+
+    ``progress`` is an optional ``callable(str)`` for status lines (the CLI
+    passes ``click.echo``); when None the rebuild is silent.
+    """
+    def _note(msg):
+        if progress:
+            progress(msg)
+
+    _note("Loading extracted files …")
     rows = _file_rows_query().all()
 
     # Per-artefact content sets and an inverted hash -> artefacts index.
@@ -286,25 +298,31 @@ def rebuild_all() -> dict:
         if h not in s:
             s[h] = size or 0
         inverted.setdefault(h, set()).add(artefact_id)
+    _note(f"Indexed {len(rows)} files across {len(artefact_sets)} artefact(s)")
 
     # Optional rarity weighting from the in-memory inverted index.
     weights = None
     if _use_idf():
         df = {h: len(ids) for h, ids in inverted.items()}
         weights = _idf_weights(df, len(artefact_sets))
+        _note("Applying IDF rarity weighting")
 
     ArtefactSimilarity.query.delete()
     db.session.flush()
 
+    pairs = _pairs_from_inverted(inverted)
+    _note(f"Comparing {len(pairs)} candidate artefact pair(s) …")
     artefact_pairs = 0
-    for a, b in _pairs_from_inverted(inverted):
+    for i, (a, b) in enumerate(pairs, 1):
         metrics = weighted_jaccard(artefact_sets[a], artefact_sets[b], weights)
-        if metrics is None or metrics["score"] < MIN_STORE_SCORE:
-            continue
-        db.session.add(ArtefactSimilarity(artefact_a_id=a, artefact_b_id=b, **metrics))
-        artefact_pairs += 1
+        if metrics is not None and metrics["score"] >= MIN_STORE_SCORE:
+            db.session.add(ArtefactSimilarity(artefact_a_id=a, artefact_b_id=b, **metrics))
+            artefact_pairs += 1
+        if progress and i % _PROGRESS_EVERY == 0:
+            _note(f"  artefact pairs: {i}/{len(pairs)} compared, {artefact_pairs} stored")
 
-    component_pairs = _rebuild_components(rows, weights)
+    _note("Building components …")
+    component_pairs = _rebuild_components(rows, weights, progress=progress)
 
     db.session.commit()
     return {"artefact_pairs": artefact_pairs, "component_pairs": component_pairs}
@@ -328,8 +346,12 @@ def _components_from_rows(rows):
             yield partition_id, part_artefact[partition_id], root, root.split("/")[-1], member
 
 
-def _rebuild_components(rows, weights=None) -> int:
+def _rebuild_components(rows, weights=None, progress=None) -> int:
     """Rebuild component tables from the same file rows used for artefacts."""
+    def _note(msg):
+        if progress:
+            progress(msg)
+
     # CASCADE handles ComponentSimilarity, but delete explicitly for SQLite
     # where ondelete is not always enforced.
     ComponentSimilarity.query.delete()
@@ -356,16 +378,18 @@ def _rebuild_components(rows, weights=None) -> int:
         for h in member:
             inverted.setdefault(h, set()).add(comp.id)
 
+    pairs = _pairs_from_inverted(inverted)
+    _note(f"Built {len(component_sets)} component(s); comparing {len(pairs)} pair(s) …")
     component_pairs = 0
-    for a, b in _pairs_from_inverted(inverted):
+    for i, (a, b) in enumerate(pairs, 1):
         # Skip pairs within the same artefact (self-similar components are noise).
-        if component_artefact[a] == component_artefact[b]:
-            continue
-        metrics = weighted_jaccard(component_sets[a], component_sets[b], weights)
-        if metrics is None or metrics["score"] < MIN_STORE_SCORE:
-            continue
-        db.session.add(ComponentSimilarity(component_a_id=a, component_b_id=b, **metrics))
-        component_pairs += 1
+        if component_artefact[a] != component_artefact[b]:
+            metrics = weighted_jaccard(component_sets[a], component_sets[b], weights)
+            if metrics is not None and metrics["score"] >= MIN_STORE_SCORE:
+                db.session.add(ComponentSimilarity(component_a_id=a, component_b_id=b, **metrics))
+                component_pairs += 1
+        if progress and i % _PROGRESS_EVERY == 0:
+            _note(f"  component pairs: {i}/{len(pairs)} compared, {component_pairs} stored")
 
     return component_pairs
 

@@ -17,7 +17,7 @@ def rebuild_similarity():
       docker compose exec web flask rebuild-similarity
     """
     click.echo("Rebuilding similarity cache ...")
-    result = rebuild_all()
+    result = rebuild_all(progress=click.echo)
     click.echo(
         f"Done. {result['artefact_pairs']} artefact pair(s), "
         f"{result['component_pairs']} component pair(s) cached."
