@@ -670,13 +670,18 @@ def parse_canonical_sources(text: str) -> dict[str, list]:
     """Parse canonical-sources text into {app_dir_lower: [(regex, title_override|None), ...]}.
 
     Each rule line has the form ``<app-dir> <regex> [-> title-override]``.  The
-    optional title override is introduced by `` -> `` (space, arrow, space) and
-    is a literal string that replaces the auto-derived product title context when
-    that copy is kept.  Use it to give bundled copies a descriptive name, e.g.:
+    optional title override is introduced by ``->`` (with any surrounding
+    whitespace) and is a literal string that replaces the auto-derived product
+    title context when that copy is kept.  Use it to give bundled copies a
+    descriptive name, e.g.:
 
         !FormEd    ANSI C Release 3 -> FormEd 2.45 (from Acorn C R3)
 
-    Raises ValueError on a malformed line or invalid regex.
+    Whitespace around ``->`` is flexible: ``regex->title``, ``regex -> title``,
+    and ``regex  ->  title`` are all equivalent.
+
+    Raises ValueError on a malformed line, an empty title after ``->``, or an
+    invalid regex.
     """
     rules: dict[str, list] = {}
     for lineno, raw in enumerate(text.splitlines(), 1):
@@ -688,9 +693,13 @@ def parse_canonical_sources(text: str) -> dict[str, list]:
             raise ValueError(
                 f'line {lineno}: expected "<app-dir> <regex>", got: {raw!r}')
         app_dir, rest = parts
-        arrow_split = re.split(r'\s+->\s+', rest, maxsplit=1)
+        arrow_split = re.split(r'\s*->\s*', rest, maxsplit=1)
         if len(arrow_split) == 2:
-            pattern, title_override = arrow_split[0], arrow_split[1].strip() or None
+            pattern = arrow_split[0].rstrip()
+            title_override = arrow_split[1].strip()
+            if not title_override:
+                raise ValueError(
+                    f'line {lineno}: empty title after "->": {raw!r}')
         else:
             pattern = rest
             title_override = None
@@ -1055,7 +1064,7 @@ def _build_products(client: ArcologyClient, g: dict, args, is_unique,
             for app_dir_name, app_files in ar['app_dirs'].items():
                 override = overrides.get(app_dir_name)
                 short_ctx = override or _product_context(ar.get('clean_name'), item_name)
-                full_ctx = override or _product_context(ar.get('full_name'), item_name)
+                full_ctx = _product_context(ar.get('full_name'), item_name)
                 tasks.append((app_dir_name, app_files, disc_num, '', short_ctx, full_ctx))
 
     if args.multi_disc in ('merge', 'both'):
@@ -1068,9 +1077,10 @@ def _build_products(client: ArcologyClient, g: dict, args, is_unique,
             for app_dir_name, app_files in ar['app_dirs'].items():
                 override = overrides.get(app_dir_name)
                 short_ctx = override or _product_context(ar.get('clean_name'), item_name)
-                full_ctx = override or _product_context(ar.get('full_name'), item_name)
-                merged_context.setdefault(app_dir_name, short_ctx)
-                merged_full_context.setdefault(app_dir_name, full_ctx)
+                full_ctx = _product_context(ar.get('full_name'), item_name)
+                if override or app_dir_name not in merged_context:
+                    merged_context[app_dir_name] = short_ctx
+                    merged_full_context[app_dir_name] = full_ctx
                 bucket = merged.setdefault(app_dir_name, [])
                 for f in app_files:
                     if is_multi_disc and disc_num is not None:
