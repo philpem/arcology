@@ -702,6 +702,99 @@ class TestCanonicalSources(unittest.TestCase):
         # No title override -> key absent (or empty dict).
         self.assertFalse(ar.get('title_overrides', {}).get('!FormEd'))
 
+    def test_parse_arrow_no_spaces(self):
+        # -> with no surrounding spaces must still split correctly.
+        rules = parse_canonical_sources(
+            '!FormEd    ANSI C Release 3->FormEd 2.45 (from Acorn C R3)\n'
+        )
+        pat, override = rules['!formed'][0]
+        self.assertTrue(pat.match('ANSI C Release 3'))
+        self.assertEqual(override, 'FormEd 2.45 (from Acorn C R3)')
+
+    def test_parse_arrow_empty_title_raises(self):
+        # -> with nothing after it (or only whitespace) is a parse error.
+        with self.assertRaises(ValueError):
+            parse_canonical_sources('!FormEd    ANSI C Release 3 -> \n')
+        with self.assertRaises(ValueError):
+            parse_canonical_sources('!FormEd    ANSI C Release 3->\n')
+
+    def test_merge_override_priority_over_no_override(self):
+        # In the merge path, a canonical-sources override must win even when
+        # the override-bearing artefact appears second in iteration order.
+        from types import SimpleNamespace
+        from cli.arccli.commands.hashdb_generate import _build_products
+
+        gathered_item = {
+            'item': {'uuid': 'i'},
+            'item_name': 'ANSI C Release 3',
+            'version': None,
+            'artefact_results': [
+                # disc 1 — no override
+                {'clean_name': 'ANSI C Release 3 Disc 1',
+                 'full_name': 'ANSI C Release 3 Disc 1 (1992)(Acorn)',
+                 'label': 'ANSI C Release 3 Disc 1',
+                 'disc_number': 1, 'version': None,
+                 'app_dirs': {'!FormEd': [_f('!FormEd/!RunImage', md5='fe_x')]}},
+                # disc 2 — has override
+                {'clean_name': 'ANSI C Release 3 Disc 2',
+                 'full_name': 'ANSI C Release 3 Disc 2 (1992)(Acorn)',
+                 'label': 'ANSI C Release 3 Disc 2',
+                 'disc_number': 2, 'version': None,
+                 'title_overrides': {'!FormEd': 'FormEd 2.45 (from Acorn C R3)'},
+                 'app_dirs': {'!FormEd': [_f('!FormEd/!RunImage', md5='fe_x')]}},
+            ],
+        }
+        args = SimpleNamespace(multi_disc='merge', path_match=False,
+                               verbose=False, explain=False,
+                               require_mandatory=False)
+
+        # is_unique: every file is unique (simplest possible uniqueness map)
+        def _is_unique(f):
+            return True
+
+        products, _ = _build_products(None, gathered_item, args, _is_unique, jobs=1)
+        titles = [p['title'] for p in products if p]
+        # The override from disc 2 must win over disc 1's auto-derived context.
+        self.assertTrue(
+            any('FormEd 2.45 (from Acorn C R3)' in t for t in titles),
+            f'Expected override in titles, got: {titles}',
+        )
+
+    def test_full_ctx_not_replaced_by_override(self):
+        # The title (short_ctx) should use the override; description (full_ctx)
+        # must retain the year/publisher from full_name regardless of override.
+        from types import SimpleNamespace
+        from cli.arccli.commands.hashdb_generate import _build_products
+
+        gathered_item = {
+            'item': {'uuid': 'i'},
+            'item_name': 'ANSI C Release 3',
+            'version': None,
+            'artefact_results': [
+                {'clean_name': 'ANSI C Release 3',
+                 'full_name': 'ANSI C Release 3 (1992)(Acorn)',
+                 'label': 'ANSI C Release 3',
+                 'disc_number': None, 'version': None,
+                 'title_overrides': {'!FormEd': 'FormEd 2.45 (from Acorn C R3)'},
+                 'app_dirs': {'!FormEd': [_f('!FormEd/!RunImage', md5='fe_y')]}},
+            ],
+        }
+        args = SimpleNamespace(multi_disc='separate', path_match=False,
+                               verbose=False, explain=False,
+                               require_mandatory=False)
+
+        def _is_unique(f):
+            return True
+
+        products, _ = _build_products(None, gathered_item, args, _is_unique, jobs=1)
+        products = [p for p in products if p]
+        self.assertEqual(len(products), 1)
+        p = products[0]
+        self.assertIn('FormEd 2.45 (from Acorn C R3)', p['title'])
+        # description must come from full_name (year/publisher retained)
+        self.assertIn('1992', p['description'])
+        self.assertIn('Acorn', p['description'])
+
 
 class TestMergeIdenticalProducts(unittest.TestCase):
     def _prod(self, app, context, hashes, required=None):
