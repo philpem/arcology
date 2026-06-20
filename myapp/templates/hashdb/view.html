@@ -193,6 +193,15 @@
                             </label>
                         </div>
                     </div>
+                    <div class="col-auto">
+                        <div class="form-check">
+                            <input type="checkbox" name="exclude_from_similarity" class="form-check-input" id="efs" value="1"{% if database.exclude_from_similarity %} checked{% endif %}>
+                            <label class="form-check-label form-label-sm" for="efs"
+                                   title="When enabled, files matching this database (e.g. a base-OS hashset) are ignored by artefact similarity, so stock OS files don't make every system disc match. Takes effect on the next similarity rebuild.">
+                                Exclude from similarity
+                            </label>
+                        </div>
+                    </div>
                     <div class="col-md-2">
                         <label class="form-label form-label-sm">Auto-restrict</label>
                         <select name="restriction_type" class="form-select form-select-sm">

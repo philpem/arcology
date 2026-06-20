@@ -133,15 +133,19 @@ class _SimilarityBase(unittest.TestCase):
             ArtefactSimilarity,
             ComponentSimilarity,
             ExtractedFile,
+            HashDatabase,
             Item,
+            KnownFile,
             Partition,
             Platform,
         )
         self.ctx = self.app.app_context()
         self.ctx.push()
-        # Clean slate each test.
+        # Clean slate each test.  ExtractedFile before KnownFile so the
+        # known_file_id FK (ON DELETE SET NULL) doesn't block the delete.
         for model in (ComponentSimilarity, ArtefactSimilarity, ArtefactComponent,
-                      ExtractedFile, Partition, Artefact, Item, Platform):
+                      ExtractedFile, KnownFile, HashDatabase,
+                      Partition, Artefact, Item, Platform):
             model.query.delete()
         self.db.session.commit()
         plat = Platform(name='Acorn')
@@ -604,6 +608,90 @@ class TestIncrementalDirtyRefresh(_SimilarityBase):
         _add_artefact(self.db, self.item, 'A', [('F', 'f', 1000)])
         stats = refresh_dirty()
         self.assertEqual(stats, {'artefacts': 0, 'artefact_pairs': 0, 'component_pairs': 0})
+class TestBaseSystemExclusion(_SimilarityBase):
+    """exclude_from_similarity drops base-OS files from the content set."""
+
+    def _make_excluded_db(self, exclude=True):
+        from myapp.database import HashDatabase
+        hdb = HashDatabase(name=f'BaseOS-{exclude}', exclude_from_similarity=exclude)
+        self.db.session.add(hdb)
+        self.db.session.commit()
+        return hdb
+
+    def _link_files_to_db(self, artefact, hdb, paths):
+        """Link the given paths' ExtractedFiles to a KnownFile in hdb."""
+        from myapp.database import ExtractedFile, KnownFile, Partition
+        for path in paths:
+            ef = (ExtractedFile.query
+                  .join(Partition, ExtractedFile.partition_id == Partition.id)
+                  .filter(Partition.artefact_id == artefact.id,
+                          ExtractedFile.path == path)
+                  .one())
+            kf = KnownFile(database_id=hdb.id, filename=ef.filename,
+                           file_size=ef.file_size, sha256=ef.sha256, md5=ef.md5)
+            self.db.session.add(kf)
+            self.db.session.flush()
+            ef.known_file_id = kf.id
+        self.db.session.commit()
+
+    def test_os_only_discs_stop_matching_when_excluded(self):
+        """Two discs sharing only base-OS files match with the flag off, not on."""
+        from myapp.services.similarity import rebuild_all, similar_artefacts
+        # Both discs share the OS files; their unique content is disjoint.
+        os_files = [('!System/Modules/A', 'osa', 40000),
+                    ('!System/Modules/B', 'osb', 60000)]
+        a = _add_artefact(self.db, self.item, 'SysA',
+                          os_files + [('UserA', 'ua', 1000)])
+        b = _add_artefact(self.db, self.item, 'SysB',
+                          os_files + [('UserB', 'ub', 1000)])
+
+        # With no exclusion, the shared OS dominates -> they match.
+        rebuild_all()
+        self.assertEqual(len(similar_artefacts(a, None)), 1)
+
+        # Flag a base-OS DB and link the OS files on both discs.
+        hdb = self._make_excluded_db(exclude=True)
+        self._link_files_to_db(a, hdb, ['!System/Modules/A', '!System/Modules/B'])
+        self._link_files_to_db(b, hdb, ['!System/Modules/A', '!System/Modules/B'])
+
+        rebuild_all()
+        # Only disjoint user content remains -> no match.
+        self.assertEqual(similar_artefacts(a, None), [])
+
+    def test_excluded_flag_off_keeps_matching(self):
+        """Linking to a non-excluded DB does not drop the files."""
+        from myapp.services.similarity import rebuild_all, similar_artefacts
+        os_files = [('!System/Modules/A', 'osa', 40000),
+                    ('!System/Modules/B', 'osb', 60000)]
+        a = _add_artefact(self.db, self.item, 'SysA',
+                          os_files + [('UserA', 'ua', 1000)])
+        b = _add_artefact(self.db, self.item, 'SysB',
+                          os_files + [('UserB', 'ub', 1000)])
+        hdb = self._make_excluded_db(exclude=False)
+        self._link_files_to_db(a, hdb, ['!System/Modules/A', '!System/Modules/B'])
+        self._link_files_to_db(b, hdb, ['!System/Modules/A', '!System/Modules/B'])
+
+        rebuild_all()
+        self.assertEqual(len(similar_artefacts(a, None)), 1)
+
+    def test_unlinked_user_content_still_matches_with_exclusion(self):
+        """Excluding the OS leaves genuine shared user content matching."""
+        from myapp.services.similarity import rebuild_all, similar_artefacts
+        os_files = [('!System/Modules/A', 'osa', 40000)]
+        shared_app = [('!ArtWorks/!RunImage', 'aw1', 80000),
+                      ('!ArtWorks/Data', 'aw2', 20000)]
+        a = _add_artefact(self.db, self.item, 'DiscA', os_files + shared_app)
+        b = _add_artefact(self.db, self.item, 'DiscB', os_files + shared_app)
+        hdb = self._make_excluded_db(exclude=True)
+        # Link only the OS file on both discs.
+        self._link_files_to_db(a, hdb, ['!System/Modules/A'])
+        self._link_files_to_db(b, hdb, ['!System/Modules/A'])
+
+        rebuild_all()
+        matches = similar_artefacts(a, None)
+        self.assertEqual(len(matches), 1)
+        # The shared !ArtWorks dominates the (OS-excluded) score.
+        self.assertGreater(matches[0][1].score, 0.99)
 
 
 class TestTlshHelper(unittest.TestCase):

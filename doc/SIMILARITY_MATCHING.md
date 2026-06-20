@@ -182,22 +182,27 @@ a list of the top matches to hand-label (useful vs. noise). **Every threshold in
 the later phases is a number only this can set** — measure first, then choose.
 The hand-labelled precision sample is the one part the tool can't do for you.
 
-### Phase 1 — Base-system hashdb exclusion (primary signal fix)
+### Phase 1 — Base-system hashdb exclusion (primary signal fix) — **implemented**
 
 Deterministically ignore operating-system / runtime files when judging
 similarity, so two J233s match on *user* content, not the stock install.
 
-- Add `exclude_from_similarity` flag to `HashDatabase` (migration + model + a
-  toggle on the hashdb edit page).
-- In the similarity content-set query (`_file_rows_query`), drop `ExtractedFile`s
-  whose linked `KnownFile` belongs to an excluded database (a join on the
-  existing `known_file_id` / `is_known` link). Applies to both granularities, so
-  an all-OS `!System` shrinks to nothing while a user's `!ArtWorks` (not in the
-  OS DB) still matches.
+- **Done:** `exclude_from_similarity` flag on `HashDatabase` (migration
+  `20260620_105239_add_hashdb_exclude_from_similarity.py`, model column, toggle
+  on the hashdb edit page).
+- **Done:** the similarity content-set query (`_file_rows_query`) drops
+  `ExtractedFile`s whose linked `KnownFile` belongs to an excluded database (an
+  outer join on the existing `known_file_id` link, added only when at least one
+  database is flagged — zero overhead otherwise). Applies to both granularities,
+  so an all-OS `!System` shrinks to nothing while a user's `!ArtWorks` (not in
+  the OS DB) still matches.
 - Reserve the flag for the **base OS**, not application software — "you both have
   ArtWorks" is signal worth keeping.
-- Re-importing or re-flagging a base DB should invalidate/refresh affected
-  similarity (or document that a full rebuild is required).
+- **Done:** changing the flag notes that the cache updates on the next rebuild
+  (a re-flag does not auto-refresh, consistent with `SIMILARITY_USE_IDF`). The
+  change takes effect on the next full `rebuild-similarity` — run manually by an
+  admin, or automatically by the task runner when `TASKRUNNER_SIMILARITY_INTERVAL`
+  is set.
 - **Reference data:** generate base-system hashdbs from the pristine J233 image +
   the RISC OS application discs via `arco hashdb generate-riscos`; a curated
   NSRL/NIST *OS-files subset* covers PC operating systems (the full RDS is too

@@ -38,7 +38,9 @@ from ..database import (
     ArtefactSimilarity,
     ComponentSimilarity,
     ExtractedFile,
+    HashDatabase,
     Item,
+    KnownFile,
     Partition,
     db,
 )
@@ -132,13 +134,33 @@ def _hash_key():
     return func.coalesce(ExtractedFile.sha256, ExtractedFile.md5)
 
 
+def _excluded_db_ids() -> list:
+    """IDs of hash databases flagged ``exclude_from_similarity``.
+
+    Files linked (as known) to one of these databases are dropped from the
+    content set, so base-OS / runtime boilerplate (a stock RISC OS install, a
+    PC operating system in a NIST hashset) does not make every system disc
+    match every other.  Returns an empty list when no database is flagged, in
+    which case the join is skipped entirely (zero overhead).
+    """
+    return [
+        row[0]
+        for row in db.session.query(HashDatabase.id)
+        .filter(HashDatabase.exclude_from_similarity.is_(True))
+        .all()
+    ]
+
+
 def _file_rows_query():
     """Hashable, non-directory, non-empty extracted files across the collection.
 
     Yields ``(artefact_id, partition_id, path, hash, size)``.
+
+    Files identified as known members of a hash database flagged
+    ``exclude_from_similarity`` are omitted (see :func:`_excluded_db_ids`).
     """
     hk = _hash_key()
-    return (
+    q = (
         db.session.query(
             Partition.artefact_id,
             ExtractedFile.partition_id,
@@ -152,6 +174,16 @@ def _file_rows_query():
         .filter(ExtractedFile.file_size.isnot(None))
         .filter(ExtractedFile.file_size > 0)
     )
+    excluded = _excluded_db_ids()
+    if excluded:
+        # Drop files whose known-file link points at an excluded database.
+        # Outer join so files with no known-file link (the common case) survive.
+        q = q.outerjoin(
+            KnownFile, ExtractedFile.known_file_id == KnownFile.id
+        ).filter(
+            or_(KnownFile.id.is_(None), KnownFile.database_id.notin_(excluded))
+        )
+    return q
 
 
 def _partition_components(files):
