@@ -547,7 +547,6 @@ class TestFindAllKnownFilesBatch(unittest.TestCase):
                 filename='test.dat',
                 md5='aaaa1111bbbb2222cccc3333dddd4444',
                 file_size=100,
-                is_known=True,
                 known_file_id=kf1.id,
             )
             self.db.session.add(ef)
@@ -618,7 +617,6 @@ class TestApplyDatabaseRestrictions(unittest.TestCase):
                 filename='virus.exe',
                 md5='deadbeef' * 4,
                 file_size=666,
-                is_known=True,
                 known_file_id=kf.id,
             )
             self.db.session.add(ef)
@@ -669,7 +667,6 @@ class TestApplyDatabaseRestrictions(unittest.TestCase):
                 filename='normal.dat',
                 md5='11112222333344445555666677778888',
                 file_size=100,
-                is_known=True,
                 known_file_id=kf.id,
             )
             self.db.session.add(ef)
@@ -722,7 +719,6 @@ class TestApplyDatabaseRestrictions(unittest.TestCase):
                 filename='trojan.exe',
                 md5='aabbccdd' * 4,
                 file_size=1234,
-                is_known=True,
                 known_file_id=kf.id,
             )
             self.db.session.add(ef)
@@ -780,7 +776,6 @@ class TestApplyDatabaseRestrictions(unittest.TestCase):
                 filename='dup.exe',
                 md5='11223344' * 4,
                 file_size=99,
-                is_known=True,
                 known_file_id=kf.id,
             )
             self.db.session.add(ef)

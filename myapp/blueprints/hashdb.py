@@ -1123,7 +1123,7 @@ def delete_known_product(db_id, pid):
         # Clear FK references so the delete cannot violate the constraint.
         ExtractedFile.query.filter(
             ExtractedFile.id.in_(affected_ef_ids)
-        ).update({'known_file_id': None, 'is_known': False}, synchronize_session=False)
+        ).update({'known_file_id': None}, synchronize_session=False)
 
     # Bulk-delete in FK-safe order: recognised_products (referenced this
     # product) and known_files, then the product row.  Deleting
@@ -1261,7 +1261,7 @@ def delete_known_file(db_id, pid, fid):
     if affected_ef_ids:
         ExtractedFile.query.filter(
             ExtractedFile.id.in_(affected_ef_ids)
-        ).update({'known_file_id': None, 'is_known': False}, synchronize_session=False)
+        ).update({'known_file_id': None}, synchronize_session=False)
 
     db.session.delete(kf)
     if database.file_count and database.file_count > 0:

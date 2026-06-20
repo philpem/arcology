@@ -1797,7 +1797,6 @@ def add_files(uuid):
 
         if known is not None:
             ef.known_file_id = known.id
-            ef.is_known = True
         else:
             added_unique += 1
         db.session.add(ef)
@@ -1850,7 +1849,7 @@ def get_partition_files(uuid):
 
     query = ExtractedFile.query.filter_by(partition_id=partition.id)
     if not show_known:
-        query = query.filter(ExtractedFile.is_known == False)
+        query = query.filter(ExtractedFile.known_file_id.is_(None))
 
     # Filter by is_archive if specified (used by ARCHIVE_DETECT to skip already-detected files)
     is_archive_param = request.args.get('is_archive')
@@ -2902,7 +2901,7 @@ def hash_database_delete_step(db_id):
     the current row counts, run in FK-safe phase order:
 
       A. unlink extracted_files still pointing at this DB's known_files
-         (clearing is_known, which ON DELETE SET NULL would leave stuck) —
+         (nulling known_file_id, which is also what ON DELETE SET NULL does) —
          must complete before any known_files are deleted;
       B/C. delete recognised_products (by product) and known_files;
       D. (final) delete known_products, delete the hash_databases row, and
@@ -2937,9 +2936,8 @@ def hash_database_delete_step(db_id):
             break
 
         # Phase A: unlink extracted_files linked to this DB (until none remain).
-        # Bounded by id so the correlated subquery stays index-friendly.  is_known
-        # must be cleared explicitly — the FK's ON DELETE SET NULL would null the
-        # link once known_files go but leave is_known stuck True.
+        # Bounded by id so the correlated subquery stays index-friendly.  Nulling
+        # known_file_id is the whole job now that is_known is derived from it.
         ef_ids = (
             db.session.query(ExtractedFile.id)
             .filter(ExtractedFile.known_file_id.in_(kf_id_query))
@@ -2949,7 +2947,7 @@ def hash_database_delete_step(db_id):
         n = _delete_chunk_with_retry(lambda ids=ef_ids: (
             ExtractedFile.query
             .filter(ExtractedFile.id.in_(ids))
-            .update({'known_file_id': None, 'is_known': False},
+            .update({'known_file_id': None},
                     synchronize_session=False)
         ))
         if n:
@@ -3019,8 +3017,8 @@ def _finalise_hashdb_delete(db_id):
     """Delete the HashDatabase row and queue relinks against other active DBs.
 
     Returns the number of other active databases for which a HASHDB_LINK job
-    was newly queued.  The freed extracted_files are now is_known=False, so each
-    other database's bounded relink picks up any that match it.
+    was newly queued.  The freed extracted_files now have known_file_id=NULL, so
+    each other database's bounded relink picks up any that match it.
     """
     from ..services.hash_rescan import queue_hashdb_link_job
 

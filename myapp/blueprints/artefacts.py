@@ -1562,12 +1562,12 @@ def _view_file_listing(file_form, all_artefact_ids):
         # archives serve as navigational pseudo-directories in the UI.
         from sqlalchemy import or_
         files_query = files_query.filter(
-            or_(ExtractedFile.is_known == False, ExtractedFile.is_archive == True)
+            or_(ExtractedFile.known_file_id.is_(None), ExtractedFile.is_archive == True)
         )
     elif file_form.hide_known.data == 'only':
         from sqlalchemy import or_
         files_query = files_query.filter(
-            or_(ExtractedFile.is_known == True, ExtractedFile.is_archive == True)
+            or_(ExtractedFile.known_file_id.isnot(None), ExtractedFile.is_archive == True)
         )
 
     if file_form.filter_products.data == 'hide':

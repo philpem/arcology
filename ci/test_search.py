@@ -1549,25 +1549,24 @@ class TestHashDBSearch(unittest.TestCase):
             ef1 = ExtractedFile(
                 partition_id=part.id, path='FileA1', filename='FileA1',
                 md5='aa' * 16, is_directory=False,
-                known_file_id=kf_a1.id, is_known=True,
+                known_file_id=kf_a1.id,
             )
             # File matching kf_b1
             ef2 = ExtractedFile(
                 partition_id=part.id, path='FileB1', filename='FileB1',
                 md5='cc' * 16, is_directory=False,
-                known_file_id=kf_b1.id, is_known=True,
+                known_file_id=kf_b1.id,
             )
             # File matching kf_other (different DB)
             ef3 = ExtractedFile(
                 partition_id=part.id, path='OtherFile', filename='OtherFile',
                 md5='dd' * 16, is_directory=False,
-                known_file_id=kf_other.id, is_known=True,
+                known_file_id=kf_other.id,
             )
             # Unknown file (no match)
             ef4 = ExtractedFile(
                 partition_id=part.id, path='Unknown', filename='Unknown',
                 md5='ee' * 16, is_directory=False,
-                is_known=False,
             )
             _db.session.add_all([ef1, ef2, ef3, ef4])
             _db.session.commit()

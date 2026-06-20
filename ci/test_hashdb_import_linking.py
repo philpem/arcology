@@ -80,7 +80,7 @@ class TestHashdbImportLinking(unittest.TestCase):
             ef = ExtractedFile(
                 partition_id=part.id, path='!Foo/!RunImage', filename='!RunImage',
                 md5=_MD5, sha1=_SHA1, file_size=123,
-                is_directory=False, is_known=False)
+                is_directory=False)
             db.session.add(ef)
             db.session.flush()
             cls.ef_id = ef.id

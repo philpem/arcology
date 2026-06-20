@@ -1,11 +1,16 @@
 """
 Regression test: the artefact file listing must not crash on an extracted file
-whose ``is_known`` flag is stale (True) but whose ``known_file_id`` is NULL.
+whose ``known_file_id`` is NULL (e.g. orphaned by a deleted KnownFile).
 
-This happens when a KnownFile is deleted: the ``known_file_id`` FK
-(ON DELETE SET NULL) nulls the link but leaves ``is_known = True``.  The
-file-listing template trusted ``is_known`` and then dereferenced
-``file.known_file.database_id`` on ``None`` -> UndefinedError -> HTTP 500.
+History: there used to be a denormalised ``is_known`` boolean alongside
+``known_file_id``.  Deleting a KnownFile nulled the link (ON DELETE SET NULL)
+but could leave ``is_known = True``, and the file-listing template trusted
+``is_known`` then dereferenced ``file.known_file.database_id`` on ``None`` ->
+UndefinedError -> HTTP 500.
+
+``is_known`` is now a read-only hybrid property derived from ``known_file_id``,
+so the two can no longer diverge — this test keeps the rendering guard, building
+the post-orphan state (``known_file_id = None``) directly.
 
 Run:
     SQLALCHEMY_DATABASE_URI=sqlite:///:memory: SECRET_KEY=test WORKER_API_KEY=test \\
@@ -60,11 +65,12 @@ class TestStaleKnownFileRender(unittest.TestCase):
                              label='Main', filesystem=FilesystemType.DFS)
             db.session.add(part)
             db.session.flush()
-            # The stale state: flagged known, but the KnownFile is gone.
+            # The post-orphan state: the KnownFile is gone, so known_file_id is
+            # NULL (and the derived is_known is therefore False).
             db.session.add(ExtractedFile(
                 partition_id=part.id, path='ORPHAN', filename='ORPHAN',
                 file_size=1024, sha256='cc' * 32, is_directory=False,
-                is_known=True, known_file_id=None))
+                known_file_id=None))
             db.session.commit()
             cls.url = f'/items/{item.url_id}/artefacts/{art.uuid}'
 

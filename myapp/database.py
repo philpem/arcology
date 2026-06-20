@@ -28,6 +28,7 @@ from sqlalchemy import Enum as SQLEnum
 from sqlalchemy import false as sa_false
 from sqlalchemy import text as sa_text
 from sqlalchemy import true as sa_true
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
 from arcology_shared.enums import AnalysisType, ArtefactType
@@ -842,7 +843,6 @@ class ExtractedFile(db.Model):
     sha1: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
     sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     known_file_id: Mapped[int | None] = mapped_column(ForeignKey("known_files.id", ondelete="SET NULL"), index=True, nullable=True)
-    is_known: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
     # Archive/nested file support
     parent_file_id: Mapped[int | None] = mapped_column(ForeignKey("extracted_files.id"), nullable=True, index=True)
@@ -871,12 +871,28 @@ class ExtractedFile(db.Model):
     )
 
     __table_args__ = (
-        Index("ix_extracted_files_partition_known", "partition_id", "is_known"),
+        Index("ix_extracted_files_partition_known_file", "partition_id", "known_file_id"),
         Index("ix_extracted_files_archive", "is_archive", "risc_os_filetype"),
         Index("ix_extracted_files_parent", "parent_file_id", "extraction_depth"),
         Index("ix_extracted_files_partition_path", "partition_id", "path"),
         Index("ix_extracted_files_sha256_size", "sha256", "file_size"),
     )
+
+    @hybrid_property
+    def is_known(self) -> bool:
+        """Whether this file matches a KnownFile in a hash database.
+
+        Derived solely from ``known_file_id`` so it can never diverge from the
+        link the way the former denormalised ``is_known`` column did (a deleted
+        KnownFile nulls ``known_file_id`` via ON DELETE SET NULL, and this
+        follows automatically).  Read-only: to mark a file (un)known, set
+        ``known_file_id``.
+        """
+        return self.known_file_id is not None
+
+    @is_known.expression
+    def is_known(cls):
+        return cls.known_file_id.isnot(None)
 
     @property
     def browse_path(self) -> str:

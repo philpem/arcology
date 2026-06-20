@@ -103,7 +103,7 @@ def _refresh_partition_unique_counts(partition_ids):
         )
         .filter(
             ExtractedFile.partition_id.in_(pid_list),
-            ExtractedFile.is_known == False,
+            ExtractedFile.known_file_id.is_(None),
             ExtractedFile.is_directory == False,
         )
         .group_by(ExtractedFile.partition_id)
@@ -130,7 +130,7 @@ def find_known_file(md5=None, sha1=None, file_size=None):
     This is deterministic across runs so repeated rescans produce stable
     results: the earliest-inserted entry wins.
 
-    For the deduplication use case (is_known=True/False) the specific
+    For the deduplication use case (linked vs unlinked) the specific
     match returned does not matter; for product attribution it provides
     a stable, predictable answer.
     """
@@ -211,7 +211,7 @@ def apply_database_restrictions(artefact):
         .join(ExtractedFile, ExtractedFile.known_file_id == KnownFile.id)
         .filter(
             ExtractedFile.partition_id.in_(partition_ids),
-            ExtractedFile.is_known == True,
+            ExtractedFile.known_file_id.isnot(None),
             HashDatabase.is_active == True,
             HashDatabase.restriction_type.isnot(None),
         )
@@ -420,14 +420,14 @@ def rescan_hashes_for_queryset(query, batch_size=500):
 
     Iterates *query* in batches using cursor-based pagination (ID > last
     seen), which is stable even if the query's filter condition changes as
-    rows are updated (e.g. is_known=False flipping to True mid-scan).
+    rows are updated (e.g. an unlinked file gaining a known_file_id mid-scan).
 
     Uses _find_known_files_batch() to match each batch with a single DB
     query instead of one query per file.  After processing, refreshes the
     unique_files counter on every affected Partition.
 
     Returns (updated, total) — updated is the number of rows whose
-    is_known or known_file_id changed.
+    known_file_id changed.
     """
     updated = 0
     total = 0
@@ -455,11 +455,9 @@ def rescan_hashes_for_queryset(query, batch_size=500):
 
             known = matches.get(ef.id)
             new_id = known.id if known else None
-            new_flag = known is not None
 
-            if ef.known_file_id != new_id or ef.is_known != new_flag:
+            if ef.known_file_id != new_id:
                 ef.known_file_id = new_id
-                ef.is_known = new_flag
                 affected_partition_ids.add(ef.partition_id)
                 updated += 1
 
@@ -528,7 +526,7 @@ def rescan_links_for_known_file_id(kf_id):
 
     Called when a KnownFile is deleted or its hashes are edited.  Files
     that no longer match will either be re-linked to another active
-    KnownFile or have their is_known flag cleared.
+    KnownFile or have their known_file_id cleared.
 
     Returns (updated, total).
     """
@@ -699,7 +697,7 @@ def rescan_hashes_for_new_known_files(kf_list, batch_size=500):
     """Targeted rescan after a bulk import: scan unlinked files whose
     md5 or sha1 appears in *kf_list*.
 
-    Only considers currently-unlinked files (is_known=False) so the scan
+    Only considers currently-unlinked files (known_file_id IS NULL) so the scan
     stays fast for large collections.  Files already linked to other
     databases are not disturbed.
 
@@ -717,7 +715,7 @@ def rescan_hashes_for_new_known_files(kf_list, batch_size=500):
         conditions.append(ExtractedFile.sha1.in_(sha1_values))
 
     query = ExtractedFile.query.filter(
-        ExtractedFile.is_known == False,
+        ExtractedFile.known_file_id.is_(None),
         or_(*conditions),
     )
     return rescan_hashes_for_queryset(query, batch_size=batch_size)

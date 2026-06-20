@@ -91,7 +91,7 @@ class TestHashdbRecognitionStep(unittest.TestCase):
                                          filename='!Run', md5=md5, is_required=True))
                 db.session.add(ExtractedFile(
                     partition_id=part.id, path=f'App{i}/!Run', filename='!Run',
-                    md5=md5, is_directory=False, is_known=False))
+                    md5=md5, is_directory=False))
             db.session.commit()
 
     def _post(self, path, payload):
@@ -428,7 +428,7 @@ class TestRecognitionBestHashAndPartition(unittest.TestCase):
                                      is_required=True))
             db.session.add(ExtractedFile(
                 partition_id=part.id, path='FolderA/!Run', filename='!Run',
-                md5='d' * 32, sha256=sha256, is_directory=False, is_known=False))
+                md5='d' * 32, sha256=sha256, is_directory=False))
 
             # Product B: required file's best hash is SHA-256, but the extracted
             # file in its folder has only md5 (no sha256) -> must NOT match.
@@ -441,7 +441,7 @@ class TestRecognitionBestHashAndPartition(unittest.TestCase):
                                      is_required=True))
             db.session.add(ExtractedFile(
                 partition_id=part.id, path='FolderB/!Run', filename='!Run',
-                md5='b' * 32, is_directory=False, is_known=False))
+                md5='b' * 32, is_directory=False))
             db.session.commit()
 
     def test_best_hash_backfill_matches_on_sha256(self):
@@ -599,7 +599,7 @@ class TestPerDatabaseRescanIsScoped(unittest.TestCase):
                 db.session.flush()
                 db.session.add(ExtractedFile(
                     partition_id=part.id, path=f'F{i}/file', filename='file',
-                    md5=f'{i:032x}', is_directory=False, is_known=False))
+                    md5=f'{i:032x}', is_directory=False))
             db.session.commit()
 
     def _login(self):
@@ -701,7 +701,7 @@ class TestOptionalOnlyRecognition(unittest.TestCase):
                 db.session.flush()
                 db.session.add(ExtractedFile(
                     partition_id=part.id, path=f'Folder{i}/!Boot', filename='!Boot',
-                    md5='ab' * 16, is_directory=False, is_known=False))
+                    md5='ab' * 16, is_directory=False))
             db.session.commit()
 
     def test_optional_only_product_is_ignored(self):

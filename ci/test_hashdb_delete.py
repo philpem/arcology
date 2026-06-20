@@ -138,7 +138,7 @@ class _HashdbDeleteBase(unittest.TestCase):
             db.session.flush()
             ef = ExtractedFile(partition_id=part.id, path=f'!Foo/!RunImage{i}',
                                filename=f'!RunImage{i}', md5=file_md5, file_size=123,
-                               is_directory=False, is_known=True, known_file_id=kf.id)
+                               is_directory=False, known_file_id=kf.id)
             db.session.add(ef)
             db.session.flush()
             ef_ids.append(ef.id)
@@ -410,7 +410,7 @@ class TestHashdbProductDeleteUnchanged(_HashdbDeleteBase):
                                              folder_path='!System'))
             ef = ExtractedFile(partition_id=part.id, path='!System/Modules',
                                filename='Modules', md5='cc' * 16, file_size=42,
-                               is_directory=False, is_known=True,
+                               is_directory=False,
                                known_file_id=kf.id)
             db.session.add(ef)
             db.session.flush()
