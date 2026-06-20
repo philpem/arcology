@@ -223,6 +223,24 @@ class TestTaskRunnerClaim(unittest.TestCase):
         self.assertTrue(row.success)
         self.assertEqual(row.summary, 'done')
 
+    def test_complete_tolerates_non_serializable_result(self):
+        # _complete must not raise on a result dict carrying a non-JSON value
+        # (json.dumps(..., default=str)) — otherwise the job is left RUNNING and
+        # re-run on every stale-reset.
+        import json
+        from datetime import datetime, timezone
+        from myapp.database import Analysis, AnalysisStatus
+
+        analysis_id = self._add_hash_rescan()
+        runner = self._runner()
+        runner._claim_one()
+        runner._complete(analysis_id,
+                         {'summary': 'ok', 'when': datetime.now(timezone.utc)})
+        row = self.db.session.get(Analysis, analysis_id)
+        self.assertEqual(row.status, AnalysisStatus.COMPLETED)
+        # details stored as valid JSON with the datetime stringified.
+        self.assertEqual(json.loads(row.details)['summary'], 'ok')
+
     def test_complete_does_not_overwrite_a_cancel(self):
         from myapp.database import Analysis, AnalysisStatus
 

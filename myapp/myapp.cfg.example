@@ -139,6 +139,15 @@ WORKER_STEP_DEADLINE_SECONDS = 20
 #TASKRUNNER_STALE_RESET_INTERVAL = 300
 #TASKRUNNER_CHUNK_GC_INTERVAL = 3600
 #TASKRUNNER_SIMILARITY_INTERVAL = 0
+#
+# Per-statement PostgreSQL statement_timeout (seconds) for the product-recognition
+# scan, as a backstop against a single runaway query (a product whose required
+# file hash is ubiquitous and seeds a huge candidate-folder scan).  When it fires
+# the runner isolates and SKIPS that one product rather than failing the whole
+# database's backfill.  Must stay well below STALE_JOB_TIMEOUT_SECONDS (default
+# 3600) so a job legitimately mid-statement is not reset as stale.  0 disables;
+# PostgreSQL-only (no-op on SQLite).
+#TASKRUNNER_RECOGNITION_STATEMENT_TIMEOUT = 300
 
 # =============================================================================
 # Content Security Policy

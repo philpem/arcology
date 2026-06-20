@@ -132,7 +132,7 @@ class TaskRunner:
                 success=True,
                 completed_at=_utcnow(),
                 summary=result.get('summary'),
-                details=json.dumps(result),
+                details=json.dumps(result, default=str),
             )
         )
         db.session.commit()

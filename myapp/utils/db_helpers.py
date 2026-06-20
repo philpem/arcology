@@ -1,9 +1,31 @@
 """Shared database query helpers."""
 
+from sqlalchemy import text
+from ..extensions import db
+
 
 def is_statement_timeout(exc):
     """True if *exc* is a PostgreSQL statement_timeout abort (SQLSTATE 57014)."""
     return getattr(getattr(exc, 'orig', None), 'pgcode', None) == '57014'
+
+
+def apply_statement_timeout(seconds):
+    """Bound the current transaction's query time (PostgreSQL only).
+
+    ``SET LOCAL`` scopes the timeout to the active transaction, so it applies to
+    the query that follows and is discarded at commit/rollback.  A non-positive
+    value disables the guard.  No-op on backends without ``statement_timeout``
+    (e.g. SQLite under the test suite).
+    """
+    try:
+        seconds = int(seconds)
+    except (TypeError, ValueError):
+        return
+    if seconds <= 0:
+        return
+    if db.session.get_bind().dialect.name != 'postgresql':
+        return
+    db.session.execute(text(f'SET LOCAL statement_timeout = {seconds * 1000}'))
 
 
 def is_deadlock(exc):

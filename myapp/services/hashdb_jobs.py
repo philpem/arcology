@@ -23,8 +23,10 @@ All ``run_*_job`` functions own their own commits and return a small summary
 dict; they raise ``JobCancelled`` if ``check_cancelled`` signals.
 """
 
+import logging
 import time
 from datetime import datetime, timezone
+from flask import current_app
 from sqlalchemy.exc import OperationalError
 from ..database import (
     ExtractedFile,
@@ -35,7 +37,7 @@ from ..database import (
     RecognisedProduct,
 )
 from ..extensions import db
-from ..utils.db_helpers import is_deadlock
+from ..utils.db_helpers import apply_statement_timeout, is_deadlock, is_statement_timeout
 from .hash_rescan import (
     has_pending_recognition_job,
     queue_hashdb_link_job,
@@ -44,7 +46,14 @@ from .hash_rescan import (
     rescan_hashes_for_artefact,
     rescan_hashes_for_new_known_files,
 )
-from .recognition import recognise_products_step
+from .recognition import recognise_products_step, recognition_batch_last_id
+
+log = logging.getLogger('arcology.taskrunner')
+
+# Products per recognition step.  The loop narrows this to 1 to isolate a product
+# that overruns the statement_timeout backstop (see _run_recognition_loop), then
+# resets to this after a clean step.
+_RECOGNITION_STEP_LIMIT = 25
 
 
 class JobCancelled(Exception):
@@ -370,32 +379,64 @@ def run_hashdb_delete_job(db_id, *, heartbeat=_noop_heartbeat,
 
 def _run_recognition_loop(*, database_id=None, partition_id=None, label,
                           heartbeat, check_cancelled):
-    """Loop ``recognise_products_step`` to completion (no per-step deadline).
+    """Loop ``recognise_products_step`` to completion, bounded per statement.
 
-    Returns ``(processed, matches)``.  Commits per step.  With ``deadline=None``
-    the step never reports ``timed_out``, so a slow product just runs through —
-    acceptable for the taskrunner (no gthread worker to protect, direct DB).
+    Returns ``(processed, matches, skipped)``.  Commits per step.
+
+    Each step runs under a generous PostgreSQL ``statement_timeout`` so a single
+    runaway query (a product whose required-file hash is ubiquitous and seeds a
+    huge candidate-folder scan) cannot wedge the single-instance runner.  When
+    the timeout fires we narrow the batch to one product to isolate the culprit,
+    then advance the cursor past it (skip it) rather than failing the whole
+    database's backfill — mirroring the removed worker step's
+    ``_recognition_timeout_or_skip`` valve.  On SQLite the timeout is a no-op, so
+    the loop runs straight through.
     """
+    budget = current_app.config.get('TASKRUNNER_RECOGNITION_STATEMENT_TIMEOUT', 300)
     last_id = 0
     processed = 0
     matches = 0
+    skipped = 0
+    limit = _RECOGNITION_STEP_LIMIT
     while True:
         check_cancelled()
-        result = recognise_products_step(
-            database_id=database_id,
-            partition_id=partition_id,
-            last_product_id=last_id,
-            limit=25,
-            deadline=None,
-        )
+        apply_statement_timeout(budget)  # SET LOCAL on this txn (no-op off PG)
+        try:
+            result = recognise_products_step(
+                database_id=database_id,
+                partition_id=partition_id,
+                last_product_id=last_id,
+                limit=limit,
+                deadline=None,
+            )
+        except OperationalError as exc:
+            db.session.rollback()
+            if not is_statement_timeout(exc):
+                raise  # a real error — caller marks the job FAILED
+            if limit > 1:
+                limit = 1  # isolate the offending product, retry the same cursor
+                continue
+            # A single product still overruns the budget: skip it and advance.
+            skip_id = recognition_batch_last_id(
+                database_id=database_id, last_product_id=last_id, limit=1)
+            if skip_id is None or skip_id <= last_id:
+                raise  # can't advance — fail rather than spin forever
+            log.warning(
+                'recognition: skipping product %s — exceeded the %ss statement '
+                'budget (it will have no recognition matches)', skip_id, budget)
+            last_id = skip_id
+            skipped += 1
+            limit = _RECOGNITION_STEP_LIMIT
+            continue
         processed += result.get('processed', 0)
         matches += result.get('matches', 0)
         last_id = result.get('next_product_id', last_id)
         db.session.commit()
         heartbeat(current=processed, total=None, label=label)
+        limit = _RECOGNITION_STEP_LIMIT  # reset after a clean step
         if result.get('done'):
             break
-    return processed, matches
+    return processed, matches, skipped
 
 
 def run_hashdb_recognition_job(db_id, *, heartbeat=_noop_heartbeat,
@@ -418,7 +459,7 @@ def run_hashdb_recognition_job(db_id, *, heartbeat=_noop_heartbeat,
 
     label = f"Recognising products in HashDB '{database.name}'"
     try:
-        processed, matches = _run_recognition_loop(
+        processed, matches, skipped = _run_recognition_loop(
             database_id=db_id, label=label,
             heartbeat=heartbeat, check_cancelled=check_cancelled)
     except JobCancelled:
@@ -436,24 +477,29 @@ def run_hashdb_recognition_job(db_id, *, heartbeat=_noop_heartbeat,
 
     finalise_recognition_status(database)
     db.session.commit()
-    return {
-        'summary': f'{processed} product(s) checked; {matches} recognition match(es) found',
-        'processed': processed,
-        'matches': matches,
-    }
+    return _recognition_result(processed, matches, skipped)
 
 
 def run_partition_recognition_job(partition, *, heartbeat=_noop_heartbeat,
                                   check_cancelled=_noop_check_cancelled):
     """Match every recognition-enabled HashDB's products against one partition."""
     label = f"Recognising products in partition {partition.uuid}"
-    processed, matches = _run_recognition_loop(
+    processed, matches, skipped = _run_recognition_loop(
         partition_id=partition.id, label=label,
         heartbeat=heartbeat, check_cancelled=check_cancelled)
+    return _recognition_result(processed, matches, skipped)
+
+
+def _recognition_result(processed, matches, skipped):
+    summary = f'{processed} product(s) checked; {matches} recognition match(es) found'
+    if skipped:
+        summary += (f'; {skipped} product(s) skipped (exceeded the statement '
+                    f'budget)')
     return {
-        'summary': f'{processed} product(s) checked; {matches} recognition match(es) found',
+        'summary': summary,
         'processed': processed,
         'matches': matches,
+        'skipped': skipped,
     }
 
 # vim: ts=4 sw=4 et
