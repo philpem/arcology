@@ -1674,11 +1674,15 @@ def add_partition(uuid):
             db.session.delete(existing)
         db.session.flush()  # Ensure deletes are processed before creating new one
 
+    # total_files is owned by the incremental counter in add_files() (see the
+    # comment there): seeding it here as well as incrementing per batch would
+    # double-count the listing.  total_bytes has no incremental path, so it
+    # stays a registration-time snapshot.
     partition = Partition(artefact_id=artefact.id, partition_index=partition_index,
                           label=data.get('label'), filesystem=filesystem,
                           container_format=data.get('container_format'),
                           archive_comment=data.get('archive_comment'),
-                          total_files=data.get('total_files'), total_bytes=data.get('total_bytes'))
+                          total_bytes=data.get('total_bytes'))
     db.session.add(partition)
     db.session.commit()
     return jsonify(partition_to_dict(partition)), 201

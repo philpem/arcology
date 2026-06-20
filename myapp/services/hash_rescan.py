@@ -7,7 +7,7 @@ database-level recognition backfills after HashDB content changes.
 """
 
 import json
-from sqlalchemy import func, or_
+from sqlalchemy import and_, case, func, or_
 from ..database import (
     Analysis,
     AnalysisStatus,
@@ -86,35 +86,48 @@ def _dedupe_known_files(matches):
 
 
 def _refresh_partition_unique_counts(partition_ids):
-    """Refresh unique_files counters for all touched partitions.
+    """Recompute the denormalised file counters for all touched partitions.
 
-    Uses a single aggregate query instead of one COUNT per partition.
+    Both ``unique_files`` (non-directory files not matched to a known file) and
+    ``total_files`` (every extracted-file row) are derived here from the actual
+    rows in a single aggregate query, so they self-heal from any incremental
+    drift the way ``unique_files`` always has.
     """
     if not partition_ids:
         return
 
     pid_list = list(partition_ids)
 
-    # Single query: count unknown non-directory files per partition.
+    # Single query per partition: total row count plus the unknown-non-directory
+    # subset, using a conditional sum so both counters come from one scan.
+    unique_case = case(
+        (
+            and_(
+                ExtractedFile.known_file_id.is_(None),
+                ExtractedFile.is_directory == False,
+            ),
+            1,
+        ),
+        else_=0,
+    )
     rows = (
         db.session.query(
             ExtractedFile.partition_id,
             func.count(ExtractedFile.id),
+            func.coalesce(func.sum(unique_case), 0),
         )
-        .filter(
-            ExtractedFile.partition_id.in_(pid_list),
-            ExtractedFile.known_file_id.is_(None),
-            ExtractedFile.is_directory == False,
-        )
+        .filter(ExtractedFile.partition_id.in_(pid_list))
         .group_by(ExtractedFile.partition_id)
         .all()
     )
-    count_map = dict(rows)
+    total_map = {pid: total for pid, total, _ in rows}
+    unique_map = {pid: unique for pid, _, unique in rows}
 
-    # Update all affected partitions (including those with zero unknown files).
+    # Update all affected partitions (including those with zero files).
     partitions = Partition.query.filter(Partition.id.in_(pid_list)).all()
     for partition in partitions:
-        partition.unique_files = count_map.get(partition.id, 0)
+        partition.total_files = total_map.get(partition.id, 0)
+        partition.unique_files = unique_map.get(partition.id, 0)
 
     db.session.commit()
 

@@ -1138,6 +1138,13 @@ def delete_known_product(db_id, pid):
     KnownProduct.query.filter(
         KnownProduct.id == pid
     ).delete(synchronize_session=False)
+    # Keep the denormalised file_count in step with the rows that actually
+    # remain.  The bulk delete above removed this product's known_files without
+    # touching file_count, so recompute it from the surviving rows rather than
+    # trying to track the delete delta (it can never drift this way).
+    database.file_count = (
+        KnownFile.query.filter(KnownFile.database_id == database.id).count()
+    )
     db.session.commit()
     flash(f'Product "{title}" deleted.', 'success')
 
