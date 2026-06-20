@@ -323,6 +323,53 @@ RUN mkdir -p /opt/dexvert && \
 
 
 #################
+# Export NSFW classifier models to ONNX (and optionally quantize to INT8)
+#################
+FROM ubuntu:24.04 AS nsfw-export
+
+ARG DEBIAN_FRONTEND=noninteractive
+# Set to 'false' to skip quantization and use fp32 models directly.
+ARG NSFW_QUANTIZE=true
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt -y update && apt -y upgrade && \
+    apt -y install python3 python3-pip
+
+# PyTorch + torchvision CPU-only wheels: must be installed together from the
+# same index so they are version-matched.  timm imports torchvision at module
+# level (timm.layers._fx); a GPU torchvision from PyPI would fail against the
+# CPU torch because torchvision::nms wouldn't be compiled in.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python3 -m pip install --break-system-packages \
+        torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python3 -m pip install --break-system-packages \
+        transformers timm onnx onnxruntime
+
+COPY worker/tools/nsfw_export/scripts/ /nsfw_scripts/
+
+# Download models from HuggingFace and export to ONNX.
+# The HF cache is mounted so repeated builds do not re-download.
+RUN --mount=type=cache,target=/root/.cache/huggingface \
+    python3 /nsfw_scripts/export_marqo.py && \
+    python3 /nsfw_scripts/export_clip.py
+
+# Quantize to INT8 (or just copy fp32 + sidecars when quantization is off).
+RUN --mount=type=cache,target=/root/.cache/huggingface \
+    mkdir -p /onnx_int8 && \
+    if [ "${NSFW_QUANTIZE}" = "true" ]; then \
+        python3 /nsfw_scripts/quantize.py; \
+    else \
+        cp /onnx/marqo/model.onnx      /onnx_int8/marqo.onnx && \
+        cp /onnx/clip/model.onnx       /onnx_int8/clip.onnx && \
+        cp /onnx/marqo/marqo_meta.json /onnx_int8/marqo_meta.json && \
+        cp /onnx/clip/clip_meta.json   /onnx_int8/clip_meta.json; \
+    fi
+
+
+#################
 # Assemble final image with tools + worker
 #################
 
@@ -365,6 +412,12 @@ COPY --from=build-wmfrs /usr/local/bin/wmf-cli /usr/local/bin
 # Copy Dexvert tools
 COPY --from=get-external /opt/dexvert/emf2svg.py /opt/dexvert/
 
+# Copy NSFW classifier models and metadata sidecars
+COPY --from=nsfw-export /onnx_int8/marqo.onnx      /opt/nsfw_models/marqo.onnx
+COPY --from=nsfw-export /onnx_int8/clip.onnx       /opt/nsfw_models/clip.onnx
+COPY --from=nsfw-export /onnx_int8/marqo_meta.json /opt/nsfw_models/marqo_meta.json
+COPY --from=nsfw-export /onnx_int8/clip_meta.json  /opt/nsfw_models/clip_meta.json
+
 # Rebuild shared library cache (needed by hxcfe)
 RUN ldconfig
 
@@ -403,7 +456,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Current as of 2026-04-01.
 ARG GREASEWEAZLE_VERSION=26690f89967d519e0106ab9566019a026b920bb4
 RUN python3 -m pip install --break-system-packages \
-	git+https://github.com/keirf/greaseweazle@${GREASEWEAZLE_VERSION}
+	git+https://github.com/keirf/greaseweazle@${GREASEWEAZLE_VERSION} \
+	onnxruntime
 
 # Install Sentry SDK for error and performance reporting (optional; enabled by SENTRY_DSN env var).
 RUN python3 -m pip install --break-system-packages sentry-sdk
@@ -454,6 +508,9 @@ ENV TOOL_TIMEOUT=3600
 # from scotch above. Override to point at a different module set if needed.
 # See doc/REPLAY_TRANSCODE.md.
 ENV REPLAY_MODULES_DIR=/usr/local/share/armovie-codecs
+ENV NSFW_ENABLED=true
+ENV NSFW_MODEL_DIR=/opt/nsfw_models
+ENV NSFW_QUANTIZE=true
 
 # Create data directories
 RUN mkdir -p /data/uploads /data/outputs

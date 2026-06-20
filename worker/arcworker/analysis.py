@@ -141,6 +141,14 @@ class AnalysisWorker:
         # wake immediately on shutdown.
         self._shutdown = threading.Event()
 
+        # NSFW classifier sessions — lazily loaded by _load_nsfw_sessions()
+        self._nsfw_sess1  = None
+        self._nsfw_sess2  = None
+        self._nsfw_input1 = None
+        self._nsfw_input2 = None
+        self._nsfw_meta1  = None
+        self._nsfw_meta2  = None
+
     def get_input_path(self, artefact: dict, work_dir: Path) -> Path:
         """
         Get input file path, decompressing if needed.
@@ -430,6 +438,22 @@ class AnalysisWorker:
             hints=replay_hints,
         )
 
+        # NSFW scan — only when there is an extraction tree to scan.
+        if extraction_path:
+            from .config import NSFW_ENABLED
+            if NSFW_ENABLED:
+                nsfw_hints: dict = {
+                    'partition_uuid':  partition_uuid,
+                    'extraction_path': extraction_path,
+                }
+                if path_prefix:
+                    nsfw_hints['path_prefix'] = path_prefix
+                self.api.queue_analysis(
+                    artefact_uuid,
+                    AnalysisType.NSFW_SCAN.value,
+                    hints=nsfw_hints,
+                )
+
     def _relative_output_path(self, extract_dir: Path) -> str:
         """Convert an absolute extraction directory to a relative path for storage.
 
@@ -599,6 +623,10 @@ class AnalysisWorker:
     _RISCOS_VIEWABLE_SUFFIXES     = _analyses._RISCOS_VIEWABLE_SUFFIXES
     _EXT_VIEWABLE                 = _analyses._EXT_VIEWABLE
     _RISCOS_HEX_VIEWABLE          = _analyses._RISCOS_HEX_VIEWABLE
+
+    # Explicit-content moderation (the NSFW_SCAN handler itself registers
+    # via @analysis_handler; only the session loader is called as self.*)
+    _load_nsfw_sessions           = _analyses._load_nsfw_sessions
 
     # =========================================================================
     # Job Processing

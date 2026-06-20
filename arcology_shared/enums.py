@@ -125,6 +125,9 @@ class AnalysisType(enum.Enum):
     REPLAY_PROCESS         = "replay_process"         # Process Acorn Replay / ARMovie file (parse header + catalogue)
     REPLAY_TRANSCODE       = "replay_transcode"       # Transcode Acorn Replay / ARMovie video to MP4 (scotch + ffmpeg)
 
+    # Explicit-content moderation
+    NSFW_SCAN              = "nsfw_scan"              # Two-stage ONNX explicit-content image classification
+
     # Maintenance
     HASH_RESCAN            = "hash_rescan"             # Re-link extracted files against active hash databases
     CLEANUP                = "cleanup"                 # Delete orphaned storage keys after item deletion or re-analysis
