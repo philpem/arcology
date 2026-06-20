@@ -3540,17 +3540,18 @@ def component_similar(uuid):
     )
 
 
-@blueprint.route('/artefacts/<string:uuid>/similar')
+@blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/similar')
+@blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/similar', endpoint='similar_nested')
+@blueprint.route('/artefacts/<string:uuid>/similar', endpoint='similar_legacy')
 @public_readable
-def similar(uuid):
-    """Full listing of artefacts (and shared components) similar to this one."""
-    artefact = (
-        Artefact.query
-        .join(Item, Artefact.item_id == Item.id)
-        .filter(Artefact.uuid == uuid)
-        .filter(artefact_visibility_clause(current_user))
-        .first_or_404()
-    )
+def similar(item_id=None, artefact_id=None, root_id=None, uuid=None):
+    """Full listing of artefacts (and shared components) similar to this one.
+
+    Accepts the nested ``/items/<item>/artefacts/<artefact>/similar`` form (slug
+    or UUID, matching the artefact view URL) as well as the flat
+    ``/artefacts/<uuid>/similar``.
+    """
+    artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
     matches = similar_artefacts(artefact, current_user)
     components = similar_components(artefact, current_user)
     return render_template(

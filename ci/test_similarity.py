@@ -466,6 +466,21 @@ class TestArtefactSimilarity(_SimilarityBase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn(b'Two', resp.data)
 
+    def test_similar_route_nested_and_slug(self):
+        """The /similar page resolves the nested /items/<i>/artefacts/<a> URL and
+        slugs, not just the flat /artefacts/<uuid> form."""
+        a = _add_artefact(self.db, self.item, 'Src', [('A', 'a', 1000), ('B', 'b', 2000)])
+        a.slug = 'src-disc'
+        self.db.session.commit()
+        client = self.app.test_client()
+        # Flat + UUID.
+        self.assertEqual(client.get(f'/artefacts/{a.uuid}/similar').status_code, 200)
+        # Nested + slug (the form you get by appending /similar to the view URL).
+        nested = f'/items/{self.item.url_id}/artefacts/{a.slug}/similar'
+        self.assertEqual(client.get(nested, follow_redirects=True).status_code, 200)
+        # A bogus identifier 404s.
+        self.assertEqual(client.get('/items/nope/artefacts/nope/similar').status_code, 404)
+
     def test_nested_pc_app_component_matches(self):
         """A deeply-nested app folder (e.g. Photoshop) matches across discs even
         when its path differs and the discs differ overall (B1)."""
