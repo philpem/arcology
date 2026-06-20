@@ -53,7 +53,7 @@ class TestHashdbBatchImport(unittest.TestCase):
         with cls.app.app_context():
             db.create_all()
 
-            hdb = HashDatabase(name='Batch DB', file_count=0)
+            hdb = HashDatabase(name='Batch DB')
             db.session.add(hdb)
             db.session.flush()
             cls.db_id = hdb.id

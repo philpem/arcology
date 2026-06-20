@@ -114,7 +114,7 @@ class TestPartitionTotalFiles(_CounterTestBase):
 
         # An active known file so the rescan actually links a row (and thus
         # refreshes the partition's counters).
-        hdb = HashDatabase(name='Apps', is_active=True, file_count=1)
+        hdb = HashDatabase(name='Apps', is_active=True)
         db.session.add(hdb)
         db.session.flush()
         db.session.add(KnownFile(database_id=hdb.id, filename='F0',
@@ -175,7 +175,7 @@ class TestHashDatabaseFileCount(_CounterTestBase):
         )
         db = self.db
 
-        hdb = HashDatabase(name='Apps', is_active=True, file_count=0)
+        hdb = HashDatabase(name='Apps', is_active=True)
         db.session.add(hdb)
         db.session.flush()
         prod_a = KnownProduct(database_id=hdb.id, title='!Foo')
@@ -210,8 +210,6 @@ class TestHashDatabaseFileCount(_CounterTestBase):
         kfb = KnownFile(database_id=hdb.id, product_id=prod_b.id,
                         filename='!BarRun', md5='b' * 32, file_size=20)
         db.session.add(kfb)
-        # file_count reflects all three known files.
-        hdb.file_count = 3
         db.session.commit()
         db_id, pid_a = hdb.id, prod_a.id
 

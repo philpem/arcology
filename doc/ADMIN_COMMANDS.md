@@ -72,6 +72,23 @@ flask rescan-hashes --artefact <UUID>        # single artefact
 flask rescan-hashes --batch-size 1000        # larger batches
 ```
 
+## reconcile-counts
+
+Rebuild the denormalised partition counters (`total_files`, `unique_files`)
+from the actual extracted-file rows. These are caches kept for cheap display
+and the "partitions with files" filter; they are maintained incrementally and
+refreshed on hash rescans, but this command rebuilds them from scratch if they
+ever drift. Safe to re-run at any time.
+
+(`HashDatabase.file_count` is a derived value with no stored column, so it
+never needs reconciling.)
+
+```bash
+flask reconcile-counts                       # rebuild all partition counters
+flask reconcile-counts --dry-run             # report drift without writing
+flask reconcile-counts --batch-size 1000     # larger commit batches
+```
+
 ## reanalyse
 
 Reset and re-queue analysis for artefacts.

@@ -37,7 +37,7 @@ class TestHashdbImportDedup(unittest.TestCase):
         cls.db = db
         with cls.app.app_context():
             db.create_all()
-            hdb = HashDatabase(name='Import DB', file_count=0, is_active=False)
+            hdb = HashDatabase(name='Import DB', is_active=False)
             db.session.add(hdb)
             db.session.flush()
             cls.db_id = hdb.id
@@ -86,7 +86,7 @@ class TestHashdbImportDedup(unittest.TestCase):
 
         with self.app.app_context():
             from myapp.database import HashDatabase
-            hdb = HashDatabase(name='Merge DB', file_count=0, is_active=False)
+            hdb = HashDatabase(name='Merge DB', is_active=False)
             self.db.session.add(hdb)
             self.db.session.flush()
             merge_id = hdb.id
@@ -120,7 +120,7 @@ class TestHashdbImportDedup(unittest.TestCase):
         from myapp.database import HashDatabase, KnownFile
 
         with self.app.app_context():
-            hdb = HashDatabase(name='Dup DB', file_count=0, is_active=False)
+            hdb = HashDatabase(name='Dup DB', is_active=False)
             self.db.session.add(hdb)
             self.db.session.flush()
             dup_id = hdb.id

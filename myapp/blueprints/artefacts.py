@@ -2430,7 +2430,6 @@ def add_to_hashdb(uuid):
         new_kfs.append(kf)
         added += 1
 
-    database.file_count = (database.file_count or 0) + added
     db.session.commit()
 
     # Link existing extracted files to the new KnownFiles (and queue product

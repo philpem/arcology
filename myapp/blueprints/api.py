@@ -2600,7 +2600,6 @@ def create_hash_database():
         version=data.get('version'),
         source_url=data.get('source_url'),
         enable_product_recognition=bool(data.get('enable_product_recognition', False)),
-        file_count=0,
     )
     db.session.add(database)
     db.session.commit()
@@ -2676,7 +2675,6 @@ def add_known_files_bulk(db_id, pid):
             continue
         db.session.add(kf)
         new_kf_list.append(kf)
-    database.file_count = (database.file_count or 0) + len(new_kf_list)
     db.session.commit()
 
     # Link existing extracted files to the new KnownFiles (and queue product
@@ -2763,7 +2761,6 @@ def import_known_database(db_id):
             db.session.add(kf)
             new_kf_list.append(kf)
 
-    database.file_count = (database.file_count or 0) + len(new_kf_list)
     db.session.commit()
 
     # Older clients expect imported batches to link immediately.  Newer CLI

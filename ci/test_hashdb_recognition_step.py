@@ -59,7 +59,7 @@ class TestHashdbRecognitionStep(unittest.TestCase):
             db.create_all()
 
             hdb = HashDatabase(
-                name='Recog DB', file_count=0,
+                name='Recog DB',
                 enable_product_recognition=True,
                 product_recognition_status=ProductRecognitionStatus.PENDING,
             )
@@ -395,7 +395,7 @@ class TestRecognitionBestHashAndPartition(unittest.TestCase):
 
         with cls.app.app_context():
             db.create_all()
-            hdb = HashDatabase(name='BH DB', file_count=0,
+            hdb = HashDatabase(name='BH DB',
                                enable_product_recognition=True)
             db.session.add(hdb)
             db.session.flush()
@@ -498,7 +498,7 @@ class TestLinkStepWallClock(unittest.TestCase):
         cls.db = db
         with cls.app.app_context():
             db.create_all()
-            hdb = HashDatabase(name='Link DB', file_count=0, is_active=True)
+            hdb = HashDatabase(name='Link DB', is_active=True)
             db.session.add(hdb)
             db.session.flush()
             cls.db_id = hdb.id
@@ -576,7 +576,7 @@ class TestPerDatabaseRescanIsScoped(unittest.TestCase):
             db.session.flush()
             cls.uid = user.id
 
-            hdb = HashDatabase(name='Scoped DB', file_count=0, is_active=True)
+            hdb = HashDatabase(name='Scoped DB', is_active=True)
             db.session.add(hdb)
             db.session.flush()
             cls.db_id = hdb.id
@@ -668,7 +668,7 @@ class TestOptionalOnlyRecognition(unittest.TestCase):
 
         with cls.app.app_context():
             db.create_all()
-            hdb = HashDatabase(name='OptOnly DB', file_count=0,
+            hdb = HashDatabase(name='OptOnly DB',
                                enable_product_recognition=True)
             db.session.add(hdb)
             db.session.flush()
@@ -752,7 +752,7 @@ class TestHashdbViewPagination(unittest.TestCase):
             db.session.add(user)
             db.session.flush()
             cls.uid = user.id
-            hdb = HashDatabase(name='Paged DB', file_count=0)
+            hdb = HashDatabase(name='Paged DB')
             db.session.add(hdb)
             db.session.flush()
             cls.db_id = hdb.id

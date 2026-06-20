@@ -26,10 +26,12 @@ from sqlalchemy import (
 )
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy import false as sa_false
+from sqlalchemy import func as sa_func
+from sqlalchemy import select as sa_select
 from sqlalchemy import text as sa_text
 from sqlalchemy import true as sa_true
 from sqlalchemy.ext.hybrid import hybrid_property
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
 from arcology_shared.enums import AnalysisType, ArtefactType
 from .enums import (  # noqa: F401 — re-exported for backward-compat call sites
@@ -1129,7 +1131,8 @@ class HashDatabase(db.Model):
     source_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     version: Mapped[str | None] = mapped_column(String(50), nullable=True)
     platform_id: Mapped[int | None] = mapped_column(ForeignKey("platforms.id", ondelete="SET NULL"), nullable=True)
-    file_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # file_count is a derived column_property (defined after KnownFile, below),
+    # not a stored column — see the comment there.
     enable_product_recognition: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default=sa_false())
     product_recognition_status: Mapped[ProductRecognitionStatus | None] = mapped_column(
         SQLEnum(ProductRecognitionStatus, name="productrecognitionstatus"),
@@ -1203,6 +1206,24 @@ class KnownFile(db.Model):
         Index("ix_known_files_db_product_sha1", "database_id", "product_id", "sha1"),
         Index("ix_known_files_db_product_sha256", "database_id", "product_id", "sha256"),
     )
+
+
+# file_count is derived from the actual known_files rows rather than stored, so
+# it can never drift from them the way the old denormalised counter did (it was
+# incremented on import but only decremented on single-file deletes — a product
+# delete left it overcounting; see issue #637).  A correlated scalar subquery is
+# emitted per loaded HashDatabase row.  hash_databases is a small table and is
+# only loaded as full entities on admin/display paths (the index, the detail
+# view, the REST serializer) — never in the per-file matching hot path, which
+# queries KnownFile directly — so this is cheap and avoids the N+1 a
+# per-instance COUNT would cause on the database listing.
+HashDatabase.file_count = column_property(
+    sa_select(sa_func.count(KnownFile.id))
+    .where(KnownFile.database_id == HashDatabase.id)
+    .correlate_except(KnownFile)
+    .scalar_subquery(),
+    deferred=False,
+)
 
 
 class HashRescanJob(db.Model):
