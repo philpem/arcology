@@ -82,6 +82,7 @@ def _save_database_from_form(database: HashDatabase, form: "HashDatabaseForm"):
     database.version = form.version.data
     database.platform_id = form.platform_id.data if form.platform_id.data != 0 else None
     database.enable_product_recognition = form.enable_product_recognition.data
+    database.exclude_from_similarity = form.exclude_from_similarity.data
     rt_value = form.restriction_type.data
     database.restriction_type = RestrictionType(rt_value) if rt_value else None
 
@@ -125,6 +126,7 @@ class HashDatabaseForm(FlaskForm):
     version = StringField('Version', validators=[Optional(), Length(max=50)])
     platform_id = SelectField('Platform', coerce=int, validators=[Optional()])
     enable_product_recognition = BooleanField('Folder recognition')
+    exclude_from_similarity = BooleanField('Exclude from similarity')
     restriction_type = SelectField('Auto-restrict', coerce=str, validators=[Optional()])
 
 
@@ -507,9 +509,13 @@ def edit(id):
     _prepare_database_form(form)
     if form.validate_on_submit():
         was_enabled = database.enable_product_recognition
+        was_excluded = database.exclude_from_similarity
         _save_database_from_form(database, form)
         db.session.commit()
         flash('Hash database updated.', 'success')
+        if database.exclude_from_similarity != was_excluded:
+            flash('Similarity exclusion changed — the similarity cache will be '
+                  'updated on the next rebuild.', 'info')
         if database.enable_product_recognition and not was_enabled:
             from ..services.hash_rescan import queue_hashdb_recognition_backfill
             _, queued = queue_hashdb_recognition_backfill(database)

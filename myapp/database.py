@@ -1161,6 +1161,11 @@ class HashDatabase(db.Model):
     # queries for free; is_deleting additionally hides it from listings and
     # blocks management routes while the worker drains its rows.
     is_deleting: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default=sa_false())
+    # When set, files linked to this database are dropped from content-set
+    # similarity (e.g. a base-OS hashdb, so a stock RISC OS install does not make
+    # every system disc match every other).  Reserve for OS/runtime boilerplate,
+    # not application software.
+    exclude_from_similarity: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default=sa_false())
     restriction_type: Mapped[RestrictionType | None] = mapped_column(
         SQLEnum(RestrictionType), nullable=True
     )  # If set, artefacts matching this DB's files are automatically restricted
