@@ -198,6 +198,45 @@ class TestHashdbRecognitionStep(unittest.TestCase):
             self.assertEqual(hdb.product_recognition_status,
                              ProductRecognitionStatus.FAILED)
 
+    def test_statement_timeout_skips_offending_product_and_completes(self):
+        # A product whose scan exceeds the statement budget is isolated (the loop
+        # narrows to limit=1) and SKIPPED (cursor advances past it) rather than
+        # failing the whole backfill or spinning forever.
+        from unittest.mock import patch
+        from sqlalchemy.exc import OperationalError
+        from myapp.database import HashDatabase, ProductRecognitionStatus
+        from myapp.services.hashdb_jobs import run_hashdb_recognition_job
+
+        self._reset_status(ProductRecognitionStatus.PENDING)
+        self._drain_pending_recognition()
+
+        class _Orig(Exception):
+            pgcode = '57014'  # query_canceled (statement_timeout)
+
+        seen = []
+
+        def fake_step(*, database_id=None, partition_id=None,
+                      last_product_id=0, limit=25, deadline=None):
+            seen.append((last_product_id, limit))
+            # The product at cursor 0 always overruns the budget (even at
+            # limit=1) -> the loop must skip it; any later cursor finishes.
+            if last_product_id == 0:
+                raise OperationalError('scan', {}, _Orig())
+            return {'done': True, 'processed': 0, 'matches': 0,
+                    'next_product_id': last_product_id}
+
+        with self.app.app_context():
+            with patch('myapp.services.hashdb_jobs.recognise_products_step',
+                       side_effect=fake_step):
+                result = run_hashdb_recognition_job(self.db_id)
+            # Narrowed to limit=1 to isolate, then advanced past the product.
+            self.assertIn((0, 1), seen)
+            self.assertEqual(result['skipped'], 1)
+            self.assertIn('skipped', result['summary'])
+            hdb = self.db.session.get(HashDatabase, self.db_id)
+            self.assertEqual(hdb.product_recognition_status,
+                             ProductRecognitionStatus.COMPLETED)
+
     # ---- candidate-folder verification is chunked (bounded statement) ------
 
     def test_recognition_matches_across_folder_query_batches(self):

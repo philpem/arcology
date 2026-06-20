@@ -10,7 +10,7 @@ import os
 from datetime import datetime, timezone
 from functools import wraps
 from flask import Blueprint, abort, current_app, g, jsonify, request
-from sqlalchemy import func, or_, select, text, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import contains_eager, joinedload, selectinload
 from sqlalchemy.orm.exc import StaleDataError
@@ -86,6 +86,7 @@ from ..utils.api_serializers import (
     share_to_dict,
 )
 from ..utils.blobs import artefact_blob, artefact_blob_storage_path, assign_blob
+from ..utils.db_helpers import apply_statement_timeout as _apply_statement_timeout
 from ..utils.db_helpers import get_by_id_or_404 as _get_by_id_or_404
 from ..utils.db_helpers import get_by_uuid_or_404 as _get_by_uuid_or_404
 from ..utils.db_helpers import is_statement_timeout
@@ -2732,25 +2733,6 @@ def queue_hash_database_link(db_id):
     from ..services.hash_rescan import queue_hashdb_link_job
     _, queued = queue_hashdb_link_job(database.id)
     return jsonify({'status': 'queued' if queued else 'already_queued'})
-
-
-def _apply_statement_timeout(seconds):
-    """Bound the current transaction's query time (PostgreSQL only).
-
-    ``SET LOCAL`` scopes the timeout to the active transaction, so it applies
-    to the recognition scan that follows and is discarded at commit/rollback.
-    A non-positive value disables the guard.  No-op on backends without
-    ``statement_timeout`` (e.g. SQLite under the test suite).
-    """
-    try:
-        seconds = int(seconds)
-    except (TypeError, ValueError):
-        return
-    if seconds <= 0:
-        return
-    if db.session.get_bind().dialect.name != 'postgresql':
-        return
-    db.session.execute(text(f'SET LOCAL statement_timeout = {seconds * 1000}'))
 
 
 @blueprint.route('/artefacts/<string:uuid>/similarity-step', methods=['POST'])

@@ -44,11 +44,13 @@ been **removed** (nothing dispatches these jobs over HTTP any more).
   (`run_hashdb_link_job`, `run_hashdb_delete_job`, `run_hashdb_recognition_job`,
   `run_hash_rescan_job`, `run_partition_recognition_job`) — the sole owners of
   the delete state machine (`delete_one_step`) and recognition finaliser
-  (`finalise_recognition_status`). They run recognition deadline-free (no
-  per-step statement-timeout / "skip a slow product" valve — a pathological
-  product runs to completion on the single-instance runner). The one remaining
-  worker-driven bounded step is `/artefacts/<uuid>/similarity-step`
-  (SIMILARITY_REFRESH stays on the worker).
+  (`finalise_recognition_status`). Recognition runs each step under a generous
+  PostgreSQL `statement_timeout` (`TASKRUNNER_RECOGNITION_STATEMENT_TIMEOUT`,
+  default 300s) as a backstop against a single runaway query; when it fires the
+  runner isolates and **skips** that one product (`recognition_batch_last_id`)
+  rather than failing the whole database's backfill or wedging the
+  single-instance runner. The one remaining worker-driven bounded step is
+  `/artefacts/<uuid>/similarity-step` (SIMILARITY_REFRESH stays on the worker).
 - Claim eligibility (incl. the CLEANUP re-analysis barrier) and stale-reset live
   in `myapp/services/analysis_queue.py` (`pending_claimable_query()`,
   `reset_stale_analyses_core()`), shared by the worker-poll endpoint and the
