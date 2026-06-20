@@ -53,7 +53,7 @@ class TestHashdbBatchImport(unittest.TestCase):
         with cls.app.app_context():
             db.create_all()
 
-            hdb = HashDatabase(name='Batch DB', file_count=0)
+            hdb = HashDatabase(name='Batch DB')
             db.session.add(hdb)
             db.session.flush()
             cls.db_id = hdb.id
@@ -75,7 +75,7 @@ class TestHashdbBatchImport(unittest.TestCase):
             ef = ExtractedFile(
                 partition_id=part.id, path='!Foo/!RunImage', filename='!RunImage',
                 md5=_MD5, sha1=_SHA1, file_size=123,
-                is_directory=False, is_known=False)
+                is_directory=False)
             db.session.add(ef)
             db.session.flush()
             cls.ef_id = ef.id

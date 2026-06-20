@@ -131,7 +131,7 @@ class VisibilityRouteTestBase(unittest.TestCase):
                 _db.session.add(partition)
                 _db.session.flush()
                 ef = ExtractedFile(partition_id=partition.id, path=path,
-                                   filename=path, known_file_id=kf.id, is_known=True)
+                                   filename=path, known_file_id=kf.id)
                 _db.session.add(ef)
                 return ef
 

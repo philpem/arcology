@@ -432,11 +432,12 @@ class ArcologyAPI:
                 rely on the @analysis_handler decorator to convert this into a
                 clean, retryable job failure.
         """
-        # First create partition
+        # First create partition.  total_files is intentionally not sent: the
+        # web app derives it from the file records posted below (seeding it here
+        # as well would double-count the listing).
         partition_data = {
             'partition_index': partition_index,
             'filesystem': filesystem,
-            'total_files': len(files)
         }
         if label:
             partition_data['label'] = label

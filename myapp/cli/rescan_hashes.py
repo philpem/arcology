@@ -11,7 +11,7 @@ from ..services.hash_rescan import rescan_hashes_all, rescan_hashes_for_artefact
 def rescan_hashes(artefact_uuid, batch_size):
     """Re-link extracted files to active hash databases without re-analysing.
 
-    Iterates ExtractedFile rows and updates is_known / known_file_id by
+    Iterates ExtractedFile rows and updates known_file_id by
     matching each file's md5/sha1 against currently active hash databases.
     Also refreshes the unique_files counter on affected partitions.
 

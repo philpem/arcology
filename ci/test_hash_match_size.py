@@ -235,7 +235,7 @@ class TestRescanLinksNullSize(_HashMatchBase):
             self.db.session.flush()
             ef = ExtractedFile(
                 partition_id=partition.id, path='f.bin', filename='f.bin',
-                file_size=4096, md5=md5, is_directory=False, is_known=False,
+                file_size=4096, md5=md5, is_directory=False,
             )
             self.db.session.add(ef)
             self.db.session.commit()

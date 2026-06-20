@@ -855,7 +855,6 @@ def import_database():
                 db.session.add(kf)
                 new_kf_list.append(kf)
                 files_added += 1
-        database.file_count = (database.file_count or 0) + files_added
         db.session.commit()
         flash(f'Imported {products_added} product(s) and {files_added} file(s) into "{database.name}".', 'success')
         _post_known_file_changes(database, new_kf_list)
@@ -926,7 +925,6 @@ def import_database():
             new_kf_list.append(kf)
             files_added += 1
 
-        database.file_count = (database.file_count or 0) + files_added
         db.session.commit()
         flash(f'Imported {files_added} file(s) from CSV into "{database.name}".', 'success')
         _post_known_file_changes(database, new_kf_list)
@@ -1123,7 +1121,7 @@ def delete_known_product(db_id, pid):
         # Clear FK references so the delete cannot violate the constraint.
         ExtractedFile.query.filter(
             ExtractedFile.id.in_(affected_ef_ids)
-        ).update({'known_file_id': None, 'is_known': False}, synchronize_session=False)
+        ).update({'known_file_id': None}, synchronize_session=False)
 
     # Bulk-delete in FK-safe order: recognised_products (referenced this
     # product) and known_files, then the product row.  Deleting
@@ -1187,7 +1185,6 @@ def add_known_file(db_id, pid):
         description=request.form.get('description', '').strip() or None,
     )
     db.session.add(kf)
-    product.database.file_count = (product.database.file_count or 0) + 1
     db.session.commit()
     flash(f'File "{filename}" added to "{product.title}".', 'success')
     if product.database.is_active:
@@ -1261,11 +1258,9 @@ def delete_known_file(db_id, pid, fid):
     if affected_ef_ids:
         ExtractedFile.query.filter(
             ExtractedFile.id.in_(affected_ef_ids)
-        ).update({'known_file_id': None, 'is_known': False}, synchronize_session=False)
+        ).update({'known_file_id': None}, synchronize_session=False)
 
     db.session.delete(kf)
-    if database.file_count and database.file_count > 0:
-        database.file_count -= 1
     db.session.commit()
     flash(f'File "{filename}" deleted.', 'success')
 

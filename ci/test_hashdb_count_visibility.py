@@ -118,7 +118,7 @@ class TestHashdbCountVisibility(unittest.TestCase):
             db.session.flush()
             db.session.add(ExtractedFile(
                 partition_id=part.id, path='SecretFile', filename='SecretFile',
-                md5='aa' * 16, is_directory=False, known_file_id=kf.id, is_known=True))
+                md5='aa' * 16, is_directory=False, known_file_id=kf.id))
             db.session.add(RecognisedProduct(
                 partition_id=part.id, product_id=prod.id, folder_path='/',
                 required_matched=1, required_total=1,
