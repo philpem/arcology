@@ -36,15 +36,19 @@ analyses (`HASH_RESCAN`, `PRODUCT_RECOGNITION`, `HASHDB_LINK`, `HASHDB_DELETE`,
 `HASHDB_RECOGNITION`). Historically the worker *drove* these by looping bounded
 HTTP "step" endpoints in `myapp/blueprints/api.py`, but every DB write already
 happened in the web process — the worker just paced it. The **task runner** now
-owns them end-to-end in-process (no HTTP), and the **worker hard-excludes** them
-(`AnalysisWorker._effective_types()`).
+owns them end-to-end in-process (no HTTP), the **worker hard-excludes** them
+(`AnalysisWorker._effective_types()`), and those worker-only step endpoints have
+been **removed** (nothing dispatches these jobs over HTTP any more).
 
-- Reusable run-to-completion drivers live in `myapp/services/hashdb_jobs.py`
+- Run-to-completion drivers live in `myapp/services/hashdb_jobs.py`
   (`run_hashdb_link_job`, `run_hashdb_delete_job`, `run_hashdb_recognition_job`,
-  `run_hash_rescan_job`, `run_partition_recognition_job`). The bounded API step
-  endpoints are now thin wrappers over the **shared** delete state machine
-  (`delete_one_step`) and recognition finaliser (`finalise_recognition_status`)
-  in that module, so the two consumers cannot drift.
+  `run_hash_rescan_job`, `run_partition_recognition_job`) — the sole owners of
+  the delete state machine (`delete_one_step`) and recognition finaliser
+  (`finalise_recognition_status`). They run recognition deadline-free (no
+  per-step statement-timeout / "skip a slow product" valve — a pathological
+  product runs to completion on the single-instance runner). The one remaining
+  worker-driven bounded step is `/artefacts/<uuid>/similarity-step`
+  (SIMILARITY_REFRESH stays on the worker).
 - Claim eligibility (incl. the CLEANUP re-analysis barrier) and stale-reset live
   in `myapp/services/analysis_queue.py` (`pending_claimable_query()`,
   `reset_stale_analyses_core()`), shared by the worker-poll endpoint and the

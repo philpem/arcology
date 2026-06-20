@@ -1,22 +1,24 @@
 """
-Deleting a hash database is offloaded to a worker-driven bounded-step
-HASHDB_DELETE job (GitHub issue #618, "Deleting hash databases takes a very
-long time", and the follow-up that the inline bulk delete still hung the web
-thread on a collection-scale database).
+Deleting a hash database is offloaded to a bounded-step HASHDB_DELETE job
+(GitHub issue #618, "Deleting hash databases takes a very long time", and the
+follow-up that the inline bulk delete still hung the web thread on a
+collection-scale database).
 
-The web delete route now only soft-deletes (is_deleting=True, is_active=False)
-and queues the reap job; the worker drives the /api/hash-databases/<id>/delete-step
-endpoint to drain rows in small, lock-friendly batches.
+The web delete route only soft-deletes (is_deleting=True, is_active=False) and
+queues the reap job; the task runner drains the rows in small, lock-friendly
+batches via ``delete_one_step`` (myapp/services/hashdb_jobs.py), in-process with
+direct DB access (no HTTP step endpoint).
 
 Verifies:
   - delete() returns immediately, marks the DB is_deleting/inactive, cancels its
     own pending link/recognition jobs, and queues exactly one HASHDB_DELETE job;
   - a soft-deleting DB is hidden from the index, the REST list, and matching;
-  - driving delete-step to completion removes the database, its products, its
-    known files, and the recognised_products that referenced them, unlinks the
-    ExtractedFile rows that pointed at the deleted known files, and queues a
+  - driving ``delete_one_step`` to completion removes the database, its products,
+    its known files, and the recognised_products that referenced them, unlinks
+    the ExtractedFile rows that pointed at the deleted known files, and queues a
     HASHDB_LINK relink for every other active database;
-  - the step is worker-only and its cursor strictly advances;
+  - the state machine's cursor strictly advances and resumes to completion under
+    a tight (past) wall-clock deadline;
   - per-product deletion (a separate route) is unchanged.
 
 Run:
@@ -27,6 +29,7 @@ Run:
 import json
 import os
 import sys
+import time
 import unittest
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -71,22 +74,28 @@ class _HashdbDeleteBase(unittest.TestCase):
         self.db.drop_all()
         self.ctx.pop()
 
-    def _drive_delete_step(self, db_id, max_steps=200):
-        """Drive the worker delete-step to completion; return the final body."""
+    def _drive_delete_step(self, db_id, max_steps=200, tight=False):
+        """Drive the in-process reap (``delete_one_step``) to completion.
+
+        With ``tight=True`` each call gets a wall-clock deadline already in the
+        past, so the state machine yields after one chunk — exercising the
+        strictly-advancing cursor and the resume-to-completion contract the
+        taskrunner relies on.  Returns the final result dict.
+        """
+        from myapp.database import HashDatabase
+        from myapp.services.hashdb_jobs import delete_one_step
         cursor = 0
         last = None
         for _ in range(max_steps):
-            resp = self.client.post(
-                f'/api/hash-databases/{db_id}/delete-step',
-                json={'cursor': cursor}, headers={'X-API-Key': _WORKER_KEY})
-            self.assertEqual(resp.status_code, 200, resp.data)
-            last = resp.get_json()
+            database = self.db.session.get(HashDatabase, db_id)
+            deadline = time.monotonic() if tight else None
+            last = delete_one_step(database, cursor, deadline=deadline)
             if last['done']:
                 return last
             self.assertGreater(last['cursor'], cursor,
-                               'delete-step cursor must strictly advance')
+                               'delete cursor must strictly advance')
             cursor = last['cursor']
-        self.fail('delete-step did not finish within max_steps')
+        self.fail('delete did not finish within max_steps')
 
     def _seed_linked_db(self, name='Arcarc Apps', md5='bb' * 16, n_files=1,
                         with_recognition=True):
@@ -271,48 +280,26 @@ class TestHashdbDeleteStep(_HashdbDeleteBase):
         linked = {json.loads(a.hints)['database_id'] for a in link_jobs}
         self.assertEqual(linked, {other_id})
 
-    def test_step_requires_worker(self):
-        from myapp.database import ApiKey, ApiKeyPermission
-        db_id, _ = self._seed_linked_db()
-        self.client.post(f'/hashdb/{db_id}/delete')
-        # A valid non-worker read/write API key authenticates but is not the
-        # worker -> the worker-only gate returns 403.
-        key, raw = ApiKey.create(self.uid, 'rw-key', ApiKeyPermission.READ_WRITE)
-        self.db.session.add(key)
-        self.db.session.commit()
-        resp = self.client.post(f'/api/hash-databases/{db_id}/delete-step',
-                                json={'cursor': 0}, headers={'X-API-Key': raw})
-        self.assertEqual(resp.status_code, 403, resp.data)
-
     def test_step_cursor_advances_under_tight_deadline(self):
+        from myapp.database import HashDatabase
+        from myapp.services.hashdb_jobs import delete_one_step
         db_id, _ = self._seed_linked_db(n_files=6, with_recognition=False)
         self.client.post(f'/hashdb/{db_id}/delete')
-        # A zero wall-clock budget returns done=False with an advanced cursor.
-        self.app.config['WORKER_STEP_DEADLINE_SECONDS'] = 0
-        try:
-            resp = self.client.post(f'/api/hash-databases/{db_id}/delete-step',
-                                    json={'cursor': 0},
-                                    headers={'X-API-Key': _WORKER_KEY})
-        finally:
-            self.app.config['WORKER_STEP_DEADLINE_SECONDS'] = 20
-        self.assertEqual(resp.status_code, 200, resp.data)
-        body = resp.get_json()
-        self.assertFalse(body['done'])
-        self.assertGreater(body['cursor'], 0)
+        # A deadline already in the past returns done=False with an advanced
+        # cursor after the first chunk.
+        database = self.db.session.get(HashDatabase, db_id)
+        result = delete_one_step(database, 0, deadline=time.monotonic())
+        self.assertFalse(result['done'])
+        self.assertGreater(result['cursor'], 0)
 
     def test_zero_deadline_still_makes_progress_to_completion(self):
-        # Regression: a non-positive WORKER_STEP_DEADLINE_SECONDS must not make
-        # the step return done=False with zero work forever (the advancing
-        # cursor would hide the stall from run_step_loop).  Each call does at
-        # least one chunk of work, so driving the step terminates.
+        # Regression: a past/zero deadline must not make the step return
+        # done=False with zero work forever (the advancing cursor would hide the
+        # stall).  Each call does at least one chunk, so driving terminates.
         from myapp.database import HashDatabase
         db_id, _ = self._seed_linked_db(n_files=6, with_recognition=False)
         self.client.post(f'/hashdb/{db_id}/delete')
-        self.app.config['WORKER_STEP_DEADLINE_SECONDS'] = 0
-        try:
-            final = self._drive_delete_step(db_id)
-        finally:
-            self.app.config['WORKER_STEP_DEADLINE_SECONDS'] = 20
+        final = self._drive_delete_step(db_id, tight=True)
         self.assertTrue(final['done'])
         self.db.session.expire_all()
         self.assertIsNone(self.db.session.get(HashDatabase, db_id))

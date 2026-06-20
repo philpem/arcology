@@ -1,16 +1,19 @@
 """Product recognition matcher and bounded backfill step.
 
 This module is the **single** implementation of HashDB product recognition.
-Both recognition paths call into it server-side:
+Both recognition paths call into it directly:
 
-  * upload-time, per-partition (worker triggers ``/partitions/<uuid>/recognise-step``)
-  * HashDB-wide backfill (worker triggers ``/hash-databases/<id>/recognition-step``)
+  * upload-time, per-partition (``run_partition_recognition_job``)
+  * HashDB-wide backfill (``run_hashdb_recognition_job``)
+
+both in ``myapp/services/hashdb_jobs.py``, run in-process by the task runner.
 
 Recognition is pure database work — read ``extracted_files`` / ``known_files``,
-match folders in memory, write ``recognised_products`` — so it lives next to the
-data rather than being shipped over the API to the worker.  The worker drives a
-bounded **step loop**: each call processes one capped batch of products and
-returns a cursor, so no single web request runs long (see ``recognise_products_step``).
+match folders in memory, write ``recognised_products`` — so it runs next to the
+data with direct DB access.  ``recognise_products_step`` processes one capped
+batch of products and returns a cursor; the task runner loops it to completion.
+(The ``deadline`` argument is a soft wall-clock budget retained for callers that
+want bounded steps; the task runner passes ``deadline=None`` and runs to done.)
 
 Matching rules:
   * a product is only matchable if it has at least one *mandatory* (required)
