@@ -415,6 +415,11 @@ def _run_recognition_loop(*, database_id=None, partition_id=None, label,
                 raise  # a real error — caller marks the job FAILED
             if limit > 1:
                 limit = 1  # isolate the offending product, retry the same cursor
+                # Heartbeat on the way through the timeout branches too: a run of
+                # consecutive slow products would otherwise go a whole
+                # statement_timeout (or several) without bumping
+                # progress_updated_at and be falsely reset as stale.
+                heartbeat(current=processed, total=None, label=label)
                 continue
             # A single product still overruns the budget: skip it and advance.
             skip_id = recognition_batch_last_id(
@@ -427,6 +432,8 @@ def _run_recognition_loop(*, database_id=None, partition_id=None, label,
             last_id = skip_id
             skipped += 1
             limit = _RECOGNITION_STEP_LIMIT
+            heartbeat(current=processed, total=None,
+                      label=f'{label} — skipped {skipped}')
             continue
         processed += result.get('processed', 0)
         matches += result.get('matches', 0)
