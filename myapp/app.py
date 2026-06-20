@@ -46,10 +46,13 @@ _ENV_INT_KEYS = (
     'FINALIZE_STALE_SECONDS', 'FINALIZE_RESULT_TTL_SECONDS',
     'ITEMS_PER_PAGE', 'FILES_PER_PAGE', 'ANALYSES_SHOWN',
     'PERMANENT_SESSION_LIFETIME', 'OIDC_SYNC_INTERVAL',
+    'TASKRUNNER_STALE_RESET_INTERVAL', 'TASKRUNNER_CHUNK_GC_INTERVAL',
+    'TASKRUNNER_SIMILARITY_INTERVAL',
 )
 _ENV_FLOAT_KEYS = (
     'SENTRY_TRACES_SAMPLE_RATE', 'SENTRY_PROFILES_SAMPLE_RATE',
     'WORKER_SENTRY_TRACES_SAMPLE_RATE', 'WORKER_SENTRY_PROFILES_SAMPLE_RATE',
+    'TASKRUNNER_POLL_BACKOFF_FLOOR', 'TASKRUNNER_POLL_BACKOFF_CEILING',
 )
 # Dict-valued keys, supplied as a JSON object in the env var.
 _ENV_JSON_KEYS = (
@@ -503,6 +506,7 @@ def _register_cli_commands(app):
     from .cli.reconcile_counts import reconcile_counts
     from .cli.rescan_hashes import rescan_hashes
     from .cli.set_password import set_password
+    from .cli.taskrunner import taskrunner
 
     app.cli.add_command(create_admin)
     app.cli.add_command(rebuild_search_index)
@@ -517,6 +521,7 @@ def _register_cli_commands(app):
     app.cli.add_command(backfill_blobs)
     app.cli.add_command(backfill_tlsh)
     app.cli.add_command(set_password)
+    app.cli.add_command(taskrunner)
 
 
 # vim: ts=4 sw=4 et

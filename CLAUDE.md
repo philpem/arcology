@@ -4,27 +4,58 @@
 
 Arcology is a digital artefact catalogue for retrocomputing collections, built on Flask. It enables cataloguing, uploading, and automatic analysis of digital artifacts like disk images, flux dumps, and archives from historical computer media.
 
-The system has three main components connected via a REST API:
+The system has four main components:
 - **Web application** (`myapp/`) - Flask app serving the UI and REST API
-- **Analysis worker** (`worker/`) - Standalone Python process that polls for analysis jobs and runs external tools
+- **Analysis worker** (`worker/`) - Standalone Python process that polls for analysis jobs and runs external tools (the *data plane*: needs the upload/output volumes)
+- **Task runner** (`myapp/taskrunner/`, run via `flask taskrunner`) - Single-instance, in-process loop reusing the web image. Owns the DB-only *control-plane* analyses (`CONTROL_PLANE_ANALYSIS_TYPES`) and time-based periodic maintenance; runs with direct DB access, no HTTP
 - **CLI tool** (`cli/`) - `arco` command-line client for creating items and uploading artefacts from a client PC
 
-Shared type definitions (enums, archive formats) live in `arcology_shared/` and are imported by all three components.
+Shared type definitions (enums, archive formats) live in `arcology_shared/` and are imported by all components.
 
 ## Architecture
 
 ```
 CLI (arco)  --> HTTP/JSON -->  Web (Flask)  <-- HTTP/JSON -->  Worker (Python)
-                                    |                              |
-                                    | SQLAlchemy                   | Shared volumes
-                                    v                              v
-                               PostgreSQL                    uploads/ & outputs/
+                                  |   ^                            |
+                                  |   | in-process (no HTTP)       | Shared volumes
+                       SQLAlchemy |   | SQLAlchemy                 v
+                                  v   |                       uploads/ & outputs/
+                               PostgreSQL <-- Task runner (flask taskrunner)
 ```
 
 - The worker has **no direct database access** - all communication goes through the REST API
+- The **task runner** runs inside the Flask app context with **direct DB access** and claims the control-plane analysis types the worker excludes (see "Control plane vs data plane" below)
 - The CLI tool communicates with the web app via the same REST API (authenticated with API keys)
-- Shared filesystem volumes: `data/uploads/` (originals) and `data/outputs/` (analysis results)
-- Workers claim jobs atomically via `PUT /api/analysis/{id}` to prevent duplicate processing
+- Shared filesystem volumes: `data/uploads/` (originals) and `data/outputs/` (analysis results); the task runner additionally mounts `data/chunks/` only for chunked-upload GC
+- Workers claim jobs atomically via `PUT /api/analysis/{id}`; the task runner claims via an in-process atomic `UPDATE ... WHERE status=PENDING` (rowcount check) — both prevent duplicate processing
+
+### Control plane vs data plane (task runner)
+
+`arcology_shared/enums.py` defines `CONTROL_PLANE_ANALYSIS_TYPES` — the DB-only
+analyses (`HASH_RESCAN`, `PRODUCT_RECOGNITION`, `HASHDB_LINK`, `HASHDB_DELETE`,
+`HASHDB_RECOGNITION`). Historically the worker *drove* these by looping bounded
+HTTP "step" endpoints in `myapp/blueprints/api.py`, but every DB write already
+happened in the web process — the worker just paced it. The **task runner** now
+owns them end-to-end in-process (no HTTP), and the **worker hard-excludes** them
+(`AnalysisWorker._effective_types()`).
+
+- Reusable run-to-completion drivers live in `myapp/services/hashdb_jobs.py`
+  (`run_hashdb_link_job`, `run_hashdb_delete_job`, `run_hashdb_recognition_job`,
+  `run_hash_rescan_job`, `run_partition_recognition_job`). The bounded API step
+  endpoints are now thin wrappers over the **shared** delete state machine
+  (`delete_one_step`) and recognition finaliser (`finalise_recognition_status`)
+  in that module, so the two consumers cannot drift.
+- Claim eligibility (incl. the CLEANUP re-analysis barrier) and stale-reset live
+  in `myapp/services/analysis_queue.py` (`pending_claimable_query()`,
+  `reset_stale_analyses_core()`), shared by the worker-poll endpoint and the
+  task runner.
+- The task runner is **single-instance** (don't scale it): the atomic claim
+  makes job execution safe under concurrency, but the periodic tasks
+  (`reset_stale_analyses_core`, `purge_stale_chunks`, similarity `rebuild_all`)
+  assume one runner. Intervals are `TASKRUNNER_*` config keys (see
+  `myapp.cfg.example`). Adding a new DB-only analysis type: add it to
+  `CONTROL_PLANE_ANALYSIS_TYPES` **and** to `DISPATCH` in
+  `myapp/taskrunner/dispatch.py` (an import-time assert enforces the pairing).
 
 ## Repository Structure
 
@@ -48,10 +79,12 @@ arcology/
 │   │   ├── analysis.py         # Analysis queue UI
 │   │   ├── search.py           # Global cross-item search (prefix query syntax)
 │   │   └── api.py              # REST API for workers and external tools
-│   ├── cli/                    # Flask CLI commands (create-admin, rebuild-search-index, rescan-hashes, reanalyse)
+│   ├── cli/                    # Flask CLI commands (create-admin, rebuild-search-index, rescan-hashes, reanalyse, taskrunner)
+│   ├── taskrunner/             # In-process control-plane job loop (runner.py, dispatch.py); run via `flask taskrunner`
 │   ├── services/               # Service layer shared by blueprints/API/CLI: artefact_types
 │   │                           #   (EXTENSION_MAP/ANALYSIS_MAP), upload_pipeline, artefact_lifecycle,
-│   │                           #   artefact_storage, restrictions, downloads, hash_rescan, search_index
+│   │                           #   artefact_storage, restrictions, downloads, hash_rescan, hashdb_jobs,
+│   │                           #   analysis_queue, search_index
 │   ├── utils/                  # Utility modules
 │   ├── templates/              # Jinja2 templates (Bootstrap 5)
 │   └── static/                 # CSS
@@ -768,14 +801,12 @@ Automated tests live in `ci/` and run in the `app-tests` GitHub Actions job (SQL
 | `ci/test_url_identifiers.py` | URL-safe identifiers and slug generation |
 | `ci/test_fk_violations.py` | FK cascade deletes, defensive checks, M2M cleanup, nullable FK edge cases (SQLite FK enforcement enabled) |
 | `ci/test_inf_processing.py` | RISC OS INF sidecar parsing, BBC↔DOS filename translation, `process_inf_sidecars()` end-to-end |
-<<<<<<< HEAD
 | `ci/test_chunked_upload.py` | Chunked upload protocol (sync path): init/chunk/status/complete, API + web |
 | `ci/test_chunked_finalize.py` | Async finalise core (state machine, single-winner claim, stale re-drive) + async `/complete` + `/complete/status` |
 | `ci/test_cli_chunked.py` | `arco` chunked client: async finalise poll loop + resumable uploads (fake server) |
 | `ci/test_worker_io.py` | Bounded-memory file access: `SectorReader`/`open_sector_reader`, `read_file_capped` cap, `_parse_directory` over seek/read, and a sparse-image regression that asserts `detect_armlock` memory doesn't scale with image size |
-=======
 | `ci/test_similarity.py` | Content-set similarity: weighted Jaccard, artefact + component matching, sha256→md5 fallback, visibility filtering |
->>>>>>> f1da452 (Add artefact similarity matching (content-set Jaccard + TLSH))
+| `ci/test_taskrunner.py` | Task runner: control-plane/DISPATCH classification, worker excludes control-plane types, atomic claim single-winner, CLEANUP barrier, run-to-completion link/delete/recognition drivers, periodic interval gate |
 
 Run locally:
 

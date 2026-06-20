@@ -182,18 +182,6 @@ class ArcologyAPI:
             page += 1
         return files
 
-    def run_hash_rescan(self, artefact_uuid: str) -> dict | None:
-        """Trigger a server-side hash rescan for one artefact.
-
-        Returns the result dict {updated, total, recognition_queued}, or None
-        on network/server error.
-        """
-        result = self._request('post', f'/artefact/{artefact_uuid}/hash-rescan')
-        if result is None:
-            log.error('run_hash_rescan(%s): API call failed', artefact_uuid)
-            return None
-        return result
-
     def update_artefact_type(self, artefact_uuid: str, artefact_type: str):
         """Correct the artefact type when magic-byte sniffing overrides the extension guess.
 
@@ -651,69 +639,11 @@ class ArcologyAPI:
             log.error(f"Failed to claim analysis {analysis_id}: {e}")
             return False
 
-    def recognise_partition_step(
-        self,
-        partition_uuid: str,
-        *,
-        last_product_id: int = 0,
-        limit: int = 25,
-    ) -> dict | None:
-        """Run one bounded per-partition product-recognition step.
-
-        Matching runs server-side (shared with the HashDB backfill); this is
-        one capped product batch.  Returns the result dict, or None on error.
-        """
-        return self.post(
-            f'/partitions/{partition_uuid}/recognise-step',
-            {'last_product_id': last_product_id, 'limit': limit},
-        )
-
-    def hashdb_link_step(self, db_id: int, *, last_id: int = 0, limit: int = 500) -> dict | None:
-        """Run one bounded HashDB relink step."""
-        return self.post(
-            f'/hash-databases/{db_id}/link-step',
-            {'last_id': last_id, 'limit': limit},
-        )
-
-    def hashdb_delete_step(self, db_id: int, *, cursor: int = 0) -> dict | None:
-        """Run one bounded HashDB background-delete (reap) step."""
-        return self.post(
-            f'/hash-databases/{db_id}/delete-step',
-            {'cursor': cursor},
-        )
-
-    def hashdb_recognition_step(
-        self,
-        db_id: int,
-        *,
-        last_product_id: int = 0,
-        limit: int = 25,
-    ) -> dict | None:
-        """Run one bounded HashDB product-recognition backfill step."""
-        return self.post(
-            f'/hash-databases/{db_id}/recognition-step',
-            {'last_product_id': last_product_id, 'limit': limit},
-        )
-
     def similarity_step(self, artefact_uuid: str, *, cursor: int = 0, limit: int = 200) -> dict | None:
         """Run one bounded content-set similarity refresh step for an artefact."""
         return self.post(
             f'/artefacts/{artefact_uuid}/similarity-step',
             {'cursor': cursor, 'limit': limit},
         )
-
-    def update_hashdb_recognition_status(
-        self,
-        db_id: int,
-        status: str,
-        *,
-        error: str | None = None,
-    ) -> bool:
-        """Update HashDB recognition status after worker-side failure/completion."""
-        response = self.post(
-            f'/hash-databases/{db_id}/recognition-status',
-            {'status': status, 'error': error},
-        )
-        return response is not None
 
 # vim: ts=4 sw=4 et

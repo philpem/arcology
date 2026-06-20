@@ -36,18 +36,12 @@ from ._common import (
     analysis_handler,
     find_extraction_path,
     resolve_extraction_file,
-    run_step_loop,
 )
 
 # Sanity cap on an ARMovie embedded poster sprite (a small RISC OS spritefile
 # thumbnail).  A header claiming more than this is corrupt/hostile, so we skip
 # the poster rather than read the bytes into RAM.
 _MAX_POSTER_SPRITE_BYTES = 16 * 1024 * 1024
-
-# Starting product batch size for per-partition recognition steps.  Halved by
-# run_step_loop on a server-signalled step timeout, so it is the maximum per
-# request rather than a fixed size.
-PARTITION_RECOGNITION_STEP_LIMIT = 25
 
 # Flux artefact types whose raw bytes carry timing noise — a byte-level fuzzy
 # hash (TLSH) is meaningless for them, so it is skipped.
@@ -223,51 +217,6 @@ def process_format_identify(self, analysis: dict, artefact: dict, work_dir: Path
         analysis_id,
         summary='Format not identified',
         details=json.dumps({'detected': 'unknown'})
-    )
-
-
-@analysis_handler("product recognition", AnalysisType.PRODUCT_RECOGNITION)
-def process_product_recognition(self, analysis: dict, artefact: dict, work_dir: Path):
-    """Recognise products in this partition's extracted files.
-
-    Matching is pure database work, so it runs server-side via the single
-    ``recognise_products_step`` implementation (shared with the HashDB-wide
-    backfill).  This handler is a thin trigger that drives the bounded step
-    loop — one capped product batch per request — so no web request runs long.
-    """
-    analysis_id = analysis['id']
-    hints = json.loads(analysis.get('hints') or '{}')
-    partition_uuid = hints.get(HintKey.PARTITION_UUID)
-
-    if not partition_uuid:
-        self.fail_analysis(analysis_id, 'No partition_uuid in analysis hints')
-        return
-
-    reporter = self.progress.start(label='Recognising products')
-    last, totals = run_step_loop(
-        lambda cursor, limit: self.api.recognise_partition_step(
-            partition_uuid, last_product_id=cursor, limit=limit),
-        cursor_key='next_product_id',
-        reporter=reporter,
-        initial_limit=PARTITION_RECOGNITION_STEP_LIMIT,
-    )
-    if last is None:
-        self.fail_analysis(
-            analysis_id,
-            'Partition recognition could not complete (API failure, or a '
-            'product batch too large to process within the step time limit)')
-        return
-
-    processed = totals.get('processed', 0)
-    matches = totals.get('matches', 0)
-    self.complete_analysis(
-        analysis_id,
-        summary=f'{processed} product(s) checked; {matches} recognition match(es) found',
-        details=json.dumps({
-            'partition_uuid': partition_uuid,
-            'products_processed': processed,
-            'matches': matches,
-        }),
     )
 
 

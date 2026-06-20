@@ -1,5 +1,15 @@
 #!/bin/sh -e
 
+# Task runner mode: a single-instance, DB-only maintenance loop reusing this
+# (web) image.  It must NOT run migrations — the web service owns `flask db
+# upgrade`; running it from two services races.  `exec` so flask runs as PID 1
+# and receives Docker's SIGTERM directly (the runner drains the current job and
+# exits cleanly).
+if [ "$1" = "taskrunner" ]; then
+    echo "Starting Arcology task runner..."
+    exec flask taskrunner
+fi
+
 echo "--- Applying database migrations... ---"
 flask db upgrade
 

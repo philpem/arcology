@@ -16,7 +16,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from arcology_shared.enums import AnalysisStatus
+from arcology_shared.enums import CONTROL_PLANE_ANALYSIS_TYPES, AnalysisStatus
 from arcology_shared.hints import HintKey
 
 try:
@@ -133,6 +133,12 @@ class AnalysisWorker:
         self.api = ArcologyAPI(api_url, upload_dir, output_dir,
                                api_key=api_key, storage=storage)
         self.analysis_types: list[str] = list(analysis_types) if analysis_types else []
+        # Control-plane / DB-only analyses are owned by the taskrunner container
+        # (myapp/taskrunner) and are hard-excluded here regardless of any
+        # WORKER_ANALYSIS_TYPES opt-in, so the worker and taskrunner never both
+        # claim them.  Names (uppercase) match the DB enum the API filters on.
+        self._control_plane_names = frozenset(
+            t.name for t in CONTROL_PLANE_ANALYSIS_TYPES)
         self._decompression_info = None  # Set by get_input_path() when decompression occurs
 
         # Set when SIGTERM/SIGINT is received so the main loop finishes the
@@ -744,6 +750,19 @@ class AnalysisWorker:
             monitor_thread.join(timeout=5.0)
             self.progress = None
 
+    def _effective_types(self) -> list[str]:
+        """The explicit allow-list of AnalysisType names this worker may claim.
+
+        Starts from the WORKER_ANALYSIS_TYPES opt-in (or *all* types when unset)
+        and always removes the control-plane / DB-only types owned by the
+        taskrunner.  Returned as an explicit list (never ``None``/empty so the
+        server-side filter cannot fall back to "all types") — belt-and-suspenders
+        so even a stray control-plane row is never handed to the worker.
+        """
+        from arcology_shared.enums import AnalysisType
+        base = self.analysis_types or [t.name for t in AnalysisType]
+        return [t for t in base if t not in self._control_plane_names]
+
     def claim_and_process(self) -> int:
         """
         Atomically claim a pending analysis and process it.
@@ -756,7 +775,7 @@ class AnalysisWorker:
             Number of analyses processed (0 or 1)
         """
         analyses = self.api.get_pending_analyses(
-            analysis_types=self.analysis_types or None
+            analysis_types=self._effective_types()
         )
 
         if not analyses:
@@ -840,6 +859,10 @@ class AnalysisWorker:
                 sys.exit(1)
         else:
             log.info("Job type filter: all types")
+        # Control-plane / DB-only jobs are owned by the taskrunner, never claimed
+        # here (see _effective_types).
+        log.info("Excluding control-plane job types (owned by taskrunner): %s",
+                 ', '.join(sorted(self._control_plane_names)))
 
         # Recover any jobs left in RUNNING state by a previous worker crash
         self.api.reset_stale_analyses()
