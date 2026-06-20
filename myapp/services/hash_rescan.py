@@ -550,7 +550,7 @@ def rescan_links_for_known_file_id(kf_id):
 def queue_product_recognition_for_partitions(partition_ids):
     """Queue PRODUCT_RECOGNITION analyses for the given partition IDs.
 
-    Called after artefact extraction or hash rescans so that the worker
+    Called after artefact extraction or hash rescans so that the task runner
     re-runs folder-level product matching for newly processed partitions.
 
     One Analysis record is created per partition.  To avoid flooding the
@@ -627,7 +627,7 @@ def _queue_system_analysis_once(
 
 
 def queue_hashdb_link_job(database_id):
-    """Queue a worker-driven relink job for one HashDB."""
+    """Queue a relink job for one HashDB (run in-process by the task runner)."""
     return _queue_system_analysis_once(
         AnalysisType.HASHDB_LINK,
         {'database_id': database_id},
@@ -635,11 +635,12 @@ def queue_hashdb_link_job(database_id):
 
 
 def queue_hashdb_delete_job(database_id):
-    """Queue a worker-driven background delete (reap) job for one HashDB.
+    """Queue a background delete (reap) job for one HashDB.
 
     The web delete route marks the database is_deleting=True / is_active=False
-    and queues this; the worker drains its rows in bounded steps via the
-    /hash-databases/<id>/delete-step endpoint so no web request runs long.
+    and queues this; the task runner drains its rows in bounded batches via
+    ``delete_one_step`` (myapp/services/hashdb_jobs.py), in-process with direct
+    DB access, so no web request runs long.
     """
     return _queue_system_analysis_once(
         AnalysisType.HASHDB_DELETE,
@@ -648,7 +649,7 @@ def queue_hashdb_delete_job(database_id):
 
 
 def queue_hashdb_recognition_job(database_id, *, commit=True):
-    """Queue a worker-driven product-recognition backfill for one HashDB."""
+    """Queue a product-recognition backfill for one HashDB (task-runner job)."""
     return _queue_system_analysis_once(
         AnalysisType.HASHDB_RECOGNITION,
         {'database_id': database_id},
@@ -660,8 +661,8 @@ def queue_hashdb_recognition_job(database_id, *, commit=True):
 def has_pending_recognition_job(database_id):
     """True if a PENDING HASHDB_RECOGNITION backfill is queued for this HashDB.
 
-    A backfill claimed by the worker is RUNNING, so a PENDING row is always a
-    genuine follow-up requested after the current run started — meaning the
+    A backfill claimed by the task runner is RUNNING, so a PENDING row is always
+    a genuine follow-up requested after the current run started — meaning the
     current run's results are already stale and must not be reported COMPLETED.
     """
     hints_json = json.dumps({'database_id': database_id}, sort_keys=True)

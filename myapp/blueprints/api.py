@@ -7,7 +7,6 @@ RESTful API for external integrations.
 import hmac
 import json
 import os
-import time
 from datetime import datetime, timezone
 from functools import wraps
 from flask import Blueprint, abort, current_app, g, jsonify, request
@@ -38,7 +37,6 @@ from ..database import (
     KnownProduct,
     Partition,
     Platform,
-    ProductRecognitionStatus,
     StorageDirectory,
     Tag,
     User,
@@ -71,14 +69,7 @@ from ..services.hash_rescan import (
     find_known_file,
     find_known_files_for_records,
     link_new_known_files,
-    queue_hashdb_recognition_backfill,
-    rescan_hashes_for_new_known_files,
 )
-from ..services.hashdb_jobs import (
-    delete_one_step,
-    finalise_recognition_status,
-)
-from ..services.recognition import recognise_products_step, recognition_batch_last_id
 from ..services.restrictions import (
     artefact_contained_file_restrictions,
     collect_all_file_restrictions,
@@ -2471,34 +2462,6 @@ def chunked_upload_complete_status(upload_uuid):
 # Hash Database API (for CLI import/export and worker recognition)
 # =============================================================================
 
-@blueprint.route('/artefact/<string:uuid>/hash-rescan', methods=['POST'])
-@require_auth('read_write')
-def run_hash_rescan(uuid):
-    """Worker endpoint: run a hash rescan for one artefact and return results.
-
-    Called by the worker when it processes a HASH_RESCAN analysis job.
-    Runs rescan_hashes_for_artefact(), optionally queues product recognition,
-    and returns {updated, total, recognition_queued}.
-    """
-    from ..services.hash_rescan import (
-        queue_product_recognition_for_partitions,
-        rescan_hashes_for_artefact,
-    )
-    artefact = _get_artefact_or_404(uuid)
-    updated, total = rescan_hashes_for_artefact(artefact)
-
-    recognition_queued = 0
-    has_recognition = HashDatabase.query.filter_by(
-        is_active=True, enable_product_recognition=True
-    ).first()
-    if has_recognition:
-        partition_ids = [p.id for p in artefact.partitions if p.total_files > 0]
-        if partition_ids:
-            recognition_queued = queue_product_recognition_for_partitions(partition_ids)
-
-    return jsonify({'updated': updated, 'total': total, 'recognition_queued': recognition_queued})
-
-
 @blueprint.route('/hash-databases', methods=['GET'])
 @require_auth('read_only')
 def list_hash_databases():
@@ -2771,143 +2734,6 @@ def queue_hash_database_link(db_id):
     return jsonify({'status': 'queued' if queued else 'already_queued'})
 
 
-@blueprint.route('/hash-databases/<int:db_id>/link-step', methods=['POST'])
-@require_auth('read_write')
-def hash_database_link_step(db_id):
-    """Worker-only bounded relink step for one HashDB."""
-    if not _is_worker_request():
-        return error_response('Only the worker may run hashdb link steps', 403)
-    database = _get_hash_database_or_404(db_id)
-    data, error = _json_object()
-    if error:
-        return error
-    last_id = int(data.get('last_id') or 0)
-    limit = max(1, min(int(data.get('limit') or 500), 2000))
-
-    batch = (
-        KnownFile.query
-        .filter(KnownFile.database_id == database.id, KnownFile.id > last_id)
-        .order_by(KnownFile.id)
-        .limit(limit)
-        .all()
-    )
-    if not batch:
-        queued_recognition = False
-        if database.enable_product_recognition:
-            _, queued_recognition = queue_hashdb_recognition_backfill(database)
-        return jsonify({
-            'done': True,
-            'processed': 0,
-            'updated': 0,
-            'next_id': last_id,
-            'recognition_queued': queued_recognition,
-        })
-
-    # The relink work is many short statements with a commit per extracted-file
-    # batch (rescan_hashes_for_queryset), so a single statement_timeout cannot
-    # bound it — and the worker abandons the request at its read timeout (30s)
-    # long before any 120s server cap.  Instead bound the step by wall-clock:
-    # process the fetched known files in small chunks until a soft deadline
-    # (kept below the worker read timeout), then return done=False with the
-    # cursor advanced to the last chunk processed so the worker simply continues.
-    deadline = time.monotonic() + current_app.config.get('WORKER_STEP_DEADLINE_SECONDS', 20)
-    chunk_size = 50
-    updated = 0
-    total = 0
-    processed = 0
-    next_id = last_id
-    for i in range(0, len(batch), chunk_size):
-        chunk = batch[i:i + chunk_size]
-        u, t = rescan_hashes_for_new_known_files(chunk)
-        updated += u
-        total += t
-        processed += len(chunk)
-        next_id = chunk[-1].id
-        if processed < len(batch) and time.monotonic() >= deadline:
-            break  # out of time budget — stop early, worker resumes at next_id
-
-    # Done only when the whole fetched page was processed *and* it was a short
-    # page (fewer than limit rows, i.e. the cursor reached the end).
-    done = processed == len(batch) and len(batch) < limit
-    queued_recognition = False
-    if done and database.enable_product_recognition:
-        _, queued_recognition = queue_hashdb_recognition_backfill(database)
-    return jsonify({
-        'done': done,
-        'processed': processed,
-        'matched_files_scanned': total,
-        'updated': updated,
-        'next_id': next_id,
-        'recognition_queued': queued_recognition,
-        'progress_label': f"Linking files in HashDB '{database.name}'",
-        'progress_total': database.file_count or 0,
-    })
-
-
-@blueprint.route('/hash-databases/<int:db_id>/delete-step', methods=['POST'])
-@require_auth('read_write')
-def hash_database_delete_step(db_id):
-    """Worker-only bounded reap step for a soft-deleted HashDB.
-
-    Thin wrapper over ``delete_one_step`` (myapp/services/hashdb_jobs.py): drives
-    the deletion of one is_deleting database in small, lock-friendly, wall-clock-
-    bounded batches so no web request runs long and the worker can resume after a
-    crash.  Each call returns ``cursor = incoming + rows_touched`` (strictly
-    advancing until the final step) to satisfy run_step_loop's anti-hang
-    contract, and ``done=True`` only once the database row is gone.
-    """
-    if not _is_worker_request():
-        return error_response('Only the worker may run hashdb delete steps', 403)
-    database = _get_hash_database_or_404(db_id)
-    data, error = _json_object()
-    if error:
-        return error
-    cursor = int(data.get('cursor') or 0)
-
-    deadline = time.monotonic() + current_app.config.get('WORKER_STEP_DEADLINE_SECONDS', 20)
-    return jsonify(delete_one_step(database, cursor, deadline=deadline))
-
-
-def _timed_out_response(**cursor):
-    """The structured result a step returns when its statement timeout fired.
-
-    The worker driver (``run_step_loop``) recognises ``timed_out`` and retries
-    the same cursor with a smaller batch rather than failing the whole job, so
-    an over-long batch degrades to slower progress instead of a dead job.  The
-    caller passes the step's cursor field (e.g. ``next_product_id=...`` or
-    ``next_id=...``) so the body still carries an unchanged cursor.
-    """
-    return jsonify({'timed_out': True, 'done': False, **cursor})
-
-
-def _recognition_timeout_or_skip(*, database_id, last_product_id, limit, subject):
-    """Roll back a timed-out recognition step and return the worker's next move.
-
-    While the batch can still be subdivided (limit > 1) the worker should retry
-    the *same* cursor with a smaller batch, so we relay ``timed_out``.  Once it is
-    down to a single product that *still* overruns the budget, subdividing can't
-    help — skip that product (advance the cursor past it) so the backfill
-    completes rather than failing the whole database's recognition.  A skipped
-    product simply gets no recognition matches (it is almost always one with a
-    very common file hash that matches a huge number of folders).
-    """
-    db.session.rollback()
-    if limit <= 1:
-        skip_id = recognition_batch_last_id(database_id, last_product_id, 1)
-        if skip_id is not None and skip_id > last_product_id:
-            current_app.logger.warning(
-                '%s recognition: skipping product %s — a single product could '
-                'not be processed within the %ss step budget; it will have no '
-                'recognition matches', subject, skip_id,
-                current_app.config.get('WORKER_STEP_DEADLINE_SECONDS', 20))
-            return jsonify({'done': False, 'processed': 0, 'matches': 0,
-                            'skipped': 1, 'next_product_id': skip_id})
-    current_app.logger.warning(
-        '%s recognition step timed out at limit=%s (cursor=%s); worker will '
-        'retry with a smaller batch', subject, limit, last_product_id)
-    return _timed_out_response(next_product_id=last_product_id)
-
-
 def _apply_statement_timeout(seconds):
     """Bound the current transaction's query time (PostgreSQL only).
 
@@ -2925,73 +2751,6 @@ def _apply_statement_timeout(seconds):
     if db.session.get_bind().dialect.name != 'postgresql':
         return
     db.session.execute(text(f'SET LOCAL statement_timeout = {seconds * 1000}'))
-
-
-@blueprint.route('/hash-databases/<int:db_id>/recognition-step', methods=['POST'])
-@require_auth('read_write')
-def hash_database_recognition_step(db_id):
-    """Worker-only bounded product-recognition backfill for one HashDB."""
-    if not _is_worker_request():
-        return error_response('Only the worker may run hashdb recognition steps', 403)
-    database = _get_hash_database_or_404(db_id)
-    data, error = _json_object()
-    if error:
-        return error
-    last_product_id = int(data.get('last_product_id') or 0)
-    limit = max(1, min(int(data.get('limit') or 25), 200))
-
-    if not database.enable_product_recognition:
-        database.product_recognition_status = None
-        database.product_recognition_updated_at = None
-        database.product_recognition_error = None
-        db.session.commit()
-        return jsonify({'done': True, 'processed': 0, 'matches': 0, 'next_product_id': last_product_id})
-
-    # Mark RUNNING in its own short transaction.  If we leave this write pending
-    # until the final commit, autoflush takes a row lock on hash_databases
-    # before the (potentially long) scan below and holds it for the whole
-    # request — so the worker's own follow-up /recognition-status call, which
-    # updates the same row, blocks behind it and times out too.  Committing now
-    # releases the lock immediately.
-    if database.product_recognition_status != ProductRecognitionStatus.RUNNING:
-        database.product_recognition_status = ProductRecognitionStatus.RUNNING
-        database.product_recognition_error = None
-        db.session.commit()
-
-    # Defence in depth: a pathological step (an unforeseen slow query) must fail
-    # fast and release its resources rather than tie up a gthread worker for the
-    # full gunicorn --timeout while the worker client has already given up.  A
-    # statement timeout aborts the query; the worker sees a 500, reports the
-    # backfill failed, and the job is re-driven cleanly.
-    budget = current_app.config.get('WORKER_STEP_DEADLINE_SECONDS', 20)
-    _apply_statement_timeout(budget)
-
-    try:
-        result = recognise_products_step(
-            database_id=database.id,
-            last_product_id=last_product_id,
-            limit=limit,
-            deadline=time.monotonic() + budget if budget else None,
-        )
-    except OperationalError as exc:
-        db.session.rollback()
-        if not is_statement_timeout(exc):
-            raise
-        result = {'timed_out': True}
-    if result.get('timed_out'):
-        # Leave the status at RUNNING (committed above); retry smaller, or skip a
-        # single un-processable product so the backfill still completes.
-        return _recognition_timeout_or_skip(
-            database_id=database.id, last_product_id=last_product_id,
-            limit=limit, subject=f'HashDB {db_id}')
-    if result['done']:
-        finalise_recognition_status(database)
-    db.session.commit()
-    result['progress_label'] = f"Recognising products in HashDB '{database.name}'"
-    if last_product_id == 0:  # first step: report the total once (cheap COUNT)
-        result['progress_total'] = (
-            KnownProduct.query.filter_by(database_id=db_id).count())
-    return jsonify(result)
 
 
 @blueprint.route('/artefacts/<string:uuid>/similarity-step', methods=['POST'])
@@ -3030,79 +2789,6 @@ def artefact_similarity_step(uuid):
         return jsonify({'timed_out': True})
     db.session.commit()
     result['progress_label'] = f"Finding similar artefacts for '{artefact.label}'"
-    return jsonify(result)
-
-
-@blueprint.route('/hash-databases/<int:db_id>/recognition-status', methods=['POST'])
-@require_auth('read_write')
-def update_hash_database_recognition_status(db_id):
-    """Worker-only status update for HashDB recognition backfills."""
-    if not _is_worker_request():
-        return error_response('Only the worker may update hashdb recognition status', 403)
-    database = _get_hash_database_or_404(db_id)
-    data, error = _json_object()
-    if error:
-        return error
-    status_value = data.get('status')
-    try:
-        status = ProductRecognitionStatus(status_value)
-    except ValueError:
-        return error_response('Invalid recognition status')
-    database.product_recognition_status = status
-    database.product_recognition_error = data.get('error')
-    if status in (ProductRecognitionStatus.COMPLETED, ProductRecognitionStatus.FAILED):
-        database.product_recognition_updated_at = datetime.now(timezone.utc)
-    db.session.commit()
-    return jsonify({'status': status.value})
-
-
-@blueprint.route('/partitions/<uuid>/recognise-step', methods=['POST'])
-@require_auth('read_write')
-def partition_recognise_step(uuid):
-    """Worker-only bounded product-recognition step for one partition.
-
-    Matches the products of every recognition-enabled HashDB against this one
-    partition, one capped product batch per call.  Replaces the old
-    worker-computed ``/recognised-products`` callback: matching now runs
-    server-side via the single ``recognise_products_step`` implementation, so
-    the worker only drives the bounded loop.
-    """
-    # Worker-only: this rewrites a partition's recognition rows (delete + insert)
-    # and is gated only on view-visibility of the partition, not on content-
-    # management permission — so without this check any read_write user could
-    # wipe or falsify recognition results on artefacts they do not own.
-    if not _is_worker_request():
-        return error_response('Only the worker may run partition recognition steps', 403)
-
-    partition = _get_partition_or_404(uuid)
-    data, error = _json_object()
-    if error:
-        return error
-    last_product_id = int(data.get('last_product_id') or 0)
-    limit = max(1, min(int(data.get('limit') or 25), 200))
-
-    budget = current_app.config.get('WORKER_STEP_DEADLINE_SECONDS', 20)
-    _apply_statement_timeout(budget)
-
-    try:
-        result = recognise_products_step(
-            partition_id=partition.id,
-            last_product_id=last_product_id,
-            limit=limit,
-            deadline=time.monotonic() + budget if budget else None,
-        )
-    except OperationalError as exc:
-        db.session.rollback()
-        if not is_statement_timeout(exc):
-            raise
-        result = {'timed_out': True}
-    if result.get('timed_out'):
-        # database_id=None: the per-partition path matches every recognition-
-        # enabled database's products, so the skip cursor spans them all.
-        return _recognition_timeout_or_skip(
-            database_id=None, last_product_id=last_product_id,
-            limit=limit, subject=f'Partition {uuid}')
-    db.session.commit()
     return jsonify(result)
 
 

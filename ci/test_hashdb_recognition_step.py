@@ -1,14 +1,18 @@
 """
-Tests for the worker-driven bounded HashDB maintenance steps:
-  POST /api/hash-databases/<id>/link-step
-  POST /api/hash-databases/<id>/recognition-step
+Tests for the DB-only HashDB recognition / link maintenance run by the task
+runner in-process (myapp/services/hashdb_jobs.py + the shared
+recognise_products_step / hash_rescan services).
 
-Covers two specific behaviours:
-  * `done` is derived from a short batch (len(batch) < limit) rather than an
-    extra COUNT over the remaining tail, and no `remaining` field is returned.
-  * A finishing recognition step does NOT mark the database COMPLETED when a
-    fresh PENDING HASHDB_RECOGNITION backfill is already queued (a content
-    change landed mid-run, so the current run's counts are stale).
+Covers, among others:
+  * `done` is derived from a short batch (len(products) < limit) and paging by
+    KnownProduct.id reaches an empty follow-up;
+  * a finishing recognition backfill does NOT mark the database COMPLETED when a
+    fresh PENDING HASHDB_RECOGNITION backfill is already queued (a content change
+    landed mid-run, so the current run's counts are stale) — instead it stays
+    PENDING so the follow-up refreshes it;
+  * a non-timeout error marks the database FAILED and propagates;
+  * best-hash (sha256) matching, per-partition replace semantics, and
+    multi-chunk candidate-folder verification.
 
 Run:
     SQLALCHEMY_DATABASE_URI=sqlite:///:memory: SECRET_KEY=test WORKER_API_KEY=test \\
@@ -94,10 +98,6 @@ class TestHashdbRecognitionStep(unittest.TestCase):
                     md5=md5, is_directory=False))
             db.session.commit()
 
-    def _post(self, path, payload):
-        return self.client.post(f'/api/hash-databases/{self.db_id}{path}',
-                                json=payload, headers={'X-API-Key': _WORKER_KEY})
-
     def _reset_status(self, status):
         from myapp.database import HashDatabase
         with self.app.app_context():
@@ -115,112 +115,88 @@ class TestHashdbRecognitionStep(unittest.TestCase):
              .delete(synchronize_session=False))
             self.db.session.commit()
 
-    # ---- fix 3: done via short batch, no `remaining` field ----------------
+    # ---- run-to-completion recognition backfill (taskrunner path) ---------
 
-    def test_recognition_step_done_without_remaining_field(self):
-        from myapp.database import ProductRecognitionStatus
+    def test_recognition_job_completes_and_marks_completed(self):
+        from myapp.database import HashDatabase, ProductRecognitionStatus
+        from myapp.services.hashdb_jobs import run_hashdb_recognition_job
         self._reset_status(ProductRecognitionStatus.PENDING)
         self._drain_pending_recognition()
 
-        # limit > product count -> short batch -> done in one step.
-        resp = self._post('/recognition-step', {'last_product_id': 0, 'limit': 50})
-        self.assertEqual(resp.status_code, 200, resp.data)
-        body = resp.get_json()
-        self.assertTrue(body['done'])
-        self.assertEqual(body['processed'], 3)
-        self.assertEqual(body['matches'], 3)
-        self.assertNotIn('remaining', body)
-
         with self.app.app_context():
-            from myapp.database import HashDatabase
+            result = run_hashdb_recognition_job(self.db_id)
+            self.assertEqual(result['processed'], 3)
+            self.assertEqual(result['matches'], 3)
             hdb = self.db.session.get(HashDatabase, self.db_id)
             self.assertEqual(hdb.product_recognition_status,
                              ProductRecognitionStatus.COMPLETED)
 
-    def test_recognition_step_full_batch_then_empty_follow_up(self):
-        from myapp.database import KnownProduct, ProductRecognitionStatus
-        self._reset_status(ProductRecognitionStatus.PENDING)
-        self._drain_pending_recognition()
-
-        # limit == 3 == product count -> full batch -> not done yet.
-        resp = self._post('/recognition-step', {'last_product_id': 0, 'limit': 3})
-        body = resp.get_json()
-        self.assertFalse(body['done'])
-        next_id = body['next_product_id']
-
-        # The follow-up call sees no products and reports done.
-        resp = self._post('/recognition-step', {'last_product_id': next_id, 'limit': 3})
-        body = resp.get_json()
-        self.assertTrue(body['done'])
-        self.assertEqual(body['processed'], 0)
-
+    def test_recognition_step_pages_then_reports_empty_follow_up(self):
+        # recognise_products_step pages by KnownProduct.id: a full batch is not
+        # done, and the follow-up past the last id sees no products and is done.
+        from myapp.database import KnownProduct
+        from myapp.services.recognition import recognise_products_step
         with self.app.app_context():
+            # limit == 3 == product count -> full batch -> not done yet.
+            first = recognise_products_step(
+                database_id=self.db_id, last_product_id=0, limit=3)
+            self.db.session.commit()
+            self.assertFalse(first['done'])
+            next_id = first['next_product_id']
+
+            # The follow-up call sees no products and reports done.
+            second = recognise_products_step(
+                database_id=self.db_id, last_product_id=next_id, limit=3)
+            self.db.session.commit()
+            self.assertTrue(second['done'])
+            self.assertEqual(second['processed'], 0)
             self.assertEqual(
                 KnownProduct.query.filter_by(database_id=self.db_id)
                 .filter(KnownProduct.id > next_id).count(),
                 0,
             )
 
-    def test_link_step_done_without_remaining_field(self):
-        resp = self._post('/link-step', {'last_id': 0, 'limit': 500})
-        self.assertEqual(resp.status_code, 200, resp.data)
-        body = resp.get_json()
-        self.assertTrue(body['done'])
-        self.assertNotIn('remaining', body)
+    # ---- a finishing backfill defers COMPLETED on a stale follow-up -------
 
-
-    # ---- fix 2: finishing step defers COMPLETED on a stale follow-up ------
-
-    def test_finishing_step_stays_pending_when_followup_queued(self):
+    def test_finishing_job_stays_pending_when_followup_queued(self):
         from myapp.database import HashDatabase, ProductRecognitionStatus
         from myapp.services.hash_rescan import queue_hashdb_recognition_job
+        from myapp.services.hashdb_jobs import run_hashdb_recognition_job
 
         self._reset_status(ProductRecognitionStatus.RUNNING)
         self._drain_pending_recognition()
         with self.app.app_context():
             # A content change landed mid-run and queued a fresh backfill.
             queue_hashdb_recognition_job(self.db_id)
-
-        resp = self._post('/recognition-step', {'last_product_id': 0, 'limit': 50})
-        self.assertEqual(resp.status_code, 200, resp.data)
-        self.assertTrue(resp.get_json()['done'])
-
-        with self.app.app_context():
+            run_hashdb_recognition_job(self.db_id)
             hdb = self.db.session.get(HashDatabase, self.db_id)
             # NOT COMPLETED — the queued follow-up will refresh the stale counts.
             self.assertEqual(hdb.product_recognition_status,
                              ProductRecognitionStatus.PENDING)
             self.assertIsNone(hdb.product_recognition_updated_at)
 
-    # ---- status RUNNING is committed before the (long) scan, not held -----
-
-    def test_running_status_committed_before_scan(self):
-        """The RUNNING marker must be committed in its own transaction.
-
-        Regression: previously the ``status = RUNNING`` write stayed pending
-        until the final commit, so autoflush held a row lock on hash_databases
-        across the whole recognition scan — the worker's follow-up
-        /recognition-status call then blocked on the same row and timed out.
-
-        We prove the early commit indirectly: if the scan raises, the request
-        rolls back, but a *separately committed* RUNNING status survives.  With
-        the old single-transaction code the status would roll back to PENDING.
-        """
+    def test_non_timeout_error_marks_failed_and_propagates(self):
+        # A non-timeout error during the backfill marks the database FAILED and
+        # propagates (the taskrunner records the job FAILED).
         from unittest.mock import patch
+        from sqlalchemy.exc import OperationalError
         from myapp.database import HashDatabase, ProductRecognitionStatus
+        from myapp.services.hashdb_jobs import run_hashdb_recognition_job
 
         self._reset_status(ProductRecognitionStatus.PENDING)
         self._drain_pending_recognition()
 
-        boom = RuntimeError('scan exploded')
-        with patch('myapp.blueprints.api.recognise_products_step', side_effect=boom):
-            with self.assertRaises(RuntimeError):
-                self._post('/recognition-step', {'last_product_id': 0, 'limit': 50})
+        class _Orig(Exception):
+            pgcode = '40001'  # serialization_failure — not a statement timeout
 
         with self.app.app_context():
+            with patch('myapp.services.hashdb_jobs.recognise_products_step',
+                       side_effect=OperationalError('x', {}, _Orig())):
+                with self.assertRaises(OperationalError):
+                    run_hashdb_recognition_job(self.db_id)
             hdb = self.db.session.get(HashDatabase, self.db_id)
             self.assertEqual(hdb.product_recognition_status,
-                             ProductRecognitionStatus.RUNNING)
+                             ProductRecognitionStatus.FAILED)
 
     # ---- candidate-folder verification is chunked (bounded statement) ------
 
@@ -228,24 +204,28 @@ class TestHashdbRecognitionStep(unittest.TestCase):
         """Matching is correct when candidate folders span multiple chunks."""
         from unittest.mock import patch
         from myapp.database import ProductRecognitionStatus, RecognisedProduct
+        from myapp.services.recognition import recognise_products_step
 
         self._reset_status(ProductRecognitionStatus.PENDING)
         self._drain_pending_recognition()
 
         # Force the chunk size below the number of candidate folders (3) so the
         # verification query runs in more than one batch.
-        with patch('myapp.services.recognition._FOLDER_QUERY_BATCH', 1):
-            resp = self._post('/recognition-step', {'last_product_id': 0, 'limit': 50})
-        self.assertEqual(resp.status_code, 200, resp.data)
-        body = resp.get_json()
-        self.assertTrue(body['done'])
-        # All three products still match despite the tiny chunk size.
-        self.assertEqual(body['matches'], 3)
         with self.app.app_context():
+            with patch('myapp.services.recognition._FOLDER_QUERY_BATCH', 1):
+                result = recognise_products_step(
+                    database_id=self.db_id, last_product_id=0, limit=50)
+            self.db.session.commit()
+            self.assertTrue(result['done'])
+            # All three products still match despite the tiny chunk size.
+            self.assertEqual(result['matches'], 3)
             self.assertEqual(RecognisedProduct.query.count(), 3)
 
     def test_statement_timeout_helper_noop_on_sqlite(self):
-        """The PostgreSQL statement-timeout guard is a safe no-op elsewhere."""
+        """The PostgreSQL statement-timeout guard is a safe no-op elsewhere.
+
+        Still used by the surviving worker-driven similarity-step endpoint.
+        """
         from myapp.blueprints.api import _apply_statement_timeout
         with self.app.app_context():
             # Must not raise on SQLite, and tolerate bad/zero values.
@@ -254,43 +234,11 @@ class TestHashdbRecognitionStep(unittest.TestCase):
             _apply_statement_timeout(None)
             _apply_statement_timeout('nope')
 
-    # ---- a timed-out step returns a retry signal, not a 500 ---------------
-
-    def _make_statement_timeout(self):
-        from sqlalchemy.exc import OperationalError
-
-        class _Orig(Exception):
-            pgcode = '57014'  # query_canceled (statement_timeout)
-
-        return OperationalError('SELECT ...', {}, _Orig())
-
-    def test_step_timeout_returns_retry_signal_and_keeps_running(self):
-        from unittest.mock import patch
-        from myapp.database import HashDatabase, ProductRecognitionStatus
-
-        self._reset_status(ProductRecognitionStatus.PENDING)
-        self._drain_pending_recognition()
-
-        with patch('myapp.blueprints.api.recognise_products_step',
-                   side_effect=self._make_statement_timeout()):
-            resp = self._post('/recognition-step', {'last_product_id': 7, 'limit': 50})
-
-        self.assertEqual(resp.status_code, 200, resp.data)
-        body = resp.get_json()
-        self.assertTrue(body['timed_out'])
-        self.assertFalse(body['done'])
-        # Cursor is unchanged so the worker retries the same batch (smaller).
-        self.assertEqual(body['next_product_id'], 7)
-        with self.app.app_context():
-            hdb = self.db.session.get(HashDatabase, self.db_id)
-            # Status stays RUNNING — the run is not failed, just throttled.
-            self.assertEqual(hdb.product_recognition_status,
-                             ProductRecognitionStatus.RUNNING)
-
     def test_wall_clock_deadline_returns_timed_out(self):
         # A step that overruns the wall-clock budget returns timed_out even when
-        # no single statement_timeout fires, so the worker retries a smaller
-        # batch.  Drive the service directly with a deadline already in the past.
+        # no single statement_timeout fires.  Drive the service directly with a
+        # deadline already in the past.  (The taskrunner runs recognition with
+        # deadline=None, so it never trips this — but the service contract holds.)
         import time
         from myapp.services.recognition import recognise_products_step
 
@@ -300,48 +248,7 @@ class TestHashdbRecognitionStep(unittest.TestCase):
                 deadline=time.monotonic() - 1)
         self.assertTrue(result['timed_out'])
         self.assertFalse(result['done'])
-        # Reports the attempted batch's last product id so a single un-processable
-        # product can be skipped at the worker's floor.
         self.assertGreater(result['next_product_id'], 0)
-
-    def test_single_product_timeout_is_skipped_not_failed(self):
-        # At the worker's floor (limit=1) a product that still times out is
-        # skipped (cursor advances past it) rather than failing the backfill.
-        from unittest.mock import patch
-        from myapp.database import HashDatabase, ProductRecognitionStatus
-
-        self._reset_status(ProductRecognitionStatus.PENDING)
-        self._drain_pending_recognition()
-
-        with patch('myapp.blueprints.api.recognise_products_step',
-                   return_value={'timed_out': True}):
-            resp = self._post('/recognition-step', {'last_product_id': 0, 'limit': 1})
-        self.assertEqual(resp.status_code, 200, resp.data)
-        body = resp.get_json()
-        self.assertNotIn('timed_out', body)
-        self.assertFalse(body['done'])
-        self.assertEqual(body['skipped'], 1)
-        self.assertGreater(body['next_product_id'], 0)  # advanced past the product
-        with self.app.app_context():
-            hdb = self.db.session.get(HashDatabase, self.db_id)
-            self.assertEqual(hdb.product_recognition_status,
-                             ProductRecognitionStatus.RUNNING)
-
-    def test_non_timeout_operational_error_propagates(self):
-        from unittest.mock import patch
-        from sqlalchemy.exc import OperationalError
-        from myapp.database import ProductRecognitionStatus
-
-        self._reset_status(ProductRecognitionStatus.PENDING)
-        self._drain_pending_recognition()
-
-        class _Orig(Exception):
-            pgcode = '40001'  # serialization_failure — not a statement timeout
-
-        with patch('myapp.blueprints.api.recognise_products_step',
-                   side_effect=OperationalError('x', {}, _Orig())):
-            with self.assertRaises(OperationalError):
-                self._post('/recognition-step', {'last_product_id': 0, 'limit': 50})
 
     def test_backfill_queue_commits_pending_status_when_job_already_pending(self):
         from myapp.database import HashDatabase, ProductRecognitionStatus
@@ -446,13 +353,12 @@ class TestRecognitionBestHashAndPartition(unittest.TestCase):
 
     def test_best_hash_backfill_matches_on_sha256(self):
         from myapp.database import RecognisedProduct
-        resp = self.client.post(
-            f'/api/hash-databases/{self.db_id}/recognition-step',
-            json={'last_product_id': 0, 'limit': 50},
-            headers={'X-API-Key': _WORKER_KEY})
-        self.assertEqual(resp.status_code, 200, resp.data)
-        self.assertTrue(resp.get_json()['done'])
+        from myapp.services.recognition import recognise_products_step
         with self.app.app_context():
+            result = recognise_products_step(
+                database_id=self.db_id, last_product_id=0, limit=50)
+            self.db.session.commit()
+            self.assertTrue(result['done'])
             matched = {
                 rp.product_id for rp in RecognisedProduct.query.filter_by(
                     partition_id=self.part_id).all()
@@ -461,84 +367,20 @@ class TestRecognitionBestHashAndPartition(unittest.TestCase):
         self.assertIn(self.prod_a, matched)
         self.assertNotIn(self.prod_b, matched)
 
-    def test_partition_step_writes_and_replaces(self):
+    def test_partition_recognition_writes_and_replaces(self):
         from myapp.database import RecognisedProduct
-        path = f'/api/partitions/{self.part_uuid}/recognise-step'
-        # First run: A matches.
-        resp = self.client.post(path, json={'last_product_id': 0, 'limit': 50},
-                                headers={'X-API-Key': _WORKER_KEY})
-        self.assertEqual(resp.status_code, 200, resp.data)
+        from myapp.services.recognition import recognise_products_step
         with self.app.app_context():
+            # First run: A matches.
+            recognise_products_step(partition_id=self.part_id, last_product_id=0, limit=50)
+            self.db.session.commit()
             first = RecognisedProduct.query.filter_by(partition_id=self.part_id).count()
-        self.assertGreaterEqual(first, 1)
-        # Re-running replaces rather than duplicating (idempotent).
-        resp = self.client.post(path, json={'last_product_id': 0, 'limit': 50},
-                                headers={'X-API-Key': _WORKER_KEY})
-        self.assertEqual(resp.status_code, 200, resp.data)
-        with self.app.app_context():
+            self.assertGreaterEqual(first, 1)
+            # Re-running replaces rather than duplicating (idempotent).
+            recognise_products_step(partition_id=self.part_id, last_product_id=0, limit=50)
+            self.db.session.commit()
             second = RecognisedProduct.query.filter_by(partition_id=self.part_id).count()
         self.assertEqual(first, second)
-
-
-class TestLinkStepWallClock(unittest.TestCase):
-    """The link step is bounded by wall-clock time (it runs many short
-    statements with commits, so statement_timeout can't bound it).  When the
-    soft deadline is hit it returns done=False with an advanced cursor so the
-    worker simply continues — it must never exceed the worker's read timeout."""
-
-    @classmethod
-    def setUpClass(cls):
-        from myapp.app import create_app
-        from myapp.database import HashDatabase, KnownFile, KnownProduct
-        from myapp.extensions import db
-
-        cls.app = create_app()
-        cls.app.config['TESTING'] = True
-        cls.client = cls.app.test_client()
-        cls.db = db
-        with cls.app.app_context():
-            db.create_all()
-            hdb = HashDatabase(name='Link DB', is_active=True)
-            db.session.add(hdb)
-            db.session.flush()
-            cls.db_id = hdb.id
-            prod = KnownProduct(database_id=hdb.id, title='!Many')
-            db.session.add(prod)
-            db.session.flush()
-            for i in range(120):
-                db.session.add(KnownFile(database_id=hdb.id, product_id=prod.id,
-                                         filename=f'f{i}', md5=f'{i:032x}'))
-            db.session.commit()
-
-    def _post(self, payload):
-        return self.client.post(f'/api/hash-databases/{self.db_id}/link-step',
-                                json=payload, headers={'X-API-Key': _WORKER_KEY})
-
-    def test_deadline_returns_partial_progress_with_advanced_cursor(self):
-        # A zero budget stops after the first 50-file chunk.
-        self.app.config['WORKER_STEP_DEADLINE_SECONDS'] = 0
-        try:
-            resp = self._post({'last_id': 0, 'limit': 2000})
-        finally:
-            self.app.config['WORKER_STEP_DEADLINE_SECONDS'] = 20
-        self.assertEqual(resp.status_code, 200, resp.data)
-        body = resp.get_json()
-        self.assertFalse(body['done'])
-        self.assertEqual(body['processed'], 50)      # one chunk
-        self.assertGreater(body['next_id'], 0)       # cursor advanced
-
-    def test_resumes_to_completion_across_steps(self):
-        # With a normal budget the whole database links in bounded steps.
-        cursor = 0
-        guard = 0
-        while True:
-            guard += 1
-            self.assertLess(guard, 50, 'link loop did not terminate')
-            body = self._post({'last_id': cursor, 'limit': 2000}).get_json()
-            if body['done']:
-                break
-            self.assertGreater(body['next_id'], cursor)
-            cursor = body['next_id']
 
 
 class TestPerDatabaseRescanIsScoped(unittest.TestCase):

@@ -9,13 +9,12 @@ these jobs in-process with direct DB access, so it needs the same logic without
 the per-request wall-clock deadline / statement-timeout machinery that existed
 only to keep an HTTP request short.
 
-This module holds:
+This module is the sole owner of these jobs (the old worker-driven HTTP step
+endpoints have been removed). It holds:
 
-  * the shared delete state machine and its helpers
+  * the delete state machine and its helpers
     (``delete_one_step`` / ``delete_chunk_with_retry`` / ``finalise_hashdb_delete``)
-    and the recognition-status finaliser (``finalise_recognition_status``).
-    The bounded API step endpoints are thin wrappers over these so the two
-    consumers cannot drift;
+    and the recognition-status finaliser (``finalise_recognition_status``);
   * ``run_*_job`` wrappers the taskrunner calls, each accepting ``heartbeat``
     and ``check_cancelled`` callbacks so a long job stays alive (bumps
     ``progress_updated_at``) and aborts promptly when cancelled.
@@ -61,14 +60,14 @@ def _noop_check_cancelled():
 
 
 # =============================================================================
-# Shared delete state machine (also used by the bounded API delete-step endpoint)
+# Delete state machine
 # =============================================================================
 
 # Per-statement chunk sizes for the bounded delete step.  Small enough that any
-# single statement stays well under the worker read timeout even on a database
-# matching a large slice of the collection; the step loops over chunks until a
-# wall-clock deadline (when one is given), so throughput is set by the deadline,
-# not these.
+# single statement stays lock-friendly even on a database matching a large slice
+# of the collection; the step loops over chunks until its (soft) wall-clock
+# deadline, so heartbeat cadence is set by the deadline the caller passes, not
+# by these.
 _DELETE_UNLINK_CHUNK = 5000      # extracted_files unlinked per statement
 _DELETE_RECOGNISED_CHUNK = 5000  # recognised_products deleted per statement
 _DELETE_KNOWN_FILE_CHUNK = 5000  # known_files deleted per statement
@@ -133,9 +132,9 @@ def delete_one_step(database, cursor, deadline=None):
 
     ``deadline`` is an optional ``time.monotonic()`` value: a soft wall-clock
     budget after which the step yields with ``done=False`` and an advanced
-    cursor (the bounded API endpoint passes one to keep its HTTP request short).
-    When ``deadline`` is ``None`` the step runs the whole reap to completion in
-    one call (the taskrunner path).
+    cursor, so ``run_hashdb_delete_job`` can heartbeat / check for cancellation
+    between batches.  When ``deadline`` is ``None`` the step runs the whole reap
+    to completion in one call.
 
     Returns ``{'done', 'cursor', 'deleted'[, 'relinked_databases'], 'progress_label'}``.
     ``cursor = incoming + rows_touched`` strictly advances until the final step.
