@@ -108,6 +108,56 @@ services:
           cpus: '2'
           memory: 4G
 
+  # Task runner: single-instance, DB-only maintenance loop.
+  #
+  # Reuses the WEB image (not the worker image) and runs `flask taskrunner`. It
+  # owns the control-plane analyses — HASH_RESCAN, PRODUCT_RECOGNITION, and the
+  # HASHDB_LINK / HASHDB_DELETE / HASHDB_RECOGNITION hash-database jobs — running
+  # them in-process with direct database access (no HTTP round-trips), and runs
+  # time-based periodic maintenance (stale-job reset, chunked-upload GC, and an
+  # optional scheduled similarity rebuild).
+  #
+  # The analysis worker no longer claims these job types, so exactly one task
+  # runner should be deployed: the atomic job claim is concurrency-safe, but the
+  # periodic tasks assume a single instance. Do NOT scale this service.
+  taskrunner:
+    build:
+      context: .
+      dockerfile: Dockerfile          # reuse the web image
+    command: ["taskrunner"]           # Dentrypoint.sh branch -> exec flask taskrunner
+    depends_on:
+      web:
+        # The web service applies `flask db upgrade`; wait for it so the schema
+        # is present before the runner touches the database.
+        condition: service_healthy
+        restart: true
+      db:
+        condition: service_healthy
+        restart: true
+    volumes:
+      # DB-only jobs need no uploads/ or outputs/. Only chunk GC touches the
+      # filesystem, so mount the same chunk volume the web service uses (and keep
+      # CHUNK_DIR aligned — both default to instance/.chunks).
+      - ./data/chunks:/app/instance/.chunks
+    env_file:
+      - .env
+    environment:
+      # Periodic maintenance intervals (seconds; 0 disables). Similarity rebuild
+      # is heavy and off by default — opt in by raising TASKRUNNER_SIMILARITY_INTERVAL.
+      - TASKRUNNER_STALE_RESET_INTERVAL=300
+      - TASKRUNNER_CHUNK_GC_INTERVAL=3600
+      - TASKRUNNER_SIMILARITY_INTERVAL=0
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    # On SIGTERM the runner finishes the current job before exiting.
+    stop_grace_period: 60s
+    deploy:
+      replicas: 1                      # single instance — do NOT scale
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+
   # PostgreSQL database server
   db:
     image: pgautoupgrade/pgautoupgrade:latest

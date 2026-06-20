@@ -8,7 +8,7 @@ import hmac
 import json
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from functools import wraps
 from flask import Blueprint, abort, current_app, g, jsonify, request
 from sqlalchemy import func, or_, select, text, update
@@ -39,7 +39,6 @@ from ..database import (
     Partition,
     Platform,
     ProductRecognitionStatus,
-    RecognisedProduct,
     StorageDirectory,
     Tag,
     User,
@@ -47,6 +46,7 @@ from ..database import (
 )
 from ..extensions import csrf, db
 from ..services import chunked_upload as _chunked
+from ..services.analysis_queue import pending_claimable_query, reset_stale_analyses_core
 from ..services.artefact_lifecycle import (
     ArtefactMoveError,
     bulk_delete_item,
@@ -70,10 +70,13 @@ from ..services.downloads import (
 from ..services.hash_rescan import (
     find_known_file,
     find_known_files_for_records,
-    has_pending_recognition_job,
     link_new_known_files,
     queue_hashdb_recognition_backfill,
     rescan_hashes_for_new_known_files,
+)
+from ..services.hashdb_jobs import (
+    delete_one_step,
+    finalise_recognition_status,
 )
 from ..services.recognition import recognise_products_step, recognition_batch_last_id
 from ..services.restrictions import (
@@ -94,7 +97,7 @@ from ..utils.api_serializers import (
 from ..utils.blobs import artefact_blob, artefact_blob_storage_path, assign_blob
 from ..utils.db_helpers import get_by_id_or_404 as _get_by_id_or_404
 from ..utils.db_helpers import get_by_uuid_or_404 as _get_by_uuid_or_404
-from ..utils.db_helpers import is_deadlock, is_statement_timeout
+from ..utils.db_helpers import is_statement_timeout
 from ..utils.enum_display import enum_value
 from ..utils.item_helpers import assign_item_fields, assign_item_tags
 from ..utils.privacy import recompute_item_privacy
@@ -1319,37 +1322,10 @@ def get_pending_analyses():
     if not _is_worker_request():
         return error_response('Only the worker may poll pending analyses', 403)
 
-    query = (
-        Analysis.query
-        .filter(Analysis.status == AnalysisStatus.PENDING)
-        .options(joinedload(Analysis.artefact).joinedload(Artefact.item))
-    )
-    # Re-analysis dispatch barrier.  A re-analysis queues a CLEANUP job (delete
-    # the previous run's output) alongside the replacement analyses.  While that
-    # CLEANUP is still outstanding (PENDING or RUNNING), do NOT hand out any
-    # other analysis for the same artefact: otherwise a second worker could run
-    # a replacement job concurrently and the CLEANUP would then delete its
-    # output — notably the shared outputs/.cache/<uuid> partition cache, which
-    # is keyed on the artefact (not the analysis) and repopulated by the new
-    # run.  The CLEANUP row itself is never blocked (so it gets claimed), and
-    # item-deletion cleanups (artefact_id IS NULL) gate nothing.  The barrier
-    # keys on PENDING/RUNNING only, so a terminal CLEANUP (COMPLETED or FAILED,
-    # incl. malformed-hints failures) lifts it — a best-effort cleanup never
-    # deadlocks the new run; a crash leaves it RUNNING until reset-stale
-    # re-queues it, which holds the artefact's jobs in the safe direction.
-    blocking_cleanup_artefacts = (
-        select(Analysis.artefact_id)
-        .where(
-            Analysis.analysis_type == AnalysisType.CLEANUP,
-            Analysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.RUNNING]),
-            Analysis.artefact_id.isnot(None),
-        )
-    )
-    query = query.filter(or_(
-        Analysis.analysis_type == AnalysisType.CLEANUP,
-        Analysis.artefact_id.is_(None),
-        Analysis.artefact_id.notin_(blocking_cleanup_artefacts),
-    ))
+    # The CLEANUP re-analysis dispatch barrier lives in pending_claimable_query()
+    # so the worker poll and the taskrunner claim share identical eligibility.
+    query = pending_claimable_query().options(
+        joinedload(Analysis.artefact).joinedload(Artefact.item))
     types_param = request.args.get('types', '')
     if types_param:
         requested_names = [t.strip() for t in types_param.split(',') if t.strip()]
@@ -1389,42 +1365,7 @@ def reset_stale_analyses():
                 getattr(user, 'is_admin', False) or user.has_permission(UserPermission.STAFF)):
             return error_response('Staff permission required', 403)
 
-    timeout_seconds = current_app.config.get('STALE_JOB_TIMEOUT_SECONDS', 3600)
-    # started_at is stored as naive UTC
-    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=timeout_seconds)
-    # Use a single atomic UPDATE rather than a read-modify-write loop.  A
-    # non-atomic approach (query.all() then modify in memory then commit) has a
-    # race window where a worker can complete and commit status='completed'
-    # between the read and the commit, causing the reset to overwrite the
-    # completion and re-queue an already-finished job.
-    result = db.session.execute(
-        update(Analysis)
-        .where(Analysis.status == AnalysisStatus.RUNNING)
-        # Heartbeat-based staleness: a job is stuck only if it has shown no sign
-        # of life (progress update or heartbeat, else its start) for the whole
-        # timeout window.  An actively-progressing long job keeps bumping
-        # progress_updated_at and is therefore never reset.
-        .where(func.coalesce(Analysis.progress_updated_at, Analysis.started_at) < cutoff)
-        .values(
-            status=AnalysisStatus.PENDING,
-            error_message=None,
-            started_at=None,
-            completed_at=None,
-            tool_name=None,
-            tool_version=None,
-            output_url=None,
-            output_path=None,
-            success=None,
-            summary=None,
-            details=None,
-            progress_message=None,
-            progress_current=None,
-            progress_total=None,
-            progress_updated_at=None,
-        )
-    )
-    db.session.commit()
-    count = result.rowcount
+    count = reset_stale_analyses_core()
     if count:
         current_app.logger.info(f'Reset {count} stale analysis job(s) to PENDING')
     return jsonify({'reset': count})
@@ -2903,56 +2844,17 @@ def hash_database_link_step(db_id):
     })
 
 
-# Per-statement chunk sizes for the bounded delete step.  Small enough that any
-# single statement stays well under the worker read timeout even on a database
-# matching a large slice of the collection; the step loops over chunks until a
-# wall-clock deadline, so throughput is set by the deadline, not these.
-_DELETE_UNLINK_CHUNK = 5000      # extracted_files unlinked per statement
-_DELETE_RECOGNISED_CHUNK = 5000  # recognised_products deleted per statement
-_DELETE_KNOWN_FILE_CHUNK = 5000  # known_files deleted per statement
-
-
-def _delete_chunk_with_retry(fn):
-    """Run one bounded delete statement, retrying briefly on deadlock.
-
-    The reap step still races a worker relink/recognition step that may hold
-    locks on the same rows in the opposite order.  PostgreSQL aborts one side;
-    the small chunk size means the other side releases promptly, so a short
-    retry succeeds rather than failing the whole step.  Returns the rowcount.
-    """
-    attempts = 4
-    for attempt in range(attempts):
-        try:
-            count = fn()
-            db.session.commit()
-            return count
-        except OperationalError as exc:
-            db.session.rollback()
-            if not is_deadlock(exc) or attempt == attempts - 1:
-                raise
-            time.sleep(0.25 * (attempt + 1))
-
-
 @blueprint.route('/hash-databases/<int:db_id>/delete-step', methods=['POST'])
 @require_auth('read_write')
 def hash_database_delete_step(db_id):
     """Worker-only bounded reap step for a soft-deleted HashDB.
 
-    Drives the deletion of one is_deleting database in small, lock-friendly,
-    wall-clock-bounded batches so no web request runs long and the worker can
-    resume after a crash.  The step is a stateless state machine derived from
-    the current row counts, run in FK-safe phase order:
-
-      A. unlink extracted_files still pointing at this DB's known_files
-         (nulling known_file_id, which is also what ON DELETE SET NULL does) —
-         must complete before any known_files are deleted;
-      B/C. delete recognised_products (by product) and known_files;
-      D. (final) delete known_products, delete the hash_databases row, and
-         queue HASHDB_LINK for every other active DB so freed files re-match.
-
-    Each call returns ``cursor = incoming + rows_touched`` (strictly advancing
-    until the final step) to satisfy run_step_loop's anti-hang contract, and
-    ``done=True`` only once the database row is gone.
+    Thin wrapper over ``delete_one_step`` (myapp/services/hashdb_jobs.py): drives
+    the deletion of one is_deleting database in small, lock-friendly, wall-clock-
+    bounded batches so no web request runs long and the worker can resume after a
+    crash.  Each call returns ``cursor = incoming + rows_touched`` (strictly
+    advancing until the final step) to satisfy run_step_loop's anti-hang
+    contract, and ``done=True`` only once the database row is gone.
     """
     if not _is_worker_request():
         return error_response('Only the worker may run hashdb delete steps', 403)
@@ -2962,125 +2864,8 @@ def hash_database_delete_step(db_id):
         return error
     cursor = int(data.get('cursor') or 0)
 
-    kf_id_query = db.session.query(KnownFile.id).filter(KnownFile.database_id == db_id)
-    product_id_query = db.session.query(KnownProduct.id).filter(KnownProduct.database_id == db_id)
-
     deadline = time.monotonic() + current_app.config.get('WORKER_STEP_DEADLINE_SECONDS', 20)
-    touched = 0
-
-    while True:
-        # Always do at least one unit of work per call before yielding on the
-        # deadline (mirroring link-step, which processes one chunk before its
-        # deadline check).  Checking the deadline at the top instead would let a
-        # non-positive WORKER_STEP_DEADLINE_SECONDS return cursor+1/done=False
-        # with zero work done — forever, since the advancing cursor hides the
-        # stall from run_step_loop.  Only break once we've actually made progress.
-        if touched and time.monotonic() >= deadline:
-            break
-
-        # Phase A: unlink extracted_files linked to this DB (until none remain).
-        # Bounded by id so the correlated subquery stays index-friendly.  Nulling
-        # known_file_id is the whole job now that is_known is derived from it.
-        ef_ids = (
-            db.session.query(ExtractedFile.id)
-            .filter(ExtractedFile.known_file_id.in_(kf_id_query))
-            .order_by(ExtractedFile.id)
-            .limit(_DELETE_UNLINK_CHUNK)
-        )
-        n = _delete_chunk_with_retry(lambda ids=ef_ids: (
-            ExtractedFile.query
-            .filter(ExtractedFile.id.in_(ids))
-            .update({'known_file_id': None},
-                    synchronize_session=False)
-        ))
-        if n:
-            touched += n
-            continue
-
-        # Phase B: delete recognised_products for this DB's products.
-        rp_ids = (
-            db.session.query(RecognisedProduct.id)
-            .filter(RecognisedProduct.product_id.in_(product_id_query))
-            .order_by(RecognisedProduct.id)
-            .limit(_DELETE_RECOGNISED_CHUNK)
-        )
-        n = _delete_chunk_with_retry(lambda ids=rp_ids: (
-            RecognisedProduct.query
-            .filter(RecognisedProduct.id.in_(ids))
-            .delete(synchronize_session=False)
-        ))
-        if n:
-            touched += n
-            continue
-
-        # Phase C: delete known_files for this DB.
-        kf_ids = (
-            db.session.query(KnownFile.id)
-            .filter(KnownFile.database_id == db_id)
-            .order_by(KnownFile.id)
-            .limit(_DELETE_KNOWN_FILE_CHUNK)
-        )
-        n = _delete_chunk_with_retry(lambda ids=kf_ids: (
-            KnownFile.query
-            .filter(KnownFile.id.in_(ids))
-            .delete(synchronize_session=False)
-        ))
-        if n:
-            touched += n
-            continue
-
-        # Phase D (final): no child rows remain — drop known_products and the
-        # database row, then queue relinks of the freed files against other
-        # active databases, mirroring the old inline delete's tail.
-        _delete_chunk_with_retry(lambda: (
-            KnownProduct.query.filter(KnownProduct.database_id == db_id)
-            .delete(synchronize_session=False)
-        ))
-        relinked = _finalise_hashdb_delete(db_id)
-        return jsonify({
-            'done': True,
-            'cursor': cursor + touched,
-            'deleted': touched,
-            'relinked_databases': relinked,
-            'progress_label': f"Deleting HashDB '{database.name}'",
-        })
-
-    # Deadline reached after making progress this call: report it and continue.
-    # touched > 0 is guaranteed (the deadline break above requires it), so the
-    # cursor advances honestly without a max(..., 1) fudge.
-    return jsonify({
-        'done': False,
-        'cursor': cursor + touched,
-        'deleted': touched,
-        'progress_label': f"Deleting HashDB '{database.name}'",
-    })
-
-
-def _finalise_hashdb_delete(db_id):
-    """Delete the HashDatabase row and queue relinks against other active DBs.
-
-    Returns the number of other active databases for which a HASHDB_LINK job
-    was newly queued.  The freed extracted_files now have known_file_id=NULL, so
-    each other database's bounded relink picks up any that match it.
-    """
-    from ..services.hash_rescan import queue_hashdb_link_job
-
-    # Deadlock-retry the final row delete too — it races a worker relink the
-    # same way the chunk deletes do; the helper commits and retries on deadlock.
-    _delete_chunk_with_retry(
-        lambda: db.session.delete(db.session.get(HashDatabase, db_id)))
-
-    relinked = 0
-    other_active = (
-        HashDatabase.query
-        .filter(HashDatabase.is_active.is_(True), HashDatabase.id != db_id)
-        .all()
-    )
-    for other in other_active:
-        _, queued = queue_hashdb_link_job(other.id)
-        if queued:
-            relinked += 1
-    return relinked
+    return jsonify(delete_one_step(database, cursor, deadline=deadline))
 
 
 def _timed_out_response(**cursor):
@@ -3142,22 +2927,6 @@ def _apply_statement_timeout(seconds):
     db.session.execute(text(f'SET LOCAL statement_timeout = {seconds * 1000}'))
 
 
-def _finalise_recognition_status(database):
-    """Mark a finished backfill COMPLETED unless a fresh follow-up is queued.
-
-    A PENDING HASHDB_RECOGNITION for the same database means a content change
-    landed after this run started, so its counts are already stale.  Leave the
-    status at PENDING in that case so the view does not surface stale results as
-    authoritative; the queued follow-up will refresh and complete them.
-    """
-    if has_pending_recognition_job(database.id):
-        database.product_recognition_status = ProductRecognitionStatus.PENDING
-        database.product_recognition_updated_at = None
-    else:
-        database.product_recognition_status = ProductRecognitionStatus.COMPLETED
-        database.product_recognition_updated_at = datetime.now(timezone.utc)
-
-
 @blueprint.route('/hash-databases/<int:db_id>/recognition-step', methods=['POST'])
 @require_auth('read_write')
 def hash_database_recognition_step(db_id):
@@ -3216,7 +2985,7 @@ def hash_database_recognition_step(db_id):
             database_id=database.id, last_product_id=last_product_id,
             limit=limit, subject=f'HashDB {db_id}')
     if result['done']:
-        _finalise_recognition_status(database)
+        finalise_recognition_status(database)
     db.session.commit()
     result['progress_label'] = f"Recognising products in HashDB '{database.name}'"
     if last_product_id == 0:  # first step: report the total once (cheap COUNT)

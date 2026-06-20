@@ -44,7 +44,6 @@ from .flux import (
     process_flux_decode,
     process_flux_visualisation,
 )
-from .hashdb import process_hash_rescan, process_hashdb_link, process_hashdb_recognition
 from .images import (
     _EXT_VIEWABLE,
     _RISCOS_HEX_VIEWABLE,
@@ -57,7 +56,6 @@ from .metadata import (
     process_checksum_compute,
     process_format_identify,
     process_metadata_extract,
-    process_product_recognition,
     process_replay,
     process_replay_transcode,
     process_riscos_module_parse,
@@ -97,7 +95,6 @@ __all__ = [
     'process_checksum_compute',
     'process_metadata_extract',
     'process_format_identify',
-    'process_product_recognition',
     'process_replay',
     'process_replay_transcode',
     'process_riscos_module_parse',
@@ -105,9 +102,5 @@ __all__ = [
     'process_armlock_remove',
     # Partition
     'process_partition_detect',
-    # Hash rescan
-    'process_hash_rescan',
-    'process_hashdb_link',
-    'process_hashdb_recognition',
 ]
 # vim: ts=4 sw=4 et

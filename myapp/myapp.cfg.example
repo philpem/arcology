@@ -113,6 +113,34 @@ WORKER_STEP_DEADLINE_SECONDS = 20
 #WEB_UI_ANALYSIS_PRIORITY = 10
 
 # =============================================================================
+# Task runner (`flask taskrunner`)
+# =============================================================================
+# The task runner is a single-instance, worker-style poll loop (intended for its
+# own container) that runs the DB-only control-plane analyses — HASH_RESCAN,
+# PRODUCT_RECOGNITION, and the HASHDB_LINK / HASHDB_DELETE / HASHDB_RECOGNITION
+# hash-database jobs — in-process with direct database access (no HTTP round
+# trips to the web API).  Do NOT run more than one instance: the atomic job
+# claim is concurrency-safe, but the periodic tasks below assume a single runner.
+#
+# Idle poll backoff: the loop sleeps between polls when no job is waiting,
+# doubling the delay from the floor up to the ceiling; a claimed job resets it.
+#TASKRUNNER_POLL_BACKOFF_FLOOR = 0.5
+#TASKRUNNER_POLL_BACKOFF_CEILING = 10
+#
+# Periodic (time-based) maintenance intervals, in seconds.  Set any to 0 to
+# disable that task.
+#   - stale-reset: re-queue RUNNING analyses orphaned by a crash (same gate as
+#     STALE_JOB_TIMEOUT_SECONDS); the analysis worker also does this for its own
+#     jobs, so this mainly covers control-plane jobs.
+#   - chunk GC: purge stale chunked-upload temp directories (requires the chunk
+#     volume / CHUNK_DIR to be mounted into the task runner container).
+#   - similarity rebuild: run a full `rebuild-similarity` on a schedule.  Heavy
+#     on large collections and disabled by default (0) — opt in explicitly.
+#TASKRUNNER_STALE_RESET_INTERVAL = 300
+#TASKRUNNER_CHUNK_GC_INTERVAL = 3600
+#TASKRUNNER_SIMILARITY_INTERVAL = 0
+
+# =============================================================================
 # Content Security Policy
 # =============================================================================
 # The app sets a CSP header on every response.  All CSS, JS, and fonts are
