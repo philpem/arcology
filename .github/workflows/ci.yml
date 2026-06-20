@@ -126,6 +126,35 @@ jobs:
         # os.cpu_count(); override with TEST_JOBS) — set TEST_JOBS=1 to debug.
         run: python ci/run_app_tests.py
 
+  tlsh-plumbing:
+    name: TLSH Plumbing (py-tlsh)
+    runs-on: ubuntu-latest
+    needs: lint
+    # Verifies the optional TLSH integration end-to-end with the real library.
+    # py-tlsh is a C++ extension kept out of requirements.txt; this isolated job
+    # installs it so the otherwise-skipped TLSH tests actually run.  A failure
+    # here never affects the main app-tests job.
+    env:
+      SQLALCHEMY_DATABASE_URI: "sqlite:///:memory:"
+      SECRET_KEY: ci-test-secret-key-not-for-production
+      WORKER_API_KEY: ci-test-worker-key
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies (incl. optional py-tlsh)
+        run: pip install -r requirements.txt py-tlsh
+
+      - name: Verify py-tlsh loaded (guard against silent skips)
+        run: python -c "import arcology_shared.fuzzyhash as f; assert f.HAS_TLSH, 'py-tlsh failed to import'; print('TLSH available')"
+
+      - name: Similarity tests with the real TLSH library
+        run: python -m unittest ci.test_similarity -v
+
   test-migrations:
     name: Migration Tests (PostgreSQL)
     runs-on: ubuntu-latest

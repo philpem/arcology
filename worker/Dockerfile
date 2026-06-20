@@ -408,6 +408,10 @@ RUN python3 -m pip install --break-system-packages \
 # Install Sentry SDK for error and performance reporting (optional; enabled by SENTRY_DSN env var).
 RUN python3 -m pip install --break-system-packages sentry-sdk
 
+# Install py-tlsh for optional byte-level fuzzy hashing (near-duplicate file
+# detection).  Optional dependency — the code degrades gracefully if absent.
+RUN python3 -m pip install --break-system-packages py-tlsh
+
 # Install Acorn image conversion libraries.
 # drawfile_render (philpem fork with signed-coordinate fix) — not pip-installable; clone manually.
 # Pinned to a specific commit SHA — update when upgrading.

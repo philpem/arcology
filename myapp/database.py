@@ -600,7 +600,11 @@ class Artefact(db.Model):
     # Hashes (computed after upload)
     md5: Mapped[str | None] = mapped_column(String(32), nullable=True)
     sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    
+    # Fuzzy hash (TLSH) for byte-level similarity.  Skipped for flux artefact
+    # types (SCP/DFI/A2R) where raw bytes carry timing noise.  NULL when not yet
+    # computed, the file is too small, or py-tlsh is unavailable.
+    tlsh: Mapped[str | None] = mapped_column(String(72), nullable=True)
+
     # Format-specific metadata (JSON)
     media_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)
     
@@ -844,6 +848,7 @@ class ExtractedFile(db.Model):
     md5: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
     sha1: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
     sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tlsh: Mapped[str | None] = mapped_column(String(72), nullable=True)  # fuzzy hash (TLSH) for near-duplicate files
     known_file_id: Mapped[int | None] = mapped_column(ForeignKey("known_files.id", ondelete="SET NULL"), index=True, nullable=True)
 
     # Archive/nested file support
@@ -1328,6 +1333,89 @@ class ItemShare(db.Model):
     item: Mapped["Item"] = relationship(back_populates="shares")
     user: Mapped[Optional["User"]] = relationship("User", foreign_keys=[user_id])
     group: Mapped[Optional["Group"]] = relationship("Group")
+
+
+# =============================================================================
+# Similarity / fuzzy matching
+# =============================================================================
+# Cached content-set similarity between artefacts (and between directory-subtree
+# "components").  Two artefacts are similar when they contain substantially the
+# same files, compared by content hash rather than container bytes -- so
+# differing compression (Spark vs ZIP) or flux timing noise does not affect the
+# result.  These tables are populated by `flask rebuild-similarity`
+# (myapp/services/similarity.py).  Pairs are stored canonically with
+# a_id < b_id so each appears once.
+
+class ArtefactSimilarity(db.Model):
+    """Cached size-weighted Jaccard similarity between two artefacts."""
+    __tablename__ = "artefact_similarity"
+    __table_args__ = (
+        db.UniqueConstraint("artefact_a_id", "artefact_b_id", name="uq_artefact_similarity_pair"),
+        Index("ix_artefact_similarity_a", "artefact_a_id", "score"),
+        Index("ix_artefact_similarity_b", "artefact_b_id", "score"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    artefact_a_id: Mapped[int] = mapped_column(ForeignKey("artefacts.id", ondelete="CASCADE"), index=True)
+    artefact_b_id: Mapped[int] = mapped_column(ForeignKey("artefacts.id", ondelete="CASCADE"), index=True)
+    score: Mapped[float] = mapped_column(Float, nullable=False)  # size-weighted Jaccard, 0..1
+    shared_files: Mapped[int] = mapped_column(Integer, nullable=False)
+    union_files: Mapped[int] = mapped_column(Integer, nullable=False)
+    shared_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    union_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    artefact_a: Mapped["Artefact"] = relationship(foreign_keys=[artefact_a_id])
+    artefact_b: Mapped["Artefact"] = relationship(foreign_keys=[artefact_b_id])
+
+
+class ArtefactComponent(db.Model):
+    """A directory-subtree 'component' of an artefact (e.g. a RISC OS !App).
+
+    Captures the content set of every file beneath a root directory so the same
+    application can be matched across different discs regardless of the
+    surrounding disc content.  Regenerated wholesale on each rebuild.
+    """
+    __tablename__ = "artefact_components"
+    __table_args__ = (
+        Index("ix_artefact_components_artefact", "artefact_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[str] = mapped_column(String(32), unique=True, index=True, default=generate_uuid)
+    artefact_id: Mapped[int] = mapped_column(ForeignKey("artefacts.id", ondelete="CASCADE"), index=True)
+    partition_id: Mapped[int] = mapped_column(ForeignKey("partitions.id", ondelete="CASCADE"), index=True)
+    root_path: Mapped[str] = mapped_column(String(1000))  # subtree root within the partition
+    name: Mapped[str] = mapped_column(String(255))        # leaf directory name (display)
+    file_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    computed_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    artefact: Mapped["Artefact"] = relationship()
+    partition: Mapped["Partition"] = relationship()
+
+
+class ComponentSimilarity(db.Model):
+    """Cached size-weighted Jaccard similarity between two components."""
+    __tablename__ = "component_similarity"
+    __table_args__ = (
+        db.UniqueConstraint("component_a_id", "component_b_id", name="uq_component_similarity_pair"),
+        Index("ix_component_similarity_a", "component_a_id", "score"),
+        Index("ix_component_similarity_b", "component_b_id", "score"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    component_a_id: Mapped[int] = mapped_column(ForeignKey("artefact_components.id", ondelete="CASCADE"), index=True)
+    component_b_id: Mapped[int] = mapped_column(ForeignKey("artefact_components.id", ondelete="CASCADE"), index=True)
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    shared_files: Mapped[int] = mapped_column(Integer, nullable=False)
+    union_files: Mapped[int] = mapped_column(Integer, nullable=False)
+    shared_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    union_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    component_a: Mapped["ArtefactComponent"] = relationship(foreign_keys=[component_a_id])
+    component_b: Mapped["ArtefactComponent"] = relationship(foreign_keys=[component_b_id])
 
 
 # vim: ts=4 sw=4 et

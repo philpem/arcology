@@ -82,6 +82,13 @@ from ..services.restrictions import (
     collect_ancestor_file_restrictions,
     grantable_bypass_rtypes,
 )
+from ..services.similarity import (
+    component_match_counts,
+    matches_for_component,
+    similar_artefacts,
+    similar_components,
+    similar_files_by_tlsh,
+)
 from ..services.upload_pipeline import QUEUE_CHECKSUM_ONLY, QUEUE_FULL, ingest_uploaded_artefact
 from ..utils.blobs import artefact_blob_storage_path, assign_blob
 from ..utils.config import int_config
@@ -2214,6 +2221,11 @@ def _view_admin_bypass(artefact, all_artefact_ids=None):
     )
 
 
+# Number of similar artefacts shown in the sidebar preview card before the
+# "Show all" link to the full similarity page.
+SIMILAR_SIDEBAR_LIMIT = 5
+
+
 def _render_artefact_view(artefact):
     """Render the artefact detail page from per-panel helper contexts."""
     file_form = _view_file_form()
@@ -2248,6 +2260,8 @@ def _render_artefact_view(artefact):
     restriction_ctx = _view_restriction_maps(all_artefact_ids, files_pagination)
     derived_entries, sidecar_entries = _view_derived_entries(artefact)
     bypass_ctx = _view_admin_bypass(artefact, all_artefact_ids)
+    similar_preview = similar_artefacts(artefact, current_user, limit=SIMILAR_SIDEBAR_LIMIT)
+    similar_folder_counts = component_match_counts(all_artefact_ids, current_user)
 
     ctx = dict(
         artefact=artefact,
@@ -2269,6 +2283,8 @@ def _render_artefact_view(artefact):
         recognised_folder_paths=recognised_folder_paths,
         derived_entries=derived_entries,
         sidecar_entries=sidecar_entries,
+        similar_preview=similar_preview,
+        similar_folder_counts=similar_folder_counts,
         move_item_choices=_move_item_choices(artefact),
     )
     ctx.update(analyses_ctx)
@@ -3475,6 +3491,76 @@ def file_duplicates(uuid):
         source=source,
         instances=instances,
     )
+
+
+@blueprint.route('/files/<string:uuid>/near-duplicates')
+@public_readable
+def file_near_duplicates(uuid):
+    """List extracted files whose content is *near* (not exactly) identical.
+
+    Uses the TLSH fuzzy hash to find files within a small edit distance — the
+    "which one file changed?" view that complements exact /duplicates.
+    """
+    source = (
+        ExtractedFile.query
+        .join(Partition)
+        .join(Artefact, Partition.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(ExtractedFile.uuid == uuid)
+        .filter(artefact_visibility_clause(current_user))
+        .first_or_404()
+    )
+    matches = similar_files_by_tlsh(source, current_user)
+    return render_template(
+        'artefacts/file_near_duplicates.html',
+        source=source,
+        matches=matches,
+    )
+
+
+@blueprint.route('/components/<string:uuid>/similar')
+@public_readable
+def component_similar(uuid):
+    """Artefacts whose directory subtree (component) matches this one."""
+    from ..database import ArtefactComponent
+    component, artefact = (
+        db.session.query(ArtefactComponent, Artefact)
+        .join(Artefact, ArtefactComponent.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(ArtefactComponent.uuid == uuid)
+        .filter(artefact_visibility_clause(current_user))
+        .first_or_404()
+    )
+    matches = matches_for_component(component, current_user)
+    return render_template(
+        'artefacts/component_similar.html',
+        component=component,
+        artefact=artefact,
+        matches=matches,
+    )
+
+
+@blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/similar')
+@blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/similar', endpoint='similar_nested')
+@blueprint.route('/artefacts/<string:uuid>/similar', endpoint='similar_legacy')
+@public_readable
+def similar(item_id=None, artefact_id=None, root_id=None, uuid=None):
+    """Full listing of artefacts (and shared components) similar to this one.
+
+    Accepts the nested ``/items/<item>/artefacts/<artefact>/similar`` form (slug
+    or UUID, matching the artefact view URL) as well as the flat
+    ``/artefacts/<uuid>/similar``.
+    """
+    artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
+    matches = similar_artefacts(artefact, current_user)
+    components = similar_components(artefact, current_user)
+    return render_template(
+        'artefacts/similar.html',
+        artefact=artefact,
+        matches=matches,
+        components=components,
+    )
+
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/rescan-hashes', methods=['POST'])
 @blueprint.route('/items/<string:item_id>/artefacts/<string:root_id>/<string:artefact_id>/rescan-hashes', methods=['POST'], endpoint='rescan_hashes_route_nested')

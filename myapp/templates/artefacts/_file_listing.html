@@ -64,7 +64,7 @@
                 </div>
             </div>
             {% endif %}
-            {{ render_subdirectory_bar(subdirectories, current_path, pagination_args, archive_paths=archive_paths, recognised_folder_paths=recognised_folder_paths) }}
+            {{ render_subdirectory_bar(subdirectories, current_path, pagination_args, archive_paths=archive_paths, recognised_folder_paths=recognised_folder_paths, similar_folder_counts=similar_folder_counts|default(none)) }}
             {{ render_letter_bar_compact(letter_pages, current_letter, pagination_args) }}
             {% if hashdb_mode %}
             <form id="hashdb-form" action="{{ url_for('myapp_blueprints_artefacts.add_to_hashdb', uuid=artefact.uuid) }}" method="post">
@@ -240,6 +240,10 @@
                                    title="List identical visible file instances">
                                     <i class="bi bi-files"></i> {{ duplicate_count }}
                                 </a>
+                                {% endif %}
+                                {% if file.tlsh and not file.is_directory %}
+                                <a href="{{ url_for('myapp_blueprints_artefacts.file_near_duplicates', uuid=file.uuid) }}"
+                                   class="text-muted ms-1" title="Find near-duplicate files (fuzzy match)"><i class="bi bi-shuffle"></i></a>
                                 {% endif %}
                                 {% if failed_conversion_info is defined and file.path in failed_conversion_info %}
                                 {% set _fc = failed_conversion_info[file.path] %}

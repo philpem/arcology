@@ -131,6 +131,7 @@ docker compose down                # Stop
 
 # Maintenance
 docker compose exec web flask rebuild-search-index  # Rebuild search index
+docker compose exec web flask rebuild-similarity    # Rebuild artefact similarity cache
 docker compose exec web flask rescan-hashes         # Re-link files against hash DBs
 ```
 
@@ -767,10 +768,14 @@ Automated tests live in `ci/` and run in the `app-tests` GitHub Actions job (SQL
 | `ci/test_url_identifiers.py` | URL-safe identifiers and slug generation |
 | `ci/test_fk_violations.py` | FK cascade deletes, defensive checks, M2M cleanup, nullable FK edge cases (SQLite FK enforcement enabled) |
 | `ci/test_inf_processing.py` | RISC OS INF sidecar parsing, BBC↔DOS filename translation, `process_inf_sidecars()` end-to-end |
+<<<<<<< HEAD
 | `ci/test_chunked_upload.py` | Chunked upload protocol (sync path): init/chunk/status/complete, API + web |
 | `ci/test_chunked_finalize.py` | Async finalise core (state machine, single-winner claim, stale re-drive) + async `/complete` + `/complete/status` |
 | `ci/test_cli_chunked.py` | `arco` chunked client: async finalise poll loop + resumable uploads (fake server) |
 | `ci/test_worker_io.py` | Bounded-memory file access: `SectorReader`/`open_sector_reader`, `read_file_capped` cap, `_parse_directory` over seek/read, and a sparse-image regression that asserts `detect_armlock` memory doesn't scale with image size |
+=======
+| `ci/test_similarity.py` | Content-set similarity: weighted Jaccard, artefact + component matching, sha256→md5 fallback, visibility filtering |
+>>>>>>> f1da452 (Add artefact similarity matching (content-set Jaccard + TLSH))
 
 Run locally:
 

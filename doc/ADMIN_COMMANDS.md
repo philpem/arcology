@@ -42,6 +42,43 @@ inconsistencies.
 flask rebuild-search-index
 ```
 
+## rebuild-similarity
+
+Rebuild the artefact content-set similarity cache. Recomputes size-weighted
+Jaccard similarity between artefacts — and between directory-subtree
+"components" (e.g. RISC OS `!Apps`) — from the current `ExtractedFile` data,
+replacing the `artefact_similarity`, `artefact_components`, and
+`component_similarity` tables.
+
+Two artefacts are scored by how much of their *decoded file content* they
+share, not by their container bytes, so differing compression (Spark vs ZIP) or
+floppy flux timing noise does not affect the result. Run after extraction has
+populated file listings, or to refresh after importing more artefacts.
+
+```bash
+flask rebuild-similarity
+```
+
+Results surface on each artefact page (the "Similar Artefacts" sidebar card and
+the full `…/similar` page). Only file listings already present are used — run
+`rescan-hashes` / analysis first if extracted-file hashes are missing.
+
+## backfill-tlsh
+
+Compute artefact-level TLSH fuzzy hashes for existing artefacts (uploaded before
+TLSH was added). TLSH enables byte-level *near-duplicate* detection of individual
+files — "which one file changed between two otherwise-identical discs?".
+
+```bash
+flask backfill-tlsh                # fill in missing artefact tlsh digests
+flask backfill-tlsh --force        # recompute even if already set
+```
+
+Flux artefact types (SCP/DFI/A2R) are skipped — their raw bytes carry timing
+noise. Requires the optional `py-tlsh` library (installed in the Docker images).
+`ExtractedFile` TLSH cannot be backfilled without re-extraction; it populates
+going forward as new artefacts are analysed.
+
 ## backfill-slugs
 
 Populate the `slug` column for Items and Artefacts where it is NULL.  This

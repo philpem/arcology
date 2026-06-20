@@ -47,3 +47,9 @@ unittest-xml-reporting
 
 # Sentry API (optional)
 sentry-sdk
+
+# Optional: byte-level fuzzy hashing (TLSH) for near-duplicate file detection.
+# Installed in the web and worker Docker images (which have a C++ toolchain);
+# left out of this list so CI / minimal installs do not need to build it.  The
+# code degrades gracefully when absent (see arcology_shared/fuzzyhash.py).
+#   pip install py-tlsh
