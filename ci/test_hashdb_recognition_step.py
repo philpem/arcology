@@ -225,14 +225,23 @@ class TestHashdbRecognitionStep(unittest.TestCase):
             return {'done': True, 'processed': 0, 'matches': 0,
                     'next_product_id': last_product_id}
 
+        beats = []
+
+        def heartbeat(**kwargs):
+            beats.append(kwargs)
+
         with self.app.app_context():
             with patch('myapp.services.hashdb_jobs.recognise_products_step',
                        side_effect=fake_step):
-                result = run_hashdb_recognition_job(self.db_id)
+                result = run_hashdb_recognition_job(self.db_id, heartbeat=heartbeat)
             # Narrowed to limit=1 to isolate, then advanced past the product.
             self.assertIn((0, 1), seen)
             self.assertEqual(result['skipped'], 1)
             self.assertIn('skipped', result['summary'])
+            # The timeout branches (narrow + skip) must report liveness, not just
+            # the final successful step — otherwise a run of slow products would
+            # go a whole statement_timeout without a heartbeat and be reset stale.
+            self.assertGreaterEqual(len(beats), 2)
             hdb = self.db.session.get(HashDatabase, self.db_id)
             self.assertEqual(hdb.product_recognition_status,
                              ProductRecognitionStatus.COMPLETED)
