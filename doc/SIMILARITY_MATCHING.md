@@ -61,21 +61,40 @@ guards address this:
 ### Storage and refresh
 
 Results are cached in three tables (`artefact_similarity`,
-`artefact_components`, `component_similarity`). They are populated two ways:
+`artefact_components`, `component_similarity`). They are populated three ways:
 
-- **Full rebuild** — `flask rebuild-similarity` recomputes everything.
-- **Incremental** — after each `FILE_EXTRACTION` / `ARCHIVE_EXTRACT` completes,
-  the API **queues a `SIMILARITY_REFRESH` job** for that artefact (gated by
-  `SIMILARITY_AUTO_REFRESH`, default on; deduped per artefact). The recompute
-  itself runs as a **worker-driven bounded job**, not on the extraction
-  result-POST, so it can't saturate web workers — the same pattern the hashdb
-  link/recognition/delete jobs use. The worker drives the
-  `/artefacts/<uuid>/similarity-step` endpoint as a cursor loop
+- **Full rebuild** — `flask rebuild-similarity` recomputes everything (O(n²)).
+- **Event-driven incremental** — after each `FILE_EXTRACTION` / `ARCHIVE_EXTRACT`
+  completes, the API marks the artefact `similarity_dirty` and (gated by
+  `SIMILARITY_AUTO_REFRESH`, default on; deduped per artefact) **queues a
+  `SIMILARITY_REFRESH` job** for it. The recompute runs as a **worker-driven
+  bounded job**, not on the extraction result-POST, so it can't saturate web
+  workers — the same pattern the hashdb link/recognition/delete jobs use. The
+  worker drives the `/artefacts/<uuid>/similarity-step` endpoint as a cursor loop
   (`run_step_loop`); each step matches a batch of candidate artefacts under a
   PostgreSQL `statement_timeout`, and `similarity_reset` (cursor 0) clears the
   artefact's rows and recreates its components so a restarted job re-runs
-  cleanly. `recompute_for_artefact` remains the synchronous wrapper used by the
-  CLI rebuild and tests.
+  cleanly. On the final step the artefact's `similarity_dirty` flag is cleared.
+  `recompute_for_artefact` remains the synchronous wrapper used by the CLI
+  rebuild and tests.
+- **Periodic delta (catch-up)** — every artefact whose extracted-file set changes
+  is flagged `similarity_dirty`; that flag is a *durable* record of staleness, so
+  a missed event-driven refresh (worker down, `SIMILARITY_AUTO_REFRESH` off, a
+  failed job) is still reconciled. `flask refresh-similarity` (and the task
+  runner's `TASKRUNNER_SIMILARITY_DELTA_INTERVAL` sweep, bounded by
+  `TASKRUNNER_SIMILARITY_DELTA_MAX` per tick) drains the dirty set via
+  `recompute_for_artefact`, clearing each flag. This is **exact** for content
+  changes — a pairwise score depends only on the two artefacts in the pair, so
+  draining the dirty set equals a full rebuild. The exception is `SIMILARITY_USE_IDF`,
+  where collection-wide document frequencies drift as artefacts change; reconcile
+  that occasionally with a full `rebuild-similarity` (e.g. a rare
+  `TASKRUNNER_SIMILARITY_INTERVAL`). A full rebuild clears all dirty flags.
+
+> **Global parameter changes still need a full rebuild.** The dirty-flag delta
+> handles per-artefact *content* changes only. Changes that alter *every* score —
+> a hash database's `exclude_from_similarity` flag, or toggling
+> `SIMILARITY_USE_IDF` — are not captured by the flag and require
+> `rebuild-similarity` (manually or via `TASKRUNNER_SIMILARITY_INTERVAL`).
 
 Comparison is exact (no MinHash/LSH). At evaluation-collection scale this is
 fine; the cap bounds the work. MinHash/LSH is the lever to reach for only if a

@@ -20,7 +20,7 @@ from ..extensions import db
 from ..services.analysis_queue import pending_claimable_query, reset_stale_analyses_core
 from ..services.chunked_upload import purge_stale_chunks
 from ..services.hashdb_jobs import JobCancelled
-from ..services.similarity import rebuild_all
+from ..services.similarity import rebuild_all, refresh_dirty
 from .dispatch import DISPATCH
 
 log = logging.getLogger('arcology.taskrunner')
@@ -49,9 +49,14 @@ class TaskRunner:
              self._reset_stale, 'stale-reset'),
             (int(cfg.get('TASKRUNNER_CHUNK_GC_INTERVAL', 3600)),
              purge_stale_chunks, 'chunk-gc'),
+            (int(cfg.get('TASKRUNNER_SIMILARITY_DELTA_INTERVAL', 0)),
+             self._refresh_similarity_delta, 'similarity-delta'),
             (int(cfg.get('TASKRUNNER_SIMILARITY_INTERVAL', 0)),
              self._rebuild_similarity, 'similarity-rebuild'),
         ]
+        # Max stale artefacts drained per similarity-delta tick, so one sweep
+        # can't monopolise the loop; the remainder is taken on later ticks.
+        self.similarity_delta_max = int(cfg.get('TASKRUNNER_SIMILARITY_DELTA_MAX', 200))
         self._periodic_last = {}
 
     # -- signals / sleep ----------------------------------------------------
@@ -186,6 +191,11 @@ class TaskRunner:
         count = reset_stale_analyses_core()
         if count:
             log.info('Reset %d stale analysis job(s) to PENDING', count)
+
+    def _refresh_similarity_delta(self):
+        stats = refresh_dirty(max_artefacts=self.similarity_delta_max)
+        if stats['artefacts']:
+            log.info('Similarity delta refresh: %s', stats)
 
     def _rebuild_similarity(self):
         log.info('Starting scheduled similarity rebuild')

@@ -57,8 +57,9 @@ been **removed** (nothing dispatches these jobs over HTTP any more).
   task runner.
 - The task runner is **single-instance** (don't scale it): the atomic claim
   makes job execution safe under concurrency, but the periodic tasks
-  (`reset_stale_analyses_core`, `purge_stale_chunks`, similarity `rebuild_all`)
-  assume one runner. Intervals are `TASKRUNNER_*` config keys (see
+  (`reset_stale_analyses_core`, `purge_stale_chunks`, the similarity delta sweep
+  `refresh_dirty`, and the full similarity `rebuild_all`) assume one runner.
+  Intervals are `TASKRUNNER_*` config keys (see
   `myapp.cfg.example`). Adding a new DB-only analysis type: add it to
   `CONTROL_PLANE_ANALYSIS_TYPES` **and** to `DISPATCH` in
   `myapp/taskrunner/dispatch.py` (an import-time assert enforces the pairing).
@@ -170,7 +171,8 @@ docker compose down                # Stop
 
 # Maintenance
 docker compose exec web flask rebuild-search-index  # Rebuild search index
-docker compose exec web flask rebuild-similarity    # Rebuild artefact similarity cache
+docker compose exec web flask rebuild-similarity    # Rebuild artefact similarity cache (full)
+docker compose exec web flask refresh-similarity    # Incrementally refresh changed artefacts only
 docker compose exec web flask rescan-hashes         # Re-link files against hash DBs
 ```
 

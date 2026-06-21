@@ -515,6 +515,97 @@ class TestArtefactSimilarity(_SimilarityBase):
         self.assertEqual(others[0][1].label, 'PC-B')
 
 
+class TestIncrementalDirtyRefresh(_SimilarityBase):
+    """Dirty-flag tracking + the bounded refresh_dirty drain."""
+
+    def _all_rows(self):
+        from myapp.database import ArtefactSimilarity
+        return {(s.artefact_a_id, s.artefact_b_id): round(s.score, 6)
+                for s in ArtefactSimilarity.query.all()}
+
+    def test_refresh_dirty_equals_full_rebuild(self):
+        from myapp.database import ArtefactSimilarity
+        from myapp.services.similarity import (
+            mark_similarity_dirty,
+            rebuild_all,
+            refresh_dirty,
+        )
+        common = [('GAME', 'g', 100000), ('LOADER', 'l', 5000)]
+        a = _add_artefact(self.db, self.item, 'Disc-A', common + [('X', 'x', 300)])
+        b = _add_artefact(self.db, self.item, 'Disc-B', common + [('Y', 'y', 300)])
+
+        rebuild_all()
+        full = self._all_rows()
+
+        # Wipe the pair cache, flag both artefacts, drain via refresh_dirty.
+        ArtefactSimilarity.query.delete()
+        self.db.session.commit()
+        mark_similarity_dirty(a.id)
+        mark_similarity_dirty(b.id)
+        stats = refresh_dirty()
+        self.assertEqual(stats['artefacts'], 2)
+        self.assertEqual(self._all_rows(), full)
+
+    def test_refresh_dirty_clears_flag(self):
+        from myapp.services.similarity import (
+            dirty_artefact_count,
+            mark_similarity_dirty,
+            refresh_dirty,
+        )
+        a = _add_artefact(self.db, self.item, 'A', [('F', 'f', 1000)])
+        mark_similarity_dirty(a.id)
+        self.assertEqual(dirty_artefact_count(), 1)
+        refresh_dirty()
+        self.assertEqual(dirty_artefact_count(), 0)
+
+    def test_refresh_dirty_respects_max_artefacts(self):
+        from myapp.services.similarity import (
+            dirty_artefact_count,
+            mark_similarity_dirty,
+            refresh_dirty,
+        )
+        ids = []
+        for i in range(3):
+            art = _add_artefact(self.db, self.item, f'D{i}', [('F', f's{i}', 1000)])
+            ids.append(art.id)
+            mark_similarity_dirty(art.id)
+        self.assertEqual(dirty_artefact_count(), 3)
+        stats = refresh_dirty(max_artefacts=1)
+        self.assertEqual(stats['artefacts'], 1)
+        self.assertEqual(dirty_artefact_count(), 2)
+
+    def test_rebuild_all_clears_all_dirty_flags(self):
+        from myapp.services.similarity import (
+            dirty_artefact_count,
+            mark_similarity_dirty,
+            rebuild_all,
+        )
+        a = _add_artefact(self.db, self.item, 'A', [('F', 'f', 1000)])
+        b = _add_artefact(self.db, self.item, 'B', [('G', 'g', 1000)])
+        mark_similarity_dirty(a.id)
+        mark_similarity_dirty(b.id)
+        self.assertEqual(dirty_artefact_count(), 2)
+        rebuild_all()
+        self.assertEqual(dirty_artefact_count(), 0)
+
+    def test_recompute_for_artefact_clears_flag(self):
+        from myapp.services.similarity import (
+            dirty_artefact_count,
+            mark_similarity_dirty,
+            recompute_for_artefact,
+        )
+        a = _add_artefact(self.db, self.item, 'A', [('F', 'f', 1000)])
+        mark_similarity_dirty(a.id)
+        recompute_for_artefact(a)
+        self.assertEqual(dirty_artefact_count(), 0)
+
+    def test_refresh_dirty_noop_when_clean(self):
+        from myapp.services.similarity import refresh_dirty
+        _add_artefact(self.db, self.item, 'A', [('F', 'f', 1000)])
+        stats = refresh_dirty()
+        self.assertEqual(stats, {'artefacts': 0, 'artefact_pairs': 0, 'component_pairs': 0})
+
+
 class TestTlshHelper(unittest.TestCase):
     """The optional TLSH fuzzy-hash helper (degrades gracefully without the lib)."""
 

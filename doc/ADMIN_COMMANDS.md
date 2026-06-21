@@ -63,6 +63,24 @@ Results surface on each artefact page (the "Similar Artefacts" sidebar card and
 the full `…/similar` page). Only file listings already present are used — run
 `rescan-hashes` / analysis first if extracted-file hashes are missing.
 
+## refresh-similarity
+
+Incrementally refresh the similarity cache for artefacts whose extracted-file
+set has changed since it was last computed (the `similarity_dirty` flag),
+recomputing each one's similarity rows in full. Unlike `rebuild-similarity`
+(a full O(n²) recompute), this only touches changed artefacts, so it is cheap
+enough to run periodically — e.g. from cron, or via the task runner's
+`TASKRUNNER_SIMILARITY_DELTA_INTERVAL`.
+
+```bash
+flask refresh-similarity                 # drain all stale artefacts
+flask refresh-similarity --max-artefacts 500   # bound one run
+```
+
+Per-artefact recompute is exact for content changes. **Global** parameter changes
+— a hash database's "exclude from similarity" flag, or `SIMILARITY_USE_IDF` —
+affect every score and still require a full `rebuild-similarity`.
+
 ## backfill-tlsh
 
 Compute artefact-level TLSH fuzzy hashes for existing artefacts (uploaded before

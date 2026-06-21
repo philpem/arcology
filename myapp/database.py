@@ -604,6 +604,15 @@ class Artefact(db.Model):
     # types (SCP/DFI/A2R) where raw bytes carry timing noise.  NULL when not yet
     # computed, the file is too small, or py-tlsh is unavailable.
     tlsh: Mapped[str | None] = mapped_column(String(72), nullable=True)
+    # Set True when this artefact's extracted-file set changes (e.g. after an
+    # extraction completes), marking its content-set similarity cache stale.
+    # Cleared by recompute_for_artefact / a full rebuild.  Drained incrementally
+    # by `flask refresh-similarity` and the task runner's similarity-delta sweep,
+    # so the cache stays fresh without a full O(n^2) rebuild.  Indexed so the
+    # "what's stale?" scan is cheap when few rows are dirty.
+    similarity_dirty: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa_false(), index=True
+    )
 
     # Format-specific metadata (JSON)
     media_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)

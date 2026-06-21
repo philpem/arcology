@@ -134,10 +134,19 @@ WORKER_STEP_DEADLINE_SECONDS = 20
 #     jobs, so this mainly covers control-plane jobs.
 #   - chunk GC: purge stale chunked-upload temp directories (requires the chunk
 #     volume / CHUNK_DIR to be mounted into the task runner container).
+#   - similarity delta: incrementally refresh the similarity cache for artefacts
+#     whose extracted-file set changed (the `similarity_dirty` flag), at most
+#     TASKRUNNER_SIMILARITY_DELTA_MAX artefacts per tick.  Cheap — the
+#     recommended way to keep the cache fresh; equivalent to running
+#     `flask refresh-similarity` on a schedule.  Disabled by default (0).
 #   - similarity rebuild: run a full `rebuild-similarity` on a schedule.  Heavy
-#     on large collections and disabled by default (0) — opt in explicitly.
+#     on large collections and disabled by default (0) — opt in explicitly.  Use
+#     it sparingly alongside the delta sweep to reconcile IDF document-frequency
+#     drift (only relevant when SIMILARITY_USE_IDF is on).
 #TASKRUNNER_STALE_RESET_INTERVAL = 300
 #TASKRUNNER_CHUNK_GC_INTERVAL = 3600
+#TASKRUNNER_SIMILARITY_DELTA_INTERVAL = 0
+#TASKRUNNER_SIMILARITY_DELTA_MAX = 200
 #TASKRUNNER_SIMILARITY_INTERVAL = 0
 #
 # Per-statement PostgreSQL statement_timeout (seconds) for the product-recognition

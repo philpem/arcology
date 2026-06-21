@@ -1272,27 +1272,32 @@ _SIMILARITY_REFRESH_TYPES = frozenset({
 
 
 def _refresh_similarity(analysis):
-    """Queue a worker-driven similarity refresh for a just-extracted artefact.
+    """Flag (and, when enabled, eagerly refresh) a just-extracted artefact's
+    similarity cache.
 
-    The actual recompute runs as a bounded SIMILARITY_REFRESH job (driven by the
-    worker via /artefacts/<uuid>/similarity-step), so no DB-heavy work runs on
-    this worker result-POST.  Best-effort: queueing must never fail the POST.
-    Disabled when SIMILARITY_AUTO_REFRESH is false.
+    The artefact is always marked ``similarity_dirty`` so a periodic
+    ``refresh_dirty`` sweep (``flask refresh-similarity`` / the task runner's
+    similarity-delta task) reconciles it even if the eager refresh below is off
+    or fails.  When SIMILARITY_AUTO_REFRESH is on (default) a bounded
+    SIMILARITY_REFRESH job is also queued so the match appears promptly; that
+    job clears the flag on completion.  Best-effort: nothing here may fail the
+    worker result-POST.
     """
-    if not current_app.config.get('SIMILARITY_AUTO_REFRESH', True):
-        return
     if analysis.analysis_type not in _SIMILARITY_REFRESH_TYPES:
         return
     if analysis.artefact_id is None:
         return
     artefact_id = analysis.artefact_id
     try:
-        from ..services.similarity import queue_similarity_refresh
-        queue_similarity_refresh(artefact_id)
+        from ..services.similarity import mark_similarity_dirty, queue_similarity_refresh
+        mark_similarity_dirty(artefact_id, commit=False)
+        if current_app.config.get('SIMILARITY_AUTO_REFRESH', True):
+            queue_similarity_refresh(artefact_id, commit=False)
+        db.session.commit()
     except Exception:
         db.session.rollback()
         current_app.logger.exception(
-            'Failed to queue similarity refresh for artefact id %s', artefact_id
+            'Failed to flag similarity refresh for artefact id %s', artefact_id
         )
 
 
@@ -2754,7 +2759,11 @@ def artefact_similarity_step(uuid):
     cursor = int(data.get('cursor') or 0)
     limit = max(1, min(int(data.get('limit') or 200), 2000))
 
-    from ..services.similarity import similarity_match_step, similarity_reset
+    from ..services.similarity import (
+        clear_similarity_dirty,
+        similarity_match_step,
+        similarity_reset,
+    )
     if cursor == 0:
         # Clear + recreate this artefact's components in its own transaction so
         # the row locks release before the (timeout-bounded) matching scan.
@@ -2769,6 +2778,9 @@ def artefact_similarity_step(uuid):
         if not is_statement_timeout(exc):
             raise
         return jsonify({'timed_out': True})
+    if result.get('done'):
+        # The cache for this artefact is now fully recomputed.
+        clear_similarity_dirty(artefact.id, commit=False)
     db.session.commit()
     result['progress_label'] = f"Finding similar artefacts for '{artefact.label}'"
     return jsonify(result)
