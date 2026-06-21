@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import BinaryIO
 from urllib.parse import quote
@@ -118,8 +119,15 @@ class StorageBackend(abc.ABC):
         """Return a pre-signed download URL, or None if not supported."""
 
     @abc.abstractmethod
-    def put_tree(self, prefix: str, local_dir: Path) -> int:
-        """Upload an entire directory tree under a prefix.  Returns file count."""
+    def put_tree(self, prefix: str, local_dir: Path,
+                 progress_callback: Callable[[int, int], None] | None = None) -> int:
+        """Upload an entire directory tree under a prefix.  Returns file count.
+
+        ``progress_callback(done, total)`` is invoked as the upload proceeds so
+        a long-running tree upload (a large extraction with many thousands of
+        files) reports live progress instead of appearing frozen at the
+        previous phase's status line.
+        """
 
     @abc.abstractmethod
     def get_tree(self, prefix: str, dest_dir: Path) -> int:
@@ -233,16 +241,23 @@ class LocalStorage(StorageBackend):
         # Local storage doesn't support pre-signed URLs
         return None
 
-    def put_tree(self, prefix: str, local_dir: Path) -> int:
+    def put_tree(self, prefix: str, local_dir: Path,
+                 progress_callback: Callable[[int, int], None] | None = None) -> int:
         dest = self._resolve(prefix)
         local_dir = Path(local_dir)
         if local_dir.resolve() == dest.resolve():
-            return sum(1 for _ in local_dir.rglob('*') if _.is_file())
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if dest.exists():
-            shutil.rmtree(dest)
-        shutil.copytree(local_dir, dest)
-        return sum(1 for _ in dest.rglob('*') if _.is_file())
+            count = sum(1 for _ in local_dir.rglob('*') if _.is_file())
+        else:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if dest.exists():
+                shutil.rmtree(dest)
+            shutil.copytree(local_dir, dest)
+            count = sum(1 for _ in dest.rglob('*') if _.is_file())
+        # Local copies are fast and effectively atomic; report a single
+        # completion tick so callers driving a progress bar still see 100%.
+        if progress_callback is not None and count:
+            progress_callback(count, count)
+        return count
 
     def get_tree(self, prefix: str, dest_dir: Path) -> int:
         source = self._resolve(prefix)
@@ -269,7 +284,7 @@ class S3Storage(StorageBackend):
 
     def __init__(self, endpoint_url: str, bucket: str,
                  access_key: str, secret_key: str, region: str = 'us-east-1',
-                 public_url: str | None = None):
+                 public_url: str | None = None, upload_concurrency: int = 8):
         import boto3
         from botocore.config import Config as BotoConfig
 
@@ -314,6 +329,16 @@ class S3Storage(StorageBackend):
             )
         else:
             self._public_client = self._client
+        # Number of objects to upload in parallel in put_tree().  A large
+        # extraction can be tens of thousands of small files; uploading them
+        # one at a time over the network is the dominant cost of a
+        # FILE_EXTRACTION on S3 and makes the job look stuck after the file
+        # listing has been registered.  boto3 clients are thread-safe, so a
+        # bounded thread pool turns this into a parallel transfer.
+        try:
+            self._upload_concurrency = max(1, int(upload_concurrency))
+        except (TypeError, ValueError):
+            self._upload_concurrency = 8
         log.info(f"S3 storage: endpoint={endpoint_url} bucket={bucket}")
 
         # Garage (and some other S3-compatible backends) produce HTTP responses
@@ -422,20 +447,41 @@ class S3Storage(StorageBackend):
             ExpiresIn=expires,
         )
 
-    def put_tree(self, prefix: str, local_dir: Path) -> int:
+    def put_tree(self, prefix: str, local_dir: Path,
+                 progress_callback: Callable[[int, int], None] | None = None) -> int:
         local_dir = Path(local_dir)
         prefix = prefix.rstrip('/') + '/'
+        files = [p for p in local_dir.rglob('*') if p.is_file()]
+        total = len(files)
+        if not total:
+            return 0
+
+        def _upload(path: Path) -> None:
+            rel = path.relative_to(local_dir)
+            key = prefix + str(rel)
+            self._client.upload_file(
+                str(path), self.bucket, key,
+                ExtraArgs={'ContentType': _mime_for_key(key)},
+            )
+
         count = 0
         try:
-            for path in local_dir.rglob('*'):
-                if path.is_file():
-                    rel = path.relative_to(local_dir)
-                    key = prefix + str(rel)
-                    self._client.upload_file(
-                        str(path), self.bucket, key,
-                        ExtraArgs={'ContentType': _mime_for_key(key)},
-                    )
+            if self._upload_concurrency <= 1 or total == 1:
+                for path in files:
+                    _upload(path)
                     count += 1
+                    if progress_callback is not None:
+                        progress_callback(count, total)
+            else:
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                workers = min(self._upload_concurrency, total)
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    futures = [pool.submit(_upload, p) for p in files]
+                    for fut in as_completed(futures):
+                        fut.result()  # re-raise any upload error
+                        count += 1
+                        if progress_callback is not None:
+                            progress_callback(count, total)
         except (BotoCoreError, BotoClientError) as exc:
             raise OSError(f"S3 put_tree failed for prefix '{prefix}': {exc}") from exc
         return count
@@ -480,6 +526,7 @@ def create_storage(config: dict) -> StorageBackend:
         secret_key = config.get('S3_SECRET_KEY')
         region = config.get('S3_REGION', 'us-east-1')
         public_url = config.get('S3_PUBLIC_URL')
+        upload_concurrency = config.get('S3_UPLOAD_CONCURRENCY', 8)
 
         if not all([endpoint, access_key, secret_key]):
             raise RuntimeError(
@@ -493,6 +540,7 @@ def create_storage(config: dict) -> StorageBackend:
             secret_key=secret_key,
             region=region,
             public_url=public_url,
+            upload_concurrency=upload_concurrency,
         )
 
     if backend != 'local':

@@ -171,6 +171,23 @@ class TestLocalStorageTreeOps(unittest.TestCase):
         self.assertTrue(self.storage.exists('outputs/extraction/a.txt'))
         self.assertTrue(self.storage.exists('outputs/extraction/sub/c.txt'))
 
+    def test_put_tree_progress_callback(self):
+        """put_tree reports a final progress tick so a driven progress bar
+        reaches 100% even on the fast local copy path."""
+        src_dir = os.path.join(self.tmpdir, 'source_tree')
+        os.makedirs(src_dir)
+        expected_count = self._create_tree(src_dir)
+
+        ticks = []
+        count = self.storage.put_tree(
+            'outputs/extraction', src_dir,
+            progress_callback=lambda done, total: ticks.append((done, total)),
+        )
+        self.assertEqual(count, expected_count)
+        self.assertTrue(ticks, 'expected at least one progress tick')
+        # The final tick must report completion (done == total == count).
+        self.assertEqual(ticks[-1], (expected_count, expected_count))
+
     def test_get_tree(self):
         # First put a tree
         src_dir = os.path.join(self.tmpdir, 'source_tree')

@@ -278,3 +278,5 @@ WORKER_STEP_DEADLINE_SECONDS = 20
 #S3_SECRET_KEY = ""
 #S3_REGION = "garage"
 #S3_PUBLIC_URL = "http://localhost:3900"  # Browser-reachable URL for presigned links
+# Objects uploaded in parallel when the worker pushes an extraction tree to S3.
+#S3_UPLOAD_CONCURRENCY = 8

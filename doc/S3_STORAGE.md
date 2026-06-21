@@ -124,6 +124,7 @@ variables.
 | `S3_SECRET_KEY` | — | S3 secret access key (required for S3) |
 | `S3_REGION` | `us-east-1` | S3 region (use `garage` for Garage) |
 | `S3_PUBLIC_URL` | (same as endpoint) | Browser-reachable S3 URL for presigned download links. Set this when `S3_ENDPOINT_URL` is a Docker-internal hostname (e.g. `http://garage:3900`) that browsers cannot reach. See [Exposing S3 publicly behind a reverse proxy](#exposing-s3-publicly-behind-a-reverse-proxy). |
+| `S3_UPLOAD_CONCURRENCY` | `8` | Number of objects uploaded in parallel when the worker pushes an extraction tree to S3. A large disc can extract to tens of thousands of small files; uploading them one at a time is the dominant cost of `FILE_EXTRACTION` on S3 and makes the job appear stuck after the file listing is registered. Raise for faster transfers, lower (or `1`) to reduce load on the S3 backend. |
 
 ## Exposing S3 publicly behind a reverse proxy
 

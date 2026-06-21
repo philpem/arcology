@@ -122,6 +122,7 @@ S3_ACCESS_KEY = os.environ.get('S3_ACCESS_KEY', '')
 S3_SECRET_KEY = os.environ.get('S3_SECRET_KEY', '')
 S3_REGION = os.environ.get('S3_REGION', 'us-east-1')
 S3_PUBLIC_URL = os.environ.get('S3_PUBLIC_URL', '')
+S3_UPLOAD_CONCURRENCY = _int_env('S3_UPLOAD_CONCURRENCY', '8')
 
 # Configure logging
 logging.basicConfig(

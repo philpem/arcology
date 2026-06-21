@@ -115,6 +115,7 @@ class AnalysisWorker:
                 S3_PUBLIC_URL,
                 S3_REGION,
                 S3_SECRET_KEY,
+                S3_UPLOAD_CONCURRENCY,
                 STORAGE_BACKEND,
             )
             storage = create_storage({
@@ -125,6 +126,7 @@ class AnalysisWorker:
                 'S3_SECRET_KEY': S3_SECRET_KEY,
                 'S3_REGION': S3_REGION,
                 'S3_PUBLIC_URL': S3_PUBLIC_URL,
+                'S3_UPLOAD_CONCURRENCY': S3_UPLOAD_CONCURRENCY,
                 'UPLOAD_FOLDER': str(upload_dir),
                 'OUTPUT_FOLDER': str(output_dir),
             })
@@ -459,11 +461,21 @@ class AnalysisWorker:
             return
         rel = self._relative_output_path(extract_dir)
         prefix = self.storage.storage_key('outputs', rel)
+        # Report upload progress so a large tree (tens of thousands of files)
+        # doesn't leave the status line frozen on the previous "Registering
+        # files … 100%" phase while the objects are pushed to S3.  Heartbeating
+        # here also keeps the job from being reset as stale during a long upload.
+        progress = getattr(self, 'progress', None)
+        progress_callback = None
+        if progress is not None:
+            def progress_callback(done, total):
+                progress.start(
+                    total=total, label='Uploading extracted files').update(done)
         # Upload first; only remove the local copy on success.  If put_tree()
         # raises, the exception propagates (the analysis handler marks the job
         # failed), and the local directory is left in place so a retry can
         # re-upload without orphaning partially-uploaded S3 objects.
-        count = self.storage.put_tree(prefix, extract_dir)
+        count = self.storage.put_tree(prefix, extract_dir, progress_callback=progress_callback)
         log.info(f"Uploaded {count} files to storage prefix: {prefix}")
         shutil.rmtree(extract_dir, ignore_errors=True)
         log.info(f"Cleaned up local extraction directory: {extract_dir}")
