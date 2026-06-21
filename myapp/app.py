@@ -48,6 +48,7 @@ _ENV_INT_KEYS = (
     'PERMANENT_SESSION_LIFETIME', 'OIDC_SYNC_INTERVAL',
     'TASKRUNNER_STALE_RESET_INTERVAL', 'TASKRUNNER_CHUNK_GC_INTERVAL',
     'TASKRUNNER_SIMILARITY_INTERVAL', 'TASKRUNNER_RECOGNITION_STATEMENT_TIMEOUT',
+    'TASKRUNNER_SIMILARITY_DELTA_INTERVAL', 'TASKRUNNER_SIMILARITY_DELTA_MAX',
 )
 _ENV_FLOAT_KEYS = (
     'SENTRY_TRACES_SAMPLE_RATE', 'SENTRY_PROFILES_SAMPLE_RATE',
@@ -504,6 +505,7 @@ def _register_cli_commands(app):
     from .cli.rebuild_search_index import rebuild_search_index
     from .cli.rebuild_similarity import rebuild_similarity
     from .cli.reconcile_counts import reconcile_counts
+    from .cli.refresh_similarity import refresh_similarity
     from .cli.rescan_hashes import rescan_hashes
     from .cli.set_password import set_password
     from .cli.taskrunner import taskrunner
@@ -511,6 +513,7 @@ def _register_cli_commands(app):
     app.cli.add_command(create_admin)
     app.cli.add_command(rebuild_search_index)
     app.cli.add_command(rebuild_similarity)
+    app.cli.add_command(refresh_similarity)
     app.cli.add_command(rescan_hashes)
     app.cli.add_command(reconcile_counts)
     app.cli.add_command(reanalyse)

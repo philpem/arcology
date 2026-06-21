@@ -267,6 +267,38 @@ class TestTaskRunnerClaim(unittest.TestCase):
         runner._run_periodics()              # now fires again
         self.assertEqual(calls['n'], 2)
 
+    def test_similarity_delta_drains_dirty_artefacts(self):
+        """The similarity-delta periodic recomputes flagged artefacts in-process."""
+        from myapp.services.similarity import dirty_artefact_count, mark_similarity_dirty
+        mark_similarity_dirty(self.artefact_id)
+        self.assertEqual(dirty_artefact_count(), 1)
+        runner = self._runner()
+        runner.similarity_delta_max = 50
+        runner._refresh_similarity_delta()
+        self.assertEqual(dirty_artefact_count(), 0)
+
+    def test_similarity_delta_max_bounds_the_sweep(self):
+        """similarity_delta_max caps how many artefacts one tick drains."""
+        from arcology_shared.enums import ArtefactType
+        from myapp.database import Artefact, StorageDirectory
+        from myapp.services.similarity import dirty_artefact_count, mark_similarity_dirty
+        item_id = self.db.session.get(Artefact, self.artefact_id).item_id
+        mark_similarity_dirty(self.artefact_id, commit=False)
+        for i in range(2):
+            art = Artefact(item_id=item_id, label=f'X{i}', artefact_type=ArtefactType.HFE,
+                           original_filename='d.ssd', storage_path=f'x{i}.ssd',
+                           storage_directory=StorageDirectory.UPLOADS)
+            self.db.session.add(art)
+            self.db.session.flush()
+            mark_similarity_dirty(art.id, commit=False)
+        self.db.session.commit()
+        self.assertEqual(dirty_artefact_count(), 3)
+
+        runner = self._runner()
+        runner.similarity_delta_max = 1
+        runner._refresh_similarity_delta()
+        self.assertEqual(dirty_artefact_count(), 2)
+
 
 class TestRunToCompletionJobs(unittest.TestCase):
     """The deadline-free run_*_job drivers reach the right end state."""

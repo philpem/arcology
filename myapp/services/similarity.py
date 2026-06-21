@@ -324,6 +324,10 @@ def rebuild_all(progress=None) -> dict:
     _note("Building components …")
     component_pairs = _rebuild_components(rows, weights, progress=progress)
 
+    # A full rebuild reconciles the whole cache, so nothing is stale afterwards.
+    db.session.query(Artefact).filter(Artefact.similarity_dirty.is_(True)).update(
+        {Artefact.similarity_dirty: False}, synchronize_session=False)
+
     db.session.commit()
     return {"artefact_pairs": artefact_pairs, "component_pairs": component_pairs}
 
@@ -613,7 +617,92 @@ def recompute_for_artefact(artefact) -> dict:
         if result["done"]:
             break
         cursor = result["next_cursor"]
+    clear_similarity_dirty(aid)
     return {"artefact_pairs": artefact_pairs, "component_pairs": component_pairs}
+
+
+# ---------------------------------------------------------------------------
+# Incremental (delta) refresh — dirty-flag tracking + bounded drain
+# ---------------------------------------------------------------------------
+
+def mark_similarity_dirty(artefact_id, *, commit=True) -> None:
+    """Flag one artefact's similarity cache as stale (idempotent).
+
+    Called when an artefact's extracted-file set changes (e.g. after an
+    extraction completes).  The flag is a durable record of staleness that a
+    later :func:`refresh_dirty` sweep drains, so a missed event-driven refresh
+    (worker down, auto-refresh off, a failed job) is still reconciled without a
+    full rebuild.
+    """
+    db.session.query(Artefact).filter(Artefact.id == artefact_id).update(
+        {Artefact.similarity_dirty: True}, synchronize_session=False)
+    if commit:
+        db.session.commit()
+
+
+def clear_similarity_dirty(artefact_id, *, commit=True) -> None:
+    """Clear one artefact's stale flag after its cache has been recomputed."""
+    db.session.query(Artefact).filter(Artefact.id == artefact_id).update(
+        {Artefact.similarity_dirty: False}, synchronize_session=False)
+    if commit:
+        db.session.commit()
+
+
+def dirty_artefact_count() -> int:
+    """Number of artefacts whose similarity cache is currently stale."""
+    return (
+        db.session.query(func.count(Artefact.id))
+        .filter(Artefact.similarity_dirty.is_(True))
+        .scalar()
+    )
+
+
+def refresh_dirty(*, max_artefacts=None, progress=None) -> dict:
+    """Drain stale artefacts, recomputing each one's similarity rows in full.
+
+    Processes up to ``max_artefacts`` flagged artefacts (oldest id first for a
+    stable, resumable order); ``None`` drains all of them.  Each artefact is
+    recomputed and its flag cleared in its own transaction, so an interrupted
+    run leaves a consistent prefix done and the rest still flagged for the next
+    sweep.  ``progress`` is an optional ``callable(str)``.
+
+    Per-artefact recompute is exact for content changes (a pairwise score
+    depends only on the two artefacts), so draining the dirty set is equivalent
+    to a full rebuild — except under IDF weighting, where collection-wide
+    document frequencies drift as artefacts change; reconcile that periodically
+    with a full ``rebuild_all``.
+    """
+    def _note(msg):
+        if progress:
+            progress(msg)
+
+    q = (
+        db.session.query(Artefact.id)
+        .filter(Artefact.similarity_dirty.is_(True))
+        .order_by(Artefact.id)
+    )
+    if max_artefacts is not None:
+        q = q.limit(max_artefacts)
+    ids = [row[0] for row in q.all()]
+    if not ids:
+        return {"artefacts": 0, "artefact_pairs": 0, "component_pairs": 0}
+
+    _note(f"Refreshing {len(ids)} stale artefact(s) …")
+    processed = artefact_pairs = component_pairs = 0
+    for aid in ids:
+        artefact = db.session.get(Artefact, aid)
+        if artefact is None:
+            # Deleted between the scan and now; its rows are gone via CASCADE.
+            clear_similarity_dirty(aid)
+            continue
+        result = recompute_for_artefact(artefact)
+        processed += 1
+        artefact_pairs += result["artefact_pairs"]
+        component_pairs += result["component_pairs"]
+        if progress and processed % 50 == 0:
+            _note(f"  {processed}/{len(ids)} refreshed")
+    return {"artefacts": processed, "artefact_pairs": artefact_pairs,
+            "component_pairs": component_pairs}
 
 
 def queue_similarity_refresh(artefact_id, *, commit=True):
