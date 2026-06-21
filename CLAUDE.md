@@ -91,7 +91,7 @@ arcology/
 │   ├── services/               # Service layer shared by blueprints/API/CLI: artefact_types
 │   │                           #   (EXTENSION_MAP/ANALYSIS_MAP), upload_pipeline, artefact_lifecycle,
 │   │                           #   artefact_storage, restrictions, downloads, hash_rescan, hashdb_jobs,
-│   │                           #   analysis_queue, search_index
+│   │                           #   analysis_queue, search_index, similarity, similarity_stats
 │   ├── utils/                  # Utility modules
 │   ├── templates/              # Jinja2 templates (Bootstrap 5)
 │   └── static/                 # CSS

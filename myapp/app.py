@@ -508,12 +508,14 @@ def _register_cli_commands(app):
     from .cli.refresh_similarity import refresh_similarity
     from .cli.rescan_hashes import rescan_hashes
     from .cli.set_password import set_password
+    from .cli.similarity_stats import similarity_stats
     from .cli.taskrunner import taskrunner
 
     app.cli.add_command(create_admin)
     app.cli.add_command(rebuild_search_index)
     app.cli.add_command(rebuild_similarity)
     app.cli.add_command(refresh_similarity)
+    app.cli.add_command(similarity_stats)
     app.cli.add_command(rescan_hashes)
     app.cli.add_command(reconcile_counts)
     app.cli.add_command(reanalyse)

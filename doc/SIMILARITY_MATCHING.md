@@ -172,13 +172,15 @@ J233 because they share the base OS, which is usually noise). `MAX_HASH_ARTEFACT
 already caps the "many near-identical discs all match" explosion; these phases
 address the rest.
 
-### Phase 0 — Evaluate on real data (prerequisite, no code)
+### Phase 0 — Evaluate on real data (prerequisite)
 
-Run `flask rebuild-similarity` on the real collection and measure before tuning:
-match precision (useful vs. noise), large-disc compute time, the distribution of
-disc sizes / file counts, and how often whole-disc matches are *only* base-OS
-overlap. **Every threshold in the later phases is a number only this can set** —
-measure first, then choose.
+Run `flask rebuild-similarity` on the real collection, then **`flask
+similarity-stats`** to gather the evaluation numbers: collection scale, the
+per-artefact file-count / size distributions, candidate-pair cost, score and
+document-frequency histograms, the most ubiquitous files, component coverage, and
+a list of the top matches to hand-label (useful vs. noise). **Every threshold in
+the later phases is a number only this can set** — measure first, then choose.
+The hand-labelled precision sample is the one part the tool can't do for you.
 
 ### Phase 1 — Base-system hashdb exclusion (primary signal fix)
 
