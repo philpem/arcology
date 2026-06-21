@@ -81,6 +81,23 @@ Per-artefact recompute is exact for content changes. **Global** parameter change
 — a hash database's "exclude from similarity" flag, or `SIMILARITY_USE_IDF` —
 affect every score and still require a full `rebuild-similarity`.
 
+## similarity-stats
+
+Read-only diagnostics for evaluating similarity on a real collection (no database
+changes). Reports collection scale and per-artefact size distributions, the
+candidate-pair cost, score and document-frequency histograms, the most ubiquitous
+files, component coverage, and a list of the top matches to hand-label for
+precision. Run after `rebuild-similarity` has populated the cache.
+
+```bash
+flask similarity-stats              # human-readable report
+flask similarity-stats --top 50     # list more ubiquitous hashes / top matches
+flask similarity-stats --json > stats.json   # structured output
+```
+
+These numbers are what the later cost-control work uses to pick its thresholds —
+gather them before tuning anything.
+
 ## backfill-tlsh
 
 Compute artefact-level TLSH fuzzy hashes for existing artefacts (uploaded before
