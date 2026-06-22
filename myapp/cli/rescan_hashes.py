@@ -29,10 +29,10 @@ def rescan_hashes(artefact_uuid, batch_size):
             click.echo(f"ERROR: artefact '{artefact_uuid}' not found.", err=True)
             raise SystemExit(1)
         click.echo(f"Rescanning hashes for artefact {artefact_uuid} ...")
-        updated, total = rescan_hashes_for_artefact(artefact)
+        updated, total = rescan_hashes_for_artefact(artefact, progress=click.echo)
     else:
         click.echo("Rescanning hashes for all artefacts ...")
-        updated, total = rescan_hashes_all(batch_size=batch_size)
+        updated, total = rescan_hashes_all(batch_size=batch_size, progress=click.echo)
 
     click.echo(f"Done. {updated} of {total} files updated.")
 

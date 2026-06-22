@@ -428,7 +428,8 @@ def find_known_files_for_records(records):
     return results
 
 
-def rescan_hashes_for_queryset(query, batch_size=500):
+def rescan_hashes_for_queryset(query, batch_size=500, *, progress=None,
+                               progress_every=50000):
     """Re-link hashes for an ExtractedFile queryset.
 
     Iterates *query* in batches using cursor-based pagination (ID > last
@@ -439,6 +440,11 @@ def rescan_hashes_for_queryset(query, batch_size=500):
     query instead of one query per file.  After processing, refreshes the
     unique_files counter on every affected Partition.
 
+    ``progress`` is an optional ``callable(str)`` for status lines (the CLI
+    passes ``click.echo``); when ``None`` the rescan is silent and no row
+    count is taken.  A progress line is emitted roughly every
+    ``progress_every`` files scanned.
+
     Returns (updated, total) — updated is the number of rows whose
     known_file_id changed.
     """
@@ -446,6 +452,12 @@ def rescan_hashes_for_queryset(query, batch_size=500):
     total = 0
     affected_partition_ids = set()
     last_id = 0
+
+    # Only pay for the upfront COUNT(*) when a caller actually wants progress.
+    total_estimate = query.count() if progress is not None else None
+    if progress is not None:
+        progress(f"  {total_estimate} file(s) to scan …")
+    last_report = 0
 
     while True:
         batch = (
@@ -476,13 +488,20 @@ def rescan_hashes_for_queryset(query, batch_size=500):
 
         db.session.commit()
 
+        if progress is not None and total - last_report >= progress_every:
+            last_report = total
+            pct = f" ({total * 100 // total_estimate}%)" if total_estimate else ""
+            progress(f"  {total}/{total_estimate} scanned{pct}, {updated} relinked")
+
     # Refresh unique_files counters for every touched partition.
+    if progress is not None and affected_partition_ids:
+        progress(f"  refreshing counters for {len(affected_partition_ids)} partition(s) …")
     _refresh_partition_unique_counts(affected_partition_ids)
 
     return updated, total
 
 
-def rescan_hashes_for_artefact(artefact):
+def rescan_hashes_for_artefact(artefact, *, progress=None):
     """Rescan all ExtractedFiles belonging to *artefact* (and its partitions).
 
     After rescanning hashes, also applies any automatic restrictions from
@@ -496,7 +515,7 @@ def rescan_hashes_for_artefact(artefact):
     query = ExtractedFile.query.filter(
         ExtractedFile.partition_id.in_(partition_ids)
     )
-    result = rescan_hashes_for_queryset(query)
+    result = rescan_hashes_for_queryset(query, progress=progress)
 
     # Auto-apply restrictions from flagged hash databases
     apply_database_restrictions(artefact)
@@ -504,12 +523,13 @@ def rescan_hashes_for_artefact(artefact):
     return result
 
 
-def rescan_hashes_all(batch_size=500):
+def rescan_hashes_all(batch_size=500, *, progress=None):
     """Rescan every ExtractedFile in the database.
 
     Returns (updated, total).
     """
-    return rescan_hashes_for_queryset(ExtractedFile.query, batch_size=batch_size)
+    return rescan_hashes_for_queryset(
+        ExtractedFile.query, batch_size=batch_size, progress=progress)
 
 
 def rescan_hashes_for_known_file(kf):
