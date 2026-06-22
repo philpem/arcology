@@ -70,15 +70,40 @@ def _upload_one(client, item_uuid, filepath, label, artefact_type, auto_analyse,
 
 	# Track whether chunked progress was shown (so we know how to print "done.")
 	_chunked = [False]
+	_SPINNER = r'/-\|'
 
-	def _progress(done, total):
+	def _fmt_speed(bps):
+		if bps >= 1024 * 1024:
+			return f'{bps / (1024 * 1024):.1f} MB/s'
+		if bps >= 1024:
+			return f'{bps / 1024:.0f} KB/s'
+		return f'{bps:.0f} B/s'
+
+	def _fmt_eta(secs):
+		secs = int(secs) + 1
+		if secs >= 3600:
+			return f'{secs // 3600}h {(secs % 3600) // 60}m'
+		if secs >= 60:
+			return f'{secs // 60}m {secs % 60}s'
+		return f'{secs}s'
+
+	def _progress(done, total, speed_bps=None, eta_secs=None):
 		_chunked[0] = True
-		print(f"\r{prefix}  [{done}/{total} chunks]", end='', flush=True)
+		info = f'{done}/{total} chunks'
+		if speed_bps is not None:
+			info += f' · {_fmt_speed(speed_bps)}'
+		if eta_secs is not None:
+			info += f' · ETA {_fmt_eta(eta_secs)}'
+		print(f"\r{prefix}  [{info}]", end='', flush=True)
 
 	def _status(state):
 		if state == 'assembling':
 			_chunked[0] = True
-			print(f"\r{prefix}  assembling on server...", end='', flush=True)
+
+	def _tick(n):
+		_chunked[0] = True
+		spin = _SPINNER[n % len(_SPINNER)]
+		print(f"\r{prefix}  {spin} assembling on server...", end='', flush=True)
 
 	result = client.upload_artefact(
 		item_uuid=item_uuid,
@@ -89,6 +114,7 @@ def _upload_one(client, item_uuid, filepath, label, artefact_type, auto_analyse,
 		hints=hints,
 		progress_cb=_progress,
 		status_cb=_status,
+		tick_cb=_tick,
 	)
 
 	# Verify integrity against the server's recorded hashes.

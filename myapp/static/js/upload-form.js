@@ -307,7 +307,7 @@ async function refreshItemChoices(selectId) {
     if (!form || !window.fetch || !window.File || !File.prototype.slice) return;
 
     var THRESHOLD = parseInt(form.dataset.chunkThreshold, 10) || (100 * 1024 * 1024);
-    var CHUNK_SIZE = parseInt(form.dataset.chunkSize, 10) || (50 * 1024 * 1024);
+    var CHUNK_SIZE = parseInt(form.dataset.chunkSize, 10) || (10 * 1024 * 1024);
     var INIT_URL = form.dataset.chunkInitUrl;
     var BASE_URL = INIT_URL.replace(/\/init$/, '');
     // Patient per-chunk retry so a brief server outage (e.g. a redeploy
@@ -318,6 +318,8 @@ async function refreshItemChoices(selectId) {
     var FINALIZE_POLL_MIN_MS = 2000;
     var FINALIZE_POLL_MAX_MS = 10000;
     var FINALIZE_POLL_TIMEOUT_MS = 4 * 3600 * 1000;
+    // Speed/ETA: rolling window over last N completed chunks.
+    var SPEED_WINDOW = 5;
 
     var alertEl = document.getElementById('chunk-upload-alert');
     var progressEl = document.getElementById('chunk-upload-progress');
@@ -341,14 +343,58 @@ async function refreshItemChoices(selectId) {
         if (alertEl) alertEl.classList.add('d-none');
     }
 
-    function setProgress(done, total) {
+    function formatSpeed(bps) {
+        if (bps >= 1024 * 1024) return (bps / (1024 * 1024)).toFixed(1) + ' MB/s';
+        if (bps >= 1024) return Math.round(bps / 1024) + ' KB/s';
+        return Math.round(bps) + ' B/s';
+    }
+
+    function formatEta(secs) {
+        secs = Math.ceil(secs);
+        if (secs >= 3600) {
+            var h = Math.floor(secs / 3600);
+            var m = Math.floor((secs % 3600) / 60);
+            return h + 'h ' + m + 'm';
+        }
+        if (secs >= 60) {
+            var m = Math.floor(secs / 60);
+            var s = secs % 60;
+            return m + 'm ' + s + 's';
+        }
+        return secs + 's';
+    }
+
+    // chunkRecords: [{t, bytes}] for chunks actually sent this session (not resumed).
+    // Used to compute a rolling-window upload speed and ETA.
+    var chunkRecords = [];
+
+    function computeSpeed() {
+        var win = chunkRecords.slice(-SPEED_WINDOW);
+        if (win.length < 2) return null;
+        var elapsed = (win[win.length - 1].t - win[0].t) / 1000;
+        if (elapsed <= 0) return null;
+        var bytes = 0;
+        for (var k = 1; k < win.length; k++) bytes += win[k].bytes;
+        return bytes / elapsed;
+    }
+
+    function setProgress(done, total, fileSize) {
         var pct = total ? Math.round((done / total) * 100) : 0;
         if (barEl) {
             barEl.style.width = pct + '%';
             barEl.setAttribute('aria-valuenow', String(pct));
         }
         if (pctEl) pctEl.textContent = pct + '%';
-        if (statusEl) statusEl.textContent = 'Uploading ' + done + ' / ' + total + ' chunks';
+        if (statusEl) {
+            var text = 'Uploading ' + done + ' / ' + total + ' chunks';
+            var speed = computeSpeed();
+            if (speed !== null) {
+                text += ' · ' + formatSpeed(speed);
+                var remainingBytes = Math.max(0, (fileSize || 0) - done * CHUNK_SIZE);
+                if (remainingBytes > 0) text += ' · ETA ' + formatEta(remainingBytes / speed);
+            }
+            statusEl.textContent = text;
+        }
     }
 
     function sessionKey(file) {
@@ -543,6 +589,7 @@ async function refreshItemChoices(selectId) {
         var storageKey = sessionKey(file);
         var uploadUuid = null;
         var received = [];
+        chunkRecords = [];  // reset speed tracking for this upload session
 
         // Resume a previous interrupted upload of the same file.  Check the
         // finalise state first: an already-finished session must not re-upload
@@ -588,12 +635,14 @@ async function refreshItemChoices(selectId) {
         received.forEach(function (i) { receivedSet[i] = true; });
 
         var done = received.length;
-        setProgress(done, totalChunks);
+        setProgress(done, totalChunks, file.size);
         for (var i = 0; i < totalChunks; i++) {
             if (receivedSet[i]) continue;
             await sendChunk(uploadUuid, i, file);
             done += 1;
-            setProgress(done, totalChunks);
+            var chunkBytes = Math.min(CHUNK_SIZE, file.size - i * CHUNK_SIZE);
+            chunkRecords.push({ t: Date.now(), bytes: chunkBytes });
+            setProgress(done, totalChunks, file.size);
         }
 
         if (statusEl) statusEl.textContent = 'Finishing…';

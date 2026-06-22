@@ -25,7 +25,7 @@ from .config import CONFIG_DIR
 
 # Files larger than this threshold are uploaded in chunks
 CHUNKED_THRESHOLD = 100 * 1024 * 1024   # 100 MB
-CHUNK_SIZE        =  50 * 1024 * 1024   #  50 MB
+CHUNK_SIZE        =  10 * 1024 * 1024   #  10 MB
 
 # (connect, read) timeout applied to every request.  The read timeout only
 # counts time spent waiting for the server to respond, not time spent
@@ -167,12 +167,14 @@ class ArcologyClient:
 	                    artefact_type: str = None, description: str = None,
 	                    auto_analyse: bool = True,
 	                    hints: dict = None,
-	                    progress_cb=None, status_cb=None) -> dict:
+	                    progress_cb=None, status_cb=None, tick_cb=None) -> dict:
 		"""Upload a file as a new artefact.
 
 		Automatically uses chunked upload for files larger than CHUNKED_THRESHOLD.
-		progress_cb(chunks_done, total_chunks) is called after each chunk (chunked only).
+		progress_cb(chunks_done, total_chunks, speed_bps, eta_secs) is called after
+		each chunk (chunked only); speed_bps and eta_secs are None until enough data.
 		status_cb(state) is called while the server assembles a chunked upload.
+		tick_cb(n) is called on each poll iteration during assembly (for spinners).
 
 		hints: optional dict of analysis hints (e.g. {'dfi_clock_mhz': 100}).
 		  Passed as a JSON string in the 'hints' form field.  The server forwards
@@ -192,6 +194,7 @@ class ArcologyClient:
 				hints=hints,
 				progress_cb=progress_cb,
 				status_cb=status_cb,
+				tick_cb=tick_cb,
 			)
 		fields = {'label': label}
 		if artefact_type:
@@ -219,7 +222,7 @@ class ArcologyClient:
 	                             auto_analyse: bool = True,
 	                             hints: dict = None,
 	                             chunk_size: int = CHUNK_SIZE,
-	                             progress_cb=None, status_cb=None) -> dict:
+	                             progress_cb=None, status_cb=None, tick_cb=None) -> dict:
 		"""Upload a large file using the resumable chunked upload protocol.
 
 		Splits the file into chunk_size pieces and uploads each with patient
@@ -230,9 +233,11 @@ class ArcologyClient:
 		never trips the request timeout, and an assembly orphaned by a server
 		redeploy is re-driven on the next poll.
 
-		progress_cb(chunks_done, total_chunks) is called as chunks are uploaded.
+		progress_cb(chunks_done, total_chunks, speed_bps, eta_secs) is called as
+		chunks are uploaded; speed_bps/eta_secs are None until enough data.
 		status_cb(state) is called with the finalise state ('assembling') while
-		the server assembles.  Returns the created artefact dict.
+		the server assembles.  tick_cb(n) is called on each poll iteration.
+		Returns the created artefact dict.
 		"""
 		file_size = os.path.getsize(filepath)
 		filename = os.path.basename(filepath)
@@ -266,19 +271,38 @@ class ArcologyClient:
 
 		# Upload the chunks the server is still missing, seeking past those it
 		# already has so a resume re-reads only what it must.
+		_SPEED_WINDOW = 5
+		chunk_records: list[dict] = []  # {t, bytes} for chunks actually sent this session
+
+		def _compute_speed_eta(done: int) -> tuple:
+			win = chunk_records[-_SPEED_WINDOW:]
+			if len(win) < 2:
+				return None, None
+			elapsed = win[-1]['t'] - win[0]['t']
+			if elapsed <= 0:
+				return None, None
+			sent_bytes = sum(r['bytes'] for r in win[1:])
+			speed = sent_bytes / elapsed  # bytes/sec
+			remaining = max(0, file_size - done * chunk_size)
+			eta = remaining / speed if speed > 0 else None
+			return speed, eta
+
 		with open(filepath, 'rb') as f:
 			for chunk_index in range(total_chunks):
 				if chunk_index in received:
 					if progress_cb:
-						progress_cb(chunk_index + 1, total_chunks)
+						progress_cb(chunk_index + 1, total_chunks, None, None)
 					continue
 				f.seek(chunk_index * chunk_size)
-				self._upload_chunk_with_retry(upload_uuid, chunk_index, f.read(chunk_size))
+				chunk_data = f.read(chunk_size)
+				self._upload_chunk_with_retry(upload_uuid, chunk_index, chunk_data)
+				chunk_records.append({'t': time.monotonic(), 'bytes': len(chunk_data)})
+				speed, eta = _compute_speed_eta(chunk_index + 1)
 				if progress_cb:
-					progress_cb(chunk_index + 1, total_chunks)
+					progress_cb(chunk_index + 1, total_chunks, speed, eta)
 
 		# Drive finalise asynchronously and wait for the artefact.
-		artefact = self._complete_and_wait(upload_uuid, status_cb=status_cb)
+		artefact = self._complete_and_wait(upload_uuid, status_cb=status_cb, tick_cb=tick_cb)
 		self._clear_resume(resume_key)
 		return artefact
 
@@ -309,7 +333,7 @@ class ArcologyClient:
 		"""GET the async finalise status for a chunked upload session."""
 		return self.get(f'uploads/chunked/{upload_uuid}/complete/status')
 
-	def _complete_and_wait(self, upload_uuid: str, status_cb=None) -> dict:
+	def _complete_and_wait(self, upload_uuid: str, status_cb=None, tick_cb=None) -> dict:
 		"""Request async finalise and poll until the artefact exists.
 
 		Falls back gracefully to the synchronous response of an older server that
@@ -322,16 +346,18 @@ class ArcologyClient:
 			return self._handle_response(resp)  # old server: synchronous artefact
 		if resp.status_code != 202:
 			return self._handle_response(resp)  # raises on error
-		return self._poll_finalize(upload_uuid, status_cb=status_cb)
+		return self._poll_finalize(upload_uuid, status_cb=status_cb, tick_cb=tick_cb)
 
-	def _poll_finalize(self, upload_uuid: str, status_cb=None) -> dict:
+	def _poll_finalize(self, upload_uuid: str, status_cb=None, tick_cb=None) -> dict:
 		"""Poll /complete/status until done (returns artefact) or failed (raises).
 
 		Transient connection errors are tolerated so a redeploy mid-finalise does
 		not abort the upload; a 404 means the session expired before completing.
+		tick_cb(n) is called on each iteration (for CLI spinners etc.).
 		"""
 		interval = FINALIZE_POLL_MIN_INTERVAL
 		deadline = time.time() + FINALIZE_POLL_TIMEOUT
+		tick = 0
 		while time.time() < deadline:
 			try:
 				status = self._finalize_status(upload_uuid)
@@ -341,10 +367,16 @@ class ArcologyClient:
 						'Upload session expired before finalise completed', 404) from exc
 				time.sleep(interval)
 				interval = min(interval * 2, FINALIZE_POLL_MAX_INTERVAL)
+				tick += 1
+				if tick_cb:
+					tick_cb(tick)
 				continue
 			except requests.RequestException:
 				time.sleep(interval)
 				interval = min(interval * 2, FINALIZE_POLL_MAX_INTERVAL)
+				tick += 1
+				if tick_cb:
+					tick_cb(tick)
 				continue
 			state = status.get('state')
 			if state == 'done':
@@ -356,6 +388,9 @@ class ArcologyClient:
 				status_cb(state)
 			time.sleep(interval)
 			interval = min(interval * 2, FINALIZE_POLL_MAX_INTERVAL)
+			tick += 1
+			if tick_cb:
+				tick_cb(tick)
 		raise ArcologyError('Timed out waiting for the server to finalise the upload')
 
 	# ---- Resumable-upload bookkeeping ----
