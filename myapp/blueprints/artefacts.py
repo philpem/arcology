@@ -2586,7 +2586,7 @@ def upload(item_id):
 # chunks; smaller files use the plain multipart form POST.  Both are overridable
 # via myapp.cfg or environment variables.
 _DEFAULT_CHUNK_THRESHOLD = 100 * 1024 * 1024  # 100 MB
-_DEFAULT_CHUNK_SIZE = 50 * 1024 * 1024  # 50 MB
+_DEFAULT_CHUNK_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
 def _chunk_threshold() -> int:
