@@ -89,7 +89,7 @@ from ..utils.blobs import artefact_blob, artefact_blob_storage_path, assign_blob
 from ..utils.db_helpers import apply_statement_timeout as _apply_statement_timeout
 from ..utils.db_helpers import get_by_id_or_404 as _get_by_id_or_404
 from ..utils.db_helpers import get_by_uuid_or_404 as _get_by_uuid_or_404
-from ..utils.db_helpers import is_statement_timeout
+from ..utils.db_helpers import is_foreign_key_violation, is_statement_timeout
 from ..utils.enum_display import enum_value
 from ..utils.item_helpers import assign_item_fields, assign_item_tags
 from ..utils.privacy import recompute_item_privacy
@@ -112,6 +112,12 @@ from ..visibility import (
 )
 
 ROUTENAME = __name__.replace('.', '_')
+
+# How many times a similarity step retries on a residual foreign-key violation
+# (a candidate component that genuinely disappeared mid-step) before asking the
+# worker to subdivide the batch.  Component ids are otherwise stable across
+# refreshes, so this is a rare backstop; a small bound is ample.
+SIMILARITY_STEP_FK_RETRIES = 5
 
 blueprint = Blueprint(ROUTENAME, __name__, url_prefix='/api')
 
@@ -2770,18 +2776,38 @@ def artefact_similarity_step(uuid):
         similarity_reset(artefact.id)
 
     budget = current_app.config.get('WORKER_STEP_DEADLINE_SECONDS', 20)
-    _apply_statement_timeout(budget)
-    try:
-        result = similarity_match_step(artefact.id, cursor, limit=limit)
-    except OperationalError as exc:
-        db.session.rollback()
-        if not is_statement_timeout(exc):
-            raise
+    # Component ids are stable across refreshes (similarity_reset reconciles rows
+    # in place rather than delete+recreate) and pairs insert with ON CONFLICT DO
+    # NOTHING, so the foreign-key and symmetric-duplicate races are normally
+    # prevented outright.  A foreign-key violation can still slip through the
+    # narrow window where a component genuinely disappears (its files were
+    # removed) while a concurrent step references it: the row is gone, so a fresh
+    # re-run simply skips it.  Retry a bounded number of times on a *foreign-key*
+    # violation only — any other IntegrityError is a real bug and must surface.
+    result = None
+    for _attempt in range(SIMILARITY_STEP_FK_RETRIES):
+        _apply_statement_timeout(budget)
+        try:
+            result = similarity_match_step(artefact.id, cursor, limit=limit)
+            if result.get('done'):
+                # The cache for this artefact is now fully recomputed.
+                clear_similarity_dirty(artefact.id, commit=False)
+            db.session.commit()
+            break
+        except OperationalError as exc:
+            db.session.rollback()
+            if not is_statement_timeout(exc):
+                raise
+            return jsonify({'timed_out': True})
+        except IntegrityError as exc:
+            db.session.rollback()
+            if not is_foreign_key_violation(exc):
+                raise
+            # Lost the race with a concurrent rebuild; re-read and retry.
+            result = None
+    if result is None:
+        # Still racing after every attempt — let the worker subdivide and retry.
         return jsonify({'timed_out': True})
-    if result.get('done'):
-        # The cache for this artefact is now fully recomputed.
-        clear_similarity_dirty(artefact.id, commit=False)
-    db.session.commit()
     result['progress_label'] = f"Finding similar artefacts for '{artefact.label}'"
     return jsonify(result)
 

@@ -28,6 +28,7 @@ Results are cached in the ``ArtefactSimilarity`` / ``ArtefactComponent`` /
 """
 
 import math
+from datetime import datetime, timezone
 from itertools import combinations
 from flask import current_app
 from sqlalchemy import func, or_
@@ -44,7 +45,14 @@ from ..database import (
     Partition,
     db,
 )
+from ..utils.db_helpers import insert_ignore_conflict
 from ..visibility import artefact_visibility_clause
+
+# Unique-pair constraint columns, used as the ON CONFLICT target so concurrent
+# inserts of the symmetric pair (A vs B and B vs A) collapse to one row instead
+# of raising.  Mirror uq_artefact_similarity_pair / uq_component_similarity_pair.
+_ARTEFACT_PAIR_COLS = ("artefact_a_id", "artefact_b_id")
+_COMPONENT_PAIR_COLS = ("component_a_id", "component_b_id")
 
 # Pairs scoring below this size-weighted Jaccard floor are not cached, to keep
 # the tables small.  Tune during evaluation.
@@ -344,14 +352,19 @@ def rebuild_all(progress=None) -> dict:
 
     pairs = _pairs_from_inverted(inverted)
     _note(f"Comparing {len(pairs)} candidate artefact pair(s) …")
-    artefact_pairs = 0
+    now = datetime.now(timezone.utc)
+    artefact_rows = []
     for i, (a, b) in enumerate(pairs, 1):
         metrics = weighted_jaccard(artefact_sets[a], artefact_sets[b], weights)
         if metrics is not None and metrics["score"] >= MIN_STORE_SCORE:
-            db.session.add(ArtefactSimilarity(artefact_a_id=a, artefact_b_id=b, **metrics))
-            artefact_pairs += 1
+            artefact_rows.append(
+                {"artefact_a_id": a, "artefact_b_id": b, "computed_at": now, **metrics})
         if progress and i % _PROGRESS_EVERY == 0:
-            _note(f"  artefact pairs: {i}/{len(pairs)} compared, {artefact_pairs} stored")
+            _note(f"  artefact pairs: {i}/{len(pairs)} compared, {len(artefact_rows)} stored")
+    # ON CONFLICT DO NOTHING tolerates a row a concurrent worker step inserted
+    # after the wholesale delete above (the runner rebuild is not isolated from
+    # worker-driven incremental refreshes).
+    artefact_pairs = insert_ignore_conflict(ArtefactSimilarity, artefact_rows, _ARTEFACT_PAIR_COLS)
 
     _note("Building components …")
     component_pairs = _rebuild_components(rows, weights, progress=progress)
@@ -383,51 +396,76 @@ def _components_from_rows(rows):
 
 
 def _rebuild_components(rows, weights=None, progress=None) -> int:
-    """Rebuild component tables from the same file rows used for artefacts."""
+    """Rebuild component tables from the same file rows used for artefacts.
+
+    Components are reconciled **in place** per artefact (:func:`_sync_components`)
+    so their ids stay stable across rebuilds — a concurrent worker similarity
+    step keeps valid foreign-key targets.  Only the pair rows are recomputed.
+    """
     def _note(msg):
         if progress:
             progress(msg)
 
-    # CASCADE handles ComponentSimilarity, but delete explicitly for SQLite
-    # where ondelete is not always enforced.
+    # The pair rows are fully recomputed below; clear them first.  Components are
+    # NOT wiped — they are reconciled in place to preserve ids.
     ComponentSimilarity.query.delete()
-    ArtefactComponent.query.delete()
     db.session.flush()
+
+    # Group this rebuild's desired components by artefact, then sync each artefact
+    # (in-place upsert).  Track the content set and id of every desired component.
+    desired_by_artefact: dict[int, list] = {}
+    members_by_key: dict[tuple, dict] = {}
+    for partition_id, artefact_id, root, name, member in _components_from_rows(rows):
+        desired_by_artefact.setdefault(artefact_id, []).append(
+            (partition_id, root, name, len(member), sum(member.values())))
+        members_by_key[(artefact_id, partition_id, root)] = member
+
+    # Pre-fetch every existing component once and group by artefact, so the
+    # per-artefact sync below does not issue one SELECT per artefact.
+    existing_by_artefact: dict[int, list] = {}
+    for comp in ArtefactComponent.query.all():
+        existing_by_artefact.setdefault(comp.artefact_id, []).append(comp)
 
     component_sets: dict[int, dict] = {}
     component_artefact: dict[int, int] = {}
     inverted: dict[str, set] = {}
+    for artefact_id, desired in desired_by_artefact.items():
+        id_map = _sync_components(
+            artefact_id, desired, existing_rows=existing_by_artefact.get(artefact_id, []))
+        for (partition_id, root) in id_map:
+            comp_id = id_map[(partition_id, root)]
+            member = members_by_key[(artefact_id, partition_id, root)]
+            component_sets[comp_id] = member
+            component_artefact[comp_id] = artefact_id
+            for h in member:
+                inverted.setdefault(h, set()).add(comp_id)
 
-    for partition_id, artefact_id, root, name, member in _components_from_rows(rows):
-        comp = ArtefactComponent(
-            artefact_id=artefact_id,
-            partition_id=partition_id,
-            root_path=root,
-            name=name,
-            file_count=len(member),
-            total_bytes=sum(member.values()),
-        )
-        db.session.add(comp)
-        db.session.flush()  # assign comp.id
-        component_sets[comp.id] = member
-        component_artefact[comp.id] = artefact_id
-        for h in member:
-            inverted.setdefault(h, set()).add(comp.id)
+    # Artefacts that previously had components but no longer qualify for any are
+    # not visited above, so drop their now-stale component rows explicitly.
+    stale_artefacts = [
+        aid for aid in existing_by_artefact if aid not in desired_by_artefact
+    ]
+    if stale_artefacts:
+        ArtefactComponent.query.filter(
+            ArtefactComponent.artefact_id.in_(stale_artefacts)
+        ).delete(synchronize_session=False)
+    db.session.flush()
 
     pairs = _pairs_from_inverted(inverted)
     _note(f"Built {len(component_sets)} component(s); comparing {len(pairs)} pair(s) …")
-    component_pairs = 0
+    now = datetime.now(timezone.utc)
+    component_rows = []
     for i, (a, b) in enumerate(pairs, 1):
         # Skip pairs within the same artefact (self-similar components are noise).
         if component_artefact[a] != component_artefact[b]:
             metrics = weighted_jaccard(component_sets[a], component_sets[b], weights)
             if metrics is not None and metrics["score"] >= MIN_STORE_SCORE:
-                db.session.add(ComponentSimilarity(component_a_id=a, component_b_id=b, **metrics))
-                component_pairs += 1
+                component_rows.append(
+                    {"component_a_id": a, "component_b_id": b, "computed_at": now, **metrics})
         if progress and i % _PROGRESS_EVERY == 0:
-            _note(f"  component pairs: {i}/{len(pairs)} compared, {component_pairs} stored")
+            _note(f"  component pairs: {i}/{len(pairs)} compared, {len(component_rows)} stored")
 
-    return component_pairs
+    return insert_ignore_conflict(ComponentSimilarity, component_rows, _COMPONENT_PAIR_COLS)
 
 
 # ---------------------------------------------------------------------------
@@ -503,20 +541,88 @@ def _distinctive_hashes(df: dict) -> set:
 SIMILARITY_STEP_CANDIDATES = 200
 
 
+def _sync_components(artefact_id, desired, existing_rows=None) -> dict:
+    """Reconcile an artefact's ``ArtefactComponent`` rows to *desired*, in place.
+
+    ``desired`` is an iterable of ``(partition_id, root_path, name, file_count,
+    total_bytes)``.  Existing rows are matched by their natural key
+    ``(partition_id, root_path)`` and **updated in place** (so their ``id`` is
+    preserved); genuinely new components are inserted and components no longer
+    present are deleted.  Keeping ids stable is what makes the cross-artefact
+    ``ComponentSimilarity`` foreign keys survive a concurrent refresh — a
+    delete+recreate would hand out fresh ids and orphan another worker's
+    in-flight pair insert.
+
+    A DB unique constraint on the natural key is deliberately not relied upon
+    (``root_path`` is up to 1000 chars, which can exceed PostgreSQL's btree
+    index row-size limit): a given artefact is never refreshed concurrently
+    (SIMILARITY_REFRESH jobs are deduped) and ``partition_id`` is private to one
+    artefact, so two transactions can never insert the same key.  Returns a
+    ``{(partition_id, root_path): component_id}`` map.  Does not commit.
+
+    ``existing_rows`` lets a bulk caller (the full rebuild) pass this artefact's
+    pre-fetched ``ArtefactComponent`` rows so we don't issue one query per
+    artefact; when ``None`` we load them ourselves (the single-artefact path).
+    """
+    if existing_rows is None:
+        existing_rows = ArtefactComponent.query.filter_by(artefact_id=artefact_id).all()
+    existing = {(c.partition_id, c.root_path): c for c in existing_rows}
+    now = datetime.now(timezone.utc)
+    id_map: dict[tuple, int] = {}
+    seen: set[tuple] = set()
+    for partition_id, root_path, name, file_count, total_bytes in desired:
+        key = (partition_id, root_path)
+        seen.add(key)
+        comp = existing.get(key)
+        if comp is None:
+            comp = ArtefactComponent(
+                artefact_id=artefact_id, partition_id=partition_id, root_path=root_path,
+                name=name, file_count=file_count, total_bytes=total_bytes, computed_at=now)
+            db.session.add(comp)
+            db.session.flush()  # assign comp.id
+        else:
+            comp.name = name
+            comp.file_count = file_count
+            comp.total_bytes = total_bytes
+            comp.computed_at = now
+        id_map[key] = comp.id
+    # Drop components that no longer exist (CASCADE clears their pair rows).
+    for key, comp in existing.items():
+        if key not in seen:
+            db.session.delete(comp)
+    db.session.flush()
+    return id_map
+
+
+def _desired_components(artefact_id):
+    """``(partition_id, root_path, name, file_count, total_bytes)`` tuples for one
+    artefact's current components, derived from its extracted files."""
+    return [
+        (partition_id, root, name, len(member), sum(member.values()))
+        for partition_id, _aid, root, name, member
+        in _components_from_rows(_files_for_artefact(artefact_id))
+    ]
+
+
 def similarity_reset(artefact_id) -> None:
-    """Clear an artefact's cached similarity rows and (re)create its components.
+    """Clear an artefact's cached similarity rows and reconcile its components.
 
     The first phase of an incremental refresh: idempotent, commits its own
     transaction (so locks release before the matching scan, and so a restarted
-    job re-runs cleanly from cursor 0).  Matching is then done by
-    :func:`similarity_match_step`.
+    job re-runs cleanly from cursor 0).  Components are reconciled **in place**
+    (:func:`_sync_components`) so their ids stay stable across refreshes;
+    matching is then done by :func:`similarity_match_step`.
     """
     aid = artefact_id
     ArtefactSimilarity.query.filter(
         or_(ArtefactSimilarity.artefact_a_id == aid, ArtefactSimilarity.artefact_b_id == aid)
     ).delete(synchronize_session=False)
 
-    comp_ids = [c.id for c in ArtefactComponent.query.filter_by(artefact_id=aid).all()]
+    # Reconcile components in place (stable ids), then clear the (possibly stale)
+    # component-pair rows for the resulting set so the match step recomputes them.
+    # The id map already holds the post-sync component ids, so no re-query.
+    id_map = _sync_components(aid, _desired_components(aid))
+    comp_ids = list(id_map.values())
     if comp_ids:
         ComponentSimilarity.query.filter(
             or_(
@@ -524,18 +630,6 @@ def similarity_reset(artefact_id) -> None:
                 ComponentSimilarity.component_b_id.in_(comp_ids),
             )
         ).delete(synchronize_session=False)
-        ArtefactComponent.query.filter_by(artefact_id=aid).delete(synchronize_session=False)
-        db.session.flush()
-
-    for partition_id, _aid, root, name, member in _components_from_rows(_files_for_artefact(aid)):
-        db.session.add(ArtefactComponent(
-            artefact_id=aid,
-            partition_id=partition_id,
-            root_path=root,
-            name=name,
-            file_count=len(member),
-            total_bytes=sum(member.values()),
-        ))
     db.session.commit()
 
 
@@ -589,17 +683,25 @@ def similarity_match_step(artefact_id, cursor=0, *, limit=SIMILARITY_STEP_CANDID
             df = {**df, **_document_frequencies(extra)}
         weights = _idf_weights(df, _total_artefact_docs())
 
-    artefact_pairs = 0
+    now = datetime.now(timezone.utc)
+    artefact_rows = []
     for oid in batch:
         metrics = weighted_jaccard(my_set, cand_sets.get(oid, {}), weights)
         if metrics is None or metrics["score"] < MIN_STORE_SCORE:
             continue
         lo, hi = (aid, oid) if aid < oid else (oid, aid)
-        db.session.add(ArtefactSimilarity(artefact_a_id=lo, artefact_b_id=hi, **metrics))
-        artefact_pairs += 1
+        artefact_rows.append(
+            {"artefact_a_id": lo, "artefact_b_id": hi, "computed_at": now, **metrics})
+    # ON CONFLICT DO NOTHING: the symmetric pair may be inserted concurrently by
+    # the other artefact's own refresh — collapse to one row instead of raising.
+    # Count rows actually inserted (conflicts excluded) so progress isn't inflated.
+    artefact_pairs = insert_ignore_conflict(ArtefactSimilarity, artefact_rows, _ARTEFACT_PAIR_COLS)
 
-    # Component level: this artefact's components (created by similarity_reset)
-    # against the batch's components.
+    # Component level: this artefact's components (reconciled by similarity_reset)
+    # against the batch's components.  Component ids are stable across refreshes
+    # (similarity_reset updates rows in place rather than delete+recreate), so a
+    # candidate refreshed concurrently keeps the same component rows and the
+    # foreign-key target of the inserts below cannot vanish mid-step.
     my_partition_files: dict[int, list] = {}
     for _a, partition_id, path, h, size in my_rows:
         my_partition_files.setdefault(partition_id, []).append((path, h, size or 0))
@@ -616,14 +718,17 @@ def similarity_match_step(artefact_id, cursor=0, *, limit=SIMILARITY_STEP_CANDID
             c.id: _component_set(cand_partition_files.get(c.partition_id, []), c.root_path)
             for c in cand_comps
         }
+        component_rows = []
         for comp, member in my_components:
             for cc in cand_comps:
                 metrics = weighted_jaccard(member, comp_sets[cc.id], weights)
                 if metrics is None or metrics["score"] < MIN_STORE_SCORE or metrics["shared_files"] == 0:
                     continue
                 lo, hi = (comp.id, cc.id) if comp.id < cc.id else (cc.id, comp.id)
-                db.session.add(ComponentSimilarity(component_a_id=lo, component_b_id=hi, **metrics))
-                component_pairs += 1
+                component_rows.append(
+                    {"component_a_id": lo, "component_b_id": hi, "computed_at": now, **metrics})
+        component_pairs = insert_ignore_conflict(
+            ComponentSimilarity, component_rows, _COMPONENT_PAIR_COLS)
 
     return {"done": len(batch) == len(remaining), "next_cursor": batch[-1],
             "processed": len(batch), "artefact_pairs": artefact_pairs,

@@ -1388,7 +1388,9 @@ class ArtefactComponent(db.Model):
 
     Captures the content set of every file beneath a root directory so the same
     application can be matched across different discs regardless of the
-    surrounding disc content.  Regenerated wholesale on each rebuild.
+    surrounding disc content.  Reconciled in place on each refresh (keyed by
+    ``(partition_id, root_path)``) so the row id stays stable, keeping the
+    cross-artefact ``ComponentSimilarity`` foreign keys valid under concurrency.
     """
     __tablename__ = "artefact_components"
     __table_args__ = (
