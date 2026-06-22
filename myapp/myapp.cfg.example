@@ -106,6 +106,12 @@ WORKER_STEP_DEADLINE_SECONDS = 20
 # Off by default; changing it requires a full `flask rebuild-similarity`.
 #SIMILARITY_USE_IDF = False
 
+# Minimum number of artefacts in the collection before the per-artefact
+# "Distinctive content" panel (what a disc has that others don't) is shown.
+# Below this, document frequency is too sparse to be meaningful (everything
+# looks unique).  Computed by `flask rebuild-similarity`.
+#SIMILARITY_MIN_DISTINCTIVENESS_DOCS = 50
+
 # Priority assigned to analyses queued via the web UI (uploads, re-analyse
 # button).  Workers pick up jobs in order of priority DESC, created_at ASC.
 # Default 10 (ANALYSIS_PRIORITY_HIGH) keeps interactive web uploads ahead

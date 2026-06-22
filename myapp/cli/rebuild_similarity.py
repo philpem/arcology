@@ -20,7 +20,8 @@ def rebuild_similarity():
     result = rebuild_all(progress=click.echo)
     click.echo(
         f"Done. {result['artefact_pairs']} artefact pair(s), "
-        f"{result['component_pairs']} component pair(s) cached."
+        f"{result['component_pairs']} component pair(s), "
+        f"{result.get('distinctiveness_rows', 0)} distinctiveness row(s) cached."
     )
 
 # vim: ts=4 sw=4 et

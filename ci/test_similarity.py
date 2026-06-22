@@ -130,6 +130,7 @@ class _SimilarityBase(unittest.TestCase):
         from myapp.database import (
             Artefact,
             ArtefactComponent,
+            ArtefactDistinctiveness,
             ArtefactSimilarity,
             ComponentSimilarity,
             ExtractedFile,
@@ -144,6 +145,7 @@ class _SimilarityBase(unittest.TestCase):
         # Clean slate each test.  ExtractedFile before KnownFile so the
         # known_file_id FK (ON DELETE SET NULL) doesn't block the delete.
         for model in (ComponentSimilarity, ArtefactSimilarity, ArtefactComponent,
+                      ArtefactDistinctiveness,
                       ExtractedFile, KnownFile, HashDatabase,
                       Partition, Artefact, Item, Platform):
             model.query.delete()
@@ -826,6 +828,63 @@ class TestBaseSystemExclusion(_SimilarityBase):
         self.assertEqual(len(matches), 1)
         # The shared !ArtWorks dominates the (OS-excluded) score.
         self.assertGreater(matches[0][1].score, 0.99)
+
+
+class TestDistinctiveness(_SimilarityBase):
+    """Per-artefact distinctiveness (the inverse lens of similarity)."""
+
+    def test_unique_vs_stock_disc(self):
+        from myapp.services.similarity import artefact_distinctiveness, rebuild_all
+        # 'os' is shared by all three discs; each disc also has unique content.
+        shared = [('!System/Mod', 'os', 50000)]
+        unique = _add_artefact(self.db, self.item, 'Unique',
+                               [('a', 'u1', 40000), ('b', 'u2', 40000)])
+        stock = _add_artefact(self.db, self.item, 'Stock', shared + [('x', 'sx', 100)])
+        _add_artefact(self.db, self.item, 'Stock2', shared + [('y', 'sy', 100)])
+        rebuild_all()
+
+        du = artefact_distinctiveness(unique)
+        ds = artefact_distinctiveness(stock)
+        # Unique disc: both files found nowhere else.
+        self.assertEqual(du['unique_files'], 2)
+        self.assertEqual(du['total_files'], 2)
+        # Stock disc: the OS module is shared, only its tiny 'x' is unique.
+        self.assertEqual(ds['unique_files'], 1)
+        # The all-unique disc is markedly more distinctive than the stock one.
+        self.assertGreater(du['distinctiveness'], ds['distinctiveness'])
+        self.assertGreater(du['distinctiveness'], 0.9)
+
+    def test_top_files_lists_rarest(self):
+        from myapp.services.similarity import artefact_distinctiveness, rebuild_all
+        shared = [('common', 'c', 1000)]
+        a = _add_artefact(self.db, self.item, 'A', shared + [('rare', 'r', 9000)])
+        _add_artefact(self.db, self.item, 'B', shared + [('other', 'o', 5000)])
+        rebuild_all()
+        d = artefact_distinctiveness(a)
+        paths = [f['path'] for f in d['top_files']]
+        # The rarest (df==1) file is listed; df is recorded.
+        self.assertIn('rare', paths)
+        rare = next(f for f in d['top_files'] if f['path'] == 'rare')
+        self.assertEqual(rare['df'], 1)
+
+    def test_rebuild_replaces_rows(self):
+        from myapp.database import ArtefactDistinctiveness
+        from myapp.services.similarity import (
+            distinctiveness_doc_count,
+            rebuild_all,
+        )
+        _add_artefact(self.db, self.item, 'A', [('f', 'f', 1000)])
+        _add_artefact(self.db, self.item, 'B', [('g', 'g', 1000)])
+        rebuild_all()
+        self.assertEqual(distinctiveness_doc_count(), 2)
+        # A second rebuild replaces rather than duplicates.
+        rebuild_all()
+        self.assertEqual(ArtefactDistinctiveness.query.count(), 2)
+
+    def test_absent_when_not_built(self):
+        from myapp.services.similarity import artefact_distinctiveness
+        a = _add_artefact(self.db, self.item, 'A', [('f', 'f', 1000)])
+        self.assertIsNone(artefact_distinctiveness(a))
 
 
 class TestTlshHelper(unittest.TestCase):

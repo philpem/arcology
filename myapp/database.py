@@ -1434,4 +1434,34 @@ class ComponentSimilarity(db.Model):
     component_b: Mapped["ArtefactComponent"] = relationship(foreign_keys=[component_b_id])
 
 
+class ArtefactDistinctiveness(db.Model):
+    """Cached "how unusual is this artefact" metric (collection-relative).
+
+    The inverse lens of similarity: rather than what an artefact shares with
+    others, this captures what it has that others *don't*, using the same
+    document-frequency machinery the similarity rebuild already computes.
+
+    Because document frequency is collection-wide it drifts as artefacts are
+    added, so this is recomputed wholesale by ``rebuild_all`` (not by the
+    per-artefact incremental refresh) — one row per artefact, replaced each
+    rebuild.
+    """
+    __tablename__ = "artefact_distinctiveness"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    artefact_id: Mapped[int] = mapped_column(
+        ForeignKey("artefacts.id", ondelete="CASCADE"), unique=True, index=True)
+    total_files: Mapped[int] = mapped_column(Integer, nullable=False)   # distinct content hashes
+    total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    unique_files: Mapped[int] = mapped_column(Integer, nullable=False)  # df == 1 (nowhere else)
+    unique_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # IDF-weighted fraction of the artefact that is rare, 0..1 (1 = all unique).
+    distinctiveness: Mapped[float] = mapped_column(Float, nullable=False)
+    # JSON: the rarest files, for the "distinctive contents" display.
+    top_files: Mapped[str | None] = mapped_column(Text, nullable=True)
+    computed_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    artefact: Mapped["Artefact"] = relationship()
+
+
 # vim: ts=4 sw=4 et

@@ -83,7 +83,9 @@ from ..services.restrictions import (
     grantable_bypass_rtypes,
 )
 from ..services.similarity import (
+    artefact_distinctiveness,
     component_match_counts,
+    distinctiveness_doc_count,
     matches_for_component,
     similar_artefacts,
     similar_components,
@@ -2262,6 +2264,9 @@ def _render_artefact_view(artefact):
     bypass_ctx = _view_admin_bypass(artefact, all_artefact_ids)
     similar_preview = similar_artefacts(artefact, current_user, limit=SIMILAR_SIDEBAR_LIMIT)
     similar_folder_counts = component_match_counts(all_artefact_ids, current_user)
+    distinctiveness = None
+    if distinctiveness_doc_count() >= int_config('SIMILARITY_MIN_DISTINCTIVENESS_DOCS', 50):
+        distinctiveness = artefact_distinctiveness(artefact)
 
     ctx = dict(
         artefact=artefact,
@@ -2285,6 +2290,7 @@ def _render_artefact_view(artefact):
         sidecar_entries=sidecar_entries,
         similar_preview=similar_preview,
         similar_folder_counts=similar_folder_counts,
+        distinctiveness=distinctiveness,
         move_item_choices=_move_item_choices(artefact),
     )
     ctx.update(analyses_ctx)

@@ -27,6 +27,8 @@ Results are cached in the ``ArtefactSimilarity`` / ``ArtefactComponent`` /
 ``ComponentSimilarity`` tables, rebuilt by ``flask rebuild-similarity``.
 """
 
+import heapq
+import json
 import math
 from datetime import datetime, timezone
 from itertools import combinations
@@ -36,6 +38,7 @@ from arcology_shared.fuzzyhash import HAS_TLSH, TLSH_SIMILAR_DISTANCE, tlsh_diff
 from ..database import (
     Artefact,
     ArtefactComponent,
+    ArtefactDistinctiveness,
     ArtefactSimilarity,
     ComponentSimilarity,
     ExtractedFile,
@@ -83,6 +86,10 @@ MAX_COMPONENTS_PER_PARTITION = 500
 # surface via their rarer shared files (and ubiquitous files still count toward
 # the score of pairs found that way).
 MAX_HASH_ARTEFACTS = 50
+
+# Number of rarest (highest-IDF) files stored per artefact for the "distinctive
+# contents" display.
+TOP_DISTINCTIVE_FILES = 20
 
 # Cap on extracted-file candidates scanned for a TLSH near-duplicate lookup.
 TLSH_CANDIDATE_LIMIT = 5000
@@ -369,12 +376,122 @@ def rebuild_all(progress=None) -> dict:
     _note("Building components …")
     component_pairs = _rebuild_components(rows, weights, progress=progress)
 
+    _note("Computing distinctiveness …")
+    distinctiveness_rows = _rebuild_distinctiveness(rows, artefact_sets, inverted)
+
     # A full rebuild reconciles the whole cache, so nothing is stale afterwards.
     db.session.query(Artefact).filter(Artefact.similarity_dirty.is_(True)).update(
         {Artefact.similarity_dirty: False}, synchronize_session=False)
 
     db.session.commit()
-    return {"artefact_pairs": artefact_pairs, "component_pairs": component_pairs}
+    return {"artefact_pairs": artefact_pairs, "component_pairs": component_pairs,
+            "distinctiveness_rows": distinctiveness_rows}
+
+
+# ---------------------------------------------------------------------------
+# Distinctiveness — "what's unusual about this artefact" (inverse of similarity)
+# ---------------------------------------------------------------------------
+
+def _rebuild_distinctiveness(rows, artefact_sets, inverted) -> int:
+    """Recompute the per-artefact distinctiveness cache from the rebuild's
+    in-memory content sets and inverted index.
+
+    Distinctiveness is the IDF-weighted fraction of an artefact's content that is
+    rare across the collection: ``sum(size * idf) / (idf_max * total_bytes)``,
+    where ``idf = log(1 + N/df)`` and ``idf_max = log(1 + N)`` (a file unique to
+    one artefact). 1.0 means every file is found nowhere else; ~0 means a stock
+    install whose every file is ubiquitous.
+    """
+    ArtefactDistinctiveness.query.delete()
+    db.session.flush()
+    n_docs = len(artefact_sets)
+    if n_docs == 0:
+        return 0
+    idf_max = math.log(1.0 + n_docs)
+
+    # One pass over rows: keep each artefact's rarest files (with a path) in a
+    # bounded min-heap keyed by (idf, size).  No per-artefact seen-set — duplicate
+    # hashes are collapsed when the heap is finalised below.
+    top: dict[int, list] = {}
+    for aid, _pid, path, h, size in rows:
+        df = len(inverted.get(h) or ()) or 1
+        idf = math.log(1.0 + n_docs / df)
+        entry = (idf, size or 0, path, h, df)
+        heap = top.setdefault(aid, [])
+        if len(heap) < TOP_DISTINCTIVE_FILES:
+            heapq.heappush(heap, entry)
+        elif entry > heap[0]:
+            heapq.heapreplace(heap, entry)
+
+    now = datetime.now(timezone.utc)
+    out = []
+    for aid, hset in artefact_sets.items():
+        total_bytes = 0
+        sum_idf = 0.0
+        unique_files = 0
+        unique_bytes = 0
+        for h, sz in hset.items():
+            sz = sz or 0
+            df = len(inverted[h])
+            total_bytes += sz
+            sum_idf += sz * math.log(1.0 + n_docs / df)
+            if df == 1:
+                unique_files += 1
+                unique_bytes += sz
+        score = (sum_idf / (idf_max * total_bytes)) if (total_bytes and idf_max) else 0.0
+        # Finalise top files: dedupe by hash (keep highest idf), sort rarest-first.
+        best: dict[str, tuple] = {}
+        for idf, sz, path, h, df in top.get(aid, []):
+            if h not in best or idf > best[h][0]:
+                best[h] = (idf, sz, path, df)
+        tops = sorted(best.values(), reverse=True)[:TOP_DISTINCTIVE_FILES]
+        top_files = json.dumps([
+            {"path": path, "size": sz, "df": df} for (_idf, sz, path, df) in tops])
+        out.append({
+            "artefact_id": aid,
+            "total_files": len(hset),
+            "total_bytes": total_bytes,
+            "unique_files": unique_files,
+            "unique_bytes": unique_bytes,
+            "distinctiveness": score,
+            "top_files": top_files,
+            "computed_at": now,
+        })
+    db.session.bulk_insert_mappings(ArtefactDistinctiveness, out)
+    return len(out)
+
+
+def distinctiveness_doc_count() -> int:
+    """How many artefacts have a cached distinctiveness row (≈ collection size).
+
+    Used to gate the UI: with too few artefacts everything looks distinctive
+    (every file is unique because nothing else is loaded), so the metric is
+    meaningless below a threshold.
+    """
+    return db.session.query(func.count(ArtefactDistinctiveness.id)).scalar() or 0
+
+
+def artefact_distinctiveness(artefact):
+    """Cached distinctiveness for one artefact as a dict, or ``None``.
+
+    The returned ``top_files`` is the parsed JSON list (rarest first).
+    """
+    row = (
+        ArtefactDistinctiveness.query
+        .filter_by(artefact_id=artefact.id)
+        .first()
+    )
+    if row is None or row.total_files == 0:
+        return None
+    return {
+        "total_files": row.total_files,
+        "total_bytes": row.total_bytes,
+        "unique_files": row.unique_files,
+        "unique_bytes": row.unique_bytes,
+        "distinctiveness": row.distinctiveness,
+        "top_files": json.loads(row.top_files) if row.top_files else [],
+        "computed_at": row.computed_at,
+    }
 
 
 def _components_from_rows(rows):

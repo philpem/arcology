@@ -330,6 +330,44 @@
         </div>
         {% endif %}
 
+        {% if distinctiveness %}
+        {% set dpct = (distinctiveness.distinctiveness * 100) | round(0, 'floor') | int %}
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-fingerprint"></i> Distinctive Content</span>
+                <span class="badge flex-shrink-0
+                    {%- if dpct >= 70 %} bg-success
+                    {%- elif dpct >= 30 %} bg-warning text-dark
+                    {%- else %} bg-secondary{% endif %}"
+                    title="IDF-weighted fraction of this artefact's content that is rare across the collection">{{ dpct }}%</span>
+            </div>
+            <div class="card-body py-2">
+                <p class="small mb-0">
+                    {% if distinctiveness.unique_files %}
+                    <strong>{{ distinctiveness.unique_files }}</strong>
+                    file{{ 's' if distinctiveness.unique_files != 1 }}
+                    ({{ distinctiveness.unique_bytes | format_filesize }})
+                    found nowhere else in the collection.
+                    {% else %}
+                    Every file here also appears on another artefact.
+                    {% endif %}
+                </p>
+            </div>
+            {% if distinctiveness.top_files %}
+            <ul class="list-group list-group-flush">
+                {% for f in distinctiveness.top_files %}
+                {% if f.df == 1 %}
+                <li class="list-group-item d-flex justify-content-between align-items-center py-1">
+                    <span class="text-truncate me-2 small" title="{{ f.path }}">{{ f.path }}</span>
+                    <span class="badge bg-light text-dark flex-shrink-0">{{ f.size | format_filesize }}</span>
+                </li>
+                {% endif %}
+                {% endfor %}
+            </ul>
+            {% endif %}
+        </div>
+        {% endif %}
+
         {% if derived_entries %}
         <div class="card mb-4">
             <div class="card-header"><i class="bi bi-diagram-3"></i> Derived Artefacts</div>

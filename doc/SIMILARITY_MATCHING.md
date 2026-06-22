@@ -122,10 +122,37 @@ byte-level fuzzy hash complements Layer 1.
 TLSH distance is not expressible in SQL, so near-duplicate file lookups
 pre-filter candidates and compute the distance in Python.
 
+## Distinctiveness — the inverse lens
+
+Similarity asks *"what does this artefact share with others?"*. The inverse is
+just as useful for a curator: *"what does this artefact have that nothing else
+does?"* — i.e. how much of a disc is genuinely unusual versus a stock install.
+
+It reuses the same document-frequency machinery the rebuild already computes
+(`df` = how many artefacts contain a given content hash):
+
+- **Unique content** — files with `df == 1` are present on no other artefact
+  ("47 files / 3.2 MB found nowhere else").
+- **Distinctiveness score** — the IDF-weighted fraction of an artefact's content
+  that is rare: `sum(size · idf) / (idf_max · total_bytes)`, where
+  `idf = log(1 + N/df)` and `idf_max = log(1 + N)`. 1.0 means everything is
+  unique; ~0 means a stock install whose every file is ubiquitous.
+- **Distinctive contents** — the rarest (highest-IDF) files, kept for display.
+
+Results are cached one row per artefact in `artefact_distinctiveness`, recomputed
+wholesale by `flask rebuild-similarity` (document frequency is collection-wide,
+so — like `SIMILARITY_USE_IDF` — it is **not** updated by the per-artefact
+incremental refresh; a full rebuild reconciles it). The UI is gated on
+`SIMILARITY_MIN_DISTINCTIVENESS_DOCS`: below that many artefacts the metric is
+meaningless because everything looks unique. High-`df` files surfaced by
+`flask similarity-stats` are good candidates to *add* to a base-system hashdb,
+closing the loop with the exclusion feature.
+
 ## Where it surfaces in the UI
 
-- **Artefact page**: a "Similar Artefacts" sidebar card, and a full
-  `…/similar` page listing similar artefacts and shared components.
+- **Artefact page**: a "Similar Artefacts" sidebar card, a "Distinctive Content"
+  sidebar card (score + files found nowhere else), and a full `…/similar` page
+  listing similar artefacts and shared components.
 - **File browser**: directories that match a component elsewhere get a
   "⤳ N" badge linking to a per-component page (`/components/<uuid>/similar`).
 - **Extracted files**: a "near-duplicates" link (`/files/<uuid>/near-duplicates`)
@@ -143,8 +170,10 @@ as an anonymous "92% similar to ⟨hidden⟩".
 | `MAX_COMPONENT_DEPTH` | `4` | same | Deepest directory the deep-scan rule considers |
 | `MAX_COMPONENTS_PER_PARTITION` | `500` | same | Safety cap on components per partition |
 | `MAX_HASH_ARTEFACTS` | `50` | same | Hashes more common than this make no candidate pairs |
+| `TOP_DISTINCTIVE_FILES` | `20` | same | Rarest files kept per artefact for the distinctiveness panel |
 | `SIMILARITY_AUTO_REFRESH` | `True` | config | Refresh cache after each extraction |
 | `SIMILARITY_USE_IDF` | `False` | config | Rarity-weight scores (needs full rebuild) |
+| `SIMILARITY_MIN_DISTINCTIVENESS_DOCS` | `50` | config | Min artefacts before the distinctiveness panel is shown |
 
 ## Key code
 
@@ -228,24 +257,23 @@ cost and noise of monolithic whole-disc comparison on big discs.
 - Component matching stays on for every disc — it is the cross-disc value and is
   already bounded.
 
-### Phase 3 — Distinctiveness ("what's unusual about this disc")
+### Phase 3 — Distinctiveness ("what's unusual about this disc") — **implemented**
 
-The inverse lens of similarity, reusing the document-frequency machinery
-(`_document_frequencies` / the rebuild inverted index): surface what a disc has
-that others don't. Cheapest first:
+The inverse lens of similarity, reusing the document-frequency machinery (the
+rebuild's inverted index): surface what a disc has that others don't. See the
+**Distinctiveness** section above for the full description. Delivered:
 
-- **"Unique to this image"** — files with `df == 1` (present on no other
-  artefact): "47 files (3.2 MB) found nowhere else." Trivial from the inverted
-  index.
-- **"Distinctive contents" panel** — top-N highest-IDF files/folders on the
-  artefact page, so a curator sees the interesting bits of an otherwise-stock
-  disc at a glance.
-- **Artefact-level distinctiveness metric** — weighted fraction of the disc that
-  is rare; a fully-low-IDF disc is "just a stock install".
-- Cache alongside similarity (df is collection-relative and moves as the
-  collection grows); gate the UI on a minimum artefact count (small collections
-  make everything look distinctive). High-IDF recurring files are good
-  candidates to *add* to a hashdb.
+- **Done:** `artefact_distinctiveness` cache table (one row per artefact),
+  populated by `rebuild_all` (`_rebuild_distinctiveness`): unique-file
+  counts/bytes (`df == 1`), an IDF-weighted distinctiveness score, and the rarest
+  files (`TOP_DISTINCTIVE_FILES`) for display.
+- **Done:** a "Distinctive Content" sidebar card on the artefact page, gated on
+  `SIMILARITY_MIN_DISTINCTIVENESS_DOCS` (small collections make everything look
+  distinctive).
+- **Validated by Phase 0:** 80% of distinct content hashes in the real collection
+  are unique to a single artefact, so the panel has rich material.
+- High-IDF recurring files (from `flask similarity-stats`) remain good candidates
+  to *add* to a base-system hashdb, closing the loop with Phase 1.
 
 ### Phase 4 — MinHash/LSH (optional, only if Phase 0 shows it's needed)
 
