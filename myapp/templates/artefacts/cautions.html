@@ -1,0 +1,94 @@
+{% extends "_base.html" %}
+{% from '_pagination.html' import render_pagination %}
+{% block page_title %}Analysis cautions – {{ artefact.label }}{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.index') }}">Items</a></li>
+        {% for ancestor in artefact.item.ancestors %}
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=ancestor.url_id) }}">{{ ancestor.name }}</a></li>
+        {% endfor %}
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=artefact.item.url_id) }}">{{ artefact.item.name }}</a></li>
+        <li class="breadcrumb-item"><a href="{{ artefact_url(artefact) }}">{{ artefact.label }}</a></li>
+        <li class="breadcrumb-item active">Analysis cautions</li>
+    </ol>
+</nav>
+
+<h1 class="mb-1"><i class="bi bi-exclamation-diamond-fill text-warning"></i> Analysis cautions</h1>
+<p class="text-muted mb-4">
+    Copy-protection indicators detected across <strong>{{ artefact.label }}</strong> and its derived artefacts.
+</p>
+
+{% if density %}
+<div class="card mb-4 border-info">
+    <div class="card-header bg-info bg-opacity-25"><i class="bi bi-info-circle-fill text-info"></i> Track density mismatch</div>
+    <ul class="list-group list-group-flush">
+        {% for d in density %}
+        <li class="list-group-item small">
+            {% if d._source_label %}<span class="text-muted me-2">{{ d._source_label }}:</span>{% endif %}
+            {{ "%.0f"|format(d.confidence * 100) }}% confidence, {{ d.matching }}/{{ d.checked }} even tracks —
+            40-track disc imaged in an 80-track drive. A density-corrected copy was produced as a derived artefact.
+            <a href="{{ url_for('myapp_blueprints_analysis.view', uuid=d._analysis_uuid) }}">Raw Analysis</a>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% if by_type %}
+{# Indicator-type filter: one type at a time keeps the table columns consistent. #}
+<div class="btn-group mb-4 flex-wrap" role="group" aria-label="Indicator type">
+    {% for t, n in by_type.items() | sort(attribute='0') %}
+    <a href="{{ url_for('myapp_blueprints_artefacts.cautions', uuid=artefact.uuid, type=t) }}"
+       class="btn btn-outline-warning {{ 'active' if t == sel_type else '' }}">
+        {{ type_labels.get(t, t.replace('_', ' ').title()) }}
+        <span class="badge bg-warning text-dark ms-1">{{ n }}</span>
+    </a>
+    {% endfor %}
+</div>
+
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 small">
+            <thead><tr><th>Track</th><th>Side</th>
+            {% if sel_type == 'weak_bits' %}<th>Count</th>
+            {% elif sel_type == 'id_mismatch' %}<th>Reported Cyl</th><th>Expected</th><th>Sectors</th>
+            {% elif sel_type == 'duplicate_id' %}<th>Sector ID</th><th>Occurrences</th>
+            {% elif sel_type == 'bad_crc' %}<th>Sector</th>
+            {% elif sel_type == 'ddam' %}<th>Sector</th>
+            {% endif %}
+            {% if multi_source %}<th>Source</th>{% endif %}
+            </tr></thead>
+            <tbody>
+            {% for ind in indicators %}
+            <tr>
+                <td>{{ ind.track }}</td>
+                <td>{{ ind.side }}</td>
+                {% if sel_type == 'weak_bits' %}<td>{{ ind.count }}</td>
+                {% elif sel_type == 'id_mismatch' %}<td><code>{{ ind.get('reported_cyl', '?') }}</code></td><td><code>{{ ind.track }}</code></td><td>{{ ind.get('count', 1) }}</td>
+                {% elif sel_type == 'duplicate_id' %}<td><code>C{{ ind.get('cyl','?') }}/H{{ ind.get('head','?') }}/S{{ ind.get('sect','?') }}</code></td><td>{{ ind.get('count', '?') }}</td>
+                {% elif sel_type == 'bad_crc' %}<td>{{ ind.get('sect', '?') }}</td>
+                {% elif sel_type == 'ddam' %}<td>{{ ind.get('sect', '?') }}</td>
+                {% endif %}
+                {% if multi_source %}
+                <td class="text-muted">
+                    {% if ind._source_uuid %}<a href="{{ url_for('myapp_blueprints_artefacts.view_legacy', uuid=ind._source_uuid) }}">{{ ind._source_label }}</a>{% else %}{{ ind._source_label or '' }}{% endif %}
+                </td>
+                {% endif %}
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-center text-muted">No indicators</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{{ render_pagination(pagination, {'type': sel_type, 'per_page': request.args.get('per_page')}, valid_per_page=valid_per_page, view_all=view_all) }}
+{% else %}
+<div class="alert alert-success"><i class="bi bi-check-circle"></i> No copy-protection cautions were detected.</div>
+{% endif %}
+{% endblock %}
+
+{# vim: ts=4 sw=4 et #}

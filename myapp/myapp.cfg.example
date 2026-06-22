@@ -72,6 +72,7 @@ CHUNKED_UPLOAD_CHUNK_SIZE = 50 * 1024 * 1024  # 50MB per chunk
 # FINALIZE_RESULT_TTL_SECONDS = 3600  # retain a done/failed session this long for status polling
 ITEMS_PER_PAGE = 25
 FILES_PER_PAGE = 100
+CAUTIONS_PER_PAGE = 100  # Protection indicators per page on the standalone cautions page
 ANALYSES_SHOWN = 5      # Max completed analyses shown per artefact before "Show All" appears
 
 # Pre-shared key used by analysis workers.

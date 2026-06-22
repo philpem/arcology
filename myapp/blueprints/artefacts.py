@@ -118,6 +118,23 @@ blueprint = Blueprint(ROUTENAME, __name__, url_prefix='', template_folder='templ
 VIEWER_ARTEFACT_TYPES = (ArtefactType.ACORN_SPRITE, ArtefactType.ACORN_DRAW, ArtefactType.ACORN_TEXT)
 
 
+# Human-readable labels for disc-protection indicator types, shared between the
+# inline "Analysis cautions" rollup and the standalone cautions page.
+PROTECTION_TYPE_LABELS = {
+    'weak_bits': 'Weak Bits',
+    'bad_crc': 'Bad CRC',
+    'ddam': 'DDAM',
+    'id_mismatch': 'ID Mismatch',
+    'duplicate_id': 'Duplicate ID',
+}
+
+# Above this many indicators of a single type, the inline "Analysis cautions"
+# rollup on the artefact page collapses that type to a summary + a link to the
+# standalone, paginated cautions page rather than emitting one table row each
+# (a 15k-indicator hard disc would otherwise bloat the page DOM).
+CAUTION_INLINE_LIMIT = 250
+
+
 # Human-readable display names for artefact types (used in form dropdowns).
 # Falls back to t.value.upper().replace('_', ' ') for any type not listed here.
 _ARTEFACT_TYPE_DISPLAY_NAMES = {
@@ -530,6 +547,53 @@ def tree(uuid):
         has_active_analyses=has_active,
         status_counts=status_counts,
         total_count=total_count,
+    )
+
+
+@blueprint.route('/artefacts/<string:uuid>/cautions')
+@public_readable
+def cautions(uuid):
+    """Standalone, paginated view of disc-protection cautions for an artefact tree.
+
+    The inline "Analysis cautions" rollup on the artefact page collapses huge
+    indicator lists (e.g. ~15k bad-CRC sectors on a hard disc) to a summary that
+    links here.  Indicators are aggregated across the artefact and all of its
+    derived children (newest protection analysis per artefact), matching the
+    rollup, and filtered to one indicator type at a time for a consistent table.
+    """
+    from ..utils.pagination import VALID_PER_PAGE, ListPagination, resolve_per_page
+
+    artefact = _get_artefact_or_404(uuid=uuid)
+    all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    cautions_data = collect_protection_cautions(all_artefact_ids)
+
+    by_type = cautions_data['by_type']
+    # Selected indicator type: the query arg if it actually has entries,
+    # otherwise the most populous type (so the page opens on real data).
+    sel_type = request.args.get('type')
+    if sel_type not in by_type:
+        sel_type = max(by_type, key=by_type.get) if by_type else None
+
+    filtered = (
+        [i for i in cautions_data['indicators'] if i.get('type') == sel_type]
+        if sel_type else []
+    )
+
+    per_page, page, view_all = resolve_per_page('CAUTIONS_PER_PAGE', 100)
+    pagination = ListPagination(filtered, page, per_page)
+
+    return render_template(
+        'artefacts/cautions.html',
+        artefact=artefact,
+        pagination=pagination,
+        indicators=pagination.items,
+        by_type=by_type,
+        sel_type=sel_type,
+        density=cautions_data['density'],
+        type_labels=PROTECTION_TYPE_LABELS,
+        multi_source=cautions_data['source_count'] > 1,
+        valid_per_page=VALID_PER_PAGE,
+        view_all=view_all,
     )
 
 
@@ -1813,21 +1877,119 @@ def _view_archive_banner(artefact, current_path, all_partitions, all_artefact_id
     )
 
 
+def collect_protection_cautions(all_artefact_ids):
+    """Aggregate disc-protection indicators + density notices across a tree.
+
+    Merges the *newest completed* ``DISC_PROTECTION_DETECT`` analysis per
+    artefact in ``all_artefact_ids`` (so the parent and every derived child
+    contribute) into a single indicator list, tagging each row with its source
+    artefact and analysis. Also collects density-mismatch notices.
+
+    Returns a dict:
+      - ``indicators``: list of indicator dicts, each annotated with
+        ``_source_label`` / ``_source_uuid`` / ``_analysis_uuid``.
+      - ``by_type``: ``{indicator_type: count}``.
+      - ``density``: list of density-detection notice dicts.
+      - ``analysis_uuid``: representative (newest) protection analysis uuid, or
+        ``None`` — used for the rollup header "Raw Analysis" link.
+      - ``source_count``: number of distinct source artefacts contributing
+        indicators (lets the inline table show a Source column only when >1).
+    """
+    indicators = []
+    by_type = {}
+    density = []
+    representative_uuid = None
+    source_uuids = set()
+
+    rows = Analysis.query.filter(
+        Analysis.artefact_id.in_(all_artefact_ids),
+        Analysis.status == AnalysisStatus.COMPLETED,
+        Analysis.analysis_type.in_(
+            (AnalysisType.DISC_PROTECTION_DETECT, AnalysisType.DETECT_TRACK_DENSITY)
+        ),
+        Analysis.details.isnot(None),
+    ).order_by(Analysis.id.desc()).all()
+
+    seen_protection = set()  # artefact_id -> keep only the newest per artefact
+    seen_density = set()
+    for a in rows:
+        if a.analysis_type == AnalysisType.DISC_PROTECTION_DETECT:
+            if a.artefact_id in seen_protection:
+                continue
+            seen_protection.add(a.artefact_id)
+            try:
+                parsed = json.loads(a.details)
+            except (json.JSONDecodeError, TypeError) as e:
+                current_app.logger.warning(f"Failed to parse protection analysis details for {a.uuid}: {e}")
+                continue
+            if representative_uuid is None:
+                representative_uuid = a.uuid
+            label = a.artefact.label if a.artefact else None
+            source_uuid = a.artefact.uuid if a.artefact else None
+            type_indicators = parsed.get('indicators', [])
+            if type_indicators:
+                source_uuids.add(source_uuid)
+            for ind in type_indicators:
+                row = dict(ind)
+                row['_source_label'] = label
+                row['_source_uuid'] = source_uuid
+                row['_analysis_uuid'] = a.uuid
+                indicators.append(row)
+                t = row.get('type')
+                if t:
+                    by_type[t] = by_type.get(t, 0) + 1
+        else:  # DETECT_TRACK_DENSITY
+            if a.artefact_id in seen_density:
+                continue
+            seen_density.add(a.artefact_id)
+            try:
+                parsed = json.loads(a.details)
+            except (json.JSONDecodeError, TypeError) as e:
+                current_app.logger.warning(f"Failed to parse density detection details for {a.uuid}: {e}")
+                continue
+            detection = parsed.get('detection', {})
+            if detection.get('detected'):
+                notice = {**detection, '_analysis_uuid': a.uuid,
+                          '_source_label': a.artefact.label if a.artefact else None}
+                density.append(notice)
+
+    return dict(
+        indicators=indicators,
+        by_type=by_type,
+        density=density,
+        analysis_uuid=representative_uuid,
+        source_count=len(source_uuids),
+    )
+
+
 def _view_analysis_detail_cards(all_artefact_ids):
     """Detail cards/badges: mastering, protection, partitions, ARMlock, flux, density."""
     # Extract completed analysis results for display.
     # These are surfaced as badges + cards directly on the artefact view page.
     mastering_analysis = None
-    protection_analysis = None
     partition_detect_details = None
     armlock_analysis = None
     flux_visualisation_analysis = None
     density_detect_analysis = None
+
+    # Disc-protection cautions are aggregated across the whole tree (parent +
+    # derived children) and can be huge, so they get their own helper and the
+    # standalone paginated cautions page.  The rollup keeps the same
+    # ``protection_analysis`` shape (``indicators`` + ``_analysis_uuid``).
+    cautions = collect_protection_cautions(all_artefact_ids)
+    protection_analysis = None
+    if cautions['indicators'] or cautions['analysis_uuid']:
+        protection_analysis = {
+            'indicators': cautions['indicators'],
+            'by_type': cautions['by_type'],
+            '_analysis_uuid': cautions['analysis_uuid'],
+        }
+
     # Load `details` only for the analysis types surfaced as cards/badges, newest
     # first, rather than carrying details for every analysis (#447). Picking the
     # first match per type preserves the previous "most recent completed" behaviour.
     _detail_types = (
-        AnalysisType.DISC_MASTERING_DETECT, AnalysisType.DISC_PROTECTION_DETECT,
+        AnalysisType.DISC_MASTERING_DETECT,
         AnalysisType.PARTITION_DETECT, AnalysisType.ARMLOCK_REMOVE,
         AnalysisType.FLUX_VISUALISATION, AnalysisType.DETECT_TRACK_DENSITY,
     )
@@ -1845,12 +2007,6 @@ def _view_analysis_detail_cards(all_artefact_ids):
                     mastering_analysis['_analysis_uuid'] = a.uuid
                 except (json.JSONDecodeError, TypeError) as e:
                     current_app.logger.warning(f"Failed to parse mastering analysis details for {a.uuid}: {e}")
-            elif protection_analysis is None and a.analysis_type == AnalysisType.DISC_PROTECTION_DETECT:
-                try:
-                    protection_analysis = json.loads(a.details)
-                    protection_analysis['_analysis_uuid'] = a.uuid
-                except (json.JSONDecodeError, TypeError) as e:
-                    current_app.logger.warning(f"Failed to parse protection analysis details for {a.uuid}: {e}")
             elif partition_detect_details is None and a.analysis_type == AnalysisType.PARTITION_DETECT:
                 try:
                     partition_detect_details = json.loads(a.details)
@@ -1877,7 +2033,7 @@ def _view_analysis_detail_cards(all_artefact_ids):
                         density_detect_analysis = {**detection, '_analysis_uuid': a.uuid}
                 except (json.JSONDecodeError, TypeError) as e:
                     current_app.logger.warning(f"Failed to parse density detection details for {a.uuid}: {e}")
-        if (mastering_analysis is not None and protection_analysis is not None
+        if (mastering_analysis is not None
                 and partition_detect_details is not None
                 and flux_visualisation_analysis is not None
                 and armlock_analysis is not None
@@ -1891,6 +2047,8 @@ def _view_analysis_detail_cards(all_artefact_ids):
         armlock_analysis=armlock_analysis,
         flux_visualisation_analysis=flux_visualisation_analysis,
         density_detect_analysis=density_detect_analysis,
+        caution_inline_limit=CAUTION_INLINE_LIMIT,
+        caution_multi_source=cautions['source_count'] > 1,
     )
 
 
