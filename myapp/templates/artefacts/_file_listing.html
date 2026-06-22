@@ -319,6 +319,14 @@
                     <div id="new-database-fields" class="mt-2 d-none">
                         <input type="text" name="new_database_name" id="new-database-name" class="form-control form-control-sm"
                                placeholder="New database name" form="hashdb-form">
+                        <div class="form-check mt-1">
+                            <input type="checkbox" class="form-check-input" id="new-database-exclude"
+                                   name="new_database_exclude_from_similarity" value="1" form="hashdb-form">
+                            <label class="form-check-label small" for="new-database-exclude"
+                                   title="For a base-OS / reference hashset: files matching this database are ignored by artefact similarity, so stock files don't make every disc match. Takes effect on the next similarity rebuild.">
+                                Exclude these files from similarity matching
+                            </label>
+                        </div>
                     </div>
                 </div>
                 <div class="mb-3" id="product-section">

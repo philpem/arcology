@@ -2350,7 +2350,11 @@ def add_to_hashdb(uuid):
         if not new_db_name:
             flash('Provide a name for the new hash database.', 'danger')
             return redirect(url_for(f'{ROUTENAME}.view', **redirect_kwargs))
-        database = HashDatabase(name=new_db_name)
+        database = HashDatabase(
+            name=new_db_name,
+            exclude_from_similarity=request.form.get(
+                'new_database_exclude_from_similarity') == '1',
+        )
         db.session.add(database)
         db.session.flush()
     else:
