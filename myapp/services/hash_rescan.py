@@ -751,6 +751,79 @@ def link_new_known_files(database, new_kf_list):
     if not database.enable_product_recognition:
         return
 
-    queue_hashdb_recognition_backfill(database)
+def create_hashdb_from_artefacts(name, artefact_ids, *, description=None,
+                                 exclude_from_similarity=True, product_title=None,
+                                 commit=True):
+    """Snapshot every extracted file across ``artefact_ids`` into a new HashDatabase.
+
+    Builds a flat known-file set (one ``KnownFile`` per unique content hash, under
+    a single ``KnownProduct``) suitable for **base-system exclusion**: point it at
+    a pristine OS / hard-drive image and the stock files get linked across the
+    collection so they can be dropped from similarity.  Unlike
+    ``arco hashdb generate-riscos`` (which is recognition-oriented and discards
+    ubiquitous files), this keeps *everything*.
+
+    Uses the files' already-computed hashes — run analysis / ``rescan-hashes``
+    first if hashes are missing; such files are skipped.  Triggers the standard
+    relink so the rest of the collection links to the new database.
+
+    Returns ``(database, added, skipped_no_hash)``.  Raises ``ValueError`` if the
+    name is blank or already in use.
+    """
+    name = (name or '').strip()
+    if not name:
+        raise ValueError('A database name is required.')
+    if HashDatabase.query.filter(func.lower(HashDatabase.name) == name.lower()).first():
+        raise ValueError(f'A hash database named "{name}" already exists.')
+
+    database = HashDatabase(
+        name=name,
+        description=description or None,
+        exclude_from_similarity=bool(exclude_from_similarity),
+        is_active=True,
+    )
+    db.session.add(database)
+    db.session.flush()
+    product = KnownProduct(database_id=database.id, title=(product_title or name))
+    db.session.add(product)
+    db.session.flush()
+
+    rows = (
+        db.session.query(
+            ExtractedFile.filename, ExtractedFile.file_size, ExtractedFile.path,
+            ExtractedFile.md5, ExtractedFile.sha1, ExtractedFile.sha256,
+        )
+        .join(Partition, ExtractedFile.partition_id == Partition.id)
+        .filter(Partition.artefact_id.in_(list(artefact_ids)))
+        .filter(ExtractedFile.is_directory.is_(False))
+        .yield_per(2000)
+    )
+
+    seen: set[str] = set()
+    new_kfs = []
+    skipped_no_hash = 0
+    for filename, file_size, path, md5, sha1, sha256 in rows:
+        key = sha256 or md5
+        if not key:
+            skipped_no_hash += 1
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        kf = KnownFile(
+            database_id=database.id, product_id=product.id,
+            filename=filename, file_size=file_size,
+            md5=md5, sha1=sha1, sha256=sha256,
+            relative_path=path or None, is_required=False,
+        )
+        db.session.add(kf)
+        new_kfs.append(kf)
+
+    if commit:
+        db.session.commit()
+    # Link the rest of the collection to the snapshot (no recognition: the DB
+    # leaves enable_product_recognition off, so this is a pure relink).
+    link_new_known_files(database, new_kfs)
+    return database, len(new_kfs), skipped_no_hash
 
 # vim: ts=4 sw=4 et
