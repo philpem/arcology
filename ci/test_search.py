@@ -1801,6 +1801,7 @@ class TestDeduplication(unittest.TestCase):
             FilesystemType,
             Item,
             Partition,
+            RiscosModule,
             StorageDirectory,
         )
         from myapp.extensions import db as _db
@@ -1851,6 +1852,14 @@ class TestDeduplication(unittest.TestCase):
                 partition_id=p1.id, path='!App/Unique', filename='Unique',
                 extension='dup', sha256='e' * 64, is_directory=False,
             ))
+
+            # The same RISC OS module sits on every copy of !RunImage, so a
+            # module: search hits the byte-identical files via the metadata join.
+            for art in (art1, art2, art3):
+                _db.session.add(RiscosModule(
+                    artefact_id=art.id, title_string='SharedMod',
+                    file_path='!App/!RunImage',
+                ))
             _db.session.commit()
             cls.item_url = item.url_id
 
@@ -1882,6 +1891,22 @@ class TestDeduplication(unittest.TestCase):
         self.assertEqual(by_path['!App/!RunImage'].dupe_count, 2)
         # The unique file is its own group with no badge.
         self.assertEqual(by_path['!App/Unique'].dupe_count, 1)
+
+    def test_module_search_without_dedupe_lists_every_copy(self):
+        results = self._run('module:SharedMod', dedupe=False)
+        paths = [ef.path for ef, *_ in results['files']]
+        # Two visible copies of the module-bearing file (private one excluded).
+        self.assertEqual(paths.count('!App/!RunImage'), 2)
+        self.assertEqual(results['total'], 2)
+
+    def test_module_search_with_dedupe_consolidates(self):
+        # Consolidation must work for the module sub-search too, and the join to
+        # RiscosModule must NOT inflate the copy count beyond the file count.
+        results = self._run('module:SharedMod', dedupe=True)
+        files = results['files']
+        self.assertEqual(len(files), 1)
+        self.assertEqual(results['total'], 1)
+        self.assertEqual(files[0][0].dupe_count, 2)
 
     def test_duplicates_page_lists_visible_copies(self):
         resp = self.client.get(f'/search/duplicates?key={self.DUP_SHA}')

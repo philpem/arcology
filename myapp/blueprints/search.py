@@ -487,6 +487,38 @@ def _count_distinct(query, col) -> int:
     return query.order_by(None).with_entities(func.count(distinct(col))).scalar() or 0
 
 
+def _file_order():
+    """Canonical sort for file-result rows: item → artefact → path (A→Z)."""
+    return (
+        func.lower(Item.name),
+        func.lower(Artefact.label),
+        func.lower(ExtractedFile.path),
+    )
+
+
+def _paginate_file_query(q, page, per_page, dedupe=False):
+    """Order, paginate and (optionally) consolidate a file-result query.
+
+    *q* must select ``(ExtractedFile, Partition, Artefact, Item)`` and already
+    carry its filters plus the visibility clause.  With *dedupe* set,
+    byte-identical files collapse to one representative (see
+    :func:`_dedupe_file_rows`); otherwise raw rows are returned.  Shared by every
+    sub-search that feeds the file bucket (hash/name/path/type/ext, module,
+    command, SWI, Replay).  Returns ``(rows, has_more, total)``.
+    """
+    if dedupe:
+        return _dedupe_file_rows(q, page=page, per_page=per_page)
+    total = _count_distinct(q, ExtractedFile.id)
+    fetched = (
+        q.order_by(*_file_order())
+        .offset((page - 1) * per_page)
+        .limit(per_page + 1)
+        .all()
+    )
+    has_more = len(fetched) > per_page
+    return fetched[:per_page], has_more, total
+
+
 def _search_files(tokens, page=1, per_page=PER_PAGE, dedupe=False):
     """Search ExtractedFile by hash, filename, path, type, or extension.
 
@@ -534,17 +566,7 @@ def _search_files(tokens, page=1, per_page=PER_PAGE, dedupe=False):
         .filter(ExtractedFile.is_directory == False)
         .filter(artefact_visibility_clause(current_user))
     )
-    if dedupe:
-        return _dedupe_file_rows(q, page=page, per_page=per_page)
-    total = _count_distinct(q, ExtractedFile.id)
-    fetched = (
-        q.order_by(func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path))
-        .offset((page - 1) * per_page)
-        .limit(per_page + 1)
-        .all()
-    )
-    has_more = len(fetched) > per_page
-    return fetched[:per_page], has_more, total
+    return _paginate_file_query(q, page, per_page, dedupe)
 
 
 def _dedupe_file_rows(q, page=1, per_page=PER_PAGE):
@@ -557,25 +579,39 @@ def _dedupe_file_rows(q, page=1, per_page=PER_PAGE):
     ``dupe_count`` / ``dupe_key`` attributes.
     """
     hashkey = _file_hashkey()
-    order_cols = (
-        func.lower(Item.name),
-        func.lower(Artefact.label),
-        func.lower(ExtractedFile.path),
-    )
-    total = q.order_by(None).with_entities(func.count(distinct(hashkey))).scalar() or 0
-
-    # Rank rows within each content group and count the group size, then keep
-    # only the first row of each group as its representative.
-    ranked = (
+    o_item, o_art, o_path = _file_order()
+    # Distinct (ef.id, hashkey, sort-cols) base.  DISTINCT collapses any JOIN
+    # fan-out — a module/Replay query joins a metadata row per file and could
+    # otherwise emit a file more than once — so the per-group COUNT is a true
+    # copy count and ranking stays stable.
+    base = (
         q.order_by(None)
         .with_entities(
             ExtractedFile.id.label('ef_id'),
             hashkey.label('hkey'),
-            func.count().over(partition_by=hashkey).label('copies'),
-            func.row_number().over(partition_by=hashkey, order_by=order_cols).label('rn'),
-            order_cols[0].label('o_item'),
-            order_cols[1].label('o_art'),
-            order_cols[2].label('o_path'),
+            o_item.label('o_item'),
+            o_art.label('o_art'),
+            o_path.label('o_path'),
+        )
+        .distinct()
+        .subquery()
+    )
+    total = db.session.query(func.count(distinct(base.c.hkey))).scalar() or 0
+
+    # Rank rows within each content group and count the group size, then keep
+    # only the first row of each group as its representative.
+    ranked = (
+        db.session.query(
+            base.c.ef_id,
+            base.c.hkey,
+            func.count().over(partition_by=base.c.hkey).label('copies'),
+            func.row_number().over(
+                partition_by=base.c.hkey,
+                order_by=(base.c.o_item, base.c.o_art, base.c.o_path),
+            ).label('rn'),
+            base.c.o_item,
+            base.c.o_art,
+            base.c.o_path,
         )
         .subquery()
     )
@@ -725,7 +761,7 @@ def _search_mastering(tokens, page=1, per_page=PER_PAGE):
     ], has_more, total
 
 
-def _search_riscos_module_files(tokens, key, clause_for, page=1, per_page=PER_PAGE):
+def _search_riscos_module_files(tokens, key, clause_for, page=1, per_page=PER_PAGE, dedupe=False):
     """Shared RiscosModule → ExtractedFile search for module/command/swi terms.
 
     *clause_for* builds the per-value RiscosModule filter; values for the same
@@ -751,48 +787,40 @@ def _search_riscos_module_files(tokens, key, clause_for, page=1, per_page=PER_PA
         .filter(ExtractedFile.is_directory == False)
         .filter(artefact_visibility_clause(current_user))
     )
-    total = _count_distinct(q, ExtractedFile.id)
-    fetched = (
-        q.order_by(func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path))
-        .offset((page - 1) * per_page)
-        .limit(per_page + 1)
-        .all()
-    )
-    has_more = len(fetched) > per_page
-    return fetched[:per_page], has_more, total
+    return _paginate_file_query(q, page, per_page, dedupe)
 
 
-def _search_modules(tokens, page=1, per_page=PER_PAGE):
+def _search_modules(tokens, page=1, per_page=PER_PAGE, dedupe=False):
     """Search RiscosModule by title_string or help_title, returning file tuples."""
     return _search_riscos_module_files(
         tokens, 'module',
         lambda v: or_(_ilike(RiscosModule.title_string, v),
                       _ilike(RiscosModule.help_title, v)),
-        page=page, per_page=per_page,
+        page=page, per_page=per_page, dedupe=dedupe,
     )
 
 
-def _search_commands(tokens, page=1, per_page=PER_PAGE):
+def _search_commands(tokens, page=1, per_page=PER_PAGE, dedupe=False):
     """Search RiscosModule by star command name, returning file tuples."""
     return _search_riscos_module_files(
         tokens, 'command',
         lambda v: and_(RiscosModule.commands.isnot(None),
                        _ilike_json(RiscosModule.commands, v)),
-        page=page, per_page=per_page,
+        page=page, per_page=per_page, dedupe=dedupe,
     )
 
 
-def _search_swis(tokens, page=1, per_page=PER_PAGE):
+def _search_swis(tokens, page=1, per_page=PER_PAGE, dedupe=False):
     """Search RiscosModule by SWI name, returning file tuples."""
     return _search_riscos_module_files(
         tokens, 'swi',
         lambda v: and_(RiscosModule.swi_names.isnot(None),
                        _ilike_json(RiscosModule.swi_names, v)),
-        page=page, per_page=per_page,
+        page=page, per_page=per_page, dedupe=dedupe,
     )
 
 
-def _search_replay_movies(tokens, page=1, per_page=PER_PAGE):
+def _search_replay_movies(tokens, page=1, per_page=PER_PAGE, dedupe=False):
     """Search ReplayMovie metadata, returning ExtractedFile tuples.
 
     Mirrors _search_riscos_module_files: joins ReplayMovie to its ExtractedFile
@@ -845,15 +873,7 @@ def _search_replay_movies(tokens, page=1, per_page=PER_PAGE):
         .filter(ExtractedFile.is_directory == False)
         .filter(artefact_visibility_clause(current_user))
     )
-    total = _count_distinct(q, ExtractedFile.id)
-    fetched = (
-        q.order_by(func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path))
-        .offset((page - 1) * per_page)
-        .limit(per_page + 1)
-        .all()
-    )
-    has_more = len(fetched) > per_page
-    return fetched[:per_page], has_more, total
+    return _paginate_file_query(q, page, per_page, dedupe)
 
 
 def _search_tags(tokens, page=1, per_page=PER_PAGE):
@@ -1106,6 +1126,13 @@ def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE, dedupe: b
     When several sub-searches feed the same bucket *and* match overlapping rows
     (rare — only multi-key queries), this is a slight over-count, which can show
     a sparse final page but never hides results.
+
+    With *dedupe*, every file-producing sub-search (hash/name/path/type/ext,
+    module, command, SWI, Replay) consolidates byte-identical files to one
+    representative.  Consolidation is per-sub-search; combining file *and* module
+    keys in one query (rare) consolidates each independently, so the same content
+    matched by two different keys may still appear twice — the same best-effort
+    property as the bucket-total over-count above.
     """
     results = {
         'files':           [],
@@ -1151,22 +1178,22 @@ def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE, dedupe: b
 
     # RISC OS module search
     if 'module' in tokens:
-        mod_results, has_more, total = _search_modules(tokens, page=page, per_page=per_page)
+        mod_results, has_more, total = _search_modules(tokens, page=page, per_page=per_page, dedupe=dedupe)
         _add('files', mod_results, has_more, total)
 
     # Star command search
     if 'command' in tokens:
-        cmd_results, has_more, total = _search_commands(tokens, page=page, per_page=per_page)
+        cmd_results, has_more, total = _search_commands(tokens, page=page, per_page=per_page, dedupe=dedupe)
         _add('files', cmd_results, has_more, total)
 
     # SWI name search
     if 'swi' in tokens:
-        swi_results, has_more, total = _search_swis(tokens, page=page, per_page=per_page)
+        swi_results, has_more, total = _search_swis(tokens, page=page, per_page=per_page, dedupe=dedupe)
         _add('files', swi_results, has_more, total)
 
     # Acorn Replay / ARMovie metadata search
     if any(k.startswith('replay_') for k in tokens):
-        replay_results, has_more, total = _search_replay_movies(tokens, page=page, per_page=per_page)
+        replay_results, has_more, total = _search_replay_movies(tokens, page=page, per_page=per_page, dedupe=dedupe)
         _add('files', replay_results, has_more, total)
 
     # Tag search
