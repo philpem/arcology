@@ -1,0 +1,69 @@
+{% extends "_base.html" %}
+{% from '_pagination.html' import render_pagination %}
+{% from '_macros.html' import file_download_icon, file_viewer_metadata_icons with context %}
+{% block page_title %}Duplicate copies{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+	<h1><i class="bi bi-files"></i> Duplicate copies</h1>
+	<a href="{{ url_for('myapp_blueprints_search.index') }}" class="btn btn-outline-secondary btn-sm">
+		<i class="bi bi-search"></i> Back to search
+	</a>
+</div>
+
+{% if representative %}
+<div class="card mb-4">
+	<div class="card-body">
+		<p class="mb-1">
+			<strong class="font-monospace">{{ representative.filename }}</strong>
+			{% if representative.risc_os_filetype %}
+			<span class="badge bg-light text-dark font-monospace border ms-1" title="RISC OS filetype">{{ representative.risc_os_filetype | format_filetype }}</span>
+			{% elif representative.extension %}
+			<span class="badge bg-light text-dark border ms-1">.{{ representative.extension }}</span>
+			{% endif %}
+			{% if representative.file_size is not none %}
+			<span class="text-muted ms-1" title="{{ representative.file_size }} bytes">{{ representative.file_size | format_filesize }}</span>
+			{% endif %}
+		</p>
+		<p class="mb-0 text-muted small font-monospace">
+			{% if representative.sha256 %}sha256:{{ representative.sha256 }}{% elif representative.sha1 %}sha1:{{ representative.sha1 }}{% elif representative.md5 %}md5:{{ representative.md5 }}{% endif %}
+		</p>
+		<p class="mb-0 mt-2 text-muted small">
+			<i class="bi bi-info-circle"></i> This content appears on <strong>{{ total }}</strong>
+			{{ 'copy' if total == 1 else 'copies' }} visible to you.
+		</p>
+	</div>
+</div>
+{% endif %}
+
+<div class="table-responsive">
+	<table class="table table-sm table-hover">
+		<thead><tr>
+			<th>Item</th>
+			<th>Artefact</th>
+			<th>Partition</th>
+			<th>Path</th>
+		</tr></thead>
+		<tbody>
+		{% for ef, part, art, item in rows %}
+		<tr>
+			<td class="small"><a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a></td>
+			<td class="small"><a href="{{ artefact_url(art) }}">{{ art.label }}</a></td>
+			<td class="small text-muted">{{ part.label if part.label else '—' }}</td>
+			<td>
+				<a href="{{ artefact_url(art) }}?path={{ ef.browse_path | urlencode }}#files"
+				   class="font-monospace text-decoration-none small">{{ ef.path }}</a>
+				{{ file_download_icon(ef.uuid, art.restrictions, ef.restrictions) }}
+				{{ file_viewer_metadata_icons(art, ef.path,
+					module_info[ef.id] if module_info is defined and ef.id in module_info else None,
+					replay_info[ef.id] if replay_info is defined and ef.id in replay_info else None) }}
+			</td>
+		</tr>
+		{% endfor %}
+		</tbody>
+	</table>
+</div>
+
+{{ render_pagination(pagination, pagination_args, valid_per_page=valid_per_page, view_all=view_all) }}
+
+{% endblock %}

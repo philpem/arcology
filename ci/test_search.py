@@ -1781,6 +1781,125 @@ class TestMultiValuePagination(unittest.TestCase):
 
 
 
+# =============================================================================
+# Duplicate-file collapsing (opt-in dedupe)
+# =============================================================================
+
+class TestDeduplication(unittest.TestCase):
+    """Content-hash deduplication of file search results and the copies page."""
+
+    # Shared content hash carried by three copies (two public, one private).
+    DUP_SHA = 'd' * 64
+
+    @classmethod
+    def setUpClass(cls):
+        from arcology_shared.enums import ArtefactType
+        from myapp.app import create_app
+        from myapp.database import (
+            Artefact,
+            ExtractedFile,
+            FilesystemType,
+            Item,
+            Partition,
+            StorageDirectory,
+        )
+        from myapp.extensions import db as _db
+
+        cls.app = create_app()
+        cls.app.config['TESTING'] = True
+        cls.app.config['LOGIN_DISABLED'] = True  # treat requests as the worker/anon-allowed
+        cls.client = cls.app.test_client()
+
+        def _artefact(item, label, private=False):
+            art = Artefact(
+                item_id=item.id,
+                label=label,
+                artefact_type=ArtefactType.HFE,
+                original_filename=f'{label}.hfe',
+                storage_path=f'{label}.hfe',
+                storage_directory=StorageDirectory.UPLOADS,
+                is_private=private,
+            )
+            _db.session.add(art)
+            _db.session.flush()
+            part = Partition(artefact_id=art.id, partition_index=0,
+                             label='Main', filesystem=FilesystemType.ADFS)
+            _db.session.add(part)
+            _db.session.flush()
+            return art, part
+
+        with cls.app.app_context():
+            _db.create_all()
+
+            item = Item(name='Dedup Item')
+            _db.session.add(item)
+            _db.session.flush()
+
+            # Three artefacts each carrying a byte-identical !RunImage (same sha256),
+            # the third private; plus one unique file with a different hash.
+            art1, p1 = _artefact(item, 'Disc One')
+            art2, p2 = _artefact(item, 'Disc Two')
+            art3, p3 = _artefact(item, 'Disc Three', private=True)
+
+            for part in (p1, p2, p3):
+                _db.session.add(ExtractedFile(
+                    partition_id=part.id, path='!App/!RunImage', filename='!RunImage',
+                    extension='dup', sha256=cls.DUP_SHA, is_directory=False,
+                ))
+            # A unique file (no duplicates) sharing the same extension.
+            _db.session.add(ExtractedFile(
+                partition_id=p1.id, path='!App/Unique', filename='Unique',
+                extension='dup', sha256='e' * 64, is_directory=False,
+            ))
+            _db.session.commit()
+            cls.item_url = item.url_id
+
+    def _run(self, query, **kw):
+        from myapp.blueprints.search import _run_search, parse_query
+        with self.app.app_context():
+            return _run_search(parse_query(query), **kw)
+
+    def test_without_dedupe_lists_every_copy(self):
+        # Anonymous/LOGIN_DISABLED still applies visibility — the private copy is
+        # excluded, leaving the two public duplicates plus the unique file.
+        results = self._run('ext:dup', dedupe=False)
+        paths = [ef.path for ef, *_ in results['files']]
+        self.assertEqual(paths.count('!App/!RunImage'), 2)
+        self.assertEqual(results['total'], 3)
+
+    def test_dedupe_collapses_duplicates(self):
+        results = self._run('ext:dup', dedupe=True)
+        paths = [ef.path for ef, *_ in results['files']]
+        # The two visible duplicates collapse to one representative row.
+        self.assertEqual(paths.count('!App/!RunImage'), 1)
+        # Two distinct content groups (the dup + the unique file).
+        self.assertEqual(results['total'], 2)
+
+    def test_dedupe_attaches_visible_copy_count(self):
+        results = self._run('ext:dup', dedupe=True)
+        by_path = {ef.path: ef for ef, *_ in results['files']}
+        # Count reflects only the copies the requester may see (private excluded).
+        self.assertEqual(by_path['!App/!RunImage'].dupe_count, 2)
+        # The unique file is its own group with no badge.
+        self.assertEqual(by_path['!App/Unique'].dupe_count, 1)
+
+    def test_duplicates_page_lists_visible_copies(self):
+        resp = self.client.get(f'/search/duplicates?key={self.DUP_SHA}')
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_data(as_text=True)
+        self.assertIn('Disc One', body)
+        self.assertIn('Disc Two', body)
+        self.assertNotIn('Disc Three', body)  # private copy stays hidden
+
+    def test_duplicates_page_unknown_key_404s(self):
+        resp = self.client.get('/search/duplicates?key=' + ('f' * 64))
+        self.assertEqual(resp.status_code, 404)
+
+    def test_duplicates_page_missing_key_404s(self):
+        resp = self.client.get('/search/duplicates')
+        self.assertEqual(resp.status_code, 404)
+
+
 if __name__ == '__main__':
     unittest.main()
 

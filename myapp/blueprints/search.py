@@ -5,10 +5,10 @@ Global cross-item search using a prefix query syntax.
 """
 
 import re
-from flask import Blueprint, render_template, request
+from flask import Blueprint, abort, render_template, request
 from flask_login import current_user
 from markupsafe import Markup, escape
-from sqlalchemy import and_, case, distinct, false, func, or_
+from sqlalchemy import String, and_, case, cast, distinct, false, func, literal, or_
 from ..database import (
     Artefact,
     ArtefactMastering,
@@ -149,6 +149,7 @@ def _neg(tokens: dict, key: str) -> list[str]:
 @public_readable
 def index():
     q = request.args.get('q', '').strip()
+    dedupe = request.args.get('dedupe', '').lower() in ('1', 'true', 'on', 'yes')
     per_page, page, view_all = resolve_per_page('SEARCH_PER_PAGE', PER_PAGE)
     # Clamp page to ≥1: resolve_per_page passes the raw ?page= value through,
     # and a negative page would produce a negative OFFSET in the sub-searches.
@@ -169,7 +170,7 @@ def index():
 
     query_warnings = _check_query_warnings(tokens)
     run = bool(q) and query_error is None
-    results = _run_search(tokens, page=page, per_page=per_page) if run else None
+    results = _run_search(tokens, page=page, per_page=per_page, dedupe=dedupe) if run else None
     # Real result count drives the pagination.  Each bucket paginates
     # independently but shares one page number, so the number of pages needed to
     # view everything is the largest bucket's page count; _run_search reports
@@ -185,6 +186,16 @@ def index():
     # artefact file listing).  Keyed by ExtractedFile.id.
     module_info, replay_info = metadata_by_file_id(results['files']) if results else ({}, {})
 
+    # Per-representative duplicate counts (only present when dedupe collapsed
+    # the file bucket).  Keyed by ExtractedFile.id like module_info/replay_info.
+    dupe_info = {}
+    if results:
+        for row in results['files']:
+            ef = row[0]
+            count = getattr(ef, 'dupe_count', None)
+            if count is not None and count > 1:
+                dupe_info[ef.id] = {'count': count, 'key': getattr(ef, 'dupe_key', None)}
+
     known_protection_types = sorted(
         v for (v,) in db.session.query(distinct(ArtefactProtection.protection_type)).all()
     )
@@ -195,6 +206,7 @@ def index():
     return render_template(
         'search/index.html',
         q=q,
+        dedupe=dedupe,
         tokens=tokens,
         query_error=query_error,
         unknown_keys=unknown_keys,
@@ -209,6 +221,7 @@ def index():
         known_mastering_types=known_mastering_types,
         module_info=module_info,
         replay_info=replay_info,
+        dupe_info=dupe_info,
     )
 
 
@@ -217,6 +230,61 @@ def index():
 def help():
     """Search syntax reference page."""
     return render_template('search/help.html')
+
+
+@blueprint.route('/duplicates')
+@public_readable
+def duplicates():
+    """List every visible copy of one content hash (the dedupe "×N" target).
+
+    ``key`` is the COALESCE(sha256, sha1, md5) group key produced by the
+    collapsed file search.  Results are visibility-filtered, so a user only ever
+    sees (and counts) the copies they are allowed to see.
+    """
+    key = request.args.get('key', '').strip()
+    if not key:
+        abort(404)
+
+    per_page, page, view_all = resolve_per_page('SEARCH_PER_PAGE', PER_PAGE)
+    page = max(1, page)
+
+    hashkey = _file_hashkey()
+    q = (
+        db.session.query(ExtractedFile, Partition, Artefact, Item)
+        .join(Partition, ExtractedFile.partition_id == Partition.id)
+        .join(Artefact, Partition.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(hashkey == key)
+        .filter(ExtractedFile.is_directory == False)
+        .filter(artefact_visibility_clause(current_user))
+    )
+    total = _count_distinct(q, ExtractedFile.id)
+    rows = (
+        q.order_by(func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path))
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+    if total == 0:
+        abort(404)
+
+    pagination = ListPagination(range(total), page, per_page)
+    pagination_args = {k: v for k, v in request.args.items() if k != 'page'}
+    module_info, replay_info = metadata_by_file_id(rows)
+
+    return render_template(
+        'search/duplicates.html',
+        key=key,
+        rows=rows,
+        total=total,
+        representative=rows[0][0] if rows else None,
+        pagination=pagination,
+        pagination_args=pagination_args,
+        valid_per_page=VALID_PER_PAGE,
+        view_all=view_all,
+        module_info=module_info,
+        replay_info=replay_info,
+    )
 
 
 # =============================================================================
@@ -360,6 +428,23 @@ def _numeric_filter(col, val: str, *, is_float: bool = False):
     return col == n
 
 
+def _file_hashkey():
+    """Group key collapsing byte-identical extracted files.
+
+    Identical content shares the same md5/sha1/sha256, so
+    ``COALESCE(sha256, sha1, md5)`` groups every physical copy of one file.  A
+    file with no hash at all falls back to an ``id:<id>`` sentinel so it never
+    merges with another unhashed file (the ``id:`` prefix cannot collide with a
+    hex hash).
+    """
+    return func.coalesce(
+        ExtractedFile.sha256,
+        ExtractedFile.sha1,
+        ExtractedFile.md5,
+        literal('id:') + cast(ExtractedFile.id, String),
+    )
+
+
 def _resolve_riscos_type(val: str):
     """Return an ExtractedFile.risc_os_filetype filter for a type: term.
 
@@ -402,8 +487,15 @@ def _count_distinct(query, col) -> int:
     return query.order_by(None).with_entities(func.count(distinct(col))).scalar() or 0
 
 
-def _search_files(tokens, page=1, per_page=PER_PAGE):
-    """Search ExtractedFile by hash, filename, path, type, or extension."""
+def _search_files(tokens, page=1, per_page=PER_PAGE, dedupe=False):
+    """Search ExtractedFile by hash, filename, path, type, or extension.
+
+    When *dedupe* is set, byte-identical files (same content hash) collapse to a
+    single representative row — the first in the location sort order — and the
+    representative carries transient ``dupe_count`` / ``dupe_key`` attributes so
+    the caller can render a "×N copies" badge linking to the copies listing.
+    Pagination then operates over distinct content groups, not raw rows.
+    """
     per_key = {}
     for h in tokens.get('md5', []):
         per_key.setdefault('md5', []).append(_hash_filter(ExtractedFile.md5, h, 32))
@@ -442,6 +534,8 @@ def _search_files(tokens, page=1, per_page=PER_PAGE):
         .filter(ExtractedFile.is_directory == False)
         .filter(artefact_visibility_clause(current_user))
     )
+    if dedupe:
+        return _dedupe_file_rows(q, page=page, per_page=per_page)
     total = _count_distinct(q, ExtractedFile.id)
     fetched = (
         q.order_by(func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path))
@@ -451,6 +545,75 @@ def _search_files(tokens, page=1, per_page=PER_PAGE):
     )
     has_more = len(fetched) > per_page
     return fetched[:per_page], has_more, total
+
+
+def _dedupe_file_rows(q, page=1, per_page=PER_PAGE):
+    """Collapse a file-result query by content hash.
+
+    *q* is a ``(ExtractedFile, Partition, Artefact, Item)`` query already
+    filtered (including the visibility clause, so counts never leak private
+    copies).  Returns ``(rows, has_more, total)`` where *total* is the number of
+    distinct content groups and each representative ExtractedFile carries
+    ``dupe_count`` / ``dupe_key`` attributes.
+    """
+    hashkey = _file_hashkey()
+    order_cols = (
+        func.lower(Item.name),
+        func.lower(Artefact.label),
+        func.lower(ExtractedFile.path),
+    )
+    total = q.order_by(None).with_entities(func.count(distinct(hashkey))).scalar() or 0
+
+    # Rank rows within each content group and count the group size, then keep
+    # only the first row of each group as its representative.
+    ranked = (
+        q.order_by(None)
+        .with_entities(
+            ExtractedFile.id.label('ef_id'),
+            hashkey.label('hkey'),
+            func.count().over(partition_by=hashkey).label('copies'),
+            func.row_number().over(partition_by=hashkey, order_by=order_cols).label('rn'),
+            order_cols[0].label('o_item'),
+            order_cols[1].label('o_art'),
+            order_cols[2].label('o_path'),
+        )
+        .subquery()
+    )
+    reps = (
+        db.session.query(ranked.c.ef_id, ranked.c.hkey, ranked.c.copies)
+        .filter(ranked.c.rn == 1)
+        .order_by(ranked.c.o_item, ranked.c.o_art, ranked.c.o_path)
+        .offset((page - 1) * per_page)
+        .limit(per_page + 1)
+        .all()
+    )
+    has_more = len(reps) > per_page
+    reps = reps[:per_page]
+    if not reps:
+        return [], has_more, total
+
+    counts = {r.ef_id: r.copies for r in reps}
+    keys = {r.ef_id: r.hkey for r in reps}
+    loaded = {
+        row[0].id: row
+        for row in (
+            db.session.query(ExtractedFile, Partition, Artefact, Item)
+            .join(Partition, ExtractedFile.partition_id == Partition.id)
+            .join(Artefact, Partition.artefact_id == Artefact.id)
+            .join(Item, Artefact.item_id == Item.id)
+            .filter(ExtractedFile.id.in_(list(counts)))
+            .all()
+        )
+    }
+    fetched = []
+    for r in reps:  # preserve the paginated location order
+        row = loaded.get(r.ef_id)
+        if row is None:
+            continue
+        row[0].dupe_count = counts[r.ef_id]
+        row[0].dupe_key = keys[r.ef_id]
+        fetched.append(row)
+    return fetched, has_more, total
 
 
 def _search_partitions(tokens, page=1, per_page=PER_PAGE):
@@ -928,7 +1091,7 @@ def _check_query_warnings(tokens: dict) -> list:
     return warnings
 
 
-def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE) -> dict:
+def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE, dedupe: bool = False) -> dict:
     """Execute queries and return result buckets.
 
     Each result bucket (files / artefacts / catalogue_items) is paginated
@@ -965,7 +1128,7 @@ def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE) -> dict:
 
     # File search
     if has_file_terms:
-        files, has_more, total = _search_files(tokens, page=page, per_page=per_page)
+        files, has_more, total = _search_files(tokens, page=page, per_page=per_page, dedupe=dedupe)
         _add('files', files, has_more, total)
 
     # Disc/partition search
