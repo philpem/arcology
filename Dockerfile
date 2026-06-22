@@ -12,7 +12,7 @@ RUN set -e; \
 	&& apk add --no-cache curl libstdc++ libgcc \
 	&& pip install --no-cache-dir -r /requirements.txt \
 	&& pip install gunicorn \
-	&& pip install py-tlsh \
+	&& CC=g++ CXX=g++ LDSHARED="g++ -shared" pip install --no-cache-dir py-tlsh \
 	&& apk del .build-deps
 
 # Uncomment this if you want to use sqltap to inspect the SQL query workload
