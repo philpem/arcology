@@ -19,6 +19,10 @@
    ============================================================================= #}
 
 {% macro _pagination_inner(pagination, pagination_args, valid_per_page=none, view_all=false) %}
+{# Drop None-valued args: dict(...) | urlencode would otherwise serialise them as
+   the literal string "None" (e.g. ?artefact=None&per_page=None), which the route
+   cannot parse and 404s.  The form inputs below already guard with `v is not none`. #}
+{% set pagination_args = dict(pagination_args.items() | rejectattr('1', 'none') | list) %}
 {% set pages_list = pagination.iter_pages(left_edge=1, left_current=2, right_current=3, right_edge=1) | list %}
 {% if pagination.pages > 1 or valid_per_page %}
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
