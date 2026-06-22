@@ -21,6 +21,7 @@
 	<li><strong>Exclude matches:</strong> prefix any keyed term with <code>!</code> to exclude it, e.g. <code>!type:Obey</code> or <code>!tag:demo</code>. A query must contain at least one non-negated term.</li>
 	<li><strong>Multi-word values:</strong> wrap values containing spaces in double quotes, e.g. <code>module:"Voice Module"</code> or <code>label:"Boot Disc"</code>.</li>
 	<li><strong>Matching:</strong> most text fields match as a substring by default. <code>filename:</code> matches the whole name exactly unless you add a <code>*</code> wildcard (so <code>filename:!Run</code> matches only <code>!Run</code>, while <code>filename:!Run*</code> matches <code>!RunImage</code>). Hashes match a prefix when shorter than the full length, otherwise exactly.</li>
+	<li><strong>Consolidate duplicate files:</strong> tick this box (under the search field) to show byte-identical files just once. Works for every file search — by name, path, hash, type, RISC OS module, <code>*</code> command, SWI, or Acorn Replay metadata. A <i class="bi bi-files"></i> <span class="badge bg-info text-dark">&times;N</span> badge then shows how many copies exist across all discs; click it to list every disc and path carrying that exact content.</li>
 </ul>
 
 <h2 class="h5 mt-4">Search keys</h2>

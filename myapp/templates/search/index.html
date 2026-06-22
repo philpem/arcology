@@ -25,6 +25,15 @@
 			<div class="col-auto">
 				<button type="submit" class="btn btn-primary"><i class="bi bi-search"></i> Search</button>
 			</div>
+			<div class="col-12">
+				<div class="form-check">
+					<input class="form-check-input" type="checkbox" name="dedupe" value="1" id="dedupe-toggle"
+						{% if dedupe %}checked{% endif %}>
+					<label class="form-check-label small text-muted" for="dedupe-toggle">
+						Consolidate duplicate files — show identical files (same content) once, with a count of all copies.
+					</label>
+				</div>
+			</div>
 		</form>
 		<div class="mt-2 text-muted small">
 			Use prefixes such as <code>type:</code>, <code>tag:</code>, or <code>filename:</code> to search specific fields,
@@ -236,6 +245,12 @@
 					{{ file_viewer_metadata_icons(art, ef.path,
 						module_info[ef.id] if module_info is defined and ef.id in module_info else None,
 						replay_info[ef.id] if replay_info is defined and ef.id in replay_info else None) }}
+					{% if dupe_info is defined and ef.id in dupe_info %}
+					<a href="{{ url_for('myapp_blueprints_search.duplicates', key=dupe_info[ef.id].key) }}"
+					   class="badge bg-info text-dark text-decoration-none ms-1"
+					   title="This file appears on {{ dupe_info[ef.id].count }} discs — show all copies">
+						<i class="bi bi-files"></i> &times;{{ dupe_info[ef.id].count }}</a>
+					{% endif %}
 				</td>
 				<td>
 					{% if ef.risc_os_filetype %}
