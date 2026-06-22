@@ -272,15 +272,15 @@ class TestHashdbRecognitionStep(unittest.TestCase):
     def test_statement_timeout_helper_noop_on_sqlite(self):
         """The PostgreSQL statement-timeout guard is a safe no-op elsewhere.
 
-        Still used by the surviving worker-driven similarity-step endpoint.
+        Used as a backstop by the task runner's recognition step (hashdb_jobs).
         """
-        from myapp.blueprints.api import _apply_statement_timeout
+        from myapp.utils.db_helpers import apply_statement_timeout
         with self.app.app_context():
             # Must not raise on SQLite, and tolerate bad/zero values.
-            _apply_statement_timeout(120)
-            _apply_statement_timeout(0)
-            _apply_statement_timeout(None)
-            _apply_statement_timeout('nope')
+            apply_statement_timeout(120)
+            apply_statement_timeout(0)
+            apply_statement_timeout(None)
+            apply_statement_timeout('nope')
 
     def test_wall_clock_deadline_returns_timed_out(self):
         # A step that overruns the wall-clock budget returns timed_out even when

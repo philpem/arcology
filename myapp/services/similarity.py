@@ -771,8 +771,9 @@ def recompute_for_artefact(artefact) -> dict:
     """Incrementally refresh all similarity rows involving one artefact, in full.
 
     Synchronous wrapper over :func:`similarity_reset` + :func:`similarity_match_step`
-    used by the CLI rebuild and the tests; the worker drives the same two phases
-    in bounded chunks via the ``/artefacts/<uuid>/similarity-step`` endpoint.
+    used by the CLI rebuild and the tests; the task runner drives the same two
+    phases (with heartbeats and cancellation checks) in
+    :func:`run_similarity_refresh_job`.
     """
     aid = artefact.id
     similarity_reset(aid)
@@ -788,6 +789,56 @@ def recompute_for_artefact(artefact) -> dict:
         cursor = result["next_cursor"]
     clear_similarity_dirty(aid)
     return {"artefact_pairs": artefact_pairs, "component_pairs": component_pairs}
+
+
+def _noop_heartbeat(*args, **kwargs):
+    pass
+
+
+def _noop_check_cancelled():
+    pass
+
+
+def run_similarity_refresh_job(artefact, *, heartbeat=_noop_heartbeat,
+                               check_cancelled=_noop_check_cancelled) -> dict:
+    """Recompute one artefact's content-set similarity, in-process (task runner).
+
+    The control-plane replacement for the former worker-driven
+    ``/artefacts/<uuid>/similarity-step`` loop: it runs :func:`similarity_reset`
+    then bounded :func:`similarity_match_step` batches, committing between
+    batches and calling ``heartbeat`` / ``check_cancelled`` so a long refresh on
+    a large artefact stays visibly alive (heartbeat-based stale detection) and
+    remains cancellable.  Returns a summary dict for the runner to record,
+    mirroring the worker's old ``complete_analysis`` payload.
+    """
+    aid = artefact.id
+    label = f"Finding similar artefacts for '{artefact.label}'"
+
+    check_cancelled()
+    similarity_reset(aid)
+    heartbeat(label=label)
+
+    cursor = 0
+    processed = artefact_pairs = component_pairs = 0
+    while True:
+        check_cancelled()
+        result = similarity_match_step(aid, cursor, limit=SIMILARITY_STEP_CANDIDATES)
+        db.session.commit()
+        processed += result["processed"]
+        artefact_pairs += result["artefact_pairs"]
+        component_pairs += result["component_pairs"]
+        heartbeat(current=processed, total=result.get("progress_total") or 0, label=label)
+        if result["done"]:
+            break
+        cursor = result["next_cursor"]
+    clear_similarity_dirty(aid)
+    return {
+        "summary": (f"{processed} candidate(s) compared; {artefact_pairs} similar "
+                    f"artefact(s), {component_pairs} similar component(s)"),
+        "candidates_compared": processed,
+        "artefact_pairs": artefact_pairs,
+        "component_pairs": component_pairs,
+    }
 
 
 # ---------------------------------------------------------------------------

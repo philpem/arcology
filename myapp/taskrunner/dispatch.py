@@ -17,6 +17,7 @@ from ..services.hashdb_jobs import (
     run_hashdb_recognition_job,
     run_partition_recognition_job,
 )
+from ..services.similarity import run_similarity_refresh_job
 
 
 def _hints(analysis):
@@ -64,12 +65,21 @@ def _dispatch_hashdb_recognition(analysis, *, heartbeat, check_cancelled):
         _database_id(analysis), heartbeat=heartbeat, check_cancelled=check_cancelled)
 
 
+def _dispatch_similarity_refresh(analysis, *, heartbeat, check_cancelled):
+    artefact = db.session.get(Artefact, analysis.artefact_id)
+    if artefact is None:
+        raise ValueError('artefact no longer exists')
+    return run_similarity_refresh_job(
+        artefact, heartbeat=heartbeat, check_cancelled=check_cancelled)
+
+
 DISPATCH = {
     AnalysisType.HASH_RESCAN: _dispatch_hash_rescan,
     AnalysisType.PRODUCT_RECOGNITION: _dispatch_product_recognition,
     AnalysisType.HASHDB_LINK: _dispatch_hashdb_link,
     AnalysisType.HASHDB_DELETE: _dispatch_hashdb_delete,
     AnalysisType.HASHDB_RECOGNITION: _dispatch_hashdb_recognition,
+    AnalysisType.SIMILARITY_REFRESH: _dispatch_similarity_refresh,
 }
 
 # Fail fast at import time if a control-plane type has no handler (a forgotten
