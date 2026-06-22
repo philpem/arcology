@@ -38,7 +38,7 @@ from ..database import (
     KnownProduct,
     RecognisedProduct,
 )
-from ..extensions import db
+from ..utils.db_helpers import insert_ignore_conflict
 
 # Maximum number of per-folder LIKE conditions OR'd into a single verification
 # query.  Bounds statement size (and keeps the planner on the (partition_id,
@@ -131,21 +131,8 @@ def insert_recognised_product_rows(rows):
     for row in rows:
         row.setdefault('created_at', now)
 
-    table = RecognisedProduct.__table__
-    dialect = db.session.get_bind().dialect.name
-    if dialect == 'postgresql':
-        from sqlalchemy.dialects.postgresql import insert
-        stmt = insert(table).values(rows).on_conflict_do_nothing(
-            index_elements=['partition_id', 'product_id', 'folder_path'],
-        )
-    elif dialect == 'sqlite':
-        from sqlalchemy.dialects.sqlite import insert
-        stmt = insert(table).values(rows).on_conflict_do_nothing(
-            index_elements=['partition_id', 'product_id', 'folder_path'],
-        )
-    else:
-        stmt = table.insert().values(rows)
-    db.session.execute(stmt)
+    insert_ignore_conflict(
+        RecognisedProduct, rows, ('partition_id', 'product_id', 'folder_path'))
 
 
 def _sql_like_escape(value):

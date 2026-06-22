@@ -331,6 +331,42 @@ class TestArtefactSimilarity(_SimilarityBase):
              .filter(Analysis.status == AnalysisStatus.PENDING).count())
         self.assertEqual(n, 1)
 
+    def test_similarity_reset_keeps_component_ids_stable(self):
+        """A refresh reconciles components in place — ids must survive, not churn.
+
+        Stable ids are what keep cross-artefact ComponentSimilarity foreign keys
+        valid when another worker refreshes a candidate concurrently.
+        """
+        from myapp.database import ArtefactComponent
+        from myapp.services.similarity import similarity_reset
+        files = [('!App/A', 'a', 1000), ('!App/B', 'b', 2000), ('!App/C', 'c', 3000)]
+        a = _add_artefact(self.db, self.item, 'S1', files)
+        similarity_reset(a.id)
+        first = {(c.partition_id, c.root_path): c.id
+                 for c in ArtefactComponent.query.filter_by(artefact_id=a.id).all()}
+        self.assertTrue(first)
+        # A second refresh (no file change) must reuse the same rows.
+        similarity_reset(a.id)
+        second = {(c.partition_id, c.root_path): c.id
+                  for c in ArtefactComponent.query.filter_by(artefact_id=a.id).all()}
+        self.assertEqual(first, second)
+
+    def test_rebuild_keeps_component_ids_stable(self):
+        """A full rebuild reconciles components in place too — ids must survive."""
+        from myapp.database import ArtefactComponent
+        from myapp.services.similarity import rebuild_all
+        files = [('!App/A', 'a', 1000), ('!App/B', 'b', 2000), ('!App/C', 'c', 3000)]
+        _add_artefact(self.db, self.item, 'RB1', files)
+        _add_artefact(self.db, self.item, 'RB2', files)
+        rebuild_all()
+        first = {(c.artefact_id, c.partition_id, c.root_path): c.id
+                 for c in ArtefactComponent.query.all()}
+        self.assertTrue(first)
+        rebuild_all()
+        second = {(c.artefact_id, c.partition_id, c.root_path): c.id
+                  for c in ArtefactComponent.query.all()}
+        self.assertEqual(first, second)
+
     def test_similarity_step_endpoint_drives_to_done(self):
         """The worker-only step endpoint chunks to completion and caches matches."""
         from myapp.services.similarity import similar_artefacts
@@ -351,6 +387,104 @@ class TestArtefactSimilarity(_SimilarityBase):
             cursor = body['next_cursor']
         self.assertTrue(done)
         self.assertEqual(len(similar_artefacts(a, None)), 1)
+
+    def _fk_integrity_error(self):
+        """An IntegrityError that looks like a PostgreSQL FK violation (23503)."""
+        from sqlalchemy.exc import IntegrityError
+        orig = type('Orig', (Exception,), {'pgcode': '23503'})('fk')
+        return IntegrityError('insert', {}, orig)
+
+    def test_similarity_step_endpoint_retries_on_fk_race(self):
+        """A residual FK violation (e.g. a concurrent rebuild wipe) is retried.
+
+        A candidate's components can be deleted by a concurrent rebuild between the
+        read and the commit, so the ComponentSimilarity insert can fail the FK.
+        The endpoint must roll back and retry rather than 500.
+        """
+        from unittest.mock import patch
+        from myapp.services import similarity as sim
+        from myapp.services.similarity import similar_artefacts
+        files = [('A', 'a', 1000), ('B', 'b', 2000), ('C', 'c', 3000)]
+        a = _add_artefact(self.db, self.item, 'R1', files)
+        _add_artefact(self.db, self.item, 'R2', files)
+        client = self.app.test_client()
+        auth = {'X-API-Key': os.environ['WORKER_API_KEY']}
+
+        real_step = sim.similarity_match_step
+        calls = {'n': 0}
+
+        def flaky(*args, **kwargs):
+            calls['n'] += 1
+            if calls['n'] == 1:
+                raise self._fk_integrity_error()
+            return real_step(*args, **kwargs)
+
+        cursor, done = 0, False
+        with patch.object(sim, 'similarity_match_step', side_effect=flaky):
+            for _ in range(10):
+                resp = client.post(f'/api/artefacts/{a.uuid}/similarity-step',
+                                   json={'cursor': cursor, 'limit': 1}, headers=auth)
+                self.assertEqual(resp.status_code, 200, resp.data)
+                body = resp.get_json()
+                if body.get('done'):
+                    done = True
+                    break
+                cursor = body['next_cursor']
+        self.assertTrue(done)
+        self.assertGreater(calls['n'], 1)  # the first step was retried
+        self.assertEqual(len(similar_artefacts(a, None)), 1)
+
+    def test_similarity_step_endpoint_does_not_mask_non_fk_integrity_error(self):
+        """A non-FK IntegrityError is a real bug and must surface, not be retried."""
+        from unittest.mock import patch
+        from sqlalchemy.exc import IntegrityError
+        from myapp.services import similarity as sim
+        a = _add_artefact(self.db, self.item, 'M1', [('A', 'a', 1000), ('B', 'b', 2000)])
+        _add_artefact(self.db, self.item, 'M2', [('A', 'a', 1000), ('B', 'b', 2000)])
+        client = self.app.test_client()
+        auth = {'X-API-Key': os.environ['WORKER_API_KEY']}
+
+        # No pgcode → not a foreign-key violation → must propagate (TESTING
+        # re-raises rather than returning a 500 body), not be silently retried.
+        boom = IntegrityError('insert', {}, Exception('not-fk'))
+        with patch.object(sim, 'similarity_match_step', side_effect=boom):
+            with self.assertRaises(IntegrityError):
+                client.post(f'/api/artefacts/{a.uuid}/similarity-step',
+                            json={'cursor': 0, 'limit': 1}, headers=auth)
+
+    def test_similarity_step_idempotent_pair_insert(self):
+        """Re-inserting the same pair stores one row, never raising a unique error.
+
+        Exercises the ON CONFLICT DO NOTHING path: the symmetric pair that the
+        other artefact's concurrent refresh would insert must be skipped.  Here we
+        provoke it single-threaded by replaying the step over unchanged components
+        (no intervening reset), which recomputes the identical normalised pairs.
+        """
+        from myapp.database import ArtefactSimilarity, ComponentSimilarity
+        from myapp.services.similarity import (
+            similarity_match_step,
+            similarity_reset,
+        )
+        # Two discs sharing a populated app directory → artefact and component matches.
+        files = [('!App/A', 'a', 1000), ('!App/B', 'b', 2000), ('!App/C', 'c', 3000)]
+        a = _add_artefact(self.db, self.item, 'I1', files)
+        b = _add_artefact(self.db, self.item, 'I2', files)
+        # Both artefacts must own components for the cross match to find pairs.
+        similarity_reset(a.id)
+        similarity_reset(b.id)
+        similarity_match_step(a.id, 0, limit=100)
+        self.db.session.commit()
+        art_before = ArtefactSimilarity.query.count()
+        comp_before = ComponentSimilarity.query.count()
+        self.assertGreater(art_before, 0)
+        self.assertGreater(comp_before, 0)
+        # Replay the same step (components unchanged, so identical pairs): the
+        # inserts collide with the rows already stored and must be dropped, not
+        # raise a unique-constraint violation or duplicate the rows.
+        similarity_match_step(a.id, 0, limit=100)
+        self.db.session.commit()
+        self.assertEqual(ArtefactSimilarity.query.count(), art_before)
+        self.assertEqual(ComponentSimilarity.query.count(), comp_before)
 
     def test_similarity_step_endpoint_requires_worker(self):
         a = _add_artefact(self.db, self.item, 'W', [('A', 'a', 1000), ('B', 'b', 2000)])

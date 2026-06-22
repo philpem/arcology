@@ -33,6 +33,47 @@ def is_deadlock(exc):
     return getattr(getattr(exc, 'orig', None), 'pgcode', None) == '40P01'
 
 
+def is_foreign_key_violation(exc):
+    """True if *exc* is a PostgreSQL foreign-key violation (SQLSTATE 23503)."""
+    return getattr(getattr(exc, 'orig', None), 'pgcode', None) == '23503'
+
+
+def insert_ignore_conflict(model, rows, index_elements, *, batch_size=1000):
+    """Bulk-insert *rows* into *model*, skipping rows that hit a unique conflict.
+
+    ``rows`` is a list of column dicts; ``index_elements`` names the columns of
+    the unique constraint to conflict on (e.g. the two columns of a
+    ``uq_*_pair``).  Emits ``INSERT ... ON CONFLICT DO NOTHING`` on PostgreSQL and
+    SQLite (the dialects this app runs on), so a duplicate inserted concurrently
+    from the symmetric side is silently dropped rather than raising
+    ``IntegrityError``.  Does not commit — the caller owns the transaction.
+
+    Returns the number of rows **actually inserted** (conflicting rows excluded),
+    so callers reporting progress counts don't overstate during a race.  The
+    unsupported-backend fallback may report ``-1`` where the driver does not
+    expose a row count.
+    """
+    if not rows:
+        return 0
+    dialect = db.session.get_bind().dialect.name
+    inserted = 0
+    if dialect == 'postgresql':
+        from sqlalchemy.dialects.postgresql import insert as _insert
+    elif dialect == 'sqlite':
+        from sqlalchemy.dialects.sqlite import insert as _insert
+    else:  # pragma: no cover - unsupported backend; fall back to a plain insert
+        for i in range(0, len(rows), batch_size):
+            result = db.session.execute(model.__table__.insert(), rows[i:i + batch_size])
+            inserted += result.rowcount
+        return inserted
+    for i in range(0, len(rows), batch_size):
+        chunk = rows[i:i + batch_size]
+        stmt = _insert(model.__table__).values(chunk).on_conflict_do_nothing(
+            index_elements=index_elements)
+        inserted += db.session.execute(stmt).rowcount
+    return inserted
+
+
 def _query_with_options(model, *load_options):
     """Return a model query with optional eager-load directives applied."""
     query = model.query
