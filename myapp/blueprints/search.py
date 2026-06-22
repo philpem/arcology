@@ -260,7 +260,7 @@ def duplicates():
     )
     total = _count_distinct(q, ExtractedFile.id)
     rows = (
-        q.order_by(func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path))
+        q.order_by(*_file_order())
         .offset((page - 1) * per_page)
         .limit(per_page)
         .all()
@@ -638,6 +638,10 @@ def _dedupe_file_rows(q, page=1, per_page=PER_PAGE):
             .join(Artefact, Partition.artefact_id == Artefact.id)
             .join(Item, Artefact.item_id == Item.id)
             .filter(ExtractedFile.id.in_(list(counts)))
+            # Re-assert visibility on the reload: the ids are already constrained
+            # by the visibility-filtered base above, but keep the safety local
+            # rather than dependent on the upstream subquery (CLAUDE.md).
+            .filter(artefact_visibility_clause(current_user))
             .all()
         )
     }
