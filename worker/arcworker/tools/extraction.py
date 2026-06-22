@@ -62,7 +62,8 @@ def extract_acorn_disc_image_manager(input_path: Path, output_dir: Path) -> dict
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Create DIM script
-    script_content = f"""insert {input_path}
+    script_content = f"""config Allow_Damaged_ADFS true
+insert {input_path}
 report
 chdir {output_dir}
 extract *

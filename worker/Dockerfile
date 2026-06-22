@@ -158,7 +158,13 @@ ARG DISCIMAGEMANAGER_REPO=https://github.com/philpem/DiscImageManager
 # Pinned commit SHAs/tags: update these when upgrading DiscImageManager or its deps.
 # Current as of 2026-04-02.
 #ARG DISCIMAGEMANAGER_VERSION=1.49
-ARG DISCIMAGEMANAGER_VERSION=285e859658a6b88e4324eb299efa7f73ef91a74a
+#ARG DISCIMAGEMANAGER_VERSION=285e859658a6b88e4324eb299efa7f73ef91a74a
+
+# Mmap fix only
+#ARG DISCIMAGEMANAGER_VERSION=b551de74874059527f7fae4c4aa35da5e7f91780
+
+# Large image support and ADFS fault tolerance
+ARG DISCIMAGEMANAGER_VERSION=9e27861670e99f9401279e365de58b442cb5ff04
 
 # SpriteToBitmap and GJHCustomComponents pinned commit SHAs
 ARG DISCIMAGEMANAGER_STB_VERSION=2cbd3ac945186bb5ed7e31685ee4e8287589ddd9
