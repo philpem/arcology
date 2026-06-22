@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from itertools import combinations
 from flask import current_app
 from sqlalchemy import func, or_
+from sqlalchemy.exc import OperationalError
 from arcology_shared.fuzzyhash import HAS_TLSH, TLSH_SIMILAR_DISTANCE, tlsh_diff
 from ..database import (
     Artefact,
@@ -317,12 +318,35 @@ def _document_frequencies(hashes) -> dict:
 # Rebuild
 # ---------------------------------------------------------------------------
 
-def rebuild_all(progress=None) -> dict:
+def rebuild_all(progress=None, *, max_retries=3) -> dict:
     """Recompute the entire similarity cache from extracted-file data.
 
     ``progress`` is an optional ``callable(str)`` for status lines (the CLI
     passes ``click.echo``); when None the rebuild is silent.
+
+    Retries a bounded number of times on a PostgreSQL deadlock (SQLSTATE
+    ``40P01``): a full rebuild contends for row locks on ``artefact_components``
+    with concurrent worker SIMILARITY_REFRESH steps.  In-place reconciliation
+    now only locks rows it actually changes, so a deadlock should be rare, but
+    when one does occur it is transient and safe to retry from scratch (the
+    rebuild is idempotent).
     """
+    for attempt in range(1, max_retries + 1):
+        try:
+            return _rebuild_all_once(progress)
+        except OperationalError as exc:
+            db.session.rollback()
+            if getattr(exc.orig, "pgcode", None) != "40P01" or attempt == max_retries:
+                raise
+            if progress:
+                progress(
+                    f"  deadlock detected; retrying rebuild "
+                    f"(attempt {attempt + 1}/{max_retries}) …"
+                )
+
+
+def _rebuild_all_once(progress=None) -> dict:
+    """One attempt at a full similarity rebuild (see :func:`rebuild_all`)."""
     def _note(msg):
         if progress:
             progress(msg)
@@ -581,10 +605,18 @@ def _sync_components(artefact_id, desired, existing_rows=None) -> dict:
             db.session.add(comp)
             db.session.flush()  # assign comp.id
         else:
-            comp.name = name
-            comp.file_count = file_count
-            comp.total_bytes = total_bytes
-            comp.computed_at = now
+            # Only emit an UPDATE (and take a row lock) when something actually
+            # changed.  A full rebuild reconciles every existing component; an
+            # unconditional ``computed_at = now`` would dirty — and so lock —
+            # every one of the (often hundreds of thousands of) unchanged
+            # components for the whole rebuild transaction, deadlocking against
+            # concurrent worker SIMILARITY_REFRESH steps touching the same rows.
+            if (comp.name != name or comp.file_count != file_count
+                    or comp.total_bytes != total_bytes):
+                comp.name = name
+                comp.file_count = file_count
+                comp.total_bytes = total_bytes
+                comp.computed_at = now
         id_map[key] = comp.id
     # Drop components that no longer exist (CASCADE clears their pair rows).
     for key, comp in existing.items():
