@@ -367,6 +367,28 @@ class TestArtefactSimilarity(_SimilarityBase):
                   for c in ArtefactComponent.query.all()}
         self.assertEqual(first, second)
 
+    def test_rebuild_does_not_touch_unchanged_components(self):
+        """A second rebuild must not re-UPDATE unchanged component rows.
+
+        The unconditional ``computed_at = now`` previously dirtied (and so
+        row-locked) every component on every rebuild, which deadlocked against
+        concurrent worker SIMILARITY_REFRESH steps.  An unchanged component's
+        ``computed_at`` must stay put across rebuilds.
+        """
+        from myapp.database import ArtefactComponent
+        from myapp.services.similarity import rebuild_all
+        files = [('!App/A', 'a', 1000), ('!App/B', 'b', 2000), ('!App/C', 'c', 3000)]
+        _add_artefact(self.db, self.item, 'NC1', files)
+        _add_artefact(self.db, self.item, 'NC2', files)
+        rebuild_all()
+        first = {c.id: c.computed_at for c in ArtefactComponent.query.all()}
+        self.assertTrue(first)
+        rebuild_all()
+        second = {c.id: c.computed_at for c in ArtefactComponent.query.all()}
+        # Same rows, same computed_at: nothing was re-written (and so nothing
+        # was needlessly locked) for the unchanged content set.
+        self.assertEqual(first, second)
+
     def test_similarity_step_endpoint_drives_to_done(self):
         """The worker-only step endpoint chunks to completion and caches matches."""
         from myapp.services.similarity import similar_artefacts
