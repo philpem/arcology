@@ -9,6 +9,11 @@ from ..services.artefact_storage import get_artefact_storage_key
 # CHECKSUM_COMPUTE handler).
 _FLUX_TYPES = {ArtefactType.SCP, ArtefactType.DFI, ArtefactType.A2R}
 
+# Emit a progress line every this many artefacts scanned.  Each artefact's blob
+# is streamed (and can be multi-GB), so this is far smaller than the file-level
+# rescan's threshold.
+_PROGRESS_EVERY = 100
+
 
 @click.command('backfill-tlsh')
 @click.option('--force', is_flag=True, help='Recompute even if a tlsh is already set')
@@ -27,10 +32,12 @@ def backfill_tlsh(force, batch_size):
         click.echo("ERROR: py-tlsh is not installed; cannot compute TLSH.", err=True)
         raise SystemExit(1)
 
-    q = Artefact.query
+    q = Artefact.query.filter(Artefact.artefact_type.notin_(_FLUX_TYPES))
     if not force:
         q = q.filter(Artefact.tlsh.is_(None))
 
+    total = q.count()
+    click.echo(f"  {total} artefact(s) to hash …")
     scanned = updated = pending = 0
     for art in q.yield_per(batch_size):
         if art.artefact_type in _FLUX_TYPES:
@@ -50,6 +57,9 @@ def backfill_tlsh(force, batch_size):
             if pending >= batch_size:
                 db.session.commit()
                 pending = 0
+        if scanned % _PROGRESS_EVERY == 0:
+            pct = f" ({scanned * 100 // total}%)" if total else ""
+            click.echo(f"  {scanned}/{total} scanned{pct}, {updated} hashed")
     db.session.commit()
     click.echo(f"Done. {updated} of {scanned} artefact(s) updated.")
 
