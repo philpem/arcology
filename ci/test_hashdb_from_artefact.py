@@ -60,6 +60,7 @@ class TestCreateHashdbFromArtefact(unittest.TestCase):
 
     def setUp(self):
         from myapp.database import (
+            Analysis,
             Artefact,
             ExtractedFile,
             HashDatabase,
@@ -71,7 +72,7 @@ class TestCreateHashdbFromArtefact(unittest.TestCase):
         )
         self.ctx = self.app.app_context()
         self.ctx.push()
-        for model in (KnownFile, KnownProduct, HashDatabase, ExtractedFile,
+        for model in (Analysis, KnownFile, KnownProduct, HashDatabase, ExtractedFile,
                       Partition, Artefact, Item, Platform):
             model.query.delete()
         self.db.session.commit()
@@ -118,6 +119,32 @@ class TestCreateHashdbFromArtefact(unittest.TestCase):
         art = _add_artefact(self.db, self.item, 'X', [('f', 'f')])
         with self.assertRaises(ValueError):
             create_hashdb_from_artefacts('   ', [art.id])
+
+    def test_overlong_name_rejected(self):
+        from myapp.services.hash_rescan import create_hashdb_from_artefacts
+        art = _add_artefact(self.db, self.item, 'X', [('f', 'f')])
+        with self.assertRaises(ValueError):
+            create_hashdb_from_artefacts('n' * 101, [art.id])
+
+    def test_link_new_known_files_still_queues_recognition(self):
+        """Regression: link_new_known_files must queue recognition when enabled."""
+        from arcology_shared.enums import AnalysisType
+        from myapp.database import Analysis, HashDatabase, KnownFile, KnownProduct
+        from myapp.services.hash_rescan import link_new_known_files
+        _add_artefact(self.db, self.item, 'Disc', [('f', 'f')])
+        hdb = HashDatabase(name='Rec', enable_product_recognition=True, is_active=True)
+        self.db.session.add(hdb)
+        self.db.session.flush()
+        product = KnownProduct(database_id=hdb.id, title='P')
+        self.db.session.add(product)
+        self.db.session.flush()
+        kf = KnownFile(database_id=hdb.id, product_id=product.id, filename='f',
+                       file_size=1000, md5=_h('f', 32), sha1=_h('f', 40), sha256=_h('f', 64))
+        self.db.session.add(kf)
+        self.db.session.commit()
+        link_new_known_files(hdb, [kf])
+        self.assertEqual(
+            Analysis.query.filter_by(analysis_type=AnalysisType.HASHDB_RECOGNITION).count(), 1)
 
     def test_links_collection_to_snapshot(self):
         """After creation, a matching file on another artefact links to the DB."""

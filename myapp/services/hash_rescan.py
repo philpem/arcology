@@ -751,6 +751,9 @@ def link_new_known_files(database, new_kf_list):
     if not database.enable_product_recognition:
         return
 
+    queue_hashdb_recognition_backfill(database)
+
+
 def create_hashdb_from_artefacts(name, artefact_ids, *, description=None,
                                  exclude_from_similarity=True, product_title=None,
                                  commit=True):
@@ -768,11 +771,13 @@ def create_hashdb_from_artefacts(name, artefact_ids, *, description=None,
     relink so the rest of the collection links to the new database.
 
     Returns ``(database, added, skipped_no_hash)``.  Raises ``ValueError`` if the
-    name is blank or already in use.
+    name is blank, too long, or already in use.
     """
     name = (name or '').strip()
     if not name:
         raise ValueError('A database name is required.')
+    if len(name) > 100:
+        raise ValueError('The database name must be 100 characters or fewer.')
     if HashDatabase.query.filter(func.lower(HashDatabase.name) == name.lower()).first():
         raise ValueError(f'A hash database named "{name}" already exists.')
 
@@ -784,7 +789,7 @@ def create_hashdb_from_artefacts(name, artefact_ids, *, description=None,
     )
     db.session.add(database)
     db.session.flush()
-    product = KnownProduct(database_id=database.id, title=(product_title or name))
+    product = KnownProduct(database_id=database.id, title=(product_title or name)[:200])
     db.session.add(product)
     db.session.flush()
 
