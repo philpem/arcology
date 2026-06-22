@@ -2448,13 +2448,23 @@ def add_to_hashdb(uuid):
 
     db.session.commit()
 
-    # Link existing extracted files to the new KnownFiles (and queue product
-    # recognition when enabled) — shared with the import routes.
-    from ..services.hash_rescan import link_new_known_files
-    link_new_known_files(database, new_kfs)
+    # Linking the freshly-added KnownFiles against the whole extracted-file
+    # corpus (and the recognition backfill) is unbounded work: for a bulk
+    # selection of hundreds of files it routinely blows past the reverse
+    # proxy's timeout, so the user sees a 504 even though the rows committed
+    # above.  Hand it to the task runner instead — it relinks in bounded
+    # chunks and queues recognition itself — exactly as the web DB-import
+    # route does (see hashdb._post_known_file_changes).
+    linking_queued = False
+    if added and database.is_active:
+        from ..services.hash_rescan import queue_hashdb_link_job
+        _, linking_queued = queue_hashdb_link_job(database.id)
 
     if added:
-        flash(f'Added {added} file(s) to "{product.title}" in "{database.name}".', 'success')
+        msg = f'Added {added} file(s) to "{product.title}" in "{database.name}".'
+        if linking_queued:
+            msg += ' Matching against the collection is running in the background.'
+        flash(msg, 'success')
     if skipped_no_hash:
         flash(f'{len(skipped_no_hash)} file(s) skipped — no hash available and extraction analysis not found. Re-run FILE_EXTRACTION first.', 'warning')
     if skipped_no_file:
