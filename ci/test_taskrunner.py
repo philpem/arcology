@@ -38,7 +38,7 @@ _WORKER_KEY = os.environ['WORKER_API_KEY']
 class TestControlPlaneClassification(unittest.TestCase):
     """The shared frozenset and the dispatch table must stay in lockstep."""
 
-    def test_control_plane_set_is_the_five_db_only_types(self):
+    def test_control_plane_set_is_the_db_only_types(self):
         from arcology_shared.enums import CONTROL_PLANE_ANALYSIS_TYPES, AnalysisType
         self.assertEqual(
             CONTROL_PLANE_ANALYSIS_TYPES,
@@ -48,6 +48,7 @@ class TestControlPlaneClassification(unittest.TestCase):
                 AnalysisType.HASHDB_LINK,
                 AnalysisType.HASHDB_DELETE,
                 AnalysisType.HASHDB_RECOGNITION,
+                AnalysisType.SIMILARITY_REFRESH,
             }),
         )
 
@@ -395,6 +396,53 @@ class TestRunToCompletionJobs(unittest.TestCase):
         result = run_partition_recognition_job(self.part)
         self.assertEqual(result['processed'], 3)
         self.assertEqual(RecognisedProduct.query.count(), 3)
+
+    def test_similarity_refresh_job_caches_matches(self):
+        """The in-process similarity driver reaches done and caches pairs,
+        heartbeating and honouring cancellation between batches."""
+        from arcology_shared.enums import ArtefactType
+        from myapp.database import Artefact, ExtractedFile, FilesystemType, Partition, StorageDirectory
+        from myapp.services.similarity import run_similarity_refresh_job, similar_artefacts
+
+        # A second artefact sharing this one's files, so a match exists to cache.
+        twin = Artefact(item_id=self.part.artefact.item_id, label='Disc2',
+                        artefact_type=ArtefactType.HFE, original_filename='d2.ssd',
+                        storage_path='d2.ssd', storage_directory=StorageDirectory.UPLOADS)
+        self.db.session.add(twin)
+        self.db.session.flush()
+        tpart = Partition(artefact_id=twin.id, partition_index=0, label='Main',
+                          filesystem=FilesystemType.DFS)
+        self.db.session.add(tpart)
+        self.db.session.flush()
+        for i in range(3):
+            self.db.session.add(ExtractedFile(
+                partition_id=tpart.id, path=f'App{i}/!Run', filename='!Run',
+                md5=f'{i:032x}', file_size=1000, is_directory=False))
+        # The shared fixture omits file_size; similarity ignores sized-zero/NULL
+        # rows, so give the original artefact's files a size to match against.
+        ExtractedFile.query.filter_by(partition_id=self.part.id).update(
+            {'file_size': 1000})
+        self.db.session.commit()
+
+        beats = []
+        result = run_similarity_refresh_job(
+            self.part.artefact,
+            heartbeat=lambda **kw: beats.append(kw),
+            check_cancelled=lambda: None,
+        )
+        self.assertIn('similar', result['summary'])
+        self.assertTrue(beats)  # progress was reported
+        self.assertEqual(len(similar_artefacts(self.part.artefact, None)), 1)
+
+    def test_similarity_refresh_job_honours_cancellation(self):
+        from myapp.services.similarity import run_similarity_refresh_job
+        from myapp.taskrunner.runner import JobCancelled
+
+        def cancel():
+            raise JobCancelled('cancelled')
+
+        with self.assertRaises(JobCancelled):
+            run_similarity_refresh_job(self.part.artefact, check_cancelled=cancel)
 
 
 if __name__ == '__main__':

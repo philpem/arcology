@@ -33,7 +33,7 @@ CLI (arco)  --> HTTP/JSON -->  Web (Flask)  <-- HTTP/JSON -->  Worker (Python)
 
 `arcology_shared/enums.py` defines `CONTROL_PLANE_ANALYSIS_TYPES` — the DB-only
 analyses (`HASH_RESCAN`, `PRODUCT_RECOGNITION`, `HASHDB_LINK`, `HASHDB_DELETE`,
-`HASHDB_RECOGNITION`). Historically the worker *drove* these by looping bounded
+`HASHDB_RECOGNITION`, `SIMILARITY_REFRESH`). Historically the worker *drove* these by looping bounded
 HTTP "step" endpoints in `myapp/blueprints/api.py`, but every DB write already
 happened in the web process — the worker just paced it. The **task runner** now
 owns them end-to-end in-process (no HTTP), the **worker hard-excludes** them
@@ -49,8 +49,13 @@ been **removed** (nothing dispatches these jobs over HTTP any more).
   default 300s) as a backstop against a single runaway query; when it fires the
   runner isolates and **skips** that one product (`recognition_batch_last_id`)
   rather than failing the whole database's backfill or wedging the
-  single-instance runner. The one remaining worker-driven bounded step is
-  `/artefacts/<uuid>/similarity-step` (SIMILARITY_REFRESH stays on the worker).
+  single-instance runner. `SIMILARITY_REFRESH` is also control-plane: its
+  run-to-completion driver is `run_similarity_refresh_job` in
+  `myapp/services/similarity.py` (it runs `similarity_reset` then bounded
+  `similarity_match_step` batches in-process, heartbeating and honouring
+  cancellation between batches). The former worker-driven
+  `/artefacts/<uuid>/similarity-step` endpoint has been **removed**; no analysis
+  is dispatched over HTTP any more.
 - Claim eligibility (incl. the CLEANUP re-analysis barrier) and stale-reset live
   in `myapp/services/analysis_queue.py` (`pending_claimable_query()`,
   `reset_stale_analyses_core()`), shared by the worker-poll endpoint and the

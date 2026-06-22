@@ -389,90 +389,17 @@ class TestArtefactSimilarity(_SimilarityBase):
         # was needlessly locked) for the unchanged content set.
         self.assertEqual(first, second)
 
-    def test_similarity_step_endpoint_drives_to_done(self):
-        """The worker-only step endpoint chunks to completion and caches matches."""
-        from myapp.services.similarity import similar_artefacts
+    def test_refresh_job_drives_to_done_and_caches_matches(self):
+        """The in-process control-plane driver reaches done and caches matches."""
+        from myapp.services.similarity import run_similarity_refresh_job, similar_artefacts
         files = [('A', 'a', 1000), ('B', 'b', 2000), ('C', 'c', 3000)]
         a = _add_artefact(self.db, self.item, 'E1', files)
         _add_artefact(self.db, self.item, 'E2', files)
-        client = self.app.test_client()
-        auth = {'X-API-Key': os.environ['WORKER_API_KEY']}
-        cursor, done = 0, False
-        for _ in range(10):
-            resp = client.post(f'/api/artefacts/{a.uuid}/similarity-step',
-                               json={'cursor': cursor, 'limit': 1}, headers=auth)
-            self.assertEqual(resp.status_code, 200, resp.data)
-            body = resp.get_json()
-            if body.get('done'):
-                done = True
-                break
-            cursor = body['next_cursor']
-        self.assertTrue(done)
+        beats = []
+        result = run_similarity_refresh_job(a, heartbeat=lambda **kw: beats.append(kw))
+        self.assertEqual(result['artefact_pairs'], 1)
+        self.assertTrue(beats)  # progress was reported
         self.assertEqual(len(similar_artefacts(a, None)), 1)
-
-    def _fk_integrity_error(self):
-        """An IntegrityError that looks like a PostgreSQL FK violation (23503)."""
-        from sqlalchemy.exc import IntegrityError
-        orig = type('Orig', (Exception,), {'pgcode': '23503'})('fk')
-        return IntegrityError('insert', {}, orig)
-
-    def test_similarity_step_endpoint_retries_on_fk_race(self):
-        """A residual FK violation (e.g. a concurrent rebuild wipe) is retried.
-
-        A candidate's components can be deleted by a concurrent rebuild between the
-        read and the commit, so the ComponentSimilarity insert can fail the FK.
-        The endpoint must roll back and retry rather than 500.
-        """
-        from unittest.mock import patch
-        from myapp.services import similarity as sim
-        from myapp.services.similarity import similar_artefacts
-        files = [('A', 'a', 1000), ('B', 'b', 2000), ('C', 'c', 3000)]
-        a = _add_artefact(self.db, self.item, 'R1', files)
-        _add_artefact(self.db, self.item, 'R2', files)
-        client = self.app.test_client()
-        auth = {'X-API-Key': os.environ['WORKER_API_KEY']}
-
-        real_step = sim.similarity_match_step
-        calls = {'n': 0}
-
-        def flaky(*args, **kwargs):
-            calls['n'] += 1
-            if calls['n'] == 1:
-                raise self._fk_integrity_error()
-            return real_step(*args, **kwargs)
-
-        cursor, done = 0, False
-        with patch.object(sim, 'similarity_match_step', side_effect=flaky):
-            for _ in range(10):
-                resp = client.post(f'/api/artefacts/{a.uuid}/similarity-step',
-                                   json={'cursor': cursor, 'limit': 1}, headers=auth)
-                self.assertEqual(resp.status_code, 200, resp.data)
-                body = resp.get_json()
-                if body.get('done'):
-                    done = True
-                    break
-                cursor = body['next_cursor']
-        self.assertTrue(done)
-        self.assertGreater(calls['n'], 1)  # the first step was retried
-        self.assertEqual(len(similar_artefacts(a, None)), 1)
-
-    def test_similarity_step_endpoint_does_not_mask_non_fk_integrity_error(self):
-        """A non-FK IntegrityError is a real bug and must surface, not be retried."""
-        from unittest.mock import patch
-        from sqlalchemy.exc import IntegrityError
-        from myapp.services import similarity as sim
-        a = _add_artefact(self.db, self.item, 'M1', [('A', 'a', 1000), ('B', 'b', 2000)])
-        _add_artefact(self.db, self.item, 'M2', [('A', 'a', 1000), ('B', 'b', 2000)])
-        client = self.app.test_client()
-        auth = {'X-API-Key': os.environ['WORKER_API_KEY']}
-
-        # No pgcode → not a foreign-key violation → must propagate (TESTING
-        # re-raises rather than returning a 500 body), not be silently retried.
-        boom = IntegrityError('insert', {}, Exception('not-fk'))
-        with patch.object(sim, 'similarity_match_step', side_effect=boom):
-            with self.assertRaises(IntegrityError):
-                client.post(f'/api/artefacts/{a.uuid}/similarity-step',
-                            json={'cursor': 0, 'limit': 1}, headers=auth)
 
     def test_similarity_step_idempotent_pair_insert(self):
         """Re-inserting the same pair stores one row, never raising a unique error.
@@ -507,13 +434,6 @@ class TestArtefactSimilarity(_SimilarityBase):
         self.db.session.commit()
         self.assertEqual(ArtefactSimilarity.query.count(), art_before)
         self.assertEqual(ComponentSimilarity.query.count(), comp_before)
-
-    def test_similarity_step_endpoint_requires_worker(self):
-        a = _add_artefact(self.db, self.item, 'W', [('A', 'a', 1000), ('B', 'b', 2000)])
-        # No worker key → rejected (401 unauthenticated, or 403 worker-only).
-        resp = self.app.test_client().post(
-            f'/api/artefacts/{a.uuid}/similarity-step', json={'cursor': 0})
-        self.assertIn(resp.status_code, (401, 403))
 
     def test_ubiquitous_file_does_not_create_pairs(self):
         """A hash shared by many artefacts must not, alone, link them as similar."""

@@ -67,16 +67,17 @@ Results are cached in three tables (`artefact_similarity`,
 - **Event-driven incremental** — after each `FILE_EXTRACTION` / `ARCHIVE_EXTRACT`
   completes, the API marks the artefact `similarity_dirty` and (gated by
   `SIMILARITY_AUTO_REFRESH`, default on; deduped per artefact) **queues a
-  `SIMILARITY_REFRESH` job** for it. The recompute runs as a **worker-driven
-  bounded job**, not on the extraction result-POST, so it can't saturate web
-  workers — the same pattern the hashdb link/recognition/delete jobs use. The
-  worker drives the `/artefacts/<uuid>/similarity-step` endpoint as a cursor loop
-  (`run_step_loop`); each step matches a batch of candidate artefacts under a
-  PostgreSQL `statement_timeout`, and `similarity_reset` (cursor 0) clears the
-  artefact's rows and recreates its components so a restarted job re-runs
-  cleanly. On the final step the artefact's `similarity_dirty` flag is cleared.
-  `recompute_for_artefact` remains the synchronous wrapper used by the CLI
-  rebuild and tests.
+  `SIMILARITY_REFRESH` job** for it. `SIMILARITY_REFRESH` is a **control-plane**
+  analysis (`CONTROL_PLANE_ANALYSIS_TYPES`): the **task runner** claims it and
+  runs `run_similarity_refresh_job` end-to-end **in-process** (no HTTP), the same
+  way it owns the hashdb link/recognition/delete jobs. The driver calls
+  `similarity_reset` (clears the artefact's rows and recreates its components so a
+  restarted job re-runs cleanly) then loops bounded `similarity_match_step`
+  batches, committing and heartbeating between batches and clearing
+  `similarity_dirty` when done. Because it has direct DB access it is not bounded
+  by a web-request statement_timeout, so large artefacts no longer trip the
+  worker's read timeout. `recompute_for_artefact` remains the synchronous wrapper
+  used by the CLI rebuild and tests.
 - **Periodic delta (catch-up)** — every artefact whose extracted-file set changes
   is flagged `similarity_dirty`; that flag is a *durable* record of staleness, so
   a missed event-driven refresh (worker down, `SIMILARITY_AUTO_REFRESH` off, a

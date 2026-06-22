@@ -128,7 +128,7 @@ class AnalysisType(enum.Enum):
     # Maintenance
     HASH_RESCAN            = "hash_rescan"             # Re-link extracted files against active hash databases
     CLEANUP                = "cleanup"                 # Delete orphaned storage keys after item deletion or re-analysis
-    SIMILARITY_REFRESH     = "similarity_refresh"      # Recompute one artefact's content-set similarity (worker-driven chunks)
+    SIMILARITY_REFRESH     = "similarity_refresh"      # Recompute one artefact's content-set similarity (task-runner, in-process)
 
 
 # Control-plane / DB-only analyses.  Historically these were "worker" jobs, but
@@ -138,15 +138,13 @@ class AnalysisType(enum.Enum):
 # now owns them end-to-end in-process with direct DB access, and the analysis
 # worker excludes them.  This frozenset is the single source of truth for the
 # split so the two consumers cannot drift.
-#
-# NOTE: SIMILARITY_REFRESH is also DB-only and a natural future member, but it
-# is intentionally left on the worker for now to keep the cutover minimal.
 CONTROL_PLANE_ANALYSIS_TYPES = frozenset({
     AnalysisType.HASH_RESCAN,
     AnalysisType.PRODUCT_RECOGNITION,
     AnalysisType.HASHDB_LINK,
     AnalysisType.HASHDB_DELETE,
     AnalysisType.HASHDB_RECOGNITION,
+    AnalysisType.SIMILARITY_REFRESH,
 })
 
 # vim: ts=4 sw=4 et

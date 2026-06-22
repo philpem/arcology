@@ -639,11 +639,4 @@ class ArcologyAPI:
             log.error(f"Failed to claim analysis {analysis_id}: {e}")
             return False
 
-    def similarity_step(self, artefact_uuid: str, *, cursor: int = 0, limit: int = 200) -> dict | None:
-        """Run one bounded content-set similarity refresh step for an artefact."""
-        return self.post(
-            f'/artefacts/{artefact_uuid}/similarity-step',
-            {'cursor': cursor, 'limit': limit},
-        )
-
 # vim: ts=4 sw=4 et
