@@ -2632,6 +2632,44 @@ def add_to_hashdb(uuid):
     return redirect(url_for(f'{ROUTENAME}.view', **redirect_kwargs))
 
 
+@blueprint.route('/<string:uuid>/create-base-hashdb', methods=['POST'])
+@login_required
+@require_permission('read_write')
+def create_base_hashdb(uuid):
+    """Snapshot all of this artefact's files into a new (base-system) hash database.
+
+    Builds a flat known-file set from the artefact's whole derived tree, optionally
+    flagged exclude_from_similarity, so a pristine OS / hard-drive image can be used
+    to drop stock files from similarity across the collection.
+    """
+    artefact = _get_artefact_or_404(uuid=uuid)
+    _require_manage_artefact_content(artefact)
+
+    name = request.form.get('name', '').strip()
+    description = request.form.get('description', '').strip() or None
+    exclude = request.form.get('exclude_from_similarity') == '1'
+    artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+
+    from ..services.hash_rescan import create_hashdb_from_artefacts
+    try:
+        database, added, skipped = create_hashdb_from_artefacts(
+            name, artefact_ids, description=description,
+            exclude_from_similarity=exclude, product_title=artefact.label)
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), 'danger')
+        return redirect(url_for(f'{ROUTENAME}.view',
+                                item_id=artefact.item.url_id, artefact_id=artefact.url_slug))
+
+    msg = f'Created hash database "{database.name}" with {added} file(s).'
+    if exclude:
+        msg += ' Flagged to exclude from similarity — run rebuild to apply.'
+    if skipped:
+        msg += f' {skipped} file(s) skipped (no hash — run analysis / rescan-hashes first).'
+    flash(msg, 'success')
+    return redirect(url_for('myapp_blueprints_hashdb.view', id=database.id))
+
+
 @blueprint.route('/items/<string:item_id>/artefacts/upload', methods=['GET', 'POST'])
 @login_required
 @require_permission('read_write')

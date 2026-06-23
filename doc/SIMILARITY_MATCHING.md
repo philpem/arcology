@@ -204,11 +204,21 @@ similarity, so two J233s match on *user* content, not the stock install.
   change takes effect on the next full `rebuild-similarity` — run manually by an
   admin, or automatically by the task runner when `TASKRUNNER_SIMILARITY_INTERVAL`
   is set.
-- **Reference data:** generate base-system hashdbs from the pristine J233 image +
-  the RISC OS application discs via `arco hashdb generate-riscos`; a curated
-  NSRL/NIST *OS-files subset* covers PC operating systems (the full RDS is too
-  large to import wholesale). This is content/ops, not code.
-- Depends on files being linked first (existing hashdb link pipeline).
+- **Done — building the base-system DB:** the **"Base HashDB"** action on an
+  artefact page (sidebar → *Create Hash Database from Artefact*) snapshots *every*
+  file on a pristine OS / hard-drive image into a new hash database (one known
+  file per unique content hash) and offers to flag it `exclude_from_similarity`
+  in the same dialog (`create_hashdb_from_artefacts` in
+  `myapp/services/hash_rescan.py`). Creation triggers the standard relink, so the
+  rest of the collection links to it automatically; then `rebuild-similarity`
+  applies the exclusion. **Use this, not `arco hashdb generate-riscos`** — the
+  latter is *recognition*-oriented and deliberately discards the ubiquitous
+  boilerplate that exclusion needs to capture.
+- **Reference data:** point the action at the pristine J233 image (and any other
+  base OS image). A curated NSRL/NIST *OS-files subset* can be `hashdb import`ed
+  to cover PC operating systems (the full RDS is too large to import wholesale).
+- Depends on files being linked first (existing hashdb link pipeline; the
+  snapshot action runs it for you).
 
 ### Phase 2 — Large-disc cost control
 

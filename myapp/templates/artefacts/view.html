@@ -209,6 +209,54 @@ tr.rp-summary.rp-expanded .rp-chevron { transform: rotate(90deg); }
     <strong>This action cannot be undone.</strong>
 </div>
 {% endcall %}
+
+<div class="modal fade" id="createBaseHashdbModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form method="post" action="{{ url_for('myapp_blueprints_artefacts.create_base_hashdb', uuid=artefact.uuid) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-database-add"></i> Create Hash Database from Artefact</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-muted">
+            Snapshots every file in this artefact (and its derived copies) into a new
+            hash database — one known file per unique content hash. Use it on a pristine
+            OS / hard-drive image to drop stock files from similarity matching across the
+            collection. Existing file hashes are used; run analysis / rescan first if any
+            are missing.
+          </p>
+          <div class="mb-3">
+            <label class="form-label" for="baseHashdbName">Database name</label>
+            <input type="text" class="form-control" id="baseHashdbName" name="name"
+                   value="Base system: {{ artefact.label }}" maxlength="100" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="baseHashdbDesc">Description <span class="text-muted">(optional)</span></label>
+            <input type="text" class="form-control" id="baseHashdbDesc" name="description"
+                   value="Generated from artefact {{ artefact.label }}">
+          </div>
+          <div class="form-check">
+            <input type="checkbox" class="form-check-input" id="baseHashdbExclude"
+                   name="exclude_from_similarity" value="1" checked>
+            <label class="form-check-label" for="baseHashdbExclude">
+              Exclude these files from similarity matching
+            </label>
+            <div class="form-text">
+              Recommended for a base-OS image. Takes effect on the next
+              <code>rebuild-similarity</code>.
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="bi bi-database-add"></i> Create</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
 {% endif %}
 {{ delete_confirm_modal(csrf_token()) }}
 {% endblock %}
