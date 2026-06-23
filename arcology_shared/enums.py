@@ -129,6 +129,8 @@ class AnalysisType(enum.Enum):
     HASH_RESCAN            = "hash_rescan"             # Re-link extracted files against active hash databases
     CLEANUP                = "cleanup"                 # Delete orphaned storage keys after item deletion or re-analysis
     SIMILARITY_REFRESH     = "similarity_refresh"      # Recompute one artefact's content-set similarity (task-runner, in-process)
+    ITEM_DELETE            = "item_delete"             # Delete an item subtree's DB rows in batches (task-runner, in-process)
+    ARTEFACT_DELETE        = "artefact_delete"         # Delete an artefact + derived subtree's DB rows in batches (task-runner)
 
 
 # Control-plane / DB-only analyses.  Historically these were "worker" jobs, but
@@ -145,6 +147,8 @@ CONTROL_PLANE_ANALYSIS_TYPES = frozenset({
     AnalysisType.HASHDB_DELETE,
     AnalysisType.HASHDB_RECOGNITION,
     AnalysisType.SIMILARITY_REFRESH,
+    AnalysisType.ITEM_DELETE,
+    AnalysisType.ARTEFACT_DELETE,
 })
 
 # vim: ts=4 sw=4 et

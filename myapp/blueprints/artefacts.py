@@ -47,12 +47,11 @@ from ..services import chunked_upload as _chunked
 from ..services.artefact_lifecycle import (
     ArtefactMoveError,
     build_processing_tree,
-    cleanup_artefact_outputs,
-    cleanup_artefact_outputs_s3,
     collect_output_cleanup_keys,
-    delete_artefact_files,
     get_all_derived_artefact_ids,
+    mark_artefact_pending_deletion,
     move_artefact_to_item,
+    queue_artefact_delete,
     queue_storage_cleanup,
     reset_artefact_for_reanalysis,
     validate_artefact_move,
@@ -3095,21 +3094,14 @@ def delete(item_id=None, artefact_id=None, root_id=None, uuid=None):
     item_url_id = artefact.item.url_id
     label = artefact.label
 
-    # Delete files for this artefact and all derived artefacts.
-    delete_artefact_files(artefact)
-
-    # Clean up analysis outputs (extraction trees, visualisations, cache).
-    from arcology_shared.storage import S3Storage
-    storage = current_app.storage
-    if isinstance(storage, S3Storage):
-        cleanup_artefact_outputs_s3(artefact, storage)
-    else:
-        cleanup_artefact_outputs(artefact, current_app.logger)
-
-    db.session.delete(artefact)
+    # Flag the artefact + derived subtree pending_deletion (it vanishes from
+    # every view immediately) and hand the heavy row deletion — and the queued
+    # storage CLEANUP — to the task runner.
+    mark_artefact_pending_deletion(artefact)
+    queue_artefact_delete(artefact)
     db.session.commit()
 
-    flash(f'Artefact "{label}" deleted.', 'success')
+    flash(f'Artefact "{label}" is being deleted.', 'success')
     return redirect(url_for('myapp_blueprints_items.view', uuid=item_url_id))
 
 

@@ -165,6 +165,10 @@ def _accessible_via_share_subquery(uid: int):
 
 def can_view_item(item: Item, user, *, sees_all: bool = False) -> bool:
     """Return True if *user* may view *item* (respecting privacy)."""
+    # A subtree queued for deletion is treated as already gone — 404 for
+    # everyone, including admins and the worker.
+    if item.pending_deletion:
+        return False
     if not item.private_effective:
         return True
     if sees_all or _is_admin(user):
@@ -207,6 +211,9 @@ def can_curate_item(item: Item, user, *, sees_all: bool = False) -> bool:
 
 def can_view_artefact(artefact: Artefact, user, *, sees_all: bool = False) -> bool:
     """Return True if *user* may view *artefact* (respecting privacy)."""
+    # Hidden once a delete is queued for the artefact or its enclosing item.
+    if artefact.pending_deletion or (artefact.item is not None and artefact.item.pending_deletion):
+        return False
     if not artefact.effective_private:
         return True
     if sees_all or _is_admin(user):
@@ -307,34 +314,47 @@ def content_gate_flags(user, artefact) -> tuple[bool, bool]:
 
 
 def item_visibility_clause(user, *, sees_all: bool = False):
-    """SQLAlchemy clause to filter an ``Item`` query by *user*'s visibility."""
+    """SQLAlchemy clause to filter an ``Item`` query by *user*'s visibility.
+
+    Items flagged ``pending_deletion`` are excluded unconditionally — even for
+    admins and the worker (``sees_all``) — so a subtree queued for deletion
+    vanishes from every list the moment the request returns and never reappears
+    while the task runner tears it down.
+    """
+    not_pending = Item.pending_deletion.is_(False)
     if sees_all or _is_admin(user):
-        return true()
+        return not_pending
     uid = _user_id(user)
     if uid is None:
-        return Item.private_effective.is_(False)
-    return or_(
+        return and_(not_pending, Item.private_effective.is_(False))
+    return and_(not_pending, or_(
         Item.private_effective.is_(False),
         Item.owner_id == uid,
         Item.id.in_(_accessible_via_share_subquery(uid)),
-    )
+    ))
 
 
 def artefact_visibility_clause(user, *, sees_all: bool = False):
-    """SQLAlchemy clause to filter an ``Artefact`` query (JOINed to ``Item``)."""
+    """SQLAlchemy clause to filter an ``Artefact`` query (JOINed to ``Item``).
+
+    Excludes artefacts (and artefacts of items) flagged ``pending_deletion``
+    unconditionally — see ``item_visibility_clause``.
+    """
+    not_pending = and_(Artefact.pending_deletion.is_(False),
+                       Item.pending_deletion.is_(False))
     if sees_all or _is_admin(user):
-        return true()
+        return not_pending
     public = and_(Artefact.is_private.is_(False), Item.private_effective.is_(False))
     uid = _user_id(user)
     if uid is None:
-        return public
-    return or_(
+        return and_(not_pending, public)
+    return and_(not_pending, or_(
         public,
         Item.owner_id == uid,
         and_(Item.private_effective.is_(True), Item.id.in_(_accessible_via_share_subquery(uid))),
         # Artefact owner sees their own privately-flagged artefact only when the
         # enclosing item is public; item privacy takes precedence otherwise.
         and_(Item.private_effective.is_(False), Artefact.owner_id == uid),
-    )
+    ))
 
 # vim: ts=4 sw=4 et

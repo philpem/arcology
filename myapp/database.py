@@ -471,6 +471,13 @@ class Item(db.Model):
     private_effective: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=sa_false(), index=True
     )
+    # Set when a delete has been requested: the whole item subtree is flagged here
+    # in the web request and hidden from every visibility surface, then the task
+    # runner's ITEM_DELETE job batch-deletes the rows.  Indexed because the
+    # visibility clauses filter on it on every list query.
+    pending_deletion: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa_false(), index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -573,6 +580,13 @@ class Artefact(db.Model):
         ForeignKey("user.id", ondelete="SET NULL"), index=True, nullable=True
     )
     is_private: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa_false())
+    # Set when a delete has been requested: the artefact (and its derived subtree)
+    # are flagged here in the web request and hidden from every visibility surface,
+    # then the task runner's ARTEFACT_DELETE job batch-deletes the rows.  Indexed
+    # because the visibility clauses filter on it on every list query.
+    pending_deletion: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa_false(), index=True
+    )
     label: Mapped[str] = mapped_column(String(255))
     slug: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)  # URL-safe slug (immutable once set)
     artefact_type: Mapped[ArtefactType] = mapped_column(_TolerantEnum(ArtefactType))
