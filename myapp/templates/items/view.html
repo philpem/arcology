@@ -252,10 +252,12 @@
                             {% if artefact.derived_artefacts %}
                             {% set ns = namespace(types=[]) %}
                             {% for d in artefact.derived_artefacts recursive %}
+                            {% if not d.pending_deletion %}
                             {% set _dt = d.artefact_type | enum_value('unknown') %}
                             {# Sidecar/companion files are shown on the artefact page, not summarised here. #}
                             {% if _dt != 'sidecar' and _dt not in ns.types %}{% set ns.types = ns.types + [_dt] %}{% endif %}
                             {% if d.derived_artefacts %}{{ loop(d.derived_artefacts) }}{% endif %}
+                            {% endif %}
                             {% endfor %}
                             {% if ns.types %}
                             <div class="ms-3 mt-1 small">

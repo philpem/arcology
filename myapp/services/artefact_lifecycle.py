@@ -31,6 +31,7 @@ from ..database import (
     OutputBlob,
     Partition,
     RecognisedProduct,
+    ReplayMovie,
     RiscosModule,
     StorageDirectory,
     UploadBlob,
@@ -72,37 +73,125 @@ def collect_all_analyses(artefact: Artefact) -> list:
     return Analysis.query.filter(Analysis.artefact_id.in_(all_ids)).order_by(Analysis.id.desc()).all()
 
 
-def bulk_delete_artefact_dependents(artefact_ids: list[int]):
+# Default keyset batch size for the task-runner's batched extracted-file
+# deletion.  Small enough to commit + heartbeat well within the stale timeout,
+# large enough that the per-statement overhead stays negligible.
+EXTRACTED_FILE_DELETE_BATCH = 5000
+
+
+def _noop_heartbeat(**_kwargs):
+    pass
+
+
+def _noop_check_cancelled():
+    pass
+
+
+def _delete_extracted_files(partition_ids, *, batch_size=None,
+                            heartbeat=_noop_heartbeat,
+                            check_cancelled=_noop_check_cancelled,
+                            commit=False) -> int:
+    """Delete ExtractedFile rows (and their restrictions) for *partition_ids*.
+
+    When *batch_size* is falsy this is the historical single-statement delete
+    (one transaction, no intermediate commits) used by the synchronous path.
+
+    When *batch_size* is given (task-runner job path) the extracted files are
+    deleted in keyset batches on ``ExtractedFile.id`` so the work is bounded per
+    statement, committed between batches (releasing locks), and heartbeated.
+    The self-referential ``parent_file_id`` (nested-archive children) is nulled
+    out first so per-batch deletes can't violate that FK on PostgreSQL when a
+    parent is removed in an earlier batch than its child.
+
+    Returns the number of extracted files deleted (0 in the unbatched path,
+    which does not count).
+    """
+    if not partition_ids:
+        return 0
+
+    if not batch_size:
+        ef_subq = db.session.query(ExtractedFile.id).filter(
+            ExtractedFile.partition_id.in_(partition_ids)).subquery()
+        ExtractedFileRestriction.query.filter(
+            ExtractedFileRestriction.extracted_file_id.in_(
+                db.session.query(ef_subq.c.id)
+            )).delete(synchronize_session=False)
+        ExtractedFile.query.filter(
+            ExtractedFile.partition_id.in_(partition_ids)
+        ).delete(synchronize_session=False)
+        return 0
+
+    # Batched path: break the self-FK first so any delete order is safe.
+    ExtractedFile.query.filter(
+        ExtractedFile.partition_id.in_(partition_ids),
+        ExtractedFile.parent_file_id.isnot(None),
+    ).update({ExtractedFile.parent_file_id: None}, synchronize_session=False)
+    if commit:
+        db.session.commit()
+
+    deleted = 0
+    cursor = 0
+    while True:
+        check_cancelled()
+        ids = [r[0] for r in db.session.query(ExtractedFile.id).filter(
+            ExtractedFile.partition_id.in_(partition_ids),
+            ExtractedFile.id > cursor,
+        ).order_by(ExtractedFile.id).limit(batch_size).all()]
+        if not ids:
+            break
+        ExtractedFileRestriction.query.filter(
+            ExtractedFileRestriction.extracted_file_id.in_(ids)
+        ).delete(synchronize_session=False)
+        ExtractedFile.query.filter(
+            ExtractedFile.id.in_(ids)
+        ).delete(synchronize_session=False)
+        cursor = ids[-1]
+        deleted += len(ids)
+        if commit:
+            db.session.commit()
+        heartbeat(current=deleted, label='Deleting extracted files…')
+    return deleted
+
+
+def bulk_delete_artefact_dependents(artefact_ids: list[int], *,
+                                    batch_size=None,
+                                    heartbeat=_noop_heartbeat,
+                                    check_cancelled=_noop_check_cancelled,
+                                    commit=False) -> int:
     """Bulk-delete all referencing rows across every FK table for the given artefact IDs.
 
-    Deletes analyses, extracted file restrictions, recognised products,
-    extracted files, partitions, protection/mastering/module records,
+    Deletes analyses, replay movies, extracted file restrictions, recognised
+    products, extracted files, partitions, protection/mastering/module records,
     artefact restrictions, and tag associations.  Does NOT delete the
     artefacts themselves — call ``bulk_delete_artefacts`` for that.
+
+    When *batch_size* is given the (potentially huge) extracted-file deletion is
+    keyset-batched with ``commit`` between batches and ``heartbeat`` /
+    ``check_cancelled`` callbacks, so the task runner can offload a large
+    deletion without holding one giant transaction.  Returns the number of
+    extracted files deleted (0 in the unbatched/synchronous path).
     """
     Analysis.query.filter(Analysis.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
-    partition_subq = db.session.query(Partition.id).filter(
-        Partition.artefact_id.in_(artefact_ids)).subquery()
-    ef_subq = db.session.query(ExtractedFile.id).filter(
-        ExtractedFile.partition_id.in_(db.session.query(partition_subq.c.id))).subquery()
-    ExtractedFileRestriction.query.filter(
-        ExtractedFileRestriction.extracted_file_id.in_(
-            db.session.query(ef_subq.c.id)
-        )).delete(synchronize_session=False)
-    RecognisedProduct.query.filter(
-        RecognisedProduct.partition_id.in_(
-            db.session.query(partition_subq.c.id)
-        )).delete(synchronize_session=False)
-    ExtractedFile.query.filter(
-        ExtractedFile.partition_id.in_(
-            db.session.query(partition_subq.c.id)
-        )).delete(synchronize_session=False)
+    # ReplayMovie has a plain (non-cascading) FK to artefacts, so it must be
+    # deleted explicitly before the artefact rows go (the old ORM-cascade path
+    # handled this via relationship cascade).
+    ReplayMovie.query.filter(ReplayMovie.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
+    partition_ids = [r[0] for r in db.session.query(Partition.id).filter(
+        Partition.artefact_id.in_(artefact_ids)).all()]
+    if partition_ids:
+        RecognisedProduct.query.filter(
+            RecognisedProduct.partition_id.in_(partition_ids)
+        ).delete(synchronize_session=False)
+    deleted = _delete_extracted_files(
+        partition_ids, batch_size=batch_size, heartbeat=heartbeat,
+        check_cancelled=check_cancelled, commit=commit)
     Partition.query.filter(Partition.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
     ArtefactProtection.query.filter(ArtefactProtection.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
     ArtefactMastering.query.filter(ArtefactMastering.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
     RiscosModule.query.filter(RiscosModule.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
     ArtefactRestriction.query.filter(ArtefactRestriction.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
     db.session.execute(artefact_tags.delete().where(artefact_tags.c.artefact_id.in_(artefact_ids)))
+    return deleted
 
 
 def bulk_delete_artefacts(artefact_ids: list[int]):
@@ -195,7 +284,13 @@ def build_processing_tree(root: Artefact) -> tuple[dict, bool, dict, int]:
 
     all_ids = [root.id] + get_all_derived_artefact_ids(root)
 
-    all_artefacts = Artefact.query.filter(Artefact.id.in_(all_ids)).all()
+    # Exclude any derived artefact queued for deletion so it disappears from the
+    # processing tree of its still-visible parent (the root itself is already
+    # 404-gated by can_view_artefact when pending).
+    all_artefacts = Artefact.query.filter(
+        Artefact.id.in_(all_ids),
+        Artefact.pending_deletion.is_(False),
+    ).all()
     artefact_map = {a.id: a for a in all_artefacts}
 
     children_map: dict[int, list] = defaultdict(list)
@@ -803,6 +898,41 @@ def collect_output_cleanup_keys(artefact: Artefact) -> dict:
     return keys
 
 
+def _delete_artefact_subtree(all_ids, cleanup, *, batch_size=None,
+                             heartbeat=_noop_heartbeat,
+                             check_cancelled=_noop_check_cancelled,
+                             commit=False) -> int:
+    """Delete all artefact rows in *all_ids* plus their dependents and blobs.
+
+    Shared Phase-4 deletion used by both the synchronous bulk paths and the
+    task-runner job drivers.  *cleanup* is the dict from
+    ``_collect_item_cleanup_keys`` (for the orphan blob id lists).  Returns the
+    number of extracted files deleted.
+    """
+    if not all_ids:
+        return 0
+    # Null out derived_from_analysis_id before deleting analyses.
+    Artefact.query.filter(Artefact.id.in_(all_ids)).update(
+        {Artefact.derived_from_analysis_id: None}, synchronize_session=False)
+    if commit:
+        db.session.commit()
+    deleted = bulk_delete_artefact_dependents(
+        all_ids, batch_size=batch_size, heartbeat=heartbeat,
+        check_cancelled=check_cancelled, commit=commit)
+    bulk_delete_artefacts(all_ids)
+    if cleanup['upload_blob_ids']:
+        UploadBlob.query.filter(
+            UploadBlob.id.in_(cleanup['upload_blob_ids'])
+        ).delete(synchronize_session=False)
+    if cleanup['output_blob_ids']:
+        OutputBlob.query.filter(
+            OutputBlob.id.in_(cleanup['output_blob_ids'])
+        ).delete(synchronize_session=False)
+    if commit:
+        db.session.commit()
+    return deleted
+
+
 def bulk_delete_item(item):
     """Delete an item, its descendants, and all related records using bulk SQL.
 
@@ -812,6 +942,11 @@ def bulk_delete_item(item):
     Replaces the previous approach of ORM cascade delete which loaded every
     related object into memory and emitted individual DELETEs — too slow for
     items with thousands of artefacts.
+
+    Synchronous (single transaction).  For large items prefer the asynchronous
+    path (``mark_item_pending_deletion`` + ``queue_item_delete`` →
+    ``run_item_delete_job`` on the task runner); this function remains for the
+    CLI and small items.
 
     File cleanup is queued as a CLEANUP job in the same transaction as the
     deletes; the worker performs the storage deletions.
@@ -826,41 +961,167 @@ def bulk_delete_item(item):
     cleanup = _collect_item_cleanup_keys(all_ids)
 
     # Phase 4: Bulk SQL deletes in FK-safe order
-    if all_ids:
-        # Null out derived_from_analysis_id before deleting analyses
-        Artefact.query.filter(Artefact.id.in_(all_ids)).update(
-            {Artefact.derived_from_analysis_id: None}, synchronize_session=False)
+    _delete_artefact_subtree(all_ids, cleanup)
 
-        bulk_delete_artefact_dependents(all_ids)
-        bulk_delete_artefacts(all_ids)
-        if cleanup['upload_blob_ids']:
-            UploadBlob.query.filter(
-                UploadBlob.id.in_(cleanup['upload_blob_ids'])
-            ).delete(synchronize_session=False)
-        if cleanup['output_blob_ids']:
-            OutputBlob.query.filter(
-                OutputBlob.id.in_(cleanup['output_blob_ids'])
-            ).delete(synchronize_session=False)
+    # Phase 5: item-level rows + queue worker-side file cleanup, all committed
+    # atomically with the deletes.
+    _delete_item_rows(all_item_ids)
+    queue_storage_cleanup(cleanup)
+    db.session.commit()
 
-    # Item-level children (external refs, tags for all items in hierarchy)
+
+def _delete_item_rows(all_item_ids):
+    """Delete the Item rows themselves (and their item-level children).
+
+    Does NOT commit — the caller controls the transaction boundary.
+    """
     ExternalReference.query.filter(
         ExternalReference.item_id.in_(all_item_ids)
     ).delete(synchronize_session=False)
     db.session.execute(
         item_tags.delete().where(item_tags.c.item_id.in_(all_item_ids)))
-
-    # Break item self-referential FK, then delete all items
+    # Break item self-referential FK, then delete all items.
     Item.query.filter(Item.id.in_(all_item_ids)).update(
         {Item.parent_id: None}, synchronize_session=False)
     Item.query.filter(Item.id.in_(all_item_ids)).delete(
         synchronize_session=False)
 
-    # Phase 5: Queue worker-side file cleanup atomically with the deletes —
-    # the job commits with them, so a web restart can no longer orphan the
-    # stored files the way the previous fire-and-forget daemon thread could.
+
+# =============================================================================
+# Asynchronous deletion (task-runner control-plane jobs)
+#
+# The web request flags the target subtree pending_deletion (so it vanishes
+# from every visibility surface immediately) and queues an ITEM_DELETE /
+# ARTEFACT_DELETE analysis; the task runner then batch-deletes the rows here.
+# =============================================================================
+
+def _cancel_pending_subtree_analyses(artefact_ids, *, reason):
+    """Fail any PENDING analyses for *artefact_ids* so the worker can't claim a
+    job on an artefact whose rows are about to be torn down.  A RUNNING analysis
+    already claimed is harmless: the worker's result write-back keys on
+    analysis_id and affects 0 rows once the row is gone.  *reason* is the
+    user-visible error_message recorded on the cancelled analyses."""
+    if not artefact_ids:
+        return
+    Analysis.query.filter(
+        Analysis.artefact_id.in_(artefact_ids),
+        Analysis.status == AnalysisStatus.PENDING,
+    ).update({Analysis.status: AnalysisStatus.FAILED,
+              Analysis.error_message: reason},
+             synchronize_session=False)
+
+
+def mark_item_pending_deletion(item, *, commit=False):
+    """Flag *item* and its whole descendant subtree pending_deletion.
+
+    One bulk UPDATE — cheap, so the web request returns immediately while the
+    task runner does the heavy row deletion.  Also fails any PENDING analyses in
+    the subtree so the worker stops being handed the dying artefacts.
+    """
+    all_item_ids = _collect_all_item_ids(item)
+    Item.query.filter(Item.id.in_(all_item_ids)).update(
+        {Item.pending_deletion: True}, synchronize_session=False)
+    _cancel_pending_subtree_analyses(
+        _collect_item_artefact_ids(all_item_ids),
+        reason='cancelled: item is being deleted')
+    if commit:
+        db.session.commit()
+
+
+def mark_artefact_pending_deletion(artefact, *, commit=False):
+    """Flag *artefact* and its derived subtree pending_deletion (see above)."""
+    all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    Artefact.query.filter(Artefact.id.in_(all_ids)).update(
+        {Artefact.pending_deletion: True}, synchronize_session=False)
+    _cancel_pending_subtree_analyses(
+        all_ids, reason='cancelled: artefact is being deleted')
+    if commit:
+        db.session.commit()
+
+
+def queue_item_delete(item, *, commit=False, priority=ANALYSIS_PRIORITY_NORMAL):
+    """Queue an ITEM_DELETE control-plane job carrying the item id in hints.
+
+    artefact_id is NULL (the item outlives no single artefact), so the job is
+    never gated by the per-artefact CLEANUP barrier.
+    """
+    job = Analysis(
+        artefact_id=None,
+        analysis_type=AnalysisType.ITEM_DELETE,
+        status=AnalysisStatus.PENDING,
+        hints=json.dumps({'item_id': item.id}),
+        priority=priority,
+    )
+    db.session.add(job)
+    if commit:
+        db.session.commit()
+    return job
+
+
+def queue_artefact_delete(artefact, *, commit=False,
+                          priority=ANALYSIS_PRIORITY_NORMAL):
+    """Queue an ARTEFACT_DELETE control-plane job (artefact id in hints)."""
+    job = Analysis(
+        artefact_id=None,
+        analysis_type=AnalysisType.ARTEFACT_DELETE,
+        status=AnalysisStatus.PENDING,
+        hints=json.dumps({'artefact_id': artefact.id}),
+        priority=priority,
+    )
+    db.session.add(job)
+    if commit:
+        db.session.commit()
+    return job
+
+
+def run_item_delete_job(item, *, heartbeat=_noop_heartbeat,
+                        check_cancelled=_noop_check_cancelled) -> dict:
+    """Delete an item subtree's DB rows in committed, heartbeated batches.
+
+    The control-plane (task-runner) counterpart of ``bulk_delete_item``.  The
+    item is already flagged pending_deletion (and hidden everywhere), so this
+    can take its time.  Re-runnable: each step re-collects whatever survives, so
+    a stale-reset re-claim simply finishes the job (deletion is idempotent).
+    """
+    all_item_ids = _collect_all_item_ids(item)
+    all_ids = _collect_item_artefact_ids(all_item_ids)
+    cleanup = _collect_item_cleanup_keys(all_ids)
+
+    deleted = _delete_artefact_subtree(
+        all_ids, cleanup, batch_size=EXTRACTED_FILE_DELETE_BATCH,
+        heartbeat=heartbeat, check_cancelled=check_cancelled, commit=True)
+
+    _delete_item_rows(all_item_ids)
     queue_storage_cleanup(cleanup)
-
     db.session.commit()
+    return {
+        'summary': f'{deleted} extracted file(s), {len(all_ids)} artefact(s), '
+                   f'{len(all_item_ids)} item(s) deleted',
+        'extracted_files': deleted,
+        'artefacts': len(all_ids),
+        'items': len(all_item_ids),
+    }
 
-    # Phase 5: Background file cleanup via storage backend (no ORM needed)
+
+def run_artefact_delete_job(artefact, *, heartbeat=_noop_heartbeat,
+                            check_cancelled=_noop_check_cancelled) -> dict:
+    """Delete an artefact + derived subtree's DB rows in batches (task runner).
+
+    The control-plane counterpart of the synchronous artefact delete.  Leaves
+    the enclosing item intact.  Re-runnable like ``run_item_delete_job``.
+    """
+    all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    cleanup = _collect_item_cleanup_keys(all_ids)
+
+    deleted = _delete_artefact_subtree(
+        all_ids, cleanup, batch_size=EXTRACTED_FILE_DELETE_BATCH,
+        heartbeat=heartbeat, check_cancelled=check_cancelled, commit=True)
+
+    queue_storage_cleanup(cleanup)
+    db.session.commit()
+    return {
+        'summary': f'{deleted} extracted file(s), {len(all_ids)} artefact(s) deleted',
+        'extracted_files': deleted,
+        'artefacts': len(all_ids),
+    }
 # vim: ts=4 sw=4 et

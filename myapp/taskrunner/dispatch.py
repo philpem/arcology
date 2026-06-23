@@ -8,8 +8,12 @@ runner records that summary and the full dict as the analysis result.
 
 import json
 from arcology_shared.enums import CONTROL_PLANE_ANALYSIS_TYPES
-from ..database import AnalysisType, Artefact, Partition
+from ..database import AnalysisType, Artefact, Item, Partition
 from ..extensions import db
+from ..services.artefact_lifecycle import (
+    run_artefact_delete_job,
+    run_item_delete_job,
+)
 from ..services.hashdb_jobs import (
     run_hash_rescan_job,
     run_hashdb_delete_job,
@@ -73,6 +77,29 @@ def _dispatch_similarity_refresh(analysis, *, heartbeat, check_cancelled):
         artefact, heartbeat=heartbeat, check_cancelled=check_cancelled)
 
 
+def _dispatch_item_delete(analysis, *, heartbeat, check_cancelled):
+    item_id = _hints(analysis).get('item_id')
+    if not item_id:
+        raise ValueError('no item_id in analysis hints')
+    item = db.session.get(Item, item_id)
+    if item is None:
+        # Already gone (e.g. a re-claim after the previous run finished).
+        return {'summary': 'item already deleted', 'items': 0}
+    return run_item_delete_job(
+        item, heartbeat=heartbeat, check_cancelled=check_cancelled)
+
+
+def _dispatch_artefact_delete(analysis, *, heartbeat, check_cancelled):
+    artefact_id = _hints(analysis).get('artefact_id')
+    if not artefact_id:
+        raise ValueError('no artefact_id in analysis hints')
+    artefact = db.session.get(Artefact, artefact_id)
+    if artefact is None:
+        return {'summary': 'artefact already deleted', 'artefacts': 0}
+    return run_artefact_delete_job(
+        artefact, heartbeat=heartbeat, check_cancelled=check_cancelled)
+
+
 DISPATCH = {
     AnalysisType.HASH_RESCAN: _dispatch_hash_rescan,
     AnalysisType.PRODUCT_RECOGNITION: _dispatch_product_recognition,
@@ -80,6 +107,8 @@ DISPATCH = {
     AnalysisType.HASHDB_DELETE: _dispatch_hashdb_delete,
     AnalysisType.HASHDB_RECOGNITION: _dispatch_hashdb_recognition,
     AnalysisType.SIMILARITY_REFRESH: _dispatch_similarity_refresh,
+    AnalysisType.ITEM_DELETE: _dispatch_item_delete,
+    AnalysisType.ARTEFACT_DELETE: _dispatch_artefact_delete,
 }
 
 # Fail fast at import time if a control-plane type has no handler (a forgotten

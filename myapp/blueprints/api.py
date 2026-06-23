@@ -47,10 +47,13 @@ from ..services import chunked_upload as _chunked
 from ..services.analysis_queue import pending_claimable_query, reset_stale_analyses_core
 from ..services.artefact_lifecycle import (
     ArtefactMoveError,
-    bulk_delete_item,
     collect_all_analyses,
     delete_artefact_files,
+    mark_artefact_pending_deletion,
+    mark_item_pending_deletion,
     move_artefact_to_item,
+    queue_artefact_delete,
+    queue_item_delete,
     validate_artefact_move,
 )
 from ..services.artefact_storage import (
@@ -598,7 +601,12 @@ def delete_item(uuid):
     api_user, sees_all = _api_viewer()
     if item.private_effective and not (sees_all or can_change_owner(item, api_user)):
         return error_response('Not permitted to delete this item', 403)
-    bulk_delete_item(item)
+    # Asynchronous: flag the subtree pending_deletion (hidden immediately) and
+    # let the task runner batch-delete the rows.  204 still means "accepted and
+    # gone from the caller's view" — pending items are invisible to every query.
+    mark_item_pending_deletion(item)
+    queue_item_delete(item)
+    db.session.commit()
     return '', 204
 
 
@@ -679,8 +687,9 @@ def delete_artefact(uuid):
     api_user, sees_all = _api_viewer()
     if artefact.item.private_effective and not (sees_all or can_change_owner(artefact.item, api_user)):
         return error_response('Not permitted to delete artefacts from this item', 403)
-    delete_artefact_files(artefact)
-    db.session.delete(artefact)
+    # Asynchronous: see delete_item above.
+    mark_artefact_pending_deletion(artefact)
+    queue_artefact_delete(artefact)
     db.session.commit()
     return '', 204
 

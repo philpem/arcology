@@ -167,22 +167,68 @@ class TestArtefactCleanupRegression(unittest.TestCase):
             sess['_user_id'] = str(self.user_id)
             sess['_fresh'] = True
 
-    def test_delete_route_removes_outputs_and_prunes_artefact_dir(self):
-        from myapp.database import Artefact
+    def test_delete_route_marks_pending_and_queues_job(self):
+        """The delete route is now asynchronous: it flags the artefact
+        pending_deletion and queues an ARTEFACT_DELETE control-plane job rather
+        than deleting synchronously (which hung the browser for large artefacts).
+        """
+        from myapp.database import (
+            Analysis,
+            AnalysisStatus,
+            AnalysisType,
+            Artefact,
+        )
 
         self._login()
         resp = self.client.post(f'/artefacts/{self.artefact_uuid}/delete')
         self.assertEqual(resp.status_code, 302, resp.data)
 
         with self.app.app_context():
+            art = self.db.session.get(Artefact, self.artefact_id)
+            # Row still present but hidden; the heavy delete is deferred.
+            self.assertIsNotNone(art)
+            self.assertTrue(art.pending_deletion)
+            job = Analysis.query.filter_by(
+                analysis_type=AnalysisType.ARTEFACT_DELETE,
+                status=AnalysisStatus.PENDING).one()
+            self.assertIsNone(job.artefact_id)
+            self.assertEqual(json.loads(job.hints)['artefact_id'], self.artefact_id)
+
+        # Files are NOT removed synchronously — the task runner + the CLEANUP
+        # job it queues do that.
+        self.assertTrue(os.path.exists(self.storage_path))
+        self.assertTrue(os.path.exists(self.analysis_dir))
+
+    def test_artefact_delete_job_deletes_rows_and_queues_cleanup(self):
+        """run_artefact_delete_job removes the DB rows and queues a CLEANUP job
+        carrying the (normalised) storage keys — including the worker's absolute
+        /data/outputs/... output_path normalised under outputs/."""
+        from arcology_shared.hints import HintKey
+        from myapp.database import (
+            Analysis,
+            AnalysisStatus,
+            AnalysisType,
+            Artefact,
+        )
+        from myapp.services.artefact_lifecycle import run_artefact_delete_job
+
+        with self.app.app_context():
+            art = self.db.session.get(Artefact, self.artefact_id)
+            run_artefact_delete_job(art)
+
             self.assertIsNone(self.db.session.get(Artefact, self.artefact_id))
 
-        self.assertFalse(os.path.exists(self.storage_path))
-        self.assertFalse(os.path.exists(self.analysis_dir))
-        self.assertFalse(os.path.exists(self.generated_output_path))
-        self.assertFalse(os.path.exists(self.cache_dir))
-        self.assertFalse(os.path.exists(self.artefact_dir))
-        self.assertTrue(os.path.exists(self.item_keep_file))
+            cleanup = Analysis.query.filter_by(
+                analysis_type=AnalysisType.CLEANUP,
+                status=AnalysisStatus.PENDING).one()
+            self.assertIsNone(cleanup.artefact_id)
+            hints = json.loads(cleanup.hints)
+            rel = os.path.relpath(self.analysis_dir, self.output_folder)
+            self.assertIn(f'outputs/{rel}', hints[HintKey.OUTPUT_DIR_PREFIXES])
+            self.assertIn(f'outputs/{self.generated_output_rel}',
+                          hints[HintKey.OUTPUT_FILE_KEYS])
+            self.assertIn(f'outputs/.cache/{self.artefact_uuid}',
+                          hints[HintKey.CACHE_PREFIXES])
 
     def test_delete_item_files_uses_same_cleanup_path(self):
         from myapp.database import Item

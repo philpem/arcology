@@ -49,6 +49,8 @@ class TestControlPlaneClassification(unittest.TestCase):
                 AnalysisType.HASHDB_DELETE,
                 AnalysisType.HASHDB_RECOGNITION,
                 AnalysisType.SIMILARITY_REFRESH,
+                AnalysisType.ITEM_DELETE,
+                AnalysisType.ARTEFACT_DELETE,
             }),
         )
 
@@ -443,6 +445,190 @@ class TestRunToCompletionJobs(unittest.TestCase):
 
         with self.assertRaises(JobCancelled):
             run_similarity_refresh_job(self.part.artefact, check_cancelled=cancel)
+
+
+class TestDeleteJobs(unittest.TestCase):
+    """The control-plane ITEM_DELETE / ARTEFACT_DELETE batched delete drivers."""
+
+    def setUp(self):
+        from arcology_shared.enums import ArtefactType
+        from myapp.app import create_app
+        from myapp.database import (
+            Artefact,
+            ExtractedFile,
+            FilesystemType,
+            Item,
+            Partition,
+            StorageDirectory,
+        )
+        from myapp.extensions import db
+
+        self.app = create_app()
+        self.app.config['TESTING'] = True
+        self.db = db
+        self.ctx = self.app.app_context()
+        self.ctx.push()
+        db.create_all()
+
+        # Root item with one artefact + partition holding enough extracted files
+        # that keyset batching loops more than once, a derived artefact, and a
+        # child item with its own artefact.
+        self.item = Item(name='root')
+        db.session.add(self.item)
+        db.session.flush()
+        self.child = Item(name='child', parent_id=self.item.id)
+        db.session.add(self.child)
+        db.session.flush()
+
+        self.root_art = Artefact(item_id=self.item.id, label='Disc',
+                                 artefact_type=ArtefactType.HFE,
+                                 original_filename='d.ssd', storage_path='d.ssd',
+                                 storage_directory=StorageDirectory.UPLOADS)
+        db.session.add(self.root_art)
+        db.session.flush()
+        self.derived_art = Artefact(item_id=self.item.id, label='Decoded',
+                                    artefact_type=ArtefactType.RAW_SECTOR,
+                                    original_filename='d.raw', storage_path='d.raw',
+                                    storage_directory=StorageDirectory.OUTPUTS,
+                                    parent_artefact_id=self.root_art.id)
+        child_art = Artefact(item_id=self.child.id, label='ChildDisc',
+                             artefact_type=ArtefactType.HFE,
+                             original_filename='c.ssd', storage_path='c.ssd',
+                             storage_directory=StorageDirectory.UPLOADS)
+        db.session.add_all([self.derived_art, child_art])
+        db.session.flush()
+
+        part = Partition(artefact_id=self.root_art.id, partition_index=0,
+                         label='Main', filesystem=FilesystemType.DFS)
+        db.session.add(part)
+        db.session.flush()
+        # 12 files; batch the delete at 5 so the loop runs 3 times.  Give a few a
+        # parent_file_id to exercise the self-FK null-out.
+        prev = None
+        for i in range(12):
+            ef = ExtractedFile(partition_id=part.id, path=f'F{i}', filename=f'F{i}',
+                               md5=f'{i:032x}', parent_file_id=prev)
+            db.session.add(ef)
+            db.session.flush()
+            prev = ef.id if i % 4 == 0 else prev
+        db.session.commit()
+        self.root_item_id = self.item.id
+        self.root_art_id = self.root_art.id
+        self.derived_art_id = self.derived_art.id
+        self.child_item_id = self.child.id
+
+    def tearDown(self):
+        self.db.session.remove()
+        self.db.drop_all()
+        self.ctx.pop()
+
+    def test_item_delete_job_removes_whole_subtree(self):
+        import myapp.services.artefact_lifecycle as lifecycle
+        from arcology_shared.enums import AnalysisType
+        from myapp.database import (
+            Analysis,
+            AnalysisStatus,
+            Artefact,
+            ExtractedFile,
+            Item,
+        )
+        from myapp.services.artefact_lifecycle import (
+            EXTRACTED_FILE_DELETE_BATCH,
+            run_item_delete_job,
+        )
+        lifecycle.EXTRACTED_FILE_DELETE_BATCH = 5  # force multiple batches
+        self.addCleanup(setattr, lifecycle, 'EXTRACTED_FILE_DELETE_BATCH',
+                        EXTRACTED_FILE_DELETE_BATCH)
+
+        beats = []
+        item = self.db.session.get(Item, self.root_item_id)
+        result = run_item_delete_job(
+            item, heartbeat=lambda **kw: beats.append(kw),
+            check_cancelled=lambda: None)
+
+        self.assertEqual(result['extracted_files'], 12)
+        self.assertTrue(beats)  # progress reported across batches
+        self.assertIsNone(self.db.session.get(Item, self.root_item_id))
+        self.assertIsNone(self.db.session.get(Item, self.child_item_id))
+        self.assertIsNone(self.db.session.get(Artefact, self.root_art_id))
+        self.assertIsNone(self.db.session.get(Artefact, self.derived_art_id))
+        self.assertEqual(ExtractedFile.query.count(), 0)
+        # A storage CLEANUP job was queued (artefact_id NULL).
+        cleanup = Analysis.query.filter_by(
+            analysis_type=AnalysisType.CLEANUP,
+            status=AnalysisStatus.PENDING).one()
+        self.assertIsNone(cleanup.artefact_id)
+
+    def test_item_delete_job_idempotent_when_already_gone(self):
+        from myapp.database import Item
+        from myapp.services.artefact_lifecycle import run_item_delete_job
+
+        item = self.db.session.get(Item, self.root_item_id)
+        run_item_delete_job(item, check_cancelled=lambda: None)
+        # Dispatcher path: the item is now gone; a re-claim must no-op cleanly.
+        from myapp.taskrunner.dispatch import _dispatch_item_delete
+
+        class _A:
+            hints = f'{{"item_id": {self.root_item_id}}}'
+        result = _dispatch_item_delete(_A(), heartbeat=lambda **kw: None,
+                                       check_cancelled=lambda: None)
+        self.assertEqual(result['items'], 0)
+
+    def test_item_delete_job_resumes_after_cancellation(self):
+        import myapp.services.artefact_lifecycle as lifecycle
+        from myapp.database import ExtractedFile, Item
+        from myapp.services.artefact_lifecycle import run_item_delete_job
+        from myapp.taskrunner.runner import JobCancelled
+        orig = lifecycle.EXTRACTED_FILE_DELETE_BATCH
+        lifecycle.EXTRACTED_FILE_DELETE_BATCH = 5
+        self.addCleanup(setattr, lifecycle, 'EXTRACTED_FILE_DELETE_BATCH', orig)
+
+        calls = {'n': 0}
+
+        def cancel_after_first():
+            calls['n'] += 1
+            if calls['n'] > 1:
+                raise JobCancelled('stop')
+
+        item = self.db.session.get(Item, self.root_item_id)
+        with self.assertRaises(JobCancelled):
+            run_item_delete_job(item, check_cancelled=cancel_after_first)
+        self.db.session.rollback()
+        # Some — but not all — files deleted; item still present (still hidden).
+        remaining = ExtractedFile.query.count()
+        self.assertTrue(0 < remaining < 12)
+        self.assertIsNotNone(self.db.session.get(Item, self.root_item_id))
+
+        # Re-run to completion (stale-reset re-claim): keyset resumes safely.
+        item = self.db.session.get(Item, self.root_item_id)
+        run_item_delete_job(item, check_cancelled=lambda: None)
+        self.assertIsNone(self.db.session.get(Item, self.root_item_id))
+        self.assertEqual(ExtractedFile.query.count(), 0)
+
+    def test_artefact_delete_job_leaves_item(self):
+        from myapp.database import Artefact, ExtractedFile, Item
+        from myapp.services.artefact_lifecycle import run_artefact_delete_job
+
+        art = self.db.session.get(Artefact, self.root_art_id)
+        run_artefact_delete_job(art, check_cancelled=lambda: None)
+        # Artefact + derived subtree gone, but the enclosing item survives.
+        self.assertIsNone(self.db.session.get(Artefact, self.root_art_id))
+        self.assertIsNone(self.db.session.get(Artefact, self.derived_art_id))
+        self.assertEqual(ExtractedFile.query.count(), 0)
+        self.assertIsNotNone(self.db.session.get(Item, self.root_item_id))
+
+    def test_item_delete_claimable_with_null_artefact_id(self):
+        from myapp.database import Analysis, AnalysisStatus, AnalysisType
+        from myapp.taskrunner.runner import TaskRunner
+
+        job = Analysis(artefact_id=None, analysis_type=AnalysisType.ITEM_DELETE,
+                       status=AnalysisStatus.PENDING,
+                       hints=f'{{"item_id": {self.root_item_id}}}')
+        self.db.session.add(job)
+        self.db.session.commit()
+        claimed = TaskRunner(self.app)._claim_one()
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed.id, job.id)
 
 
 if __name__ == '__main__':

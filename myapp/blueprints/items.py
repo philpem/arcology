@@ -29,7 +29,10 @@ from ..database import (
 )
 from ..extensions import db
 from ..permissions import public_readable, require_permission, require_visible_item
-from ..services.artefact_lifecycle import bulk_delete_item
+from ..services.artefact_lifecycle import (
+    mark_item_pending_deletion,
+    queue_item_delete,
+)
 from ..utils.item_helpers import (
     assign_item_fields,
     assign_item_tags,
@@ -549,9 +552,13 @@ def delete(uuid, item):
     name = item.name
     parent = item.parent
 
-    bulk_delete_item(item)
+    # Flag the whole subtree pending_deletion (it vanishes from every view
+    # immediately) and hand the heavy row deletion to the task runner.
+    mark_item_pending_deletion(item)
+    queue_item_delete(item)
+    db.session.commit()
 
-    flash(f'Item "{name}" deleted.', 'success')
+    flash(f'Item "{name}" is being deleted.', 'success')
     # Redirect to parent if we came from within the hierarchy
     if parent:
         return redirect(url_for(f'{ROUTENAME}.view', uuid=parent.url_id))
