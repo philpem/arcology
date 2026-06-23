@@ -1970,12 +1970,13 @@ def _view_analysis_detail_cards(all_artefact_ids):
     partition_detect_details = None
     armlock_analysis = None
     flux_visualisation_analysis = None
-    density_detect_analysis = None
 
     # Disc-protection cautions are aggregated across the whole tree (parent +
     # derived children) and can be huge, so they get their own helper and the
     # standalone paginated cautions page.  The rollup keeps the same
-    # ``protection_analysis`` shape (``indicators`` + ``_analysis_uuid``).
+    # ``protection_analysis`` shape (``indicators`` + ``_analysis_uuid``).  The
+    # helper also collects density-mismatch notices (newest per artefact), so we
+    # reuse its newest entry here rather than re-querying DETECT_TRACK_DENSITY.
     cautions = collect_protection_cautions(all_artefact_ids)
     protection_analysis = None
     if cautions['indicators'] or cautions['analysis_uuid']:
@@ -1985,13 +1986,17 @@ def _view_analysis_detail_cards(all_artefact_ids):
             '_analysis_uuid': cautions['analysis_uuid'],
         }
 
+    # Newest density-mismatch notice across the tree (helper is ordered newest
+    # first), or None.  Carries an extra '_source_label' the rollup ignores.
+    density_detect_analysis = cautions['density'][0] if cautions['density'] else None
+
     # Load `details` only for the analysis types surfaced as cards/badges, newest
     # first, rather than carrying details for every analysis (#447). Picking the
     # first match per type preserves the previous "most recent completed" behaviour.
     _detail_types = (
         AnalysisType.DISC_MASTERING_DETECT,
         AnalysisType.PARTITION_DETECT, AnalysisType.ARMLOCK_REMOVE,
-        AnalysisType.FLUX_VISUALISATION, AnalysisType.DETECT_TRACK_DENSITY,
+        AnalysisType.FLUX_VISUALISATION,
     )
     _detail_analyses = Analysis.query.filter(
         Analysis.artefact_id.in_(all_artefact_ids),
@@ -2025,19 +2030,10 @@ def _view_analysis_detail_cards(all_artefact_ids):
                     flux_visualisation_analysis['_analysis_uuid'] = a.uuid
                 except (json.JSONDecodeError, TypeError) as e:
                     current_app.logger.warning(f"Failed to parse flux visualisation analysis details for {a.uuid}: {e}")
-            elif density_detect_analysis is None and a.analysis_type == AnalysisType.DETECT_TRACK_DENSITY:
-                try:
-                    det_details = json.loads(a.details)
-                    detection = det_details.get('detection', {})
-                    if detection.get('detected'):
-                        density_detect_analysis = {**detection, '_analysis_uuid': a.uuid}
-                except (json.JSONDecodeError, TypeError) as e:
-                    current_app.logger.warning(f"Failed to parse density detection details for {a.uuid}: {e}")
         if (mastering_analysis is not None
                 and partition_detect_details is not None
                 and flux_visualisation_analysis is not None
-                and armlock_analysis is not None
-                and density_detect_analysis is not None):
+                and armlock_analysis is not None):
             break
 
     return dict(
