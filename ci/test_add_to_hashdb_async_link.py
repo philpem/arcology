@@ -143,6 +143,47 @@ class TestAddToHashdbAsyncLink(unittest.TestCase):
             )
             self.assertEqual(len(link_jobs), 1)
 
+    def test_new_database_inline_honours_exclude_flag(self):
+        """Creating a DB inline with the checkbox sets exclude_from_similarity."""
+        from myapp.database import HashDatabase
+        resp = self.client.post(
+            f'/{self.artefact_uuid}/add-to-hashdb',
+            data={
+                'file_ids': str(self.ef_id),
+                'database_id': 'new',
+                'new_database_name': 'Base OS Inline',
+                'new_database_exclude_from_similarity': '1',
+                'new_product_title': 'Base',
+                'is_required': '0',
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(resp.status_code, 302, resp.data)
+        with self.app.app_context():
+            hdb = HashDatabase.query.filter_by(name='Base OS Inline').first()
+            self.assertIsNotNone(hdb)
+            self.assertTrue(hdb.exclude_from_similarity)
+
+    def test_new_database_inline_defaults_not_excluded(self):
+        """Without the checkbox, an inline-created DB is not excluded."""
+        from myapp.database import HashDatabase
+        resp = self.client.post(
+            f'/{self.artefact_uuid}/add-to-hashdb',
+            data={
+                'file_ids': str(self.ef_id),
+                'database_id': 'new',
+                'new_database_name': 'Plain Inline',
+                'new_product_title': 'Plain',
+                'is_required': '0',
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(resp.status_code, 302, resp.data)
+        with self.app.app_context():
+            hdb = HashDatabase.query.filter_by(name='Plain Inline').first()
+            self.assertIsNotNone(hdb)
+            self.assertFalse(hdb.exclude_from_similarity)
+
 
 if __name__ == '__main__':
     unittest.main()
