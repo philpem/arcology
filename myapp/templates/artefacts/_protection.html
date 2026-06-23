@@ -78,6 +78,17 @@
                         </h2>
                         <div id="prot_{{ ptype }}" class="accordion-collapse collapse">
                             <div class="accordion-body p-0">
+                                {% if type_indicators | length > (caution_inline_limit | default(250)) %}
+                                {# Too many to list inline (e.g. a 15k bad-CRC hard disc) —
+                                   collapse to a summary that links to the paginated cautions page. #}
+                                <div class="p-3 small text-muted">
+                                    <i class="bi bi-list-ol me-1"></i>
+                                    {{ type_indicators | length }} {{ ptype_labels.get(ptype, ptype.replace('_', ' ').title()) }}
+                                    indicators — too many to list here.
+                                    <a href="{{ url_for('myapp_blueprints_artefacts.cautions', uuid=artefact.uuid, type=ptype) }}">
+                                        View the full list</a>.
+                                </div>
+                                {% else %}
                                 <table class="table table-sm mb-0 small">
                                     <thead><tr><th>Track</th><th>Side</th>
                                     {% if ptype == 'weak_bits' %}<th>Count</th>
@@ -86,6 +97,7 @@
                                     {% elif ptype == 'bad_crc' %}<th>Sector</th>
                                     {% elif ptype == 'ddam' %}<th>Sector</th>
                                     {% endif %}
+                                    {% if caution_multi_source %}<th>Source</th>{% endif %}
                                     </tr></thead>
                                     <tbody>
                                     {% for ind in type_indicators %}
@@ -98,10 +110,12 @@
                                         {% elif ptype == 'bad_crc' %}<td>{{ ind.get('sect', '?') }}</td>
                                         {% elif ptype == 'ddam' %}<td>{{ ind.get('sect', '?') }}</td>
                                         {% endif %}
+                                        {% if caution_multi_source %}<td class="text-muted">{{ ind.get('_source_label', '') }}</td>{% endif %}
                                     </tr>
                                     {% endfor %}
                                     </tbody>
                                 </table>
+                                {% endif %}
                             </div>
                         </div>
                     </div>
