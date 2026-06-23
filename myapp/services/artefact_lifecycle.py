@@ -995,18 +995,19 @@ def _delete_item_rows(all_item_ids):
 # ARTEFACT_DELETE analysis; the task runner then batch-deletes the rows here.
 # =============================================================================
 
-def _cancel_pending_subtree_analyses(artefact_ids):
+def _cancel_pending_subtree_analyses(artefact_ids, *, reason):
     """Fail any PENDING analyses for *artefact_ids* so the worker can't claim a
     job on an artefact whose rows are about to be torn down.  A RUNNING analysis
     already claimed is harmless: the worker's result write-back keys on
-    analysis_id and affects 0 rows once the row is gone."""
+    analysis_id and affects 0 rows once the row is gone.  *reason* is the
+    user-visible error_message recorded on the cancelled analyses."""
     if not artefact_ids:
         return
     Analysis.query.filter(
         Analysis.artefact_id.in_(artefact_ids),
         Analysis.status == AnalysisStatus.PENDING,
     ).update({Analysis.status: AnalysisStatus.FAILED,
-              Analysis.error_message: 'cancelled: artefact is being deleted'},
+              Analysis.error_message: reason},
              synchronize_session=False)
 
 
@@ -1020,7 +1021,9 @@ def mark_item_pending_deletion(item, *, commit=False):
     all_item_ids = _collect_all_item_ids(item)
     Item.query.filter(Item.id.in_(all_item_ids)).update(
         {Item.pending_deletion: True}, synchronize_session=False)
-    _cancel_pending_subtree_analyses(_collect_item_artefact_ids(all_item_ids))
+    _cancel_pending_subtree_analyses(
+        _collect_item_artefact_ids(all_item_ids),
+        reason='cancelled: item is being deleted')
     if commit:
         db.session.commit()
 
@@ -1030,7 +1033,8 @@ def mark_artefact_pending_deletion(artefact, *, commit=False):
     all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
     Artefact.query.filter(Artefact.id.in_(all_ids)).update(
         {Artefact.pending_deletion: True}, synchronize_session=False)
-    _cancel_pending_subtree_analyses(all_ids)
+    _cancel_pending_subtree_analyses(
+        all_ids, reason='cancelled: artefact is being deleted')
     if commit:
         db.session.commit()
 

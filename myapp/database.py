@@ -906,6 +906,11 @@ class ExtractedFile(db.Model):
         Index("ix_extracted_files_parent", "parent_file_id", "extraction_depth"),
         Index("ix_extracted_files_partition_path", "partition_id", "path"),
         Index("ix_extracted_files_sha256_size", "sha256", "file_size"),
+        # Supports the task runner's keyset-batched deletion
+        # (WHERE partition_id IN (...) AND id > cursor ORDER BY id): each batch
+        # is a cheap index range scan rather than a per-batch sort of the
+        # partition's rows.
+        Index("ix_extracted_files_partition_id_id", "partition_id", "id"),
     )
 
     @hybrid_property

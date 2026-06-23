@@ -45,8 +45,17 @@ def upgrade():
     op.create_index(
         'ix_artefacts_pending_deletion', 'artefacts', ['pending_deletion'])
 
+    # Supports the keyset-batched extracted-file deletion the ITEM_DELETE /
+    # ARTEFACT_DELETE jobs run (WHERE partition_id IN (...) AND id > cursor
+    # ORDER BY id): turns each batch into an index range scan.
+    op.create_index(
+        'ix_extracted_files_partition_id_id', 'extracted_files',
+        ['partition_id', 'id'])
+
 
 def downgrade():
+    op.drop_index('ix_extracted_files_partition_id_id',
+                  table_name='extracted_files')
     op.drop_index('ix_artefacts_pending_deletion', table_name='artefacts')
     op.drop_column('artefacts', 'pending_deletion')
     op.drop_index('ix_items_pending_deletion', table_name='items')
