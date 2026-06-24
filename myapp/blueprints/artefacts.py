@@ -2589,7 +2589,7 @@ def _render_artefact_view(artefact):
 
     viewable_filenames, failed_conversion_info, has_converted_outputs = \
         _view_conversion_status(artefact, all_artefact_ids)
-    module_info, replay_info = metadata_by_path(all_artefact_ids)
+    module_info, replay_info, media_info = metadata_by_path(all_artefact_ids)
     recognised_products, recognised_folder_paths = _view_recognised_products(all_partitions)
     hashdb_ctx = _view_hashdb_context(hashdb_mode)
     restriction_ctx = _view_restriction_maps(all_artefact_ids, files_pagination)
@@ -2614,6 +2614,7 @@ def _render_artefact_view(artefact):
         has_converted_outputs=has_converted_outputs,
         module_info=module_info,
         replay_info=replay_info,
+        media_info=media_info,
         recognised_products=recognised_products,
         recognised_folder_paths=recognised_folder_paths,
         derived_entries=derived_entries,

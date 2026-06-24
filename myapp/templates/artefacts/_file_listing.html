@@ -253,7 +253,8 @@
                                 {% endif %}
                                 {{ file_viewer_metadata_icons(artefact, file.path,
                                     module_info[file.path] if module_info is defined and file.path in module_info else None,
-                                    replay_info[file.path] if replay_info is defined and file.path in replay_info else None) }}
+                                    replay_info[file.path] if replay_info is defined and file.path in replay_info else None,
+                                    media_info[file.path] if media_info is defined and file.path in media_info else None) }}
                                 {% endif %}
                             </td>
                             <td>{% if file.is_directory %}<span class="text-muted">DIR</span>{% elif file.file_size %}<span title="{{ file.file_size }} bytes">{{ file.file_size | format_filesize }}</span>{% else %}-{% endif %}</td>

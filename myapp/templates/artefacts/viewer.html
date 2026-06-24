@@ -563,7 +563,7 @@
                 <tr><th>Frame rate</th><td>{{ replay_detail.frame_rate }} fps</td></tr>
                 {% endif %}
                 {% if replay_detail.duration_seconds is not none %}
-                <tr><th>Duration</th><td>{{ '%.1f' % replay_detail.duration_seconds }} s</td></tr>
+                <tr><th>Duration</th><td>{{ replay_detail.duration_seconds | format_duration }}</td></tr>
                 {% endif %}
                 {% if replay_detail.sound_format is not none %}
                 <tr><th>Sound</th><td>
@@ -653,7 +653,7 @@
                 <tr><th>Audio</th><td>none</td></tr>
                 {% endif %}
                 {% if media_detail.duration_seconds is not none %}
-                <tr><th>Duration</th><td>{{ '%.1f' % media_detail.duration_seconds }} s</td></tr>
+                <tr><th>Duration</th><td>{{ media_detail.duration_seconds | format_duration }}</td></tr>
                 {% endif %}
             </tbody>
         </table>

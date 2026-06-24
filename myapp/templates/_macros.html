@@ -45,14 +45,16 @@
 {%- if direct %}{{ direct.name }}{% else %}<span class="text-muted fst-italic">{{ effective.name if effective else '-' }}</span>{% endif -%}
 {%- endmacro %}
 
-{# Viewer icons for a file row: a RISC OS module (bi-cpu) and/or an Acorn
-   Replay / ARMovie (bi-film) link to the artefact viewer's detail card.
+{# Viewer icons for a file row: a RISC OS module (bi-cpu), an Acorn Replay /
+   ARMovie (bi-film) and/or a generic transcoded media file (bi-film /
+   bi-music-note-beamed) link to the artefact viewer's detail card.
 
-   *module* / *replay* are the matched RiscosModule / ReplayMovie row (or a
-   falsy value when the file has none).  Shared by the artefact file listing
-   and the global file search results so both stay in step.
+   *module* / *replay* / *media* are the matched RiscosModule / ReplayMovie /
+   MediaFile row (or a falsy value when the file has none).  Shared by the
+   artefact file listing and the global file search results so both stay in
+   step.
 #}
-{% macro file_viewer_metadata_icons(artefact, file_path, module, replay) -%}
+{% macro file_viewer_metadata_icons(artefact, file_path, module, replay, media=none) -%}
 {%- if module -%}
 <a href="{{ artefact_url(artefact, 'viewer') }}?file={{ file_path | urlencode }}"
    class="text-success ms-1" title="RISC OS Module: {{ module.help_title or module.title_string }}{% if module.version %} {{ module.version }}{% endif %}{% if module.date %} ({{ module.date }}){% endif %}"><i class="bi bi-cpu"></i></a>
@@ -62,5 +64,11 @@
    audio-only filetype) from video Replay (bi-film). #}
 <a href="{{ artefact_url(artefact, 'viewer') }}?file={{ file_path | urlencode }}"
    class="text-primary ms-1" title="Acorn Replay / ARMovie{% if replay.video_format == 0 %} (sound-only){% endif %}{% if replay.title %}: {{ replay.title }}{% endif %}{% if replay.video_format is not none %} (format {{ replay.video_format }}{% if replay.video_label %} {{ replay.video_label }}{% endif %}){% endif %}{% if replay.width is not none and replay.height is not none %} — {{ replay.width }}×{{ replay.height }}{% endif %}"><i class="bi {% if replay.video_format == 0 %}bi-music-note-beamed{% else %}bi-film{% endif %}"></i></a>
+{%- endif -%}
+{%- if media -%}
+{# Generic transcoded / passthrough media: audio-only (bi-music-note-beamed)
+   vs video (bi-film), playable from the viewer's media detail card. #}
+<a href="{{ artefact_url(artefact, 'viewer') }}?file={{ file_path | urlencode }}"
+   class="text-primary ms-1" title="{% if media.media_kind == 'audio' %}Audio{% else %}Video{% endif %}{% if media.container_format %} ({{ media.container_format }}){% endif %}{% if media.width is not none and media.height is not none %} — {{ media.width }}×{{ media.height }}{% endif %} — click to play"><i class="bi {% if media.media_kind == 'audio' %}bi-music-note-beamed{% else %}bi-film{% endif %}"></i></a>
 {%- endif -%}
 {%- endmacro %}

@@ -182,9 +182,11 @@ def index():
     pagination = ListPagination(range(total), page, per_page)
     pagination_args = {k: v for k, v in request.args.items() if k != 'page'}
 
-    # Module / Replay viewer icons for the file results (parallel to the
-    # artefact file listing).  Keyed by ExtractedFile.id.
-    module_info, replay_info = metadata_by_file_id(results['files']) if results else ({}, {})
+    # Module / Replay / media viewer icons for the file results (parallel to
+    # the artefact file listing).  Keyed by ExtractedFile.id.
+    module_info, replay_info, media_info = (
+        metadata_by_file_id(results['files']) if results else ({}, {}, {})
+    )
 
     # Per-representative duplicate counts (only present when dedupe collapsed
     # the file bucket).  Keyed by ExtractedFile.id like module_info/replay_info.
@@ -221,6 +223,7 @@ def index():
         known_mastering_types=known_mastering_types,
         module_info=module_info,
         replay_info=replay_info,
+        media_info=media_info,
         dupe_info=dupe_info,
     )
 
@@ -270,7 +273,7 @@ def duplicates():
 
     pagination = ListPagination(range(total), page, per_page)
     pagination_args = {k: v for k, v in request.args.items() if k != 'page'}
-    module_info, replay_info = metadata_by_file_id(rows)
+    module_info, replay_info, media_info = metadata_by_file_id(rows)
 
     return render_template(
         'search/duplicates.html',
@@ -284,6 +287,7 @@ def duplicates():
         view_all=view_all,
         module_info=module_info,
         replay_info=replay_info,
+        media_info=media_info,
     )
 
 

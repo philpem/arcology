@@ -474,6 +474,7 @@ class TestSearchLogic(unittest.TestCase):
             ExtractedFile,
             FilesystemType,
             Item,
+            MediaFile,
             Partition,
             ReplayMovie,
             RiscosModule,
@@ -661,6 +662,33 @@ class TestSearchLogic(unittest.TestCase):
                 sound_channels=1,
                 number_of_chunks=15,
                 duration_seconds=30.0,
+            ))
+
+            # Generic transcoded media file (public artefact) + its MediaFile row
+            f_media = ExtractedFile(
+                partition_id=part.id,
+                path='Video/Demo.mkv',
+                filename='Demo.mkv',
+                extension='mkv',
+                md5='m1' + '0' * 30,
+                sha1='m1' + '0' * 38,
+                sha256='m1' + '0' * 62,
+                is_directory=False,
+            )
+            _db.session.add(f_media)
+            _db.session.add(MediaFile(
+                artefact_id=art.id,
+                file_path='Video/Demo.mkv',
+                media_kind='video',
+                container_format='matroska,webm',
+                video_codec='mpeg2video',
+                width=720,
+                height=576,
+                frame_rate=25.0,
+                audio_codec='mp3',
+                has_audio=True,
+                duration_seconds=89.1,
+                mp4_output_path='out/demo.mp4',
             ))
 
             # A PRIVATE artefact with an ARMovie — must be excluded for anon.
@@ -1077,44 +1105,60 @@ class TestSearchLogic(unittest.TestCase):
         from myapp.services.file_metadata import metadata_by_file_id
         with self.app.app_context():
             results = self._search('module:WindowManager')
-            module_info, replay_info = metadata_by_file_id(results['files'])
+            module_info, replay_info, media_info = metadata_by_file_id(results['files'])
             row = next(r for r in results['files']
                        if r[0].path == 'Modules/WindowManager')
             self.assertIn(row[0].id, module_info)
             self.assertEqual(module_info[row[0].id].title_string, 'WindowManager')
             self.assertNotIn(row[0].id, replay_info)
+            self.assertNotIn(row[0].id, media_info)
 
     def test_file_metadata_icons_replay(self):
         # A file-search row matching a ReplayMovie should get a film icon entry.
         from myapp.services.file_metadata import metadata_by_file_id
         with self.app.app_context():
             results = self._search('replay_title:Lion')
-            module_info, replay_info = metadata_by_file_id(results['files'])
+            module_info, replay_info, media_info = metadata_by_file_id(results['files'])
             row = next(r for r in results['files']
                        if r[0].path == 'Video/LionFish')
             self.assertIn(row[0].id, replay_info)
             self.assertEqual(replay_info[row[0].id].title, 'Lion fish in the Red Sea')
             self.assertNotIn(row[0].id, module_info)
+            self.assertNotIn(row[0].id, media_info)
+
+    def test_file_metadata_icons_media(self):
+        # A file-search row matching a MediaFile should get a media icon entry.
+        from myapp.services.file_metadata import metadata_by_file_id
+        with self.app.app_context():
+            results = self._search('filename:Demo.mkv')
+            module_info, replay_info, media_info = metadata_by_file_id(results['files'])
+            row = next(r for r in results['files']
+                       if r[0].path == 'Video/Demo.mkv')
+            self.assertIn(row[0].id, media_info)
+            self.assertEqual(media_info[row[0].id].media_kind, 'video')
+            self.assertNotIn(row[0].id, module_info)
+            self.assertNotIn(row[0].id, replay_info)
 
     def test_file_metadata_icons_empty(self):
         from myapp.services.file_metadata import metadata_by_file_id
         with self.app.app_context():
-            self.assertEqual(metadata_by_file_id([]), ({}, {}))
+            self.assertEqual(metadata_by_file_id([]), ({}, {}, {}))
 
     def test_file_metadata_by_path(self):
         # The artefact-listing adapter keys by file_path for a single artefact.
         from myapp.services.file_metadata import metadata_by_path
         with self.app.app_context():
-            module_info, replay_info = metadata_by_path([self.art_id])
+            module_info, replay_info, media_info = metadata_by_path([self.art_id])
             self.assertEqual(module_info['Modules/WindowManager'].title_string,
                              'WindowManager')
             self.assertEqual(replay_info['Video/LionFish'].title,
                              'Lion fish in the Red Sea')
+            self.assertEqual(media_info['Video/Demo.mkv'].media_kind, 'video')
 
     def test_file_metadata_by_path_empty(self):
         from myapp.services.file_metadata import metadata_by_path
         with self.app.app_context():
-            self.assertEqual(metadata_by_path([]), ({}, {}))
+            self.assertEqual(metadata_by_path([]), ({}, {}, {}))
 
     # ------------------------------------------------------------------
     # Command searches
