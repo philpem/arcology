@@ -1215,6 +1215,50 @@ class TestSearchLogic(unittest.TestCase):
         self.assertIn('Modules/ADFS', file_paths)
 
     # ------------------------------------------------------------------
+    # File-bucket refinement (intersection across key families)
+    # ------------------------------------------------------------------
+
+    def test_module_refines_swi_intersection(self):
+        # The ADFS module provides ADFS_DiscOp — both terms describe the same
+        # file, so they must AND (refine), not union.
+        results = self._search('module:ADFS swi:ADFS_DiscOp')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('Modules/ADFS', file_paths)
+
+    def test_module_refines_swi_excludes_mismatch(self):
+        # WindowManager does NOT provide ADFS_DiscOp; the WindowManager module
+        # file must not survive the intersection (regression: previously the two
+        # sub-searches unioned, so module:WindowManager re-added it).
+        results = self._search('module:WindowManager swi:ADFS_DiscOp')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertNotIn('Modules/WindowManager', file_paths)
+        self.assertNotIn('Modules/ADFS', file_paths)
+        self.assertEqual(results['files'], [])
+
+    def test_type_refines_module_intersection(self):
+        # Modules are type ffa; type:ffa module:ADFS keeps only the ADFS module.
+        results = self._search('type:ffa module:ADFS')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('Modules/ADFS', file_paths)
+        self.assertNotIn('Modules/WindowManager', file_paths)
+
+    def test_type_refines_module_excludes_wrong_type(self):
+        # ff8 is !RunImage's type, not the module files' (ffa) — empty result.
+        results = self._search('type:ff8 module:ADFS')
+        self.assertEqual(results['files'], [])
+
+    def test_filename_refines_command_intersection(self):
+        # The ADFS module file provides the Back command and is named 'ADFS'.
+        results = self._search('filename:ADFS command:Back')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('Modules/ADFS', file_paths)
+
+    def test_filename_refines_command_excludes_mismatch(self):
+        # WindowManager does not provide 'Back'; intersection is empty.
+        results = self._search('filename:WindowManager command:Back')
+        self.assertEqual(results['files'], [])
+
+    # ------------------------------------------------------------------
     # Acorn Replay / ARMovie searches
     # ------------------------------------------------------------------
 

@@ -567,17 +567,95 @@ def _file_match_clause(tokens):
     return and_(*[or_(*clauses) for clauses in per_key.values()], *neg)
 
 
-def _search_files(tokens, page=1, per_page=PER_PAGE, dedupe=False):
-    """Search ExtractedFile by hash, filename, path, type, or extension.
+def _module_match_clause(tokens):
+    """Combined RiscosModule filter for the module/command/swi keys, or None.
 
-    When *dedupe* is set, byte-identical files (same content hash) collapse to a
-    single representative row — the first in the location sort order — and the
-    representative carries transient ``dupe_count`` / ``dupe_key`` attributes so
-    the caller can render a "×N copies" badge linking to the copies listing.
-    Pagination then operates over distinct content groups, not raw rows.
+    Each key's values are ORed; different keys are ANDed so they *refine* one
+    another (a file matching ``module:X command:Y`` must satisfy both).  A key's
+    negations apply only when that key also carries a positive term — matching
+    the orphaned-negation warning, so ``!swi:`` is inert without a positive
+    ``swi:``.  Returns ``None`` when no module/command/swi term is present.
     """
-    combined = _file_match_clause(tokens)
-    if combined is None:
+    builders = {
+        'module':  lambda v: or_(_ilike(RiscosModule.title_string, v),
+                                 _ilike(RiscosModule.help_title, v)),
+        'command': lambda v: and_(RiscosModule.commands.isnot(None),
+                                  _ilike_json(RiscosModule.commands, v)),
+        'swi':     lambda v: and_(RiscosModule.swi_names.isnot(None),
+                                  _ilike_json(RiscosModule.swi_names, v)),
+    }
+    parts = []
+    for key, builder in builders.items():
+        values = tokens.get(key, [])
+        if not values:
+            continue
+        parts.append(or_(*[builder(v) for v in values]))
+        parts += [_negate(builder(v)) for v in _neg(tokens, key)]
+    if not parts:
+        return None
+    return and_(*parts)
+
+
+def _replay_match_clause(tokens):
+    """Combined ReplayMovie filter for the Acorn Replay / ARMovie keys, or None.
+
+    Text keys use substring match; numeric keys support exact-or-range via
+    :func:`_numeric_filter`.  Different keys are ANDed (refine); multiple values
+    for one key are ORed.  Returns ``None`` when no ``replay_*`` term is present.
+    """
+    text_keys = (
+        ('replay_title', ReplayMovie.title),
+        ('replay_author', ReplayMovie.author),
+        ('replay_copyright', ReplayMovie.copyright),
+    )
+    int_keys = (
+        ('replay_vformat', ReplayMovie.video_format),
+        ('replay_sformat', ReplayMovie.sound_format),
+        ('replay_width', ReplayMovie.width),
+        ('replay_height', ReplayMovie.height),
+    )
+    float_keys = (
+        ('replay_framerate', ReplayMovie.frame_rate),
+        ('replay_duration', ReplayMovie.duration_seconds),
+    )
+
+    per_key = {}
+    for key, col in text_keys:
+        for v in tokens.get(key, []):
+            per_key.setdefault(key, []).append(_ilike(col, v))
+    for key, col in int_keys:
+        for v in tokens.get(key, []):
+            per_key.setdefault(key, []).append(_numeric_filter(col, v))
+    for key, col in float_keys:
+        for v in tokens.get(key, []):
+            per_key.setdefault(key, []).append(_numeric_filter(col, v, is_float=True))
+
+    if not per_key:
+        return None
+    return and_(*[or_(*clauses) for clauses in per_key.values()])
+
+
+def _search_file_bucket(tokens, page=1, per_page=PER_PAGE, dedupe=False):
+    """Search the file bucket, intersecting every file-producing key family.
+
+    File-level keys (hash/name/path/type/ext), RISC OS module/command/swi, and
+    Acorn Replay / ARMovie metadata all describe the *same* ExtractedFile row,
+    so when more than one family is present they are ANDed — each additional
+    term *refines* the result set rather than unioning a separate one.  For
+    example ``type:ARMovie replayvideoformat:900`` finds ARMovie files whose
+    Replay codec is 900, and ``module:ADFS swi:ADFS_DiscOp`` finds the module
+    file satisfying both.
+
+    Returns ``([], False, 0)`` when no file-producing term is present.  With
+    *dedupe*, byte-identical files collapse to one representative (see
+    :func:`_dedupe_file_rows`); the metadata joins never inflate the copy count
+    because :func:`_dedupe_file_rows` de-duplicates on ExtractedFile.id first.
+    """
+    file_clause = _file_match_clause(tokens)
+    module_clause = _module_match_clause(tokens)
+    replay_clause = _replay_match_clause(tokens)
+
+    if file_clause is None and module_clause is None and replay_clause is None:
         return [], False, 0
 
     q = (
@@ -585,7 +663,23 @@ def _search_files(tokens, page=1, per_page=PER_PAGE, dedupe=False):
         .join(Partition, ExtractedFile.partition_id == Partition.id)
         .join(Artefact, Partition.artefact_id == Artefact.id)
         .join(Item, Artefact.item_id == Item.id)
-        .filter(combined)
+    )
+    filters = []
+    if file_clause is not None:
+        filters.append(file_clause)
+    if module_clause is not None:
+        q = q.join(RiscosModule, and_(
+            RiscosModule.artefact_id == Artefact.id,
+            RiscosModule.file_path == ExtractedFile.path))
+        filters.append(module_clause)
+    if replay_clause is not None:
+        q = q.join(ReplayMovie, and_(
+            ReplayMovie.artefact_id == Artefact.id,
+            ReplayMovie.file_path == ExtractedFile.path))
+        filters.append(replay_clause)
+
+    q = (
+        q.filter(and_(*filters))
         .filter(ExtractedFile.is_directory == False)
         .filter(artefact_visibility_clause(current_user))
     )
@@ -786,131 +880,6 @@ def _search_mastering(tokens, page=1, per_page=PER_PAGE):
         {'type': 'mastering', 'mastering_type': m.mastering_type, 'artefact': a, 'item': i}
         for m, a, i in deduped
     ], has_more, total
-
-
-def _search_riscos_module_files(tokens, key, clause_for, page=1, per_page=PER_PAGE, dedupe=False):
-    """Shared RiscosModule → ExtractedFile search for module/command/swi terms.
-
-    *clause_for* builds the per-value RiscosModule filter; values for the same
-    key are ORed together so the whole key is one query with one count and one
-    offset/limit (correct pagination regardless of how many values were given).
-    """
-    values = tokens.get(key, [])
-    if not values:
-        return [], False, 0
-
-    module_filter = [or_(*[clause_for(v) for v in values])]
-    module_filter += [_negate(clause_for(v)) for v in _neg(tokens, key)]
-
-    q = (
-        db.session.query(ExtractedFile, Partition, Artefact, Item)
-        .join(Partition, ExtractedFile.partition_id == Partition.id)
-        .join(Artefact, Partition.artefact_id == Artefact.id)
-        .join(Item, Artefact.item_id == Item.id)
-        .join(RiscosModule, and_(
-            RiscosModule.artefact_id == Artefact.id,
-            RiscosModule.file_path == ExtractedFile.path))
-        .filter(and_(*module_filter))
-        .filter(ExtractedFile.is_directory == False)
-        .filter(artefact_visibility_clause(current_user))
-    )
-    return _paginate_file_query(q, page, per_page, dedupe)
-
-
-def _search_modules(tokens, page=1, per_page=PER_PAGE, dedupe=False):
-    """Search RiscosModule by title_string or help_title, returning file tuples."""
-    return _search_riscos_module_files(
-        tokens, 'module',
-        lambda v: or_(_ilike(RiscosModule.title_string, v),
-                      _ilike(RiscosModule.help_title, v)),
-        page=page, per_page=per_page, dedupe=dedupe,
-    )
-
-
-def _search_commands(tokens, page=1, per_page=PER_PAGE, dedupe=False):
-    """Search RiscosModule by star command name, returning file tuples."""
-    return _search_riscos_module_files(
-        tokens, 'command',
-        lambda v: and_(RiscosModule.commands.isnot(None),
-                       _ilike_json(RiscosModule.commands, v)),
-        page=page, per_page=per_page, dedupe=dedupe,
-    )
-
-
-def _search_swis(tokens, page=1, per_page=PER_PAGE, dedupe=False):
-    """Search RiscosModule by SWI name, returning file tuples."""
-    return _search_riscos_module_files(
-        tokens, 'swi',
-        lambda v: and_(RiscosModule.swi_names.isnot(None),
-                       _ilike_json(RiscosModule.swi_names, v)),
-        page=page, per_page=per_page, dedupe=dedupe,
-    )
-
-
-def _search_replay_movies(tokens, page=1, per_page=PER_PAGE, dedupe=False):
-    """Search ReplayMovie metadata, returning ExtractedFile tuples.
-
-    Mirrors _search_riscos_module_files: joins ReplayMovie to its ExtractedFile
-    by (artefact_id, file_path) so results render in the existing file bucket.
-    Text keys use substring match; numeric keys support exact-or-range via
-    _numeric_filter.  Different keys are ANDed; multiple values for one key are
-    ORed.
-
-    Any file-level terms present (e.g. ``type:ARMovie``) are folded in as an
-    additional AND filter so that, for example, ``type:ARMovie
-    replayvideoformat:900`` refines to ARMovie files with that codec rather than
-    unioning every ARMovie file with every codec-900 movie.  ``_run_search``
-    relies on this by skipping the standalone file search when Replay terms are
-    present.
-    """
-    # (token key, ReplayMovie column, clause builder)
-    _text_keys = (
-        ('replay_title', ReplayMovie.title),
-        ('replay_author', ReplayMovie.author),
-        ('replay_copyright', ReplayMovie.copyright),
-    )
-    _int_keys = (
-        ('replay_vformat', ReplayMovie.video_format),
-        ('replay_sformat', ReplayMovie.sound_format),
-        ('replay_width', ReplayMovie.width),
-        ('replay_height', ReplayMovie.height),
-    )
-    _float_keys = (
-        ('replay_framerate', ReplayMovie.frame_rate),
-        ('replay_duration', ReplayMovie.duration_seconds),
-    )
-
-    per_key = {}
-    for key, col in _text_keys:
-        for v in tokens.get(key, []):
-            per_key.setdefault(key, []).append(_ilike(col, v))
-    for key, col in _int_keys:
-        for v in tokens.get(key, []):
-            per_key.setdefault(key, []).append(_numeric_filter(col, v))
-    for key, col in _float_keys:
-        for v in tokens.get(key, []):
-            per_key.setdefault(key, []).append(_numeric_filter(col, v, is_float=True))
-
-    if not per_key:
-        return [], False, 0
-
-    combined = and_(*[or_(*clauses) for clauses in per_key.values()])
-    file_clause = _file_match_clause(tokens)
-    if file_clause is not None:
-        combined = and_(combined, file_clause)
-    q = (
-        db.session.query(ExtractedFile, Partition, Artefact, Item)
-        .join(Partition, ExtractedFile.partition_id == Partition.id)
-        .join(Artefact, Partition.artefact_id == Artefact.id)
-        .join(Item, Artefact.item_id == Item.id)
-        .join(ReplayMovie, and_(
-            ReplayMovie.artefact_id == Artefact.id,
-            ReplayMovie.file_path == ExtractedFile.path))
-        .filter(combined)
-        .filter(ExtractedFile.is_directory == False)
-        .filter(artefact_visibility_clause(current_user))
-    )
-    return _paginate_file_query(q, page, per_page, dedupe)
 
 
 def _search_tags(tokens, page=1, per_page=PER_PAGE):
@@ -1164,12 +1133,14 @@ def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE, dedupe: b
     (rare — only multi-key queries), this is a slight over-count, which can show
     a sparse final page but never hides results.
 
-    With *dedupe*, every file-producing sub-search (hash/name/path/type/ext,
-    module, command, SWI, Replay) consolidates byte-identical files to one
-    representative.  Consolidation is per-sub-search; combining file *and* module
-    keys in one query (rare) consolidates each independently, so the same content
-    matched by two different keys may still appear twice — the same best-effort
-    property as the bucket-total over-count above.
+    The file bucket is a single intersected query: file-level keys
+    (hash/name/path/type/ext), RISC OS module/command/SWI, and Acorn Replay
+    metadata all constrain the *same* ExtractedFile, so combining families
+    *refines* (ANDs) rather than unions — e.g. ``type:ARMovie
+    replayvideoformat:900`` or ``module:ADFS swi:ADFS_DiscOp``.  The other
+    buckets (artefacts / catalogue_items) remain a union of their independent
+    sub-searches.  With *dedupe*, byte-identical files consolidate to one
+    representative (see :func:`_search_file_bucket`).
     """
     results = {
         'files':           [],
@@ -1180,8 +1151,9 @@ def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE, dedupe: b
     bucket_totals = {'files': 0, 'artefacts': 0, 'catalogue_items': 0}
 
     has_file_terms = any(k in tokens for k in ('md5', 'sha1', 'sha256', 'filename', 'path', 'type', 'ext'))
-    has_disc_terms = any(k in tokens for k in ('label', 'ident', 'fs'))
+    has_module_terms = any(k in tokens for k in ('module', 'command', 'swi'))
     has_replay_terms = any(k.startswith('replay_') for k in tokens)
+    has_disc_terms = any(k in tokens for k in ('label', 'ident', 'fs'))
     has_text = 'text' in tokens
 
     def _add(bucket, rows, has_more, total):
@@ -1191,12 +1163,11 @@ def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE, dedupe: b
             results['has_next'] = True
         bucket_totals[bucket] += total
 
-    # File search.  When Replay terms are also present the Replay sub-search
-    # folds the file terms in as a refinement (intersection), so running the
-    # broader file-only search here too would wrongly re-add every file matching
-    # the file terms alone — skip it and let the Replay search own the bucket.
-    if has_file_terms and not has_replay_terms:
-        files, has_more, total = _search_files(tokens, page=page, per_page=per_page, dedupe=dedupe)
+    # File bucket — one intersected query across every file-producing key family
+    # (file-level / module / command / SWI / Replay), so additional families
+    # refine rather than union (see _search_file_bucket).
+    if has_file_terms or has_module_terms or has_replay_terms:
+        files, has_more, total = _search_file_bucket(tokens, page=page, per_page=per_page, dedupe=dedupe)
         _add('files', files, has_more, total)
 
     # Disc/partition search
@@ -1216,26 +1187,6 @@ def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE, dedupe: b
     if 'mastering' in tokens:
         mast_results, has_more, total = _search_mastering(tokens, page=page, per_page=per_page)
         _add('artefacts', mast_results, has_more, total)
-
-    # RISC OS module search
-    if 'module' in tokens:
-        mod_results, has_more, total = _search_modules(tokens, page=page, per_page=per_page, dedupe=dedupe)
-        _add('files', mod_results, has_more, total)
-
-    # Star command search
-    if 'command' in tokens:
-        cmd_results, has_more, total = _search_commands(tokens, page=page, per_page=per_page, dedupe=dedupe)
-        _add('files', cmd_results, has_more, total)
-
-    # SWI name search
-    if 'swi' in tokens:
-        swi_results, has_more, total = _search_swis(tokens, page=page, per_page=per_page, dedupe=dedupe)
-        _add('files', swi_results, has_more, total)
-
-    # Acorn Replay / ARMovie metadata search
-    if any(k.startswith('replay_') for k in tokens):
-        replay_results, has_more, total = _search_replay_movies(tokens, page=page, per_page=per_page, dedupe=dedupe)
-        _add('files', replay_results, has_more, total)
 
     # Tag search
     if 'tag' in tokens:
