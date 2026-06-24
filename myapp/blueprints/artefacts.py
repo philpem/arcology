@@ -89,6 +89,7 @@ from ..services.similarity import (
     similar_files_by_tlsh,
 )
 from ..services.upload_pipeline import QUEUE_CHECKSUM_ONLY, QUEUE_FULL, ingest_uploaded_artefact
+from ..services.whats_interesting import summarise_artefact
 from ..utils.blobs import artefact_blob_storage_path, assign_blob
 from ..utils.config import int_config
 from ..utils.enum_display import enum_value
@@ -2415,6 +2416,7 @@ def _render_artefact_view(artefact):
     bypass_ctx = _view_admin_bypass(artefact, all_artefact_ids)
     similar_preview = similar_artefacts(artefact, current_user, limit=SIMILAR_SIDEBAR_LIMIT)
     similar_folder_counts = component_match_counts(all_artefact_ids, current_user)
+    interesting_summary = summarise_artefact(all_artefact_ids)
 
     ctx = dict(
         artefact=artefact,
@@ -2438,6 +2440,7 @@ def _render_artefact_view(artefact):
         sidecar_entries=sidecar_entries,
         similar_preview=similar_preview,
         similar_folder_counts=similar_folder_counts,
+        interesting_summary=interesting_summary,
         move_item_choices=_move_item_choices(artefact),
     )
     ctx.update(analyses_ctx)
