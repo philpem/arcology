@@ -523,14 +523,18 @@ def _paginate_file_query(q, page, per_page, dedupe=False):
     return fetched[:per_page], has_more, total
 
 
-def _search_files(tokens, page=1, per_page=PER_PAGE, dedupe=False):
-    """Search ExtractedFile by hash, filename, path, type, or extension.
+def _file_match_clause(tokens):
+    """Combined ExtractedFile filter for the file-level keys, or None.
 
-    When *dedupe* is set, byte-identical files (same content hash) collapse to a
-    single representative row — the first in the location sort order — and the
-    representative carries transient ``dupe_count`` / ``dupe_key`` attributes so
-    the caller can render a "×N copies" badge linking to the copies listing.
-    Pagination then operates over distinct content groups, not raw rows.
+    Builds one clause ANDing each present file key (``md5``/``sha1``/``sha256``/
+    ``filename``/``path``/``type``/``ext`` — values within a key ORed) together
+    with any negated file terms.  Returns ``None`` when no positive file term is
+    present.
+
+    Shared by the standalone file search and by metadata sub-searches (e.g.
+    Replay) that join ExtractedFile and want file terms such as ``type:`` to
+    *refine* their results — intersecting — rather than union a separate,
+    broader file-only result set.
     """
     per_key = {}
     for h in tokens.get('md5', []):
@@ -549,7 +553,7 @@ def _search_files(tokens, page=1, per_page=PER_PAGE, dedupe=False):
         per_key.setdefault('ext', []).append(ExtractedFile.extension == v.lower())
 
     if not per_key:
-        return [], False, 0
+        return None
 
     neg = _negated_clauses(tokens, {
         'md5':      lambda v: _hash_filter(ExtractedFile.md5, v, 32),
@@ -560,7 +564,22 @@ def _search_files(tokens, page=1, per_page=PER_PAGE, dedupe=False):
         'type':     _resolve_riscos_type,
         'ext':      lambda v: ExtractedFile.extension == v.lower(),
     })
-    combined = and_(*[or_(*clauses) for clauses in per_key.values()], *neg)
+    return and_(*[or_(*clauses) for clauses in per_key.values()], *neg)
+
+
+def _search_files(tokens, page=1, per_page=PER_PAGE, dedupe=False):
+    """Search ExtractedFile by hash, filename, path, type, or extension.
+
+    When *dedupe* is set, byte-identical files (same content hash) collapse to a
+    single representative row — the first in the location sort order — and the
+    representative carries transient ``dupe_count`` / ``dupe_key`` attributes so
+    the caller can render a "×N copies" badge linking to the copies listing.
+    Pagination then operates over distinct content groups, not raw rows.
+    """
+    combined = _file_match_clause(tokens)
+    if combined is None:
+        return [], False, 0
+
     q = (
         db.session.query(ExtractedFile, Partition, Artefact, Item)
         .join(Partition, ExtractedFile.partition_id == Partition.id)
@@ -836,6 +855,13 @@ def _search_replay_movies(tokens, page=1, per_page=PER_PAGE, dedupe=False):
     Text keys use substring match; numeric keys support exact-or-range via
     _numeric_filter.  Different keys are ANDed; multiple values for one key are
     ORed.
+
+    Any file-level terms present (e.g. ``type:ARMovie``) are folded in as an
+    additional AND filter so that, for example, ``type:ARMovie
+    replayvideoformat:900`` refines to ARMovie files with that codec rather than
+    unioning every ARMovie file with every codec-900 movie.  ``_run_search``
+    relies on this by skipping the standalone file search when Replay terms are
+    present.
     """
     # (token key, ReplayMovie column, clause builder)
     _text_keys = (
@@ -869,6 +895,9 @@ def _search_replay_movies(tokens, page=1, per_page=PER_PAGE, dedupe=False):
         return [], False, 0
 
     combined = and_(*[or_(*clauses) for clauses in per_key.values()])
+    file_clause = _file_match_clause(tokens)
+    if file_clause is not None:
+        combined = and_(combined, file_clause)
     q = (
         db.session.query(ExtractedFile, Partition, Artefact, Item)
         .join(Partition, ExtractedFile.partition_id == Partition.id)
@@ -1152,6 +1181,7 @@ def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE, dedupe: b
 
     has_file_terms = any(k in tokens for k in ('md5', 'sha1', 'sha256', 'filename', 'path', 'type', 'ext'))
     has_disc_terms = any(k in tokens for k in ('label', 'ident', 'fs'))
+    has_replay_terms = any(k.startswith('replay_') for k in tokens)
     has_text = 'text' in tokens
 
     def _add(bucket, rows, has_more, total):
@@ -1161,8 +1191,11 @@ def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE, dedupe: b
             results['has_next'] = True
         bucket_totals[bucket] += total
 
-    # File search
-    if has_file_terms:
+    # File search.  When Replay terms are also present the Replay sub-search
+    # folds the file terms in as a refinement (intersection), so running the
+    # broader file-only search here too would wrongly re-add every file matching
+    # the file terms alone — skip it and let the Replay search own the bucket.
+    if has_file_terms and not has_replay_terms:
         files, has_more, total = _search_files(tokens, page=page, per_page=per_page, dedupe=dedupe)
         _add('files', files, has_more, total)
 
@@ -1231,6 +1264,11 @@ def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE, dedupe: b
             seen_file_ids.add(ef.id)
             deduped_files.append(row)
     results['files'] = deduped_files
+
+    # Per-bucket totals so each result tab can show the true match count in its
+    # badge (the rendered rows are only the current page, so |length| there would
+    # cap at per_page and disagree with the "Showing 1–N of M" pagination line).
+    results['totals'] = dict(bucket_totals)
 
     # Largest bucket drives the page count (see docstring).
     results['total'] = max(bucket_totals.values())

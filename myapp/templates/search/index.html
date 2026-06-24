@@ -200,7 +200,7 @@
 	<li class="nav-item">
 		<a class="nav-link active" data-bs-toggle="tab" href="#tab-files">
 			<i class="bi bi-file-earmark"></i> Files
-			<span class="badge bg-secondary ms-1">{{ results.files|length }}</span>
+			<span class="badge bg-secondary ms-1">{{ results.totals.files }}</span>
 		</a>
 	</li>
 	{% endif %}
@@ -208,7 +208,7 @@
 	<li class="nav-item">
 		<a class="nav-link{% if not results.files %} active{% endif %}" data-bs-toggle="tab" href="#tab-artefacts">
 			<i class="bi bi-disc"></i> Artefacts
-			<span class="badge bg-secondary ms-1">{{ results.artefacts|length }}</span>
+			<span class="badge bg-secondary ms-1">{{ results.totals.artefacts }}</span>
 		</a>
 	</li>
 	{% endif %}
@@ -216,7 +216,7 @@
 	<li class="nav-item">
 		<a class="nav-link{% if not results.files and not results.artefacts %} active{% endif %}" data-bs-toggle="tab" href="#tab-items">
 			<i class="bi bi-collection"></i> Items
-			<span class="badge bg-secondary ms-1">{{ results.catalogue_items|length }}</span>
+			<span class="badge bg-secondary ms-1">{{ results.totals.catalogue_items }}</span>
 		</a>
 	</li>
 	{% endif %}
