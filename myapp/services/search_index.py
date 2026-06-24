@@ -212,8 +212,10 @@ def handle_replay_movies(analysis: Analysis, details: dict,
         ))
 
 
-def _link_transcode_blobs(entry: dict) -> tuple[int | None, int | None]:
-    """Return ``(mp4_output_blob_id, poster_blob_id)`` for a transcode entry.
+def _link_transcode_blobs(
+    entry: dict,
+) -> tuple[int | None, int | None, str | None, str | None]:
+    """Return ``(mp4_blob_id, poster_blob_id, mp4_path, poster_path)``.
 
     Content-keyed media transcoding stores its MP4/poster under a shared,
     content-addressed path; these refcounting ``OutputBlob`` rows are what let
@@ -222,24 +224,38 @@ def _link_transcode_blobs(entry: dict) -> tuple[int | None, int | None]:
     on a miss it is created from the worker-reported output hash.  Legacy entries
     that predate content-addressed transcoding carry no ``input_sha256`` and are
     left unlinked — they keep their artefact-scoped path string and per-prefix GC.
-    """
-    if not entry.get('input_sha256'):
-        return None, None
 
-    def _blob_id(path, file_size, sha256):
+    The returned *paths* are the blob's CANONICAL ``storage_path`` whenever a blob
+    is found or created.  ``get_or_create_blob`` deduplicates by
+    ``(file_size, sha256)``, so a byte-identical output produced for a *different*
+    source (e.g. two sound-only clips embedding the same title-card poster sprite)
+    reuses the existing blob — whose ``storage_path`` differs from the file this
+    worker just wrote.  Storing the canonical path keeps the row, owner-resolution
+    (``resolve_output_artefacts``) and refcount GC mutually consistent; the
+    duplicate file the worker wrote becomes an unreferenced orphan a periodic
+    dedup sweep can reclaim, rather than a live path no blob accounts for.
+    """
+    mp4_path = entry.get('mp4_output_path')
+    poster_path = entry.get('poster_path')
+    if not entry.get('input_sha256'):
+        return None, None, mp4_path, poster_path
+
+    def _link(path, file_size, sha256):
         if not path:
-            return None
+            return None, path
         blob = OutputBlob.query.filter_by(storage_path=path).first()
         if blob is None and file_size is not None and sha256:
             blob, _ = get_or_create_blob(
                 StorageDirectory.OUTPUTS, path, file_size, sha256)
-        return blob.id if blob is not None else None
+        if blob is None:
+            return None, path
+        return blob.id, blob.storage_path
 
-    mp4_id = _blob_id(entry.get('mp4_output_path'),
-                      entry.get('mp4_file_size'), entry.get('mp4_sha256'))
-    poster_id = _blob_id(entry.get('poster_path'),
-                         entry.get('poster_file_size'), entry.get('poster_sha256'))
-    return mp4_id, poster_id
+    mp4_id, mp4_path = _link(
+        mp4_path, entry.get('mp4_file_size'), entry.get('mp4_sha256'))
+    poster_id, poster_path = _link(
+        poster_path, entry.get('poster_file_size'), entry.get('poster_sha256'))
+    return mp4_id, poster_id, mp4_path, poster_path
 
 
 def handle_replay_transcode(analysis: Analysis, details: dict,
@@ -264,14 +280,15 @@ def handle_replay_transcode(analysis: Analysis, details: dict,
         file_path = entry.get('file_path')
         if not file_path:
             continue
-        mp4_blob_id, poster_blob_id = _link_transcode_blobs(entry)
+        mp4_blob_id, poster_blob_id, mp4_path, poster_path = \
+            _link_transcode_blobs(entry)
         ReplayMovie.query.filter_by(
             artefact_id=analysis.artefact_id,
             file_path=file_path,
         ).update(
             {
-                'mp4_output_path': _truncate(entry.get('mp4_output_path'), _mp4_max),
-                'poster_path': _truncate(entry.get('poster_path'), _poster_max),
+                'mp4_output_path': _truncate(mp4_path, _mp4_max),
+                'poster_path': _truncate(poster_path, _poster_max),
                 'mp4_output_blob_id': mp4_blob_id,
                 'poster_blob_id': poster_blob_id,
             },
@@ -325,7 +342,8 @@ def handle_media_transcode(analysis: Analysis, details: dict,
                 f"Skipping media file with oversized file_path ({len(file_path)}): {file_path}"
             )
             continue
-        mp4_blob_id, poster_blob_id = _link_transcode_blobs(entry)
+        mp4_blob_id, poster_blob_id, mp4_path, poster_path = \
+            _link_transcode_blobs(entry)
         db.session.add(MediaFile(
             artefact_id=analysis.artefact_id,
             file_path=file_path,
@@ -340,8 +358,8 @@ def handle_media_transcode(analysis: Analysis, details: dict,
             channels=entry.get('channels'),
             has_audio=entry.get('has_audio'),
             duration_seconds=entry.get('duration_seconds'),
-            mp4_output_path=_truncate(entry.get('mp4_output_path'), _out_max),
-            poster_path=_truncate(entry.get('poster_path'), _poster_max),
+            mp4_output_path=_truncate(mp4_path, _out_max),
+            poster_path=_truncate(poster_path, _poster_max),
             mp4_output_blob_id=mp4_blob_id,
             poster_blob_id=poster_blob_id,
         ))

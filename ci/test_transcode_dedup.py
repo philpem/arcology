@@ -259,6 +259,70 @@ class TestDedupDbBacked(unittest.TestCase):
                 self._db.session.rollback()
 
 
+class TestLinkTranscodeBlobsCanonicalPath(unittest.TestCase):
+    """_link_transcode_blobs keeps the row's stored path == the blob's path.
+
+    get_or_create_blob deduplicates by (file_size, sha256), so a byte-identical
+    output produced for a DIFFERENT source (two sound-only clips embedding the
+    same title-card poster sprite) reuses the existing blob — whose storage_path
+    was written for the first source.  The handler must store that canonical path
+    so owner-resolution and refcount GC stay consistent with the blob.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.app import create_app
+        from myapp.extensions import db as _db
+        cls.app = create_app()
+        cls.app.config['TESTING'] = True
+        cls._db = _db
+        with cls.app.app_context():
+            _db.create_all()
+
+    def test_collision_returns_canonical_blob_path(self):
+        from myapp.database import StorageDirectory
+        from myapp.services.search_index import _link_transcode_blobs
+        from myapp.utils.blobs import get_or_create_blob
+        with self.app.app_context():
+            try:
+                # An existing poster blob written for source X.
+                x_path = f'media/{"1" * 64}/1/poster.png'
+                blob, created = get_or_create_blob(
+                    StorageDirectory.OUTPUTS, x_path, 10, 'p' * 64)
+                self._db.session.flush()
+                self.assertTrue(created)
+
+                # Source Y produces a byte-identical poster, written to its own
+                # content-addressed path, but the same (size, sha) -> same blob.
+                y_path = f'media/{"2" * 64}/1/poster.png'
+                mp4_id, poster_id, mp4_path, poster_path = _link_transcode_blobs({
+                    'input_sha256': '2' * 64,
+                    'mp4_output_path': f'media/{"2" * 64}/1/movie.m4a',
+                    'mp4_file_size': 99, 'mp4_sha256': 'm' * 64,
+                    'poster_path': y_path,
+                    'poster_file_size': 10, 'poster_sha256': 'p' * 64,
+                })
+                # The poster links the EXISTING blob and reports its canonical
+                # path (X's), not the path Y wrote.
+                self.assertEqual(poster_id, blob.id)
+                self.assertEqual(poster_path, x_path)
+                # The mp4 (no collision) keeps its own freshly-created path.
+                self.assertEqual(mp4_path, f'media/{"2" * 64}/1/movie.m4a')
+                self.assertIsNotNone(mp4_id)
+            finally:
+                self._db.session.rollback()
+
+    def test_legacy_entry_without_input_sha_is_unlinked(self):
+        from myapp.services.search_index import _link_transcode_blobs
+        with self.app.app_context():
+            mp4_id, poster_id, mp4_path, poster_path = _link_transcode_blobs({
+                'mp4_output_path': 'item/art/u.mp4', 'poster_path': None,
+            })
+            self.assertEqual((mp4_id, poster_id), (None, None))
+            self.assertEqual(mp4_path, 'item/art/u.mp4')
+            self.assertIsNone(poster_path)
+
+
 def _artefact_keys_hint():
     from arcology_shared.hints import HintKey
     return HintKey.ARTEFACT_KEYS

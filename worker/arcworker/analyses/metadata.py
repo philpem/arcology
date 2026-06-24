@@ -603,7 +603,12 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
 
         entry = {
             'file_path': db_path,
-            'has_audio': produce_error.get('has_audio', False),
+            # has_audio is decided at encode time (whether a WAV track was
+            # decoded), so it is unknown on a cache hit where produce() never
+            # ran — report None rather than a possibly-wrong False.  The miss
+            # path always records the true value in produce_error.
+            'has_audio': (None if cached.get('cache_hit')
+                          else produce_error.get('has_audio', False)),
             'width': header.get('width'),
             'height': header.get('height'),
         }

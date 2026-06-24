@@ -15,6 +15,11 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import contains_eager, joinedload, selectinload
 from sqlalchemy.orm.exc import StaleDataError
 from arcology_shared.enums import COMPRESSED_RAW_SECTOR_TYPES
+from arcology_shared.transcode_paths import (
+    transcode_movie_name,
+    transcode_output_subdir,
+    transcode_poster_like,
+)
 from ..database import (
     _API_KEY_PERMISSION_ORDER,
     Analysis,
@@ -1409,7 +1414,9 @@ def transcode_cache_lookup():
     extension, a registered ``OutputBlob`` at the content-addressed path means
     the file has already been transcoded — the worker reuses that output and
     skips ffmpeg.  Returns 404 (the ordinary miss) when nothing is registered
-    yet.  Worker-gated: a low-privilege key must not probe stored content.
+    yet, or when the registered blob's underlying object is gone (a GC race or
+    backend eviction) so the worker re-encodes rather than indexing a broken
+    output.  Worker-gated: a low-privilege key must not probe stored content.
     """
     if not _is_worker_request():
         return error_response('Worker only', 403)
@@ -1419,15 +1426,23 @@ def transcode_cache_lookup():
     if not sha256 or not tool_version or not ext:
         return error_response('sha256, tool_version and ext are required', 400)
 
-    subdir = f'media/{sha256}/{tool_version}'
+    subdir = transcode_output_subdir(sha256, tool_version)
     mp4_blob = OutputBlob.query.filter_by(
-        storage_path=f'{subdir}/movie.{ext}').first()
+        storage_path=f'{subdir}/{transcode_movie_name(ext)}').first()
     if mp4_blob is None:
         return error_response('Not cached', 404)
-    # A content-addressed dir holds at most one poster (poster.jpg or .png).
+    # Only signal a hit when the bytes are actually still present: a surviving
+    # blob row whose object was deleted out-of-band would otherwise have the
+    # worker skip the encode and index a permanently-missing output.
+    storage = current_app.storage
+    if not storage.exists(storage.storage_key('outputs', mp4_blob.storage_path)):
+        return error_response('Not cached', 404)
+    # A content-addressed dir holds at most one poster (poster.jpg or .png);
+    # order for a deterministic pick should a stale sibling ever coexist.
     poster_blob = db.session.scalars(
-        db.select(OutputBlob).where(
-            OutputBlob.storage_path.like(f'{subdir}/poster.%'))
+        db.select(OutputBlob)
+        .where(OutputBlob.storage_path.like(transcode_poster_like(subdir)))
+        .order_by(OutputBlob.storage_path)
     ).first()
     return jsonify({
         'mp4_output_path': mp4_blob.storage_path,

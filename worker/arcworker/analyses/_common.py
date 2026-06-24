@@ -16,6 +16,11 @@ from pathlib import Path
 from typing import NamedTuple
 from arcology_shared.enums import AnalysisStatus, AnalysisType
 from arcology_shared.hints import HintKey
+from arcology_shared.transcode_paths import (
+    transcode_movie_name,
+    transcode_output_subdir,
+    transcode_poster_name,
+)
 from ..config import log
 from ..exceptions import JobCancelledException
 from ..tools import compute_file_hash
@@ -449,20 +454,6 @@ def iter_resolved_files(self, files, extraction_path, work_dir, *,
         yield file_data, file_path, disk_path
 
 
-def transcode_output_subdir(sha256: str, tool_version: str) -> str:
-    """Content-addressed ``outputs/`` subdir for a transcoded media file.
-
-    Keyed on the SOURCE file's SHA-256 (deterministic) and the transcoder
-    version, so two artefacts holding byte-identical media share one stored
-    output and the second transcode is a cache hit.  Deliberately lives OUTSIDE
-    the per-artefact ``outputs/{item}/{artefact}/`` tree so the per-artefact
-    storage GC (``delete_prefix``) never sweeps it — a shared output is reclaimed
-    only when its refcounting ``OutputBlob`` is orphaned (see
-    ``_collect_item_cleanup_keys``).
-    """
-    return f'media/{sha256}/{tool_version}'
-
-
 def transcode_cached(worker, *, input_path: Path, output_ext: str, produce,
                      tool_version: str = MEDIA_TRANSCODE_TOOL_VERSION) -> dict | None:
     """Content-keyed transcode: reuse a prior output, else produce and store it.
@@ -504,7 +495,7 @@ def transcode_cached(worker, *, input_path: Path, output_ext: str, produce,
     subdir = transcode_output_subdir(sha256, tool_version)
     _m_md5, mp4_sha256, mp4_size = compute_file_hash(Path(local_mp4))
     saved_mp4 = worker.save_output_file(
-        Path(local_mp4), f'movie.{output_ext}', subdir=subdir)
+        Path(local_mp4), transcode_movie_name(output_ext), subdir=subdir)
     result = {
         'mp4_output_path': saved_mp4,
         'poster_path': None,
@@ -516,7 +507,8 @@ def transcode_cached(worker, *, input_path: Path, output_ext: str, produce,
     if local_poster is not None and Path(local_poster).exists():
         _p_md5, poster_sha256, poster_size = compute_file_hash(Path(local_poster))
         result['poster_path'] = worker.save_output_file(
-            Path(local_poster), f'poster{Path(local_poster).suffix}', subdir=subdir)
+            Path(local_poster),
+            transcode_poster_name(Path(local_poster).suffix), subdir=subdir)
         result['poster_file_size'] = poster_size
         result['poster_sha256'] = poster_sha256
     return result

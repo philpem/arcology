@@ -724,8 +724,8 @@ def _collect_item_artefact_ids(item_ids):
     return direct_ids + derived_ids
 
 
-def _transcode_blob_externally_referenced(blob_id, deleting_ids):
-    """True if a transcode OutputBlob is still referenced by a surviving artefact.
+def _transcode_blobs_externally_referenced(blob_ids, deleting_ids):
+    """Subset of *blob_ids* still referenced by a SURVIVING artefact.
 
     A content-addressed transcode output is shared across every artefact holding
     the identical source media, referenced via ``Artefact.output_blob_id`` (rare)
@@ -733,18 +733,32 @@ def _transcode_blob_externally_referenced(blob_id, deleting_ids):
     by the artefacts being deleted (``deleting_ids``) cascade away with them and
     do not count; a reference from any other (surviving) artefact means the bytes
     must be kept.
+
+    Resolved in a fixed three queries over the whole candidate set rather than
+    per-blob, so the cost is independent of how many shared outputs an item has.
     """
-    if db.session.query(Artefact.id).filter(
-            Artefact.output_blob_id == blob_id,
-            ~Artefact.id.in_(deleting_ids)).first() is not None:
-        return True
+    if not blob_ids:
+        return set()
+    blob_ids = set(blob_ids)
+    referenced: set = set()
+    referenced.update(db.session.scalars(
+        select(Artefact.output_blob_id).where(
+            Artefact.output_blob_id.in_(blob_ids),
+            ~Artefact.id.in_(deleting_ids))
+    ).all())
     for model in (ReplayMovie, MediaFile):
-        if db.session.query(model.id).filter(
-                or_(model.mp4_output_blob_id == blob_id,
-                    model.poster_blob_id == blob_id),
-                ~model.artefact_id.in_(deleting_ids)).first() is not None:
-            return True
-    return False
+        rows = db.session.execute(
+            select(model.mp4_output_blob_id, model.poster_blob_id).where(
+                or_(model.mp4_output_blob_id.in_(blob_ids),
+                    model.poster_blob_id.in_(blob_ids)),
+                ~model.artefact_id.in_(deleting_ids))
+        ).all()
+        for mp4_blob_id, poster_blob_id in rows:
+            if mp4_blob_id in blob_ids:
+                referenced.add(mp4_blob_id)
+            if poster_blob_id in blob_ids:
+                referenced.add(poster_blob_id)
+    return referenced
 
 
 def _collect_item_cleanup_keys(all_artefact_ids):
@@ -829,11 +843,14 @@ def _collect_item_cleanup_keys(all_artefact_ids):
             if poster_blob_id is not None:
                 transcode_blob_ids.add(poster_blob_id)
     transcode_blob_ids -= set(orphan_output_blob_ids)
-    for blob in (OutputBlob.query.filter(OutputBlob.id.in_(transcode_blob_ids)).all()
-                 if transcode_blob_ids else []):
-        if not _transcode_blob_externally_referenced(blob.id, deleting_ids):
-            artefact_keys.append(f"outputs/{blob.storage_path}")
-            orphan_output_blob_ids.append(blob.id)
+    survivors = _transcode_blobs_externally_referenced(
+        transcode_blob_ids, deleting_ids)
+    orphaned_transcode_ids = transcode_blob_ids - survivors
+    for blob in (OutputBlob.query.filter(
+            OutputBlob.id.in_(orphaned_transcode_ids)).all()
+            if orphaned_transcode_ids else []):
+        artefact_keys.append(f"outputs/{blob.storage_path}")
+        orphan_output_blob_ids.append(blob.id)
 
     # Analysis output dirs and named output files
     rows = db.session.execute(

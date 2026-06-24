@@ -20,6 +20,7 @@ from flask import current_app, redirect, send_file
 # imports it lazily), so this guarantees those types are registered before we
 # serve any local file with mimetypes.guess_type().
 from arcology_shared import storage as _storage  # noqa: F401
+from arcology_shared.transcode_paths import CONTENT_ADDRESSED_MEDIA_PREFIX
 from ..database import Artefact
 from .artefact_storage import (
     get_artefact_path,
@@ -110,7 +111,9 @@ def resolve_output_artefact(filename):
 # Content-addressed, shared transcode outputs (see the worker's
 # transcode_output_subdir): keyed on the source media's hash, not on any one
 # artefact, so they live under this prefix instead of outputs/{item}/{artefact}/.
-CONTENT_ADDRESSED_OUTPUT_PREFIX = 'media/'
+# The prefix is defined once in arcology_shared so the worker (writer) and the
+# web app (this resolver) cannot drift.
+CONTENT_ADDRESSED_OUTPUT_PREFIX = CONTENT_ADDRESSED_MEDIA_PREFIX
 
 
 def resolve_output_artefacts(filename):
