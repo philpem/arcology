@@ -49,6 +49,7 @@ from ..services.artefact_lifecycle import (
     ArtefactMoveError,
     collect_all_analyses,
     delete_artefact_files,
+    get_all_derived_artefact_ids,
     mark_artefact_pending_deletion,
     mark_item_pending_deletion,
     move_artefact_to_item,
@@ -69,6 +70,7 @@ from ..services.downloads import (
     serve_output_file,
 )
 from ..services.hash_rescan import (
+    create_hashdb_from_artefacts,
     find_known_file,
     find_known_files_for_records,
     link_new_known_files,
@@ -886,6 +888,67 @@ def transform_to_disk_image(uuid):
     queue_analyses_for_artefact(artefact, commit=False, skip_analyses=skip)
     db.session.commit()
     return jsonify(artefact_to_dict(artefact))
+
+
+@blueprint.route('/artefacts/<string:uuid>/create-hashdb', methods=['POST'])
+@require_auth('read_write')
+def create_hashdb_from_artefact(uuid):
+    """Snapshot an artefact's whole extracted-file tree into a new hash database.
+
+    The ingest counterpart to the web "Base HashDB" action: upload an install
+    disc / installed-files tree, snapshot it to a reference database, and every
+    later disc containing those files is *recognised* instead of "unknown".
+
+    Body (JSON):
+      name (required)            — name for the new database
+      exclude_from_similarity    — bool, default False.  True for base-OS /
+                                   boilerplate snapshots (drop from similarity);
+                                   leave False for commercial software so it
+                                   still participates in similarity matching.
+      product_title              — optional title for the single product group
+                                   (defaults to the artefact label)
+      description                — optional database description
+
+    Returns 201 with the new database's id, name and the file counts.
+    """
+    artefact = _get_artefact_or_404(uuid)
+    perm_error = _require_manage_item_content(artefact.item)
+    if perm_error:
+        return perm_error
+
+    data, error = _json_object(force=True)
+    if error:
+        return error
+    missing = _require_fields(data, 'name')
+    if missing:
+        return missing
+    nul = _nul_error(data, ['name', 'product_title', 'description'])
+    if nul:
+        return nul
+
+    artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    try:
+        database, added, skipped = create_hashdb_from_artefacts(
+            data['name'],
+            artefact_ids,
+            description=(data.get('description') or '').strip() or None,
+            exclude_from_similarity=bool(data.get('exclude_from_similarity', False)),
+            product_title=(data.get('product_title') or '').strip() or artefact.label,
+        )
+    except ValueError as exc:
+        db.session.rollback()
+        # The service raises ValueError for a name clash as well as for invalid
+        # input; map the clash to 409 and everything else to 400.
+        status = 409 if 'already exists' in str(exc) else 400
+        return error_response(str(exc), status)
+
+    return jsonify({
+        'id': database.id,
+        'name': database.name,
+        'exclude_from_similarity': database.exclude_from_similarity,
+        'files_added': added,
+        'files_skipped_no_hash': skipped,
+    }), 201
 
 
 @blueprint.route('/artefacts/<string:uuid>/download', methods=['GET'])
