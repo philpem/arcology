@@ -12,7 +12,9 @@ import json
 import time
 import traceback
 from collections.abc import Callable
+from typing import NamedTuple
 from arcology_shared.enums import AnalysisStatus, AnalysisType
+from arcology_shared.hints import HintKey
 from ..config import log
 from ..exceptions import JobCancelledException
 
@@ -330,4 +332,111 @@ def find_extraction_path(self, artefact_uuid: str) -> str | None:
         elif atype == 'archive_extract' and not archive_extract_path:
             archive_extract_path = opath
     return file_extraction_path or archive_extract_path
+
+
+class BatchScanResult(NamedTuple):
+    """Result of :func:`scan_partition_files`.
+
+    ``files`` is the directory-excluded, ``select_files``-filtered list of
+    file_data dicts from the partition.  ``extraction_path`` is resolved only
+    when at least one file matched (lazy fallback) — when ``files`` is empty it
+    carries whatever the hint held (possibly ``None``), so a handler that
+    short-circuits on ``not scan.files`` never triggers a needless
+    ``find_extraction_path`` round-trip.
+    """
+
+    extraction_path: str | None
+    files: list[dict]
+    path_prefix: str
+    partition_uuid: str | None
+
+
+def scan_partition_files(self, analysis: dict, artefact: dict, *, select_files):
+    """Shared per-partition batch scaffold: hint parse → file list → filter → path.
+
+    The common front half of every "scan a partition's extracted files and do
+    X to each" handler (FORMAT_CONVERT Mode 2, REPLAY_TRANSCODE,
+    RISCOS_MODULE_PARSE, MEDIA_TRANSCODE).  Parses the standard extraction
+    hints, fetches the partition file list via the API (pushing the
+    extraction-context filter down), drops directories, and keeps the files for
+    which ``select_files(file_data)`` is truthy.
+
+    *select_files* is ``(file_data) -> bool``; directories are excluded before
+    it is called.  It may also record side data keyed by ``file_data['path']``
+    (e.g. FORMAT_CONVERT's viewable-type map) as a side effect.
+
+    Returns a :class:`BatchScanResult`, or ``None`` when ``partition_uuid`` is
+    missing or the extraction path cannot be resolved — the caller fails the
+    analysis with its own message.  This helper never calls
+    ``complete_analysis``/``fail_analysis`` or queues anything.
+
+    The extraction-path fallback (``find_extraction_path``) is resolved lazily:
+    only when ≥1 file matched.  When nothing matched, the hint's path (or
+    ``None``) is returned alongside ``files=[]`` so the caller's "no files"
+    short-circuit runs before the path is ever needed.
+    """
+    hints = json.loads(analysis.get('hints') or '{}')
+    partition_uuid = hints.get(HintKey.PARTITION_UUID)
+    extraction_path = hints.get(HintKey.EXTRACTION_PATH)
+    path_prefix = hints.get(HintKey.PATH_PREFIX, '')
+
+    if not partition_uuid:
+        return None
+
+    base_params = {'show_known': 'true'}
+    if path_prefix:
+        base_params['path_prefix'] = path_prefix
+    else:
+        base_params['extraction_depth'] = 0
+
+    all_files = self.api.get_partition_files(partition_uuid, **base_params)
+
+    files = [
+        f for f in all_files
+        if not f.get('is_directory', False) and select_files(f)
+    ]
+
+    # Lazy path resolution: a handler that finds no matching files short-circuits
+    # before using extraction_path, so skip the find_extraction_path round-trip.
+    if files and not extraction_path:
+        extraction_path = find_extraction_path(self, artefact.get('uuid'))
+        if not extraction_path:
+            return None
+
+    return BatchScanResult(
+        extraction_path=extraction_path,
+        files=files,
+        path_prefix=path_prefix,
+        partition_uuid=partition_uuid,
+    )
+
+
+def iter_resolved_files(self, files, extraction_path, work_dir, *,
+                        path_prefix='', reporter=None, on_missing=None):
+    """Yield ``(file_data, file_path, disk_path)`` for each resolvable file.
+
+    The shared back half of the batch scaffold: wraps
+    :func:`resolve_extraction_file` (passing the file's ``risc_os_filetype`` and
+    the *path_prefix*) for every file in *files*.  Files that cannot be located
+    on disk are skipped after invoking ``on_missing(file_data, db_path)`` (so a
+    handler can bucket them into its own error list).  When *reporter* is given
+    it is driven by the count of successfully-resolved files (not the raw scan
+    position), so progress does not skip values when files are missing.
+    """
+    resolved = 0
+    for file_data in files:
+        db_path = file_data['path']
+        file_path, disk_path = resolve_extraction_file(
+            self, extraction_path, db_path, work_dir,
+            path_prefix=path_prefix,
+            risc_os_filetype=file_data.get('risc_os_filetype') or None,
+        )
+        if file_path is None:
+            if on_missing is not None:
+                on_missing(file_data, db_path)
+            continue
+        resolved += 1
+        if reporter is not None:
+            reporter.update(resolved)
+        yield file_data, file_path, disk_path
 # vim: ts=4 sw=4 et

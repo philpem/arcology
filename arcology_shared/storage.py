@@ -23,11 +23,25 @@ from urllib.parse import quote
 
 # Ensure SVG is always mapped correctly — some Linux systems omit it.
 mimetypes.add_type('image/svg+xml', '.svg')
-# MP4 (transcoded Acorn Replay videos) — guarantee the Content-Type so the
-# browser plays it inline in an HTML5 <video> instead of downloading it.
-mimetypes.add_type('video/mp4', '.mp4')
-# M4A (transcoded sound-only Acorn Replay audio) — inline HTML5 <audio>.
-mimetypes.add_type('audio/mp4', '.m4a')
+# Time-based media Content-Types — guarantee them so transcoded outputs and
+# passed-through media files play inline in an HTML5 <video>/<audio> element and
+# carry the right Content-Type as S3 object metadata, regardless of whether the
+# host (e.g. a minimal Alpine worker) ships a rich /etc/mime.types.  Stock
+# `mimetypes` is platform-dependent for several of these.
+for _media_mime, _media_ext in (
+    ('video/mp4', '.mp4'),    # transcoded video + browser-native MP4
+    ('video/mp4', '.m4v'),
+    ('audio/mp4', '.m4a'),    # transcoded sound-only audio
+    ('video/webm', '.webm'),
+    ('audio/ogg', '.ogg'),
+    ('audio/ogg', '.oga'),
+    ('video/ogg', '.ogv'),
+    ('audio/ogg', '.opus'),
+    ('audio/flac', '.flac'),
+    ('audio/aac', '.aac'),
+):
+    mimetypes.add_type(_media_mime, _media_ext)
+del _media_mime, _media_ext
 
 
 def _mime_for_key(key: str) -> str:

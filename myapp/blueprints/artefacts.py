@@ -30,6 +30,7 @@ from ..database import (
     Item,
     KnownFile,
     KnownProduct,
+    MediaFile,
     Partition,
     Platform,
     RecognisedProduct,
@@ -322,8 +323,17 @@ def _redirect_to_artefact_view(artefact):
     return redirect(url_for(f'{ROUTENAME}.view', **_artefact_view_kwargs(artefact)))
 
 
-def _check_download_restrictions(artefact):
-    """Return a redirect response when download restrictions block access."""
+def _check_download_restrictions(artefact, require_confirm=True):
+    """Return a redirect response when download restrictions block access.
+
+    A non-bypass user is always hard-blocked.  A bypass-capable user must
+    additionally pass ``?confirm_bypass`` for an *attachment download* (the
+    explicit-override UX).  Inline rendering/streaming routes pass
+    ``require_confirm=False``: like an analysis-output rendering, they serve a
+    bypasser without the override step (the bytes are still gated for everyone
+    who cannot bypass) — otherwise an inline <video>/<audio> fetch would receive
+    a 302-to-HTML and silently fail to play.
+    """
     # Restrictions on a container artefact cascade to artefacts derived from it.
     restrictions = artefact.effective_restrictions
     if not restrictions:
@@ -334,14 +344,14 @@ def _check_download_restrictions(artefact):
         flash(f'Download restricted: {categories}', 'danger')
         return _redirect_to_artefact_view(artefact)
 
-    if not request.args.get('confirm_bypass'):
+    if require_confirm and not request.args.get('confirm_bypass'):
         flash('This artefact has download restrictions. Use the download override button to confirm.', 'warning')
         return _redirect_to_artefact_view(artefact)
 
     return None
 
 
-def _check_file_download_restrictions(ef):
+def _check_file_download_restrictions(ef, require_confirm=True):
     """Return a redirect when file-level restrictions block an extracted-file download.
 
     Called after _check_download_restrictions() has cleared artefact-level
@@ -349,6 +359,10 @@ def _check_file_download_restrictions(ef):
     (so downloading an archive is blocked if any contained file is restricted),
     and on any ancestor archive/directory (so a file inside a restricted archive
     is also blocked).
+
+    ``require_confirm`` behaves as in :func:`_check_download_restrictions`:
+    inline streaming routes pass ``False`` so a bypasser plays without the
+    download-override step.
     """
     all_restrictions = (
         collect_all_file_restrictions(ef) +
@@ -362,19 +376,23 @@ def _check_file_download_restrictions(ef):
         flash(f'File download restricted: {categories}', 'danger')
         return _redirect_to_artefact_view(ef.partition.artefact)
 
-    if not request.args.get('confirm_bypass'):
+    if require_confirm and not request.args.get('confirm_bypass'):
         flash('This file has download restrictions. Use the download override to confirm.', 'warning')
         return _redirect_to_artefact_view(ef.partition.artefact)
 
     return None
 
 
-def _check_artefact_file_restrictions(artefact):
+def _check_artefact_file_restrictions(artefact, require_confirm=True):
     """Block artefact download when any extracted file within it has restrictions.
 
     Called after _check_download_restrictions() has cleared artefact-level
     restrictions.  Because ExtractedFileRestriction has .restriction_type, the
     existing can_bypass_all_restrictions() method works on these objects directly.
+
+    ``require_confirm`` behaves as in :func:`_check_download_restrictions`:
+    inline streaming routes pass ``False`` so a bypasser plays without the
+    download-override step.
     """
     file_restrictions = artefact_contained_file_restrictions(artefact)
 
@@ -386,7 +404,7 @@ def _check_artefact_file_restrictions(artefact):
         flash(f'Download restricted (artefact contains restricted files): {categories}', 'danger')
         return _redirect_to_artefact_view(artefact)
 
-    if not request.args.get('confirm_bypass'):
+    if require_confirm and not request.args.get('confirm_bypass'):
         flash('This artefact contains files with download restrictions. Use the download override to confirm.', 'warning')
         return _redirect_to_artefact_view(artefact)
 
@@ -1017,10 +1035,10 @@ def _viewer_explicit_gate(artefact, output_groups, all_partition_ids, _output_bl
             explicit_file_paths = {row.path for row in explicit_efs}
 
     for group in output_groups:
-        # Replay groups carry their own explicit/restricted/stable_id from
+        # Replay/media groups carry their own explicit/restricted/stable_id from
         # content_gate_flags (gated per owning artefact, incl. derived ones);
         # don't overwrite them with the output-path based computation here.
-        if group.get('is_replay'):
+        if group.get('is_replay') or group.get('is_media'):
             continue
         group['explicit'] = (
             artefact_is_explicit or group.get('source_file') in explicit_file_paths
@@ -1075,11 +1093,11 @@ def _viewer_thumbnail_bundle(artefact, output_groups, file_filter):
         single_img_groups, other_groups = [], []
         for g in output_groups:
             img_count = sum(1 for o in g['outputs'] if o.get('type') == 'image')
-            if img_count == 1 or g.get('is_replay'):
-                # Single-image groups and Replay movies are single thumbnails, so
-                # they join the per-directory bundle grid.  Explicit ones stay in
-                # the bundle; the template wraps each with its own gate so the
-                # directory grid stays unified.
+            if img_count == 1 or g.get('is_replay') or g.get('is_media'):
+                # Single-image groups, Replay movies and media files are single
+                # thumbnails, so they join the per-directory bundle grid.
+                # Explicit ones stay in the bundle; the template wraps each with
+                # its own gate so the directory grid stays unified.
                 single_img_groups.append(g)
             else:
                 other_groups.append(g)
@@ -1318,6 +1336,157 @@ def _viewer_replay_groups(all_artefact_ids, current_path):
     return groups
 
 
+def _media_src_url(row, all_artefact_ids):
+    """Resolve the playback URL for a MediaFile row.
+
+    Transcoded rows play their MP4/M4A output; passthrough rows (no
+    ``mp4_output_path``) play the original media bytes inline via the
+    restriction-gated stream route — the extracted source file when the row
+    came from an extraction, or the artefact itself for a direct upload.
+    Returns ``(src_url, original_url)`` where ``original_url`` is the download
+    link for the source (or None).
+    """
+    if row.mp4_output_path:
+        src = url_for(f'{ROUTENAME}.get_output_file', filename=row.mp4_output_path)
+    else:
+        src = None
+
+    original_url = None
+    if row.file_path:
+        ef_uuid = (
+            db.session.query(ExtractedFile.uuid)
+            .join(Partition)
+            .filter(
+                Partition.artefact_id.in_(all_artefact_ids),
+                ExtractedFile.path == row.file_path,
+                ExtractedFile.is_directory == False,  # noqa: E712
+            )
+            .limit(1)
+            .scalar()
+        )
+        if ef_uuid:
+            original_url = url_for(f'{ROUTENAME}.download_file', uuid=ef_uuid)
+            if src is None:  # passthrough — stream the original extracted bytes
+                src = url_for(f'{ROUTENAME}.stream_file', uuid=ef_uuid)
+    else:
+        # Direct-upload media artefact (no extraction path).
+        owning = db.session.get(Artefact, row.artefact_id)
+        if owning:
+            original_url = url_for(f'{ROUTENAME}.download_legacy', uuid=owning.uuid)
+            if src is None:
+                src = url_for(f'{ROUTENAME}.stream_artefact', uuid=owning.uuid)
+    return src, original_url
+
+
+def _viewer_media_groups(all_artefact_ids, current_path):
+    """Generic media (audio/video) files as viewer groups, interleaved with outputs.
+
+    Mirrors :func:`_viewer_replay_groups` for arbitrary ffmpeg-handled media.
+    One group per indexed MediaFile (a transcoded or passed-through media file
+    found in an extraction), keyed by its extracted-file path so it sorts,
+    filters, paginates and thumbnail-bundles alongside the other files.  Each
+    links to the media detail/player card (viewer?file=<path>).
+    """
+    rows = (
+        MediaFile.query
+        .filter(
+            MediaFile.artefact_id.in_(all_artefact_ids),
+            MediaFile.file_path.isnot(None),
+        )
+        .order_by(MediaFile.file_path)
+        .all()
+    )
+    art_ids = {row.artefact_id for row in rows}
+    artefacts = (
+        {a.id: a for a in Artefact.query.filter(Artefact.id.in_(art_ids)).all()}
+        if art_ids else {}
+    )
+    groups = []
+    for row in rows:
+        if current_path and not (row.file_path or '').startswith(current_path):
+            continue
+        restricted, explicit = content_gate_flags(
+            current_user, artefacts.get(row.artefact_id))
+        groups.append({
+            'label': row.file_path,
+            'source_file': row.file_path,
+            'outputs': [],
+            'is_media': True,
+            'media': {
+                'file_path': row.file_path,
+                'title': (row.file_path or '').split('/')[-1],
+                'poster_url': (
+                    url_for(f'{ROUTENAME}.get_output_file', filename=row.poster_path)
+                    if row.poster_path else None
+                ),
+                'has_media': True,
+                'media_kind': row.media_kind or 'video',
+            },
+            'restricted': restricted,
+            'explicit': explicit,
+            'stable_id': hashlib.md5(
+                f"media:{row.artefact_id}:{row.file_path}".encode()
+            ).hexdigest()[:12],
+        })
+    return groups
+
+
+def _viewer_media_detail(file_filter, all_artefact_ids, artefact):
+    """Generic media detail/player card.
+
+    For a ``?file=`` drill-in, looks up the matching MediaFile (extraction
+    media).  With no file filter, falls back to the viewed artefact's own media
+    when it was a direct media upload (a MediaFile row with no ``file_path``).
+    Returns the player context (src/poster/metadata + content-gate flags), or
+    None when there is no media to show.
+    """
+    row = None
+    if file_filter:
+        row = MediaFile.query.filter(
+            MediaFile.artefact_id.in_(all_artefact_ids),
+            MediaFile.file_path == file_filter,
+        ).first()
+    else:
+        row = MediaFile.query.filter(
+            MediaFile.artefact_id == artefact.id,
+            MediaFile.file_path.is_(None),
+        ).first()
+    if not row:
+        return None
+
+    src_url, original_url = _media_src_url(row, all_artefact_ids)
+    owning = db.session.get(Artefact, row.artefact_id)
+    restricted, explicit = content_gate_flags(current_user, owning)
+
+    return {
+        'file_path': row.file_path,
+        'title': (row.file_path or artefact.original_filename or '').split('/')[-1],
+        'media_kind': row.media_kind or 'video',
+        'src_url': src_url,
+        'poster_url': (
+            url_for(f'{ROUTENAME}.get_output_file', filename=row.poster_path)
+            if row.poster_path else None
+        ),
+        'original_url': original_url,
+        'transcoded': bool(row.mp4_output_path),
+        'container_format': row.container_format,
+        'video_codec': row.video_codec,
+        'width': row.width,
+        'height': row.height,
+        'frame_rate': row.frame_rate,
+        'audio_codec': row.audio_codec,
+        'sample_rate': row.sample_rate,
+        'channels': row.channels,
+        'has_audio': row.has_audio,
+        'duration_seconds': row.duration_seconds,
+        'restricted': restricted,
+        'explicit': explicit,
+        'stable_id': hashlib.md5(
+            f"media:{row.artefact_id}:{row.file_path}".encode()
+        ).hexdigest()[:12],
+    }
+
+
 def _viewer_stamp_stable_ids(artefact, output_groups):
     """Defensive stable-ID stamping for groups missed upstream."""
     # ── Stable IDs for any group that didn't get one upstream ───────────────
@@ -1362,13 +1531,19 @@ def _render_viewer(artefact):
     # in a separate trailing "Acorn Replay media" section.  Skip when drilled
     # into a single file (?file=): the replay_detail player card handles that.
     replay_present = False
+    media_present = False
     if not file_filter and viewer_status != 'restricted':
-        replay_groups = _viewer_replay_groups(all_artefact_ids, current_path)
-        if replay_groups:
+        extra_groups = _viewer_replay_groups(all_artefact_ids, current_path)
+        if extra_groups:
             replay_present = True
-            output_groups = output_groups + replay_groups
+        media_groups = _viewer_media_groups(all_artefact_ids, current_path)
+        if media_groups:
+            media_present = True
+            extra_groups = extra_groups + media_groups
+        if extra_groups:
+            output_groups = output_groups + extra_groups
             # Re-sort the merged list (collect already sorted its own groups) so
-            # movies and converted outputs interleave alphabetically by path.
+            # movies/media and converted outputs interleave alphabetically by path.
             output_groups.sort(key=lambda g: g['label'].lower())
 
     subdirectories, archive_paths = _viewer_subdirectories(
@@ -1400,6 +1575,11 @@ def _render_viewer(artefact):
     # above; replay_detail covers the single-movie (?file=) player card.
     _outputs_restricted = viewer_status == 'restricted'
     replay_detail = None if _outputs_restricted else _viewer_replay_detail(file_filter, all_artefact_ids)
+    # Generic media player/metadata card (?file= drill-in, or the artefact's own
+    # media for a direct upload).  Suppressed when outputs are restricted, like
+    # replay_detail — the player is a rendering of the same gated bytes.
+    media_detail = None if _outputs_restricted else _viewer_media_detail(
+        file_filter, all_artefact_ids, artefact)
 
     _viewer_stamp_stable_ids(artefact, output_groups)
 
@@ -1415,6 +1595,8 @@ def _render_viewer(artefact):
         module_detail=module_detail,
         replay_detail=replay_detail,
         replay_present=replay_present,
+        media_detail=media_detail,
+        media_present=media_present,
         user_can_bypass_explicit=user_can_bypass_explicit,
         total_counts=total_counts,
         total_groups=total_groups,
@@ -3325,6 +3507,33 @@ def download(item_id=None, artefact_id=None, root_id=None, uuid=None):
     return response
 
 
+@blueprint.route('/artefacts/<string:uuid>/stream', endpoint='stream_artefact')
+@public_downloadable
+def stream_artefact(uuid):
+    """Stream a directly-uploaded media artefact inline for in-page playback.
+
+    Same restriction enforcement as ``download``; differs only in serving the
+    bytes inline (explicit Content-Type, byte-range) rather than as an
+    attachment, so the media player can play and seek a browser-playable upload.
+    """
+    artefact = _get_artefact_or_404(None, None, None, uuid)
+
+    # Inline playback: hard-block non-bypassers, but don't require the
+    # confirm_bypass download-override (an <video>/<audio> fetch can't supply it).
+    restriction_redirect = _check_download_restrictions(artefact, require_confirm=False)
+    if restriction_redirect:
+        return restriction_redirect
+
+    restriction_redirect = _check_artefact_file_restrictions(artefact, require_confirm=False)
+    if restriction_redirect:
+        return restriction_redirect
+
+    response = serve_artefact_file(artefact, inline=True)
+    if response is None:
+        abort(404, description='File not found')
+    return response
+
+
 @blueprint.route('/files/<string:uuid>/download', endpoint='download_file')
 @public_downloadable
 def download_file(uuid):
@@ -3347,6 +3556,39 @@ def download_file(uuid):
         return restriction_redirect
 
     response = serve_extracted_file(ef)
+    if response is None:
+        abort(404, description='Extracted file not found on disk')
+    return response
+
+
+@blueprint.route('/files/<string:uuid>/stream', endpoint='stream_file')
+@public_downloadable
+def stream_file(uuid):
+    """Stream an extracted file inline for in-page playback (audio/video).
+
+    Identical access enforcement to ``download_file`` (artefact visibility,
+    then artefact- and file-level download restrictions) — a passthrough media
+    file must not bypass restriction gating just because it is played rather
+    than downloaded.  The only difference is the response is served inline (with
+    an explicit Content-Type and byte-range support) instead of as an
+    attachment, so an HTML5 <video>/<audio> element can play and seek it.
+    """
+    ef = ExtractedFile.query.filter_by(uuid=uuid).first_or_404()
+    artefact = ef.partition.artefact
+    if not can_view_artefact(artefact, current_user):
+        abort(404)
+
+    # Inline playback: hard-block non-bypassers, but don't require the
+    # confirm_bypass download-override (an <video>/<audio> fetch can't supply it).
+    restriction_redirect = _check_download_restrictions(artefact, require_confirm=False)
+    if restriction_redirect:
+        return restriction_redirect
+
+    restriction_redirect = _check_file_download_restrictions(ef, require_confirm=False)
+    if restriction_redirect:
+        return restriction_redirect
+
+    response = serve_extracted_file(ef, inline=True)
     if response is None:
         abort(404, description='Extracted file not found on disk')
     return response

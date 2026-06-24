@@ -35,7 +35,9 @@ from ..utils.paths import artefact_output_subdir
 from ._common import (
     analysis_handler,
     find_extraction_path,
+    iter_resolved_files,
     resolve_extraction_file,
+    scan_partition_files,
 )
 
 # Sanity cap on an ARMovie embedded poster sprite (a small RISC OS spritefile
@@ -229,32 +231,20 @@ def process_riscos_module_parse(self, analysis: dict, artefact: dict, work_dir: 
     Only queued for Acorn filesystem extractions.
     """
     analysis_id = analysis['id']
-    hints = json.loads(analysis.get('hints') or '{}')
-    partition_uuid = hints.get(HintKey.PARTITION_UUID)
-    extraction_path = hints.get(HintKey.EXTRACTION_PATH)
-    path_prefix = hints.get(HintKey.PATH_PREFIX, '')  # set when queued from archive extraction
 
-    if not partition_uuid:
-        self.fail_analysis(analysis_id, 'No partition_uuid in analysis hints')
+    # Discover filetype ffa (Module) files via the shared batch scaffold.
+    scan = scan_partition_files(
+        self, analysis, artefact,
+        select_files=lambda f: (f.get('risc_os_filetype') or '').lower() == 'ffa',
+    )
+    if scan is None:
+        self.fail_analysis(
+            analysis_id,
+            'No partition_uuid in hints or could not determine extraction path',
+        )
         return
 
-    # Fetch files with RISC OS filetype ffa (Module).
-    # Push the extraction-context filter to the API.
-    base_params = {'show_known': 'true'}
-    if path_prefix:
-        base_params['path_prefix'] = path_prefix
-    else:
-        base_params['extraction_depth'] = 0
-
-    all_files = self.api.get_partition_files(partition_uuid, **base_params)
-
-    module_files = [
-        f for f in all_files
-        if (f.get('risc_os_filetype') or '').lower() == 'ffa'
-        and not f.get('is_directory', False)
-    ]
-
-    if not module_files:
+    if not scan.files:
         self.complete_analysis(
             analysis_id,
             summary='No RISC OS modules (filetype ffa) found',
@@ -262,32 +252,17 @@ def process_riscos_module_parse(self, analysis: dict, artefact: dict, work_dir: 
         )
         return
 
-    # Determine extraction path (same fallback logic as ARCHIVE_EXTRACT)
-    if not extraction_path:
-        extraction_path = find_extraction_path(self, artefact.get('uuid'))
-
-    if not extraction_path:
-        self.fail_analysis(analysis_id, 'Could not determine extraction path')
-        return
-
     modules = []
     parse_errors = 0
 
-    for file_data in module_files:
-        db_path = file_data['path']
-        risc_os_filetype = file_data.get('risc_os_filetype', '')
+    def _missing(file_data, db_path):
+        nonlocal parse_errors
+        log.warning(f"Module file not found on disk: {db_path}")
+        parse_errors += 1
 
-        file_path, _disk_path = resolve_extraction_file(
-            self, extraction_path, db_path, work_dir,
-            path_prefix=path_prefix,
-            risc_os_filetype=risc_os_filetype or None,
-        )
-
-        if file_path is None:
-            log.warning(f"Module file not found on disk: {db_path}")
-            parse_errors += 1
-            continue
-
+    for _file_data, file_path, db_path in iter_resolved_files(
+            self, scan.files, scan.extraction_path, work_dir,
+            path_prefix=scan.path_prefix, on_missing=_missing):
         try:
             # Capped read: a RISC OS module is small; refuse to slurp an
             # over-size (corrupt/hostile) file into RAM.
@@ -310,11 +285,11 @@ def process_riscos_module_parse(self, analysis: dict, artefact: dict, work_dir: 
 
     details_dict: dict = {
         'modules': modules,
-        'files_scanned': len(module_files),
+        'files_scanned': len(scan.files),
         'parse_errors': parse_errors,
     }
-    if path_prefix:
-        details_dict['path_prefix'] = path_prefix
+    if scan.path_prefix:
+        details_dict['path_prefix'] = scan.path_prefix
 
     self.complete_analysis(
         analysis_id,
@@ -497,30 +472,20 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
     skipped, leaving its parsed metadata intact.
     """
     analysis_id = analysis['id']
-    hints = json.loads(analysis.get('hints') or '{}')
-    partition_uuid = hints.get(HintKey.PARTITION_UUID)
-    extraction_path = hints.get(HintKey.EXTRACTION_PATH)
-    path_prefix = hints.get(HintKey.PATH_PREFIX, '')
 
-    if not partition_uuid:
-        self.fail_analysis(analysis_id, 'No partition_uuid in analysis hints')
+    # Discover filetype ae7 (ARMovie) files via the shared batch scaffold.
+    scan = scan_partition_files(
+        self, analysis, artefact,
+        select_files=lambda f: (f.get('risc_os_filetype') or '').lower() == 'ae7',
+    )
+    if scan is None:
+        self.fail_analysis(
+            analysis_id,
+            'No partition_uuid in hints or could not determine extraction path',
+        )
         return
 
-    base_params = {'show_known': 'true'}
-    if path_prefix:
-        base_params['path_prefix'] = path_prefix
-    else:
-        base_params['extraction_depth'] = 0
-
-    all_files = self.api.get_partition_files(partition_uuid, **base_params)
-
-    replay_files = [
-        f for f in all_files
-        if (f.get('risc_os_filetype') or '').lower() == 'ae7'
-        and not f.get('is_directory', False)
-    ]
-
-    if not replay_files:
+    if not scan.files:
         self.complete_analysis(
             analysis_id,
             summary='No Acorn Replay / ARMovie files (filetype ae7) found',
@@ -528,13 +493,7 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
         )
         return
 
-    if not extraction_path:
-        extraction_path = find_extraction_path(self, artefact.get('uuid'))
-
-    if not extraction_path:
-        self.fail_analysis(analysis_id, 'Could not determine extraction path')
-        return
-
+    path_prefix = scan.path_prefix
     output_subdir = artefact_output_subdir(artefact)
     # Only pass --modules-dir when it actually exists (it won't when the worker
     # runs outside the Docker image that bundles the codecs).
@@ -543,20 +502,13 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
     transcoded = []
     transcode_errors = []
 
-    for index, file_data in enumerate(replay_files):
-        db_path = file_data['path']
-        risc_os_filetype = file_data.get('risc_os_filetype', '')
+    def _missing(file_data, db_path):
+        log.warning(f"ARMovie file not found on disk: {db_path}")
+        transcode_errors.append({'file_path': db_path, 'error': 'File not found on disk'})
 
-        file_path, _disk_path = resolve_extraction_file(
-            self, extraction_path, db_path, work_dir,
-            path_prefix=path_prefix,
-            risc_os_filetype=risc_os_filetype or None,
-        )
-
-        if file_path is None:
-            log.warning(f"ARMovie file not found on disk: {db_path}")
-            transcode_errors.append({'file_path': db_path, 'error': 'File not found on disk'})
-            continue
+    for index, (_file_data, file_path, db_path) in enumerate(iter_resolved_files(
+            self, scan.files, scan.extraction_path, work_dir,
+            path_prefix=path_prefix, on_missing=_missing)):
 
         # Need the frame geometry from the header to drive ffmpeg's rawvideo
         # input; the raw bytes are also reused for the embedded poster sprite.
@@ -650,7 +602,7 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
     details_dict: dict = {
         'transcoded': transcoded,
         'transcode_errors': transcode_errors,
-        'files_scanned': len(replay_files),
+        'files_scanned': len(scan.files),
     }
     if path_prefix:
         details_dict['path_prefix'] = path_prefix
