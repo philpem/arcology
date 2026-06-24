@@ -40,7 +40,12 @@ from ..tools import (
     transcode_media_to_mp4,
 )
 from ..utils.paths import artefact_output_subdir
-from ._common import analysis_handler, iter_resolved_files, scan_partition_files
+from ._common import (
+    analysis_handler,
+    iter_resolved_files,
+    scan_partition_files,
+    transcode_cached,
+)
 
 
 def _process_media_file(self, file_path: Path, db_path: str | None, filename: str,
@@ -96,33 +101,43 @@ def _process_media_file(self, file_path: Path, db_path: str | None, filename: st
                     poster_path, poster_name, subdir=output_subdir)
         return entry
 
-    # Transcode to a browser-playable format.
-    if has_video:
-        out_name = f'{base_name}.mp4'
-        poster_name = f'{base_name}_poster.jpg'
-        out_path = work_dir / out_name
-        poster_path = work_dir / poster_name
-        result = transcode_media_to_mp4(
-            file_path, out_path, work_dir=work_dir,
-            has_audio=has_audio, poster_path=poster_path,
-        )
-    else:
-        out_name = f'{base_name}.m4a'
-        out_path = work_dir / out_name
-        result = transcode_media_to_audio(file_path, out_path, work_dir=work_dir)
+    # Transcode to a browser-playable format — content-keyed so byte-identical
+    # source media is only ever encoded once (transcode_cached stores the output
+    # under a content-addressed path and skips the re-encode on a later hit).
+    output_ext = 'mp4' if has_video else 'm4a'
+    produce_error: dict = {}
 
-    if not result.get('success'):
+    def _produce():
+        out_path = work_dir / f'{base_name}.{output_ext}'
+        if has_video:
+            poster_path = work_dir / f'{base_name}_poster.jpg'
+            result = transcode_media_to_mp4(
+                file_path, out_path, work_dir=work_dir,
+                has_audio=has_audio, poster_path=poster_path,
+            )
+        else:
+            result = transcode_media_to_audio(file_path, out_path, work_dir=work_dir)
+        if not result.get('success'):
+            produce_error.update(
+                error=result.get('error', 'Transcode failed'),
+                stage=result.get('stage'))
+            return None, None
+        local_poster = result.get('poster_path')
+        return out_path, (Path(local_poster) if local_poster else None)
+
+    cached = transcode_cached(
+        self, input_path=file_path, output_ext=output_ext, produce=_produce)
+    if cached is None:
         return {
             'file_path': db_path,
             'media_kind': media_kind,
-            'error': result.get('error', 'Transcode failed'),
-            'stage': result.get('stage'),
+            'error': produce_error.get('error', 'Transcode failed'),
+            'stage': produce_error.get('stage'),
         }
 
-    entry['mp4_output_path'] = self.save_output_file(out_path, out_name, subdir=output_subdir)
-    if result.get('poster_path'):
-        entry['poster_path'] = self.save_output_file(
-            Path(result['poster_path']), f'{base_name}_poster.jpg', subdir=output_subdir)
+    # Carry through the output paths plus (on a cache miss) the produced files'
+    # hashes so the web side can register the refcounting OutputBlob rows.
+    entry.update({k: v for k, v in cached.items() if k != 'cache_hit'})
     return entry
 
 

@@ -72,6 +72,7 @@ from ..services.artefact_types import (
     queue_analyses_for_artefact,
 )
 from ..services.downloads import (
+    output_access_decision,
     resolve_output_artefact,
     serve_artefact_file,
     serve_extracted_file,
@@ -4089,15 +4090,16 @@ def get_output_file(filename):
     Enforces artefact visibility (private artefacts' outputs must not be
     exposed) and delegates the serving to the shared downloads service.
     """
-    artefact_for_check = resolve_output_artefact(filename)
-    if artefact_for_check is None or not can_view_artefact(artefact_for_check, current_user):
+    # Enforce visibility + download restrictions on the owning artefact(s).
+    # Analysis outputs are a rendering of the same content (a Sprite/Draw image,
+    # a text conversion, a transcoded video), so a caller who cannot bypass the
+    # artefact's restrictions must not read its outputs either.  Content-addressed
+    # transcode outputs may be shared by several artefacts; output_access_decision
+    # gates against all of them.
+    decision = output_access_decision(filename, current_user)
+    if decision == 'not_found':
         abort(404)
-
-    # Download restrictions gate the original bytes; analysis outputs are a
-    # rendering of the same content (e.g. a Sprite/Draw image, a text
-    # conversion), so a caller who cannot bypass the artefact's restrictions
-    # must not be able to read its outputs either.
-    if output_blocked_for(current_user, artefact_for_check):
+    if decision == 'restricted':
         abort(403)
 
     response = serve_output_file(filename)

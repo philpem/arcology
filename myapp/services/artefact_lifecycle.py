@@ -13,7 +13,7 @@ import json
 import os
 import shutil
 from flask import current_app
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from arcology_shared.hints import HintKey
 from ..database import (
     ANALYSIS_PRIORITY_NORMAL,
@@ -28,6 +28,7 @@ from ..database import (
     ExtractedFile,
     ExtractedFileRestriction,
     Item,
+    MediaFile,
     OutputBlob,
     Partition,
     RecognisedProduct,
@@ -723,6 +724,29 @@ def _collect_item_artefact_ids(item_ids):
     return direct_ids + derived_ids
 
 
+def _transcode_blob_externally_referenced(blob_id, deleting_ids):
+    """True if a transcode OutputBlob is still referenced by a surviving artefact.
+
+    A content-addressed transcode output is shared across every artefact holding
+    the identical source media, referenced via ``Artefact.output_blob_id`` (rare)
+    or a ``ReplayMovie``/``MediaFile`` transcode FK.  References from rows owned
+    by the artefacts being deleted (``deleting_ids``) cascade away with them and
+    do not count; a reference from any other (surviving) artefact means the bytes
+    must be kept.
+    """
+    if db.session.query(Artefact.id).filter(
+            Artefact.output_blob_id == blob_id,
+            ~Artefact.id.in_(deleting_ids)).first() is not None:
+        return True
+    for model in (ReplayMovie, MediaFile):
+        if db.session.query(model.id).filter(
+                or_(model.mp4_output_blob_id == blob_id,
+                    model.poster_blob_id == blob_id),
+                ~model.artefact_id.in_(deleting_ids)).first() is not None:
+            return True
+    return False
+
+
 def _collect_item_cleanup_keys(all_artefact_ids):
     """Collect all storage keys and cache prefixes for cleanup.
 
@@ -787,6 +811,29 @@ def _collect_item_cleanup_keys(all_artefact_ids):
             if external_ref is None:
                 artefact_keys.append(f"{directory}/{blob.storage_path}")
                 orphan_ids.append(blob.id)
+
+    # Content-addressed transcode outputs are shared, refcounted OutputBlobs
+    # referenced via ReplayMovie/MediaFile FKs (not Artefact.output_blob_id), so
+    # the loop above never sees them and the per-artefact output_dir_prefixes
+    # sweep deliberately misses them (they live under outputs/media/<hash>/...).
+    # Gather the blobs referenced by the artefacts being deleted and orphan only
+    # those with no surviving reference of any kind.
+    transcode_blob_ids = set()
+    for model in (ReplayMovie, MediaFile):
+        for mp4_blob_id, poster_blob_id in db.session.execute(
+            select(model.mp4_output_blob_id, model.poster_blob_id)
+            .where(model.artefact_id.in_(all_artefact_ids))
+        ).all():
+            if mp4_blob_id is not None:
+                transcode_blob_ids.add(mp4_blob_id)
+            if poster_blob_id is not None:
+                transcode_blob_ids.add(poster_blob_id)
+    transcode_blob_ids -= set(orphan_output_blob_ids)
+    for blob in (OutputBlob.query.filter(OutputBlob.id.in_(transcode_blob_ids)).all()
+                 if transcode_blob_ids else []):
+        if not _transcode_blob_externally_referenced(blob.id, deleting_ids):
+            artefact_keys.append(f"outputs/{blob.storage_path}")
+            orphan_output_blob_ids.append(blob.id)
 
     # Analysis output dirs and named output files
     rows = db.session.execute(

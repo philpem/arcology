@@ -35,6 +35,7 @@ from ..database import (
     ItemShare,
     KnownFile,
     KnownProduct,
+    OutputBlob,
     Partition,
     Platform,
     StorageDirectory,
@@ -67,7 +68,7 @@ from ..services.artefact_storage import (
 )
 from ..services.artefact_types import detect_artefact_type, queue_analyses_for_artefact
 from ..services.downloads import (
-    resolve_output_artefact,
+    output_access_decision,
     serve_artefact_file,
     serve_extracted_file,
     serve_output_file,
@@ -113,7 +114,6 @@ from ..visibility import (
     can_view_artefact,
     can_view_item,
     item_visibility_clause,
-    output_blocked_for,
 )
 
 ROUTENAME = __name__.replace('.', '_')
@@ -1399,6 +1399,42 @@ def reset_stale_analyses():
 # Output Files
 # =============================================================================
 
+@blueprint.route('/transcode-cache', methods=['GET'])
+@require_auth('read_only')
+def transcode_cache_lookup():
+    """Worker-only: report a prior content-addressed transcode for reuse.
+
+    Media transcoding is content-keyed (see the worker's ``transcode_cached``):
+    given the SOURCE file's SHA-256, the transcoder version and the output
+    extension, a registered ``OutputBlob`` at the content-addressed path means
+    the file has already been transcoded — the worker reuses that output and
+    skips ffmpeg.  Returns 404 (the ordinary miss) when nothing is registered
+    yet.  Worker-gated: a low-privilege key must not probe stored content.
+    """
+    if not _is_worker_request():
+        return error_response('Worker only', 403)
+    sha256 = (request.args.get('sha256') or '').lower()
+    tool_version = request.args.get('tool_version') or ''
+    ext = request.args.get('ext') or ''
+    if not sha256 or not tool_version or not ext:
+        return error_response('sha256, tool_version and ext are required', 400)
+
+    subdir = f'media/{sha256}/{tool_version}'
+    mp4_blob = OutputBlob.query.filter_by(
+        storage_path=f'{subdir}/movie.{ext}').first()
+    if mp4_blob is None:
+        return error_response('Not cached', 404)
+    # A content-addressed dir holds at most one poster (poster.jpg or .png).
+    poster_blob = db.session.scalars(
+        db.select(OutputBlob).where(
+            OutputBlob.storage_path.like(f'{subdir}/poster.%'))
+    ).first()
+    return jsonify({
+        'mp4_output_path': mp4_blob.storage_path,
+        'poster_path': poster_blob.storage_path if poster_blob else None,
+    })
+
+
 @blueprint.route('/outputs/<path:filename>', methods=['GET'])
 @require_auth('read_only')
 def get_output_file(filename):
@@ -1411,18 +1447,17 @@ def get_output_file(filename):
     Serving is delegated to the shared downloads service (same code path as
     the web endpoint).
     """
-    artefact_for_check = resolve_output_artefact(filename)
-    if artefact_for_check is None:
-        return error_response('File not found', 404)
+    # Enforce visibility + download restrictions on the owning artefact(s).
+    # Analysis outputs render the same content as the original bytes, so a caller
+    # who cannot bypass the artefact's restrictions must not read its outputs
+    # either (the worker key — user is None — is intentionally blocked from
+    # restricted bytes).  Content-addressed transcode outputs may be shared by
+    # several artefacts; output_access_decision gates against all of them.
     user, sees_all = _api_viewer()
-    if not can_view_artefact(artefact_for_check, user, sees_all=sees_all):
+    decision = output_access_decision(filename, user, sees_all=sees_all)
+    if decision == 'not_found':
         return error_response('File not found', 404)
-
-    # Download restrictions gate the original bytes; analysis outputs render the
-    # same content, so a caller who cannot bypass the artefact's restrictions
-    # must not read its outputs either.  This mirrors download_artefact() — the
-    # worker key (user is None) is intentionally blocked from restricted bytes.
-    if output_blocked_for(user, artefact_for_check):
+    if decision == 'restricted':
         return error_response('Download restricted', 403)
 
     response = serve_output_file(filename)

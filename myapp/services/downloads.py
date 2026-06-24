@@ -107,6 +107,67 @@ def resolve_output_artefact(filename):
     return Artefact.query.filter_by(uuid=uuid_candidate).first()
 
 
+# Content-addressed, shared transcode outputs (see the worker's
+# transcode_output_subdir): keyed on the source media's hash, not on any one
+# artefact, so they live under this prefix instead of outputs/{item}/{artefact}/.
+CONTENT_ADDRESSED_OUTPUT_PREFIX = 'media/'
+
+
+def resolve_output_artefacts(filename):
+    """Return every artefact entitled to view the output at *filename* (0+).
+
+    Legacy per-artefact outputs embed the owning artefact's UUID in the path and
+    resolve to that single artefact.  Content-addressed transcode outputs
+    (``media/{sha256}/{ver}/...``) are shared by every artefact that holds
+    byte-identical source media, so they are reverse-looked-up via the
+    ReplayMovie / MediaFile rows referencing them and may have several owners.
+    """
+    if (filename or '').startswith(CONTENT_ADDRESSED_OUTPUT_PREFIX):
+        from ..database import MediaFile, ReplayMovie
+        from ..extensions import db
+        owner_ids: set[int] = set()
+        for model in (ReplayMovie, MediaFile):
+            owner_ids.update(db.session.scalars(
+                db.select(model.artefact_id).where(db.or_(
+                    model.mp4_output_path == filename,
+                    model.poster_path == filename,
+                ))
+            ).all())
+        if not owner_ids:
+            return []
+        return list(db.session.scalars(
+            db.select(Artefact).where(Artefact.id.in_(owner_ids))
+        ).all())
+    artefact = resolve_output_artefact(filename)
+    return [artefact] if artefact is not None else []
+
+
+def output_access_decision(filename, user, *, sees_all=False):
+    """Authorisation decision for serving the output at *filename*.
+
+    Returns ``'not_found'`` (no entitled artefact is viewable — 404; a private
+    artefact's outputs must be indistinguishable from nonexistent),
+    ``'restricted'`` (viewable but every entitled artefact is download-restricted
+    for this user — 403), or ``'ok'`` (serve).
+
+    A content-addressed transcode output is shared by every artefact holding the
+    identical source media, so the user may read those identical bytes if ANY
+    one entitled artefact is viewable and not restricted for them — that artefact
+    is a legitimate, unrestricted route to the same content.  For a legacy
+    single-owner path this collapses to the previous per-artefact check.
+    """
+    from ..visibility import can_view_artefact, output_blocked_for
+    viewable = [
+        a for a in resolve_output_artefacts(filename)
+        if can_view_artefact(a, user, sees_all=sees_all)
+    ]
+    if not viewable:
+        return 'not_found'
+    if any(not output_blocked_for(user, a) for a in viewable):
+        return 'ok'
+    return 'restricted'
+
+
 def serve_output_file(filename):
     """Serve an analysis output file (visualisation, extracted text, ...).
 

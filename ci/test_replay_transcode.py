@@ -240,43 +240,42 @@ class TestPosterSprite(unittest.TestCase):
         self.assertFalse(res['success'])
         self.assertIn('exceeds file size', res['error'])
 
-    def test_save_replay_poster_saves_and_returns_path(self):
-        """_save_replay_poster runs the extractor and stores the PNG output."""
-        from unittest.mock import MagicMock
+    def test_make_replay_poster_extracts_local_png(self):
+        """_make_replay_poster runs the extractor and returns the local PNG path.
+
+        It no longer uploads the poster — transcode_cached now stores it
+        content-addressed alongside the transcoded video — so it returns the
+        local Path for the caller to hand over.
+        """
         from worker.arcworker.analyses import metadata
 
         with tempfile.TemporaryDirectory() as td:
             work = Path(td)
             movie = work / 'movie.ae7'
             movie.write_bytes(b'\x00' * 4096)
-            worker = MagicMock()
-            worker.save_output_file.return_value = 'item/art/abc_0_poster.png'
 
             def _fake_convert(data, off, size, out_path):
                 Path(out_path).write_bytes(b'\x89PNG')
                 return {'success': True, 'poster_path': str(out_path)}
 
             with patch.object(metadata, 'convert_replay_poster_sprite', side_effect=_fake_convert):
-                saved = metadata._save_replay_poster(
-                    worker, movie,
+                poster = metadata._make_replay_poster(
+                    movie,
                     {'sprite_offset': 100, 'sprite_size': 200},
-                    work, 'item/art', 'abc_0',
+                    work, 'abc_0',
                 )
-            self.assertEqual(saved, 'item/art/abc_0_poster.png')
-            worker.save_output_file.assert_called_once()
+            self.assertEqual(poster, work / 'abc_0_poster.png')
+            self.assertTrue(poster.exists())
 
-    def test_save_replay_poster_skips_when_no_sprite(self):
-        from unittest.mock import MagicMock
+    def test_make_replay_poster_skips_when_no_sprite(self):
         from worker.arcworker.analyses import metadata
-        worker = MagicMock()
         with tempfile.TemporaryDirectory() as td:
             with patch.object(metadata, 'convert_replay_poster_sprite') as conv:
-                saved = metadata._save_replay_poster(
-                    worker, b'\x00' * 16, {'sprite_size': 0}, Path(td), 'sub', 'base',
+                poster = metadata._make_replay_poster(
+                    b'\x00' * 16, {'sprite_size': 0}, Path(td), 'base',
                 )
-        self.assertIsNone(saved)
+        self.assertIsNone(poster)
         conv.assert_not_called()
-        worker.save_output_file.assert_not_called()
 
 
 class TestSearchIndexAndViewer(unittest.TestCase):

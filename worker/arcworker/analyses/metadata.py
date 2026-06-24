@@ -31,13 +31,13 @@ from ..tools import (
 )
 from ..tools.extraction import convert_fcfs_to_raw
 from ..tools.iso9660 import parse_iso9660_pvd
-from ..utils.paths import artefact_output_subdir
 from ._common import (
     analysis_handler,
     find_extraction_path,
     iter_resolved_files,
     resolve_extraction_file,
     scan_partition_files,
+    transcode_cached,
 )
 
 # Sanity cap on an ARMovie embedded poster sprite (a small RISC OS spritefile
@@ -416,12 +416,13 @@ def process_replay(self, analysis: dict, artefact: dict, work_dir: Path):
         )
 
 
-def _save_replay_poster(worker, file_path, header, work_dir, output_subdir, base_name):
-    """Extract an ARMovie embedded poster sprite to PNG and save it as output.
+def _make_replay_poster(file_path, header, work_dir, base_name):
+    """Extract an ARMovie embedded poster sprite to a local PNG.
 
-    Returns the saved output-file path (relative, as stored), or None when the
-    movie has no embedded poster sprite or extraction failed.  Best-effort: a
-    poster is a nicety, never a reason to fail the transcode.
+    Returns the local poster Path, or None when the movie has no embedded poster
+    sprite or extraction failed.  Best-effort: a poster is a nicety, never a
+    reason to fail the transcode.  The caller stores it (content-addressed,
+    alongside the transcoded video) via :func:`transcode_cached`.
 
     The header tells us exactly where the poster sprite lives and how big it is,
     so we seek to it and read just those bytes (bounded by a sanity cap) — a
@@ -454,7 +455,7 @@ def _save_replay_poster(worker, file_path, header, work_dir, output_subdir, base
     if not result.get('success'):
         log.info("Replay poster sprite extraction failed for %s: %s", base_name, result.get('error'))
         return None
-    return worker.save_output_file(poster_path, poster_name, subdir=output_subdir)
+    return poster_path
 
 
 @analysis_handler("Transcode Replay video", AnalysisType.REPLAY_TRANSCODE)
@@ -494,7 +495,6 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
         return
 
     path_prefix = scan.path_prefix
-    output_subdir = artefact_output_subdir(artefact)
     # Only pass --modules-dir when it actually exists (it won't when the worker
     # runs outside the Docker image that bundles the codecs).
     modules_dir = REPLAY_MODULES_DIR if REPLAY_MODULES_DIR and Path(REPLAY_MODULES_DIR).is_dir() else None
@@ -519,81 +519,96 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
             continue
 
         base_name = f'{analysis["uuid"]}_{index}'
+        produce_error: dict = {}
 
         if header.get('video_format') == 0:
             # Sound-only movie — no video frames, but still playable as audio.
             # Many sound-only Replay files carry a poster sprite (a title card);
-            # extract it so the audio player and grid have a thumbnail.
-            audio_name = f'{base_name}.m4a'
-            audio_path = work_dir / audio_name
-            result = transcode_armovie_to_audio(
-                file_path, audio_path,
-                work_dir=work_dir,
-                modules_dir=modules_dir,
-            )
-            if not result['success']:
-                log.warning(f"Audio transcode failed for {db_path}: {result.get('error')}")
+            # extract it so the audio player and grid have a thumbnail.  Routed
+            # through transcode_cached so identical ARMovie content is only
+            # decoded once across artefacts.
+            def _produce_audio(file_path=file_path, header=header,
+                               base_name=base_name, produce_error=produce_error):
+                audio_path = work_dir / f'{base_name}.m4a'
+                result = transcode_armovie_to_audio(
+                    file_path, audio_path,
+                    work_dir=work_dir,
+                    modules_dir=modules_dir,
+                )
+                if not result['success']:
+                    produce_error.update(
+                        error=result.get('error', 'Audio transcode failed'),
+                        stage=result.get('stage'))
+                    return None, None
+                poster = _make_replay_poster(file_path, header, work_dir, base_name)
+                return audio_path, poster
+
+            cached = transcode_cached(
+                self, input_path=file_path, output_ext='m4a', produce=_produce_audio)
+            if cached is None:
+                log.warning(f"Audio transcode failed for {db_path}: {produce_error.get('error')}")
                 transcode_errors.append({
                     'file_path': db_path,
-                    'error': result.get('error', 'Audio transcode failed'),
-                    'stage': result.get('stage'),
+                    'error': produce_error.get('error', 'Audio transcode failed'),
+                    'stage': produce_error.get('stage'),
                 })
                 continue
-            saved_audio = self.save_output_file(audio_path, audio_name, subdir=output_subdir)
-            saved_poster = _save_replay_poster(self, file_path, header, work_dir, output_subdir, base_name)
-            transcoded.append({
-                'file_path': db_path,
-                'mp4_output_path': saved_audio,   # media output (audio for sound-only)
-                'poster_path': saved_poster,
+            entry = {
+                'file_path': db_path,   # mp4_output_path holds audio for sound-only
                 'has_audio': True,
                 'audio_only': True,
                 'width': None,
                 'height': None,
-                'tool_result': result,
-            })
+            }
+            entry.update({k: v for k, v in cached.items() if k != 'cache_hit'})
+            transcoded.append(entry)
             continue
-
-        mp4_name = f'{base_name}.mp4'
-        frame_name = f'{base_name}.jpg'
-        mp4_path = work_dir / mp4_name
-        frame_path = work_dir / frame_name
 
         # Prefer the author-supplied embedded poster sprite as the thumbnail; only
         # fall back to ffmpeg's first decoded frame when there is no poster sprite.
-        saved_poster = _save_replay_poster(self, file_path, header, work_dir, output_subdir, base_name)
+        def _produce_video(file_path=file_path, header=header,
+                           base_name=base_name, produce_error=produce_error):
+            mp4_path = work_dir / f'{base_name}.mp4'
+            frame_path = work_dir / f'{base_name}.jpg'
+            sprite_poster = _make_replay_poster(file_path, header, work_dir, base_name)
+            result = transcode_armovie_to_mp4(
+                file_path, mp4_path,
+                width=header.get('width'),
+                height=header.get('height'),
+                frame_rate=header.get('frame_rate'),
+                work_dir=work_dir,
+                modules_dir=modules_dir,
+                poster_path=None if sprite_poster else frame_path,
+            )
+            if not result['success']:
+                produce_error.update(
+                    error=result.get('error', 'Transcode failed'),
+                    stage=result.get('stage'),
+                    has_audio=result.get('has_audio', False))
+                return None, None
+            produce_error.update(has_audio=result.get('has_audio', False))
+            poster = sprite_poster or (frame_path if result.get('poster_path') else None)
+            return mp4_path, poster
 
-        result = transcode_armovie_to_mp4(
-            file_path, mp4_path,
-            width=header.get('width'),
-            height=header.get('height'),
-            frame_rate=header.get('frame_rate'),
-            work_dir=work_dir,
-            modules_dir=modules_dir,
-            poster_path=None if saved_poster else frame_path,
-        )
-
-        if not result['success']:
-            log.warning(f"Transcode failed for {db_path}: {result.get('error')}")
+        cached = transcode_cached(
+            self, input_path=file_path, output_ext='mp4', produce=_produce_video)
+        if cached is None:
+            log.warning(f"Transcode failed for {db_path}: {produce_error.get('error')}")
             transcode_errors.append({
                 'file_path': db_path,
-                'error': result.get('error', 'Transcode failed'),
-                'stage': result.get('stage'),
+                'error': produce_error.get('error', 'Transcode failed'),
+                'stage': produce_error.get('stage'),
             })
             continue
 
-        saved_mp4 = self.save_output_file(mp4_path, mp4_name, subdir=output_subdir)
-        if not saved_poster and result.get('poster_path'):
-            saved_poster = self.save_output_file(frame_path, frame_name, subdir=output_subdir)
-
-        transcoded.append({
+        entry = {
             'file_path': db_path,
-            'mp4_output_path': saved_mp4,
-            'poster_path': saved_poster,
-            'has_audio': result.get('has_audio', False),
-            'width': result.get('width'),
-            'height': result.get('height'),
-            'tool_result': result,
-        })
+            'has_audio': produce_error.get('has_audio', False),
+            'width': header.get('width'),
+            'height': header.get('height'),
+        }
+        entry.update({k: v for k, v in cached.items() if k != 'cache_hit'})
+        transcoded.append(entry)
 
     summary_parts = [f'Transcoded {len(transcoded)} ARMovie file(s) to MP4']
     if transcode_errors:
