@@ -244,7 +244,8 @@
 					{{ file_download_icon(ef.uuid, art.restrictions, ef.restrictions) }}
 					{{ file_viewer_metadata_icons(art, ef.path,
 						module_info[ef.id] if module_info is defined and ef.id in module_info else None,
-						replay_info[ef.id] if replay_info is defined and ef.id in replay_info else None) }}
+						replay_info[ef.id] if replay_info is defined and ef.id in replay_info else None,
+						media_info[ef.id] if media_info is defined and ef.id in media_info else None) }}
 					{% if dupe_info is defined and ef.id in dupe_info %}
 					<a href="{{ url_for('myapp_blueprints_search.duplicates', key=dupe_info[ef.id].key) }}"
 					   class="badge bg-info text-dark text-decoration-none ms-1"
