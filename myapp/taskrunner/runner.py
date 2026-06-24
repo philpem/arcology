@@ -11,24 +11,26 @@ import logging
 import signal
 import threading
 import time
-from datetime import datetime, timezone
 from flask import current_app
 from sqlalchemy import select, update
 from arcology_shared.enums import CONTROL_PLANE_ANALYSIS_TYPES
 from ..database import Analysis, AnalysisStatus
 from ..extensions import db
-from ..services.analysis_queue import pending_claimable_query, reset_stale_analyses_core
+from ..services.analysis_queue import (
+    gc_stale_worker_heartbeats,
+    pending_claimable_query,
+    reset_stale_analyses_core,
+)
 from ..services.chunked_upload import purge_stale_chunks
 from ..services.hashdb_jobs import JobCancelled
 from ..services.similarity import rebuild_all, refresh_dirty
+from ..utils.timeutils import naive_utc_now
 from .dispatch import DISPATCH
 
 log = logging.getLogger('arcology.taskrunner')
 
-
-def _utcnow():
-    # Stored timestamps are naive UTC, matching the worker / api.py convention.
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+# Stored timestamps are naive UTC, matching the worker / api.py convention.
+_utcnow = naive_utc_now
 
 
 class TaskRunner:
@@ -49,6 +51,8 @@ class TaskRunner:
              self._reset_stale, 'stale-reset'),
             (int(cfg.get('TASKRUNNER_CHUNK_GC_INTERVAL', 3600)),
              purge_stale_chunks, 'chunk-gc'),
+            (int(cfg.get('TASKRUNNER_HEARTBEAT_GC_INTERVAL', 600)),
+             gc_stale_worker_heartbeats, 'worker-heartbeat-gc'),
             (int(cfg.get('TASKRUNNER_SIMILARITY_DELTA_INTERVAL', 0)),
              self._refresh_similarity_delta, 'similarity-delta'),
             (int(cfg.get('TASKRUNNER_SIMILARITY_INTERVAL', 0)),
@@ -106,7 +110,10 @@ class TaskRunner:
     def _claim_one(self):
         """Atomically claim one PENDING control-plane analysis, or return None."""
         candidate = (
-            pending_claimable_query()
+            # apply_heavy_cap=False: the taskrunner is single-instance and already
+            # serialises to one job, so the worker-fleet heavy cap must not gate
+            # its cross-domain control-plane claims.
+            pending_claimable_query(apply_heavy_cap=False)
             .filter(Analysis.analysis_type.in_(CONTROL_PLANE_ANALYSIS_TYPES))
             .order_by(Analysis.priority.desc(), Analysis.created_at)
             .limit(1)

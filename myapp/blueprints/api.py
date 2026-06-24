@@ -44,7 +44,11 @@ from ..database import (
 )
 from ..extensions import csrf, db
 from ..services import chunked_upload as _chunked
-from ..services.analysis_queue import pending_claimable_query, reset_stale_analyses_core
+from ..services.analysis_queue import (
+    pending_claimable_query,
+    record_worker_heartbeat,
+    reset_stale_analyses_core,
+)
 from ..services.artefact_lifecycle import (
     ArtefactMoveError,
     collect_all_analyses,
@@ -1235,8 +1239,14 @@ def update_analysis(id):
     has_progress = any(
         f in data for f in ('progress_message', 'progress_current', 'progress_total')
     )
-    if worker and analysis.status == AnalysisStatus.RUNNING and (
-            has_progress or data.get('heartbeat')):
+    # A worker busy on a long job only heartbeats (it stops polling for new
+    # work), so its liveness must be recorded here too — otherwise busy workers
+    # would be invisible to the fairness cap's worker count.  The recording is
+    # deferred to *after* the analysis commit below so its own commit/rollback
+    # cannot disturb this status update.
+    record_heartbeat = worker and analysis.status == AnalysisStatus.RUNNING and (
+        has_progress or data.get('heartbeat'))
+    if record_heartbeat:
         analysis.progress_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     if data.get('status') in ('completed', 'failed'):
         analysis.progress_message = None
@@ -1257,6 +1267,11 @@ def update_analysis(id):
         # return 404 so the worker's existing 404 handler discards the result.
         db.session.rollback()
         return error_response('Analysis was deleted during update', 404)
+
+    # Record liveness only after the status update has committed, so the
+    # heartbeat's own (best-effort) commit/rollback is fully isolated from it.
+    if record_heartbeat:
+        record_worker_heartbeat(request.headers.get('X-Worker-Id'))
 
     # After extraction populates the file listing, refresh this artefact's
     # similarity cache so matches appear without a manual rebuild-similarity.
@@ -1326,6 +1341,10 @@ def get_pending_analyses():
     # locations) through it.  The worker authenticates with the pre-shared key.
     if not _is_worker_request():
         return error_response('Only the worker may poll pending analyses', 403)
+
+    # Record this worker's liveness (idle workers poll continuously even with no
+    # work), so the heavy-job fairness cap can size itself to the live fleet.
+    record_worker_heartbeat(request.headers.get('X-Worker-Id'))
 
     # The CLEANUP re-analysis dispatch barrier lives in pending_claimable_query()
     # so the worker poll and the taskrunner claim share identical eligibility.

@@ -88,12 +88,27 @@ def generate_uuid() -> str:
 
 
 # Analysis job priority.  Higher values are picked up first.
+# ANALYSIS_PRIORITY_LOW: demote a job below normal API/CLI submissions.
 # ANALYSIS_PRIORITY_NORMAL: default for API/CLI-submitted jobs.
 # ANALYSIS_PRIORITY_HIGH: default for web UI uploads and re-analyses,
 #   keeping interactive jobs ahead of bulk API/CLI submissions.
-# Override via WEB_UI_ANALYSIS_PRIORITY in myapp.cfg or environment.
+# ANALYSIS_PRIORITY_URGENT: above the web default; raising a re-analysis to this
+#   tier requires the can_prioritise_analyses grant (see can_raise_analysis_priority).
+# Override the web-UI default via WEB_UI_ANALYSIS_PRIORITY in myapp.cfg or environment.
+ANALYSIS_PRIORITY_LOW = -10
 ANALYSIS_PRIORITY_NORMAL = 0
 ANALYSIS_PRIORITY_HIGH = 10
+ANALYSIS_PRIORITY_URGENT = 20
+
+# Single source for the user-facing priority tiers, as ordered (value, label)
+# pairs (low -> high).  Used by the re-analyse form, the reprioritise controls,
+# and the CLI so the available tiers cannot drift across them.
+ANALYSIS_PRIORITY_TIERS = (
+    (ANALYSIS_PRIORITY_LOW, 'Low'),
+    (ANALYSIS_PRIORITY_NORMAL, 'Normal'),
+    (ANALYSIS_PRIORITY_HIGH, 'High'),
+    (ANALYSIS_PRIORITY_URGENT, 'Urgent'),
+)
 
 # =============================================================================
 # Blob deduplication tables (defined before Artefact for FK references)
@@ -178,6 +193,7 @@ class User(db.Model):
     is_admin      = Column(Boolean, nullable=False, default=False, server_default=sa_false())
     permission    = Column(SQLEnum(UserPermission), nullable=False, default=UserPermission.READ_WRITE, server_default=UserPermission.READ_WRITE.name)
     can_use_api   = Column(Boolean, nullable=False, default=False, server_default=sa_false())
+    can_prioritise_analyses = Column(Boolean, nullable=False, default=False, server_default=sa_false())
     preferences   = Column(JSON, nullable=True, default=None)
     # SSO / OIDC fields (null for local-only accounts)
     oidc_sub      = Column(String(255), nullable=True, index=True)
@@ -255,6 +271,19 @@ class User(db.Model):
     def has_permission(self, required: UserPermission) -> bool:
         order = [UserPermission.READ_ONLY, UserPermission.READ_WRITE, UserPermission.STAFF]
         return order.index(self.permission) >= order.index(required)
+
+    def can_raise_analysis_priority(self) -> bool:
+        """Whether this user may raise a re-analysis above the web-UI default.
+
+        Admins and staff always may; other users need the explicit
+        can_prioritise_analyses grant (settable in the admin UI or via the
+        OIDC_ROLE_PRIORITISE SSO role).
+        """
+        return (
+            self.is_admin
+            or self.has_permission(UserPermission.STAFF)
+            or self.can_prioritise_analyses
+        )
 
     def setPassword(self, password):
         self.password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
@@ -1495,6 +1524,35 @@ class ComponentSimilarity(db.Model):
 
     component_a: Mapped["ArtefactComponent"] = relationship(foreign_keys=[component_a_id])
     component_b: Mapped["ArtefactComponent"] = relationship(foreign_keys=[component_b_id])
+
+
+class WorkerHeartbeat(db.Model):
+    """Liveness record for an analysis worker, used to size the fairness cap.
+
+    Workers are otherwise anonymous (they share one API key).  Each worker
+    process self-generates a random id at startup and stamps it on every poll
+    and progress heartbeat (see record_worker_heartbeat); the number of rows
+    seen within a freshness window is the live worker count the heavy-job cap
+    scales against (myapp/services/analysis_queue.py).
+
+    One row per worker id.  A restarted worker takes a new id, so its old row
+    lingers until it ages out of the freshness window; the read-time freshness
+    filter ignores it immediately and the taskrunner physically GCs aged rows,
+    so the table stays bounded.
+    """
+    __tablename__ = "worker_heartbeats"
+
+    worker_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    last_seen: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        index=True,
+    )
+    first_seen: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    hostname: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 # vim: ts=4 sw=4 et

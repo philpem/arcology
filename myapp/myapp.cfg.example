@@ -113,6 +113,26 @@ WORKER_STEP_DEADLINE_SECONDS = 20
 # of bulk API/CLI submissions.  Set to 0 to revert to a shared FIFO queue.
 #WEB_UI_ANALYSIS_PRIORITY = 10
 
+# Heavy-job fairness cap.  Limits how many long-running ("heavy") analyses
+# (file/archive extraction, flux decode, Replay transcode, …) may run
+# concurrently across the worker fleet, so a burst of heavy jobs cannot occupy
+# every worker and starve quick jobs queued behind them.  Best-effort (the
+# atomic claim is the hard gate), and an all-heavy queue still drains one job at
+# a time.  Accepts:
+#   - a positive integer N      -> at most N heavy jobs running (absolute);
+#   - a percentage "NN%"        -> NN% of the live worker count;
+#   - a negative integer -K     -> keep K worker slots free for light jobs;
+#   - 0                         -> disabled.
+# Relative forms (percentage / negative) scale automatically with the number of
+# live workers, discovered from worker heartbeats — no need to declare a worker
+# count.  Default -1 (keep one slot free) ships the cap on with a sane default.
+#ANALYSIS_HEAVY_RUNNING_CAP = -1
+#
+# Freshness window (seconds) for counting a worker as live from its heartbeats.
+# Set comfortably above the worker idle-poll ceiling (POLL_INTERVAL, default 10s)
+# and the busy heartbeat interval (CANCEL_CHECK_INTERVAL, default 30s).
+#ANALYSIS_WORKER_HEARTBEAT_WINDOW = 60
+
 # =============================================================================
 # Task runner (`flask taskrunner`)
 # =============================================================================
@@ -144,8 +164,12 @@ WORKER_STEP_DEADLINE_SECONDS = 20
 #     on large collections and disabled by default (0) — opt in explicitly.  Use
 #     it sparingly alongside the delta sweep to reconcile IDF document-frequency
 #     drift (only relevant when SIMILARITY_USE_IDF is on).
+#   - worker-heartbeat GC: delete worker_heartbeats rows aged well past the
+#     freshness window (table hygiene only — the live count already ignores
+#     stale rows).
 #TASKRUNNER_STALE_RESET_INTERVAL = 300
 #TASKRUNNER_CHUNK_GC_INTERVAL = 3600
+#TASKRUNNER_HEARTBEAT_GC_INTERVAL = 600
 #TASKRUNNER_SIMILARITY_DELTA_INTERVAL = 0
 #TASKRUNNER_SIMILARITY_DELTA_MAX = 200
 #TASKRUNNER_SIMILARITY_INTERVAL = 0
@@ -219,6 +243,9 @@ WORKER_STEP_DEADLINE_SECONDS = 20
 #OIDC_ROLE_READ_WRITE = "arcology-read-write"
 #OIDC_ROLE_READ_ONLY  = "arcology-read-only"
 #OIDC_ROLE_API_ACCESS = "arcology-api"
+# Grants can_prioritise_analyses: raise a re-analysis above the web default
+# (Urgent tier).  Independent of the permission level above.
+#OIDC_ROLE_PRIORITISE = "arcology-prioritise"
 
 # When True, users with no matching permission role are denied login entirely.
 # When False (default), they are downgraded to READ_ONLY instead.

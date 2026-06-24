@@ -1,5 +1,6 @@
 {% extends "_base.html" %}
 {% from '_macros.html' import status_badge with context %}
+{% from 'analysis/_priority.html' import priority_form with context %}
 {% block page_title %}{{ analysis.analysis_type|format_analysis_type }} (#{{ analysis.id }}){% endblock %}
 
 {% block content %}
@@ -25,6 +26,7 @@
     <div>
         {% if user_can_write %}
         {% if analysis.status.value == 'pending' %}
+        {{ priority_form(url_for('myapp_blueprints_analysis.set_priority', uuid=analysis.uuid), analysis.priority, reprioritise_choices) }}
         <form action="{{ url_for('myapp_blueprints_analysis.cancel', uuid=analysis.uuid) }}" method="post" class="d-inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-outline-danger"><i class="bi bi-x-lg"></i> Cancel</button>

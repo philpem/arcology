@@ -1,6 +1,7 @@
 {% extends "_base.html" %}
 {% from '_pagination.html' import render_pagination, render_letter_bar %}
 {% from '_confirm_modal.html' import modal_trigger, danger_modal, delete_trigger, delete_confirm_modal %}
+{% from 'analysis/_priority.html' import priority_form with context %}
 {% block page_title %}{{ item.name }}{% endblock %}
 
 {% macro analysis_lozenge(info) %}
@@ -228,7 +229,9 @@
                             <option value="uploaded_desc" {% if artefact_sort == 'uploaded_desc' %}selected{% endif %}>Uploaded (newest)</option>
                         </select>
                     </form>
-                    {% if user_can_contribute %}<a href="{{ url_for('myapp_blueprints_artefacts.upload', item_id=item.url_id) }}" class="btn btn-sm btn-primary"><i class="bi bi-plus"></i> Upload</a>{% endif %}
+                    {% if user_can_contribute %}
+                    {{ priority_form(url_for('myapp_blueprints_analysis.set_item_priority', uuid=item.uuid), none, reprioritise_choices, bulk=True) }}
+                    <a href="{{ url_for('myapp_blueprints_artefacts.upload', item_id=item.url_id) }}" class="btn btn-sm btn-primary"><i class="bi bi-plus"></i> Upload</a>{% endif %}
                 </div>
             </div>
             {% if letter_pages %}

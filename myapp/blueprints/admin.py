@@ -76,6 +76,7 @@ class CreateUserForm(FlaskForm):
     is_admin         = BooleanField('Administrator')
     permission       = SelectField('Permission', coerce=str, choices=PERMISSION_CHOICES)
     can_use_api      = BooleanField('API Key Access')
+    can_prioritise_analyses = BooleanField('Can Prioritise Analyses')
 
 
 class EditUserForm(FlaskForm):
@@ -85,6 +86,7 @@ class EditUserForm(FlaskForm):
     is_admin         = BooleanField('Administrator')
     permission       = SelectField('Permission', coerce=str, choices=PERMISSION_CHOICES)
     can_use_api      = BooleanField('API Key Access')
+    can_prioritise_analyses = BooleanField('Can Prioritise Analyses')
 
 
 class GroupForm(FlaskForm):
@@ -145,6 +147,7 @@ def create_user():
             is_admin=form.is_admin.data,
             permission=UserPermission(form.permission.data),
             can_use_api=form.can_use_api.data,
+            can_prioritise_analyses=form.can_prioritise_analyses.data,
         )
         user.setPassword(form.password.data)
         db.session.add(user)
@@ -191,6 +194,7 @@ def edit_user(user_id):
             is_admin=user.is_admin,
             permission=user.permission.value,
             can_use_api=user.can_use_api,
+            can_prioritise_analyses=user.can_prioritise_analyses,
         )
         return _render_edit_user(form, user)
 
@@ -225,6 +229,7 @@ def edit_user(user_id):
         if not user.oidc_managed:
             user.permission = UserPermission(form.permission.data)
             user.can_use_api = form.can_use_api.data
+            user.can_prioritise_analyses = form.can_prioritise_analyses.data
             user.is_admin = form.is_admin.data
 
         # Update restriction bypass permissions

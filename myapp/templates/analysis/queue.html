@@ -1,5 +1,6 @@
 {% extends "_base.html" %}
 {% from '_confirm_modal.html' import modal_trigger, danger_modal %}
+{% from 'analysis/_priority.html' import priority_form with context %}
 {% block page_title %}Analysis Queue{% endblock %}
 
 {% block content %}
@@ -53,8 +54,11 @@
         {% for a in pending %}
         <div class="list-group-item d-flex justify-content-between">
             <span><a href="{{ url_for('myapp_blueprints_analysis.view', uuid=a.uuid) }}">#{{ a.id }}</a> {{ a.analysis_type|format_analysis_type }} - {% if a.artefact %}{{ a.artefact.label }}{% else %}<span class="text-muted fst-italic">system job</span>{% endif %}</span>
-            <div>
-                <span class="text-muted me-3">Queued {{ a.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+            <div class="d-flex align-items-center gap-2">
+                <span class="text-muted">Queued {{ a.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                {% if user_can_write %}
+                {{ priority_form(url_for('myapp_blueprints_analysis.set_priority', uuid=a.uuid), a.priority, reprioritise_choices) }}
+                {% endif %}
                 <form action="{{ url_for('myapp_blueprints_analysis.cancel', uuid=a.uuid) }}" method="post" class="d-inline">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-x"></i></button>

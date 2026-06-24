@@ -1,7 +1,12 @@
 import json
 import click
 from flask import current_app
-from ..database import Analysis, AnalysisStatus, Artefact
+from ..database import (
+    ANALYSIS_PRIORITY_TIERS,
+    Analysis,
+    AnalysisStatus,
+    Artefact,
+)
 from ..extensions import db
 from ..services.artefact_lifecycle import (
     bulk_delete_artefact_dependents,
@@ -14,6 +19,11 @@ from ..services.artefact_lifecycle import (
 from ..services.artefact_storage import get_output_folder
 from ..services.artefact_types import queue_analyses_for_artefact
 from ._selection import build_artefact_query
+
+# CLI priority names -> stored priority value, derived from the single source in
+# database.py.  The CLI is an operator tool, so it is not subject to the
+# per-user can_prioritise_analyses gate the web UI enforces; any tier is allowed.
+_CLI_PRIORITIES = {label.lower(): value for value, label in ANALYSIS_PRIORITY_TIERS}
 
 
 @click.command('reanalyse')
@@ -31,10 +41,14 @@ from ._selection import build_artefact_query
               help='Only artefacts of this type (e.g. SCP, HFE, IMG)')
 @click.option('--all', 'select_all', is_flag=True, default=False,
               help='Reanalyse every artefact in the database')
+@click.option('--priority', 'priority_name',
+              type=click.Choice(list(_CLI_PRIORITIES), case_sensitive=False),
+              default='normal', show_default=True,
+              help='Queue priority for the requeued jobs (operator tool: not gated)')
 @click.option('--dry-run', is_flag=True, default=False,
               help='Show what would be requeued without making changes')
 def reanalyse(analysis_uuid, item_uuid, tag_name, platform_name, category_name,
-              artefact_type_name, select_all, dry_run):
+              artefact_type_name, select_all, priority_name, dry_run):
     """Reset and re-queue analysis for artefacts in the database.
 
     Use --analysis <uuid> to retry a single analysis without disturbing other
@@ -52,7 +66,9 @@ def reanalyse(analysis_uuid, item_uuid, tag_name, platform_name, category_name,
       flask reanalyse --artefact-type SCP
       flask reanalyse --platform "Acorn Archimedes" --tag "needs-review"
       flask reanalyse --item abc123def456
+      flask reanalyse --artefact-type SCP --priority high
     """
+    priority = _CLI_PRIORITIES[priority_name.lower()]
     # -----------------------------------------------------------------------
     # Single analysis retry
     # -----------------------------------------------------------------------
@@ -125,6 +141,7 @@ def reanalyse(analysis_uuid, item_uuid, tag_name, platform_name, category_name,
             analysis_type=analysis_type,
             status=AnalysisStatus.PENDING,
             hints=hints,
+            priority=priority,
         )
         db.session.add(new_analysis)
         db.session.commit()
@@ -182,7 +199,8 @@ def reanalyse(analysis_uuid, item_uuid, tag_name, platform_name, category_name,
         # commit=False on reset, commit=True on queue: one commit per artefact
         # covers both the bulk deletes and the new analysis inserts.
         cleanup = reset_artefact_for_reanalysis(artefact, commit=False)
-        queue_analyses_for_artefact(artefact, skip_duplicate_check=True, commit=True)
+        queue_analyses_for_artefact(artefact, skip_duplicate_check=True, commit=True,
+                                    priority=priority)
         cleanup_analysis_outputs(
             output_folder,
             cleanup['output_files'],
