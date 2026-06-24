@@ -14,31 +14,44 @@
 </div>
 {% endmacro %}
 
-{# Replay player/poster body — rendered plain, or wrapped in the explicit gate
-   when the movie's owning artefact is EXPLICIT-and-bypassable. #}
-{% macro replay_player(d) %}
-{% if d.mp4_url %}
-{% if d.video_format == 0 %}
-{# Sound-only Replay file — audio player, with the embedded poster sprite
-   (a title card) shown above it when present. #}
+{# Generic audio/video player body — the single source of player markup, used
+   for both generic media and Acorn Replay (via the replay_player wrapper).
+   Switches on d.media_kind ('audio' → <audio>, else <video>), plays d.src_url,
+   shows d.poster_url, and falls back to d.pending_label when there is no
+   source yet.  Rendered plain or wrapped in the explicit gate by the caller. #}
+{% macro media_player(d) %}
+{% if d.src_url %}
+{% if d.media_kind == 'audio' %}
 {% if d.poster_url %}
 <img src="{{ d.poster_url }}" class="img-fluid mb-3 d-block mx-auto rounded replay-poster" alt="{{ d.title or d.file_path }} poster">
 {% endif %}
-<audio controls preload="metadata" class="w-100 mb-3" src="{{ d.mp4_url }}">
+<audio controls preload="metadata" class="w-100 mb-3" src="{{ d.src_url }}">
     Your browser does not support the audio element.
 </audio>
 {% else %}
-<video controls preload="metadata" class="mb-3 d-block mx-auto replay-player"{% if d.poster_url %} poster="{{ d.poster_url }}"{% endif %} src="{{ d.mp4_url }}">
+<video controls preload="metadata" class="mb-3 d-block mx-auto replay-player"{% if d.poster_url %} poster="{{ d.poster_url }}"{% endif %} src="{{ d.src_url }}">
     Your browser does not support the video element.
 </video>
 {% endif %}
 {% else %}
 <p class="text-muted small mb-3">
-    <i class="bi bi-film"></i>
-    {% if d.video_format == 0 %}Audio not yet available (transcode pending).
-    {% else %}Preview not yet available (transcode pending or codec unsupported).{% endif %}
+    <i class="bi bi-film"></i> {{ d.pending_label or 'Preview not yet available.' }}
 </p>
 {% endif %}
+{% endmacro %}
+
+{# Replay player/poster body — thin wrapper mapping the Replay detail's fields
+   onto the generic media_player (sound-only Replay = audio). #}
+{% macro replay_player(d) %}
+{{ media_player({
+    'src_url': d.mp4_url,
+    'media_kind': 'audio' if d.video_format == 0 else 'video',
+    'poster_url': d.poster_url,
+    'title': d.title,
+    'file_path': d.file_path,
+    'pending_label': ('Audio not yet available (transcode pending).' if d.video_format == 0
+                      else 'Preview not yet available (transcode pending or codec unsupported).'),
+}) }}
 {% endmacro %}
 
 {# Replay thumbnail link — the poster (or a dark placeholder when not yet
@@ -79,6 +92,41 @@
         {% call explicit_gate(item.stable_id, compact=true) %}{{ replay_thumb(p) }}{% endcall %}
         {% else %}
         {{ replay_thumb(p) }}
+        {% endif %}
+    {% endcall %}
+</div>
+{% endmacro %}
+
+{# Generic media thumbnail link — poster (or a dark placeholder) with a centred
+   play/audio badge.  bi-play-fill = video, bi-music-note-beamed = audio. #}
+{% macro media_thumb(p) %}
+<a href="{{ request.path }}?file={{ p.file_path | urlencode }}"
+   class="viewer-thumb-link replay-thumb"
+   title="Open media player{% if p.title %}: {{ p.title }}{% endif %}">
+    {% if p.poster_url %}
+    <img src="{{ p.poster_url }}" class="viewer-img" alt="{{ p.title or p.file_path }}" loading="lazy">
+    {% else %}
+    <div class="viewer-img bg-dark"></div>
+    {% endif %}
+    <span class="replay-play-overlay" aria-hidden="true"
+          title="{% if p.media_kind == 'audio' %}Audio file{% else %}Video file{% endif %}">
+        <i class="bi {% if p.media_kind == 'audio' %}bi-music-note-beamed{% else %}bi-play-fill{% endif %}"></i>
+    </span>
+</a>
+{% endmacro %}
+
+{# One media file as a thumbnail card in the unified grid.  Same content gates
+   as image/Replay thumbnails. #}
+{% macro media_card(item, viewer_col_class) %}
+{% set p = item.media %}
+<div class="{{ viewer_col_class }}">
+    {% call thumb_card(p.title or (p.file_path.split('/') | last)) %}
+        {% if item.restricted %}
+        {{ locked_thumb() }}
+        {% elif item.explicit %}
+        {% call explicit_gate(item.stable_id, compact=true) %}{{ media_thumb(p) }}{% endcall %}
+        {% else %}
+        {{ media_thumb(p) }}
         {% endif %}
     {% endcall %}
 </div>
@@ -274,7 +322,7 @@
 <div class="alert alert-info">
     <i class="bi bi-hourglass-split"></i> Conversion in progress — please refresh in a moment.
 </div>
-{% elif viewer_status == 'failed' and not module_detail and not replay_detail and not replay_present %}
+{% elif viewer_status == 'failed' and not module_detail and not replay_detail and not replay_present and not media_detail and not media_present %}
 <div class="alert alert-warning">
     <i class="bi bi-exclamation-triangle"></i>
     Conversion failed or has not been run yet.
@@ -543,6 +591,76 @@
 </div>
 {% endif %}
 
+{# ── Generic media (audio/video) detail/player card ── #}
+{% if media_detail %}
+{% if media_detail.file_path %}
+<h5 class="font-monospace border-bottom pb-2 mb-3">{{ media_detail.file_path }}</h5>
+{% endif %}
+<div class="card mb-4">
+    <div class="card-header">
+        <i class="bi {% if media_detail.media_kind == 'audio' %}bi-music-note-beamed text-info{% else %}bi-film text-primary{% endif %}"></i>
+        {% if media_detail.media_kind == 'audio' %}Audio{% else %}Video{% endif %}{% if media_detail.title %} — {{ media_detail.title }}{% endif %}
+    </div>
+    <div class="card-body">
+        {% if media_detail.restricted %}
+        {{ restricted_notice('This file', 'its player is') }}
+        {% else %}
+        {% if media_detail.explicit %}
+        {% call explicit_gate(media_detail.stable_id, gate_class='mb-3') %}{{ media_player(media_detail) }}{% endcall %}
+        {% else %}
+        {{ media_player(media_detail) }}
+        {% endif %}
+
+        {% if media_detail.src_url or media_detail.original_url %}
+        <div class="mb-3">
+            {% if media_detail.transcoded and media_detail.src_url %}
+            <a href="{{ media_detail.src_url }}" download class="btn btn-sm btn-outline-primary">
+                <i class="bi bi-download"></i>
+                {% if media_detail.media_kind == 'audio' %}Download converted audio (M4A){% else %}Download converted video (MP4){% endif %}
+            </a>
+            {% endif %}
+            {% if media_detail.original_url %}
+            <a href="{{ media_detail.original_url }}" download class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-file-earmark-arrow-down"></i> Download original
+            </a>
+            {% endif %}
+        </div>
+        {% endif %}
+        {% endif %}
+
+        <table class="table table-sm mb-0">
+            <tbody>
+                {% if not media_detail.transcoded %}
+                <tr><th style="width:200px">Playback</th><td>Original file (browser-native, not re-encoded)</td></tr>
+                {% else %}
+                <tr><th style="width:200px">Playback</th><td>Transcoded to browser-playable {% if media_detail.media_kind == 'audio' %}M4A{% else %}MP4 (H.264/AAC){% endif %}</td></tr>
+                {% endif %}
+                {% if media_detail.container_format %}
+                <tr><th>Container</th><td><code>{{ media_detail.container_format }}</code></td></tr>
+                {% endif %}
+                {% if media_detail.video_codec %}
+                <tr><th>Video codec</th><td><code>{{ media_detail.video_codec }}</code></td></tr>
+                {% endif %}
+                {% if media_detail.width is not none and media_detail.height is not none %}
+                <tr><th>Dimensions</th><td>{{ media_detail.width }} × {{ media_detail.height }} px</td></tr>
+                {% endif %}
+                {% if media_detail.frame_rate is not none %}
+                <tr><th>Frame rate</th><td>{{ '%.3g' % media_detail.frame_rate }} fps</td></tr>
+                {% endif %}
+                {% if media_detail.audio_codec %}
+                <tr><th>Audio codec</th><td><code>{{ media_detail.audio_codec }}</code>{% if media_detail.sample_rate %}, {{ media_detail.sample_rate }} Hz{% endif %}{% if media_detail.channels %}, {{ media_detail.channels }} ch{% endif %}</td></tr>
+                {% elif media_detail.has_audio is sameas false %}
+                <tr><th>Audio</th><td>none</td></tr>
+                {% endif %}
+                {% if media_detail.duration_seconds is not none %}
+                <tr><th>Duration</th><td>{{ '%.1f' % media_detail.duration_seconds }} s</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
 {% for group in output_groups %}
 
 {% if group.is_thumbnail_bundle %}
@@ -552,6 +670,8 @@
     {% for item in group.bundle_items %}
     {% if item.is_replay %}
     {{ replay_card(item, viewer_col_class) }}
+    {% elif item.is_media %}
+    {{ media_card(item, viewer_col_class) }}
     {% else %}
     {% set img_out = item.outputs | selectattr('type', 'equalto', 'image') | first %}
     {% if img_out %}
@@ -585,18 +705,18 @@
         {% endif %}
     </div>
     {% endif %}
-    {% endif %}{# end is_replay else #}
+    {% endif %}{# end is_replay/is_media else #}
     {% endfor %}
 </div>
 
-{% elif group.is_replay %}
-{# ── Single Replay movie group (interleaved, non-thumbnail mode) ── #}
+{% elif group.is_replay or group.is_media %}
+{# ── Single Replay movie / media file group (interleaved, non-thumbnail mode) ── #}
 {% if output_groups | length > 1 or group.source_file %}
 <section class="mb-5">
 <h5 class="font-monospace border-bottom pb-2 mb-3">{{ group.label }}</h5>
 {% endif %}
 <div class="row g-3 mb-4">
-{{ replay_card(group, viewer_col_class) }}
+{% if group.is_replay %}{{ replay_card(group, viewer_col_class) }}{% else %}{{ media_card(group, viewer_col_class) }}{% endif %}
 </div>
 {% if output_groups | length > 1 or group.source_file %}
 </section>
@@ -642,7 +762,7 @@
 </div>
 {% endif %}
 
-{% if output_groups or replay_detail %}
+{% if output_groups or replay_detail or media_detail %}
 <script>
 function revealExplicit(gid) {
     var overlay = document.getElementById('explicit-overlay-' + gid);

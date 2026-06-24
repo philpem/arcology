@@ -54,6 +54,12 @@ from .fs_iso_riscos import parse_iso_riscos_filetypes
 from .fs_riscos_armlock import detect_armlock, remove_armlock
 from .images_acorn import convert_draw, convert_replay_poster_sprite, convert_sprite
 from .iso9660 import parse_iso9660_pvd
+from .media_transcode import (
+    extract_media_poster,
+    probe_media,
+    transcode_media_to_audio,
+    transcode_media_to_mp4,
+)
 from .partition import (
     detect_acorn_adfs,
     detect_acorn_partitions,
@@ -120,6 +126,10 @@ __all__ = [
     'convert_draw',
     'transcode_armovie_to_mp4',
     'transcode_armovie_to_audio',
+    'probe_media',
+    'transcode_media_to_mp4',
+    'transcode_media_to_audio',
+    'extract_media_poster',
     'decode_module',
     'HelpParseError',
     'ModuleParseError',

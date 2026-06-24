@@ -81,6 +81,113 @@ EXTENSION_MAP = {
     '.emf':  ArtefactType.IMAGE,
 }
 
+# --- Time-based media (audio / video) ---------------------------------------
+#
+# Recognised media container extensions, split into video vs audio so the
+# player can pick <video>/<audio> and the artefact type (VIDEO/AUDIO) follows
+# the container.  These are the single source of truth — EXTENSION_MAP is
+# derived from them below, and they drive MEDIA_TRANSCODE's file discovery.
+#
+# Whether a file is *transcoded* is NOT decided by extension: browser playback
+# depends on the container **and the codecs inside it** (a .mov with H.264/AAC
+# plays natively; a .mov with MPEG-4/DivX does not).  MEDIA_TRANSCODE therefore
+# probes every media file with ffprobe and calls media_is_browser_playable()
+# below — re-encoding only what browsers genuinely cannot play, and passing the
+# rest through untouched (their metadata is still recorded).
+_VIDEO_EXTENSIONS = frozenset({
+    '.mp4', '.m4v', '.webm', '.ogv',                  # commonly browser-native
+    '.mov', '.qt',                                    # QuickTime (native iff H.264/...)
+    '.avi', '.mkv', '.wmv', '.flv', '.asf',
+    '.mpg', '.mpeg', '.mpe', '.m2v', '.mpv',          # MPEG-1 / MPEG-2 program/elementary
+    '.ts', '.m2ts', '.mts', '.vob',                   # MPEG-2 transport / DVD-Video
+    '.3gp', '.3g2', '.divx', '.ogm', '.rm', '.rmvb',
+})
+_AUDIO_EXTENSIONS = frozenset({
+    '.mp3', '.m4a', '.aac', '.ogg', '.oga', '.wav', '.flac', '.opus',
+    '.wma', '.ra', '.au', '.aiff', '.aif', '.ac3', '.mp2',
+})
+
+MEDIA_EXTENSIONS = _VIDEO_EXTENSIONS | _AUDIO_EXTENSIONS
+
+# Container extensions whose bytes a modern browser *may* be able to play
+# directly (subject to a codec check below).  Anything outside these sets is
+# always transcoded.  MOV/QT are included because, with H.264, they play in
+# evergreen browsers (the same ISO-BMFF container family as MP4).
+_PASSTHROUGH_VIDEO_CONTAINERS = frozenset({
+    '.mp4', '.m4v', '.webm', '.ogv', '.mov', '.qt',
+})
+_PASSTHROUGH_AUDIO_CONTAINERS = frozenset({
+    '.mp3', '.m4a', '.aac', '.ogg', '.oga', '.wav', '.flac', '.opus',
+})
+
+# Codecs an evergreen browser can decode via HTML5 <video>/<audio>.  Codecs
+# outside these (HEVC/H.265, MPEG-1/2 video, MPEG-4 Part 2 / DivX/Xvid, WMV,
+# VC-1, RealVideo, …) are transcoded to H.264.  ffprobe codec_name values.
+_PASSTHROUGH_VIDEO_CODECS = frozenset({
+    'h264', 'avc1', 'vp8', 'vp9', 'av1', 'theora',
+})
+_PASSTHROUGH_AUDIO_CODECS = frozenset({
+    'aac', 'mp3', 'opus', 'vorbis', 'flac',
+    'pcm_s16le', 'pcm_u8', 'pcm_s24le', 'pcm_s32le', 'pcm_f32le',  # WAV PCM
+})
+
+# Fold the media extensions into the single detection map (video container →
+# VIDEO, audio container → AUDIO).
+for _ext in _VIDEO_EXTENSIONS:
+    EXTENSION_MAP[_ext] = ArtefactType.VIDEO
+for _ext in _AUDIO_EXTENSIONS:
+    EXTENSION_MAP[_ext] = ArtefactType.AUDIO
+del _ext
+
+
+def media_kind_for_extension(ext: str) -> str | None:
+    """Return ``'video'`` / ``'audio'`` for a media extension, else ``None``."""
+    ext = ext.lower()
+    if ext in _VIDEO_EXTENSIONS:
+        return 'video'
+    if ext in _AUDIO_EXTENSIONS:
+        return 'audio'
+    return None
+
+
+def media_is_browser_playable(filename: str, *, has_video: bool,
+                              video_codec: str | None,
+                              audio_codec: str | None) -> bool:
+    """Decide whether a media file can be streamed to a browser as-is.
+
+    Combines a container check (by *filename* extension) with a codec check
+    (from ffprobe).  Returns True only when the container is one browsers
+    understand **and** every present track uses a browser-decodable codec — so
+    a file is passed through untouched rather than needlessly re-encoded.
+    Anything that fails either check must be transcoded to H.264/AAC MP4.
+    """
+    _, ext = os.path.splitext(filename.lower())
+    vc = (video_codec or '').lower()
+    ac = (audio_codec or '').lower()
+
+    if has_video:
+        if ext not in _PASSTHROUGH_VIDEO_CONTAINERS:
+            return False
+        if vc not in _PASSTHROUGH_VIDEO_CODECS:
+            return False
+        # An audio track, if present, must also be browser-decodable.
+        if ac and ac not in _PASSTHROUGH_AUDIO_CODECS:
+            return False
+        return True
+
+    # Audio-only.  Accept both audio containers and browser-native *video*
+    # containers carrying only an audio stream (e.g. an AAC track in an .mp4 or
+    # .webm) — those play fine in an HTML5 element and must not be re-encoded.
+    if ext not in _PASSTHROUGH_AUDIO_CONTAINERS and ext not in _PASSTHROUGH_VIDEO_CONTAINERS:
+        return False
+    # Require a known-good audio codec: an absent codec means ffprobe found no
+    # playable audio stream (corrupt/empty/misnamed file), which must NOT be
+    # passed through as a broken player — fall through to a (failing) transcode.
+    if not ac or ac not in _PASSTHROUGH_AUDIO_CODECS:
+        return False
+    return True
+
+
 # Compressor suffixes recognised on top of a raw-sector extension, in order
 # of preference when several compressed forms of the same image exist.
 COMPRESSOR_SUFFIXES = ('.zst', '.gz', '.bz2')

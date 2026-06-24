@@ -170,6 +170,100 @@ class TestAnalysisMap(unittest.TestCase):
                 f'Expected EXTENSION_MAP[{ext!r}] == ArtefactType.IMAGE',
             )
 
+    def test_media_extensions_present(self):
+        """Video/audio container extensions map to VIDEO/AUDIO."""
+        for ext in ('.mp4', '.webm', '.mov', '.avi', '.mkv', '.mpg', '.mpeg', '.m2v'):
+            self.assertEqual(EXTENSION_MAP.get(ext), ArtefactType.VIDEO,
+                             f'Expected EXTENSION_MAP[{ext!r}] == VIDEO')
+        for ext in ('.mp3', '.ogg', '.wav', '.flac', '.m4a', '.wma'):
+            self.assertEqual(EXTENSION_MAP.get(ext), ArtefactType.AUDIO,
+                             f'Expected EXTENSION_MAP[{ext!r}] == AUDIO')
+
+    def test_media_queue_includes_transcode(self):
+        """VIDEO/AUDIO uploads queue MEDIA_TRANSCODE."""
+        for atype in (ArtefactType.VIDEO, ArtefactType.AUDIO):
+            self.assertIn(AnalysisType.MEDIA_TRANSCODE, ANALYSIS_MAP[atype])
+
+
+class TestMediaPlayability(unittest.TestCase):
+    """Codec-aware passthrough vs transcode decision (media_is_browser_playable)."""
+
+    def setUp(self):
+        from arcology_shared.artefact_types import (
+            MEDIA_EXTENSIONS,
+            media_is_browser_playable,
+        )
+        self.playable = media_is_browser_playable
+        self.media_exts = MEDIA_EXTENSIONS
+
+    def test_extension_sets_cover_detect(self):
+        """Every MEDIA_EXTENSIONS entry detects as VIDEO or AUDIO."""
+        for ext in self.media_exts:
+            self.assertIn(detect_artefact_type('x' + ext),
+                          (ArtefactType.VIDEO, ArtefactType.AUDIO), ext)
+
+    def test_h264_mp4_passthrough(self):
+        self.assertTrue(self.playable('a.mp4', has_video=True,
+                                      video_codec='h264', audio_codec='aac'))
+
+    def test_h264_mov_passthrough(self):
+        # QuickTime container with H.264 plays natively — must not be transcoded.
+        self.assertTrue(self.playable('a.mov', has_video=True,
+                                      video_codec='h264', audio_codec='aac'))
+
+    def test_avi_divx_transcode(self):
+        self.assertFalse(self.playable('a.avi', has_video=True,
+                                       video_codec='mpeg4', audio_codec='mp3'))
+
+    def test_mpeg2_transcode(self):
+        self.assertFalse(self.playable('a.mpg', has_video=True,
+                                       video_codec='mpeg2video', audio_codec='mp2'))
+
+    def test_hevc_mp4_transcode(self):
+        # HEVC is not universally supported — transcode even in an MP4 container.
+        self.assertFalse(self.playable('a.mp4', has_video=True,
+                                       video_codec='hevc', audio_codec='aac'))
+
+    def test_webm_vp9_passthrough(self):
+        self.assertTrue(self.playable('a.webm', has_video=True,
+                                      video_codec='vp9', audio_codec='opus'))
+
+    def test_mp3_passthrough(self):
+        self.assertTrue(self.playable('a.mp3', has_video=False,
+                                      video_codec=None, audio_codec='mp3'))
+
+    def test_wma_transcode(self):
+        self.assertFalse(self.playable('a.wma', has_video=False,
+                                       video_codec=None, audio_codec='wmav2'))
+
+    def test_wav_pcm_passthrough(self):
+        self.assertTrue(self.playable('a.wav', has_video=False,
+                                      video_codec=None, audio_codec='pcm_s16le'))
+
+    def test_audio_only_in_video_container_passthrough(self):
+        # An audio-only stream in a browser-native video container (AAC in .mp4,
+        # Opus in .webm) plays in an HTML5 element — must NOT be transcoded.
+        self.assertTrue(self.playable('a.mp4', has_video=False,
+                                      video_codec=None, audio_codec='aac'))
+        self.assertTrue(self.playable('a.webm', has_video=False,
+                                      video_codec=None, audio_codec='opus'))
+        self.assertTrue(self.playable('a.mov', has_video=False,
+                                      video_codec=None, audio_codec='aac'))
+
+    def test_audio_only_in_video_container_bad_codec_transcodes(self):
+        # ...but only when the audio codec itself is browser-decodable.
+        self.assertFalse(self.playable('a.mp4', has_video=False,
+                                       video_codec=None, audio_codec='ac3'))
+
+    def test_streamless_file_not_passthrough(self):
+        # A corrupt/empty file with a media extension but no decodable audio
+        # stream (ffprobe reports no codec) must NOT be passed through as a
+        # broken player — it should fall through to transcode.
+        self.assertFalse(self.playable('a.mp3', has_video=False,
+                                       video_codec=None, audio_codec=None))
+        self.assertFalse(self.playable('a.mp4', has_video=False,
+                                       video_codec=None, audio_codec=None))
+
 
 if __name__ == '__main__':
     unittest.main()

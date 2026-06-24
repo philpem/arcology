@@ -437,6 +437,18 @@ class AnalysisWorker:
             AnalysisType.REPLAY_PROCESS.value,
             hints=replay_hints,
         )
+        # Generic audio/video transcoding — harmless no-op on extractions with
+        # no non-native media files (the handler self-filters by extension).
+        media_hints = {HintKey.PARTITION_UUID: partition_uuid}
+        if extraction_path:
+            media_hints[HintKey.EXTRACTION_PATH] = extraction_path
+        if path_prefix:
+            media_hints[HintKey.PATH_PREFIX] = path_prefix
+        self.api.queue_analysis(
+            artefact_uuid,
+            AnalysisType.MEDIA_TRANSCODE.value,
+            hints=media_hints,
+        )
 
     def _relative_output_path(self, extract_dir: Path) -> str:
         """Convert an absolute extraction directory to a relative path for storage.

@@ -14,6 +14,12 @@ not exist; callers translate None into their own 404 shape.
 import mimetypes
 import os
 from flask import current_app, redirect, send_file
+# Imported for its import-time side effect: arcology_shared/storage.py is the
+# canonical spot (per CLAUDE.md) that registers media Content-Types via
+# mimetypes.add_type, and nothing else imports it eagerly (artefact_storage
+# imports it lazily), so this guarantees those types are registered before we
+# serve any local file with mimetypes.guess_type().
+from arcology_shared import storage as _storage  # noqa: F401
 from ..database import Artefact
 from .artefact_storage import (
     get_artefact_path,
@@ -25,23 +31,33 @@ from .artefact_storage import (
 UUID_HEX_LEN = 32
 
 
-def serve_artefact_file(artefact):
-    """Serve an artefact's stored file as an attachment download.
+def serve_artefact_file(artefact, inline=False):
+    """Serve an artefact's stored file.
 
     S3 mode: redirect to a pre-signed URL.  Local mode: send_file (None when
     the file is missing on disk).  Callers must have already enforced
     visibility and download restrictions.
+
+    With ``inline=True`` the file is served for in-page playback rather than as
+    an attachment download (no Content-Disposition: attachment, explicit
+    Content-Type) — used by the media player for browser-playable artefacts.
     """
     storage = current_app.storage
     key = get_artefact_storage_key(artefact)
 
-    url = storage.presigned_url(key, filename=artefact.original_filename)
+    # In inline mode, presign WITHOUT a filename so no Content-Disposition:
+    # attachment is set (it would force a download instead of in-page playback);
+    # the presigned URL still carries the right Content-Type from the key.
+    url = storage.presigned_url(key, filename=None if inline else artefact.original_filename)
     if url:
         return redirect(url)
 
     full_path = get_artefact_path(artefact)
     if not os.path.exists(full_path):
         return None
+    if inline:
+        mime, _ = mimetypes.guess_type(artefact.original_filename or full_path)
+        return send_file(full_path, mimetype=mime or 'application/octet-stream')
     return send_file(
         full_path,
         as_attachment=True,
@@ -49,16 +65,24 @@ def serve_artefact_file(artefact):
     )
 
 
-def serve_extracted_file(ef):
-    """Serve an extracted file as an attachment download.
+def serve_extracted_file(ef, inline=False):
+    """Serve an extracted file.
 
     Resolves the file's on-disk location via the extraction outputs (handles
     S3 by downloading to a temp file).  Returns None when the file cannot be
     found.  Callers must have already enforced visibility and restrictions.
+
+    With ``inline=True`` the file is served for in-page playback (explicit
+    Content-Type, no attachment disposition, byte-range support via send_file)
+    rather than as a download — used by the media player for browser-playable
+    extracted media.
     """
     file_path = resolve_extracted_file_path(ef)
     if not file_path:
         return None
+    if inline:
+        mime, _ = mimetypes.guess_type(ef.filename or file_path)
+        return send_file(file_path, mimetype=mime or 'application/octet-stream')
     return send_file(file_path, as_attachment=True, download_name=ef.filename)
 
 

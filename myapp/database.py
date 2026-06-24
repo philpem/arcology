@@ -660,6 +660,9 @@ class Artefact(db.Model):
     replay_movies: Mapped[list["ReplayMovie"]] = relationship(
         back_populates="artefact", cascade="all, delete-orphan"
     )
+    media_files: Mapped[list["MediaFile"]] = relationship(
+        back_populates="artefact", cascade="all, delete-orphan"
+    )
     user_bypasses: Mapped[list["UserArtefactBypass"]] = relationship(
         back_populates="artefact", cascade="all, delete-orphan",
         foreign_keys="UserArtefactBypass.artefact_id",
@@ -1049,6 +1052,47 @@ class ReplayMovie(db.Model):
     poster_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
     artefact: Mapped["Artefact"] = relationship(back_populates="replay_movies")
+
+
+class MediaFile(db.Model):
+    """Generic time-based media (audio/video) found in an extraction.
+
+    Populated server-side when a MEDIA_TRANSCODE analysis completes.  One row
+    per **non-native** media container (AVI/QuickTime/MPEG/...) that was
+    transcoded to a browser-playable MP4/M4A.  Browser-native media (MP4/WebM/
+    MP3/...) is NOT recorded here — it has no analysis and is discovered live
+    from ``ExtractedFile`` and streamed directly.
+
+    Mirrors :class:`ReplayMovie` (Replay stays on its own dedicated pipeline);
+    this is the equivalent for arbitrary ffmpeg-handled media.  Codec / track
+    metadata is captured from ffprobe so the viewer can show the same kind of
+    technical detail it shows for Replay movies.
+    """
+    __tablename__ = 'media_files'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    artefact_id: Mapped[int] = mapped_column(ForeignKey('artefacts.id'), index=True)
+    file_path: Mapped[str | None] = mapped_column(String(1000), nullable=True, index=True)  # source container path within extraction
+    media_kind: Mapped[str | None] = mapped_column(String(8), nullable=True, index=True)  # 'video' | 'audio'
+    container_format: Mapped[str | None] = mapped_column(String(64), nullable=True)  # ffprobe format_name (e.g. "avi", "mov,mp4,...")
+    # Video track (null for audio-only)
+    video_codec: Mapped[str | None] = mapped_column(String(64), nullable=True)  # e.g. "mpeg2video", "h264"
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    frame_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Audio track (null for silent video)
+    audio_codec: Mapped[str | None] = mapped_column(String(64), nullable=True)  # e.g. "mp3", "pcm_s16le"
+    sample_rate: Mapped[int | None] = mapped_column(Integer, nullable=True)  # Hz
+    channels: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    has_audio: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Transcoded outputs (relative paths under the 'outputs' storage dir, served
+    # via get_output_file).  mp4_output_path holds an MP4 for video or an M4A
+    # for audio-only sources.
+    mp4_output_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    poster_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+
+    artefact: Mapped["Artefact"] = relationship(back_populates="media_files")
 
 
 # =============================================================================

@@ -82,6 +82,13 @@ ANALYSIS_MAP = {
     # Common image formats — pass through or convert to PNG/SVG
     ArtefactType.IMAGE: [AnalysisType.FORMAT_CONVERT],
 
+    # Time-based media — MEDIA_TRANSCODE probes (ffprobe) every media file for
+    # codec/track metadata and only re-encodes the ones browsers can't play
+    # (AVI/MPEG/DivX/...); browser-playable files (MP4/WebM/MP3/H.264 MOV/...)
+    # are passed through untouched and streamed directly.
+    ArtefactType.VIDEO: [AnalysisType.METADATA_EXTRACT, AnalysisType.MEDIA_TRANSCODE],
+    ArtefactType.AUDIO: [AnalysisType.METADATA_EXTRACT, AnalysisType.MEDIA_TRANSCODE],
+
     # Unknown - try to identify
     ArtefactType.UNKNOWN: [AnalysisType.FORMAT_IDENTIFY],
 }

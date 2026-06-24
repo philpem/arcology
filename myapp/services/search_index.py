@@ -29,6 +29,7 @@ from ..database import (
     Artefact,
     ArtefactMastering,
     ArtefactProtection,
+    MediaFile,
     Partition,
     ReplayMovie,
     RiscosModule,
@@ -242,6 +243,71 @@ def handle_replay_transcode(analysis: Analysis, details: dict,
         )
 
 
+def handle_media_transcode(analysis: Analysis, details: dict,
+                           full_rebuild: bool = False) -> None:
+    """Rebuild MediaFile rows from a MEDIA_TRANSCODE result.
+
+    Unlike Replay (where REPLAY_PROCESS creates the rows and REPLAY_TRANSCODE
+    only updates them), MEDIA_TRANSCODE is the *only* analysis touching
+    media_files, so this handler inserts the rows.  Same scoped-deletion
+    semantics as ``handle_replay_movies``.
+
+    Entries with no ``file_path`` come from a *direct* media upload (the
+    artefact is itself the media); they are indexed with ``file_path = NULL`` so
+    the viewer can offer an artefact-level player.  Native uploads transcode to
+    nothing (``transcoded`` empty) and produce no rows — they stream directly.
+    """
+    path_prefix = details.get('path_prefix', '')
+    transcoded = details.get('transcoded', [])
+
+    if full_rebuild:
+        MediaFile.query.filter_by(artefact_id=analysis.artefact_id).delete()
+    elif path_prefix:
+        MediaFile.query.filter(
+            MediaFile.artefact_id == analysis.artefact_id,
+            MediaFile.file_path.like(path_prefix + '/%'),
+        ).delete(synchronize_session=False)
+    elif transcoded:
+        MediaFile.query.filter_by(artefact_id=analysis.artefact_id).delete()
+
+    cols = MediaFile.__table__.c
+    _path_max = cols.file_path.type.length
+    _kind_max = cols.media_kind.type.length
+    _container_max = cols.container_format.type.length
+    _vcodec_max = cols.video_codec.type.length
+    _acodec_max = cols.audio_codec.type.length
+    _out_max = cols.mp4_output_path.type.length
+    _poster_max = cols.poster_path.type.length
+
+    def _truncate(value, limit):
+        return value[:limit] if value else None
+
+    for entry in transcoded:
+        file_path = entry.get('file_path')
+        if file_path and len(file_path) > _path_max:
+            current_app.logger.warning(
+                f"Skipping media file with oversized file_path ({len(file_path)}): {file_path}"
+            )
+            continue
+        db.session.add(MediaFile(
+            artefact_id=analysis.artefact_id,
+            file_path=file_path,
+            media_kind=_truncate(entry.get('media_kind'), _kind_max),
+            container_format=_truncate(entry.get('container_format'), _container_max),
+            video_codec=_truncate(entry.get('video_codec'), _vcodec_max),
+            width=entry.get('width'),
+            height=entry.get('height'),
+            frame_rate=entry.get('frame_rate'),
+            audio_codec=_truncate(entry.get('audio_codec'), _acodec_max),
+            sample_rate=entry.get('sample_rate'),
+            channels=entry.get('channels'),
+            has_audio=entry.get('has_audio'),
+            duration_seconds=entry.get('duration_seconds'),
+            mp4_output_path=_truncate(entry.get('mp4_output_path'), _out_max),
+            poster_path=_truncate(entry.get('poster_path'), _poster_max),
+        ))
+
+
 # =============================================================================
 # High-level entry point (used by the API on analysis completion)
 # =============================================================================
@@ -254,6 +320,7 @@ _HANDLER_MAP = {
     AnalysisType.REPLAY_PROCESS:         handle_replay_movies,
     # Must come after REPLAY_PROCESS — it updates the rows that handler creates.
     AnalysisType.REPLAY_TRANSCODE:       handle_replay_transcode,
+    AnalysisType.MEDIA_TRANSCODE:        handle_media_transcode,
 }
 
 
@@ -343,7 +410,8 @@ def rebuild_all(echo=None) -> dict:
             # full_rebuild=True for the per-file handlers so the CLI's batch
             # pass doesn't need path-prefix logic (it rebuilds from scratch).
             if analysis_type in (AnalysisType.RISCOS_MODULE_PARSE,
-                                 AnalysisType.REPLAY_PROCESS):
+                                 AnalysisType.REPLAY_PROCESS,
+                                 AnalysisType.MEDIA_TRANSCODE):
                 handler(analysis, details, full_rebuild=True)
             else:
                 handler(analysis, details)

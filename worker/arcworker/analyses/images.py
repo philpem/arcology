@@ -16,7 +16,6 @@ import signal
 from contextlib import contextmanager
 from pathlib import Path
 from arcology_shared.enums import AnalysisType, ArtefactType
-from arcology_shared.hints import HintKey
 from ..config import log
 from ..tools import (
     convert_draw,
@@ -25,7 +24,7 @@ from ..tools import (
     read_file_capped,
 )
 from ..utils.paths import artefact_output_subdir
-from ._common import analysis_handler, resolve_extraction_file
+from ._common import analysis_handler, iter_resolved_files, scan_partition_files
 
 # Per-file timeout (seconds) for pure-Python conversion calls (spritefile,
 # DrawFileRender, PIL).  These libraries have no internal timeout; a
@@ -272,7 +271,6 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
     analysis_id = analysis['id']
     analysis_uuid = analysis['uuid']
     artefact_type_str = artefact.get('artefact_type', '')
-    hints = json.loads(analysis.get('hints') or '{}')
 
     output_subdir = artefact_output_subdir(artefact)
 
@@ -308,17 +306,6 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
         return
 
     # --- Mode 2: Extraction scan ---
-    extraction_path = hints.get(HintKey.EXTRACTION_PATH)
-    partition_uuid = hints.get(HintKey.PARTITION_UUID)
-    path_prefix = hints.get(HintKey.PATH_PREFIX, '')  # e.g. 'Archives/Emulators.zip'
-    if not extraction_path:
-        self.fail_analysis(
-            analysis_id,
-            f'FORMAT_CONVERT not supported for artefact type {artefact_type_str!r} '
-            f'and no extraction_path hint provided',
-        )
-        return
-
     # Determine viewable type from DB metadata.  Returns None for
     # files that are not viewable (not a sprite, draw, or text file).
     def _viewable_type_from_db(file_data: dict) -> 'ArtefactType | None':
@@ -331,41 +318,39 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
         ext = Path(filename).suffix.lower()
         return self._EXT_VIEWABLE.get(ext)
 
-    # Query file list from the database via API instead of scanning the
-    # filesystem.  This avoids downloading the entire extraction tree
-    # in S3 mode — only the viewable files will be fetched individually.
-    # Push the extraction-context filter to the API.
-    viewable_files: list[tuple[dict, ArtefactType]] = []
-    if partition_uuid:
-        base_params = {'show_known': 'true'}
-        if path_prefix:
-            base_params['path_prefix'] = path_prefix
-        else:
-            base_params['extraction_depth'] = 0
+    # Discover viewable files via the shared batch scaffold.  The select
+    # predicate records each match's viewable type keyed by its DB path so the
+    # conversion loop can recover it.  Querying the DB (rather than scanning the
+    # filesystem) avoids downloading the whole extraction tree in S3 mode.
+    types_by_path: dict[str, ArtefactType] = {}
 
-        all_files = self.api.get_partition_files(partition_uuid, **base_params)
+    def _select(file_data: dict) -> bool:
+        vt = _viewable_type_from_db(file_data)
+        if vt is not None:
+            types_by_path[file_data['path']] = vt
+            return True
+        return False
 
-        for file_data in all_files:
-            if file_data.get('is_directory', False):
-                continue
-            vt = _viewable_type_from_db(file_data)
-            if vt is not None:
-                viewable_files.append((file_data, vt))
+    scan = scan_partition_files(self, analysis, artefact, select_files=_select)
+    if scan is None:
+        self.fail_analysis(
+            analysis_id,
+            f'FORMAT_CONVERT not supported for artefact type {artefact_type_str!r} '
+            f'and no extraction_path hint provided',
+        )
+        return
 
     all_outputs = []
     failed_conversions = []
     file_index = 0
-    for file_data, viewable_type in viewable_files:
-        db_path = file_data['path']
 
-        file_path, _disk_path = resolve_extraction_file(
-            self, extraction_path, db_path, work_dir,
-            path_prefix=path_prefix,
-            risc_os_filetype=file_data.get('risc_os_filetype') or None,
-        )
-        if file_path is None:
-            log.warning(f"Viewable file not found: {db_path}")
-            continue
+    def _missing(file_data, db_path):
+        log.warning(f"Viewable file not found: {db_path}")
+
+    for _file_data, file_path, db_path in iter_resolved_files(
+            self, scan.files, scan.extraction_path, work_dir,
+            path_prefix=scan.path_prefix, on_missing=_missing):
+        viewable_type = types_by_path[db_path]
 
         # display_path is the DB path (already matches ExtractedFile.path)
         display_path = db_path

@@ -52,6 +52,11 @@ class ArtefactType(enum.Enum):
     # Common image formats (raster and vector metafiles)
     IMAGE        = "image"           # JPEG, PNG, GIF, BMP, TIFF, WebP, PCX, TGA, WMF, EMF
 
+    # Time-based media (playable in the viewer; non-native containers are
+    # transcoded to MP4/M4A by MEDIA_TRANSCODE, native ones played directly)
+    VIDEO        = "video"           # MP4/WebM/AVI/QuickTime/MPEG/MKV/... (container, not codec)
+    AUDIO        = "audio"           # MP3/OGG/WAV/FLAC/AAC/...
+
     # Companion/metadata files attached to another artefact (e.g. a disk image's
     # ddrescue .map, readme, or checksum files bundled alongside it).
     SIDECAR      = "sidecar"
@@ -119,6 +124,7 @@ class AnalysisType(enum.Enum):
 
     # Format conversion / viewing
     FORMAT_CONVERT         = "format_convert"         # Convert native formats to portable equivalents (Sprite→PNG, Draw→PNG/SVG, Text→UTF-8)
+    MEDIA_TRANSCODE        = "media_transcode"        # Transcode non-native audio/video (AVI/QuickTime/MPEG/...) to browser-playable MP4/M4A (ffmpeg)
 
     # RISC OS / Acorn specific
     RISCOS_MODULE_PARSE    = "riscos_module_parse"    # Parse RISC OS relocatable module metadata (title, version, date, SWIs, commands)

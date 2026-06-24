@@ -52,6 +52,7 @@ from .images import (
     _detect_viewable_type,
     process_format_convert,
 )
+from .media import process_media_transcode
 from .metadata import (
     process_checksum_compute,
     process_format_identify,
@@ -96,6 +97,8 @@ __all__ = [
     'process_replay',
     'process_replay_transcode',
     'process_riscos_module_parse',
+    # Media
+    'process_media_transcode',
     # Armlock
     'process_armlock_remove',
     # Partition
