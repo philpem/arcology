@@ -291,6 +291,30 @@ def create_app(config_name=None):
             size /= 1024.0
     app.jinja_env.filters['format_filesize'] = _format_filesize
 
+    def _format_duration(seconds):
+        """Format a duration in seconds as h/m/s, skipping zero leading fields.
+
+        Seconds keep one decimal place (e.g. 89.1 -> "1m 29.1s"); whole minutes
+        and hours are shown only when non-zero ("3725.0" -> "1h 2m 5.0s").  A
+        sub-minute duration shows just seconds ("9.4s").
+        """
+        if seconds is None:
+            return '-'
+        total = float(seconds)
+        sign = '-' if total < 0 else ''
+        total = abs(total)
+        hours = int(total // 3600)
+        minutes = int((total % 3600) // 60)
+        secs = total - hours * 3600 - minutes * 60
+        parts = []
+        if hours:
+            parts.append(f'{hours}h')
+        if minutes or hours:
+            parts.append(f'{minutes}m')
+        parts.append(f'{secs:.1f}s')
+        return sign + ' '.join(parts)
+    app.jinja_env.filters['format_duration'] = _format_duration
+
     # enable database logging (if enabled)
     if app.config.get('DEBUG_DB_LOG', False):
         import logging
