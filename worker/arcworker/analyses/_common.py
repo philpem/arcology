@@ -368,7 +368,7 @@ def scan_partition_files(self, analysis: dict, artefact: dict, *, select_files):
     """Shared per-partition batch scaffold: hint parse → file list → filter → path.
 
     The common front half of every "scan a partition's extracted files and do
-    X to each" handler (FORMAT_CONVERT Mode 2, REPLAY_TRANSCODE,
+    X to each" handler (FORMAT_CONVERT Mode 2, REPLAY_PROCESS,
     RISCOS_MODULE_PARSE, MEDIA_TRANSCODE).  Parses the standard extraction
     hints, fetches the partition file list via the API (pushing the
     extraction-context filter down), drops directories, and keeps the files for

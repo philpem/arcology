@@ -1248,7 +1248,7 @@ def _viewer_replay_detail(file_filter, all_artefact_ids):
                 detail = dict(m)
                 break
 
-    # Transcoded video + poster (populated by a REPLAY_TRANSCODE analysis).
+    # Transcoded video + poster (populated by the REPLAY_PROCESS analysis).
     detail['mp4_url'] = (
         url_for(f'{ROUTENAME}.get_output_file', filename=row.mp4_output_path)
         if row.mp4_output_path else None
@@ -1296,9 +1296,9 @@ def _viewer_replay_groups(all_artefact_ids, current_path):
     (``source_file``) so it sorts, filters, paginates and thumbnail-bundles
     alongside the other files instead of sitting in a separate trailing section.
     Each links to the Replay detail/player card (viewer?file=<path>), the same
-    way converted sprites link to their full image.  Poster images come from a
-    completed REPLAY_TRANSCODE analysis; a movie not yet transcoded has no poster
-    (the template renders a play/audio placeholder).
+    way converted sprites link to their full image.  Poster images come from the
+    completed REPLAY_PROCESS analysis; a movie that failed to transcode has no
+    poster (the template renders a play/audio placeholder).
     """
     rows = (
         ReplayMovie.query

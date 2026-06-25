@@ -58,7 +58,6 @@ from .metadata import (
     process_format_identify,
     process_metadata_extract,
     process_replay,
-    process_replay_transcode,
     process_riscos_module_parse,
 )
 from .partition import process_partition_detect
@@ -95,7 +94,6 @@ __all__ = [
     'process_metadata_extract',
     'process_format_identify',
     'process_replay',
-    'process_replay_transcode',
     'process_riscos_module_parse',
     # Media
     'process_media_transcode',

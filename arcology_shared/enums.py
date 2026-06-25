@@ -128,8 +128,7 @@ class AnalysisType(enum.Enum):
 
     # RISC OS / Acorn specific
     RISCOS_MODULE_PARSE    = "riscos_module_parse"    # Parse RISC OS relocatable module metadata (title, version, date, SWIs, commands)
-    REPLAY_PROCESS         = "replay_process"         # Process Acorn Replay / ARMovie file (parse header + catalogue)
-    REPLAY_TRANSCODE       = "replay_transcode"       # Transcode Acorn Replay / ARMovie video to MP4 (scotch + ffmpeg)
+    REPLAY_PROCESS         = "replay_process"         # Index Acorn Replay / ARMovie file: parse header + catalogue AND transcode video to MP4 (scotch + ffmpeg)
 
     # Maintenance
     HASH_RESCAN            = "hash_rescan"             # Re-link extracted files against active hash databases
@@ -174,7 +173,7 @@ CONTROL_PLANE_ANALYSIS_TYPES = frozenset({
 HEAVY_ANALYSIS_TYPES = frozenset({
     AnalysisType.FILE_EXTRACTION,
     AnalysisType.ARCHIVE_EXTRACT,
-    AnalysisType.REPLAY_TRANSCODE,
+    AnalysisType.REPLAY_PROCESS,
     AnalysisType.MEDIA_TRANSCODE,
     AnalysisType.FLUX_DECODE,
     AnalysisType.PARTITION_DETECT,

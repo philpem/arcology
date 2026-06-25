@@ -358,7 +358,7 @@ COPY --from=build-riscosarc /usr/local/bin/riscosarc.jar /usr/local/bin/
 COPY --from=build-riscosarc /usr/local/bin/riscosarc /usr/local/bin/
 COPY --from=build-tbafs /usr/local/bin/tbafs-extractor /usr/local/bin/
 
-# Copy scotch Acorn Replay transcoder (used with ffmpeg by REPLAY_TRANSCODE)
+# Copy scotch Acorn Replay transcoder (used with ffmpeg by REPLAY_PROCESS)
 COPY --from=build-scotch /usr/local/bin/replay-transcode /usr/local/bin/
 COPY --from=build-scotch /usr/local/bin/replay-inspect /usr/local/bin/
 # Bundle the freeware Acorn Replay decompressor modules (Acorn freeware via
@@ -388,7 +388,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 # - file: GNU File for file format identification (TODO, look at replacing with Dexvert)
 # - fdisk: For sfdisk - used to carve up PC partitions
 # - default-jre: Java JRE for riscosarc
-# - ffmpeg: re-encode scotch's NUT-muxed Replay stream into MP4 (REPLAY_TRANSCODE);
+# - ffmpeg: re-encode scotch's NUT-muxed Replay stream into MP4 (REPLAY_PROCESS);
 #           ffprobe (shipped with it) reports the muxed audio track; also the
 #           basis for future AVI/other-container output
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \

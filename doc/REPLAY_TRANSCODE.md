@@ -4,8 +4,11 @@ Arcology can transcode Acorn Replay (ARMovie, RISC OS filetype `&AE7`) videos
 found inside disc-image extractions into browser-playable **MP4**, shown in an
 HTML5 video player on the artefact viewer.
 
-This is handled by the **`REPLAY_TRANSCODE`** analysis, which runs *after* the
-`REPLAY_PROCESS` metadata parse on any extraction that contains ARMovie files.
+This is handled by the **`REPLAY_PROCESS`** analysis, which — on any extraction
+that contains ARMovie files — parses each movie's header into searchable
+metadata *and* transcodes its video, in a single pass. (Parsing and transcoding
+were previously two analyses, `REPLAY_PROCESS` then `REPLAY_TRANSCODE`; they were
+merged because both re-discovered and re-parsed the same files.)
 
 ## Pipeline
 
@@ -57,7 +60,7 @@ of a video player.
 
 Every ARMovie may embed a **poster sprite** — a standard RISC OS spritefile
 (usually a title card) located by header lines 19/20 (`sprite_offset` /
-`sprite_size`). `REPLAY_TRANSCODE` extracts it to PNG (`convert_replay_poster_sprite`
+`sprite_size`). `REPLAY_PROCESS` extracts it to PNG (`convert_replay_poster_sprite`
 in `worker/arcworker/tools/images_acorn.py`, via the bundled `spritefile` lib)
 and uses it as the movie's poster:
 
@@ -79,8 +82,7 @@ its parsed metadata is left untouched.
 |---------|----------|
 | Tool wrapper (`transcode_armovie_to_mp4`) | `worker/arcworker/tools/replay_transcode.py` |
 | Poster-sprite extractor (`convert_replay_poster_sprite`) | `worker/arcworker/tools/images_acorn.py` |
-| Analysis handler (`process_replay_transcode`) | `worker/arcworker/analyses/metadata.py` |
-| Queued after metadata parse | end of `process_replay` (same file) |
+| Analysis handler (`process_replay` — parses + transcodes) | `worker/arcworker/analyses/metadata.py` |
 | Module directory config | `REPLAY_MODULES_DIR` in `worker/arcworker/config.py` |
 | Docker build of scotch + ffmpeg | `worker/Dockerfile` (`build-scotch` stage, runtime apt) |
 
@@ -89,7 +91,7 @@ its parsed metadata is left untouched.
 | Concern | Location |
 |---------|----------|
 | `mp4_output_path` / `poster_path` columns | `ReplayMovie` in `myapp/database.py` |
-| Search-index update | `handle_replay_transcode` in `myapp/services/search_index.py` |
+| Search-index row (metadata + transcode outputs) | `handle_replay_movies` in `myapp/services/search_index.py` |
 | Player card + download toolbar (media / poster / original) | `myapp/templates/artefacts/viewer.html` |
 | Poster thumbnails + centred play/audio overlay, interleaved into the unified viewer grid by filename | `_viewer_replay_groups` (blueprint) + `replay_card` / `replay_thumb` macros in `viewer.html` |
 | File-list / search icon: `bi-film` (video) vs `bi-music-note-beamed` (sound-only) | `file_viewer_metadata_icons` in `myapp/templates/_macros.html` |
@@ -138,12 +140,12 @@ long movies.
 
 ## Operating
 
-- Transcoding is queued automatically after extraction (via `REPLAY_PROCESS`).
-- To re-transcode (e.g. after changing `REPLAY_MODULES_DIR`), re-run the analysis:
+- Parsing + transcoding are queued automatically after extraction (one
+  `REPLAY_PROCESS` analysis per extraction with ARMovie files).
+- To re-parse/re-transcode (e.g. after changing `REPLAY_MODULES_DIR`), re-run the
+  analysis:
 
   ```bash
-  flask reanalyse --analysis <REPLAY_TRANSCODE-uuid>
-  # or re-run the parse, which re-queues the transcode:
   flask reanalyse --analysis <REPLAY_PROCESS-uuid>
   ```
 
@@ -151,7 +153,7 @@ long movies.
 
   ```yaml
   environment:
-    - WORKER_ANALYSIS_TYPES=REPLAY_TRANSCODE
+    - WORKER_ANALYSIS_TYPES=REPLAY_PROCESS
   ```
 
 - If transcoded rows look stale, refresh the index: `flask rebuild-search-index`.
@@ -159,5 +161,4 @@ long movies.
 ## Future work
 
 ffmpeg is now present in the worker, so additional output containers (AVI, etc.)
-or codecs can be added by extending `transcode_armovie_to_mp4` /
-`process_replay_transcode`.
+or codecs can be added by extending `transcode_armovie_to_mp4` / `process_replay`.
