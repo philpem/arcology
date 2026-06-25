@@ -105,6 +105,13 @@ _VIDEO_EXTENSIONS = frozenset({
 _AUDIO_EXTENSIONS = frozenset({
     '.mp3', '.m4a', '.aac', '.ogg', '.oga', '.wav', '.flac', '.opus',
     '.wma', '.ra', '.au', '.aiff', '.aif', '.ac3', '.mp2',
+    # Tracker / module music — decoded by ffmpeg when compiled with libopenmpt.
+    # Browsers cannot play these natively so they are always transcoded to M4A.
+    '.mod', '.s3m', '.it', '.xm',   # the four mainstream PC tracker formats
+    '.med',                          # MED/OctaMED (Amiga / RISC OS)
+    '.stm', '.669', '.mtm',         # early PC formats (ScreamTracker 2, Composer 669, MultiTracker)
+    '.ult', '.far', '.okt', '.ptm', # UltraTracker, Farandole, Oktalyzer, PolyTracker
+    '.mdl',                          # DigiTrack
 })
 
 MEDIA_EXTENSIONS = _VIDEO_EXTENSIONS | _AUDIO_EXTENSIONS
