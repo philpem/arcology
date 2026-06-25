@@ -85,7 +85,7 @@
 {% macro replay_card(item, viewer_col_class) %}
 {% set p = item.replay %}
 <div class="{{ viewer_col_class }}">
-    {% call thumb_card(p.title or (p.file_path.split('/') | last)) %}
+    {% call thumb_card(p.file_path.split('/') | last) %}
         {% if item.restricted %}
         {{ locked_thumb() }}
         {% elif item.explicit %}
