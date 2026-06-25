@@ -314,10 +314,9 @@ def _is_plausible_timestamp(
         return False
     if dt < _TIMESTAMP_FLOOR:
         return False
-    if extraction_started_at is not None:
-        lower = _as_utc(extraction_started_at) - _TIMESTAMP_SKEW
-        if dt >= lower:
-            return False
+    started = _as_utc(extraction_started_at)
+    if started is not None and dt >= started - _TIMESTAMP_SKEW:
+        return False
     return True
 
 
