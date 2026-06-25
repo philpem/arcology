@@ -251,10 +251,14 @@ async function refreshItemChoices(selectId) {
         hintsCollapse.toggle();
     });
 
-    // Wire up the file input.
-    document.getElementById('file').addEventListener('change', function (e) {
-        var file = e.target.files[0];
+    var fileInput = document.getElementById('file');
+
+    function onFileSelected(file) {
         if (!file) return;
+
+        // Update drop-zone filename display.
+        var fnEl = document.getElementById('drop-zone-filename');
+        if (fnEl) fnEl.textContent = file.name;
 
         var labelField = document.getElementById('label');
         var result     = parseArtefactFilename(file.name);
@@ -285,7 +289,63 @@ async function refreshItemChoices(selectId) {
             dfiGroup.classList.add('d-none');
             document.getElementById('dfi_clock_mhz').value = '';
         }
+    }
+
+    // Wire up the file input.
+    fileInput.addEventListener('change', function (e) {
+        onFileSelected(e.target.files[0]);
     });
+
+    // Wire up the drop zone.
+    var dropZone = document.getElementById('drop-zone');
+    var browseBtn = document.getElementById('drop-zone-browse');
+    if (dropZone) {
+        // Click on the zone or Browse button opens the file picker.
+        browseBtn && browseBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            fileInput.click();
+        });
+        dropZone.addEventListener('click', function (e) {
+            // Don't double-trigger when clicking the browse button.
+            if (e.target === browseBtn || browseBtn && browseBtn.contains(e.target)) return;
+            fileInput.click();
+        });
+        dropZone.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+        });
+
+        // Drag-and-drop events.
+        var dragDepth = 0;
+        dropZone.addEventListener('dragenter', function (e) {
+            e.preventDefault();
+            dragDepth++;
+            dropZone.classList.add('drag-over');
+        });
+        dropZone.addEventListener('dragleave', function () {
+            dragDepth--;
+            if (dragDepth <= 0) { dragDepth = 0; dropZone.classList.remove('drag-over'); }
+        });
+        dropZone.addEventListener('dragover', function (e) {
+            e.preventDefault();
+        });
+        dropZone.addEventListener('drop', function (e) {
+            e.preventDefault();
+            dragDepth = 0;
+            dropZone.classList.remove('drag-over');
+            var dt = e.dataTransfer;
+            if (!dt || !dt.files || dt.files.length === 0) return;
+            // Assign the dropped file to the input via DataTransfer.
+            try {
+                var transfer = new DataTransfer();
+                transfer.items.add(dt.files[0]);
+                fileInput.files = transfer.files;
+            } catch (err) {
+                // Safari fallback: store file directly for the chunked upload path.
+                fileInput._droppedFile = dt.files[0];
+            }
+            onFileSelected(dt.files[0]);
+        });
+    }
 }());
 
 
@@ -653,7 +713,7 @@ async function refreshItemChoices(selectId) {
 
     form.addEventListener('submit', function (e) {
         var fileInput = document.getElementById('file');
-        var file = fileInput && fileInput.files[0];
+        var file = (fileInput && fileInput.files[0]) || (fileInput && fileInput._droppedFile);
         if (!file || file.size < THRESHOLD) return;  // small file: normal POST
 
         e.preventDefault();

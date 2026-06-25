@@ -15,3 +15,20 @@ code { font-size: 0.875em; word-break: break-all; }
    Clamp the height so a large poster never dominates the card. */
 .replay-poster { max-height: 60vh; width: auto; object-fit: contain; }
 
+/* Drag-and-drop file upload zone. */
+.drop-zone {
+    border: 2px dashed var(--bs-border-color);
+    border-radius: var(--bs-border-radius);
+    padding: 1.5rem 1rem;
+    text-align: center;
+    transition: border-color 0.15s, background-color 0.15s;
+    cursor: pointer;
+}
+.drop-zone:hover,
+.drop-zone.drag-over {
+    border-color: var(--bs-primary);
+    background-color: rgba(var(--bs-primary-rgb), 0.05);
+}
+.drop-zone input[type="file"] { display: none; }
+.drop-zone-label { color: var(--bs-secondary-color); margin-bottom: 0.5rem; }
+
