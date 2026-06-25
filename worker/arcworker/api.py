@@ -16,7 +16,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from arcology_shared.enums import AnalysisStatus, ArtefactType
-from .config import API_RETRIES, API_TIMEOUT, log
+from .config import API_RETRIES, API_TIMEOUT, WORKER_ID, log
 from .tools import compute_file_hash
 
 
@@ -40,6 +40,9 @@ class ArcologyAPI:
         self.outputs = output_dir
         self.storage = storage
         self._auth = {'Authorization': f'Bearer {api_key}'} if api_key else {}
+        # Identify this worker process so the server can count live workers
+        # (heavy-job fairness cap).  Sent on every request, including idle polls.
+        self._auth['X-Worker-Id'] = WORKER_ID
         # requests.Session is not guaranteed thread-safe and the cancellation
         # monitor thread uses this client concurrently with the job thread,
         # so each thread gets its own session.

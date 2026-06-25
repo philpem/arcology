@@ -57,6 +57,11 @@
 							{{ form.can_use_api.label(class="form-check-label") }}
 						</div>
 						<div class="form-text">Allows the user to create API keys for programmatic access.</div>
+						<div class="form-check mt-2">
+							{{ form.can_prioritise_analyses(class="form-check-input") }}
+							{{ form.can_prioritise_analyses.label(class="form-check-label") }}
+						</div>
+						<div class="form-text">Allows the user to raise re-analysis priority above the default (Urgent tier).</div>
 					</div>
 
 					{% if RestrictionType %}

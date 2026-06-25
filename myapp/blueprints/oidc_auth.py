@@ -272,6 +272,7 @@ def _get_or_create_user(userinfo: dict) -> tuple['User | None', 'str | None']:
         is_admin=False,
         permission=UserPermission.READ_ONLY,
         can_use_api=False,
+        can_prioritise_analyses=False,
     )
     db.session.add(user)
     db.session.flush()
@@ -447,14 +448,16 @@ def _sync_permissions(user: User, userinfo: dict) -> bool:
     staff_role  = cfg.get('OIDC_ROLE_STAFF', 'arcology-staff')
     ro_role     = cfg.get('OIDC_ROLE_READ_ONLY', 'arcology-read-only')
     api_role    = cfg.get('OIDC_ROLE_API_ACCESS', 'arcology-api')
+    prio_role   = cfg.get('OIDC_ROLE_PRIORITISE', 'arcology-prioritise')
 
     current_app.logger.debug(
-        'OIDC role sync for %r: found roles %r (checking admin=%r rw=%r staff=%r ro=%r api=%r)',
-        user.username, sorted(roles), admin_role, rw_role, staff_role, ro_role, api_role,
+        'OIDC role sync for %r: found roles %r (checking admin=%r rw=%r staff=%r ro=%r api=%r prio=%r)',
+        user.username, sorted(roles), admin_role, rw_role, staff_role, ro_role, api_role, prio_role,
     )
 
     user.is_admin = admin_role in roles
     user.can_use_api = api_role in roles
+    user.can_prioritise_analyses = prio_role in roles
 
     if admin_role in roles or rw_role in roles:
         user.permission = UserPermission.READ_WRITE
@@ -472,11 +475,14 @@ def _sync_permissions(user: User, userinfo: dict) -> bool:
         user.permission = UserPermission.READ_ONLY
         user.is_admin = False
         user.can_use_api = False
+        user.can_prioritise_analyses = False
         role_matched = False
 
     current_app.logger.debug(
-        'OIDC role sync result for %r: is_admin=%r permission=%r can_use_api=%r role_matched=%r',
-        user.username, user.is_admin, user.permission, user.can_use_api, role_matched,
+        'OIDC role sync result for %r: is_admin=%r permission=%r can_use_api=%r '
+        'can_prioritise_analyses=%r role_matched=%r',
+        user.username, user.is_admin, user.permission, user.can_use_api,
+        user.can_prioritise_analyses, role_matched,
     )
     _sync_groups(user, userinfo)
     return role_matched

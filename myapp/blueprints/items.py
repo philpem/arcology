@@ -55,6 +55,7 @@ from ..visibility import (
     can_view_item,
     item_visibility_clause,
 )
+from .analysis import REPRIORITISE_CHOICES
 
 _ITEM_SORT_OPTIONS = {
     'name_asc':      func.lower(Item.name).asc(),
@@ -438,7 +439,8 @@ def view(uuid, item):
                            shareable_groups=shareable_groups,
                            user_can_contribute=user_can_contribute,
                            user_can_edit=user_can_edit,
-                           user_can_delete=user_can_delete)
+                           user_can_delete=user_can_delete,
+                           reprioritise_choices=REPRIORITISE_CHOICES)
 
 
 @blueprint.route('/<string:uuid>/edit', methods=['GET', 'POST'])

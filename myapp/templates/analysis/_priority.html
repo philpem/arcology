@@ -1,0 +1,23 @@
+{# Reusable analysis-priority controls.
+
+   priority_form(action, current, choices, bulk=False)
+     action   - POST endpoint URL
+     current  - current priority value (single-job form; ignored when bulk)
+     choices  - list of (value, label) tuples (REPRIORITISE_CHOICES)
+     bulk     - True for artefact/item bulk controls (different button label)
+
+   The select is submitted by its own button; the controls are rendered only
+   where the caller has already checked write permission. #}
+{% macro priority_form(action, current, choices, bulk=False) %}
+<form action="{{ action }}" method="post" class="d-inline-flex align-items-center gap-1">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <select name="priority" class="form-select form-select-sm" style="width:auto" aria-label="Priority">
+        {% for value, label in choices %}
+        <option value="{{ value }}"{% if not bulk and current is not none and value == current %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-sm btn-outline-secondary" title="Set queue priority">
+        <i class="bi bi-sort-down"></i> {% if bulk %}Set all{% else %}Set{% endif %}
+    </button>
+</form>
+{% endmacro %}

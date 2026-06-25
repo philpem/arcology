@@ -6,6 +6,7 @@ Loads settings from environment variables with sensible defaults.
 
 import logging
 import os
+import uuid
 from pathlib import Path
 
 
@@ -50,6 +51,13 @@ LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
 # Worker API key for authenticating with the web application.
 # Checked by validate_config() at worker startup, not at import time.
 WORKER_API_KEY = os.environ.get('WORKER_API_KEY', '')
+
+# Stable per-process identifier sent as the X-Worker-Id header on every API
+# request.  The server records it (worker_heartbeats) to count how many workers
+# are currently live and size the heavy-job fairness cap accordingly.  Operators
+# need not set anything — each process self-generates a random id; WORKER_ID is
+# only an optional override for a stable id across restarts.
+WORKER_ID = os.environ.get('WORKER_ID') or uuid.uuid4().hex
 
 # Subprocess timeout for tool execution and decompression (seconds)
 TOOL_TIMEOUT = _int_env('TOOL_TIMEOUT', '3600')

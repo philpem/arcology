@@ -1,6 +1,7 @@
 {% extends "_base.html" %}
 {% from '_pagination.html' import render_pagination %}
 {% from '_macros.html' import status_badge with context %}
+{% from 'analysis/_priority.html' import priority_form with context %}
 {% block page_title %}Analyses – {{ artefact.label }}{% endblock %}
 
 {% block content %}
@@ -25,6 +26,13 @@
     <a href="{{ url_for('myapp_blueprints_analysis.artefact_analyses', uuid=artefact.uuid, status='completed') }}" class="btn btn-outline-success {{ 'active' if status_filter == 'completed' else '' }}">Completed ({{ status_counts.completed }})</a>
     <a href="{{ url_for('myapp_blueprints_analysis.artefact_analyses', uuid=artefact.uuid, status='failed') }}" class="btn btn-outline-danger {{ 'active' if status_filter == 'failed' else '' }}">Failed ({{ status_counts.failed }})</a>
 </div>
+
+{% if user_can_write and status_counts.pending %}
+<div class="d-flex align-items-center gap-2 mb-4">
+    <span class="text-muted small">Reprioritise all pending ({{ status_counts.pending }}):</span>
+    {{ priority_form(url_for('myapp_blueprints_analysis.set_artefact_priority', uuid=artefact.uuid), none, reprioritise_choices, bulk=True) }}
+</div>
+{% endif %}
 
 <div class="card">
     <div class="table-responsive">

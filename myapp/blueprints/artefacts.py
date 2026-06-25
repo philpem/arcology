@@ -18,6 +18,8 @@ from wtforms import BooleanField, IntegerField, SelectField, StringField, TextAr
 from wtforms.validators import DataRequired, Optional
 from ..database import (
     ANALYSIS_PRIORITY_HIGH,
+    ANALYSIS_PRIORITY_TIERS,
+    ANALYSIS_PRIORITY_URGENT,
     Analysis,
     AnalysisStatus,
     AnalysisType,
@@ -215,6 +217,11 @@ class AnalyseForm(FlaskForm):
     dfi_clock_mhz = IntegerField('DFI clock frequency (MHz)', validators=[Optional()],
                                   description='Override sample frequency for DFI files recorded at non-standard rates (e.g. 100)')
     notes = TextAreaField('Additional notes', validators=[Optional()])
+    # Choices are (re)assigned per-request in the analyse() route so the default
+    # tracks WEB_UI_ANALYSIS_PRIORITY and the Urgent tier can be hidden for users
+    # without the can_prioritise_analyses grant.  Raising above the default is
+    # enforced server-side regardless of the rendered choices.
+    priority = SelectField('Queue priority', coerce=int, validators=[Optional()])
 
 
 class FileSearchForm(FlaskForm):
@@ -3779,6 +3786,16 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
         (p.id, p.name) for p in platforms
     ]
 
+    # Priority choices.  All tiers are valid for WTForms (so an over-default POST
+    # is clamped with a warning rather than hard-rejected); the Urgent option is
+    # merely hidden in the template for users who can't raise priority, and the
+    # real gate is enforced server-side below.
+    web_priority = current_app.config.get('WEB_UI_ANALYSIS_PRIORITY', ANALYSIS_PRIORITY_HIGH)
+    can_raise = current_user.can_raise_analysis_priority()
+    form.priority.choices = list(ANALYSIS_PRIORITY_TIERS)
+    if request.method == 'GET' and form.priority.data is None:
+        form.priority.data = web_priority
+
     if form.validate_on_submit():
         hints = {}
         if form.platform_id.data and form.platform_id.data != 0:
@@ -3797,9 +3814,17 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
         # CLEANUP job for them (replaces the old fire-and-forget daemon
         # thread, which died silently on web-container restart and only
         # handled local storage).
+        # Resolve the requested priority.  Default to the web priority; raising
+        # above it requires the can_prioritise_analyses grant.  Server-authoritative
+        # — never trust the submitted value, which a crafted POST could set to
+        # Urgent regardless of the rendered options.
+        requested = form.priority.data if form.priority.data is not None else web_priority
+        if requested > web_priority and not can_raise:
+            flash('You do not have permission to raise analysis priority; using the default.', 'warning')
+            requested = web_priority
+
         cleanup_keys = collect_output_cleanup_keys(artefact)
         reset_artefact_for_reanalysis(artefact)
-        web_priority = current_app.config.get('WEB_UI_ANALYSIS_PRIORITY', ANALYSIS_PRIORITY_HIGH)
         # Queue the cleanup and the replacement analyses in one transaction so
         # the dispatch barrier (api.get_pending_analyses) and the jobs it guards
         # become visible together.  The barrier holds back the artefact's new
@@ -3809,8 +3834,8 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
         # produces any.  The +1 priority keeps the cleanup near the queue front
         # so the barrier lifts promptly; it is a latency hint, not the guarantee.
         queue_storage_cleanup(cleanup_keys, artefact_id=artefact.id, commit=False,
-                              priority=web_priority + 1)
-        queue_analyses_for_artefact(artefact, hints if hints else None, priority=web_priority)
+                              priority=requested + 1)
+        queue_analyses_for_artefact(artefact, hints if hints else None, priority=requested)
 
         flash('Re-analysis queued. Previous results have been cleared.', 'success')
         return _redirect_to_artefact_view(artefact)
@@ -3843,7 +3868,9 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
     return render_template('artefacts/analyse.html',
                            form=form,
                            artefact=artefact,
-                           pending_types=pending_types)
+                           pending_types=pending_types,
+                           can_raise_priority=can_raise,
+                           urgent_priority=ANALYSIS_PRIORITY_URGENT)
 
 
 @blueprint.route('/items/<string:item_id>/artefacts/<string:artefact_id>/compute-hashes', methods=['POST'])

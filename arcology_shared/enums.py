@@ -157,4 +157,33 @@ CONTROL_PLANE_ANALYSIS_TYPES = frozenset({
     AnalysisType.ARTEFACT_DELETE,
 })
 
+# Long-running ("heavy") analyses.  The fairness cap in
+# ``myapp/services/analysis_queue.py`` limits how many of these may run
+# concurrently so a burst of heavy jobs cannot occupy every worker and starve
+# quick jobs queued behind them.  Kept deliberately conservative —
+# misclassifying a type only costs throughput, never correctness.  CLEANUP is
+# *excluded*: it gates the re-analysis dispatch barrier and must never be
+# throttled, or an artefact's replacement analyses would stall behind it.
+#
+# Worker-domain types ONLY.  Control-plane analyses (ITEM_DELETE, HASHDB_LINK,
+# …) are run by the single-instance taskrunner, which opts out of the cap — so
+# counting a running taskrunner job against the *worker* fleet's heavy budget
+# would needlessly throttle unrelated worker jobs.  They are deliberately left
+# out so the cap reflects only worker load.  (Must not overlap
+# CONTROL_PLANE_ANALYSIS_TYPES.)
+HEAVY_ANALYSIS_TYPES = frozenset({
+    AnalysisType.FILE_EXTRACTION,
+    AnalysisType.ARCHIVE_EXTRACT,
+    AnalysisType.REPLAY_TRANSCODE,
+    AnalysisType.MEDIA_TRANSCODE,
+    AnalysisType.FLUX_DECODE,
+    AnalysisType.PARTITION_DETECT,
+    AnalysisType.ARMLOCK_REMOVE,
+})
+
+# The fairness cap counts running HEAVY jobs against the worker fleet only, so
+# the two sets must stay disjoint (see comment above).
+assert not (HEAVY_ANALYSIS_TYPES & CONTROL_PLANE_ANALYSIS_TYPES), \
+    "HEAVY_ANALYSIS_TYPES must not overlap CONTROL_PLANE_ANALYSIS_TYPES"
+
 # vim: ts=4 sw=4 et
