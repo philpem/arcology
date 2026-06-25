@@ -25,10 +25,13 @@ def init_app(app):
 @require_permission('staff')
 def index():
     """Disk usage and deduplication statistics (STAFF and admins only)."""
+    dedup = deduplication_stats()
     return render_template(
         'storage/index.html',
-        capacity=storage_capacity(),
-        dedup=deduplication_stats(),
+        # Reuse the footprint already summed by deduplication_stats() instead of
+        # re-scanning the blob tables inside storage_capacity().
+        capacity=storage_capacity(arcology_bytes=dedup['physical_bytes']),
+        dedup=dedup,
         format_size=format_size,
     )
 

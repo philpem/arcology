@@ -300,14 +300,26 @@ class LocalStorage(StorageBackend):
         return self._resolve(key)
 
     def disk_usage(self) -> dict | None:
-        """Return total/used/free bytes for the uploads filesystem.
+        """Return total/used/free bytes for the backing filesystem(s).
 
-        Reported against the uploads directory — the dominant store and, in the
-        common single-volume deployment, the same filesystem as outputs.  Uses a
-        single ``statvfs`` syscall (cheap enough to call per request behind the
-        short-lived navbar cache).
+        Uploads and outputs may live on different volumes.  When they share a
+        filesystem a single ``statvfs`` describes both; when they differ, report
+        the more-constrained volume (least free space) so a near-full outputs
+        disk isn't masked behind a near-empty uploads disk.  Cheap enough to
+        call per request behind the short-lived navbar cache.
         """
-        usage = shutil.disk_usage(self.uploads_dir)
+        uploads = shutil.disk_usage(self.uploads_dir)
+        try:
+            same_volume = (os.stat(self.uploads_dir).st_dev ==
+                           os.stat(self.outputs_dir).st_dev)
+        except OSError:
+            same_volume = True
+        if same_volume:
+            usage = uploads
+        else:
+            outputs = shutil.disk_usage(self.outputs_dir)
+            # The volume with the least free space is the binding constraint.
+            usage = uploads if uploads.free <= outputs.free else outputs
         return {
             'kind': 'local',
             'total': usage.total,

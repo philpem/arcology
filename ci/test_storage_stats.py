@@ -178,6 +178,41 @@ class TestStorageStats(unittest.TestCase):
             self.assertEqual(resp.status_code, expected,
                              f"user {uid} expected {expected}, got {resp.status_code}")
 
+    # -- object-store quota clamping ----------------------------------------
+
+    def test_s3_capacity_clamps_when_quota_exceeded(self):
+        """Over-quota object storage must not report negative free or >100%."""
+        from myapp.services.storage_stats import storage_capacity
+        with self.app.app_context():
+            # Simulate an object store (no filesystem free-space figure) whose
+            # stored content exceeds a small configured quota.
+            self.app.storage.disk_usage = lambda: None
+            self.app.config["STORAGE_CAPACITY_BYTES"] = 1000
+            cap = storage_capacity(arcology_bytes=1500)
+            self.assertEqual(cap["kind"], "s3")
+            self.assertEqual(cap["used"], 1500)
+            self.assertEqual(cap["free"], 0)            # clamped, not -500
+            self.assertEqual(cap["percent_used"], 100.0)  # clamped, not 150.0
+
+    def test_storage_capacity_used_is_footprint_for_local(self):
+        """`used` is Arcology's footprint on every backend, not whole-disk."""
+        from myapp.services.storage_stats import storage_capacity
+        with self.app.app_context():
+            self._seed_shared_and_unique()
+            cap = storage_capacity()
+            self.assertEqual(cap["kind"], "local")
+            self.assertEqual(cap["used"], 150)
+            self.assertEqual(cap["used"], cap["arcology_bytes"])
+
+    def test_storage_capacity_reuses_precomputed_footprint(self):
+        """A passed-in footprint is used verbatim (no blob re-scan)."""
+        from myapp.services.storage_stats import storage_capacity
+        with self.app.app_context():
+            self.app.storage.disk_usage = lambda: None
+            cap = storage_capacity(arcology_bytes=4242)
+            self.assertEqual(cap["used"], 4242)
+            self.assertEqual(cap["arcology_bytes"], 4242)
+
 
 if __name__ == "__main__":
     unittest.main()

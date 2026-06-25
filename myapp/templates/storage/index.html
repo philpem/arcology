@@ -32,7 +32,7 @@
                     </p>
                     {% if capacity.quota %}
                     {% set pct = capacity.percent_used %}
-                    <div class="progress" role="progressbar" style="height: 1.5rem;">
+                    <div class="progress" role="progressbar" aria-valuenow="{{ pct|round(0, 'floor') if pct is not none else 0 }}" aria-valuemin="0" aria-valuemax="100" style="height: 1.5rem;">
                         <div class="progress-bar {% if pct and pct >= 90 %}bg-danger{% elif pct and pct >= 75 %}bg-warning{% endif %}" style="width: {{ pct if pct is not none else 0 }}%;">
                             {{ '%.1f'|format(pct) if pct is not none else '0' }}%
                         </div>
@@ -100,7 +100,7 @@
                 <tr>
                     <th>Copies</th>
                     <th>Size each</th>
-                    <th>Reclaimable</th>
+                    <th>Saved</th>
                     <th>SHA-256</th>
                 </tr>
             </thead>

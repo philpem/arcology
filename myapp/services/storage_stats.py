@@ -38,6 +38,13 @@ def format_size(num) -> str:
         n /= 1024
 
 
+def _clamp_percent(pct):
+    """Clamp a percentage to [0, 100], passing ``None`` through unchanged."""
+    if pct is None:
+        return None
+    return max(0.0, min(100.0, pct))
+
+
 def _blob_totals(model):
     """Return (count, bytes) of stored blobs for a blob model (physical)."""
     count, total = db.session.execute(
@@ -84,6 +91,10 @@ def deduplication_stats() -> dict:
         _shared_blob_count(Artefact.output_blob_id)
 
     # Most-duplicated logical content (same query as `flask dedup-artefacts`).
+    # Intentionally system-wide: this is operational storage accounting for the
+    # staff/admin `/storage` page, so it deliberately does NOT apply an item
+    # *_visibility_clause (which would undercount and misreport dedup totals).
+    # The route is gated to STAFF and admins, who are trusted operators.
     top_groups = db.session.execute(
         db.select(Artefact.file_size, Artefact.sha256, func.count(Artefact.id))
         .where(Artefact.file_size.isnot(None), Artefact.sha256.isnot(None))
@@ -111,17 +122,26 @@ def deduplication_stats() -> dict:
     }
 
 
-def storage_capacity() -> dict:
+def storage_capacity(arcology_bytes: int | None = None) -> dict:
     """Capacity figures for display.
 
-    ``used`` is Arcology's own footprint (physical blob bytes).  Local backends
-    add real filesystem ``total``/``free`` via ``statvfs``; for any backend an
-    optional ``STORAGE_CAPACITY_BYTES`` config provides a quota ceiling (the
-    only way to express a "total" for an unbounded object store).
+    ``used`` and ``arcology_bytes`` both report Arcology's own footprint
+    (physical blob bytes) for every backend — there is no per-backend overload.
+    Local backends additionally report the real filesystem ``total``/``free``
+    (and ``fs_used``) via ``statvfs``; for any backend an optional
+    ``STORAGE_CAPACITY_BYTES`` config provides a quota ceiling (the only way to
+    express a "total" for an unbounded object store).  ``percent_used`` is the
+    fullness of the *displayed* capacity — disk fullness for local backends,
+    quota fullness for object stores — clamped to ``[0, 100]``.
+
+    Pass ``arcology_bytes`` to reuse a footprint already computed by
+    ``deduplication_stats()`` and avoid re-summing the blob tables.
     """
-    _, upload_physical = _blob_totals(UploadBlob)
-    _, output_physical = _blob_totals(OutputBlob)
-    used = upload_physical + output_physical
+    if arcology_bytes is None:
+        _, upload_physical = _blob_totals(UploadBlob)
+        _, output_physical = _blob_totals(OutputBlob)
+        arcology_bytes = upload_physical + output_physical
+    used = arcology_bytes
 
     disk = current_app.storage.disk_usage()
     quota = current_app.config.get('STORAGE_CAPACITY_BYTES')
@@ -129,25 +149,27 @@ def storage_capacity() -> dict:
     if disk is not None:
         total = disk['total']
         free = disk['free']
-        # `used` here is whole-filesystem usage, the honest free-space figure.
         fs_used = disk['used']
-        percent = (fs_used / total * 100.0) if total else None
+        percent = _clamp_percent((fs_used / total * 100.0) if total else None)
         return {
             'kind': 'local',
             'total': total,
             'free': free,
-            'used': fs_used,
+            'fs_used': fs_used,
+            'used': used,
             'arcology_bytes': used,
             'percent_used': percent,
             'quota': quota,
         }
 
     # Object store: no filesystem free space.  Total is the configured quota.
-    percent = (used / quota * 100.0) if quota else None
+    # Clamp free at zero and percent at 100 so an over-quota collection doesn't
+    # render a negative free figure or a progress bar wider than its container.
+    percent = _clamp_percent((used / quota * 100.0) if quota else None)
     return {
         'kind': 's3',
         'total': quota,
-        'free': (quota - used) if quota is not None else None,
+        'free': max(quota - used, 0) if quota is not None else None,
         'used': used,
         'arcology_bytes': used,
         'percent_used': percent,
