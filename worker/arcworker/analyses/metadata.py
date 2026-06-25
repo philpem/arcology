@@ -14,6 +14,7 @@ Covers:
 
 import json
 from pathlib import Path
+from arcology_shared.artefact_types import is_replay_file
 from arcology_shared.enums import AnalysisType, ArtefactType
 from arcology_shared.fuzzyhash import compute_tlsh
 from arcology_shared.hints import HintKey
@@ -303,7 +304,8 @@ def process_riscos_module_parse(self, analysis: dict, artefact: dict, work_dir: 
 def process_replay(self, analysis: dict, artefact: dict, work_dir: Path):
     """Process Acorn Replay / ARMovie files found in an extraction.
 
-    Scans partition files for filetype ae7 (ARMovie), reads each from disk, and
+    Scans partition files for ARMovie movies (RISC OS filetype &AE7 or a
+    PC-style ``.rpl`` / ``.replay`` extension), reads each from disk, and
     parses the text header + chunk catalogue into searchable metadata.  Named
     "process" (not "parse") because this handler will later be extended to
     transcode the video to a portable format.
@@ -321,7 +323,8 @@ def process_replay(self, analysis: dict, artefact: dict, work_dir: Path):
         self.fail_analysis(analysis_id, 'No partition_uuid in analysis hints')
         return
 
-    # Fetch files with RISC OS filetype ae7 (ARMovie).
+    # Fetch all files, then keep ARMovie movies (filetype &AE7 or a PC-style
+    # Replay extension — see is_replay_file).
     base_params = {'show_known': 'true'}
     if path_prefix:
         base_params['path_prefix'] = path_prefix
@@ -332,8 +335,9 @@ def process_replay(self, analysis: dict, artefact: dict, work_dir: Path):
 
     replay_files = [
         f for f in all_files
-        if (f.get('risc_os_filetype') or '').lower() == 'ae7'
-        and not f.get('is_directory', False)
+        if not f.get('is_directory', False)
+        and is_replay_file(f.get('filename') or f.get('path') or '',
+                           f.get('risc_os_filetype'))
     ]
 
     if not replay_files:
@@ -475,10 +479,12 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
     """
     analysis_id = analysis['id']
 
-    # Discover filetype ae7 (ARMovie) files via the shared batch scaffold.
+    # Discover ARMovie files (filetype &AE7 or a Replay extension) via the
+    # shared batch scaffold.
     scan = scan_partition_files(
         self, analysis, artefact,
-        select_files=lambda f: (f.get('risc_os_filetype') or '').lower() == 'ae7',
+        select_files=lambda f: is_replay_file(
+            f.get('filename') or f.get('path') or '', f.get('risc_os_filetype')),
     )
     if scan is None:
         self.fail_analysis(

@@ -506,6 +506,33 @@ class TestHandlerOrdering(unittest.TestCase):
         )
 
 
+class TestReplayFileDetection(unittest.TestCase):
+    """is_replay_file() — the discovery predicate shared by REPLAY_PROCESS and
+    REPLAY_TRANSCODE.  Must catch RISC OS filetype &AE7 *and* PC-style Replay
+    extensions so movies zipped on a non-RISC OS filesystem (where the &AE7
+    filetype is lost) are still recognised."""
+
+    def test_matches_riscos_filetype_ae7(self):
+        from arcology_shared.artefact_types import is_replay_file
+        self.assertTrue(is_replay_file('movie', 'ae7'))
+        self.assertTrue(is_replay_file('movie', 'AE7'))      # case-insensitive
+
+    def test_matches_pc_extensions(self):
+        from arcology_shared.artefact_types import is_replay_file
+        for name in ('clip.rpl', 'clip.replay', 'clip.armovie',
+                     'CLIP.RPL', 'CLIP.Replay'):
+            self.assertTrue(is_replay_file(name, None), name)
+            # Extension wins even with no/blank filetype.
+            self.assertTrue(is_replay_file(name, ''), name)
+
+    def test_rejects_non_replay(self):
+        from arcology_shared.artefact_types import is_replay_file
+        self.assertFalse(is_replay_file('readme.txt', None))
+        self.assertFalse(is_replay_file('movie.mp4', 'a64'))   # other media filetype
+        self.assertFalse(is_replay_file('', None))
+        self.assertFalse(is_replay_file('noext', None))
+
+
 if __name__ == '__main__':
     unittest.main()
 
