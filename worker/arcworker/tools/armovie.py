@@ -163,15 +163,19 @@ def file_has_armovie_magic(source) -> bool:
     error (missing/unreadable file) is reported as "not ARMovie".
     """
     magic = _MAGIC.encode('latin-1')
+    n = len(magic)
     try:
         if isinstance(source, (str, os.PathLike)):
+            # Open and read only the first n bytes — never the whole movie.
             with open(source, 'rb') as fh:
-                head = fh.read(len(magic))
+                head = fh.read(n)
         elif isinstance(source, (bytes, bytearray, memoryview)):
-            head = bytes(source)[:len(magic)]
+            # Slice *before* materialising bytes so a memoryview over a large
+            # buffer is not copied whole.
+            head = bytes(source[:n])
         else:
             source.seek(0)
-            head = source.read(len(magic))
+            head = source.read(n)
     except OSError:
         return False
     return head == magic

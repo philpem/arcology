@@ -562,6 +562,13 @@ class TestArmovieMagicSniff(unittest.TestCase):
         from worker.arcworker.tools.armovie import file_has_armovie_magic
         self.assertFalse(file_has_armovie_magic('/no/such/file.rpl'))
 
+    def test_memoryview_not_copied_whole(self):
+        """A memoryview over a large buffer must only have its first bytes read,
+        not be materialised whole."""
+        from worker.arcworker.tools.armovie import file_has_armovie_magic
+        big = memoryview(b'ARMovie' + b'\x00' * (8 * 1024 * 1024))
+        self.assertTrue(file_has_armovie_magic(big))
+
 
 if __name__ == '__main__':
     unittest.main()
