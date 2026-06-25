@@ -438,11 +438,12 @@ def search(id):
         kf_filter = ExtractedFile.known_file_id.in_(kf_ids_sq)
 
     q = (
-        db.session.query(ExtractedFile, Partition, Artefact, Item, KnownFile)
+        db.session.query(ExtractedFile, Partition, Artefact, Item, KnownFile, KnownProduct)
         .join(Partition, ExtractedFile.partition_id == Partition.id)
         .join(Artefact, Partition.artefact_id == Artefact.id)
         .join(Item, Artefact.item_id == Item.id)
         .join(KnownFile, ExtractedFile.known_file_id == KnownFile.id)
+        .outerjoin(KnownProduct, KnownFile.product_id == KnownProduct.id)
         .filter(kf_filter)
         # Hide matches inside artefacts/items the caller may not view, so the
         # hash search cannot be used to enumerate private collections.
@@ -457,8 +458,8 @@ def search(id):
     if truncated:
         q = q[:SEARCH_LIMIT]
 
-    unique_items = len({item.id for _, _, _, item, _ in q})
-    unique_artefacts = len({art.id for _, _, art, _, _ in q})
+    unique_items = len({item.id for _, _, _, item, _, _ in q})
+    unique_artefacts = len({art.id for _, _, art, _, _, _ in q})
 
     return render_template('hashdb/search.html',
                            database=database,
