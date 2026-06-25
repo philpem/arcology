@@ -241,8 +241,9 @@ FROM ubuntu:24.04 AS build-scotch
 # Pinned commit SHA — update this when upgrading scotch.
 # To find the SHA for a new commit:
 #   git ls-remote https://github.com/philpem/scotch.git refs/heads/main
-# Current as of 2026-06-15; branch: main.
-ARG SCOTCH_VERSION=7451dbee25a8a43bbc4bd6b0a0c08f45e0564e0c
+# Current as of 2026-06-25; branch: main.  Must be a revision with NUT muxer
+# support (--output-format nut), which the worker now relies on.
+ARG SCOTCH_VERSION=9178b6139bc294d06902f62b86d4972ef5600b5b
 ARG SCOTCH_REPO=https://github.com/philpem/scotch.git
 
 # Disable prompt during package installation
@@ -257,7 +258,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt -y install git build-essential cmake
 
 # scotch is pure C11 + libm (vendored ARM emulator); no third-party runtime deps.
-# We only need the transcoder (Replay -> raw RGB24 + WAV) and the inspector.
+# We only need the transcoder (Replay -> NUT muxed video+audio) and the inspector.
 RUN git clone "${SCOTCH_REPO}" /src/scotch && \
     cd /src/scotch && git checkout "${SCOTCH_VERSION}" && \
     cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && \
@@ -387,8 +388,9 @@ ARG DEBIAN_FRONTEND=noninteractive
 # - file: GNU File for file format identification (TODO, look at replacing with Dexvert)
 # - fdisk: For sfdisk - used to carve up PC partitions
 # - default-jre: Java JRE for riscosarc
-# - ffmpeg: mux scotch's decoded Replay frames into MP4 (REPLAY_TRANSCODE); also
-#           the basis for future AVI/other-container output
+# - ffmpeg: re-encode scotch's NUT-muxed Replay stream into MP4 (REPLAY_TRANSCODE);
+#           ffprobe (shipped with it) reports the muxed audio track; also the
+#           basis for future AVI/other-container output
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 	--mount=type=cache,target=/var/lib/apt,sharing=locked \
 	sed -i '/^Components:/ s/$/ multiverse/' /etc/apt/sources.list.d/ubuntu.sources && \

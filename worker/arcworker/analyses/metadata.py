@@ -463,8 +463,9 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
     """Transcode Acorn Replay / ARMovie files found in an extraction to MP4.
 
     Mirrors :func:`process_replay`'s ae7 file discovery, then for each movie
-    runs scotch's ``replay-transcode`` (decode to raw RGB24 + WAV) piped into
-    ffmpeg (mux to H.264/AAC MP4) and grabs a first-frame poster thumbnail.
+    runs scotch's ``replay-transcode`` (decode + mux video/audio into a NUT
+    container) followed by ffmpeg (re-encode to H.264/AAC MP4) and grabs a
+    first-frame poster thumbnail.
     The MP4 and poster are saved as analysis output files and reported so the
     web side can attach them to the matching ReplayMovie row.
 

@@ -39,29 +39,36 @@ from worker.arcworker.tools.replay_transcode import (
 )
 
 
-def _make_fake_run(*, decode_ok=True, make_wav=True):
+def _make_fake_run(*, decode_ok=True, make_nut=True):
     """Build a run_tool_with_output stand-in that creates expected output files.
 
     Inspects the command to decide which file to create:
-      - replay-transcode: writes --output (raw) and (if make_wav) --audio-output
-      - ffmpeg: writes the final positional argument (mp4 or poster)
+      - replay-transcode: writes the ``--output`` NUT file (NUT mode muxes audio
+        in, so there is no longer a separate ``--audio-output`` WAV)
+      - ffmpeg: writes the final positional argument (mp4 / m4a / poster)
     Returns (CompletedProcess, {}) with returncode 0, except a failed decode
-    returns returncode 1 and writes nothing.
+    returns returncode 1 and writes nothing.  ``ffprobe`` never reaches here —
+    audio detection is mocked separately via :func:`_fake_probe`.
     """
     def _run(cmd, timeout=None, cwd=None):
         if cmd[0] == 'replay-transcode':
             if not decode_ok:
                 return subprocess.CompletedProcess(cmd, 1, b'', b'unsupported codec'), {}
-            out = Path(cmd[cmd.index('--output') + 1])
-            out.write_bytes(b'\x00' * 16)
-            if make_wav:
-                Path(cmd[cmd.index('--audio-output') + 1]).write_bytes(b'RIFFxxxx')
+            if make_nut:
+                Path(cmd[cmd.index('--output') + 1]).write_bytes(b'\x00' * 16)
             return subprocess.CompletedProcess(cmd, 0, b'', b''), {}
         # ffmpeg (mux or poster) — last arg is the output file
         Path(cmd[-1]).write_bytes(b'\x00' * 8)
         return subprocess.CompletedProcess(cmd, 0, b'', b''), {}
 
     return _run
+
+
+def _fake_probe(has_audio, has_video=True):
+    """Stand-in for ``probe_media`` (ffprobe) reporting stream presence."""
+    def _probe(path, *, timeout=None):
+        return {'success': True, 'has_audio': has_audio, 'has_video': has_video}
+    return _probe
 
 
 class TestTranscodeTool(unittest.TestCase):
@@ -73,7 +80,9 @@ class TestTranscodeTool(unittest.TestCase):
             mp4 = work / 'out.mp4'
             poster = work / 'out.jpg'
             with patch('worker.arcworker.tools.replay_transcode.run_tool_with_output',
-                       side_effect=_make_fake_run()):
+                       side_effect=_make_fake_run()), \
+                 patch('worker.arcworker.tools.replay_transcode.probe_media',
+                       side_effect=_fake_probe(True)):
                 res = transcode_armovie_to_mp4(
                     inp, mp4, width=320, height=256, frame_rate=12.5,
                     work_dir=work, poster_path=poster,
@@ -91,7 +100,9 @@ class TestTranscodeTool(unittest.TestCase):
             inp.write_bytes(b'ARMovie')
             mp4 = work / 'out.mp4'
             with patch('worker.arcworker.tools.replay_transcode.run_tool_with_output',
-                       side_effect=_make_fake_run(make_wav=False)):
+                       side_effect=_make_fake_run()), \
+                 patch('worker.arcworker.tools.replay_transcode.probe_media',
+                       side_effect=_fake_probe(False)):
                 res = transcode_armovie_to_mp4(
                     inp, mp4, width=160, height=128, frame_rate=None,
                     work_dir=work,
@@ -128,6 +139,26 @@ class TestTranscodeTool(unittest.TestCase):
             self.assertFalse(res['success'])
             self.assertEqual(res['stage'], 'decode')
 
+    def test_audio_only_nut_on_video_path_fails_at_decode(self):
+        """A video movie whose NUT carries audio but no video stream (codec
+        skipped via --skip-unsupported) fails cleanly at the decode stage rather
+        than hard-failing the '-map 0:v:0' mux."""
+        with tempfile.TemporaryDirectory() as td:
+            work = Path(td)
+            inp = work / 'movie.rpl'
+            inp.write_bytes(b'ARMovie')
+            with patch('worker.arcworker.tools.replay_transcode.run_tool_with_output',
+                       side_effect=_make_fake_run()), \
+                 patch('worker.arcworker.tools.replay_transcode.probe_media',
+                       side_effect=_fake_probe(True, has_video=False)):
+                res = transcode_armovie_to_mp4(
+                    inp, work / 'o.mp4', width=320, height=256, frame_rate=25,
+                    work_dir=work,
+                )
+            self.assertFalse(res['success'])
+            self.assertEqual(res['stage'], 'decode')
+            self.assertIn('no video stream', res['error'])
+
     def test_modules_dir_passed_through(self):
         seen = {}
 
@@ -141,7 +172,9 @@ class TestTranscodeTool(unittest.TestCase):
             inp = work / 'movie.rpl'
             inp.write_bytes(b'ARMovie')
             with patch('worker.arcworker.tools.replay_transcode.run_tool_with_output',
-                       side_effect=_capture):
+                       side_effect=_capture), \
+                 patch('worker.arcworker.tools.replay_transcode.probe_media',
+                       side_effect=_fake_probe(True)):
                 transcode_armovie_to_mp4(
                     inp, work / 'o.mp4', width=320, height=256, frame_rate=25,
                     work_dir=work, modules_dir='/srv/replay-modules',
@@ -149,19 +182,18 @@ class TestTranscodeTool(unittest.TestCase):
         self.assertIn('--modules-dir', seen['cmd'])
         self.assertIn('/srv/replay-modules', seen['cmd'])
 
-    def test_mux_input_is_rgb24_not_output_pixfmt(self):
-        """The rawvideo INPUT must be rgb24 (replay-transcode's invariant output);
-        it must never pick up the libx264 OUTPUT -pix_fmt (that reintroduces red)."""
+    def test_decode_uses_nut_and_mux_reads_nut_file(self):
+        """Decode must request ``--output-format nut`` and write to a NUT file;
+        the ffmpeg mux must read that NUT (``-i movie.nut``) and must NOT use the
+        old rawvideo recipe (``-f rawvideo`` / ``-pixel_format``)."""
         captured = {}
 
         def _run(cmd, timeout=None, cwd=None):
             if cmd[0] == 'replay-transcode':
+                captured['decode'] = cmd
                 Path(cmd[cmd.index('--output') + 1]).write_bytes(b'\x00' * 16)
-                # recipe carries BOTH tokens; the parser must not be fooled
-                return (subprocess.CompletedProcess(cmd, 0, b'', b''),
-                        {'stderr': 'ffmpeg -f rawvideo -pixel_format rgb24 -i - '
-                                   '-c:v libx264 -pix_fmt yuv420p out.mp4'})
-            if '-f' in cmd and 'rawvideo' in cmd:   # the mux call
+                return subprocess.CompletedProcess(cmd, 0, b'', b''), {}
+            if cmd[0] == 'ffmpeg' and '-frames:v' not in cmd:   # the mux call
                 captured['mux'] = cmd
             Path(cmd[-1]).write_bytes(b'\x00' * 8)
             return subprocess.CompletedProcess(cmd, 0, b'', b''), {}
@@ -171,33 +203,40 @@ class TestTranscodeTool(unittest.TestCase):
             inp = work / 'movie.rpl'
             inp.write_bytes(b'ARMovie')
             with patch('worker.arcworker.tools.replay_transcode.run_tool_with_output',
-                       side_effect=_run):
+                       side_effect=_run), \
+                 patch('worker.arcworker.tools.replay_transcode.probe_media',
+                       side_effect=_fake_probe(True)):
                 res = transcode_armovie_to_mp4(
                     inp, work / 'out.mp4', width=160, height=128, frame_rate=25,
                     work_dir=work,
                 )
             self.assertTrue(res['success'])
+
+        decode = captured['decode']
+        self.assertEqual(decode[decode.index('--output-format') + 1], 'nut')
+        nut_arg = decode[decode.index('--output') + 1]
+        self.assertTrue(nut_arg.endswith('.nut'))
+        self.assertNotIn('--audio-output', decode)
+
         mux = captured['mux']
-        # The input pixel format (the one before '-i') is rgb24, not yuv420p.
-        self.assertEqual(mux[mux.index('-pixel_format') + 1], 'rgb24')
+        # ffmpeg reads the NUT file directly; no rawvideo demuxer parameters.
+        self.assertEqual(mux[mux.index('-i') + 1], nut_arg)
+        self.assertNotIn('-f', mux)
+        self.assertNotIn('-pixel_format', mux)
+        self.assertNotIn('-video_size', mux)
 
 
 class TestAudioOnlyTranscode(unittest.TestCase):
     def test_sound_only_produces_audio(self):
-        def _run(cmd, timeout=None, cwd=None):
-            if cmd[0] == 'replay-transcode':
-                Path(cmd[cmd.index('--audio-output') + 1]).write_bytes(b'RIFFxxxx')
-                return subprocess.CompletedProcess(cmd, 0, b'', b''), {}
-            Path(cmd[-1]).write_bytes(b'\x00' * 8)   # ffmpeg m4a output
-            return subprocess.CompletedProcess(cmd, 0, b'', b''), {}
-
         with tempfile.TemporaryDirectory() as td:
             work = Path(td)
             inp = work / 'sound.rpl'
             inp.write_bytes(b'ARMovie')
             out = work / 'sound.m4a'
             with patch('worker.arcworker.tools.replay_transcode.run_tool_with_output',
-                       side_effect=_run):
+                       side_effect=_make_fake_run()), \
+                 patch('worker.arcworker.tools.replay_transcode.probe_media',
+                       side_effect=_fake_probe(True)):
                 res = transcode_armovie_to_audio(inp, out, work_dir=work)
             self.assertTrue(res['success'])
             self.assertTrue(res['audio_only'])
@@ -206,16 +245,16 @@ class TestAudioOnlyTranscode(unittest.TestCase):
             self.assertTrue(out.exists())
 
     def test_sound_only_no_audio_fails(self):
-        def _run(cmd, timeout=None, cwd=None):
-            # replay-transcode writes no WAV (e.g. nothing decodable)
-            return subprocess.CompletedProcess(cmd, 0, b'', b'no audio'), {}
-
+        # replay-transcode writes a NUT, but it carries no audio stream → the
+        # probe reports has_audio False, so the transcode fails at the decode stage.
         with tempfile.TemporaryDirectory() as td:
             work = Path(td)
             inp = work / 'sound.rpl'
             inp.write_bytes(b'ARMovie')
             with patch('worker.arcworker.tools.replay_transcode.run_tool_with_output',
-                       side_effect=_run):
+                       side_effect=_make_fake_run()), \
+                 patch('worker.arcworker.tools.replay_transcode.probe_media',
+                       side_effect=_fake_probe(False)):
                 res = transcode_armovie_to_audio(inp, work / 'o.m4a', work_dir=work)
         self.assertFalse(res['success'])
         self.assertEqual(res['stage'], 'decode')
