@@ -489,6 +489,12 @@ If you add a new handler that opens extracted files by DB path, the physical fil
 
 For RISC OS ISOs, always pass both. RISC OS CD mastering tools sometimes use Rock Ridge names with `,xxx` suffixes, sometimes ARCHIMEDES blocks, and sometimes both. Passing only one will leave filetypes `NULL` for files that used the other mechanism.
 
+#### `extraction_started_at` and invalid timestamps
+
+Many platforms and filesystems do not store a usable file timestamp — BBC DFS has none at all, ADFS only date-stamps some files, and any no-RTC machine writes bogus dates. When the source carries no date, extraction tools (DIM, 7z, …) default the extracted file's mtime to *now*, which would otherwise be catalogued as today's date.
+
+Pass `extraction_started_at` (the UTC instant the extraction job began) to `enumerate_extracted_files()`. Any file whose timestamp falls within the extraction window `[started_at - 60s, now]` is dropped to `NULL` (unknown) rather than stored — that date can only be the tool's fabricated "now". Independently, timestamps in the future or before `1975-01-01` (`_TIMESTAMP_FLOOR`) are always dropped, which also catches corrupt RISC OS load/exec decodes. Genuinely old dates — including INF-decoded RISC OS date-stamps — are preserved. The goal is to keep every valid timestamp while discarding patently invalid ones.
+
 #### Derived artefacts and follow-on analysis chains
 
 Registering a derived artefact via the API causes the web app to check `ANALYSIS_MAP` and automatically queue follow-on analyses. This is intentional, but it means a chain of several workers can be processing the same original artefact concurrently. Keep handlers idempotent and do not assume that derived artefacts registered in one job are visible to handlers running in parallel.
