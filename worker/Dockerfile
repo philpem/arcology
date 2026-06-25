@@ -243,7 +243,7 @@ FROM ubuntu:24.04 AS build-scotch
 #   git ls-remote https://github.com/philpem/scotch.git refs/heads/main
 # Current as of 2026-06-25; branch: main.  Must be a revision with NUT muxer
 # support (--output-format nut), which the worker now relies on.
-ARG SCOTCH_VERSION=9178b6139bc294d06902f62b86d4972ef5600b5b
+ARG SCOTCH_VERSION=9ba9ee176d19fa889c3fb6cde83e4e8f7ab34717
 ARG SCOTCH_REPO=https://github.com/philpem/scotch.git
 
 # Disable prompt during package installation
