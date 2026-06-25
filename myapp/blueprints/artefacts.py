@@ -16,7 +16,6 @@ from flask_wtf.file import FileField, FileRequired
 from werkzeug.exceptions import NotFound
 from wtforms import BooleanField, IntegerField, SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Optional
-from arcology_shared.replay_codecs import sound_codec_name, video_codec_name
 from ..database import (
     ANALYSIS_PRIORITY_HIGH,
     ANALYSIS_PRIORITY_TIERS,
@@ -1248,13 +1247,6 @@ def _viewer_replay_detail(file_filter, all_artefact_ids):
             if m.get('file_path') == file_filter:
                 detail = dict(m)
                 break
-
-    # Translate the numeric codec format fields to human-readable names via the
-    # shared lookup table (resolved at display time so the table can grow without
-    # re-analysing movies).  None when the number is unknown — the template then
-    # falls back to any codec label parsed from the header.
-    detail['video_codec_name'] = video_codec_name(detail.get('video_format'))
-    detail['sound_codec_name'] = sound_codec_name(detail.get('sound_format'))
 
     # Transcoded video + poster (populated by a REPLAY_TRANSCODE analysis).
     detail['mp4_url'] = (

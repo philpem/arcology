@@ -63,7 +63,7 @@
 {# Disambiguate sound-only Replay (bi-music-note-beamed — shared with any future
    audio-only filetype) from video Replay (bi-film). #}
 <a href="{{ artefact_url(artefact, 'viewer') }}?file={{ file_path | urlencode }}"
-   class="text-primary ms-1" title="Acorn Replay / ARMovie{% if replay.video_format == 0 %} (sound-only){% endif %}{% if replay.title %}: {{ replay.title }}{% endif %}{% if replay.video_format is not none %} (format {{ replay.video_format }}{% if replay.video_label %} {{ replay.video_label }}{% endif %}){% endif %}{% if replay.width is not none and replay.height is not none %} — {{ replay.width }}×{{ replay.height }}{% endif %}"><i class="bi {% if replay.video_format == 0 %}bi-music-note-beamed{% else %}bi-film{% endif %}"></i></a>
+   class="text-primary ms-1" title="Acorn Replay / ARMovie{% if replay.video_format == 0 %} (sound-only){% endif %}{% if replay.title %}: {{ replay.title }}{% endif %}{% if replay.video_format is not none %} (format {{ replay.video_format }}{% set vname = replay.video_format | video_codec_name %}{% if vname %} {{ vname }}{% elif replay.video_label %} {{ replay.video_label }}{% endif %}){% endif %}{% if replay.width is not none and replay.height is not none %} — {{ replay.width }}×{{ replay.height }}{% endif %}"><i class="bi {% if replay.video_format == 0 %}bi-music-note-beamed{% else %}bi-film{% endif %}"></i></a>
 {%- endif -%}
 {%- if media -%}
 {# Generic transcoded / passthrough media: audio-only (bi-music-note-beamed)

@@ -270,6 +270,13 @@ def create_app(config_name=None):
     app.jinja_env.filters['format_filetype'] = format_filetype
     app.jinja_env.filters['filetype_name'] = get_filetype_name
 
+    # Acorn Replay / ARMovie codec-number → name translation (single source of
+    # truth in arcology_shared; a filter so any template showing a codec format
+    # number can label it).
+    from arcology_shared.replay_codecs import sound_codec_name, video_codec_name
+    app.jinja_env.filters['video_codec_name'] = video_codec_name
+    app.jinja_env.filters['sound_codec_name'] = sound_codec_name
+
     # Extension-based filetype labels (non-RISC OS files)
     from .extension_labels import extension_label, unified_type_label
     app.jinja_env.filters['extension_label'] = extension_label
