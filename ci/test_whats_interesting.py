@@ -213,7 +213,31 @@ class TestBuckets(_Base):
         self.db.session.commit()
 
         s = self._summarise(art)
+        # Folder recognition with no per-file hash match: the recognised *count*
+        # is 0 (the file lands in the unknown bucket) but the product name is
+        # still surfaced so the card can show "contains !Draw".
+        self.assertEqual(s.recognised.count, 0)
+        self.assertEqual(s.unknown.count, 1)
         self.assertIn('!Draw', s.recognised_products)
+
+    def test_base_os_folder_recognition_not_surfaced(self):
+        """Folder recognition against a base-OS (excluded) DB must not leak in.
+
+        recognised_products is the *non-base* software list; a RecognisedProduct
+        pointing at an excluded database should never appear there.
+        """
+        from myapp.database import RecognisedProduct
+        _, prod, _ = self._db_with_files(
+            'RISC OS 3.6', exclude=True, product_title='RISC OS Boot',
+            file_seeds=['boot1'])
+        art = self._artefact('disc')
+        self._file(art, 'User.letter', size=50)
+        self.db.session.add(RecognisedProduct(
+            partition_id=art._part.id, product_id=prod.id, folder_path='!Boot'))
+        self.db.session.commit()
+
+        s = self._summarise(art)
+        self.assertEqual(s.recognised_products, [])
 
     def test_aggregates_over_derived_tree(self):
         _, _, os_kfs = self._db_with_files(

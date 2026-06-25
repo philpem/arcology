@@ -55,7 +55,10 @@ class InterestingSummary:
     # Distinct names of the excluded (base-OS) databases that matched, e.g.
     # "RISC OS 3.6" — used for the "Standard <X> (hidden)" lead-in.
     standard_os_names: list[str] = field(default_factory=list)
-    # Distinct recognised-software product titles, e.g. "!ArtWorks 1.5".
+    # Distinct recognised-software (non-base) product titles, e.g.
+    # "!ArtWorks 1.5".  Populated from per-file hash matches *and* folder-level
+    # product recognition, so this can be non-empty even when ``recognised.count``
+    # is 0 (a product identified by folder with no individual file hash-match).
     recognised_products: list[str] = field(default_factory=list)
 
     @property
@@ -122,50 +125,66 @@ def summarise_artefact(all_artefact_ids) -> InterestingSummary:
         return summary
 
     # Names of the base-OS databases that matched (for "Standard RISC OS 3.6").
-    summary.standard_os_names = [
-        name
-        for (name,) in (
-            db.session.query(HashDatabase.name)
+    # Only files linked to an excluded database can contribute, so the bucket
+    # count already tells us whether this scan can return anything — skip it
+    # entirely when nothing landed in the standard-OS bucket.
+    if summary.standard_os.count:
+        summary.standard_os_names = [
+            name
+            for (name,) in (
+                db.session.query(HashDatabase.name)
+                .select_from(ExtractedFile)
+                .join(Partition, ExtractedFile.partition_id == Partition.id)
+                .join(KnownFile, ExtractedFile.known_file_id == KnownFile.id)
+                .join(HashDatabase, KnownFile.database_id == HashDatabase.id)
+                .filter(Partition.artefact_id.in_(all_artefact_ids))
+                .filter(ExtractedFile.is_directory.is_(False))
+                .filter(HashDatabase.exclude_from_similarity.is_(True))
+                .distinct()
+                .order_by(HashDatabase.name)
+                .limit(_NAME_LIMIT)
+                .all()
+            )
+        ]
+
+    # Recognised-software product names, from two sources:
+    #  1. products linked directly via non-excluded known files (per-file hash
+    #     match) — only possible when the recognised bucket is non-empty;
+    #  2. folder-level product recognition (independent of per-file hash links,
+    #     so it can name a product — "contains !Draw" — even when no individual
+    #     file hash-matched, i.e. with recognised.count == 0).
+    # Both restrict to non-base (non-excluded) databases so base-OS products
+    # never leak in.  Each query orders by title before its cap so the merged,
+    # re-capped result is the true alphabetical head rather than an arbitrary
+    # truncation of two independently-capped fetches.
+    titles: set[str] = set()
+    if summary.recognised.count:
+        for (title,) in (
+            db.session.query(KnownProduct.title)
             .select_from(ExtractedFile)
             .join(Partition, ExtractedFile.partition_id == Partition.id)
             .join(KnownFile, ExtractedFile.known_file_id == KnownFile.id)
             .join(HashDatabase, KnownFile.database_id == HashDatabase.id)
+            .join(KnownProduct, KnownFile.product_id == KnownProduct.id)
             .filter(Partition.artefact_id.in_(all_artefact_ids))
             .filter(ExtractedFile.is_directory.is_(False))
-            .filter(HashDatabase.exclude_from_similarity.is_(True))
+            .filter(HashDatabase.exclude_from_similarity.is_(False))
             .distinct()
-            .order_by(HashDatabase.name)
+            .order_by(KnownProduct.title)
             .limit(_NAME_LIMIT)
             .all()
-        )
-    ]
-
-    # Recognised-software product names, from two sources: the products linked
-    # directly via non-excluded known files, and the folder-level product
-    # recognition results.  Merge and de-duplicate.
-    titles: set[str] = set()
-    for (title,) in (
-        db.session.query(KnownProduct.title)
-        .select_from(ExtractedFile)
-        .join(Partition, ExtractedFile.partition_id == Partition.id)
-        .join(KnownFile, ExtractedFile.known_file_id == KnownFile.id)
-        .join(HashDatabase, KnownFile.database_id == HashDatabase.id)
-        .join(KnownProduct, KnownFile.product_id == KnownProduct.id)
-        .filter(Partition.artefact_id.in_(all_artefact_ids))
-        .filter(ExtractedFile.is_directory.is_(False))
-        .filter(HashDatabase.exclude_from_similarity.is_(False))
-        .distinct()
-        .limit(_NAME_LIMIT)
-        .all()
-    ):
-        titles.add(title)
+        ):
+            titles.add(title)
     for (title,) in (
         db.session.query(KnownProduct.title)
         .select_from(RecognisedProduct)
         .join(KnownProduct, RecognisedProduct.product_id == KnownProduct.id)
+        .join(HashDatabase, KnownProduct.database_id == HashDatabase.id)
         .join(Partition, RecognisedProduct.partition_id == Partition.id)
         .filter(Partition.artefact_id.in_(all_artefact_ids))
+        .filter(HashDatabase.exclude_from_similarity.is_(False))
         .distinct()
+        .order_by(KnownProduct.title)
         .limit(_NAME_LIMIT)
         .all()
     ):

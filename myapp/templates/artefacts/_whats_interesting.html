@@ -36,10 +36,14 @@
                         {%- if s.standard_os_names %} ({{ s.standard_os_names | join(', ') }}){% endif %}
                     </span>
                     {% endif %}
-                    {% if s.recognised.count %}
-                    <span class="text-muted" title="{{ s.recognised.size | format_filesize }} — files matching a non-base reference database">
+                    {# Show recognised software when files hash-matched a non-base
+                       database (recognised.count) OR when only folder-level product
+                       recognition fired (no per-file match, so count is 0 but we
+                       still know the product names). #}
+                    {% if s.recognised.count or s.recognised_products %}
+                    <span class="text-muted" title="{{ s.recognised.size | format_filesize }} — recognised non-base software{% if not s.recognised.count %} (identified by folder, not per-file hash){% endif %}">
                         <i class="bi bi-box-seam"></i>
-                        {{ s.recognised.count }} recognised
+                        {% if s.recognised.count %}{{ s.recognised.count }} recognised{% else %}Recognised software{% endif %}
                         {%- if s.recognised_products %}: {{ s.recognised_products | join(', ') }}{% endif %}
                     </span>
                     {% endif %}

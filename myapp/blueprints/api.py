@@ -70,6 +70,7 @@ from ..services.downloads import (
     serve_output_file,
 )
 from ..services.hash_rescan import (
+    HashDatabaseNameConflictError,
     create_hashdb_from_artefacts,
     find_known_file,
     find_known_files_for_records,
@@ -935,12 +936,12 @@ def create_hashdb_from_artefact(uuid):
             exclude_from_similarity=bool(data.get('exclude_from_similarity', False)),
             product_title=(data.get('product_title') or '').strip() or artefact.label,
         )
+    except HashDatabaseNameConflictError as exc:
+        db.session.rollback()
+        return error_response(str(exc), 409)
     except ValueError as exc:
         db.session.rollback()
-        # The service raises ValueError for a name clash as well as for invalid
-        # input; map the clash to 409 and everything else to 400.
-        status = 409 if 'already exists' in str(exc) else 400
-        return error_response(str(exc), status)
+        return error_response(str(exc), 400)
 
     return jsonify({
         'id': database.id,
