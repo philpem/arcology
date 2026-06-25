@@ -554,7 +554,7 @@
                 <tr><th>Copyright</th><td>{{ replay_detail.copyright }}</td></tr>
                 {% endif %}
                 {% if replay_detail.video_format is not none %}
-                <tr><th>Video format</th><td>{{ replay_detail.video_format }}{% if replay_detail.video_label %} ({{ replay_detail.video_label }}){% endif %}{% if replay_detail.sound_only %} <span class="text-muted small">(sound-only)</span>{% endif %}</td></tr>
+                <tr><th>Video format</th><td>{{ replay_detail.video_format }}{% set vname = replay_detail.video_format | video_codec_name %}{% if vname %} ({{ vname }}){% elif replay_detail.video_label %} ({{ replay_detail.video_label }}){% endif %}{% if replay_detail.sound_only %} <span class="text-muted small">(sound-only)</span>{% endif %}</td></tr>
                 {% endif %}
                 {% if replay_detail.width is not none and replay_detail.height is not none %}
                 <tr><th>Dimensions</th><td>{{ replay_detail.width }} × {{ replay_detail.height }} px{% if replay_detail.pixel_depth is not none %}, {{ replay_detail.pixel_depth }} bpp{% endif %}</td></tr>
@@ -567,7 +567,7 @@
                 {% endif %}
                 {% if replay_detail.sound_format is not none %}
                 <tr><th>Sound</th><td>
-                    {% if replay_detail.sound_format == 0 %}none{% else %}format {{ replay_detail.sound_format }}{% if replay_detail.sound_rate %}, {{ replay_detail.sound_rate }} Hz{% endif %}{% if replay_detail.sound_channels %}, {{ replay_detail.sound_channels }} ch{% endif %}{% if replay_detail.sound_precision %}, {{ replay_detail.sound_precision }}-bit{% endif %}{% if replay_detail.sound_track_count is not none %} <span class="text-muted small">({{ replay_detail.sound_track_count }} track(s))</span>{% endif %}{% endif %}
+                    {% if replay_detail.sound_format == 0 %}none{% else %}format {{ replay_detail.sound_format }}{% set sname = replay_detail.sound_format | sound_codec_name %}{% if sname %} ({{ sname }}){% endif %}{% if replay_detail.sound_rate %}, {{ replay_detail.sound_rate }} Hz{% endif %}{% if replay_detail.sound_channels %}, {{ replay_detail.sound_channels }} ch{% endif %}{% if replay_detail.sound_precision %}, {{ replay_detail.sound_precision }}-bit{% endif %}{% if replay_detail.sound_track_count is not none %} <span class="text-muted small">({{ replay_detail.sound_track_count }} track(s))</span>{% endif %}{% endif %}
                 </td></tr>
                 {% endif %}
                 {% if replay_detail.frames_per_chunk is not none %}
