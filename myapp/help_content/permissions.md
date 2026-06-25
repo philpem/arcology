@@ -10,10 +10,15 @@ Every Arcology account has a permission level that controls what it can do.  Tie
 |------|-------------|:----------:|:-----------------:|:-------------------------------:|
 | **Read Only** | Guests, researchers, patrons | ✓ | ✗ | ✗ |
 | **Read/Write** | Curators responsible for managing the collection | ✓ | ✓ | ✓ |
-| **Staff** | Trusted curators (reserved for future use) | ✓ | ✓ | ✓ |
+| **Staff** | Trusted operators; see queue-management notes below | ✓ | ✓ | ✓ |
 | **Admin** | System administrators | ✓ | ✓ | ✓ + user management |
 
-> **Note:** The **Staff** tier is a placeholder for future capabilities.  At present it behaves identically to **Read/Write**.  It exists so that administrators can pre-assign a higher trust level to specific users without granting full admin access.
+> **Staff** tier users can additionally:
+>
+> - **Reset stuck analysis jobs** — the *Reset stale* button on the Analysis Queue page (and the matching API endpoint) requires Staff or above.  This is intentionally restricted so that ordinary curators cannot accidentally disrupt the global analysis queue.
+> - **Raise re-analysis priority** without needing the per-user *Can prioritise analyses* grant (Read/Write users can also raise priority if an admin has set that flag on their account).
+>
+> Staff cannot manage user accounts; that still requires Admin.
 
 ### Admin vs. Read/Write
 

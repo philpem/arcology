@@ -75,7 +75,7 @@
 					<div class="mb-3">
 						<label class="form-label text-muted">Permission</label>
 						<p class="form-control-plaintext">
-							{% set _perm_labels = {'read_only': 'Read Only', 'read_write': 'Full Read/Write'} %}
+							{% set _perm_labels = {'read_only': 'Read Only', 'read_write': 'Full Read/Write', 'staff': 'Staff'} %}
 							{{ _perm_labels.get(user.permission.value, user.permission.value) }}
 							<span class="text-muted small ms-1">(set by {{ oidc_provider_name }})</span>
 						</p>
