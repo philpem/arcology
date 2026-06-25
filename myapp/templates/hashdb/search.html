@@ -38,7 +38,9 @@
     <table class="table table-sm table-hover">
         <thead>
             <tr>
-                {% if not known_file %}<th>Known file</th>{% endif %}
+                {% if not known_file %}
+                <th>{% if not product %}Product{% else %}Known file{% endif %}</th>
+                {% endif %}
                 <th>Matched file</th>
                 <th>Type</th>
                 <th>Size</th>
@@ -46,10 +48,21 @@
             </tr>
         </thead>
         <tbody>
-        {% for ef, part, art, item, kf in results %}
+        {% for ef, part, art, item, kf, kp in results %}
             <tr>
                 {% if not known_file %}
-                <td><code>{{ kf.filename }}</code></td>
+                <td>
+                    {% if not product %}
+                        {% if kp %}
+                        <a href="{{ url_for('myapp_blueprints_hashdb.view_product', id=database.id, pid=kp.id) }}">{{ kp.title }}</a>
+                        <div class="small text-muted font-monospace">{{ kf.filename }}</div>
+                        {% else %}
+                        <code>{{ kf.filename }}</code>
+                        {% endif %}
+                    {% else %}
+                    <code>{{ kf.filename }}</code>
+                    {% endif %}
+                </td>
                 {% endif %}
                 <td>
                     <a href="{{ artefact_url(art) }}#files"
