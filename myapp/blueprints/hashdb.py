@@ -437,6 +437,13 @@ def search(id):
         )
         kf_filter = ExtractedFile.known_file_id.in_(kf_ids_sq)
 
+    if file_id:
+        order_by_cols = [func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path)]
+    elif product_id:
+        order_by_cols = [func.lower(KnownFile.filename), func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path)]
+    else:
+        order_by_cols = [func.lower(KnownProduct.title), func.lower(KnownFile.filename), func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path)]
+
     q = (
         db.session.query(ExtractedFile, Partition, Artefact, Item, KnownFile, KnownProduct)
         .join(Partition, ExtractedFile.partition_id == Partition.id)
@@ -449,7 +456,7 @@ def search(id):
         # hash search cannot be used to enumerate private collections.
         .filter(artefact_visibility_clause(current_user))
         .filter(ExtractedFile.is_directory == False)
-        .order_by(func.lower(KnownFile.filename), func.lower(Item.name), func.lower(Artefact.label), func.lower(ExtractedFile.path))
+        .order_by(*order_by_cols)
         .limit(SEARCH_LIMIT + 1)
         .all()
     )
