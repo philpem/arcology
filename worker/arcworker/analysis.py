@@ -428,7 +428,7 @@ class AnalysisWorker:
             hints=module_hints,
         )
         # Acorn Replay / ARMovie metadata — harmless no-op on extractions with
-        # no filetype ae7 files.
+        # no ARMovie files (filetype ae7 or a .rpl/.replay extension).
         replay_hints = {HintKey.PARTITION_UUID: partition_uuid}
         if extraction_path:
             replay_hints[HintKey.EXTRACTION_PATH] = extraction_path

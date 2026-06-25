@@ -181,6 +181,36 @@ def media_kind_for_riscos_filetype(filetype: str) -> str | None:
     """Return ``'video'`` / ``'audio'`` for a RISC OS filetype hex code, else ``None``."""
     return RISCOS_MEDIA_FILETYPES.get(filetype.lower())
 
+
+# Acorn Replay / ARMovie detection.
+#
+# On RISC OS these files carry filetype &AE7 (ARMovie), which is how the
+# REPLAY_PROCESS / REPLAY_TRANSCODE pipeline normally finds them.  When such a
+# file is moved to a non-RISC OS filesystem (e.g. zipped on a PC without the
+# Acorn extra field), that filetype is lost, so we also recognise the PC-style
+# extensions people give Replay movies.
+#
+# Extension/filetype is only a *candidate* signal: discovery confirms each
+# match by sniffing the ``ARMovie`` magic bytes (file_has_armovie_magic) before
+# treating a file as Replay, so a non-ARMovie file that merely happens to carry
+# one of these extensions is rejected rather than mis-processed.
+REPLAY_RISCOS_FILETYPE = 'ae7'
+REPLAY_EXTENSIONS = frozenset({'.rpl', '.rep', '.replay', '.armovie'})
+
+
+def is_replay_file(filename: str, risc_os_filetype: str | None) -> bool:
+    """Return True if a file *might* be an Acorn Replay / ARMovie movie.
+
+    A cheap, metadata-only candidate filter: matches RISC OS filetype &AE7 or a
+    PC-style Replay extension (``.rpl`` / ``.rep`` / ``.replay`` / ``.armovie``),
+    case-insensitive.  Callers confirm a genuine match with the ARMovie magic
+    bytes (``file_has_armovie_magic``) once the file is on disk.
+    """
+    if (risc_os_filetype or '').lower() == REPLAY_RISCOS_FILETYPE:
+        return True
+    _, ext = os.path.splitext((filename or '').lower())
+    return ext in REPLAY_EXTENSIONS
+
 # Container extensions whose bytes a modern browser *may* be able to play
 # directly (subject to a codec check below).  Anything outside these sets is
 # always transcoded.  MOV/QT are included because, with H.264, they play in

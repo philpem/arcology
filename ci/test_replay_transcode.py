@@ -506,6 +506,70 @@ class TestHandlerOrdering(unittest.TestCase):
         )
 
 
+class TestReplayFileDetection(unittest.TestCase):
+    """is_replay_file() — the discovery predicate shared by REPLAY_PROCESS and
+    REPLAY_TRANSCODE.  Must catch RISC OS filetype &AE7 *and* PC-style Replay
+    extensions so movies zipped on a non-RISC OS filesystem (where the &AE7
+    filetype is lost) are still recognised."""
+
+    def test_matches_riscos_filetype_ae7(self):
+        from arcology_shared.artefact_types import is_replay_file
+        self.assertTrue(is_replay_file('movie', 'ae7'))
+        self.assertTrue(is_replay_file('movie', 'AE7'))      # case-insensitive
+
+    def test_matches_pc_extensions(self):
+        from arcology_shared.artefact_types import is_replay_file
+        for name in ('clip.rpl', 'clip.rep', 'clip.replay', 'clip.armovie',
+                     'CLIP.RPL', 'CLIP.Replay'):
+            self.assertTrue(is_replay_file(name, None), name)
+            # Extension wins even with no/blank filetype.
+            self.assertTrue(is_replay_file(name, ''), name)
+
+    def test_rejects_non_replay(self):
+        from arcology_shared.artefact_types import is_replay_file
+        self.assertFalse(is_replay_file('readme.txt', None))
+        self.assertFalse(is_replay_file('movie.mp4', 'a64'))   # other media filetype
+        self.assertFalse(is_replay_file('', None))
+        self.assertFalse(is_replay_file('noext', None))
+
+
+class TestArmovieMagicSniff(unittest.TestCase):
+    """file_has_armovie_magic() — the cheap content check that confirms an
+    extension/filetype candidate is genuinely an Acorn Replay file before it is
+    parsed or transcoded."""
+
+    def test_accepts_armovie_bytes(self):
+        from worker.arcworker.tools.armovie import file_has_armovie_magic
+        self.assertTrue(file_has_armovie_magic(b'ARMovie\n160\n...'))
+
+    def test_rejects_other_bytes(self):
+        from worker.arcworker.tools.armovie import file_has_armovie_magic
+        self.assertFalse(file_has_armovie_magic(b'PK\x03\x04 not a movie'))
+        self.assertFalse(file_has_armovie_magic(b''))
+        self.assertFalse(file_has_armovie_magic(b'ARMov'))  # too short
+
+    def test_accepts_armovie_path(self):
+        from worker.arcworker.tools.armovie import file_has_armovie_magic
+        with tempfile.TemporaryDirectory() as d:
+            good = Path(d) / 'movie.rpl'
+            good.write_bytes(b'ARMovie\n' + b'0\n' * 20)
+            self.assertTrue(file_has_armovie_magic(good))
+            bad = Path(d) / 'other.rpl'
+            bad.write_bytes(b'just some text file')
+            self.assertFalse(file_has_armovie_magic(bad))
+
+    def test_missing_file_is_false(self):
+        from worker.arcworker.tools.armovie import file_has_armovie_magic
+        self.assertFalse(file_has_armovie_magic('/no/such/file.rpl'))
+
+    def test_memoryview_not_copied_whole(self):
+        """A memoryview over a large buffer must only have its first bytes read,
+        not be materialised whole."""
+        from worker.arcworker.tools.armovie import file_has_armovie_magic
+        big = memoryview(b'ARMovie' + b'\x00' * (8 * 1024 * 1024))
+        self.assertTrue(file_has_armovie_magic(big))
+
+
 if __name__ == '__main__':
     unittest.main()
 

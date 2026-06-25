@@ -153,6 +153,34 @@ def _parse_catalogue(region: bytes, number_of_chunks: int) -> int | None:
         return None
 
 
+def file_has_armovie_magic(source) -> bool:
+    """Return True iff *source* begins with the ``ARMovie`` magic bytes.
+
+    A cheap content sniff — reads only the first few bytes — used to confirm
+    that a file selected by extension or filetype is genuinely an Acorn Replay /
+    ARMovie movie before it is parsed or transcoded.  *source* may be a path, a
+    seekable binary stream, or a bytes-like object.  Never raises: any read
+    error (missing/unreadable file) is reported as "not ARMovie".
+    """
+    magic = _MAGIC.encode('latin-1')
+    n = len(magic)
+    try:
+        if isinstance(source, (str, os.PathLike)):
+            # Open and read only the first n bytes — never the whole movie.
+            with open(source, 'rb') as fh:
+                head = fh.read(n)
+        elif isinstance(source, (bytes, bytearray, memoryview)):
+            # Slice *before* materialising bytes so a memoryview over a large
+            # buffer is not copied whole.
+            head = bytes(source[:n])
+        else:
+            source.seek(0)
+            head = source.read(n)
+    except OSError:
+        return False
+    return head == magic
+
+
 def parse_armovie_header(source) -> dict:
     """Parse an ARMovie file's text header (and, if present, the catalogue).
 

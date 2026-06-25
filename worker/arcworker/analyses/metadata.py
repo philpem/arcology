@@ -14,6 +14,7 @@ Covers:
 
 import json
 from pathlib import Path
+from arcology_shared.artefact_types import is_replay_file
 from arcology_shared.enums import AnalysisType, ArtefactType
 from arcology_shared.fuzzyhash import compute_tlsh
 from arcology_shared.hints import HintKey
@@ -24,6 +25,7 @@ from ..tools import (
     compute_file_hash,
     convert_replay_poster_sprite,
     decode_module,
+    file_has_armovie_magic,
     parse_armovie_header,
     read_file_capped,
     transcode_armovie_to_audio,
@@ -303,7 +305,8 @@ def process_riscos_module_parse(self, analysis: dict, artefact: dict, work_dir: 
 def process_replay(self, analysis: dict, artefact: dict, work_dir: Path):
     """Process Acorn Replay / ARMovie files found in an extraction.
 
-    Scans partition files for filetype ae7 (ARMovie), reads each from disk, and
+    Scans partition files for ARMovie movies (RISC OS filetype &AE7 or a
+    PC-style ``.rpl`` / ``.replay`` extension), reads each from disk, and
     parses the text header + chunk catalogue into searchable metadata.  Named
     "process" (not "parse") because this handler will later be extended to
     transcode the video to a portable format.
@@ -321,7 +324,8 @@ def process_replay(self, analysis: dict, artefact: dict, work_dir: Path):
         self.fail_analysis(analysis_id, 'No partition_uuid in analysis hints')
         return
 
-    # Fetch files with RISC OS filetype ae7 (ARMovie).
+    # Fetch all files, then keep ARMovie movies (filetype &AE7 or a PC-style
+    # Replay extension — see is_replay_file).
     base_params = {'show_known': 'true'}
     if path_prefix:
         base_params['path_prefix'] = path_prefix
@@ -332,8 +336,9 @@ def process_replay(self, analysis: dict, artefact: dict, work_dir: Path):
 
     replay_files = [
         f for f in all_files
-        if (f.get('risc_os_filetype') or '').lower() == 'ae7'
-        and not f.get('is_directory', False)
+        if not f.get('is_directory', False)
+        and is_replay_file(f.get('filename') or f.get('path') or '',
+                           f.get('risc_os_filetype'))
     ]
 
     if not replay_files:
@@ -353,6 +358,7 @@ def process_replay(self, analysis: dict, artefact: dict, work_dir: Path):
 
     movies = []
     parse_errors = 0
+    not_armovie = 0
 
     for file_data in replay_files:
         db_path = file_data['path']
@@ -367,6 +373,14 @@ def process_replay(self, analysis: dict, artefact: dict, work_dir: Path):
         if file_path is None:
             log.warning(f"ARMovie file not found on disk: {db_path}")
             parse_errors += 1
+            continue
+
+        # Confirm the ARMovie magic before parsing: a file selected only by its
+        # extension (no &AE7 filetype) might not be Replay at all — reject it
+        # quietly rather than recording a spurious parse error.
+        if not file_has_armovie_magic(file_path):
+            log.info(f"Skipping {db_path}: no ARMovie magic (not an Acorn Replay file)")
+            not_armovie += 1
             continue
 
         try:
@@ -389,6 +403,8 @@ def process_replay(self, analysis: dict, artefact: dict, work_dir: Path):
         'files_scanned': len(replay_files),
         'parse_errors': parse_errors,
     }
+    if not_armovie:
+        details_dict['not_armovie'] = not_armovie
     if path_prefix:
         details_dict['path_prefix'] = path_prefix
 
@@ -475,10 +491,12 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
     """
     analysis_id = analysis['id']
 
-    # Discover filetype ae7 (ARMovie) files via the shared batch scaffold.
+    # Discover ARMovie files (filetype &AE7 or a Replay extension) via the
+    # shared batch scaffold.
     scan = scan_partition_files(
         self, analysis, artefact,
-        select_files=lambda f: (f.get('risc_os_filetype') or '').lower() == 'ae7',
+        select_files=lambda f: is_replay_file(
+            f.get('filename') or f.get('path') or '', f.get('risc_os_filetype')),
     )
     if scan is None:
         self.fail_analysis(
@@ -510,6 +528,13 @@ def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Pat
     for index, (_file_data, file_path, db_path) in enumerate(iter_resolved_files(
             self, scan.files, scan.extraction_path, work_dir,
             path_prefix=path_prefix, on_missing=_missing)):
+
+        # Confirm the ARMovie magic before transcoding — an extension-only match
+        # might not be Replay at all.  Skip non-ARMovie files quietly (mirrors
+        # process_replay, which never queued them as movies in the first place).
+        if not file_has_armovie_magic(file_path):
+            log.info(f"Skipping {db_path}: no ARMovie magic (not an Acorn Replay file)")
+            continue
 
         # Need the frame geometry from the header to drive ffmpeg's rawvideo
         # input; the raw bytes are also reused for the embedded poster sprite.
