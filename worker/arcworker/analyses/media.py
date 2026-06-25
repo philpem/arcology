@@ -30,6 +30,7 @@ from arcology_shared.artefact_types import (
     MEDIA_EXTENSIONS,
     media_is_browser_playable,
     media_kind_for_extension,
+    media_kind_for_riscos_filetype,
 )
 from arcology_shared.enums import AnalysisType, ArtefactType
 from ..config import log
@@ -178,7 +179,10 @@ def process_media_transcode(self, analysis: dict, artefact: dict, work_dir: Path
     # --- Mode 2: Extraction scan ---
     def _select(file_data: dict) -> bool:
         ext = Path(file_data.get('filename', '')).suffix.lower()
-        return ext in MEDIA_EXTENSIONS
+        if ext in MEDIA_EXTENSIONS:
+            return True
+        filetype = (file_data.get('risc_os_filetype') or '').lower()
+        return media_kind_for_riscos_filetype(filetype) is not None
 
     scan = scan_partition_files(self, analysis, artefact, select_files=_select)
     if scan is None:
@@ -213,7 +217,10 @@ def process_media_transcode(self, analysis: dict, artefact: dict, work_dir: Path
         )
         if 'error' in entry:
             log.warning(f"Skipping {db_path} — {entry['error']}")
-            entry.setdefault('media_kind', media_kind_for_extension(Path(db_path).suffix))
+            entry.setdefault('media_kind',
+                media_kind_for_extension(Path(db_path).suffix) or
+                media_kind_for_riscos_filetype((file_data.get('risc_os_filetype') or '').lower())
+            )
             errors.append(entry)
             continue
         processed.append(entry)

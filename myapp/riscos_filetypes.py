@@ -44,6 +44,7 @@ FILETYPE_MAP = {
     'aff': 'DrawFile',
     'd94': 'ArtWorks',
     'ae7': 'ARMovie',
+    'bf8': 'MPEG',
     'fb2': 'AVI',
     '695': 'GIF',
     '69c': 'BMP',

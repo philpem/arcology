@@ -109,6 +109,19 @@ _AUDIO_EXTENSIONS = frozenset({
 
 MEDIA_EXTENSIONS = _VIDEO_EXTENSIONS | _AUDIO_EXTENSIONS
 
+# RISC OS filetypes that identify standard video/audio containers.
+# These let MEDIA_TRANSCODE select files that lack a PC-style extension.
+# &AE7 (ARMovie) is intentionally excluded — it has its own REPLAY_PROCESS pipeline.
+RISCOS_MEDIA_FILETYPES: dict[str, str] = {
+    'fb2': 'video',  # AVI
+    'bf8': 'video',  # MPEG
+}
+
+
+def media_kind_for_riscos_filetype(filetype: str) -> str | None:
+    """Return ``'video'`` / ``'audio'`` for a RISC OS filetype hex code, else ``None``."""
+    return RISCOS_MEDIA_FILETYPES.get(filetype.lower())
+
 # Container extensions whose bytes a modern browser *may* be able to play
 # directly (subject to a codec check below).  Anything outside these sets is
 # always transcoded.  MOV/QT are included because, with H.264, they play in
