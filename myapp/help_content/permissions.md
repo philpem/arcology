@@ -10,7 +10,7 @@ Every Arcology account has a permission level that controls what it can do.  Tie
 |------|-------------|:----------:|:-----------------:|:-------------------------------:|
 | **Read Only** | Guests, researchers, patrons | ✓ | ✗ | ✗ |
 | **Read/Write** | Curators responsible for managing the collection | ✓ | ✓ | ✓ |
-| **Staff** | Trusted operators with additional queue management capabilities | ✓ | ✓ | ✓ |
+| **Staff** | Trusted operators; see queue-management notes below | ✓ | ✓ | ✓ |
 | **Admin** | System administrators | ✓ | ✓ | ✓ + user management |
 
 > **Staff** tier users can additionally:
