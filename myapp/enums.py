@@ -19,7 +19,7 @@ class UserPermission(enum.Enum):
     """Permission level for a web UI user. Controls all actions in both the web UI and the API."""
     READ_ONLY  = "read_only"   # View everything; no modifications
     READ_WRITE = "read_write"  # Full CRUD access
-    STAFF      = "staff"       # READ_WRITE + taxonomy/hash-DB management; below admin
+    STAFF      = "staff"       # READ_WRITE + stale-job reset + priority-raising; below admin
 
 
 class ApiKeyPermission(enum.Enum):

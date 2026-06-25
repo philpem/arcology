@@ -55,7 +55,7 @@ def _route_redirect(endpoint: str, **values):
 PERMISSION_CHOICES = [
     ('read_only',  'Read Only — can view but not modify data'),
     ('read_write', 'Read/Write — full item and artefact access'),
-    ('staff',      'Staff — read/write plus taxonomy and hash-DB management'),
+    ('staff',      'Staff — read/write plus analysis queue management'),
 ]
 
 
