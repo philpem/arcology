@@ -344,6 +344,24 @@ def _ilike_json(col, val):
     return col.ilike(pattern)
 
 
+def _ilike_json_exact(col, val):
+    """Exact-element filter for JSON array columns, with * wildcard support.
+
+    Without wildcards: matches the value as a complete JSON string element
+    (e.g. val='Filer_Run' matches the element "Filer_Run" but not
+    "Filer_RunApp").  With wildcards (*): falls back to substring search
+    anchored to avoid matching outside the JSON brackets.
+    """
+    pattern = val.replace('*', '%')
+    if '%' not in pattern:
+        return col.ilike(f'%"{pattern}"%')
+    if not pattern.startswith('%'):
+        pattern = f'%{pattern}'
+    if not pattern.endswith('%'):
+        pattern = f'{pattern}%'
+    return col.ilike(pattern)
+
+
 def _negate(clause):
     """Null-safe negation: TRUE for rows where *clause* is not TRUE.
 
@@ -577,12 +595,12 @@ def _module_match_clause(tokens):
     ``swi:``.  Returns ``None`` when no module/command/swi term is present.
     """
     builders = {
-        'module':  lambda v: or_(_ilike(RiscosModule.title_string, v),
-                                 _ilike(RiscosModule.help_title, v)),
+        'module':  lambda v: or_(_ilike_path(RiscosModule.title_string, v),
+                                 _ilike_path(RiscosModule.help_title, v)),
         'command': lambda v: and_(RiscosModule.commands.isnot(None),
-                                  _ilike_json(RiscosModule.commands, v)),
+                                  _ilike_json_exact(RiscosModule.commands, v)),
         'swi':     lambda v: and_(RiscosModule.swi_names.isnot(None),
-                                  _ilike_json(RiscosModule.swi_names, v)),
+                                  _ilike_json_exact(RiscosModule.swi_names, v)),
     }
     parts = []
     for key, builder in builders.items():
