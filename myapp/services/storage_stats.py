@@ -127,8 +127,9 @@ def storage_capacity(arcology_bytes: int | None = None) -> dict:
 
     ``used`` and ``arcology_bytes`` both report Arcology's own footprint
     (physical blob bytes) for every backend — there is no per-backend overload.
-    Local backends additionally report the real filesystem ``total``/``free``
-    (and ``fs_used``) via ``statvfs``; for any backend an optional
+    Local backends additionally report the real filesystem ``total``/``free``/
+    ``fs_used`` via ``statvfs`` (object stores report these as ``None``); for
+    any backend an optional
     ``STORAGE_CAPACITY_BYTES`` config provides a quota ceiling (the only way to
     express a "total" for an unbounded object store).  ``percent_used`` is the
     fullness of the *displayed* capacity — disk fullness for local backends,
@@ -170,6 +171,7 @@ def storage_capacity(arcology_bytes: int | None = None) -> dict:
         'kind': 's3',
         'total': quota,
         'free': max(quota - used, 0) if quota is not None else None,
+        'fs_used': None,  # No backing filesystem; keep the dict shape uniform.
         'used': used,
         'arcology_bytes': used,
         'percent_used': percent,
