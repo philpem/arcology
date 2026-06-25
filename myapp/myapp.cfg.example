@@ -308,3 +308,9 @@ WORKER_STEP_DEADLINE_SECONDS = 20
 #S3_PUBLIC_URL = "http://localhost:3900"  # Browser-reachable URL for presigned links
 # Objects uploaded in parallel when the worker pushes an extraction tree to S3.
 #S3_UPLOAD_CONCURRENCY = 8
+
+# Optional storage quota, in bytes.  Drives the used/total percentage shown on
+# the staff/admin Storage page and the navbar capacity chip.  Mainly useful for
+# S3-compatible backends, which have no inherent free-space figure; local
+# backends report real filesystem free space and ignore this unless set.
+#STORAGE_CAPACITY_BYTES = 1099511627776   # e.g. 1 TiB

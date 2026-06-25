@@ -56,6 +56,7 @@ _ENV_INT_KEYS = (
     'TASKRUNNER_SIMILARITY_DELTA_INTERVAL', 'TASKRUNNER_SIMILARITY_DELTA_MAX',
     'ANALYSIS_WORKER_HEARTBEAT_WINDOW',
     'S3_UPLOAD_CONCURRENCY',
+    'STORAGE_CAPACITY_BYTES',
 )
 _ENV_FLOAT_KEYS = (
     'SENTRY_TRACES_SAMPLE_RATE', 'SENTRY_PROFILES_SAMPLE_RATE',
@@ -373,12 +374,23 @@ def create_app(config_name=None):
     # -- user permission context processor --
     @app.context_processor
     def inject_user_permissions():
-        """Inject user_can_write, public_mode, and public_downloads into every template context."""
+        """Inject user_can_write, user_is_staff, public_mode, public_downloads
+        and the navbar storage summary into every template context."""
         can_write = (current_user.is_authenticated and
                      current_user.has_permission(UserPermission.READ_WRITE))
+        is_staff = (current_user.is_authenticated and
+                    (getattr(current_user, 'is_admin', False) or
+                     current_user.has_permission(UserPermission.STAFF)))
         pm = bool_config('PUBLIC_MODE')
         pd = bool_config('PUBLIC_DOWNLOADS', default=True)
-        return dict(user_can_write=can_write, public_mode=pm, public_downloads=pd)
+        # Capacity chip for users who can upload; briefly cached in the service.
+        storage_summary = None
+        if can_write:
+            from .services.storage_stats import navbar_storage_summary
+            storage_summary = navbar_storage_summary()
+        return dict(user_can_write=can_write, user_is_staff=is_staff,
+                    public_mode=pm, public_downloads=pd,
+                    storage_summary=storage_summary)
 
     # -- version context processor --
     import datetime

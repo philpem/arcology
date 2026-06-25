@@ -3,13 +3,7 @@ from flask import current_app
 from sqlalchemy import func
 from ..database import Artefact, OutputBlob, UploadBlob
 from ..extensions import db
-
-
-def _format_size(n):
-    for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
-        if n < 1024 or unit == 'TB':
-            return f"{n:.1f} {unit}" if unit != 'B' else f"{n} {unit}"
-        n /= 1024
+from ..services.storage_stats import format_size as _format_size
 
 
 @click.command("dedup-artefacts")

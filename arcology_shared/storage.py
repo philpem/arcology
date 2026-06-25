@@ -154,6 +154,17 @@ class StorageBackend(abc.ABC):
         """
         return f"{storage_directory}/{storage_path}"
 
+    def disk_usage(self) -> dict | None:
+        """Return filesystem capacity for the backing volume, or None.
+
+        Backends that sit on a real filesystem return a dict with integer
+        ``total``/``used``/``free`` byte counts and a ``kind`` discriminator.
+        Object stores (S3) have no meaningful free-space figure and return
+        ``None``; callers derive capacity for those from stored-byte sums and an
+        optional configured quota instead.
+        """
+        return None
+
 
 class LocalStorage(StorageBackend):
     """Local filesystem storage backend.
@@ -287,6 +298,34 @@ class LocalStorage(StorageBackend):
     def local_path(self, key: str) -> Path:
         """Return the local filesystem path for a key (LocalStorage only)."""
         return self._resolve(key)
+
+    def disk_usage(self) -> dict | None:
+        """Return total/used/free bytes for the backing filesystem(s).
+
+        Uploads and outputs may live on different volumes.  When they share a
+        filesystem a single ``statvfs`` describes both; when they differ, report
+        the more-constrained volume (least free space) so a near-full outputs
+        disk isn't masked behind a near-empty uploads disk.  Cheap enough to
+        call per request behind the short-lived navbar cache.
+        """
+        uploads = shutil.disk_usage(self.uploads_dir)
+        try:
+            same_volume = (os.stat(self.uploads_dir).st_dev ==
+                           os.stat(self.outputs_dir).st_dev)
+        except OSError:
+            same_volume = True
+        if same_volume:
+            usage = uploads
+        else:
+            outputs = shutil.disk_usage(self.outputs_dir)
+            # The volume with the least free space is the binding constraint.
+            usage = uploads if uploads.free <= outputs.free else outputs
+        return {
+            'kind': 'local',
+            'total': usage.total,
+            'used': usage.used,
+            'free': usage.free,
+        }
 
 
 class S3Storage(StorageBackend):

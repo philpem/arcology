@@ -338,3 +338,22 @@ Options:
 | Flag | Description |
 |------|-------------|
 | `--apply` | Delete non-canonical legacy objects from the storage backend |
+
+### Post-migration deduplication runbook
+
+The blob-deduplication migration (`00006a25a2c0`) links existing **hashed**
+artefacts to canonical blobs, but it does **not** delete duplicate physical
+files — that is a separate, explicit step. To fully deduplicate storage (local
+or S3) after upgrading:
+
+1. `flask db upgrade` — applies the migration (links already-hashed artefacts).
+2. Let the worker finish `CHECKSUM_COMPUTE` for artefacts whose SHA-256 was NULL
+   at migration time.
+3. `flask backfill-blobs --dry-run` then `flask backfill-blobs` — create blob
+   records for the now-hashed artefacts.
+4. `flask dedup-artefacts` then `flask dedup-artefacts --apply` — physically
+   delete the non-canonical legacy upload objects, reclaiming space.
+
+New uploads are deduplicated automatically as they are hashed; this runbook is
+only needed once, to clean up content that predates the dedup model. Progress
+and savings are visible on the staff/admin **Storage** page (`/storage`).
