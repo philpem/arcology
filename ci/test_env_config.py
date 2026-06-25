@@ -54,11 +54,42 @@ class TestEnvConfig(unittest.TestCase):
             SENTRY_TRACES_SAMPLE_RATE='0.25',
             # An option valid for SQLite's StaticPool (pool_size is not).
             SQLALCHEMY_ENGINE_OPTIONS='{"echo": false}',
+            MAX_UPLOAD_SIZE='16G',
+            STORAGE_CAPACITY_BYTES='2TiB',
         )
         self.assertEqual(app.config['WORKER_STEP_DEADLINE_SECONDS'], 7)
         self.assertIs(app.config['PUBLIC_MODE'], True)
         self.assertEqual(app.config['SENTRY_TRACES_SAMPLE_RATE'], 0.25)
         self.assertEqual(app.config['SQLALCHEMY_ENGINE_OPTIONS'], {'echo': False})
+        self.assertEqual(app.config['MAX_UPLOAD_SIZE'], 16 * 1024**3)
+        self.assertEqual(app.config['STORAGE_CAPACITY_BYTES'], 2 * 1024**4)
+
+    def test_parse_byte_size(self):
+        from myapp.utils.config import parse_byte_size
+        cases = [
+            ('1024',  1024),
+            (1024,    1024),
+            ('1K',    1024),
+            ('1k',    1024),
+            ('1KiB',  1024),
+            ('1kib',  1024),
+            ('1M',    1024**2),
+            ('1MiB',  1024**2),
+            ('4G',    4 * 1024**3),
+            ('4GiB',  4 * 1024**3),
+            ('2T',    2 * 1024**4),
+            ('2TiB',  2 * 1024**4),
+            ('100M',  100 * 1024**2),
+            (' 16 G ', 16 * 1024**3),   # whitespace tolerance
+        ]
+        for raw, expected in cases:
+            with self.subTest(raw=raw):
+                self.assertEqual(parse_byte_size(raw), expected)
+
+        for bad in ('', 'abc', '1X', '1GB', '1KB'):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    parse_byte_size(bad)
 
     def test_empty_csp_header_disables_but_other_empties_ignored(self):
         app = self._build_app_with_env(CSP_HEADER='', OIDC_DISCOVERY_URL='')
@@ -72,7 +103,7 @@ class TestEnvConfig(unittest.TestCase):
 
         covered = set()
         for group in ('_ENV_STR_KEYS', '_ENV_BOOL_KEYS', '_ENV_INT_KEYS',
-                      '_ENV_FLOAT_KEYS', '_ENV_JSON_KEYS'):
+                      '_ENV_FLOAT_KEYS', '_ENV_JSON_KEYS', '_ENV_BYTE_SIZE_KEYS'):
             covered.update(getattr(app_module, group))
 
         key_re = re.compile(r'^#?\s*([A-Z][A-Z0-9_]+)\s*=')

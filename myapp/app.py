@@ -8,7 +8,7 @@ from flask_login import current_user
 from werkzeug.middleware.proxy_fix import ProxyFix
 from .database import UserPermission
 from .extensions import bootstrap, csrf, db, login_manager, migrate
-from .utils.config import bool_config, parse_bool
+from .utils.config import bool_config, parse_bool, parse_byte_size
 
 # Every setting that can live in myapp.cfg is also overridable from the
 # environment, so a Docker deployment can delete myapp.cfg entirely with no ill
@@ -44,8 +44,6 @@ _ENV_BOOL_KEYS = (
 _ENV_INT_KEYS = (
     'WEB_UI_ANALYSIS_PRIORITY', 'STALE_JOB_TIMEOUT_SECONDS',
     'WORKER_STEP_DEADLINE_SECONDS',
-    'MAX_CONTENT_LENGTH', 'MAX_UPLOAD_SIZE',
-    'CHUNKED_UPLOAD_THRESHOLD', 'CHUNKED_UPLOAD_CHUNK_SIZE',
     'FINALIZE_CONCURRENCY', 'FINALIZE_HEARTBEAT_SECONDS',
     'FINALIZE_STALE_SECONDS', 'FINALIZE_RESULT_TTL_SECONDS',
     'ITEMS_PER_PAGE', 'FILES_PER_PAGE', 'CAUTIONS_PER_PAGE', 'ANALYSES_SHOWN',
@@ -56,6 +54,12 @@ _ENV_INT_KEYS = (
     'TASKRUNNER_SIMILARITY_DELTA_INTERVAL', 'TASKRUNNER_SIMILARITY_DELTA_MAX',
     'ANALYSIS_WORKER_HEARTBEAT_WINDOW',
     'S3_UPLOAD_CONCURRENCY',
+)
+# Byte-size keys accept an optional binary suffix (K/KiB, M/MiB, G/GiB, T/TiB)
+# in addition to a plain integer.  parse_byte_size() handles both forms.
+_ENV_BYTE_SIZE_KEYS = (
+    'MAX_CONTENT_LENGTH', 'MAX_UPLOAD_SIZE',
+    'CHUNKED_UPLOAD_THRESHOLD', 'CHUNKED_UPLOAD_CHUNK_SIZE',
     'STORAGE_CAPACITY_BYTES',
 )
 _ENV_FLOAT_KEYS = (
@@ -94,6 +98,16 @@ def _load_config_from_env(app):
                 app.config[key] = int(val)
             except ValueError:
                 app.logger.warning(f'{key} env var is not an integer: {val!r}')
+    for key in _ENV_BYTE_SIZE_KEYS:
+        val = os.environ.get(key)
+        if val is not None:
+            try:
+                app.config[key] = parse_byte_size(val)
+            except ValueError:
+                app.logger.warning(
+                    f'{key} env var is not a valid byte size: {val!r} '
+                    f'(expected an integer or a value like 4G, 512M, 1TiB)'
+                )
     for key in _ENV_FLOAT_KEYS:
         val = os.environ.get(key)
         if val is not None:

@@ -8,6 +8,7 @@ import logging
 import os
 import uuid
 from pathlib import Path
+from arcology_shared.config import parse_byte_size
 
 
 def _int_env(name: str, default: str) -> int:
@@ -22,6 +23,18 @@ def _int_env(name: str, default: str) -> int:
     except ValueError:
         raise ValueError(
             f"Environment variable {name} must be an integer, got {raw!r}"
+        ) from None
+
+
+def _byte_env(name: str, default: str) -> int:
+    """Parse a byte-size environment variable via the shared parse_byte_size()."""
+    raw = os.environ.get(name, default)
+    try:
+        return parse_byte_size(raw)
+    except ValueError:
+        raise ValueError(
+            f"Environment variable {name} must be a byte size "
+            f"(e.g. 10G, 512MiB, or a plain integer), got {raw!r}"
         ) from None
 
 
@@ -110,7 +123,7 @@ MAX_ARCHIVE_DEPTH = _int_env('MAX_ARCHIVE_DEPTH', '10')
 
 # Maximum size of a decompressed file in bytes (default: 10 GiB).
 # Prevents decompression-bomb inputs from exhausting disk space.
-MAX_DECOMPRESSED_BYTES = _int_env('MAX_DECOMPRESSED_BYTES', str(10 * 1024 ** 3))
+MAX_DECOMPRESSED_BYTES = _byte_env('MAX_DECOMPRESSED_BYTES', '10GiB')
 
 # Mastering detection: number of trailing tracks to scan
 MASTERING_TRACK_SCAN_COUNT = _int_env('MASTERING_TRACK_SCAN_COUNT', '5')
