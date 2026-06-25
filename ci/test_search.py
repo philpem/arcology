@@ -1091,6 +1091,20 @@ class TestSearchLogic(unittest.TestCase):
         mod_results = [r for r in results['artefacts'] if r['type'] == 'module']
         self.assertEqual(mod_results, [])
 
+    def test_module_search_exact_excludes_substring(self):
+        """A bare module: term matches the whole name exactly, not a substring.
+
+        'Window' is a substring of 'WindowManager' but must not match without a
+        wildcard (the ColorExtend/ImageExtend-vs-Extend case); 'Window*' does.
+        """
+        results = self._search('module:Window')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertNotIn('Modules/WindowManager', file_paths)
+
+        results = self._search('module:Window*')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('Modules/WindowManager', file_paths)
+
     def test_module_search_deduplication(self):
         # Both modules belong to the same artefact; searching ADFS* should
         # only produce one result per artefact.
@@ -1208,9 +1222,17 @@ class TestSearchLogic(unittest.TestCase):
         file_paths = [ef.path for ef, _, _, _ in results['files']]
         self.assertEqual(file_paths, [])
 
-    def test_swi_search_partial_name(self):
-        """Substring match: 'DiscOp' should match 'ADFS_DiscOp'."""
+    def test_swi_search_partial_name_requires_wildcard(self):
+        """A bare swi: term matches a whole SWI name exactly, not a substring.
+
+        Without a wildcard 'DiscOp' must NOT match 'ADFS_DiscOp'; a leading
+        wildcard ('*DiscOp') is required for the substring match.
+        """
         results = self._search('swi:DiscOp')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertNotIn('Modules/ADFS', file_paths)
+
+        results = self._search('swi:*DiscOp')
         file_paths = [ef.path for ef, _, _, _ in results['files']]
         self.assertIn('Modules/ADFS', file_paths)
 
