@@ -8,6 +8,7 @@ import logging
 import os
 import uuid
 from pathlib import Path
+from arcology_shared.config import parse_byte_size
 
 
 def _int_env(name: str, default: str) -> int:
@@ -25,32 +26,11 @@ def _int_env(name: str, default: str) -> int:
         ) from None
 
 
-# Byte-size suffix table (longest-first so 3-char suffixes win over 1-char).
-_BYTE_SUFFIXES = (
-    ('tib', 1024**4), ('gib', 1024**3), ('mib', 1024**2), ('kib', 1024),
-    ('t',   1024**4), ('g',   1024**3), ('m',   1024**2), ('k',   1024),
-)
-
-
 def _byte_env(name: str, default: str) -> int:
-    """Parse a byte-size environment variable.
-
-    Accepts K/KiB, M/MiB, G/GiB, T/TiB (case-insensitive, powers of 1024)
-    and bare integers.
-    """
+    """Parse a byte-size environment variable via the shared parse_byte_size()."""
     raw = os.environ.get(name, default)
-    s = raw.strip().lower()
-    for suffix, multiplier in _BYTE_SUFFIXES:
-        if s.endswith(suffix):
-            num = s[:-len(suffix)].strip()
-            if num:
-                try:
-                    return int(num) * multiplier
-                except ValueError:
-                    pass
-            break
     try:
-        return int(s)
+        return parse_byte_size(raw)
     except ValueError:
         raise ValueError(
             f"Environment variable {name} must be a byte size "
