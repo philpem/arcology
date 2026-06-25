@@ -48,7 +48,16 @@
 
                     <div class="mb-3">
                         {{ form.file.label(class="form-label") }}<span class="text-danger ms-1" aria-hidden="true">*</span>
-                        {{ form.file(class="form-control") }}
+                        <div class="drop-zone" id="drop-zone" role="button" tabindex="0"
+                             aria-label="Drop a file here or click to browse">
+                            {{ form.file(class="form-control") }}
+                            <i class="bi bi-cloud-upload fs-2 text-secondary"></i>
+                            <p class="drop-zone-label mt-2 mb-2">Drag &amp; drop a file here, or</p>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="drop-zone-browse">
+                                <i class="bi bi-folder2-open"></i> Browse&hellip;
+                            </button>
+                            <p class="drop-zone-label mt-2 mb-0" id="drop-zone-filename"></p>
+                        </div>
                         <div class="form-text">Select the file to upload (disk image, scan, etc.)</div>
                     </div>
 
