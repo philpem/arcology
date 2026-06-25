@@ -519,7 +519,7 @@ class TestReplayFileDetection(unittest.TestCase):
 
     def test_matches_pc_extensions(self):
         from arcology_shared.artefact_types import is_replay_file
-        for name in ('clip.rpl', 'clip.replay', 'clip.armovie',
+        for name in ('clip.rpl', 'clip.rep', 'clip.replay', 'clip.armovie',
                      'CLIP.RPL', 'CLIP.Replay'):
             self.assertTrue(is_replay_file(name, None), name)
             # Extension wins even with no/blank filetype.
@@ -531,6 +531,36 @@ class TestReplayFileDetection(unittest.TestCase):
         self.assertFalse(is_replay_file('movie.mp4', 'a64'))   # other media filetype
         self.assertFalse(is_replay_file('', None))
         self.assertFalse(is_replay_file('noext', None))
+
+
+class TestArmovieMagicSniff(unittest.TestCase):
+    """file_has_armovie_magic() — the cheap content check that confirms an
+    extension/filetype candidate is genuinely an Acorn Replay file before it is
+    parsed or transcoded."""
+
+    def test_accepts_armovie_bytes(self):
+        from worker.arcworker.tools.armovie import file_has_armovie_magic
+        self.assertTrue(file_has_armovie_magic(b'ARMovie\n160\n...'))
+
+    def test_rejects_other_bytes(self):
+        from worker.arcworker.tools.armovie import file_has_armovie_magic
+        self.assertFalse(file_has_armovie_magic(b'PK\x03\x04 not a movie'))
+        self.assertFalse(file_has_armovie_magic(b''))
+        self.assertFalse(file_has_armovie_magic(b'ARMov'))  # too short
+
+    def test_accepts_armovie_path(self):
+        from worker.arcworker.tools.armovie import file_has_armovie_magic
+        with tempfile.TemporaryDirectory() as d:
+            good = Path(d) / 'movie.rpl'
+            good.write_bytes(b'ARMovie\n' + b'0\n' * 20)
+            self.assertTrue(file_has_armovie_magic(good))
+            bad = Path(d) / 'other.rpl'
+            bad.write_bytes(b'just some text file')
+            self.assertFalse(file_has_armovie_magic(bad))
+
+    def test_missing_file_is_false(self):
+        from worker.arcworker.tools.armovie import file_has_armovie_magic
+        self.assertFalse(file_has_armovie_magic('/no/such/file.rpl'))
 
 
 if __name__ == '__main__':
