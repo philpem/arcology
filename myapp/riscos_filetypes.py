@@ -39,11 +39,36 @@ FILETYPE_MAP = {
 
     # Music and Sound
     'af1': 'Maestro',
+    'fb1': 'WAV',
+    'fc2': 'AIFF',
+    '1ad': 'AMPEG (MP2/MP3)',
+    '1a8': 'Ogg Vorbis',
+    '1cf': 'FLAC',
+    'a8f': 'AC3',
+    'f88': 'RealAudio',
+
+    # Tracker / Module music
+    '501': 'SoundTracker',
+    '701': 'ProTracker',
+    '7b7': 'Soundtracker',
+    'acf': 'QTM',
+    'c02': 'ScreamTracker',
+    'c04': 'Impulse Tracker',
+    'c05': 'UltraTracker',
+    'cb6': 'SoundTracker',
 
     # Images and multimedia
     'aff': 'DrawFile',
     'd94': 'ArtWorks',
     'ae7': 'ARMovie',
+    '071': 'AVI / MIDI',
+    '0f8': 'MPEG',
+    'a63': 'MKV (Matroska)',
+    'a64': 'MP4',
+    'a8d': 'MPEG VOB',
+    'b9f': 'FLI/FLC',
+    'bf8': 'MPEG',
+    'fb2': 'AVI',
     '695': 'GIF',
     '69c': 'BMP',
     'b60': 'PNG',
