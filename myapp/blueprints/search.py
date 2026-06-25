@@ -951,17 +951,21 @@ def _search_artefact_hashes(tokens, page=1, per_page=PER_PAGE):
 
 
 def _search_text_items(tokens, page=1, per_page=PER_PAGE):
-    """Free-text search on item name/description."""
-    text_filters = []
+    """Free-text search on item name/description.
+
+    Multiple bare words are ANDed: every word must appear, though each may match
+    in *either* the name or the description (so ``risc disc`` requires both
+    words, not either).  Quote a phrase to match the literal adjacent string.
+    """
+    item_filter = []
     for v in tokens.get('text', []):
         pattern = f'%{v}%'
-        text_filters.append(Item.name.ilike(pattern))
-        text_filters.append(Item.description.ilike(pattern))
+        item_filter.append(or_(
+            Item.name.ilike(pattern), Item.description.ilike(pattern)))
 
-    if not text_filters:
+    if not item_filter:
         return [], False, 0
 
-    item_filter = [or_(*text_filters)]
     for v in _neg(tokens, 'text'):
         pattern = f'%{v}%'
         item_filter.append(_negate(or_(
@@ -984,17 +988,20 @@ def _search_text_items(tokens, page=1, per_page=PER_PAGE):
 
 
 def _search_text_artefacts(tokens, page=1, per_page=PER_PAGE):
-    """Free-text search on artefact label/description."""
-    art_text_filters = []
+    """Free-text search on artefact label/description.
+
+    Multiple bare words are ANDed: every word must appear, though each may match
+    in *either* the label or the description (matching :func:`_search_text_items`).
+    """
+    art_filter = []
     for v in tokens.get('text', []):
         pattern = f'%{v}%'
-        art_text_filters.append(Artefact.label.ilike(pattern))
-        art_text_filters.append(Artefact.description.ilike(pattern))
+        art_filter.append(or_(
+            Artefact.label.ilike(pattern), Artefact.description.ilike(pattern)))
 
-    if not art_text_filters:
+    if not art_filter:
         return [], False, 0
 
-    art_filter = [or_(*art_text_filters)]
     for v in _neg(tokens, 'text'):
         pattern = f'%{v}%'
         art_filter.append(_negate(or_(

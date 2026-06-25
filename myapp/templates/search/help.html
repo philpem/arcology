@@ -12,14 +12,16 @@
 <p class="text-muted">
 	A search query is made up of one or more terms separated by spaces. A bare
 	word searches item and artefact names and descriptions; a <em>keyed</em>
-	term (<code>key:value</code>) searches a specific field.
+	term (<code>key:value</code>) searches a specific field. Multiple bare words
+	must <em>all</em> appear (e.g. <code>risc disc</code> requires both words),
+	though each may match in either the name or the description.
 </p>
 
 <h2 class="h5 mt-4">General rules</h2>
 <ul>
 	<li><strong>Wildcards:</strong> use <code>*</code> to match any sequence of characters, e.g. <code>tag:prot*</code> or <code>swi:OS_*</code>.</li>
 	<li><strong>Exclude matches:</strong> prefix any keyed term with <code>!</code> to exclude it, e.g. <code>!type:Obey</code> or <code>!tag:demo</code>. A query must contain at least one non-negated term.</li>
-	<li><strong>Multi-word values:</strong> wrap values containing spaces in double quotes, e.g. <code>module:"Voice Module"</code> or <code>label:"Boot Disc"</code>.</li>
+	<li><strong>Multi-word values:</strong> wrap values containing spaces in double quotes, e.g. <code>module:"Voice Module"</code> or <code>label:"Boot Disc"</code>. A quoted bare phrase like <code>"BBC Micro"</code> matches that literal adjacent string, whereas <code>BBC Micro</code> requires both words but in any position.</li>
 	<li><strong>Matching:</strong> most text fields match as a substring by default. <code>filename:</code> matches the whole name exactly unless you add a <code>*</code> wildcard (so <code>filename:!Run</code> matches only <code>!Run</code>, while <code>filename:!Run*</code> matches <code>!RunImage</code>). Hashes match a prefix when shorter than the full length, otherwise exactly.</li>
 	<li><strong>Combining file terms narrows:</strong> file properties — name, path, type, extension, hash, RISC OS module / <code>*</code> command / SWI, and Acorn Replay metadata — all describe the same file, so adding another term <em>refines</em> the result (e.g. <code>type:ARMovie replayvideoformat:900</code> finds ARMovie files with that codec, and <code>module:ADFS swi:ADFS_DiscOp</code> finds the module providing that SWI). Multiple values for one key still match <em>any</em> of them.</li>
 	<li><strong>Consolidate duplicate files:</strong> tick this box (under the search field) to show byte-identical files just once. Works for every file search — by name, path, hash, type, RISC OS module, <code>*</code> command, SWI, or Acorn Replay metadata. A <i class="bi bi-files"></i> <span class="badge bg-info text-dark">&times;N</span> badge then shows how many copies exist across all discs; click it to list every disc and path carrying that exact content.</li>

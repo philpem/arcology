@@ -1463,6 +1463,24 @@ class TestSearchLogic(unittest.TestCase):
         results = self._search('xyzzy_no_such_item')
         self.assertEqual(results['catalogue_items'], [])
 
+    def test_text_search_multiple_words_are_anded(self):
+        # 'Software' is in the item name, 'classic' in its description — both
+        # present, so the item matches (words may match different columns).
+        results = self._search('Software classic')
+        self.assertTrue(len(results['catalogue_items']) > 0)
+
+    def test_text_search_and_excludes_when_one_word_missing(self):
+        # 'Software' matches but 'xyzzynope' appears nowhere — AND must exclude
+        # the item (regression: bare words were previously ORed).
+        results = self._search('Software xyzzynope')
+        self.assertEqual(results['catalogue_items'], [])
+
+    def test_text_search_and_across_name_and_description(self):
+        # 'Test' is in the name, 'BBC' in the description: each word may match
+        # either column, but both must be present somewhere.
+        results = self._search('Test BBC')
+        self.assertTrue(len(results['catalogue_items']) > 0)
+
     def test_text_search_quoted_phrase(self):
         results = self._search('"BBC Micro"')
         self.assertTrue(len(results['catalogue_items']) > 0)
@@ -1483,6 +1501,17 @@ class TestSearchLogic(unittest.TestCase):
 
     def test_text_search_artefact_no_match(self):
         results = self._search('xyzzy_no_such_artefact')
+        art_results = [r for r in results['artefacts'] if r['type'] == 'artefact_text']
+        self.assertEqual(art_results, [])
+
+    def test_text_search_artefact_multiple_words_anded(self):
+        # 'Side' is in the label, 'flux' in the description — both present.
+        results = self._search('Side flux')
+        art_results = [r for r in results['artefacts'] if r['type'] == 'artefact_text']
+        self.assertTrue(len(art_results) > 0)
+
+    def test_text_search_artefact_and_excludes_missing_word(self):
+        results = self._search('Side xyzzynope')
         art_results = [r for r in results['artefacts'] if r['type'] == 'artefact_text']
         self.assertEqual(art_results, [])
 
