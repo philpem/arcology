@@ -112,9 +112,61 @@ MEDIA_EXTENSIONS = _VIDEO_EXTENSIONS | _AUDIO_EXTENSIONS
 # RISC OS filetypes that identify standard video/audio containers.
 # These let MEDIA_TRANSCODE select files that lack a PC-style extension.
 # &AE7 (ARMovie) is intentionally excluded — it has its own REPLAY_PROCESS pipeline.
+# &071 is technically dual-use (MIDI and AVI); it is mapped to video so that AVI
+# files stored under that type reach the transcode pipeline.
 RISCOS_MEDIA_FILETYPES: dict[str, str] = {
-    'fb2': 'video',  # AVI
-    'bf8': 'video',  # MPEG
+    # Video
+    '071': 'video',   # AVI (also registered for MIDI; video takes priority here)
+    '0f8': 'video',   # MPEG
+    'a63': 'video',   # MKV (Matroska)
+    'a64': 'video',   # MP4
+    'a8d': 'video',   # MPEG DVD VOB
+    'b9f': 'video',   # FLI/FLC (Autodesk Animator)
+    'bf8': 'video',   # MPEG
+    'fb2': 'video',   # AVI
+    # Audio
+    '1a8': 'audio',   # Ogg Vorbis
+    '1ad': 'audio',   # AMPEG (MP2/MP3)
+    '1cf': 'audio',   # FLAC
+    'a8f': 'audio',   # AC3
+    'f88': 'audio',   # RealAudio
+    'fb1': 'audio',   # WAV
+    'fc2': 'audio',   # AIFF
+    # Tracker / module music (decoded to audio by ffmpeg/libopenmpt)
+    '501': 'audio',   # SoundTracker
+    '701': 'audio',   # ProTracker
+    '7b7': 'audio',   # Soundtracker
+    'acf': 'audio',   # QTM
+    'c02': 'audio',   # ScreamTracker
+    'c04': 'audio',   # Impulse Tracker
+    'c05': 'audio',   # UltraTracker
+    'cb6': 'audio',   # SoundTracker
+}
+
+# PC-style extension that best describes each RISC OS media filetype.
+# Passed as a synthetic filename hint to media_is_browser_playable() so that
+# passthrough-capable formats (MP4/H.264, MP3, Ogg, FLAC, WAV) stored on RISC OS
+# discs without a file extension are not needlessly re-encoded.
+# Tracker formats are omitted: no standard extension helps with passthrough, and
+# ffprobe auto-detects their format from file headers regardless.
+RISCOS_FILETYPE_EXTENSION: dict[str, str] = {
+    # Video (none are browser-passthrough, but the hint aids logging)
+    '071': '.avi',
+    '0f8': '.mpg',
+    'a63': '.mkv',
+    'a64': '.mp4',    # may be passthrough if H.264/AAC
+    'a8d': '.vob',
+    'b9f': '.fli',
+    'bf8': '.mpg',
+    'fb2': '.avi',
+    # Audio
+    '1a8': '.ogg',    # passthrough
+    '1ad': '.mp3',    # passthrough
+    '1cf': '.flac',   # passthrough
+    'a8f': '.ac3',
+    'f88': '.ra',
+    'fb1': '.wav',    # passthrough
+    'fc2': '.aiff',
 }
 
 

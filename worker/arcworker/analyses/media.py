@@ -28,6 +28,7 @@ import json
 from pathlib import Path
 from arcology_shared.artefact_types import (
     MEDIA_EXTENSIONS,
+    RISCOS_FILETYPE_EXTENSION,
     media_is_browser_playable,
     media_kind_for_extension,
     media_kind_for_riscos_filetype,
@@ -211,8 +212,17 @@ def process_media_transcode(self, analysis: dict, artefact: dict, work_dir: Path
             self, scan.files, scan.extraction_path, work_dir,
             path_prefix=scan.path_prefix, on_missing=_missing)):
         base_name = f'{analysis_uuid}_{index}'
+        filename = file_data.get('filename', '')
+        # For RISC OS files without a PC-style extension, synthesise one so that
+        # media_is_browser_playable() makes the right passthrough decision
+        # (e.g. a RISC OS MP4 &A64 without ".mp4" would otherwise always transcode).
+        if not Path(filename).suffix:
+            ft = (file_data.get('risc_os_filetype') or '').lower()
+            synth_ext = RISCOS_FILETYPE_EXTENSION.get(ft, '')
+            if synth_ext:
+                filename = 'file' + synth_ext
         entry = _process_media_file(
-            self, file_path, db_path, file_data.get('filename', ''),
+            self, file_path, db_path, filename,
             base_name, work_dir, output_subdir,
         )
         if 'error' in entry:
