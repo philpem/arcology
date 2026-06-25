@@ -182,8 +182,15 @@ def storage_capacity(arcology_bytes: int | None = None) -> dict:
 def navbar_storage_summary() -> dict | None:
     """Compact, briefly-cached capacity summary for the navbar chip.
 
-    Local → free/total of the uploads volume.  Object store → stored bytes plus
-    quota when configured.  Returns ``None`` if figures can't be produced.
+    The headline figure is **free space** whenever a total is known — the disk
+    size for local backends, or the configured ``STORAGE_CAPACITY_BYTES`` quota
+    for object stores.  Only an object store with no quota configured (so no
+    "total" to subtract from) falls back to reporting the stored footprint.
+
+    Returns a dict with a compact ``label`` for the chip, a ``percent_used``
+    (used to colour the chip when space runs low), and a list of
+    ``(name, value)`` ``detail`` rows for the hover tooltip — or ``None`` if
+    figures can't be produced.
     """
     now = time.monotonic()
     if _navbar_cache['value'] is not None and \
@@ -192,22 +199,33 @@ def navbar_storage_summary() -> dict | None:
 
     try:
         cap = storage_capacity()
-        if cap['kind'] == 'local':
-            summary = {
-                'kind': 'local',
-                'label': f"{format_size(cap['free'])} free of {format_size(cap['total'])}",
-                'percent_used': cap['percent_used'],
-            }
+        total = cap['total']
+        free = cap['free']
+        used = cap['used']
+        percent = cap['percent_used']
+
+        if total is not None:
+            # Free space is the headline; the tooltip carries the breakdown.
+            label = f"{format_size(free)} free of {format_size(total)}"
+            free_pct = round(100.0 - percent) if percent is not None else None
+            total_name = 'Disk size' if cap['kind'] == 'local' else 'Quota'
+            detail = [
+                ('Collection', format_size(used)),
+                ('Free', f"{format_size(free)} ({free_pct}%)"
+                         if free_pct is not None else format_size(free)),
+                (total_name, format_size(total)),
+            ]
         else:
-            if cap['quota']:
-                label = f"{format_size(cap['used'])} of {format_size(cap['quota'])} used"
-            else:
-                label = f"{format_size(cap['used'])} stored"
-            summary = {
-                'kind': 's3',
-                'label': label,
-                'percent_used': cap['percent_used'],
-            }
+            # Object store with no quota: no total to report free against.
+            label = f"{format_size(used)} stored"
+            detail = [('Collection', format_size(used))]
+
+        summary = {
+            'kind': cap['kind'],
+            'label': label,
+            'percent_used': percent,
+            'detail': detail,
+        }
     except Exception:  # pragma: no cover - never break page render over a chip
         summary = None
 
