@@ -21,12 +21,11 @@ transaction that records the analysis status.
 
 import json
 from flask import current_app
-from sqlalchemy import select
+from sqlalchemy import text
 from arcology_shared.enums import AnalysisType
 from ..database import (
     Analysis,
     AnalysisStatus,
-    Artefact,
     ArtefactMastering,
     ArtefactProtection,
     MediaFile,
@@ -381,6 +380,15 @@ _HANDLER_MAP = {
 }
 
 
+# Namespace for the per-artefact advisory lock that serialises search-index
+# writes.  Paired with the artefact id, it gives each artefact its own lock in
+# PostgreSQL's advisory-lock space — distinct from the artefact *row* lock that
+# request_analysis / produce_artefact take, so index population never queues
+# behind (nor blocks) the heavily-contended job-creation path during extraction.
+# Value is an arbitrary constant within signed int4 range.
+_SEARCH_INDEX_LOCK_NAMESPACE = 0x53494458  # 'SIDX'
+
+
 def populate_search_index_from_analysis(analysis: Analysis) -> None:
     """Update search-index tables from a completed analysis result (API path).
 
@@ -389,9 +397,16 @@ def populate_search_index_from_analysis(analysis: Analysis) -> None:
     status update *before* opening the savepoint so a savepoint rollback
     cannot undo it.
 
-    A row-level lock (SELECT … FOR UPDATE) on the artefact serialises
-    concurrent completions of the same analysis type so they don't clobber
-    each other's freshly-inserted rows.
+    A transaction-scoped advisory lock keyed on the artefact id serialises
+    concurrent completions of the same analysis type so they don't clobber each
+    other's freshly-inserted rows.  Unlike the former ``SELECT … FOR UPDATE`` on
+    the artefact row, an advisory lock lives in its own lock space: index
+    population no longer contends with the artefact row lock that
+    ``request_analysis`` / ``produce_artefact`` hold while creating follow-on and
+    derived-artefact jobs, which under heavy extraction could stall this update
+    past the worker's API timeout.  The lock is released automatically when the
+    outer transaction commits.  (No-op on non-PostgreSQL backends, e.g. the
+    SQLite test DB, which serialises writes globally.)
     """
     if not analysis.details:
         return
@@ -411,9 +426,12 @@ def populate_search_index_from_analysis(analysis: Analysis) -> None:
     try:
         db.session.flush()
         with db.session.begin_nested():
-            db.session.execute(
-                select(Artefact).where(Artefact.id == analysis.artefact_id).with_for_update()
-            )
+            if (analysis.artefact_id is not None
+                    and db.session.get_bind().dialect.name == 'postgresql'):
+                db.session.execute(
+                    text('SELECT pg_advisory_xact_lock(:ns, :aid)'),
+                    {'ns': _SEARCH_INDEX_LOCK_NAMESPACE, 'aid': analysis.artefact_id},
+                )
             handler(analysis, details)
             db.session.flush()
     except Exception:
