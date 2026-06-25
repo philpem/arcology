@@ -11,30 +11,43 @@ This is handled by the **`REPLAY_TRANSCODE`** analysis, which runs *after* the
 
 ```
 ARMovie (.rpl)
-   │  scotch  replay-transcode  (decode bitstream → raw RGB24 frames + WAV)
+   │  scotch  replay-transcode --output-format nut
+   │            (decode bitstream → NUT container: video + audio + geometry/fps)
    ▼
-raw RGB24 + WAV
-   │  ffmpeg  (mux → H.264/AAC MP4, first frame → JPEG poster)
+movie.nut
+   │  ffmpeg -i movie.nut  (re-encode → H.264/AAC MP4, first frame → JPEG poster)
    ▼
 MP4 + poster.jpg   →  saved as analysis output files
                        recorded on the ReplayMovie row (mp4_output_path, poster_path)
 ```
 
 - **scotch** (`replay-transcode`, <https://github.com/philpem/scotch>) decodes
-  the Replay bitstream. It is pure C11 + libm with a vendored ARM emulator and
-  is compiled in the worker Docker image (`build-scotch` stage).
-- **ffmpeg** muxes the decoded frames/audio into MP4 and extracts the poster.
-  Installed as a runtime package in the worker image.
+  the Replay bitstream and muxes the decoded video *and* audio into a single
+  self-describing **NUT** container (`--output-format nut`). It is pure C11 +
+  libm with a vendored ARM emulator and is compiled in the worker Docker image
+  (`build-scotch` stage). The pinned `SCOTCH_VERSION` must be a revision with
+  the NUT muxer — the worker now depends on it.
+- **ffmpeg** reads the NUT stream and re-encodes it to MP4, and extracts the
+  poster. `ffprobe` (shipped with ffmpeg) reports whether the muxed stream
+  carries an audio track. Installed as a runtime package in the worker image.
 
-`replay-transcode` **always outputs plain packed `rgb24`** — every codec's
-working colour (YUV555, 6Y5UV, RGB555, palette, …) is converted to rgb24
-internally — so the rawvideo input we hand ffmpeg is always `-pixel_format
-rgb24`. We deliberately do **not** force `--video-colour`: passing
-`--video-colour rgb888` told the transcoder to read codec 7's YUV555 working
-output as RGB888, zeroing the blue channel and producing all-red frames. (Note
-the transcoder's printed recipe also contains a libx264 *output* `-pix_fmt
-yuv420p`; that is the encode format and must not be applied to the rawvideo
-input.)
+The NUT container is **self-describing**: it carries the geometry, frame rate
+and audio track, so ffmpeg is invoked with a plain `-i movie.nut` — the old
+`-f rawvideo -pixel_format rgb24 -video_size WxH -framerate FPS` recipe and the
+sidecar WAV are gone. scotch still converts every codec's working colour
+(YUV555, 6Y5UV, RGB555, palette, …) to packed rgb24 internally before muxing,
+so the colour-handling concerns that motivated *not* forcing `--video-colour`
+(passing `--video-colour rgb888` read codec 7's YUV555 output as RGB888, zeroing
+the blue channel → all-red frames) are now entirely inside scotch.
+
+**Why a NUT *file*, not a stdout pipe.** Upstream documents
+`replay-transcode --output-format nut | ffmpeg -i -`. The worker instead writes
+the NUT to a scratch file (`--output movie.nut`) and feeds ffmpeg that path,
+because Replay decodes are routinely multi-GB and the worker's subprocess
+helper captures stdout into memory — piping would reintroduce the unbounded
+in-RAM buffer the file-based intermediate exists to avoid (see the worker I/O
+rules in `CLAUDE.md`). The on-disk NUT is comparable in size to the previous
+raw-RGB24 intermediate, so the scratch footprint is unchanged.
 
 **Sound-only** Replay files (video format 0) have no frames; they are transcoded
 to an **M4A** (AAC) audio file and shown with an HTML5 `<audio>` player instead
