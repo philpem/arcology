@@ -1260,7 +1260,13 @@ def update_analysis(id):
         analysis.progress_updated_at = None
 
     # On successful completion of specific analysis types, extract structured
-    # data from the JSON details blob into indexed search tables.
+    # data from the JSON details blob into indexed search tables.  This runs in
+    # the same transaction as the status update so the index rows and the
+    # 'completed' status commit atomically — a crash can never leave a completed
+    # analysis with missing index rows.  Per-artefact serialisation uses a
+    # transaction-scoped advisory lock (not the artefact row lock), so it does
+    # not queue behind the heavily-contended artefact FOR UPDATE that
+    # request_analysis / produce_artefact take during extraction.
     if data.get('status') == 'completed' and data.get('success'):
         _populate_search_index(analysis)
 
