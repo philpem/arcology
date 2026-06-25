@@ -357,3 +357,76 @@ or S3) after upgrading:
 New uploads are deduplicated automatically as they are hashed; this runbook is
 only needed once, to clean up content that predates the dedup model. Progress
 and savings are visible on the staff/admin **Storage** page (`/storage`).
+
+> **Note — this runbook covers uploaded artefacts only.** `backfill-blobs` and
+> `dedup-artefacts` operate on `Artefact` rows. Transcoded media outputs (Acorn
+> Replay / generic media → MP4/M4A) are *not* artefacts; they have their own
+> dedup tooling below.
+
+## dedup-transcode-outputs
+
+Collapses **legacy duplicate media transcodes** onto shared, refcounted
+`OutputBlob`s — without re-running the (expensive) transcode. New transcodes are
+content-addressed on the source file's hash and deduplicated automatically at
+write time, but outputs produced before content-addressing existed sit at
+per-artefact paths, so the same source media transcoded under two artefacts is
+stored twice. This command migrates those legacy outputs onto the canonical
+`media/{source_sha256}/{tool_version}/` location.
+
+Because identical source media transcodes to an equivalent output, the source
+file's already-recorded SHA-256 (on the `ExtractedFile`, or the `Artefact` for a
+direct upload) determines the canonical location — the transcoder is never run.
+The one surviving copy per source is hashed to record its true output hash on the
+blob; identical-source duplicates link to it and their redundant copies are
+reclaimed. Rows whose source hash cannot be resolved unambiguously are skipped
+and counted (a later `flask reanalyse` migrates them via the normal path).
+
+```bash
+flask dedup-transcode-outputs --dry-run   # report what would change
+flask dedup-transcode-outputs             # apply
+```
+
+Options:
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Report without modifying storage or the DB |
+| `--batch-size N` | Rows to commit per batch (default: 200) |
+
+Safe to re-run — rows already linked to a blob are skipped.
+
+## redo-transcode
+
+Discards an **incorrectly produced transcode** and re-encodes it from scratch.
+Media transcodes are cached on `(source_sha256, tool_version)`, so a plain
+`flask reanalyse` is a cache *hit* and re-serves the same bad output. This command
+first **invalidates** the cached output (deletes the shared `OutputBlob`(s) and
+files, clears every referencing row), then re-queues the transcode so the worker
+re-encodes. A bad transcode of a given source is bad for *every* artefact sharing
+that source, so invalidation is scoped by source hash.
+
+```bash
+flask redo-transcode --artefact UUID --dry-run    # preview
+flask redo-transcode --artefact UUID              # invalidate + re-queue
+flask redo-transcode --source-hash SHA256         # by source media hash
+flask redo-transcode --artefact UUID --no-reanalyse  # only clear the cache
+```
+
+Specify the target by `--artefact` (every transcode the artefact owns) and/or
+`--source-hash` (one source's output, across all artefacts that share it); at
+least one is required.
+
+Options:
+
+| Flag | Description |
+|------|-------------|
+| `--artefact UUID` | Redo every transcode owned by this artefact |
+| `--source-hash SHA` | Redo the transcode of this source media hash |
+| `--no-reanalyse` | Only invalidate the cached output; do not re-queue |
+| `--dry-run` | Report without modifying anything |
+
+> To invalidate **every** cached transcode at once (e.g. after changing the
+> ffmpeg flags or codec choices for all media), bump
+> `MEDIA_TRANSCODE_TOOL_VERSION` in `arcology_shared/transcode_paths.py` instead:
+> a new value routes all transcodes to a fresh namespace, and the old outputs are
+> reclaimed by the storage GC once nothing references them.

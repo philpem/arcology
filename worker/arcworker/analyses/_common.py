@@ -17,6 +17,7 @@ from typing import NamedTuple
 from arcology_shared.enums import AnalysisStatus, AnalysisType
 from arcology_shared.hints import HintKey
 from arcology_shared.transcode_paths import (
+    MEDIA_TRANSCODE_TOOL_VERSION,
     transcode_movie_name,
     transcode_output_subdir,
     transcode_poster_name,
@@ -25,11 +26,10 @@ from ..config import log
 from ..exceptions import JobCancelledException
 from ..tools import compute_file_hash
 
-# Bump to invalidate every cached transcode output (e.g. when the ffmpeg flags
-# or codec choices change).  Part of the content-addressed output path, so a new
-# value simply routes transcodes to a fresh namespace; old outputs are left for
-# the storage GC to reclaim once nothing references them.
-MEDIA_TRANSCODE_TOOL_VERSION = '1'
+# MEDIA_TRANSCODE_TOOL_VERSION is defined in arcology_shared.transcode_paths so
+# the worker (writer) and the web app (which dedups/reclaims these outputs) share
+# one source of truth.  Imported above; handlers in this package keep importing
+# it from here unchanged.
 
 # AnalysisType.value → handler function, populated by @analysis_handler
 # at import time.  Handlers are free functions with the signature
