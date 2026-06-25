@@ -22,7 +22,6 @@ transaction that records the analysis status.
 import json
 from flask import current_app
 from sqlalchemy import select
-from sqlalchemy.exc import OperationalError
 from arcology_shared.enums import AnalysisType
 from ..database import (
     Analysis,
@@ -390,13 +389,9 @@ def populate_search_index_from_analysis(analysis: Analysis) -> None:
     status update *before* opening the savepoint so a savepoint rollback
     cannot undo it.
 
-    A row-level lock (SELECT … FOR UPDATE NOWAIT) on the artefact serialises
+    A row-level lock (SELECT … FOR UPDATE) on the artefact serialises
     concurrent completions of the same analysis type so they don't clobber
-    each other's freshly-inserted rows.  NOWAIT means the lock attempt fails
-    immediately rather than blocking if another transaction already holds it —
-    a ``55P03`` OperationalError is caught and the index update is skipped
-    (rather than stalling the HTTP response for up to the worker's read timeout).
-    Run ``flask rebuild-search-index`` to repair any gaps.
+    each other's freshly-inserted rows.
     """
     if not analysis.details:
         return
@@ -417,31 +412,10 @@ def populate_search_index_from_analysis(analysis: Analysis) -> None:
         db.session.flush()
         with db.session.begin_nested():
             db.session.execute(
-                select(Artefact).where(Artefact.id == analysis.artefact_id).with_for_update(nowait=True)
+                select(Artefact).where(Artefact.id == analysis.artefact_id).with_for_update()
             )
             handler(analysis, details)
             db.session.flush()
-    except OperationalError as exc:
-        pgcode = getattr(getattr(exc, 'orig', None), 'pgcode', None)
-        if pgcode == '55P03':
-            # Another concurrent analysis completion holds the row lock.
-            # Skip index population rather than blocking the HTTP response;
-            # `flask rebuild-search-index` will repair the gap.
-            current_app.logger.warning(
-                f"Search index update skipped for analysis {analysis.uuid} "
-                f"({enum_value(analysis.analysis_type)}): artefact row locked by "
-                f"concurrent update (run rebuild-search-index to repair)"
-            )
-        else:
-            try:
-                import sentry_sdk
-                sentry_sdk.capture_exception()
-            except ImportError:
-                pass
-            current_app.logger.exception(
-                f"Error populating search index for analysis {analysis.uuid} "
-                f"({enum_value(analysis.analysis_type)})"
-            )
     except Exception:
         try:
             import sentry_sdk

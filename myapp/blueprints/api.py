@@ -7,6 +7,7 @@ RESTful API for external integrations.
 import hmac
 import json
 import os
+import threading
 from datetime import datetime, timezone
 from functools import wraps
 from flask import Blueprint, abort, current_app, g, jsonify, request
@@ -1259,11 +1260,6 @@ def update_analysis(id):
         analysis.progress_total = None
         analysis.progress_updated_at = None
 
-    # On successful completion of specific analysis types, extract structured
-    # data from the JSON details blob into indexed search tables.
-    if data.get('status') == 'completed' and data.get('success'):
-        _populate_search_index(analysis)
-
     try:
         db.session.commit()
     except StaleDataError:
@@ -1278,17 +1274,48 @@ def update_analysis(id):
     if record_heartbeat:
         record_worker_heartbeat(request.headers.get('X-Worker-Id'))
 
-    # After extraction populates the file listing, refresh this artefact's
-    # similarity cache so matches appear without a manual rebuild-similarity.
     if data.get('status') == 'completed' and data.get('success'):
+        # Extract structured data from the JSON details blob into indexed search
+        # tables.  Run in a background thread with a fresh DB session so the
+        # HTTP response returns immediately — the FOR UPDATE lock this acquires
+        # must not stall the worker's API_TIMEOUT when multiple workers complete
+        # analyses for the same artefact concurrently.
+        _schedule_search_index_update(analysis.id)
+        # After extraction populates the file listing, refresh this artefact's
+        # similarity cache so matches appear without a manual rebuild-similarity.
         _refresh_similarity(analysis)
 
     return jsonify(analysis_to_dict(analysis))
 
 
-def _populate_search_index(analysis):
-    from ..services.search_index import populate_search_index_from_analysis
-    populate_search_index_from_analysis(analysis)
+def _schedule_search_index_update(analysis_id: int) -> None:
+    """Populate search-index tables for a completed analysis in a background thread.
+
+    Running this off the request thread means the FOR UPDATE lock inside
+    populate_search_index_from_analysis never blocks the HTTP response, so the
+    worker's API_TIMEOUT cannot be exceeded by lock contention between concurrent
+    analysis completions for the same artefact.  The analysis status is already
+    committed before this is called, so the background thread only needs to own
+    the index write.
+    """
+    app = current_app._get_current_object()
+
+    def _run():
+        with app.app_context():
+            from ..services.search_index import populate_search_index_from_analysis
+            analysis = db.session.get(Analysis, analysis_id)
+            if analysis is None:
+                return
+            populate_search_index_from_analysis(analysis)
+            try:
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                app.logger.exception(
+                    'Failed to commit search index update for analysis %s', analysis_id
+                )
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 # Analysis types that change an artefact's extracted-file set and therefore its
