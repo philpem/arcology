@@ -12,11 +12,24 @@ import json
 import time
 import traceback
 from collections.abc import Callable
+from pathlib import Path
 from typing import NamedTuple
 from arcology_shared.enums import AnalysisStatus, AnalysisType
 from arcology_shared.hints import HintKey
+from arcology_shared.transcode_paths import (
+    transcode_movie_name,
+    transcode_output_subdir,
+    transcode_poster_name,
+)
 from ..config import log
 from ..exceptions import JobCancelledException
+from ..tools import compute_file_hash
+
+# Bump to invalidate every cached transcode output (e.g. when the ffmpeg flags
+# or codec choices change).  Part of the content-addressed output path, so a new
+# value simply routes transcodes to a fresh namespace; old outputs are left for
+# the storage GC to reclaim once nothing references them.
+MEDIA_TRANSCODE_TOOL_VERSION = '1'
 
 # AnalysisType.value → handler function, populated by @analysis_handler
 # at import time.  Handlers are free functions with the signature
@@ -439,4 +452,64 @@ def iter_resolved_files(self, files, extraction_path, work_dir, *,
         if reporter is not None:
             reporter.update(resolved)
         yield file_data, file_path, disk_path
+
+
+def transcode_cached(worker, *, input_path: Path, output_ext: str, produce,
+                     tool_version: str = MEDIA_TRANSCODE_TOOL_VERSION) -> dict | None:
+    """Content-keyed transcode: reuse a prior output, else produce and store it.
+
+    Hashes *input_path*, asks the server whether this exact source content has
+    already been transcoded for ``(tool_version, output_ext)`` and, on a hit,
+    returns the shared output paths without re-encoding.  On a miss it calls
+    ``produce()`` — which must transcode to local files in the work dir and
+    return ``(local_mp4_path, local_poster_path_or_None)``, or ``(None, None)``
+    to signal a transcode failure — then stores both under the content-addressed
+    subdir so the next identical source is a hit.
+
+    On success returns ``{'mp4_output_path', 'poster_path', 'input_sha256',
+    'cache_hit'}``; on a *miss* it additionally reports the produced outputs'
+    ``file_size``/``sha256`` (``mp4_file_size``/``mp4_sha256`` and, when a poster
+    was produced, ``poster_file_size``/``poster_sha256``) so the web side can
+    register the refcounting ``OutputBlob`` rows.  Returns ``None`` when
+    ``produce()`` signalled failure.  ``ffprobe`` / header metadata is derived
+    from the input by the caller and is intentionally independent of this cache
+    — only the expensive re-encode is skipped.
+    """
+    _md5, sha256, _size = compute_file_hash(input_path)
+
+    cache = worker.api.get_transcode_cache(sha256, tool_version, output_ext)
+    if cache:
+        # Reuse the previously stored output; the web side links the existing
+        # OutputBlob by its (unique) storage path, so no output hashes needed.
+        return {
+            'mp4_output_path': cache.get('mp4_output_path'),
+            'poster_path': cache.get('poster_path'),
+            'input_sha256': sha256,
+            'cache_hit': True,
+        }
+
+    local_mp4, local_poster = produce()
+    if local_mp4 is None:
+        return None
+
+    subdir = transcode_output_subdir(sha256, tool_version)
+    _m_md5, mp4_sha256, mp4_size = compute_file_hash(Path(local_mp4))
+    saved_mp4 = worker.save_output_file(
+        Path(local_mp4), transcode_movie_name(output_ext), subdir=subdir)
+    result = {
+        'mp4_output_path': saved_mp4,
+        'poster_path': None,
+        'input_sha256': sha256,
+        'cache_hit': False,
+        'mp4_file_size': mp4_size,
+        'mp4_sha256': mp4_sha256,
+    }
+    if local_poster is not None and Path(local_poster).exists():
+        _p_md5, poster_sha256, poster_size = compute_file_hash(Path(local_poster))
+        result['poster_path'] = worker.save_output_file(
+            Path(local_poster),
+            transcode_poster_name(Path(local_poster).suffix), subdir=subdir)
+        result['poster_file_size'] = poster_size
+        result['poster_sha256'] = poster_sha256
+    return result
 # vim: ts=4 sw=4 et

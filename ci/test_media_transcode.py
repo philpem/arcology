@@ -25,9 +25,14 @@ if _REPO_ROOT not in sys.path:
 
 os.environ.setdefault('WORKER_API_KEY', 'test')
 
+from worker.arcworker.analyses import _common as common_mod
 from worker.arcworker.analyses import media as media_mod
 from worker.arcworker.analysis import AnalysisWorker
 from worker.arcworker.tools import media_transcode as mt
+
+# A deterministic stand-in for the streaming file hash so the content-keyed
+# transcode cache can run without real files on disk.
+_FAKE_HASH = ('0' * 32, 'f' * 64, 4)
 
 
 class _FakeProc:
@@ -133,6 +138,7 @@ def _worker():
     w = MagicMock(spec=AnalysisWorker)
     w.save_output_file.side_effect = lambda p, name, subdir=None: f'out/{name}'
     w.api = MagicMock()
+    w.api.get_transcode_cache.return_value = None  # default: content-cache miss
     return w
 
 
@@ -161,6 +167,7 @@ class TestMode1Direct(unittest.TestCase):
             ('.mp4', '.avi', '.mov')) else 'audio',
             'original_filename': filename, 'uuid': 'a'}
         with patch.object(media_mod, 'probe_media', return_value=probe_result), \
+             patch.object(common_mod, 'compute_file_hash', return_value=_FAKE_HASH), \
              patch.object(media_mod, 'transcode_media_to_mp4',
                           return_value=transcode_result or {'success': True, 'poster_path': None}), \
              patch.object(media_mod, 'transcode_media_to_audio',
@@ -184,7 +191,9 @@ class TestMode1Direct(unittest.TestCase):
         d = _details_from_complete(w)
         entry = d['transcoded'][0]
         self.assertFalse(entry['passthrough'])
-        self.assertEqual(entry['mp4_output_path'], 'out/u.mp4')
+        # Output is content-addressed: stored as movie.<ext> under a hash subdir.
+        self.assertEqual(entry['mp4_output_path'], 'out/movie.mp4')
+        self.assertEqual(entry['input_sha256'], _FAKE_HASH[1])
 
     def test_probe_failure_fails_analysis(self):
         w = self._run('clip.avi', {'success': False, 'error': 'bad'})
@@ -218,6 +227,7 @@ class TestMode2Extraction(unittest.TestCase):
         with patch.object(media_mod, 'scan_partition_files', return_value=scan), \
              patch.object(media_mod, 'iter_resolved_files', _iter), \
              patch.object(media_mod, 'probe_media', side_effect=_probe_by_path), \
+             patch.object(common_mod, 'compute_file_hash', return_value=_FAKE_HASH), \
              patch.object(media_mod, 'transcode_media_to_mp4',
                           return_value={'success': True, 'poster_path': None}), \
              patch.object(media_mod, 'transcode_media_to_audio',

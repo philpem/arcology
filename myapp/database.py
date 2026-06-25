@@ -1079,6 +1079,14 @@ class ReplayMovie(db.Model):
     # Relative paths under the 'outputs' storage directory, served via get_output_file.
     mp4_output_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     poster_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    # Content-addressed dedup anchors: when the transcoded MP4/poster is stored as
+    # a shared, refcounted OutputBlob (keyed on the source file's hash), these FKs
+    # reference it so the GC only deletes the bytes once nothing references them.
+    # Null for legacy rows whose outputs predate content-addressed transcoding.
+    mp4_output_blob_id: Mapped[int | None] = mapped_column(
+        ForeignKey('output_blobs.id', ondelete='SET NULL'), nullable=True, index=True)
+    poster_blob_id: Mapped[int | None] = mapped_column(
+        ForeignKey('output_blobs.id', ondelete='SET NULL'), nullable=True, index=True)
 
     artefact: Mapped["Artefact"] = relationship(back_populates="replay_movies")
 
@@ -1120,6 +1128,13 @@ class MediaFile(db.Model):
     # for audio-only sources.
     mp4_output_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     poster_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    # Content-addressed dedup anchors (see ReplayMovie): reference the shared,
+    # refcounted OutputBlob holding the transcoded MP4/poster bytes.  Null for
+    # legacy rows whose outputs predate content-addressed transcoding.
+    mp4_output_blob_id: Mapped[int | None] = mapped_column(
+        ForeignKey('output_blobs.id', ondelete='SET NULL'), nullable=True, index=True)
+    poster_blob_id: Mapped[int | None] = mapped_column(
+        ForeignKey('output_blobs.id', ondelete='SET NULL'), nullable=True, index=True)
 
     artefact: Mapped["Artefact"] = relationship(back_populates="media_files")
 

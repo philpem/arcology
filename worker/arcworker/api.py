@@ -209,6 +209,41 @@ class ArcologyAPI:
         """
         self.patch(f"/artefacts/{artefact_uuid}", {'media_metadata': metadata})
 
+    def get_transcode_cache(self, sha256: str, tool_version: str,
+                            ext: str) -> dict | None:
+        """Look up a previously transcoded output for identical source content.
+
+        Media transcoding is content-keyed: a file is transcoded once and the
+        output stored under a content-addressed path keyed on the *source*
+        file's SHA-256.  Returns ``{'mp4_output_path', 'poster_path'}`` (the
+        shared output paths) when the server has a registered OutputBlob for
+        this ``(sha256, tool_version, ext)``, else ``None`` — a cache miss, for
+        which the caller should transcode normally.
+
+        A 404 is the ordinary miss and is deliberately not logged as an error;
+        any transport failure also returns ``None`` so a flaky lookup degrades
+        to a (correct, if redundant) re-transcode rather than a job failure.
+        """
+        query = urlencode({
+            'sha256': sha256, 'tool_version': tool_version, 'ext': ext,
+        })
+        try:
+            resp = self._request_response('get', f'/transcode-cache?{query}')
+        except Exception as exc:
+            log.warning(f"transcode-cache lookup failed (treating as miss): {exc}")
+            return None
+        if resp.status_code != 200:
+            if resp.status_code != 404:
+                log.warning(
+                    f"transcode-cache lookup HTTP {resp.status_code} "
+                    f"(treating as miss)"
+                )
+            return None
+        try:
+            return resp.json()
+        except Exception:
+            return None
+
     def update_analysis(self, analysis_id: int, **kwargs) -> bool:
         """
         Update analysis record in API.
