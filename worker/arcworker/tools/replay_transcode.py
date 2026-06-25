@@ -119,9 +119,23 @@ def transcode_armovie_to_mp4(
             stage='decode',
         )
 
-    # Does the muxed stream carry audio?  (Informational; also decides whether
-    # we ask ffmpeg to encode an audio track.)
+    # Inspect the muxed stream: confirm it actually carries video, and whether
+    # it carries audio.  Under ``--skip-unsupported`` scotch can emit a NUT with
+    # only an audio stream (video codec unsupported, audio decoded) — that file
+    # is non-empty, so the decode check above passes, but ``-map 0:v:0`` would
+    # then hard-fail at the mux stage (or, with a zero-frame video stream,
+    # produce a degenerate MP4).  Treat "no video stream" as a clean decode
+    # failure here instead, mirroring the old raw-output "produced no video".
     probe = probe_media(nut_path, timeout=timeout)
+    if probe.get('success') and not probe.get('has_video'):
+        return tool_result(
+            False,
+            tool='replay-transcode',
+            error='replay-transcode produced no video stream '
+                  '(codec unsupported or decompressor module missing)',
+            process_output=decode_output,
+            stage='decode',
+        )
     has_audio = bool(probe.get('has_audio')) if probe.get('success') else False
 
     # ── Stage 2: NUT → MP4 ─────────────────────────────────────────────────

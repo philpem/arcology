@@ -64,10 +64,10 @@ def _make_fake_run(*, decode_ok=True, make_nut=True):
     return _run
 
 
-def _fake_probe(has_audio):
-    """Stand-in for ``probe_media`` (ffprobe) reporting audio presence."""
+def _fake_probe(has_audio, has_video=True):
+    """Stand-in for ``probe_media`` (ffprobe) reporting stream presence."""
     def _probe(path, *, timeout=None):
-        return {'success': True, 'has_audio': has_audio}
+        return {'success': True, 'has_audio': has_audio, 'has_video': has_video}
     return _probe
 
 
@@ -138,6 +138,26 @@ class TestTranscodeTool(unittest.TestCase):
                 )
             self.assertFalse(res['success'])
             self.assertEqual(res['stage'], 'decode')
+
+    def test_audio_only_nut_on_video_path_fails_at_decode(self):
+        """A video movie whose NUT carries audio but no video stream (codec
+        skipped via --skip-unsupported) fails cleanly at the decode stage rather
+        than hard-failing the '-map 0:v:0' mux."""
+        with tempfile.TemporaryDirectory() as td:
+            work = Path(td)
+            inp = work / 'movie.rpl'
+            inp.write_bytes(b'ARMovie')
+            with patch('worker.arcworker.tools.replay_transcode.run_tool_with_output',
+                       side_effect=_make_fake_run()), \
+                 patch('worker.arcworker.tools.replay_transcode.probe_media',
+                       side_effect=_fake_probe(True, has_video=False)):
+                res = transcode_armovie_to_mp4(
+                    inp, work / 'o.mp4', width=320, height=256, frame_rate=25,
+                    work_dir=work,
+                )
+            self.assertFalse(res['success'])
+            self.assertEqual(res['stage'], 'decode')
+            self.assertIn('no video stream', res['error'])
 
     def test_modules_dir_passed_through(self):
         seen = {}
