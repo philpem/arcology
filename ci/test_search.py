@@ -1215,6 +1215,50 @@ class TestSearchLogic(unittest.TestCase):
         self.assertIn('Modules/ADFS', file_paths)
 
     # ------------------------------------------------------------------
+    # File-bucket refinement (intersection across key families)
+    # ------------------------------------------------------------------
+
+    def test_module_refines_swi_intersection(self):
+        # The ADFS module provides ADFS_DiscOp — both terms describe the same
+        # file, so they must AND (refine), not union.
+        results = self._search('module:ADFS swi:ADFS_DiscOp')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('Modules/ADFS', file_paths)
+
+    def test_module_refines_swi_excludes_mismatch(self):
+        # WindowManager does NOT provide ADFS_DiscOp; the WindowManager module
+        # file must not survive the intersection (regression: previously the two
+        # sub-searches unioned, so module:WindowManager re-added it).
+        results = self._search('module:WindowManager swi:ADFS_DiscOp')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertNotIn('Modules/WindowManager', file_paths)
+        self.assertNotIn('Modules/ADFS', file_paths)
+        self.assertEqual(results['files'], [])
+
+    def test_type_refines_module_intersection(self):
+        # Modules are type ffa; type:ffa module:ADFS keeps only the ADFS module.
+        results = self._search('type:ffa module:ADFS')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('Modules/ADFS', file_paths)
+        self.assertNotIn('Modules/WindowManager', file_paths)
+
+    def test_type_refines_module_excludes_wrong_type(self):
+        # ff8 is !RunImage's type, not the module files' (ffa) — empty result.
+        results = self._search('type:ff8 module:ADFS')
+        self.assertEqual(results['files'], [])
+
+    def test_filename_refines_command_intersection(self):
+        # The ADFS module file provides the Back command and is named 'ADFS'.
+        results = self._search('filename:ADFS command:Back')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('Modules/ADFS', file_paths)
+
+    def test_filename_refines_command_excludes_mismatch(self):
+        # WindowManager does not provide 'Back'; intersection is empty.
+        results = self._search('filename:WindowManager command:Back')
+        self.assertEqual(results['files'], [])
+
+    # ------------------------------------------------------------------
     # Acorn Replay / ARMovie searches
     # ------------------------------------------------------------------
 
@@ -1270,6 +1314,28 @@ class TestSearchLogic(unittest.TestCase):
         results = self._search('ReplayTitle:"lion fish"')
         file_paths = [ef.path for ef, _, _, _ in results['files']]
         self.assertNotIn('Video/Secret', file_paths)
+
+    def test_type_refines_replay_intersection(self):
+        # type:ARMovie (→ ae7) AND replay format 19 both describe LionFish.
+        results = self._search('type:ARMovie ReplayVideoFormat:19')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertIn('Video/LionFish', file_paths)
+
+    def test_type_refines_replay_excludes_wrong_format(self):
+        # LionFish is ae7 but format 19, not 99 — the file term must REFINE the
+        # Replay search, not union with it (regression: previously type:ARMovie
+        # ran a separate file search that re-added LionFish regardless of format).
+        results = self._search('type:ARMovie ReplayVideoFormat:99')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertNotIn('Video/LionFish', file_paths)
+        self.assertEqual(results['files'], [])
+
+    def test_type_refines_replay_excludes_wrong_type(self):
+        # Wrong file type (fff) — even though format 19 matches LionFish, the
+        # ae7 file does not satisfy type:Text, so the intersection is empty.
+        results = self._search('type:Text ReplayVideoFormat:19')
+        file_paths = [ef.path for ef, _, _, _ in results['files']]
+        self.assertNotIn('Video/LionFish', file_paths)
 
     # ------------------------------------------------------------------
     # _numeric_filter behaviour (exact / range / operators)
@@ -1397,6 +1463,24 @@ class TestSearchLogic(unittest.TestCase):
         results = self._search('xyzzy_no_such_item')
         self.assertEqual(results['catalogue_items'], [])
 
+    def test_text_search_multiple_words_are_anded(self):
+        # 'Software' is in the item name, 'classic' in its description — both
+        # present, so the item matches (words may match different columns).
+        results = self._search('Software classic')
+        self.assertTrue(len(results['catalogue_items']) > 0)
+
+    def test_text_search_and_excludes_when_one_word_missing(self):
+        # 'Software' matches but 'xyzzynope' appears nowhere — AND must exclude
+        # the item (regression: bare words were previously ORed).
+        results = self._search('Software xyzzynope')
+        self.assertEqual(results['catalogue_items'], [])
+
+    def test_text_search_and_across_name_and_description(self):
+        # 'Test' is in the name, 'BBC' in the description: each word may match
+        # either column, but both must be present somewhere.
+        results = self._search('Test BBC')
+        self.assertTrue(len(results['catalogue_items']) > 0)
+
     def test_text_search_quoted_phrase(self):
         results = self._search('"BBC Micro"')
         self.assertTrue(len(results['catalogue_items']) > 0)
@@ -1417,6 +1501,17 @@ class TestSearchLogic(unittest.TestCase):
 
     def test_text_search_artefact_no_match(self):
         results = self._search('xyzzy_no_such_artefact')
+        art_results = [r for r in results['artefacts'] if r['type'] == 'artefact_text']
+        self.assertEqual(art_results, [])
+
+    def test_text_search_artefact_multiple_words_anded(self):
+        # 'Side' is in the label, 'flux' in the description — both present.
+        results = self._search('Side flux')
+        art_results = [r for r in results['artefacts'] if r['type'] == 'artefact_text']
+        self.assertTrue(len(art_results) > 0)
+
+    def test_text_search_artefact_and_excludes_missing_word(self):
+        results = self._search('Side xyzzynope')
         art_results = [r for r in results['artefacts'] if r['type'] == 'artefact_text']
         self.assertEqual(art_results, [])
 
@@ -1466,6 +1561,20 @@ class TestSearchLogic(unittest.TestCase):
     def test_total_zero_when_no_match(self):
         results = self._search('xyzzy_guaranteed_no_match_12345')
         self.assertEqual(results['total'], 0)
+
+    def test_per_bucket_totals_reflect_real_counts(self):
+        # The tab badges render results['totals'][bucket], which must be the true
+        # match count (what the pagination line reports) — not the current page's
+        # row count, which caps at per_page.  Two fixture files match here.
+        from myapp.blueprints.search import _run_search, parse_query
+        with self.app.app_context():
+            full = _run_search(parse_query('path:!Impression path:Tools'), per_page=100)
+            paged = _run_search(parse_query('path:!Impression path:Tools'), page=1, per_page=1)
+        self.assertEqual(full['totals']['files'], 2)
+        # Same query, page size 1: only one row rendered, but the badge total
+        # still reports the full count.
+        self.assertEqual(len(paged['files']), 1)
+        self.assertEqual(paged['totals']['files'], 2)
 
 
 # =============================================================================
