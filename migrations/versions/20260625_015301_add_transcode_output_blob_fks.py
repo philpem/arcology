@@ -9,15 +9,15 @@ leave the FKs null — they are served via the legacy path and migrate to the
 content-addressed scheme on re-analysis.
 
 Revision ID: 00006a3bdbb4
-Revises: 00006a3b25dd
-Create Date: 2026-06-24 13:29:24.000000
+Revises: 00006a3beadf
+Create Date: 2026-06-25 01:53:01.000000
 """
 import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = '00006a3bdbb4'
-down_revision = '00006a3b25dd'
+down_revision = '00006a3beadf'
 branch_labels = None
 depends_on = None
 
