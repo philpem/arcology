@@ -154,6 +154,17 @@ class StorageBackend(abc.ABC):
         """
         return f"{storage_directory}/{storage_path}"
 
+    def disk_usage(self) -> dict | None:
+        """Return filesystem capacity for the backing volume, or None.
+
+        Backends that sit on a real filesystem return a dict with integer
+        ``total``/``used``/``free`` byte counts and a ``kind`` discriminator.
+        Object stores (S3) have no meaningful free-space figure and return
+        ``None``; callers derive capacity for those from stored-byte sums and an
+        optional configured quota instead.
+        """
+        return None
+
 
 class LocalStorage(StorageBackend):
     """Local filesystem storage backend.
@@ -287,6 +298,22 @@ class LocalStorage(StorageBackend):
     def local_path(self, key: str) -> Path:
         """Return the local filesystem path for a key (LocalStorage only)."""
         return self._resolve(key)
+
+    def disk_usage(self) -> dict | None:
+        """Return total/used/free bytes for the uploads filesystem.
+
+        Reported against the uploads directory — the dominant store and, in the
+        common single-volume deployment, the same filesystem as outputs.  Uses a
+        single ``statvfs`` syscall (cheap enough to call per request behind the
+        short-lived navbar cache).
+        """
+        usage = shutil.disk_usage(self.uploads_dir)
+        return {
+            'kind': 'local',
+            'total': usage.total,
+            'used': usage.used,
+            'free': usage.free,
+        }
 
 
 class S3Storage(StorageBackend):
