@@ -25,6 +25,39 @@ def _int_env(name: str, default: str) -> int:
         ) from None
 
 
+# Byte-size suffix table (longest-first so 3-char suffixes win over 1-char).
+_BYTE_SUFFIXES = (
+    ('tib', 1024**4), ('gib', 1024**3), ('mib', 1024**2), ('kib', 1024),
+    ('t',   1024**4), ('g',   1024**3), ('m',   1024**2), ('k',   1024),
+)
+
+
+def _byte_env(name: str, default: str) -> int:
+    """Parse a byte-size environment variable.
+
+    Accepts K/KiB, M/MiB, G/GiB, T/TiB (case-insensitive, powers of 1024)
+    and bare integers.
+    """
+    raw = os.environ.get(name, default)
+    s = raw.strip().lower()
+    for suffix, multiplier in _BYTE_SUFFIXES:
+        if s.endswith(suffix):
+            num = s[:-len(suffix)].strip()
+            if num:
+                try:
+                    return int(num) * multiplier
+                except ValueError:
+                    pass
+            break
+    try:
+        return int(s)
+    except ValueError:
+        raise ValueError(
+            f"Environment variable {name} must be a byte size "
+            f"(e.g. 10G, 512MiB, or a plain integer), got {raw!r}"
+        ) from None
+
+
 def validate_config() -> None:
     """Validate required settings; called from the worker entry point.
 
@@ -110,7 +143,7 @@ MAX_ARCHIVE_DEPTH = _int_env('MAX_ARCHIVE_DEPTH', '10')
 
 # Maximum size of a decompressed file in bytes (default: 10 GiB).
 # Prevents decompression-bomb inputs from exhausting disk space.
-MAX_DECOMPRESSED_BYTES = _int_env('MAX_DECOMPRESSED_BYTES', str(10 * 1024 ** 3))
+MAX_DECOMPRESSED_BYTES = _byte_env('MAX_DECOMPRESSED_BYTES', '10GiB')
 
 # Mastering detection: number of trailing tracks to scan
 MASTERING_TRACK_SCAN_COUNT = _int_env('MASTERING_TRACK_SCAN_COUNT', '5')
