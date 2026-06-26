@@ -26,10 +26,7 @@ Two operator tasks are *not* covered by that write-time path and live here:
   source hash.
 """
 
-import hashlib
 import posixpath
-import tempfile
-from pathlib import Path
 from flask import current_app
 from arcology_shared.enums import AnalysisType
 from arcology_shared.transcode_paths import (
@@ -49,6 +46,7 @@ from ..database import (
 )
 from ..extensions import db
 from ..utils.blobs import get_or_create_blob
+from .artefact_storage import compute_file_hashes
 
 # The two row types that own a transcoded output, each mapped to the analysis
 # that (re)produces it.  REPLAY_PROCESS both parses and transcodes ARMovie files
@@ -106,43 +104,30 @@ def _canonical_path(source_sha, leaf):
 
 
 def _hash_output(storage_path):
-    """Return ``(sha256, file_size)`` of an output object, streamed (no OOM).
+    """Return ``(sha256, md5, file_size)`` of an output object, streamed (no OOM).
 
-    Returns ``(None, None)`` when the object is missing.
+    Returns ``(None, None, None)`` when the object is missing.
     """
     storage = current_app.storage
     key = storage.storage_key('outputs', storage_path)
     if not storage.exists(key):
-        return None, None
-    digest = hashlib.sha256()
-    size = 0
-    f = storage.open_read(key)
-    try:
-        for chunk in iter(lambda: f.read(1024 * 1024), b''):
-            digest.update(chunk)
-            size += len(chunk)
-    finally:
-        f.close()
-    return digest.hexdigest(), size
+        return None, None, None
+    md5, sha256, size = compute_file_hashes(key, use_storage=True, with_size=True)
+    return sha256, md5, size
 
 
 def _relocate(src_path, dst_path):
     """Move an output object to its canonical ``dst_path`` (no-op if already so).
 
-    Uses get->put->delete so it works on every storage backend (the abstraction
-    exposes no rename); skips the copy when the destination already exists.
+    Delegates to the backend's native move (filesystem rename / S3 CopyObject),
+    so large outputs are not streamed through the web process.
     """
     if src_path == dst_path:
         return
     storage = current_app.storage
-    src_key = storage.storage_key('outputs', src_path)
-    dst_key = storage.storage_key('outputs', dst_path)
-    if not storage.exists(dst_key):
-        with tempfile.TemporaryDirectory() as tmp:
-            local = Path(tmp) / posixpath.basename(dst_path)
-            storage.get(src_key, local)
-            storage.put(dst_key, local)
-    storage.delete(src_key)
+    storage.move(
+        storage.storage_key('outputs', src_path),
+        storage.storage_key('outputs', dst_path))
 
 
 class DedupStats:
@@ -188,7 +173,7 @@ def _link_output(row, fk_attr, path_attr, canonical, stats, dry_run):
         stats.blobs_created += 1
         return True
 
-    sha256, size = _hash_output(current_path)
+    sha256, md5, size = _hash_output(current_path)
     if sha256 is None:
         stats.skipped += 1
         return False
@@ -201,7 +186,7 @@ def _link_output(row, fk_attr, path_attr, canonical, stats, dry_run):
     # existing path, mirroring search_index._link_transcode_blobs so the row,
     # owner-resolution and refcount GC all agree on one canonical path.
     blob, created = get_or_create_blob(
-        StorageDirectory.OUTPUTS, canonical, size, sha256)
+        StorageDirectory.OUTPUTS, canonical, size, sha256, md5)
     if blob is None:
         stats.skipped += 1
         return False

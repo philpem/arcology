@@ -155,15 +155,21 @@ def get_artefact_path(artefact: Artefact) -> str:
     return full_path
 
 
-def compute_file_hashes(filepath_or_key: str, use_storage: bool = False) -> tuple[str, str]:
+def compute_file_hashes(filepath_or_key: str, use_storage: bool = False,
+                        with_size: bool = False):
     """Compute MD5 and SHA256 hashes for a file.
 
     Args:
         filepath_or_key: Either a local filesystem path or a storage key.
         use_storage: If True, read from the storage backend using key.
+        with_size: If True, also return the byte count as a third tuple element
+            ``(md5, sha256, size)``, counted in the same single pass so a caller
+            needing a blob's ``(file_size, sha256)`` avoids a second read.
+            Default returns ``(md5, sha256)`` for existing callers.
     """
     md5_hash = hashlib.md5()
     sha256_hash = hashlib.sha256()
+    size = 0
 
     if use_storage:
         f = current_app.storage.open_read(filepath_or_key)
@@ -174,9 +180,12 @@ def compute_file_hashes(filepath_or_key: str, use_storage: bool = False) -> tupl
         for chunk in iter(lambda: f.read(8192), b''):
             md5_hash.update(chunk)
             sha256_hash.update(chunk)
+            size += len(chunk)
     finally:
         f.close()
 
+    if with_size:
+        return md5_hash.hexdigest(), sha256_hash.hexdigest(), size
     return md5_hash.hexdigest(), sha256_hash.hexdigest()
 
 

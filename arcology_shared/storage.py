@@ -154,6 +154,22 @@ class StorageBackend(abc.ABC):
         """
         return f"{storage_directory}/{storage_path}"
 
+    def move(self, src_key: str, dst_key: str) -> None:
+        """Move an object from ``src_key`` to ``dst_key`` (no-op if equal).
+
+        Default is download->upload->delete via a temp file, so it works on any
+        backend; subclasses override with a native, server-side move (filesystem
+        rename, S3 CopyObject) to avoid streaming the bytes through the client.
+        Overwrites the destination if it already exists.
+        """
+        if src_key == dst_key:
+            return
+        with tempfile.TemporaryDirectory() as tmp:
+            local = Path(tmp) / 'obj'
+            self.get(src_key, local)
+            self.put(dst_key, local)
+        self.delete(src_key)
+
     def disk_usage(self) -> dict | None:
         """Return filesystem capacity for the backing volume, or None.
 
@@ -218,6 +234,20 @@ class LocalStorage(StorageBackend):
 
     def open_read(self, key: str) -> BinaryIO:
         return open(self._resolve(key), 'rb')
+
+    def move(self, src_key: str, dst_key: str) -> None:
+        src = self._resolve(src_key)
+        dst = self._resolve(dst_key)
+        if src.resolve() == dst.resolve():
+            return
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.replace(src, dst)  # atomic within a filesystem
+        except OSError:
+            # Cross-device rename (uploads/ and outputs/ on separate mounts):
+            # fall back to copy + delete.
+            shutil.copy2(src, dst)
+            src.unlink()
 
     def delete(self, key: str) -> None:
         path = self._resolve(key)
@@ -442,6 +472,25 @@ class S3Storage(StorageBackend):
             raise OSError(f"S3 read failed for '{key}': {exc}") from exc
         except BotoCoreError as exc:
             raise OSError(f"S3 read failed for '{key}': {exc}") from exc
+
+    def move(self, src_key: str, dst_key: str) -> None:
+        if src_key == dst_key:
+            return
+        try:
+            # Server-side copy; MetadataDirective=REPLACE so the destination's
+            # Content-Type is (re)derived from its key, not copied from source
+            # (an output renamed to a new extension must render inline).
+            self._client.copy_object(
+                Bucket=self.bucket,
+                CopySource={'Bucket': self.bucket, 'Key': src_key},
+                Key=dst_key,
+                ContentType=_mime_for_key(dst_key),
+                MetadataDirective='REPLACE',
+            )
+        except (BotoCoreError, BotoClientError) as exc:
+            raise OSError(
+                f"S3 move failed for '{src_key}' -> '{dst_key}': {exc}") from exc
+        self.delete(src_key)
 
     def delete(self, key: str) -> None:
         # S3 delete is idempotent — no error if key doesn't exist
