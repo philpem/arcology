@@ -80,4 +80,24 @@ def classify_content(filename: str,
 
     return categories
 
+
+def present_content_categories(files) -> set[ContentCategory]:
+    """Union of :func:`classify_content` over an extraction's file list.
+
+    ``files`` is the list of file dicts produced by ``enumerate_extracted_files``
+    (directories are skipped).  The result is the set of categories whose
+    follow-on analysis is worth queueing for this extraction — a partition with
+    no ARMovie files yields no :data:`ContentCategory.REPLAY`, so no Replay job is
+    dispatched at all.  Stops early once every category is present.
+    """
+    present: set[ContentCategory] = set()
+    for f in files:
+        if f.get('is_directory'):
+            continue
+        present |= classify_content(
+            f.get('filename') or f.get('path') or '', f.get('risc_os_filetype'))
+        if len(present) == len(ContentCategory):
+            break
+    return present
+
 # vim: ts=4 sw=4 et

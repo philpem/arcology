@@ -12,6 +12,10 @@ from functools import partial
 from pathlib import Path
 from arcology_shared.archive_formats import ArchiveType, get_archive_info
 from arcology_shared.bundle import BUNDLE_MARKER, is_sidecar_name
+from arcology_shared.content_categories import (
+    ContentCategory,
+    present_content_categories,
+)
 from arcology_shared.enums import COMPRESSED_RAW_SECTOR_TYPES, AnalysisType, ArtefactType
 from arcology_shared.hints import HintKey
 from ..config import log
@@ -499,6 +503,7 @@ def _extract_top_level_archive(
             artefact['uuid'],
             partition.get('uuid'),
             extraction_path=rel_output_path,
+            categories=present_content_categories(files),
         )
 
     self.complete_analysis(
@@ -857,6 +862,7 @@ def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path
             artefact['uuid'],
             partition.get('uuid'),
             extraction_path=rel_output_path,
+            categories=present_content_categories(files),
         )
 
     self.complete_analysis(
@@ -1229,10 +1235,16 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
     self._upload_extraction_tree(persistent_output)
     rel_output_path = self._relative_output_path(persistent_output)
 
+    # Which follow-on content kinds the archive actually contains — gate the
+    # per-kind follow-ups so an archive with no nested archives / no
+    # Sprite-Draw-Text / no modules does not spawn jobs that scan and find
+    # nothing.  PRODUCT_RECOGNITION is hash-based and always re-queued.
+    present = present_content_categories(files)
+
     # Queue ARCHIVE_DETECT for nested archives (if under depth limit).
     # Pass the archive's display path as path_prefix so that nested
     # ARCHIVE_EXTRACT jobs can strip it to locate files on disk.
-    if extraction_depth < MAX_ARCHIVE_DEPTH:
+    if extraction_depth < MAX_ARCHIVE_DEPTH and ContentCategory.ARCHIVE in present:
         self.api.queue_analysis(
             artefact['uuid'],
             AnalysisType.ARCHIVE_DETECT.value,
@@ -1257,15 +1269,16 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
     # Pass path_prefix so that source_file values in analysis.details match
     # ExtractedFile.path in the database (which has the archive's display
     # path prepended for nested archives).
-    self.api.queue_analysis(
-        artefact['uuid'],
-        AnalysisType.FORMAT_CONVERT.value,
-        hints={
-            HintKey.EXTRACTION_PATH: rel_output_path,
-            HintKey.PATH_PREFIX: archive_display_path,
-            HintKey.PARTITION_UUID: partition_uuid,
-        },
-    )
+    if ContentCategory.CONVERTIBLE in present:
+        self.api.queue_analysis(
+            artefact['uuid'],
+            AnalysisType.FORMAT_CONVERT.value,
+            hints={
+                HintKey.EXTRACTION_PATH: rel_output_path,
+                HintKey.PATH_PREFIX: archive_display_path,
+                HintKey.PARTITION_UUID: partition_uuid,
+            },
+        )
 
     # Queue RISCOS_MODULE_PARSE for modules inside the archive.
     # The initial parse (queued by queue_partition_follow_ups after
@@ -1273,15 +1286,16 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
     # so it never sees files inside archives.
     # Pass path_prefix so the handler can strip the archive prefix when
     # building on-disk paths (DB paths include the prefix, disk paths don't).
-    self.api.queue_analysis(
-        artefact['uuid'],
-        AnalysisType.RISCOS_MODULE_PARSE.value,
-        hints={
-            HintKey.PARTITION_UUID: partition_uuid,
-            HintKey.EXTRACTION_PATH: rel_output_path,
-            HintKey.PATH_PREFIX: archive_display_path,
-        },
-    )
+    if ContentCategory.RISCOS_MODULE in present:
+        self.api.queue_analysis(
+            artefact['uuid'],
+            AnalysisType.RISCOS_MODULE_PARSE.value,
+            hints={
+                HintKey.PARTITION_UUID: partition_uuid,
+                HintKey.EXTRACTION_PATH: rel_output_path,
+                HintKey.PATH_PREFIX: archive_display_path,
+            },
+        )
 
     tool_key = result.get('tool', 'tool').lower().replace(' ', '_')
     po = result.get('process_output')
