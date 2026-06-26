@@ -381,13 +381,15 @@ def _extract_top_level_archive(
     """
     import json
     from ..config import OUTPUT_DIR
-    from ..utils.paths import get_output_path
+    from ..utils.paths import get_output_path, reset_output_dir
 
     analysis_id = analysis['id']
     item = artefact.get('item', {'uuid': 'default', 'slug': 'default'})
 
-    extract_dir = get_output_path(
-        OUTPUT_DIR, item, artefact, analysis, partition=None
+    # Rebuild clean: the path is deterministic per analysis, so a re-run must
+    # not merge into the previous run's tree (see reset_output_dir).
+    extract_dir = reset_output_dir(
+        get_output_path(OUTPUT_DIR, item, artefact, analysis, partition=None)
     )
     input_path = self.get_input_path(artefact, work_dir)
 
@@ -611,7 +613,7 @@ def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path
     uses that file directly instead of re-decompressing the original artefact.
     """
     from ..config import OUTPUT_DIR
-    from ..utils.paths import get_output_path
+    from ..utils.paths import get_output_path, reset_output_dir
 
     analysis_id = analysis['id']
     artefact_type = artefact.get('artefact_type', '')
@@ -650,14 +652,17 @@ def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path
     # Get Item for hierarchical path
     item = artefact.get('item', {'uuid': 'default', 'slug': 'default'})
 
-    # Use hierarchical output path for persistent storage
-    extract_dir = get_output_path(
+    # Use hierarchical output path for persistent storage.  Start from a clean
+    # directory: the path is deterministic per analysis UUID, so a re-run must
+    # not merge a fresh extraction into the previous run's tree (see
+    # reset_output_dir).
+    extract_dir = reset_output_dir(get_output_path(
         OUTPUT_DIR,
         item,
         artefact,
         analysis,
         partition=None
-    )
+    ))
 
     # Track every tool attempted so all process_output ends up in details.
     all_results: dict[str, dict] = {}
@@ -1000,7 +1005,7 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
         get_archive_info,
     )
     from ..config import OUTPUT_DIR
-    from ..utils.paths import get_output_path
+    from ..utils.paths import get_output_path, reset_output_dir
 
     analysis_id = analysis['id']
 
@@ -1158,9 +1163,11 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
         partition
     )
 
-    # Move extracted files from temp to persistent storage
+    # Move extracted files from temp to persistent storage.  Clear any prior
+    # run's tree first so a re-run replaces rather than merges into it (see
+    # reset_output_dir).
     if temp_output_dir.exists():
-        persistent_output.mkdir(parents=True, exist_ok=True)
+        reset_output_dir(persistent_output).mkdir(parents=True, exist_ok=True)
         shutil.copytree(temp_output_dir, persistent_output, dirs_exist_ok=True)
 
     # Scan extracted files from persistent storage.
