@@ -275,6 +275,8 @@ def resolve_extracted_file_path(ef):
 
                 s3_prefix = f"outputs/{base.strip('/')}"
 
+                from arcology_shared.storage import compact_storage_key
+
                 # Build candidate keys.  If the file has a known RISC OS
                 # filetype, try ,xxx suffix variants (both cases) before
                 # the plain key.  This avoids an expensive list_prefix()
@@ -283,11 +285,12 @@ def resolve_extracted_file_path(ef):
                 # unstripped fallback for archives with matching top-level dir).
                 s3_candidates = []
                 for dp in disk_paths_to_try:
-                    file_key = f"{s3_prefix}/{dp.lstrip('/')}"
                     if ef.risc_os_filetype:
-                        s3_candidates.append(file_key + ',' + ef.risc_os_filetype.lower())
-                        s3_candidates.append(file_key + ',' + ef.risc_os_filetype.upper())
-                    s3_candidates.append(file_key)
+                        s3_candidates.append(compact_storage_key(
+                            s3_prefix, dp.lstrip('/') + ',' + ef.risc_os_filetype.lower()))
+                        s3_candidates.append(compact_storage_key(
+                            s3_prefix, dp.lstrip('/') + ',' + ef.risc_os_filetype.upper()))
+                    s3_candidates.append(compact_storage_key(s3_prefix, dp.lstrip('/')))
 
                 for key in s3_candidates:
                     try:

@@ -471,6 +471,31 @@ class AnalysisWorker:
             # Not under outputs dir — return as-is (shouldn't happen normally)
             return str(extract_dir)
 
+    def _extraction_storage_relpath_mapper(self, prefix: str):
+        """Return a mapper for extracted-file storage keys in object storage.
+
+        The mapper is deterministic from the logical extraction-relative path,
+        so the DB can keep the archive's original path while S3/Garage stores
+        only a compact key when the full key would exceed the backend limit.
+        """
+        from arcology_shared.storage import (
+            MAX_S3_KEY_BYTES,
+            compact_storage_relpath,
+        )
+        max_relative_path_bytes = (
+            MAX_S3_KEY_BYTES - len((prefix.rstrip('/') + '/').encode('utf-8'))
+        )
+        compacted = {'count': 0}
+
+        def mapper(relative_path: str) -> str:
+            mapped = compact_storage_relpath(relative_path, max_relative_path_bytes)
+            if mapped != relative_path.lstrip('/'):
+                compacted['count'] += 1
+            return mapped
+
+        mapper.compacted = compacted
+        return mapper
+
     def _upload_extraction_tree(self, extract_dir: Path) -> None:
         """Upload an extraction directory tree to storage (S3 mode).
 
@@ -482,6 +507,7 @@ class AnalysisWorker:
             return
         rel = self._relative_output_path(extract_dir)
         prefix = self.storage.storage_key('outputs', rel)
+        relpath_mapper = self._extraction_storage_relpath_mapper(prefix)
         # Report upload progress so a large tree (tens of thousands of files)
         # doesn't leave the status line frozen on the previous "Registering
         # files … 100%" phase while the objects are pushed to S3.  Heartbeating
@@ -496,7 +522,17 @@ class AnalysisWorker:
         # raises, the exception propagates (the analysis handler marks the job
         # failed), and the local directory is left in place so a retry can
         # re-upload without orphaning partially-uploaded S3 objects.
-        count = self.storage.put_tree(prefix, extract_dir, progress_callback=progress_callback)
+        count = self.storage.put_tree(
+            prefix, extract_dir,
+            progress_callback=progress_callback,
+            relpath_mapper=relpath_mapper,
+        )
+        compacted_count = relpath_mapper.compacted['count']
+        if compacted_count:
+            log.warning(
+                f"Compacted {compacted_count} extracted storage key(s) under "
+                f"{prefix} to fit object storage limits"
+            )
         log.info(f"Uploaded {count} files to storage prefix: {prefix}")
         shutil.rmtree(extract_dir, ignore_errors=True)
         log.info(f"Cleaned up local extraction directory: {extract_dir}")
@@ -550,14 +586,17 @@ class AnalysisWorker:
         # S3 mode: try downloading each candidate key directly.
         # Using get() with a 404 catch is one S3 call per attempt vs
         # exists() + get() = two calls for the successful candidate.
-        prefix = extraction_path.lstrip('/')
-        base_key = f"outputs/{prefix}/{relative_path.lstrip('/')}"
+        from arcology_shared.storage import compact_storage_key
+        prefix = f"outputs/{extraction_path.lstrip('/')}"
+        rel_path = relative_path.lstrip('/')
 
         candidates = []
         if risc_os_filetype:
-            candidates.append(base_key + ',' + risc_os_filetype.lower())
-            candidates.append(base_key + ',' + risc_os_filetype.upper())
-        candidates.append(base_key)
+            candidates.append(compact_storage_key(
+                prefix, rel_path + ',' + risc_os_filetype.lower()))
+            candidates.append(compact_storage_key(
+                prefix, rel_path + ',' + risc_os_filetype.upper()))
+        candidates.append(compact_storage_key(prefix, rel_path))
 
         for key in candidates:
             local_path = dest_dir / Path(key).name
