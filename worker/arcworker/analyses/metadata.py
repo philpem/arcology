@@ -15,7 +15,7 @@ Covers:
 
 import json
 from pathlib import Path
-from arcology_shared.artefact_types import is_replay_file
+from arcology_shared.content_categories import ContentCategory, classify_content
 from arcology_shared.enums import AnalysisType, ArtefactType
 from arcology_shared.fuzzyhash import compute_tlsh
 from ..config import REPLAY_MODULES_DIR, log
@@ -235,7 +235,8 @@ def process_riscos_module_parse(self, analysis: dict, artefact: dict, work_dir: 
     # Discover filetype ffa (Module) files via the shared batch scaffold.
     scan = scan_partition_files(
         self, analysis, artefact,
-        select_files=lambda f: (f.get('risc_os_filetype') or '').lower() == 'ffa',
+        select_files=lambda f: ContentCategory.RISCOS_MODULE in classify_content(
+            f.get('filename') or f.get('path') or '', f.get('risc_os_filetype')),
     )
     if scan is None:
         self.fail_analysis(
@@ -327,7 +328,7 @@ def process_replay(self, analysis: dict, artefact: dict, work_dir: Path):
     # shared batch scaffold.
     scan = scan_partition_files(
         self, analysis, artefact,
-        select_files=lambda f: is_replay_file(
+        select_files=lambda f: ContentCategory.REPLAY in classify_content(
             f.get('filename') or f.get('path') or '', f.get('risc_os_filetype')),
     )
     if scan is None:

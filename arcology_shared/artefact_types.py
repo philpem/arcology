@@ -211,6 +211,77 @@ def is_replay_file(filename: str, risc_os_filetype: str | None) -> bool:
     _, ext = os.path.splitext((filename or '').lower())
     return ext in REPLAY_EXTENSIONS
 
+
+# Viewable (format-convertible) detection.
+#
+# Files the FORMAT_CONVERT pipeline can render into a web-viewable output:
+# RISC OS Sprite/DrawFile/Text and bitmap images.  Three lookup tables — by
+# RISC OS filetype suffix on the on-disk name (``,ff9``), by plain extension
+# (DOS discs without RISC OS metadata), and by RISC OS filetype hex code (ISO
+# extractions whose names lost the ``,xxx`` suffix).  Each maps to the
+# ArtefactType the converter dispatches on.
+RISCOS_VIEWABLE_SUFFIXES: dict[str, ArtefactType] = {
+    ',ff9': ArtefactType.ACORN_SPRITE,  # Sprite
+    ',aff': ArtefactType.ACORN_DRAW,    # DrawFile
+    ',fff': ArtefactType.ACORN_TEXT,    # Text
+    ',feb': ArtefactType.ACORN_TEXT,    # Obey
+    ',ffe': ArtefactType.ACORN_TEXT,    # Command
+    ',c85': ArtefactType.IMAGE,         # JPEG
+    ',695': ArtefactType.IMAGE,         # GIF
+    ',b60': ArtefactType.IMAGE,         # PNG
+    ',69c': ArtefactType.IMAGE,         # BMP
+    ',ff0': ArtefactType.IMAGE,         # TIFF
+}
+VIEWABLE_EXTENSIONS: dict[str, ArtefactType] = {
+    '.spr':  ArtefactType.ACORN_SPRITE,
+    '.aff':  ArtefactType.ACORN_DRAW,
+    '.draw': ArtefactType.ACORN_DRAW,
+    '.txt':  ArtefactType.ACORN_TEXT,
+    '.jpg':  ArtefactType.IMAGE,
+    '.jpeg': ArtefactType.IMAGE,
+    '.png':  ArtefactType.IMAGE,
+    '.gif':  ArtefactType.IMAGE,
+    '.webp': ArtefactType.IMAGE,
+    '.bmp':  ArtefactType.IMAGE,
+    '.tif':  ArtefactType.IMAGE,
+    '.tiff': ArtefactType.IMAGE,
+    '.pcx':  ArtefactType.IMAGE,
+    '.tga':  ArtefactType.IMAGE,
+    '.wmf':  ArtefactType.IMAGE,
+    '.emf':  ArtefactType.IMAGE,
+}
+# &D94 (ArtWorks), &D87/&D88 (Impression), &D01 (TechWriter) are intentionally
+# omitted — they require bespoke rendering tools.
+RISCOS_VIEWABLE_FILETYPES: dict[str, ArtefactType] = {
+    'ff9': ArtefactType.ACORN_SPRITE,
+    'aff': ArtefactType.ACORN_DRAW,
+    'fff': ArtefactType.ACORN_TEXT,
+    'feb': ArtefactType.ACORN_TEXT,
+    'ffe': ArtefactType.ACORN_TEXT,
+    'c85': ArtefactType.IMAGE,  # JPEG
+    '695': ArtefactType.IMAGE,  # GIF
+    'b60': ArtefactType.IMAGE,  # PNG
+    '69c': ArtefactType.IMAGE,  # BMP
+    'ff0': ArtefactType.IMAGE,  # TIFF
+}
+
+
+def viewable_artefact_type(filename: str,
+                           risc_os_filetype: str | None) -> ArtefactType | None:
+    """Return the convertible ArtefactType for a file, or None if not viewable.
+
+    Metadata-only: prefers the RISC OS filetype hex code, then falls back to the
+    filename extension — the same precedence the FORMAT_CONVERT extraction scan
+    uses to pick files out of a partition's file list.
+    """
+    ft = (risc_os_filetype or '').lower()
+    if ft:
+        vt = RISCOS_VIEWABLE_FILETYPES.get(ft)
+        if vt:
+            return vt
+    _, ext = os.path.splitext((filename or '').lower())
+    return VIEWABLE_EXTENSIONS.get(ext)
+
 # Container extensions whose bytes a modern browser *may* be able to play
 # directly (subject to a codec check below).  Anything outside these sets is
 # always transcoded.  MOV/QT are included because, with H.264, they play in

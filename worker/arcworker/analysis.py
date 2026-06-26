@@ -390,25 +390,41 @@ class AnalysisWorker:
         *,
         extraction_path: str | None = None,
         path_prefix: str | None = None,
+        categories: 'set | None' = None,
     ):
-        """Queue the standard archive-detect, product-recognition, and format-convert follow-ups."""
+        """Queue the standard archive-detect, product-recognition, and format-convert follow-ups.
+
+        *categories* is the set of :class:`ContentCategory` actually present in
+        the extraction (from :func:`present_content_categories`).  A content-typed
+        follow-up is queued only when its category is present, so an extraction
+        with no ARMovie files never spawns a Replay job, no media never spawns a
+        transcode, and so on.  PRODUCT_RECOGNITION is hash-based (independent of
+        file kind) and always runs.  ``categories=None`` means "unknown" and
+        queues every follow-up — the pre-gating behaviour, kept as a safe default.
+        """
+        from arcology_shared.content_categories import ContentCategory
         from arcology_shared.enums import AnalysisType
-        archive_hints = {HintKey.PARTITION_UUID: partition_uuid}
-        if extraction_path:
-            archive_hints[HintKey.EXTRACTION_PATH] = extraction_path
-        if path_prefix:
-            archive_hints[HintKey.PATH_PREFIX] = path_prefix
-        self.api.queue_analysis(
-            artefact_uuid,
-            AnalysisType.ARCHIVE_DETECT.value,
-            hints=archive_hints,
-        )
+
+        def present(category) -> bool:
+            return categories is None or category in categories
+
+        if present(ContentCategory.ARCHIVE):
+            archive_hints = {HintKey.PARTITION_UUID: partition_uuid}
+            if extraction_path:
+                archive_hints[HintKey.EXTRACTION_PATH] = extraction_path
+            if path_prefix:
+                archive_hints[HintKey.PATH_PREFIX] = path_prefix
+            self.api.queue_analysis(
+                artefact_uuid,
+                AnalysisType.ARCHIVE_DETECT.value,
+                hints=archive_hints,
+            )
         self.api.queue_analysis(
             artefact_uuid,
             AnalysisType.PRODUCT_RECOGNITION.value,
             hints={HintKey.PARTITION_UUID: partition_uuid},
         )
-        if extraction_path:
+        if extraction_path and present(ContentCategory.CONVERTIBLE):
             self.api.queue_analysis(
                 artefact_uuid,
                 AnalysisType.FORMAT_CONVERT.value,
@@ -417,38 +433,38 @@ class AnalysisWorker:
                     HintKey.PARTITION_UUID: partition_uuid,
                 },
             )
-        # RISC OS module metadata extraction — harmless no-op on non-Acorn
-        # extractions since only filetype ffa files are scanned.
-        module_hints = {HintKey.PARTITION_UUID: partition_uuid}
-        if extraction_path:
-            module_hints[HintKey.EXTRACTION_PATH] = extraction_path
-        self.api.queue_analysis(
-            artefact_uuid,
-            AnalysisType.RISCOS_MODULE_PARSE.value,
-            hints=module_hints,
-        )
-        # Acorn Replay / ARMovie metadata — harmless no-op on extractions with
-        # no ARMovie files (filetype ae7 or a .rpl/.replay extension).
-        replay_hints = {HintKey.PARTITION_UUID: partition_uuid}
-        if extraction_path:
-            replay_hints[HintKey.EXTRACTION_PATH] = extraction_path
-        self.api.queue_analysis(
-            artefact_uuid,
-            AnalysisType.REPLAY_PROCESS.value,
-            hints=replay_hints,
-        )
-        # Generic audio/video transcoding — harmless no-op on extractions with
-        # no non-native media files (the handler self-filters by extension).
-        media_hints = {HintKey.PARTITION_UUID: partition_uuid}
-        if extraction_path:
-            media_hints[HintKey.EXTRACTION_PATH] = extraction_path
-        if path_prefix:
-            media_hints[HintKey.PATH_PREFIX] = path_prefix
-        self.api.queue_analysis(
-            artefact_uuid,
-            AnalysisType.MEDIA_TRANSCODE.value,
-            hints=media_hints,
-        )
+        # RISC OS module metadata extraction (filetype ffa).
+        if present(ContentCategory.RISCOS_MODULE):
+            module_hints = {HintKey.PARTITION_UUID: partition_uuid}
+            if extraction_path:
+                module_hints[HintKey.EXTRACTION_PATH] = extraction_path
+            self.api.queue_analysis(
+                artefact_uuid,
+                AnalysisType.RISCOS_MODULE_PARSE.value,
+                hints=module_hints,
+            )
+        # Acorn Replay / ARMovie indexing + transcode (filetype ae7 / .rpl …).
+        if present(ContentCategory.REPLAY):
+            replay_hints = {HintKey.PARTITION_UUID: partition_uuid}
+            if extraction_path:
+                replay_hints[HintKey.EXTRACTION_PATH] = extraction_path
+            self.api.queue_analysis(
+                artefact_uuid,
+                AnalysisType.REPLAY_PROCESS.value,
+                hints=replay_hints,
+            )
+        # Generic audio/video transcoding.
+        if present(ContentCategory.MEDIA):
+            media_hints = {HintKey.PARTITION_UUID: partition_uuid}
+            if extraction_path:
+                media_hints[HintKey.EXTRACTION_PATH] = extraction_path
+            if path_prefix:
+                media_hints[HintKey.PATH_PREFIX] = path_prefix
+            self.api.queue_analysis(
+                artefact_uuid,
+                AnalysisType.MEDIA_TRANSCODE.value,
+                hints=media_hints,
+            )
 
     def _relative_output_path(self, extract_dir: Path) -> str:
         """Convert an absolute extraction directory to a relative path for storage.

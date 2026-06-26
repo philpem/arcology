@@ -15,6 +15,11 @@ import json
 import signal
 from contextlib import contextmanager
 from pathlib import Path
+from arcology_shared.artefact_types import (
+    RISCOS_VIEWABLE_FILETYPES,
+    RISCOS_VIEWABLE_SUFFIXES,
+    VIEWABLE_EXTENSIONS,
+)
 from arcology_shared.enums import AnalysisType, ArtefactType
 from ..config import log
 from ..tools import (
@@ -49,56 +54,13 @@ def _conversion_timeout(seconds: int, label: str = ''):
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old_handler)
 
-# RISC OS filetype suffixes that indicate viewable file types.
-# Mapping: suffix (e.g. ',ff9') → ArtefactType
-_RISCOS_VIEWABLE_SUFFIXES: dict[str, 'ArtefactType'] = {
-    ',ff9': ArtefactType.ACORN_SPRITE,  # Sprite
-    ',aff': ArtefactType.ACORN_DRAW,    # DrawFile
-    ',fff': ArtefactType.ACORN_TEXT,    # Text
-    ',feb': ArtefactType.ACORN_TEXT,    # Obey
-    ',ffe': ArtefactType.ACORN_TEXT,    # Command
-    ',c85': ArtefactType.IMAGE,         # JPEG
-    ',695': ArtefactType.IMAGE,         # GIF
-    ',b60': ArtefactType.IMAGE,         # PNG
-    ',69c': ArtefactType.IMAGE,         # BMP
-    ',ff0': ArtefactType.IMAGE,         # TIFF
-}
-# Extension-based detection (used for DOS discs without RISC OS metadata)
-_EXT_VIEWABLE: dict[str, 'ArtefactType'] = {
-    '.spr':  ArtefactType.ACORN_SPRITE,
-    '.aff':  ArtefactType.ACORN_DRAW,
-    '.draw': ArtefactType.ACORN_DRAW,
-    '.txt':  ArtefactType.ACORN_TEXT,
-    '.jpg':  ArtefactType.IMAGE,
-    '.jpeg': ArtefactType.IMAGE,
-    '.png':  ArtefactType.IMAGE,
-    '.gif':  ArtefactType.IMAGE,
-    '.webp': ArtefactType.IMAGE,
-    '.bmp':  ArtefactType.IMAGE,
-    '.tif':  ArtefactType.IMAGE,
-    '.tiff': ArtefactType.IMAGE,
-    '.pcx':  ArtefactType.IMAGE,
-    '.tga':  ArtefactType.IMAGE,
-    '.wmf':  ArtefactType.IMAGE,
-    '.emf':  ArtefactType.IMAGE,
-}
-# RISC OS filetype hex → viewable type, for ISO files where no ',xxx'
-# suffix is present on the extracted filename but risc_os_filetype is
-# available from the ARCHIMEDES extension metadata sidecar.
-# Note: &D94 (ArtWorks), &D87/&D88 (Impression), &D01 (TechWriter) are
-# intentionally omitted — they require bespoke rendering tools.
-_RISCOS_HEX_VIEWABLE: dict[str, 'ArtefactType'] = {
-    'ff9': ArtefactType.ACORN_SPRITE,
-    'aff': ArtefactType.ACORN_DRAW,
-    'fff': ArtefactType.ACORN_TEXT,
-    'feb': ArtefactType.ACORN_TEXT,
-    'ffe': ArtefactType.ACORN_TEXT,
-    'c85': ArtefactType.IMAGE,  # JPEG
-    '695': ArtefactType.IMAGE,  # GIF
-    'b60': ArtefactType.IMAGE,  # PNG
-    '69c': ArtefactType.IMAGE,  # BMP
-    'ff0': ArtefactType.IMAGE,  # TIFF
-}
+# Viewable-file lookup tables now live in arcology_shared (the single source the
+# content classifier also reads); aliased here under their original names so the
+# worker-class attribute bindings (AnalysisWorker._RISCOS_VIEWABLE_SUFFIXES, …)
+# and this module's exports keep working unchanged.
+_RISCOS_VIEWABLE_SUFFIXES = RISCOS_VIEWABLE_SUFFIXES
+_EXT_VIEWABLE = VIEWABLE_EXTENSIONS
+_RISCOS_HEX_VIEWABLE = RISCOS_VIEWABLE_FILETYPES
 
 
 def _convert_file_to_outputs(
