@@ -94,6 +94,32 @@ def cache_user_id(user):
     return user.get_id() if getattr(user, 'is_authenticated', False) else 'anon'
 
 
+def cache_value(prefix, signature, compute, *, user=None, timeout=None):
+    """Read-through cache of a single value, keyed by content version.
+
+    ``prefix`` namespaces the entry and ``signature`` distinguishes inputs (e.g.
+    a hash of a search query).  Pass ``user`` for a per-viewer value (one whose
+    computation is visibility-filtered); omit it for a global value.
+
+    A computed ``None`` is treated as "no value" and not stored, so ``None`` is
+    always a miss.  This is deliberate and safe for counts: only ``None`` — never
+    ``0`` — is a miss, so a genuine zero count caches and serves correctly.
+
+    With NullCache ``get`` always misses, so this reduces to a bare ``compute()``
+    call — identical behaviour to the un-cached code.
+    """
+    version = content_version()
+    uid = cache_user_id(user) if user is not None else 'all'
+    key = f'{prefix}:u{uid}:{signature}:v{version}'
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    value = compute()
+    if value is not None:
+        cache.set(key, value, timeout=timeout)
+    return value
+
+
 # Stored in place of a value to record that an id was computed and has *no*
 # result.  Lets cache_per_id() distinguish a genuine miss (recompute) from a
 # known-empty id (cache hit, omit), so ids without a value aren't recomputed

@@ -229,6 +229,67 @@ class TestCachePerId(_CacheTestBase):
         self.assertEqual(got, {1: 'bob'})
 
 
+class TestCacheValue(_CacheTestBase):
+    def test_reads_through_then_caches(self):
+        from myapp.services.cache import cache_value
+
+        calls = []
+
+        def compute():
+            calls.append(1)
+            return 42
+
+        self.assertEqual(cache_value('t:val', 'sig', compute), 42)
+        self.assertEqual(cache_value('t:val', 'sig', compute), 42)
+        self.assertEqual(len(calls), 1)  # second call served from cache
+
+    def test_zero_is_cached_not_treated_as_miss(self):
+        """A genuine 0 (e.g. a search count of zero) must cache, not recompute."""
+        from myapp.services.cache import cache_value
+
+        calls = []
+
+        def compute():
+            calls.append(1)
+            return 0
+
+        self.assertEqual(cache_value('t:zero', 'sig', compute), 0)
+        self.assertEqual(cache_value('t:zero', 'sig', compute), 0)
+        self.assertEqual(len(calls), 1)
+
+    def test_distinct_signatures_isolated(self):
+        from myapp.services.cache import cache_value
+
+        a = cache_value('t:sig', 'query-a', lambda: 'A')
+        b = cache_value('t:sig', 'query-b', lambda: 'B')
+        self.assertEqual((a, b), ('A', 'B'))
+
+    def test_version_bump_invalidates(self):
+        from myapp.services.cache import bump_content_version, cache_value
+
+        self.assertEqual(cache_value('t:v', 'sig', lambda: 'old'), 'old')
+        bump_content_version()
+        self.assertEqual(cache_value('t:v', 'sig', lambda: 'new'), 'new')
+
+    def test_per_user_isolation(self):
+        from flask_login import AnonymousUserMixin
+        from myapp.services.cache import cache_value
+
+        class _User:
+            is_authenticated = True
+
+            def __init__(self, uid):
+                self._uid = uid
+
+            def get_id(self):
+                return self._uid
+
+        anon = cache_value('t:u', 'sig', lambda: 'anon', user=AnonymousUserMixin())
+        alice = cache_value('t:u', 'sig', lambda: 'alice', user=_User('alice'))
+        # Different viewers must not share the entry.
+        self.assertEqual((anon, alice), ('anon', 'alice'))
+
+
 class TestNullCacheIsNoOp(unittest.TestCase):
     """With no backend configured the cache disables itself (always fresh)."""
 
