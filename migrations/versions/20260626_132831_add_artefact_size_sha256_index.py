@@ -8,7 +8,7 @@ covering these columns (unlike extracted_files / known_files / the blob tables),
 so those queries fell back to a sequential scan.  Add a composite index.
 
 Revision ID: 00006a3e7e7f
-Revises: 00006a3db85a
+Revises: 00006a3e696d
 Create Date: 2026-06-26 13:28:31 UTC
 """
 
@@ -16,7 +16,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "00006a3e7e7f"
-down_revision = "00006a3db85a"
+down_revision = "00006a3e696d"
 branch_labels = None
 depends_on = None
 
