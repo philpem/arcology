@@ -79,6 +79,35 @@ class TestFileRecordsReturnIds(unittest.TestCase):
             self.assertIsNotNone(row)
             self.assertEqual(row.path, path)
 
+    def test_nested_file_keyed_by_original_path(self):
+        # Files extracted from an archive (parent_file_id) are stored nested
+        # under the parent's path, but the response must key the id by the
+        # worker's *original* incoming path — that is the key the worker holds in
+        # memory and feeds to detect_and_queue_archives for nested archives.
+        from myapp.database import ExtractedFile
+        puuid, hdr = self._partition()
+        # Register an archive parent and mark it as such (so children nest).
+        parent = self.client.post(
+            f'/api/partitions/{puuid}/files',
+            json={'files': [{'path': 'big.zip', 'filename': 'big.zip',
+                             'is_directory': False}]}, headers=hdr).get_json()
+        parent_id = parent['files'][0]['id']
+        self.client.post(f'/api/files/{parent_id}/mark_archive',
+                         json={'is_archive': True}, headers=hdr)
+        # A child extracted from that archive, posted with its original path.
+        resp = self.client.post(
+            f'/api/partitions/{puuid}/files',
+            json={'files': [{'path': 'inner.txt', 'filename': 'inner.txt',
+                             'is_directory': False,
+                             'parent_file_id': parent_id}]}, headers=hdr).get_json()
+        self.assertEqual(len(resp['files']), 1)
+        entry = resp['files'][0]
+        # Keyed by the ORIGINAL path the worker sent...
+        self.assertEqual(entry['path'], 'inner.txt')
+        # ...while the stored row is nested under the archive.
+        self.assertEqual(self.db.session.get(ExtractedFile, entry['id']).path,
+                         'big.zip/inner.txt')
+
     def test_returns_id_for_preexisting_file_on_retry(self):
         # A re-posted (deduped) file is reported with its existing id, so a
         # retried registration can still detect archives among already-present
