@@ -46,7 +46,6 @@ from .flux import (
 )
 from .images import (
     _EXT_VIEWABLE,
-    _RISCOS_HEX_VIEWABLE,
     _RISCOS_VIEWABLE_SUFFIXES,
     _convert_file_to_outputs,
     _detect_viewable_type,
@@ -88,7 +87,6 @@ __all__ = [
     '_detect_viewable_type',
     '_RISCOS_VIEWABLE_SUFFIXES',
     '_EXT_VIEWABLE',
-    '_RISCOS_HEX_VIEWABLE',
     # Metadata
     'process_checksum_compute',
     'process_metadata_extract',

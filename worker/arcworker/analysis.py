@@ -637,7 +637,6 @@ class AnalysisWorker:
     _detect_viewable_type         = _analyses._detect_viewable_type
     _RISCOS_VIEWABLE_SUFFIXES     = _analyses._RISCOS_VIEWABLE_SUFFIXES
     _EXT_VIEWABLE                 = _analyses._EXT_VIEWABLE
-    _RISCOS_HEX_VIEWABLE          = _analyses._RISCOS_HEX_VIEWABLE
 
     # =========================================================================
     # Job Processing
