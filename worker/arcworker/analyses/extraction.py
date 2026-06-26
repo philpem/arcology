@@ -1,9 +1,10 @@
 """
 File / archive extraction analysis handlers.
 
-Covers FILE_EXTRACTION (disc/sector image → file tree), ARCHIVE_DETECT
-(scan a partition for nested archives), and ARCHIVE_EXTRACT (extract a
-detected archive — at top level or nested).
+Covers FILE_EXTRACTION (disc/sector image → file tree) and ARCHIVE_EXTRACT
+(extract a detected archive — at top level or nested).  Archive *detection* is
+folded into registration here too: ``detect_and_queue_archives`` marks archives
+and queues their extraction inline once files have DB ids.
 """
 
 import json
@@ -19,7 +20,7 @@ from arcology_shared.content_categories import (
 )
 from arcology_shared.enums import COMPRESSED_RAW_SECTOR_TYPES, AnalysisType, ArtefactType
 from arcology_shared.hints import HintKey
-from ..config import log
+from ..config import MAX_ARCHIVE_DEPTH, log
 from ..tools import (
     decompress_single_file,
     detect_fat_filesystem,
@@ -467,7 +468,7 @@ def _extract_top_level_archive(
         extraction_started_at=extraction_started_at,
     )
 
-    partition = self.api.register_file_listing(
+    partition, path_to_id = self.api.register_file_listing(
         artefact['uuid'], files, 'archive',
         container_format=archive_info['name'],
         archive_comment=result.get('archive_comment'),
@@ -502,6 +503,10 @@ def _extract_top_level_archive(
     # a crash after queueing is safe — the server dedupes PENDING/RUNNING
     # analyses when the retried job queues them again.
     if partition:
+        detect_and_queue_archives(
+            self, artefact['uuid'], files, path_to_id, partition.get('uuid'),
+            extraction_path=rel_output_path,
+        )
         self.queue_partition_follow_ups(
             artefact['uuid'],
             partition.get('uuid'),
@@ -849,7 +854,7 @@ def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path
         container_format = _iso_and_fat_labels.get(fs_type)
 
     # Register partition and file listing in the database
-    partition = self.api.register_file_listing(
+    partition, path_to_id = self.api.register_file_listing(
         artefact['uuid'],
         files,
         fs_type,
@@ -864,10 +869,14 @@ def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path
     self._upload_extraction_tree(extract_dir)
     rel_output_path = self._relative_output_path(extract_dir)
 
-    # Queue ARCHIVE_DETECT to scan extracted files for nested archives.
-    # Queued before completing so a crash in between cannot lose the
-    # follow-ups (the server dedupes PENDING/RUNNING analyses on retry).
+    # Detect nested archives and queue the standard follow-ups.  Queued before
+    # completing so a crash in between cannot lose them (the server dedupes
+    # PENDING/RUNNING analyses on retry).
     if partition:
+        detect_and_queue_archives(
+            self, artefact['uuid'], files, path_to_id, partition.get('uuid'),
+            extraction_path=rel_output_path,
+        )
         self.queue_partition_follow_ups(
             artefact['uuid'],
             partition.get('uuid'),
@@ -884,55 +893,41 @@ def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path
     )
 
 
-@analysis_handler("archive detection", AnalysisType.ARCHIVE_DETECT)
-def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path):
+def detect_and_queue_archives(
+    self,
+    artefact_uuid: str,
+    files: list[dict],
+    path_to_id: dict[str, int],
+    partition_uuid: str,
+    *,
+    extraction_path: str | None = None,
+    path_prefix: str = '',
+):
+    """Mark archives among freshly-registered files and queue their extraction.
+
+    Replaces the former ARCHIVE_DETECT analysis.  Archive detection is a pure
+    metadata operation (RISC OS filetype / extension → archive type), so it runs
+    inline right after registration, over the just-enumerated ``files`` and the
+    DB ids ``path_to_id`` returned by registration — marking each archive and
+    queueing one ARCHIVE_EXTRACT per archive, exactly as ARCHIVE_DETECT did but
+    without the separate job and its re-fetch of the whole partition listing.
+
+    Idempotent: on a retried extraction the files already exist, mark_archive is
+    a no-op, and the server dedupes the re-queued ARCHIVE_EXTRACT jobs.
     """
-    Process ARCHIVE_DETECT analysis.
-    Scans partition files for archives and queues extraction jobs.
-    """
-    import json
     from arcology_shared.archive_formats import (
         get_archive_by_extension,
         get_archive_by_filetype,
         get_archive_info,
         is_compressor_format,
     )
-    from ..config import MAX_ARCHIVE_DEPTH
 
-    analysis_id = analysis['id']
-
-    hints = json.loads(analysis.get('hints') or '{}')
-    partition_uuid = hints.get(HintKey.PARTITION_UUID)
-    extraction_path = hints.get(HintKey.EXTRACTION_PATH)
-    path_prefix = hints.get(HintKey.PATH_PREFIX, '')
-
-    if not partition_uuid:
-        self.fail_analysis(analysis_id, 'No partition_uuid in analysis hints')
-        return
-
-    # Get files not yet marked as archives (skip already-detected ones).
-    # Must include known files (show_known=true) because archive files
-    # can match the known-files database and would otherwise be hidden.
-    # Push the extraction-context filter to the API so only the relevant
-    # subset is fetched.
-    base_params = {'is_archive': 'false', 'show_known': 'true'}
-    if path_prefix:
-        base_params['path_prefix'] = path_prefix
-    else:
-        base_params['extraction_depth'] = 0
-
-    files = self.api.get_partition_files(partition_uuid, **base_params)
-
-    archive_count = 0
-    queued_count = 0
-    depth_limit_exceeded = 0
-    compressor_count = 0
-
-    total_files = len(files)
-    for scanned, file_data in enumerate(files, start=1):
-        self.progress.start(total=total_files, label='Scanning for archives').update(scanned)
-        filetype = file_data.get('risc_os_filetype')
-        filename = file_data.get('filename', '')
+    for f in files:
+        if f.get('is_directory'):
+            continue
+        path = f.get('path', '')
+        filename = Path(path).name
+        filetype = f.get('risc_os_filetype')
 
         # A compressed disk image (drive.dd.zst, disk.img.gz) is promoted to a
         # disk-image artefact and decompressed transiently during its own
@@ -941,50 +936,40 @@ def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path)
         if _is_compressed_disk_image(filename):
             continue
 
-        # Try detecting by RISC OS filetype first
-        archive_type = get_archive_by_filetype(filetype) if filetype else None
-
-        # Fall back to extension-based detection (for PC archives)
+        # RISC OS filetype first, then extension (for PC archives).
+        archive_type = (get_archive_by_filetype(filetype) if filetype else None) \
+            or get_archive_by_extension(filename)
         if not archive_type:
-            archive_type = get_archive_by_extension(filename)
+            continue
 
-        if not archive_type:
+        file_id = path_to_id.get(path)
+        if file_id is None:
+            # Registration did not report an id for this path (shouldn't happen);
+            # skip rather than queue an extraction with no target file.
+            log.warning(f"No registered id for archive {path}; skipping detection")
             continue
 
         archive_info = get_archive_info(archive_type)
+        current_depth = f.get('extraction_depth', 0) or 0
 
-        # Check if this is a single-file compressor
-        is_compressor = is_compressor_format(archive_type)
+        # Mark as an archive so the UI shows it as a virtual directory.
+        self.api.post(f"/files/{file_id}/mark_archive", {
+            'is_archive': True,
+            'archive_format': archive_info['name'],
+        })
 
-        # Check depth limit
-        current_depth = file_data.get('extraction_depth', 0)
+        # At the depth cap, mark but do not recurse.
         if current_depth >= MAX_ARCHIVE_DEPTH:
-            depth_limit_exceeded += 1
-            # Mark as archive but don't queue extraction
-            self.api.post(f"/files/{file_data['id']}/mark_archive", {
-                'is_archive': True,
-                'archive_format': archive_info['name']
-            })
             continue
 
-        # Mark as archive
-        self.api.post(f"/files/{file_data['id']}/mark_archive", {
-            'is_archive': True,
-            'archive_format': archive_info['name']
-        })
-        archive_count += 1
-        if is_compressor:
-            compressor_count += 1
-
-        # Queue extraction
         extract_hints = {
-            HintKey.FILE_ID: file_data['id'],
+            HintKey.FILE_ID: file_id,
             HintKey.PARTITION_UUID: partition_uuid,
             HintKey.ARCHIVE_TYPE: archive_type.value,
-            # archive_format / is_compressor are informational extras carried
-            # for logging; the ARCHIVE_EXTRACT handler does not read them back.
+            # archive_format / is_compressor are informational extras carried for
+            # logging; the ARCHIVE_EXTRACT handler does not read them back.
             'archive_format': archive_info['name'],
-            'is_compressor': is_compressor,
+            'is_compressor': is_compressor_format(archive_type),
             HintKey.EXTRACTION_DEPTH: current_depth + 1,
         }
         if extraction_path:
@@ -992,25 +977,10 @@ def process_archive_detect(self, analysis: dict, artefact: dict, work_dir: Path)
         if path_prefix:
             extract_hints[HintKey.PATH_PREFIX] = path_prefix
         self.api.queue_analysis(
-            artefact['uuid'],
+            artefact_uuid,
             AnalysisType.ARCHIVE_EXTRACT.value,
-            hints=extract_hints
+            hints=extract_hints,
         )
-        queued_count += 1
-
-    summary = f"Detected {archive_count} archives ({compressor_count} compressors), queued {queued_count} for extraction"
-    if depth_limit_exceeded > 0:
-        summary += f", {depth_limit_exceeded} at depth limit"
-
-    self.complete_analysis(
-        analysis_id,
-        summary=summary,
-        details=json.dumps({
-            'archives_found': archive_count,
-            'compressors_found': compressor_count,
-            'depth_limit_exceeded': depth_limit_exceeded
-        })
-    )
 
 
 @analysis_handler("archive extraction", AnalysisType.ARCHIVE_EXTRACT)
@@ -1029,7 +999,7 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
         ArchiveType,
         get_archive_info,
     )
-    from ..config import MAX_ARCHIVE_DEPTH, OUTPUT_DIR
+    from ..config import OUTPUT_DIR
     from ..utils.paths import get_output_path
 
     analysis_id = analysis['id']
@@ -1110,8 +1080,8 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
         self.fail_analysis(analysis_id, f'File {file_id} not found')
         return
 
-    # Determine extraction path: prefer value passed through hints (set by the
-    # analysis that triggered ARCHIVE_DETECT, which in turn queued this job).
+    # Determine extraction path: prefer value passed through hints (set by
+    # detect_and_queue_archives when it queued this job at registration time).
     # Fall back to searching analyses only for jobs created before this fix.
     extraction_path = hinted_extraction_path
     if not extraction_path:
@@ -1220,8 +1190,9 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
     )
 
     # Register extracted files in the same partition with parent_file_id
+    path_to_id = {}
     if files:
-        self.api.post_file_records(
+        path_to_id = self.api.post_file_records(
             partition_uuid, files,
             progress_callback=lambda posted, total: self.progress.start(
                 total=total, label='Registering files').update(posted),
@@ -1254,19 +1225,14 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
     # nothing.  PRODUCT_RECOGNITION is hash-based and always re-queued.
     present = present_content_categories(files)
 
-    # Queue ARCHIVE_DETECT for nested archives (if under depth limit).
-    # Pass the archive's display path as path_prefix so that nested
-    # ARCHIVE_EXTRACT jobs can strip it to locate files on disk.
-    if extraction_depth < MAX_ARCHIVE_DEPTH and ContentCategory.ARCHIVE in present:
-        self.api.queue_analysis(
-            artefact['uuid'],
-            AnalysisType.ARCHIVE_DETECT.value,
-            hints={
-                HintKey.PARTITION_UUID: partition_uuid,
-                HintKey.EXTRACTION_PATH: rel_output_path,
-                HintKey.PATH_PREFIX: archive_display_path,
-            }
-        )
+    # Detect nested archives and queue their extraction inline (depth-capped
+    # inside the helper).  Pass the archive's display path as path_prefix so the
+    # nested ARCHIVE_EXTRACT jobs can strip it to locate files on disk.
+    detect_and_queue_archives(
+        self, artefact['uuid'], files, path_to_id, partition_uuid,
+        extraction_path=rel_output_path,
+        path_prefix=archive_display_path,
+    )
 
     # Re-queue PRODUCT_RECOGNITION so the newly-extracted files are
     # included in folder matching.  The first PRODUCT_RECOGNITION run

@@ -1804,19 +1804,22 @@ def add_files(uuid):
         candidates.append((path, f))
 
     # Single query for all paths already present in this partition (duplicate
-    # guard), instead of one SELECT per incoming file.
-    existing_paths = set()
+    # guard), instead of one SELECT per incoming file.  Capture the row id too:
+    # the worker needs the id of every incoming file (added or pre-existing) so
+    # it can queue per-archive ARCHIVE_EXTRACT jobs without a second round-trip.
+    existing_id_by_path = {}
     if candidates:
         incoming_paths = {path for path, _ in candidates}
-        existing_paths = {
-            row[0]
-            for row in db.session.query(ExtractedFile.path)
+        existing_id_by_path = {
+            row.path: row.id
+            for row in db.session.query(ExtractedFile.id, ExtractedFile.path)
             .filter(
                 ExtractedFile.partition_id == partition.id,
                 ExtractedFile.path.in_(incoming_paths),
             )
             .all()
         }
+    existing_paths = set(existing_id_by_path)
 
     # Single batch query to match every incoming file against active hash
     # databases, replacing the per-file find_known_file() N+1 pattern.
@@ -1826,10 +1829,18 @@ def add_files(uuid):
     added_unique = 0
     skipped = 0
     seen_paths = set()
+    # id keyed by the worker's *original* incoming path (f['path']), before any
+    # archive nesting is applied below — that is the key the worker can map back
+    # to the file dicts it holds in memory.  Pre-existing rows are filled in now;
+    # freshly-created rows are filled in after the commit assigns their ids.
+    id_by_incoming_path = {}
+    created = []  # (incoming_path, ExtractedFile) awaiting a post-commit id
     for (path, f), known in zip(candidates, known_matches, strict=True):
         # Guard against both pre-existing rows and duplicates within this batch.
         if path in existing_paths or path in seen_paths:
             skipped += 1
+            if path in existing_id_by_path:
+                id_by_incoming_path[f['path']] = existing_id_by_path[path]
             continue
         seen_paths.add(path)
 
@@ -1867,6 +1878,7 @@ def add_files(uuid):
         else:
             added_unique += 1
         db.session.add(ef)
+        created.append((f['path'], ef))
         added += 1
 
     # Update the partition counters incrementally rather than re-running two
@@ -1899,7 +1911,17 @@ def add_files(uuid):
         from ..services.hash_rescan import apply_database_restrictions
         apply_database_restrictions(partition.artefact)
 
-    response = {'added': added}
+    # Resolve the freshly-created rows' ids (assigned by the commit) and return
+    # the id of every incoming file keyed by its original path, so the worker can
+    # fold archive detection into registration (queue ARCHIVE_EXTRACT per archive
+    # with the file id) instead of re-scanning the partition in a separate job.
+    for incoming_path, ef in created:
+        id_by_incoming_path[incoming_path] = ef.id
+
+    response = {
+        'added': added,
+        'files': [{'id': fid, 'path': p} for p, fid in id_by_incoming_path.items()],
+    }
     if skipped > 0:
         response['skipped'] = skipped
         current_app.logger.info(f"Skipped {skipped} duplicate files for partition {uuid}")
@@ -1918,7 +1940,7 @@ def get_partition_files(uuid):
     if not show_known:
         query = query.filter(ExtractedFile.known_file_id.is_(None))
 
-    # Filter by is_archive if specified (used by ARCHIVE_DETECT to skip already-detected files)
+    # Filter by is_archive if specified (callers can request only/never archives)
     is_archive_param = request.args.get('is_archive')
     if is_archive_param is not None:
         query = query.filter(ExtractedFile.is_archive == (is_archive_param.lower() == 'true'))

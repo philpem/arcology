@@ -40,8 +40,8 @@ class HintKey:
     CONTAINER_FORMAT = 'container_format'
 
     # --- Archive / nested-extraction context ---
-    # Threaded through ARCHIVE_DETECT / ARCHIVE_EXTRACT and the follow-on
-    # analyses they queue so extracted-file paths resolve correctly.
+    # Threaded through ARCHIVE_EXTRACT and the follow-on analyses queued after
+    # extraction so extracted-file paths resolve correctly.
     EXTRACTION_PATH = 'extraction_path'
     PATH_PREFIX = 'path_prefix'
     EXTRACTION_DEPTH = 'extraction_depth'
