@@ -36,7 +36,7 @@
                     <dt>Description</dt><dd>{{ artefact.description }}</dd>
                     {% endif %}
                     <dt>Original Filename</dt><dd><code>{{ artefact.original_filename }}</code></dd>
-                    <dt>Size</dt><dd>{% if artefact.file_size %}<span title="{{ artefact.file_size }} bytes">{{ artefact.file_size | format_filesize }}</span>{% else %}-{% endif %}</dd>
+                    <dt>Size</dt><dd>{% if artefact.file_size is not none %}<span title="{{ artefact.file_size }} bytes">{{ artefact.file_size | format_filesize }}</span>{% else %}-{% endif %}</dd>
                     <dt>MIME Type</dt><dd>{{ artefact.mime_type or '-' }}</dd>
                     <dt>Uploaded</dt><dd><span title="{{ artefact.created_at.isoformat() }}">{{ artefact.created_at.strftime('%Y-%m-%d %H:%M') }}</span></dd>
                     <dt>Updated</dt><dd><span title="{{ artefact.updated_at.isoformat() }}">{{ artefact.updated_at.strftime('%Y-%m-%d %H:%M') }}</span></dd>

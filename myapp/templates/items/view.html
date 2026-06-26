@@ -271,7 +271,7 @@
                             {% endif %}
                         </div>
                         <div class="text-end">
-                            {% if artefact.file_size %}<small class="text-muted"><span title="{{ artefact.file_size }} bytes">{{ artefact.file_size | format_filesize }}</span></small>{% endif %}
+                            {% if artefact.file_size is not none %}<small class="text-muted"><span title="{{ artefact.file_size }} bytes">{{ artefact.file_size | format_filesize }}</span></small>{% endif %}
                         </div>
                     </div>
                 </div>
