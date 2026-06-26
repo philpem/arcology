@@ -1261,8 +1261,8 @@ def _viewer_replay_detail(file_filter, all_artefact_ids):
     # Link to download the original ARMovie file (the extracted file the
     # ReplayMovie row was indexed from), gated by the same download route as the
     # file listing.  Matched by path within the viewer's artefact set.
-    ef_uuid = (
-        db.session.query(ExtractedFile.uuid)
+    src_ef = (
+        db.session.query(ExtractedFile)
         .join(Partition)
         .filter(
             Partition.artefact_id.in_(all_artefact_ids),
@@ -1270,11 +1270,17 @@ def _viewer_replay_detail(file_filter, all_artefact_ids):
             ExtractedFile.is_directory == False,  # noqa: E712
         )
         .limit(1)
-        .scalar()
+        .first()
     )
     detail['original_url'] = (
-        url_for(f'{ROUTENAME}.download_file', uuid=ef_uuid) if ef_uuid else None
+        url_for(f'{ROUTENAME}.download_file', uuid=src_ef.uuid) if src_ef else None
     )
+    # Source-file size + hashes, surfaced at the foot of the metadata table so
+    # the user doesn't have to return to the file listing to read them.
+    detail['file_size'] = src_ef.file_size if src_ef else None
+    detail['md5'] = src_ef.md5 if src_ef else None
+    detail['sha1'] = src_ef.sha1 if src_ef else None
+    detail['sha256'] = src_ef.sha256 if src_ef else None
 
     # Content-gate flags (NSFW/explicit blur + hard-restriction lock), keyed off
     # the movie's owning artefact so a derived/explicit movie is gated even when
@@ -1466,6 +1472,29 @@ def _viewer_media_detail(file_filter, all_artefact_ids, artefact):
     owning = db.session.get(Artefact, row.artefact_id)
     restricted, explicit = content_gate_flags(current_user, owning)
 
+    # Source size + hashes for the foot of the metadata table.  Extraction media
+    # reads them from the matching ExtractedFile; a direct media upload (no
+    # file_path) falls back to the artefact's own size/hashes.
+    src_size = src_md5 = src_sha1 = src_sha256 = None
+    if row.file_path:
+        src_ef = (
+            db.session.query(ExtractedFile)
+            .join(Partition)
+            .filter(
+                Partition.artefact_id.in_(all_artefact_ids),
+                ExtractedFile.path == row.file_path,
+                ExtractedFile.is_directory == False,  # noqa: E712
+            )
+            .limit(1)
+            .first()
+        )
+        if src_ef:
+            src_size, src_md5, src_sha1, src_sha256 = (
+                src_ef.file_size, src_ef.md5, src_ef.sha1, src_ef.sha256)
+    else:
+        src_size, src_md5, src_sha256 = (
+            artefact.file_size, artefact.md5, artefact.sha256)
+
     return {
         'file_path': row.file_path,
         'title': (row.file_path or artefact.original_filename or '').split('/')[-1],
@@ -1487,6 +1516,10 @@ def _viewer_media_detail(file_filter, all_artefact_ids, artefact):
         'channels': row.channels,
         'has_audio': row.has_audio,
         'duration_seconds': row.duration_seconds,
+        'file_size': src_size,
+        'md5': src_md5,
+        'sha1': src_sha1,
+        'sha256': src_sha256,
         'restricted': restricted,
         'explicit': explicit,
         'stable_id': hashlib.md5(

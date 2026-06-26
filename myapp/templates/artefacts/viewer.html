@@ -585,6 +585,18 @@
                 {% if replay_detail.has_key_frames is not none %}
                 <tr><th>Key-frame table</th><td>{% if replay_detail.has_key_frames %}yes{% else %}no{% endif %}</td></tr>
                 {% endif %}
+                {% if replay_detail.file_size is not none %}
+                <tr><th>File size</th><td><span title="{{ replay_detail.file_size }} bytes">{{ replay_detail.file_size | format_filesize }}</span></td></tr>
+                {% endif %}
+                {% if replay_detail.md5 %}
+                <tr><th>MD5</th><td><code class="user-select-all">{{ replay_detail.md5 }}</code></td></tr>
+                {% endif %}
+                {% if replay_detail.sha1 %}
+                <tr><th>SHA-1</th><td><code class="user-select-all">{{ replay_detail.sha1 }}</code></td></tr>
+                {% endif %}
+                {% if replay_detail.sha256 %}
+                <tr><th>SHA-256</th><td><code class="user-select-all" style="word-break:break-all">{{ replay_detail.sha256 }}</code></td></tr>
+                {% endif %}
             </tbody>
         </table>
     </div>
@@ -654,6 +666,18 @@
                 {% endif %}
                 {% if media_detail.duration_seconds is not none %}
                 <tr><th>Duration</th><td>{{ media_detail.duration_seconds | format_duration }}</td></tr>
+                {% endif %}
+                {% if media_detail.file_size is not none %}
+                <tr><th>File size</th><td><span title="{{ media_detail.file_size }} bytes">{{ media_detail.file_size | format_filesize }}</span></td></tr>
+                {% endif %}
+                {% if media_detail.md5 %}
+                <tr><th>MD5</th><td><code class="user-select-all">{{ media_detail.md5 }}</code></td></tr>
+                {% endif %}
+                {% if media_detail.sha1 %}
+                <tr><th>SHA-1</th><td><code class="user-select-all">{{ media_detail.sha1 }}</code></td></tr>
+                {% endif %}
+                {% if media_detail.sha256 %}
+                <tr><th>SHA-256</th><td><code class="user-select-all" style="word-break:break-all">{{ media_detail.sha256 }}</code></td></tr>
                 {% endif %}
             </tbody>
         </table>
