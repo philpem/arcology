@@ -812,11 +812,15 @@ def run_similarity_refresh_job(artefact, *, heartbeat=_noop_heartbeat,
     mirroring the worker's old ``complete_analysis`` payload.
     """
     aid = artefact.id
-    label = f"Finding similar artefacts for '{artefact.label}'"
+    base_label = f"Finding similar artefacts for '{artefact.label}'"
 
+    # Emit the label before similarity_reset (which can be slow on a large
+    # artefact) so the queue shows a status message for the whole job, not just
+    # from the first match batch onwards.
     check_cancelled()
+    heartbeat(label=base_label)
     similarity_reset(aid)
-    heartbeat(label=label)
+    heartbeat(label=base_label)
 
     cursor = 0
     processed = artefact_pairs = component_pairs = 0
@@ -827,7 +831,11 @@ def run_similarity_refresh_job(artefact, *, heartbeat=_noop_heartbeat,
         processed += result["processed"]
         artefact_pairs += result["artefact_pairs"]
         component_pairs += result["component_pairs"]
-        heartbeat(current=processed, total=result.get("progress_total") or 0, label=label)
+        # Fold the running count into the message (as CLEANUP does) so the text
+        # conveys progress alongside the bar rather than staying a static label.
+        total = result.get("progress_total") or 0
+        label = f"{base_label} ({processed} of {total} compared)" if total else base_label
+        heartbeat(current=processed, total=total, label=label)
         if result["done"]:
             break
         cursor = result["next_cursor"]
