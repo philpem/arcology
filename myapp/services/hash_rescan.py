@@ -25,6 +25,16 @@ from ..database import (
 from ..extensions import db
 
 
+class HashDatabaseNameConflictError(ValueError):
+    """Raised when a requested hash-database name is already in use.
+
+    A subclass of :class:`ValueError` so existing ``except ValueError`` callers
+    keep working, while API routes that want to distinguish a name clash (HTTP
+    409) from invalid input (HTTP 400) can catch it structurally rather than
+    matching on the message text.
+    """
+
+
 def _active_known_file_query():
     """Return a KnownFile query limited to active hash databases."""
     return (
@@ -791,7 +801,8 @@ def create_hashdb_from_artefacts(name, artefact_ids, *, description=None,
     relink so the rest of the collection links to the new database.
 
     Returns ``(database, added, skipped_no_hash)``.  Raises ``ValueError`` if the
-    name is blank, too long, or already in use.
+    name is blank or too long, or :class:`HashDatabaseNameConflictError` (a
+    ``ValueError`` subclass) if the name is already in use.
     """
     name = (name or '').strip()
     if not name:
@@ -799,7 +810,8 @@ def create_hashdb_from_artefacts(name, artefact_ids, *, description=None,
     if len(name) > 100:
         raise ValueError('The database name must be 100 characters or fewer.')
     if HashDatabase.query.filter(func.lower(HashDatabase.name) == name.lower()).first():
-        raise ValueError(f'A hash database named "{name}" already exists.')
+        raise HashDatabaseNameConflictError(
+            f'A hash database named "{name}" already exists.')
 
     database = HashDatabase(
         name=name,

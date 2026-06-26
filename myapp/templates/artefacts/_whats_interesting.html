@@ -1,0 +1,53 @@
+{# "What's interesting about this disc?" triage card.
+   Leads with the unknown (candidate user content / unarchived) files; collapses
+   the standard-OS and recognised-software context that is, by definition, not
+   interesting.  Rendered only when the artefact has extracted files. #}
+{% if interesting_summary and interesting_summary.has_files %}
+{% set s = interesting_summary %}
+        <div class="card mb-4 border-info">
+            <div class="card-header bg-info bg-opacity-10">
+                <i class="bi bi-stars"></i> What's Interesting
+            </div>
+            <div class="card-body">
+                {% if s.unknown.count %}
+                <p class="mb-2 fs-5">
+                    <strong>{{ s.unknown.count }}</strong>
+                    file{{ '' if s.unknown.count == 1 else 's' }}
+                    {% if s.unknown.size %}<span class="text-muted">({{ s.unknown.size | format_filesize }})</span>{% endif %}
+                    not in any reference database.
+                </p>
+                <p class="mb-3 text-muted small">
+                    These are the candidate user documents, customisations, or
+                    unarchived software on this disc — the part worth a closer look.
+                    <a href="?hide_known=hide#files">Show unknown files &rarr;</a>
+                </p>
+                {% else %}
+                <p class="mb-3 fs-5">
+                    <i class="bi bi-check-circle text-success"></i>
+                    Every file here matches a reference database — nothing unknown.
+                </p>
+                {% endif %}
+
+                <div class="d-flex flex-wrap gap-3 small">
+                    {% if s.standard_os.count %}
+                    <span class="text-muted" title="{{ s.standard_os.size | format_filesize }} — base-OS / boilerplate files excluded from similarity">
+                        <i class="bi bi-hdd-stack"></i>
+                        {{ s.standard_os.count }} standard OS
+                        {%- if s.standard_os_names %} ({{ s.standard_os_names | join(', ') }}){% endif %}
+                    </span>
+                    {% endif %}
+                    {# Show recognised software when files hash-matched a non-base
+                       database (recognised.count) OR when only folder-level product
+                       recognition fired (no per-file match, so count is 0 but we
+                       still know the product names). #}
+                    {% if s.recognised.count or s.recognised_products %}
+                    <span class="text-muted" title="{{ s.recognised.size | format_filesize }} — recognised non-base software{% if not s.recognised.count %} (identified by folder, not per-file hash){% endif %}">
+                        <i class="bi bi-box-seam"></i>
+                        {% if s.recognised.count %}{{ s.recognised.count }} recognised{% else %}Recognised software{% endif %}
+                        {%- if s.recognised_products %}: {{ s.recognised_products | join(', ') }}{% endif %}
+                    </span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+{% endif %}
