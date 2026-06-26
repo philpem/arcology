@@ -9,7 +9,8 @@ risk**.  We meet it with *version-keyed* caching instead of TTL guessing:
   * Every cache key embeds the current content version, e.g.
     ``dashboard:stats:<uid>:v7``.
   * Any database commit that touches catalogue data (items, artefacts,
-    analyses, shares, groups, users) bumps the counter.  Every previously
+    analyses, shares, groups, users) or a search-index table bumps the counter
+    (see ``_CONTENT_MODEL_NAMES``).  Every previously
     stored key instantly becomes unreachable; the next read recomputes and
     stores under the new version.  Stale values are therefore *never served* —
     they simply age out via TTL.
@@ -44,13 +45,23 @@ from ..extensions import cache, db
 _CONTENT_VERSION_KEY = 'arc:ver:content'
 
 # Models whose creation/modification/deletion can change a cached, content-
-# derived value (catalogue counts and per-user visibility).  Touching any of
-# these in a committed transaction invalidates content-versioned cache entries.
+# derived value (catalogue counts, per-user visibility, or a search-bucket
+# total).  Touching any of these in a committed transaction invalidates
+# content-versioned cache entries.
 #
 # Over-invalidation is always safe here — it only causes a cache miss, never a
 # stale read — so the list errs toward completeness.  It is imported lazily in
 # register_cache_invalidation() to avoid an import cycle with database.py.
-_CONTENT_MODEL_NAMES = ('Item', 'Artefact', 'Analysis', 'ItemShare', 'Group', 'User')
+_CONTENT_MODEL_NAMES = (
+    # Catalogue + visibility (dashboard stats, item-listing counts).
+    'Item', 'Artefact', 'Analysis', 'ItemShare', 'Group', 'User',
+    # Search-index tables backing the cached search-bucket counts, so a
+    # (re)index write invalidates those counts even when it does not co-commit
+    # with a catalogue-model change (e.g. `flask rebuild-search-index`, which
+    # rewrites these tables without touching Analysis).
+    'ExtractedFile', 'Partition', 'ArtefactProtection', 'ArtefactMastering',
+    'RiscosModule', 'ReplayMovie', 'SearchDocument', 'Tag',
+)
 
 
 def content_version():
@@ -92,6 +103,32 @@ def cache_user_id(user):
     the same (public) data.
     """
     return user.get_id() if getattr(user, 'is_authenticated', False) else 'anon'
+
+
+def cache_value(prefix, signature, compute, *, user=None, timeout=None):
+    """Read-through cache of a single value, keyed by content version.
+
+    ``prefix`` namespaces the entry and ``signature`` distinguishes inputs (e.g.
+    a hash of a search query).  Pass ``user`` for a per-viewer value (one whose
+    computation is visibility-filtered); omit it for a global value.
+
+    A computed ``None`` is treated as "no value" and not stored, so ``None`` is
+    always a miss.  This is deliberate and safe for counts: only ``None`` — never
+    ``0`` — is a miss, so a genuine zero count caches and serves correctly.
+
+    With NullCache ``get`` always misses, so this reduces to a bare ``compute()``
+    call — identical behaviour to the un-cached code.
+    """
+    version = content_version()
+    uid = cache_user_id(user) if user is not None else 'all'
+    key = f'{prefix}:u{uid}:{signature}:v{version}'
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    value = compute()
+    if value is not None:
+        cache.set(key, value, timeout=timeout)
+    return value
 
 
 # Stored in place of a value to record that an id was computed and has *no*

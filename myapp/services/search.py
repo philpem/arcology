@@ -14,6 +14,8 @@ Visibility is enforced here, not by the caller: every sub-search applies
 see.
 """
 
+import hashlib
+import json
 import re
 from flask_login import current_user
 from markupsafe import Markup, escape
@@ -51,6 +53,7 @@ from ..visibility import (
     item_visibility_clause,
     output_blocked_for,
 )
+from .cache import cache_value
 
 # =============================================================================
 # Query parser
@@ -359,6 +362,32 @@ def _dedup_by_artefact(rows):
     return deduped
 
 
+def _count_signature(tokens, extra=''):
+    """Deterministic, compact hash of a parsed query (plus *extra*).
+
+    The whole ``tokens`` dict — positive keys and the nested negation map under
+    NOT_KEY — is the canonical, normalised form of the query, so two requests
+    that parse to the same tokens share a cache entry.  ``extra`` folds in count-
+    affecting flags that aren't in the tokens (e.g. the file-bucket dedupe flag).
+    """
+    raw = json.dumps(tokens, sort_keys=True, default=str) + '|' + extra
+    return hashlib.sha1(raw.encode('utf-8')).hexdigest()[:16]
+
+
+def _cached_count(bucket, tokens, compute, *, extra=''):
+    """Read-through cache for a sub-search total.
+
+    A bucket total depends only on the query and the viewer's visibility — not
+    on the page or page size — so the cached value is reused across every page
+    of the same search.  Any catalogue write bumps the content version, so a
+    stale total is never served.  With no cache backend this is just ``compute()``.
+    """
+    return cache_value(
+        f'search:cnt:{bucket}', _count_signature(tokens, extra),
+        compute, user=current_user,
+    )
+
+
 def _count_rows(query) -> int:
     """Total number of rows the (unordered) *query* would return."""
     return query.order_by(None).count()
@@ -397,7 +426,7 @@ def _file_eager_options():
     )
 
 
-def _paginate_file_query(q, page, per_page, dedupe=False):
+def _paginate_file_query(q, page, per_page, dedupe=False, count_wrap=None):
     """Order, paginate and (optionally) consolidate a file-result query.
 
     *q* must select ``(ExtractedFile, Partition, Artefact, Item)`` and already
@@ -405,11 +434,13 @@ def _paginate_file_query(q, page, per_page, dedupe=False):
     byte-identical files collapse to one representative (see
     :func:`_dedupe_file_rows`); otherwise raw rows are returned.  Shared by every
     sub-search that feeds the file bucket (hash/name/path/type/ext, module,
-    command, SWI, Replay).  Returns ``(rows, has_more, total)``.
+    command, SWI, Replay).  ``count_wrap`` optionally wraps the total computation
+    in a cache (see :func:`_cached_count`).  Returns ``(rows, has_more, total)``.
     """
     if dedupe:
-        return _dedupe_file_rows(q, page=page, per_page=per_page)
-    total = _count_distinct(q, ExtractedFile.id)
+        return _dedupe_file_rows(q, page=page, per_page=per_page, count_wrap=count_wrap)
+    _total = lambda: _count_distinct(q, ExtractedFile.id)  # noqa: E731
+    total = count_wrap(_total) if count_wrap else _total()
     fetched = (
         q.options(*_file_eager_options())
         .order_by(*_file_order())
@@ -581,17 +612,24 @@ def _search_file_bucket(tokens, page=1, per_page=PER_PAGE, dedupe=False):
         .filter(ExtractedFile.is_directory == False)
         .filter(artefact_visibility_clause(current_user))
     )
-    return _paginate_file_query(q, page, per_page, dedupe)
+
+    def _count_wrap(compute):
+        # dedupe changes the total (distinct content groups vs raw files), so it
+        # must distinguish the cache entry.
+        return _cached_count('files', tokens, compute, extra=f'd{int(dedupe)}')
+
+    return _paginate_file_query(q, page, per_page, dedupe, count_wrap=_count_wrap)
 
 
-def _dedupe_file_rows(q, page=1, per_page=PER_PAGE):
+def _dedupe_file_rows(q, page=1, per_page=PER_PAGE, count_wrap=None):
     """Collapse a file-result query by content hash.
 
     *q* is a ``(ExtractedFile, Partition, Artefact, Item)`` query already
     filtered (including the visibility clause, so counts never leak private
-    copies).  Returns ``(rows, has_more, total)`` where *total* is the number of
-    distinct content groups and each representative ExtractedFile carries
-    ``dupe_count`` / ``dupe_key`` attributes.
+    copies).  ``count_wrap`` optionally caches the total (see
+    :func:`_cached_count`).  Returns ``(rows, has_more, total)`` where *total* is
+    the number of distinct content groups and each representative ExtractedFile
+    carries ``dupe_count`` / ``dupe_key`` attributes.
     """
     hashkey = _file_hashkey()
     o_item, o_art, o_path = _file_order()
@@ -611,7 +649,8 @@ def _dedupe_file_rows(q, page=1, per_page=PER_PAGE):
         .distinct()
         .subquery()
     )
-    total = db.session.query(func.count(distinct(base.c.hkey))).scalar() or 0
+    _total = lambda: db.session.query(func.count(distinct(base.c.hkey))).scalar() or 0  # noqa: E731
+    total = count_wrap(_total) if count_wrap else _total()
 
     # Rank rows within each content group and count the group size, then keep
     # only the first row of each group as its representative.
@@ -704,7 +743,7 @@ def _search_partitions(tokens, page=1, per_page=PER_PAGE):
         .filter(combined)
         .filter(artefact_visibility_clause(current_user))
     )
-    total = _count_rows(q)
+    total = _cached_count('partitions', tokens, lambda: _count_rows(q))
     fetched = (
         q.order_by(func.lower(Item.name), func.lower(Artefact.label), Partition.partition_index)
         .offset((page - 1) * per_page)
@@ -733,7 +772,7 @@ def _search_protection(tokens, page=1, per_page=PER_PAGE):
         .filter(and_(*filters))
         .filter(artefact_visibility_clause(current_user))
     )
-    total = _count_distinct(q, Artefact.id)
+    total = _cached_count('protection', tokens, lambda: _count_distinct(q, Artefact.id))
     fetched = (
         q.order_by(func.lower(Item.name), func.lower(Artefact.label))
         .offset((page - 1) * per_page)
@@ -766,7 +805,7 @@ def _search_mastering(tokens, page=1, per_page=PER_PAGE):
         .filter(and_(*filters))
         .filter(artefact_visibility_clause(current_user))
     )
-    total = _count_distinct(q, Artefact.id)
+    total = _cached_count('mastering', tokens, lambda: _count_distinct(q, Artefact.id))
     fetched = (
         q.order_by(func.lower(Item.name), func.lower(Artefact.label))
         .offset((page - 1) * per_page)
@@ -798,7 +837,7 @@ def _search_tags(tokens, page=1, per_page=PER_PAGE):
         .filter(and_(*tag_filter))
         .filter(artefact_visibility_clause(current_user))
     )
-    total = _count_rows(q)
+    total = _cached_count('tags', tokens, lambda: _count_rows(q))
     fetched = (
         q.order_by(func.lower(Item.name), func.lower(Artefact.label))
         .offset((page - 1) * per_page)
@@ -838,7 +877,7 @@ def _search_artefact_hashes(tokens, page=1, per_page=PER_PAGE):
         .filter(and_(*hash_filter))
         .filter(artefact_visibility_clause(current_user))
     )
-    total = _count_rows(q)
+    total = _cached_count('arthash', tokens, lambda: _count_rows(q))
     fetched = (
         q.order_by(func.lower(Item.name), func.lower(Artefact.label))
         .offset((page - 1) * per_page)
@@ -988,7 +1027,7 @@ def _search_text_items(tokens, page=1, per_page=PER_PAGE):
         .filter(and_(*item_filter))
         .filter(item_visibility_clause(current_user))
     )
-    total = _count_rows(q)
+    total = _cached_count('textitems', tokens, lambda: _count_rows(q))
 
     # PostgreSQL: rank by FTS relevance (name weighted above description), with
     # name as the stable tie-break.  Elsewhere (SQLite), plain name order.
@@ -1043,7 +1082,7 @@ def _search_text_artefacts(tokens, page=1, per_page=PER_PAGE):
         .filter(and_(*art_filter))
         .filter(artefact_visibility_clause(current_user))
     )
-    total = _count_rows(q)
+    total = _cached_count('textart', tokens, lambda: _count_rows(q))
 
     order = [func.lower(Item.name), func.lower(Artefact.label)]
     tsq = None
@@ -1125,7 +1164,7 @@ def _search_documents(tokens, page=1, per_page=PER_PAGE):
         .filter(match_clause)
         .filter(artefact_visibility_clause(current_user))
     )
-    total = _count_rows(q)
+    total = _cached_count('documents', tokens, lambda: _count_rows(q))
 
     order = [func.lower(Item.name), func.lower(Artefact.label), SearchDocument.file_path]
     if tsq is not None:
