@@ -232,6 +232,51 @@ class TestCommonImageConversion(unittest.TestCase):
         self.assertIn('emf2svg', result.get('error', ''))
 
 
+class TestFormatConvertExtractionScan(unittest.TestCase):
+
+    def test_resolved_display_path_does_not_need_to_match_selected_path(self):
+        from worker.arcworker.analyses import images
+        from worker.arcworker.analyses._common import BatchScanResult
+
+        tmpdir = Path(tempfile.mkdtemp())
+        try:
+            source = tmpdir / 'Boot,fff'
+            source.write_text('print "hello"')
+            file_data = {
+                'path': '!HDBackup/!Boot',
+                'filename': '!Boot',
+                'risc_os_filetype': 'fff',
+            }
+
+            def fake_scan(worker, analysis, artefact, *, select_files):
+                self.assertTrue(select_files(file_data))
+                return BatchScanResult(
+                    extraction_path='extract-root',
+                    files=[file_data],
+                    path_prefix='',
+                    partition_uuid='partition-uuid',
+                )
+
+            def fake_iter(worker, files, extraction_path, work_dir, *, path_prefix='', on_missing=None):
+                yield files[0], source, '2F8B1A7A'
+
+            worker = MagicMock()
+            worker._convert_file_to_outputs.return_value = ([{'path': 'converted.txt'}], None, [])
+            analysis = {'id': 123, 'uuid': 'analysis-uuid'}
+            artefact = {'artefact_type': 'raw_sector', 'uuid': 'art', 'label': 'disc'}
+
+            with patch.object(images, 'scan_partition_files', side_effect=fake_scan), \
+                    patch.object(images, 'iter_resolved_files', side_effect=fake_iter):
+                images.process_format_convert(worker, analysis, artefact, tmpdir)
+
+            worker.fail_analysis.assert_not_called()
+            worker.complete_analysis.assert_called_once()
+            details = worker.complete_analysis.call_args.kwargs['details']
+            self.assertIn('"source_file": "2F8B1A7A"', details)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 if __name__ == '__main__':
     unittest.main()
 
