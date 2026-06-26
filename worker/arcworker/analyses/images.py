@@ -303,9 +303,13 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
     def _missing(file_data, db_path):
         log.warning(f"Viewable file not found: {db_path}")
 
-    for _file_data, file_path, db_path in iter_resolved_files(
+    for file_data, file_path, _disk_path in iter_resolved_files(
             self, scan.files, scan.extraction_path, work_dir,
             path_prefix=scan.path_prefix, on_missing=_missing):
+        # iter_resolved_files yields the on-disk (prefix-stripped) path as its
+        # third value; types_by_path is keyed by the full DB path, so look up
+        # and display the file by its DB path (file_data['path']).
+        db_path = file_data['path']
         viewable_type = types_by_path[db_path]
 
         # display_path is the DB path (already matches ExtractedFile.path)
