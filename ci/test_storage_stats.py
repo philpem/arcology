@@ -95,6 +95,28 @@ class TestStorageStats(unittest.TestCase):
         self.db.session.commit()
         self.assertEqual(UploadBlob.query.count(), 2)
 
+    def _seed_zero_length(self, count=3):
+        """`count` artefacts that are all zero-length (sharing the empty SHA-256)."""
+        from arcology_shared.enums import ArtefactType
+        from myapp.database import Artefact, Item, Platform, StorageDirectory
+
+        empty_sha = hashlib.sha256(b"").hexdigest()
+        item = Item(name="Empty item", platform=Platform(name="Empties"))
+        self.db.session.add(item)
+        self.db.session.flush()
+        for idx in range(count):
+            art = Artefact(
+                item_id=item.id, label=f"empty {idx}",
+                artefact_type=ArtefactType.RAW_SECTOR,
+                original_filename=f"empty-{idx}.img",
+                storage_path=f"empty-{idx}.img",
+                storage_directory=StorageDirectory.UPLOADS,
+                file_size=0, sha256=empty_sha,
+            )
+            self.db.session.add(art)
+        self.db.session.commit()
+        return empty_sha
+
     # -- deduplication statistics -------------------------------------------
 
     def test_dedup_stats_logical_physical_and_savings(self):
@@ -113,6 +135,96 @@ class TestStorageStats(unittest.TestCase):
             # One duplicated content group (the shared 100-byte content).
             self.assertEqual(len(stats["top_groups"]), 1)
             self.assertEqual(stats["top_groups"][0]["count"], 2)
+
+    def test_dedup_stats_excludes_zero_length_artefacts(self):
+        """Zero-length artefacts share the empty-file SHA-256 but waste no
+        physical bytes, so they must not appear in the most-duplicated list."""
+        from myapp.services.storage_stats import deduplication_stats
+        with self.app.app_context():
+            self._seed_zero_length(count=5)
+            stats = deduplication_stats()
+            self.assertEqual(stats["top_groups"], [])
+
+    def test_duplicate_group_instances_lists_artefacts_and_files(self):
+        """The drill-down service returns every artefact and extracted file
+        holding the content key, across items, with where-they-live detail."""
+        from myapp.database import (
+            Artefact,
+            ExtractedFile,
+            FilesystemType,
+            Partition,
+            StorageDirectory,
+        )
+        from myapp.services.storage_stats import duplicate_group_instances
+        with self.app.app_context():
+            self._seed_shared_and_unique()  # 2 artefacts share 100B/shared_sha
+            shared_sha = hashlib.sha256(b"x" * 100).hexdigest()
+
+            # Add an extracted file inside the unique artefact whose content
+            # matches the shared group (same size + sha256).
+            unique_art = self.db.session.scalars(
+                self.db.select(Artefact).where(Artefact.label == "unique")).one()
+            part = Partition(artefact_id=unique_art.id, partition_index=0,
+                             label="Main", filesystem=FilesystemType.DFS)
+            self.db.session.add(part)
+            self.db.session.flush()
+            self.db.session.add(ExtractedFile(
+                partition_id=part.id, path="DIR/COPY", filename="COPY",
+                file_size=100, sha256=shared_sha, is_directory=False))
+            self.db.session.commit()
+
+            group = duplicate_group_instances(100, shared_sha)
+            self.assertEqual(len(group["artefacts"]), 2)
+            self.assertEqual(len(group["files"]), 1)
+            self.assertEqual(group["files"][0].path, "DIR/COPY")
+            self.assertEqual(group["outputs_dir"], StorageDirectory.OUTPUTS)
+            # Every artefact row carries its item context for display.
+            self.assertTrue(all(a.item_name for a in group["artefacts"]))
+
+    def test_duplicates_page_renders_for_staff(self):
+        from myapp.database import UserPermission
+        with self.app.app_context():
+            self._seed_shared_and_unique()
+            staff_id = self._make_user("dup-staff", UserPermission.STAFF)
+            self.db.session.commit()
+            shared_sha = hashlib.sha256(b"x" * 100).hexdigest()
+        with self.client.session_transaction() as sess:
+            sess["_user_id"] = str(staff_id)
+        resp = self.client.get(f"/storage/duplicates?size=100&sha256={shared_sha}")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn(b"shared", resp.data)
+
+    def test_duplicates_page_404_for_unknown_or_zero(self):
+        from myapp.database import UserPermission
+        with self.app.app_context():
+            staff_id = self._make_user("dup-staff2", UserPermission.STAFF)
+            self.db.session.commit()
+        with self.client.session_transaction() as sess:
+            sess["_user_id"] = str(staff_id)
+        empty_sha = hashlib.sha256(b"").hexdigest()
+        # Zero-length content is excluded from the dedup reports.
+        self.assertEqual(
+            self.client.get(f"/storage/duplicates?size=0&sha256={empty_sha}").status_code, 404)
+        # Unknown content key.
+        self.assertEqual(
+            self.client.get("/storage/duplicates?size=999&sha256=" + ("a" * 64)).status_code, 404)
+        # Missing params.
+        self.assertEqual(self.client.get("/storage/duplicates").status_code, 404)
+
+    def test_duplicates_page_access_control(self):
+        from myapp.database import UserPermission
+        with self.app.app_context():
+            self._seed_shared_and_unique()
+            ro_id = self._make_user("dup-reader", UserPermission.READ_ONLY)
+            self.db.session.commit()
+            shared_sha = hashlib.sha256(b"x" * 100).hexdigest()
+        # Anonymous → not 200.
+        self.assertNotEqual(
+            self.client.get(f"/storage/duplicates?size=100&sha256={shared_sha}").status_code, 200)
+        with self.client.session_transaction() as sess:
+            sess["_user_id"] = str(ro_id)
+        self.assertEqual(
+            self.client.get(f"/storage/duplicates?size=100&sha256={shared_sha}").status_code, 403)
 
     def test_dedup_stats_empty_collection(self):
         from myapp.services.storage_stats import deduplication_stats

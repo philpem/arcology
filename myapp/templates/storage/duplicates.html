@@ -1,0 +1,105 @@
+{% extends "_base.html" %}
+{% block page_title %}Duplicate content{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_storage.index') }}">Storage</a></li>
+        <li class="breadcrumb-item active" aria-current="page">Duplicate content</li>
+    </ol>
+</nav>
+
+<h1 class="mb-3"><i class="bi bi-files"></i> Duplicate content</h1>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <dl class="row mb-0">
+            <dt class="col-sm-3">Size each</dt>
+            <dd class="col-sm-9">{{ format_size(group.file_size) }}
+                <span class="text-muted">({{ group.file_size }} bytes)</span></dd>
+            <dt class="col-sm-3">SHA-256</dt>
+            <dd class="col-sm-9"><code class="small">{{ group.sha256 }}</code></dd>
+            <dt class="col-sm-3">Copies</dt>
+            <dd class="col-sm-9">
+                {{ group.artefacts | length }} artefact{{ '' if group.artefacts | length == 1 else 's' }},
+                {{ group.files | length }} extracted file{{ '' if group.files | length == 1 else 's' }}
+            </dd>
+        </dl>
+    </div>
+</div>
+
+{# -- Artefacts holding this content -- #}
+<div class="card mb-4">
+    <div class="card-header"><i class="bi bi-file-earmark-binary"></i> Artefacts ({{ group.artefacts | length }})</div>
+    <div class="card-body p-0">
+        {% if group.artefacts %}
+        <table class="table table-sm mb-0 align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>Item</th>
+                    <th>Artefact</th>
+                    <th>Origin</th>
+                    <th>Owner</th>
+                    <th>Original filename</th>
+                    <th>Uploaded</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for a in group.artefacts %}
+                <tr>
+                    <td><a href="{{ url_for('myapp_blueprints_items.view', uuid=a.item_uuid) }}">{{ a.item_name }}</a></td>
+                    <td>
+                        <a href="{{ url_for('myapp_blueprints_artefacts.view', item_id=a.item_uuid, artefact_id=a.uuid) }}">{{ a.label }}</a>
+                        {% if a.is_private %}<span class="badge bg-secondary" title="Private">private</span>{% endif %}
+                    </td>
+                    <td>
+                        {% if a.storage_directory == group.outputs_dir %}
+                            <span class="badge bg-info text-dark">derived</span>
+                        {% else %}
+                            <span class="badge bg-light text-dark border">uploaded</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ a.owner or '-' }}</td>
+                    <td><code class="small">{{ a.original_filename }}</code></td>
+                    <td class="text-nowrap"><span class="text-muted small">{{ a.created_at.strftime('%Y-%m-%d %H:%M') if a.created_at else '-' }}</span></td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted m-3">No artefacts hold this content directly.</p>
+        {% endif %}
+    </div>
+</div>
+
+{# -- Extracted files holding this content -- #}
+<div class="card mb-4">
+    <div class="card-header"><i class="bi bi-file-earmark"></i> Extracted files ({{ group.files | length }})</div>
+    <div class="card-body p-0">
+        {% if group.files %}
+        <table class="table table-sm mb-0 align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>Item</th>
+                    <th>Artefact</th>
+                    <th>Partition</th>
+                    <th>Path</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for f in group.files %}
+                <tr>
+                    <td><a href="{{ url_for('myapp_blueprints_items.view', uuid=f.item_uuid) }}">{{ f.item_name }}</a></td>
+                    <td><a href="{{ url_for('myapp_blueprints_artefacts.view', item_id=f.item_uuid, artefact_id=f.artefact_uuid) }}">{{ f.artefact_label }}</a></td>
+                    <td><span class="text-muted small">#{{ f.partition_index }}{% if f.partition_label %} {{ f.partition_label }}{% endif %}</span></td>
+                    <td><code class="small">{{ f.path }}</code></td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted m-3">No extracted files hold this content.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -180,6 +180,103 @@ class TestDuplicateCountVisibility(unittest.TestCase):
         self.assertEqual(r.status_code, 404)
 
 
+# Canonical SHA-256 of an empty (zero-length) file.
+_EMPTY_SHA = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+
+
+class TestZeroLengthFilesExcludedFromDuplicates(unittest.TestCase):
+    """Zero-length files all share the canonical empty-file SHA-256.  Counting
+    them as duplicates groups every empty file in the catalogue together,
+    yielding a meaningless many-thousand badge — so empty files must be
+    excluded from both the duplicate-count badge and the duplicates list."""
+
+    N_PUBLIC = 5
+
+    @classmethod
+    def setUpClass(cls):
+        from arcology_shared.enums import ArtefactType
+        from myapp.app import create_app
+        from myapp.database import (
+            Artefact,
+            ExtractedFile,
+            FilesystemType,
+            Item,
+            Partition,
+            StorageDirectory,
+            User,
+            UserPermission,
+        )
+        from myapp.extensions import db
+        from myapp.utils.privacy import recompute_item_privacy
+
+        cls.app = create_app()
+        cls.app.config['TESTING'] = True
+        cls.client = cls.app.test_client()
+        cls.db = db
+        with cls.app.app_context():
+            db.create_all()
+
+            owner = User(username='empty-owner', password_hash='x',
+                         permission=UserPermission.READ_WRITE)
+            db.session.add(owner)
+            db.session.flush()
+
+            first_uuid = None
+            first_file_uuid = None
+            for i in range(cls.N_PUBLIC):
+                item = Item(name=f'empty-{i}', is_private=False, owner_id=owner.id)
+                db.session.add(item)
+                db.session.flush()
+                art = Artefact(item_id=item.id, label='Disc',
+                               artefact_type=ArtefactType.HFE,
+                               original_filename='d.ssd', storage_path=f'empty-{i}.ssd',
+                               storage_directory=StorageDirectory.UPLOADS,
+                               owner_id=owner.id)
+                db.session.add(art)
+                db.session.flush()
+                part = Partition(artefact_id=art.id, partition_index=0,
+                                 label='Main', filesystem=FilesystemType.DFS)
+                db.session.add(part)
+                db.session.flush()
+                ef = ExtractedFile(
+                    partition_id=part.id, path='EMPTY', filename='EMPTY',
+                    file_size=0, sha256=_EMPTY_SHA, is_directory=False)
+                db.session.add(ef)
+                recompute_item_privacy(item)
+                if i == 0:
+                    db.session.flush()
+                    first_uuid = (item.uuid, art.uuid)
+                    first_file_uuid = ef.uuid
+            cls.view_item_uuid, cls.view_art_uuid = first_uuid
+            cls.empty_file_uuid = first_file_uuid
+            cls.owner_id = owner.id
+            db.session.commit()
+
+    def _login(self, uid):
+        with self.client.session_transaction() as sess:
+            sess['_user_id'] = str(uid)
+            sess['_fresh'] = True
+
+    def test_zero_length_files_omitted_from_duplicate_counts(self):
+        """The badge must not appear for an empty file, even though many empty
+        files with identical content exist across the catalogue."""
+        self._login(self.owner_id)
+        url = f'/items/{self.view_item_uuid}/artefacts/{self.view_art_uuid}'
+        with captured_templates(self.app) as templates:
+            r = self.client.get(url, follow_redirects=True)
+            self.assertEqual(r.status_code, 200, r.data[:500])
+            ctx = next(c for _t, c in templates if 'duplicate_counts' in c)
+        self.assertNotIn((0, _EMPTY_SHA), ctx['duplicate_counts'])
+
+    def test_duplicates_page_404_for_zero_length_file(self):
+        """The duplicates list page must 404 for a zero-length file rather than
+        enumerating every empty file in the catalogue."""
+        self._login(self.owner_id)
+        r = self.client.get(
+            f'/files/{self.empty_file_uuid}/duplicates', follow_redirects=True)
+        self.assertEqual(r.status_code, 404)
+
+
 if __name__ == '__main__':
     unittest.main()
 

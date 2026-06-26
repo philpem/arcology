@@ -15,8 +15,18 @@ counted); "physical" bytes are what is actually stored (each blob counted once).
 import time
 from flask import current_app
 from sqlalchemy import func
-from ..database import Artefact, OutputBlob, UploadBlob
+from ..database import (
+    Artefact,
+    ExtractedFile,
+    Item,
+    OutputBlob,
+    Partition,
+    StorageDirectory,
+    UploadBlob,
+    User,
+)
 from ..extensions import db
+from .dedup import dedup_content_clause
 
 # Most-duplicated content groups shown on the stats page.
 TOP_DUPLICATE_GROUPS = 20
@@ -95,9 +105,13 @@ def deduplication_stats() -> dict:
     # staff/admin `/storage` page, so it deliberately does NOT apply an item
     # *_visibility_clause (which would undercount and misreport dedup totals).
     # The route is gated to STAFF and admins, who are trusted operators.
+    # dedup_content_clause excludes zero-length artefacts: every empty file
+    # shares the canonical empty-file SHA-256, so they collapse into one large
+    # group that wastes no physical bytes (file_size * (count - 1) == 0) yet
+    # crowds out the genuine duplicates this list exists to surface.
     top_groups = db.session.execute(
         db.select(Artefact.file_size, Artefact.sha256, func.count(Artefact.id))
-        .where(Artefact.file_size.isnot(None), Artefact.sha256.isnot(None))
+        .where(dedup_content_clause(Artefact))
         .group_by(Artefact.file_size, Artefact.sha256)
         .having(func.count(Artefact.id) > 1)
         .order_by(func.count(Artefact.id).desc())
@@ -119,6 +133,70 @@ def deduplication_stats() -> dict:
             {'file_size': fs, 'sha256': sha, 'count': int(c)}
             for fs, sha, c in top_groups
         ],
+    }
+
+
+def duplicate_group_instances(file_size: int, sha256: str) -> dict:
+    """Every artefact and extracted file whose content is ``(file_size, sha256)``.
+
+    Backs the staff/admin ``/storage`` drill-down so an operator can see *where*
+    a duplicated content group lives — which items, artefacts, partitions and
+    paths hold copies, and who owns them.  This distinguishes "the same file
+    appears across several artefacts" from "one artefact was uploaded several
+    times" (compare owners and original filenames).
+
+    Intentionally system-wide: like ``deduplication_stats()`` this is
+    operational accounting for a route gated to STAFF and admins, so it applies
+    no item ``*_visibility_clause``.  Returns SQLAlchemy ``Row`` objects whose
+    columns the template reads by name.
+    """
+    artefacts = db.session.execute(
+        db.select(
+            Artefact.uuid,
+            Artefact.label,
+            Artefact.original_filename,
+            Artefact.storage_directory,
+            Artefact.is_private,
+            Artefact.created_at,
+            Item.uuid.label('item_uuid'),
+            Item.name.label('item_name'),
+            User.username.label('owner'),
+        )
+        .join(Item, Artefact.item_id == Item.id)
+        .outerjoin(User, Artefact.owner_id == User.id)
+        .where(Artefact.file_size == file_size, Artefact.sha256 == sha256)
+        .order_by(Item.name, Artefact.label)
+    ).all()
+
+    files = db.session.execute(
+        db.select(
+            ExtractedFile.uuid,
+            ExtractedFile.path,
+            ExtractedFile.filename,
+            Partition.partition_index,
+            Partition.label.label('partition_label'),
+            Artefact.uuid.label('artefact_uuid'),
+            Artefact.label.label('artefact_label'),
+            Item.uuid.label('item_uuid'),
+            Item.name.label('item_name'),
+        )
+        .join(Partition, ExtractedFile.partition_id == Partition.id)
+        .join(Artefact, Partition.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .where(
+            ExtractedFile.file_size == file_size,
+            ExtractedFile.sha256 == sha256,
+            ExtractedFile.is_directory.is_(False),
+        )
+        .order_by(Item.name, Artefact.label, ExtractedFile.path)
+    ).all()
+
+    return {
+        'file_size': file_size,
+        'sha256': sha256,
+        'artefacts': artefacts,
+        'files': files,
+        'outputs_dir': StorageDirectory.OUTPUTS,
     }
 
 
