@@ -275,15 +275,13 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
             file_data.get('filename', ''), file_data.get('risc_os_filetype'))
 
     # Discover viewable files via the shared batch scaffold.  The select
-    # predicate records each match's viewable type keyed by its DB path so the
-    # conversion loop can recover it.  Querying the DB (rather than scanning the
-    # filesystem) avoids downloading the whole extraction tree in S3 mode.
-    types_by_path: dict[str, ArtefactType] = {}
-
+    # predicate annotates each selected DB record with its viewable type.  The
+    # conversion loop must not key this by path: iter_resolved_files may return
+    # a display path with path-prefix stripping or suffix normalisation applied.
     def _select(file_data: dict) -> bool:
         vt = _viewable_type_from_db(file_data)
         if vt is not None:
-            types_by_path[file_data['path']] = vt
+            file_data['_viewable_type'] = vt
             return True
         return False
 
@@ -303,10 +301,13 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
     def _missing(file_data, db_path):
         log.warning(f"Viewable file not found: {db_path}")
 
-    for _file_data, file_path, db_path in iter_resolved_files(
+    for file_data, file_path, db_path in iter_resolved_files(
             self, scan.files, scan.extraction_path, work_dir,
             path_prefix=scan.path_prefix, on_missing=_missing):
-        viewable_type = types_by_path[db_path]
+        viewable_type = file_data.get('_viewable_type') or _viewable_type_from_db(file_data)
+        if viewable_type is None:
+            log.warning(f"Skipping {db_path} — no viewable type in metadata")
+            continue
 
         # display_path is the DB path (already matches ExtractedFile.path)
         display_path = db_path

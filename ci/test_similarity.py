@@ -435,6 +435,36 @@ class TestArtefactSimilarity(_SimilarityBase):
         self.assertEqual(ArtefactSimilarity.query.count(), art_before)
         self.assertEqual(ComponentSimilarity.query.count(), comp_before)
 
+    def test_component_rows_with_deleted_targets_are_filtered(self):
+        from datetime import datetime, timezone
+        from myapp.database import ArtefactComponent
+        from myapp.services.similarity import _filter_existing_component_rows, similarity_reset
+
+        files = [('!App/A', 'a', 1000), ('!App/B', 'b', 2000), ('!App/C', 'c', 3000)]
+        a = _add_artefact(self.db, self.item, 'FK1', files)
+        b = _add_artefact(self.db, self.item, 'FK2', files)
+        similarity_reset(a.id)
+        similarity_reset(b.id)
+        comps = ArtefactComponent.query.order_by(ArtefactComponent.id).all()
+        self.assertGreaterEqual(len(comps), 2)
+        deleted_id = comps[-1].id
+        self.db.session.delete(comps[-1])
+        self.db.session.flush()
+
+        rows = [
+            {
+                'component_a_id': comps[0].id,
+                'component_b_id': deleted_id,
+                'score': 1.0,
+                'shared_files': 3,
+                'union_files': 3,
+                'shared_bytes': 6000,
+                'union_bytes': 6000,
+                'computed_at': datetime.now(timezone.utc),
+            }
+        ]
+        self.assertEqual(_filter_existing_component_rows(rows), [])
+
     def test_ubiquitous_file_does_not_create_pairs(self):
         """A hash shared by many artefacts must not, alone, link them as similar."""
         from myapp.services import similarity

@@ -10,6 +10,7 @@ The backend is selected via the STORAGE_BACKEND configuration variable.
 """
 
 import abc
+import hashlib
 import logging
 import mimetypes
 import os
@@ -42,6 +43,84 @@ for _media_mime, _media_ext in (
 ):
     mimetypes.add_type(_media_mime, _media_ext)
 del _media_mime, _media_ext
+
+
+# Garage stores object keys in LMDB, whose keys are limited to 511 bytes.
+# Garage prefixes object keys with the 32-byte bucket id, leaving 479 bytes
+# for the key itself: https://git.deuxfleurs.fr/Deuxfleurs/garage/issues/778
+MAX_S3_KEY_BYTES = 479
+COMPACTED_STORAGE_PATH_ROOT = '__arcology_longpaths__'
+
+
+def _truncate_utf8(value: str, max_bytes: int) -> str:
+    """Return *value* truncated to at most *max_bytes* UTF-8 bytes."""
+    if len(value.encode('utf-8')) <= max_bytes:
+        return value
+    out = []
+    used = 0
+    for ch in value:
+        b = ch.encode('utf-8')
+        if used + len(b) > max_bytes:
+            break
+        out.append(ch)
+        used += len(b)
+    return ''.join(out) or '_'
+
+
+def compact_storage_relpath(relative_path: str, max_relative_path_bytes: int) -> str:
+    """Return a deterministic compact storage path for an extracted file.
+
+    The input path is the logical path inside the extraction tree.  Short paths
+    are returned unchanged.  Over-budget paths are replaced with a stable
+    hash-prefixed name so database/UI paths can retain the archive's original
+    layout while object storage stays under its key length limit.
+    """
+    relative_path = str(relative_path).lstrip('/')
+    if len(relative_path.encode('utf-8')) <= max_relative_path_bytes:
+        return relative_path
+
+    digest = hashlib.sha256(relative_path.encode('utf-8')).hexdigest()[:24]
+    marker = f'{COMPACTED_STORAGE_PATH_ROOT}/{digest}_'
+    marker_bytes = len(marker.encode('utf-8'))
+    if max_relative_path_bytes <= marker_bytes:
+        message = (
+            f"Object key prefix leaves {max_relative_path_bytes} bytes for "
+            f"extracted paths, less than compacted path overhead {marker_bytes}"
+        )
+        log.error(message)
+        raise OSError(message)
+
+    basename = relative_path.rsplit('/', 1)[-1] or '_'
+    tail = _truncate_utf8(basename, max_relative_path_bytes - marker_bytes)
+    compacted = marker + tail
+    if len(compacted.encode('utf-8')) > max_relative_path_bytes:
+        message = (
+            f"Compacted extracted path is still over the "
+            f"{max_relative_path_bytes}-byte budget: {relative_path}"
+        )
+        log.error(message)
+        raise OSError(message)
+    return compacted
+
+
+def compact_storage_key(prefix: str, relative_path: str,
+                        max_key_bytes: int = MAX_S3_KEY_BYTES) -> str:
+    """Build an object key under *prefix*, compacting *relative_path* if needed."""
+    prefix = prefix.rstrip('/') + '/'
+    max_relative_path_bytes = max_key_bytes - len(prefix.encode('utf-8'))
+    rel = compact_storage_relpath(relative_path, max_relative_path_bytes)
+    return prefix + rel
+
+
+def _validate_s3_key(key: str) -> None:
+    key_bytes = len(key.encode('utf-8'))
+    if key_bytes > MAX_S3_KEY_BYTES:
+        message = (
+            f"S3 object key is {key_bytes} bytes, exceeding the "
+            f"{MAX_S3_KEY_BYTES}-byte limit: {key}"
+        )
+        log.error(message)
+        raise OSError(message)
 
 
 def _mime_for_key(key: str) -> str:
@@ -134,13 +213,18 @@ class StorageBackend(abc.ABC):
 
     @abc.abstractmethod
     def put_tree(self, prefix: str, local_dir: Path,
-                 progress_callback: Callable[[int, int], None] | None = None) -> int:
+                 progress_callback: Callable[[int, int], None] | None = None,
+                 relpath_mapper: Callable[[str], str] | None = None) -> int:
         """Upload an entire directory tree under a prefix.  Returns file count.
 
         ``progress_callback(done, total)`` is invoked as the upload proceeds so
         a long-running tree upload (a large extraction with many thousands of
         files) reports live progress instead of appearing frozen at the
         previous phase's status line.
+
+        ``relpath_mapper`` can rewrite each file's path relative to
+        ``local_dir`` before building the storage key.  Callers use this for
+        object-store key compaction while preserving logical on-disk paths.
         """
 
     @abc.abstractmethod
@@ -297,7 +381,8 @@ class LocalStorage(StorageBackend):
         return None
 
     def put_tree(self, prefix: str, local_dir: Path,
-                 progress_callback: Callable[[int, int], None] | None = None) -> int:
+                 progress_callback: Callable[[int, int], None] | None = None,
+                 relpath_mapper: Callable[[str], str] | None = None) -> int:
         dest = self._resolve(prefix)
         local_dir = Path(local_dir)
         if local_dir.resolve() == dest.resolve():
@@ -306,8 +391,20 @@ class LocalStorage(StorageBackend):
             dest.parent.mkdir(parents=True, exist_ok=True)
             if dest.exists():
                 shutil.rmtree(dest)
-            shutil.copytree(local_dir, dest)
-            count = sum(1 for _ in dest.rglob('*') if _.is_file())
+            if relpath_mapper is None:
+                shutil.copytree(local_dir, dest)
+                count = sum(1 for _ in dest.rglob('*') if _.is_file())
+            else:
+                count = 0
+                for path in local_dir.rglob('*'):
+                    if not path.is_file():
+                        continue
+                    rel = str(path.relative_to(local_dir))
+                    mapped_rel = relpath_mapper(rel)
+                    target = dest / mapped_rel
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(path, target)
+                    count += 1
         # Local copies are fast and effectively atomic; report a single
         # completion tick so callers driving a progress bar still see 100%.
         if progress_callback is not None and count:
@@ -434,6 +531,7 @@ class S3Storage(StorageBackend):
             _urllib3_pool_log.addFilter(_GarageHeaderParsingFilter())
 
     def put(self, key: str, source_path: Path) -> None:
+        _validate_s3_key(key)
         try:
             self._client.upload_file(
                 str(source_path), self.bucket, key,
@@ -476,6 +574,7 @@ class S3Storage(StorageBackend):
     def move(self, src_key: str, dst_key: str) -> None:
         if src_key == dst_key:
             return
+        _validate_s3_key(dst_key)
         try:
             # Server-side copy; MetadataDirective=REPLACE so the destination's
             # Content-Type is (re)derived from its key, not copied from source
@@ -550,17 +649,24 @@ class S3Storage(StorageBackend):
         )
 
     def put_tree(self, prefix: str, local_dir: Path,
-                 progress_callback: Callable[[int, int], None] | None = None) -> int:
+                 progress_callback: Callable[[int, int], None] | None = None,
+                 relpath_mapper: Callable[[str], str] | None = None) -> int:
         local_dir = Path(local_dir)
         prefix = prefix.rstrip('/') + '/'
-        files = [p for p in local_dir.rglob('*') if p.is_file()]
+        files = []
+        for path in local_dir.rglob('*'):
+            if not path.is_file():
+                continue
+            rel = str(path.relative_to(local_dir))
+            mapped_rel = relpath_mapper(rel) if relpath_mapper is not None else rel
+            key = prefix + mapped_rel
+            _validate_s3_key(key)
+            files.append((path, key))
         total = len(files)
         if not total:
             return 0
 
-        def _upload(path: Path) -> None:
-            rel = path.relative_to(local_dir)
-            key = prefix + str(rel)
+        def _upload(path: Path, key: str) -> None:
             self._client.upload_file(
                 str(path), self.bucket, key,
                 ExtraArgs={'ContentType': _mime_for_key(key)},
@@ -569,8 +675,8 @@ class S3Storage(StorageBackend):
         count = 0
         try:
             if self._upload_concurrency <= 1 or total == 1:
-                for path in files:
-                    _upload(path)
+                for path, key in files:
+                    _upload(path, key)
                     count += 1
                     if progress_callback is not None:
                         progress_callback(count, total)
@@ -578,7 +684,7 @@ class S3Storage(StorageBackend):
                 from concurrent.futures import ThreadPoolExecutor, as_completed
                 workers = min(self._upload_concurrency, total)
                 with ThreadPoolExecutor(max_workers=workers) as pool:
-                    futures = [pool.submit(_upload, p) for p in files]
+                    futures = [pool.submit(_upload, p, k) for p, k in files]
                     for fut in as_completed(futures):
                         fut.result()  # re-raise any upload error
                         count += 1

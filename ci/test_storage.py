@@ -14,6 +14,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -378,6 +379,94 @@ class TestS3StorageBlobKeys(unittest.TestCase):
         params = self.storage._public_client.generate_presigned_url.call_args.kwargs['Params']
         self.assertEqual(params['Key'], key)
         self.assertEqual(params['ResponseContentType'], 'image/svg+xml')
+
+
+class TestExtractionPathCompaction(unittest.TestCase):
+
+    def test_long_extracted_path_maps_to_hash_prefixed_storage_key(self):
+        from arcology_shared.storage import compact_storage_relpath
+
+        logical_path = '/'.join(
+            [f'very-long-directory-name-{i}' for i in range(12)]
+            + ['ImportantFile,fff']
+        )
+
+        mapped = compact_storage_relpath(logical_path, 120)
+        self.assertLessEqual(len(mapped.encode('utf-8')), 120)
+        self.assertTrue(mapped.startswith('__arcology_longpaths__/'))
+        self.assertTrue(mapped.endswith('ImportantFile,fff'))
+        self.assertEqual(
+            mapped,
+            compact_storage_relpath(logical_path, 120),
+            'mapping must be deterministic for download resolution',
+        )
+        self.assertEqual(
+            compact_storage_relpath('short/path.txt', 120),
+            'short/path.txt',
+        )
+
+    def test_s3_put_tree_uses_mapped_key_without_moving_local_file(self):
+        from arcology_shared.storage import S3Storage, compact_storage_relpath
+
+        tmpdir = tempfile.mkdtemp()
+        try:
+            root = Path(tmpdir)
+            long_dir = root
+            for i in range(12):
+                long_dir = long_dir / f'very-long-directory-name-{i}'
+            long_dir.mkdir(parents=True)
+            source = long_dir / 'ImportantFile,fff'
+            source.write_bytes(b'data')
+
+            storage = object.__new__(S3Storage)
+            storage.bucket = 'test-bucket'
+            storage._client = mock.Mock()
+            storage._upload_concurrency = 1
+
+            prefix = 'outputs/item/artefact/analysis'
+            count = storage.put_tree(
+                prefix,
+                root,
+                relpath_mapper=lambda rel: compact_storage_relpath(rel, 120),
+            )
+
+            self.assertEqual(count, 1)
+            self.assertTrue(source.exists(), 'logical local extraction path is preserved')
+            uploaded_key = storage._client.upload_file.call_args.args[2]
+            self.assertTrue(uploaded_key.startswith(prefix + '/__arcology_longpaths__/'))
+            self.assertLessEqual(
+                len(uploaded_key.removeprefix(prefix + '/').encode('utf-8')),
+                120,
+            )
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_s3_rejects_and_logs_overlong_key(self):
+        from arcology_shared.storage import MAX_S3_KEY_BYTES, S3Storage
+
+        storage = object.__new__(S3Storage)
+        storage.bucket = 'test-bucket'
+        storage._client = mock.Mock()
+        key = 'outputs/' + ('x' * MAX_S3_KEY_BYTES)
+        with self.assertLogs('arcology_shared.storage', level='ERROR') as logs:
+            with self.assertRaises(OSError):
+                storage.put(key, '/tmp/source.bin')
+        self.assertIn('exceeding the 479-byte limit', '\n'.join(logs.output))
+        storage._client.upload_file.assert_not_called()
+
+    def test_s3_move_rejects_and_logs_overlong_destination_key(self):
+        from arcology_shared.storage import MAX_S3_KEY_BYTES, S3Storage
+
+        storage = object.__new__(S3Storage)
+        storage.bucket = 'test-bucket'
+        storage._client = mock.Mock()
+        dst_key = 'outputs/' + ('x' * MAX_S3_KEY_BYTES)
+        with self.assertLogs('arcology_shared.storage', level='ERROR') as logs:
+            with self.assertRaises(OSError):
+                storage.move('outputs/source.bin', dst_key)
+        self.assertIn('exceeding the 479-byte limit', '\n'.join(logs.output))
+        storage._client.copy_object.assert_not_called()
+        storage._client.delete_object.assert_not_called()
 
 
 class TestCreateStorage(unittest.TestCase):
