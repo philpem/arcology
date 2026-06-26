@@ -1920,12 +1920,15 @@ def _view_file_listing(file_form, all_artefact_ids):
         letter_pages, current_letter = {}, ''
 
     # Count globally visible instances of each content key on this page.
-    # ``file_size is not None`` deliberately includes valid zero-length files.
+    # Zero-length files are excluded: every empty file shares the canonical
+    # empty-file SHA-256, so counting them as duplicates groups every empty
+    # file in the catalogue together, producing a meaningless many-thousand
+    # badge.  An empty file is not a meaningful content duplicate.
     duplicate_counts = {}
     duplicate_keys = {
         (f.file_size, f.sha256)
         for f in files_pagination.items
-        if not f.is_directory and f.file_size is not None and f.sha256
+        if not f.is_directory and f.file_size and f.sha256
     }
     if duplicate_keys:
         from sqlalchemy import and_ as _and
@@ -3972,7 +3975,12 @@ def file_duplicates(uuid):
         .filter(artefact_visibility_clause(current_user))
         .first_or_404()
     )
-    if source.file_size is None or not source.sha256 or source.is_directory:
+    # Zero-length files are excluded (``not source.file_size`` also covers a
+    # None size): every empty file shares the canonical empty-file SHA-256, so
+    # listing "duplicates" would enumerate every empty file in the catalogue.
+    # This mirrors the duplicate-count badge in _view_file_listing(), which
+    # omits empty files for the same reason.
+    if not source.file_size or not source.sha256 or source.is_directory:
         abort(404)
 
     instances = (
