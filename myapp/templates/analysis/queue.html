@@ -29,7 +29,7 @@
                 </span>
             </div>
             <div class="d-flex align-items-center mt-1">
-                <small class="text-muted text-truncate js-progress-msg" style="max-width: 55%;" title="{{ a.progress_message or '' }}">{% if a.progress_message %}<i class="bi bi-hourglass-split"></i> {{ a.progress_message|truncate(60, true, '…') }}{% endif %}</small>
+                <small class="text-muted text-truncate js-progress-msg" style="max-width: 55%;{% if not a.progress_message %} display: none;{% endif %}" title="{{ a.progress_message or '' }}"><i class="bi bi-hourglass-split"></i> <span class="js-progress-text">{{ a.progress_message|truncate(60, true, '…') if a.progress_message else '' }}</span></small>
                 <div class="progress ms-2 flex-grow-1 js-progress-wrap" style="height: 0.4rem;{% if not a.progress_total %} display: none;{% endif %}">
                     <div class="progress-bar js-progress-bar" role="progressbar" style="width: {{ pct }}%;"></div>
                 </div>
@@ -108,11 +108,19 @@
         var msgEl = row.querySelector('.js-progress-msg');
         var wrap = row.querySelector('.js-progress-wrap');
         var bar = row.querySelector('.js-progress-bar');
-        if (msgEl && job.progress_message) {
-            var text = job.progress_message;
-            if (text.length > 60) text = text.slice(0, 59) + '…';
-            msgEl.textContent = text;
-            msgEl.setAttribute('title', job.progress_message);
+        if (msgEl) {
+            if (job.progress_message) {
+                var text = job.progress_message;
+                if (text.length > 60) text = text.slice(0, 59) + '…';
+                // Update only the text span, leaving the hourglass icon in
+                // place — setting textContent on the whole element would wipe it.
+                var textEl = msgEl.querySelector('.js-progress-text');
+                if (textEl) textEl.textContent = text;
+                msgEl.setAttribute('title', job.progress_message);
+                msgEl.style.display = '';
+            } else {
+                msgEl.style.display = 'none';
+            }
         }
         if (wrap && bar && job.progress_total) {
             var pct = Math.floor((job.progress_current || 0) * 100 / job.progress_total);
