@@ -32,7 +32,7 @@ from .extraction import (
     _handle_disk_image_bundle,
     _is_riscos_zip,
     _sniff_archive_magic,
-    process_archive_detect,
+    detect_and_queue_archives,
     process_archive_extract,
     process_file_extraction,
 )
@@ -74,7 +74,7 @@ __all__ = [
     '_SCP_VIA_CONVERSION_TYPES',
     # Extraction
     'process_file_extraction',
-    'process_archive_detect',
+    'detect_and_queue_archives',
     'process_archive_extract',
     '_apply_pling_renames',
     '_sniff_archive_magic',

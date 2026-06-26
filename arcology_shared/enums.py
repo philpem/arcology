@@ -98,7 +98,8 @@ class AnalysisType(enum.Enum):
     FILE_EXTRACTION        = "file_extraction"        # Extract files and register listing
 
     # Archive/nested file analyses
-    ARCHIVE_DETECT         = "archive_detect"         # Scan for archives by filetype/extension
+    # (Archive *detection* is folded into file registration — see
+    # detect_and_queue_archives in worker/arcworker/analyses/extraction.py.)
     ARCHIVE_EXTRACT        = "archive_extract"        # Extract specific archive file
 
     # Metadata

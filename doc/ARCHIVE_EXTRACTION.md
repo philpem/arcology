@@ -90,15 +90,16 @@ _*Compressor = single-file, decompresses to file with same name (not a directory
 
 ```
 1. User uploads ADFS disk image → Artefact created
-2. FILE_EXTRACTION runs → Extracts files, creates ExtractedFile records with risc_os_filetype
-3. ARCHIVE_DETECT runs → Identifies archives, marks is_archive=True
-4. For each archive:
-   a. Queue ARCHIVE_EXTRACT with file_id, depth
-   b. Check depth limit before extraction
-   c. Extract using appropriate tool
-   d. Register files with parent_file_id set
-   e. Queue ARCHIVE_DETECT for newly extracted files
-5. Recursion continues until:
+2. FILE_EXTRACTION runs → Extracts files, registers ExtractedFile records
+   (registration returns each file's id), then detects archives inline
+   (detect_and_queue_archives): marks is_archive=True and queues an
+   ARCHIVE_EXTRACT per archive with file_id + depth
+3. For each archive:
+   a. Check depth limit before extraction
+   b. Extract using appropriate tool
+   c. Register files with parent_file_id set (registration returns their ids)
+   d. Detect nested archives inline and queue their ARCHIVE_EXTRACT jobs
+4. Recursion continues until:
    - No more archives found
    - Depth limit reached
    - Circular reference detected
@@ -126,9 +127,12 @@ detection_details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  #
 ### New Analysis Types
 
 ```python
-ARCHIVE_DETECT = "archive_detect"    # Scan for archives
 ARCHIVE_EXTRACT = "archive_extract"  # Extract specific archive
 ```
+
+Archive *detection* is not a separate analysis: it is folded into file
+registration (``detect_and_queue_archives``), which marks archives and queues
+ARCHIVE_EXTRACT inline using the file ids the registration API returns.
 
 ## Implementation Phases
 
@@ -143,8 +147,8 @@ ARCHIVE_EXTRACT = "archive_extract"  # Extract specific archive
 ### Phase 2: Archive Detection
 **Status**: Design complete
 
-- Add `ARCHIVE_DETECT` to `AnalysisType` enum
-- Detection logic by RISC OS filetype
+- Detection logic by RISC OS filetype, folded into file registration
+  (`detect_and_queue_archives`)
 - Automatic queueing of extraction jobs
 - Database fields populated
 

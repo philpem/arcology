@@ -159,8 +159,7 @@ components:
         - `flux_visualisation` — Render flux-level graphs from SCP images
         - `flux_decode` — Attempt to decode flux to sector data
         - `sector_dump` — Raw sector extraction
-        - `file_extraction` — Walk the filesystem and record file listing
-        - `archive_detect` — Scan extracted files for archives by extension/magic
+        - `file_extraction` — Walk the filesystem, record the listing, and detect archives inline
         - `archive_extract` — Extract a specific archive file
         - `metadata_extract` — Extract format metadata (track count, geometry, etc.)
         - `partition_detect` — Detect partitions on HDD/CD images
@@ -177,7 +176,6 @@ components:
         - flux_decode
         - sector_dump
         - file_extraction
-        - archive_detect
         - archive_extract
         - metadata_extract
         - partition_detect
