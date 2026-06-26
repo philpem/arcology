@@ -150,6 +150,31 @@ class TestStorageStats(unittest.TestCase):
             self.assertIsNotNone(summary)
             self.assertEqual(summary["kind"], "local")
             self.assertIn("free", summary["label"])
+            # Tooltip detail carries the breakdown rows.
+            names = [name for name, _ in summary["detail"]]
+            self.assertEqual(names, ["Collection", "Free", "Disk size"])
+
+    def test_navbar_summary_s3_with_quota_reports_free(self):
+        """Object store with a quota reports free space, not "X used"."""
+        from myapp.services.storage_stats import navbar_storage_summary
+        with self.app.app_context():
+            self.app.storage.disk_usage = lambda: None
+            self.app.config["STORAGE_CAPACITY_BYTES"] = 1000
+            summary = navbar_storage_summary()
+            self.assertEqual(summary["kind"], "s3")
+            self.assertIn("free", summary["label"])
+            names = [name for name, _ in summary["detail"]]
+            self.assertEqual(names, ["Collection", "Free", "Quota"])
+
+    def test_navbar_summary_s3_without_quota_falls_back_to_stored(self):
+        """Object store with no quota has no total, so it reports stored bytes."""
+        from myapp.services.storage_stats import navbar_storage_summary
+        with self.app.app_context():
+            self.app.storage.disk_usage = lambda: None
+            summary = navbar_storage_summary()
+            self.assertEqual(summary["kind"], "s3")
+            self.assertIn("stored", summary["label"])
+            self.assertEqual([n for n, _ in summary["detail"]], ["Collection"])
 
     def test_s3_disk_usage_is_none(self):
         from arcology_shared.storage import S3Storage
