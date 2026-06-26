@@ -595,6 +595,10 @@ class Artefact(db.Model):
             "NOT (upload_blob_id IS NOT NULL AND output_blob_id IS NOT NULL)",
             name="ck_artefact_at_most_one_blob",
         ),
+        # Content-key lookups: GROUP BY (file_size, sha256) for the dedup stats
+        # and `flask dedup-artefacts`, plus the point lookup behind the /storage
+        # duplicate-group drill-down (duplicate_group_instances).
+        Index("ix_artefacts_size_sha256", "file_size", "sha256"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

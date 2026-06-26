@@ -3,6 +3,7 @@ from flask import current_app
 from sqlalchemy import func
 from ..database import Artefact, OutputBlob, UploadBlob
 from ..extensions import db
+from ..services.dedup import dedup_content_clause
 from ..services.storage_stats import format_size as _format_size
 
 
@@ -24,12 +25,12 @@ def dedup_artefacts(apply):
     blob record -- typically left over from uploads that predated the blob
     deduplication migration.  Removing them reclaims disk/object-store space.
     """
-    # Zero-length artefacts are excluded: every empty file shares the canonical
-    # empty-file SHA-256, so they collapse into one large group that reclaims no
-    # physical bytes yet dominates the report.
+    # dedup_content_clause excludes zero-length artefacts: every empty file
+    # shares the canonical empty-file SHA-256, so they collapse into one large
+    # group that reclaims no physical bytes yet dominates the report.
     groups = (
         db.session.query(Artefact.file_size, Artefact.sha256, func.count(Artefact.id))
-        .filter(Artefact.file_size > 0, Artefact.sha256.isnot(None))
+        .filter(dedup_content_clause(Artefact))
         .group_by(Artefact.file_size, Artefact.sha256)
         .having(func.count(Artefact.id) > 1)
         .order_by(func.count(Artefact.id).desc())

@@ -26,6 +26,7 @@ from ..database import (
     User,
 )
 from ..extensions import db
+from .dedup import dedup_content_clause
 
 # Most-duplicated content groups shown on the stats page.
 TOP_DUPLICATE_GROUPS = 20
@@ -104,13 +105,13 @@ def deduplication_stats() -> dict:
     # staff/admin `/storage` page, so it deliberately does NOT apply an item
     # *_visibility_clause (which would undercount and misreport dedup totals).
     # The route is gated to STAFF and admins, who are trusted operators.
-    # Zero-length artefacts are excluded: every empty file shares the canonical
-    # empty-file SHA-256, so they collapse into one large group that wastes no
-    # physical bytes (file_size * (count - 1) == 0) yet crowds out the genuine
-    # duplicates this list exists to surface.
+    # dedup_content_clause excludes zero-length artefacts: every empty file
+    # shares the canonical empty-file SHA-256, so they collapse into one large
+    # group that wastes no physical bytes (file_size * (count - 1) == 0) yet
+    # crowds out the genuine duplicates this list exists to surface.
     top_groups = db.session.execute(
         db.select(Artefact.file_size, Artefact.sha256, func.count(Artefact.id))
-        .where(Artefact.file_size > 0, Artefact.sha256.isnot(None))
+        .where(dedup_content_clause(Artefact))
         .group_by(Artefact.file_size, Artefact.sha256)
         .having(func.count(Artefact.id) > 1)
         .order_by(func.count(Artefact.id).desc())

@@ -141,11 +141,9 @@ class TestStorageStats(unittest.TestCase):
         physical bytes, so they must not appear in the most-duplicated list."""
         from myapp.services.storage_stats import deduplication_stats
         with self.app.app_context():
-            empty_sha = self._seed_zero_length(count=5)
+            self._seed_zero_length(count=5)
             stats = deduplication_stats()
             self.assertEqual(stats["top_groups"], [])
-            self.assertNotIn(
-                empty_sha, {g["sha256"] for g in stats["top_groups"]})
 
     def test_duplicate_group_instances_lists_artefacts_and_files(self):
         """The drill-down service returns every artefact and extracted file
