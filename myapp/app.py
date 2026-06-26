@@ -7,7 +7,7 @@ from flask import Flask, g, render_template, request, url_for
 from flask_login import current_user
 from werkzeug.middleware.proxy_fix import ProxyFix
 from .database import UserPermission
-from .extensions import bootstrap, csrf, db, login_manager, migrate
+from .extensions import bootstrap, cache, csrf, db, login_manager, migrate
 from .utils.config import bool_config, parse_bool, parse_byte_size
 
 # Every setting that can live in myapp.cfg is also overridable from the
@@ -27,6 +27,7 @@ _ENV_STR_KEYS = (
     'OIDC_ROLE_STAFF', 'OIDC_ROLE_API_ACCESS', 'OIDC_ROLE_PRIORITISE',
     'OIDC_GROUP_SYNC_CLAIM',
     'JINJA_BYTECODE_CACHE', 'JINJA_BYTECODE_CACHE_DIR', 'JINJA_PREWARM',
+    'CACHE_TYPE', 'CACHE_REDIS_URL', 'REDIS_URL', 'CACHE_KEY_PREFIX',
     'SENTRY_DSN', 'WORKER_SENTRY_DSN',
     # String so relative cap expressions ("50%", "-1") survive env passthrough;
     # resolve_heavy_cap() parses int / percentage / negative forms.
@@ -54,6 +55,7 @@ _ENV_INT_KEYS = (
     'TASKRUNNER_SIMILARITY_DELTA_INTERVAL', 'TASKRUNNER_SIMILARITY_DELTA_MAX',
     'ANALYSIS_WORKER_HEARTBEAT_WINDOW',
     'S3_UPLOAD_CONCURRENCY',
+    'CACHE_DEFAULT_TIMEOUT',
 )
 # Byte-size keys accept an optional binary suffix (K/KiB, M/MiB, G/GiB, T/TiB)
 # in addition to a plain integer.  parse_byte_size() handles both forms.
@@ -233,6 +235,37 @@ def create_app(config_name=None):
     bootstrap.init_app(app)
     app.config['BOOTSTRAP_SERVE_LOCAL'] = True
     csrf.init_app(app)
+
+    # Read-through cache (Flask-Caching).  Disabled (NullCache) unless a backend
+    # is configured, so the default deployment behaves exactly as before — always
+    # fresh.  Configuring a Redis URL turns it on; CACHE_TYPE may override the
+    # backend explicitly (e.g. 'SimpleCache' for single-process dev only — it is
+    # not shared across Gunicorn workers and must not be used in production).
+    redis_url = app.config.get('CACHE_REDIS_URL') or app.config.get('REDIS_URL')
+    cache_config = {
+        'CACHE_DEFAULT_TIMEOUT': app.config.get('CACHE_DEFAULT_TIMEOUT', 300),
+        'CACHE_KEY_PREFIX': app.config.get('CACHE_KEY_PREFIX', 'arcology:'),
+    }
+    explicit_type = app.config.get('CACHE_TYPE')
+    if explicit_type:
+        cache_config['CACHE_TYPE'] = explicit_type
+        if redis_url:
+            cache_config['CACHE_REDIS_URL'] = redis_url
+    elif redis_url:
+        cache_config['CACHE_TYPE'] = 'RedisCache'
+        cache_config['CACHE_REDIS_URL'] = redis_url
+    else:
+        cache_config['CACHE_TYPE'] = 'NullCache'
+    cache.init_app(app, config=cache_config)
+    if cache_config['CACHE_TYPE'] == 'SimpleCache':
+        app.logger.warning(
+            'CACHE_TYPE=SimpleCache is per-process and not shared across Gunicorn '
+            'workers — use only for single-process development, never in production.'
+        )
+
+    # Wire the commit hook that invalidates content-versioned cache entries.
+    from .services.cache import register_cache_invalidation
+    register_cache_invalidation(app)
 
     # Initialise storage backend (local filesystem or S3-compatible)
     from arcology_shared.storage import create_storage
