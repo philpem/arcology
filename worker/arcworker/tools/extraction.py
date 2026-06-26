@@ -14,7 +14,7 @@ import re
 import shutil
 import tempfile
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from arcology_shared.fuzzyhash import compute_tlsh
 from ..utils.text import normalize_extracted_filenames
@@ -256,6 +256,70 @@ def _has_acorn_filetypes(output_dir: Path) -> bool:
     return False
 
 
+# Timestamps before this predate every platform we catalogue (the BBC Micro
+# arrived in 1981, RISC OS in 1987, MS-DOS in 1981).  A date older than this is
+# almost always a corrupt value — e.g. a bad RISC OS load/exec decode, or a
+# zero/epoch sentinel — rather than a genuine artefact date.
+_TIMESTAMP_FLOOR = datetime(1975, 1, 1, tzinfo=timezone.utc)
+
+# Clock-granularity / NTP slack applied to both ends of the rejection window.
+_TIMESTAMP_SKEW = timedelta(seconds=60)
+
+
+def _as_utc(value: str | datetime | None) -> datetime | None:
+    """Coerce an ISO 8601 string or datetime to an aware UTC datetime.
+
+    Filesystem mtimes are stored as naive UTC and INF-decoded timestamps as
+    tz-aware UTC; normalise both so they can be compared.  Returns ``None`` if
+    the value is missing or unparseable.
+    """
+    if isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    elif isinstance(value, datetime):
+        dt = value
+    else:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _is_plausible_timestamp(
+    value: str | datetime | None,
+    extraction_started_at: datetime | None,
+    now: datetime,
+) -> bool:
+    """Decide whether an extracted-file timestamp is a real artefact date.
+
+    Many filesystems and platforms do not store a usable mtime/ctime (BBC DFS,
+    non-date-stamped ADFS, and other no-RTC media), and extraction tools then
+    default the file's timestamp to "now".  Such fabricated dates land inside
+    this job's extraction window, so we reject any timestamp that:
+
+    - is in the future (``now`` + skew) — impossible for an artefact;
+    - falls within the extraction window ``[started_at - skew, now]`` — the
+      tool's own "now", written because the source carried no date;
+    - predates :data:`_TIMESTAMP_FLOOR` — a corrupt/garbage value.
+
+    INF-decoded RISC OS timestamps are validated too, since a corrupt load/exec
+    pair can decode to an absurd year.
+    """
+    dt = _as_utc(value)
+    if dt is None:
+        return False
+    if dt > now + _TIMESTAMP_SKEW:
+        return False
+    if dt < _TIMESTAMP_FLOOR:
+        return False
+    started = _as_utc(extraction_started_at)
+    if started is not None and dt >= started - _TIMESTAMP_SKEW:
+        return False
+    return True
+
+
 def enumerate_extracted_files(
     output_dir: Path,
     acorn: bool | str = False,
@@ -264,6 +328,7 @@ def enumerate_extracted_files(
     filetype_map: dict[str, str] | None = None,
     inf_metadata: dict[str, dict] | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
+    extraction_started_at: datetime | None = None,
 ) -> list[dict]:
     """
     Enumerate files in an extraction directory and return structured file list.
@@ -292,6 +357,12 @@ def enumerate_extracted_files(
             file is hashed.  Hashing every extracted file is the dominant cost
             of this function, so this lets long extractions report live
             progress.  *total* comes from a cheap pre-count pass.
+        extraction_started_at: Wall-clock UTC time the extraction job began.
+            When set, any file timestamp falling within the extraction window
+            ``[started_at - skew, now]`` is dropped: it is the extraction tool's
+            own "now", written because the source filesystem/platform stored no
+            real date (BBC DFS, non-date-stamped ADFS, other no-RTC media).
+            Future and obviously-corrupt timestamps are dropped regardless.
 
     Returns:
         List of file dicts with path, size, hashes, and optional
@@ -301,6 +372,10 @@ def enumerate_extracted_files(
 
     if acorn == 'auto':
         acorn = _has_acorn_filetypes(output_dir)
+
+    # Reference "now" for timestamp validation, captured once so every file in
+    # this run is judged against the same instant.
+    now_ref = datetime.now(timezone.utc)
 
     files = []
 
@@ -402,6 +477,15 @@ def enumerate_extracted_files(
             # The record is still registered, just without hashes — log it so
             # a transient I/O error is distinguishable from "never hashed".
             _log.warning(f"Could not hash extracted file {file_path}: {e}")
+
+        # Drop fabricated / impossible timestamps (extraction-window "now",
+        # future dates, corrupt decodes) so they read as unknown rather than
+        # as today's date.  Applies to both the filesystem mtime and any
+        # INF-decoded RISC OS timestamp.
+        if 'modified_time' in file_entry and not _is_plausible_timestamp(
+            file_entry['modified_time'], extraction_started_at, now_ref
+        ):
+            del file_entry['modified_time']
 
         files.append(file_entry)
 
