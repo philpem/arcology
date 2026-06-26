@@ -51,11 +51,12 @@ from ..extensions import db
 from ..utils.blobs import get_or_create_blob
 
 # The two row types that own a transcoded output, each mapped to the analysis
-# that (re)produces it.  Both carry the same columns (mp4_output_path /
-# poster_path and the mp4_output_blob_id / poster_blob_id dedup anchors), so
-# they are processed uniformly.
+# that (re)produces it.  REPLAY_PROCESS both parses and transcodes ARMovie files
+# (re-running it re-encodes when the cache is cold).  Both row types carry the
+# same columns (mp4_output_path / poster_path and the mp4_output_blob_id /
+# poster_blob_id dedup anchors), so they are processed uniformly.
 _TRANSCODE_TYPES = {
-    ReplayMovie: AnalysisType.REPLAY_TRANSCODE,
+    ReplayMovie: AnalysisType.REPLAY_PROCESS,
     MediaFile: AnalysisType.MEDIA_TRANSCODE,
 }
 _TRANSCODE_MODELS = tuple(_TRANSCODE_TYPES)

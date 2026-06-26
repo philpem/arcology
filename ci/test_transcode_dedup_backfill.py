@@ -210,7 +210,7 @@ class TestTranscodeDedupBackfill(unittest.TestCase):
 
                 # Resolve re-queue targets BEFORE invalidation clears the rows.
                 targets = requeue_targets({source_sha})
-                self.assertIn((art.id, AnalysisType.REPLAY_TRANSCODE), targets)
+                self.assertIn((art.id, AnalysisType.REPLAY_PROCESS), targets)
 
                 counts = invalidate_transcodes({source_sha})
                 self.assertEqual(counts['blobs'], 1)
