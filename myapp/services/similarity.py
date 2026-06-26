@@ -250,6 +250,34 @@ def _partition_components(files):
     yield from components
 
 
+def _filter_existing_component_rows(rows: list[dict]) -> list[dict]:
+    """Drop component-pair rows whose FK targets no longer exist.
+
+    PostgreSQL key-share locks keep the surviving component rows from being
+    deleted by a concurrent refresh until this transaction has inserted its
+    ComponentSimilarity rows.
+    """
+    if not rows:
+        return rows
+    ids = {r['component_a_id'] for r in rows} | {r['component_b_id'] for r in rows}
+    existing: set[int] = set()
+    dialect = db.session.get_bind().dialect.name
+    id_list = list(ids)
+    for i in range(0, len(id_list), 500):
+        q = db.session.query(ArtefactComponent.id).filter(
+            ArtefactComponent.id.in_(id_list[i:i + 500])
+        )
+        if dialect == 'postgresql':
+            q = q.with_for_update(key_share=True)
+        existing.update(row[0] for row in q.all())
+    if len(existing) == len(ids):
+        return rows
+    return [
+        r for r in rows
+        if r['component_a_id'] in existing and r['component_b_id'] in existing
+    ]
+
+
 def _pairs_from_inverted(inverted: dict) -> set[tuple]:
     """All ``(a, b)`` (a < b) pairs that share at least one *distinctive* key.
 
@@ -489,6 +517,7 @@ def _rebuild_components(rows, weights=None, progress=None) -> int:
         if progress and i % _PROGRESS_EVERY == 0:
             _note(f"  component pairs: {i}/{len(pairs)} compared, {len(component_rows)} stored")
 
+    component_rows = _filter_existing_component_rows(component_rows)
     return insert_ignore_conflict(ComponentSimilarity, component_rows, _COMPONENT_PAIR_COLS)
 
 
@@ -759,6 +788,7 @@ def similarity_match_step(artefact_id, cursor=0, *, limit=SIMILARITY_STEP_CANDID
                 lo, hi = (comp.id, cc.id) if comp.id < cc.id else (cc.id, comp.id)
                 component_rows.append(
                     {"component_a_id": lo, "component_b_id": hi, "computed_at": now, **metrics})
+        component_rows = _filter_existing_component_rows(component_rows)
         component_pairs = insert_ignore_conflict(
             ComponentSimilarity, component_rows, _COMPONENT_PAIR_COLS)
 
