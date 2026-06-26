@@ -28,8 +28,10 @@ import json
 from pathlib import Path
 from arcology_shared.artefact_types import (
     MEDIA_EXTENSIONS,
+    RISCOS_FILETYPE_EXTENSION,
     media_is_browser_playable,
     media_kind_for_extension,
+    media_kind_for_riscos_filetype,
 )
 from arcology_shared.enums import AnalysisType, ArtefactType
 from ..config import log
@@ -178,7 +180,10 @@ def process_media_transcode(self, analysis: dict, artefact: dict, work_dir: Path
     # --- Mode 2: Extraction scan ---
     def _select(file_data: dict) -> bool:
         ext = Path(file_data.get('filename', '')).suffix.lower()
-        return ext in MEDIA_EXTENSIONS
+        if ext in MEDIA_EXTENSIONS:
+            return True
+        filetype = (file_data.get('risc_os_filetype') or '').lower()
+        return media_kind_for_riscos_filetype(filetype) is not None
 
     scan = scan_partition_files(self, analysis, artefact, select_files=_select)
     if scan is None:
@@ -207,13 +212,25 @@ def process_media_transcode(self, analysis: dict, artefact: dict, work_dir: Path
             self, scan.files, scan.extraction_path, work_dir,
             path_prefix=scan.path_prefix, on_missing=_missing)):
         base_name = f'{analysis_uuid}_{index}'
+        filename = file_data.get('filename', '')
+        # For RISC OS files without a PC-style extension, synthesise one so that
+        # media_is_browser_playable() makes the right passthrough decision
+        # (e.g. a RISC OS MP4 &A64 without ".mp4" would otherwise always transcode).
+        if not Path(filename).suffix:
+            ft = (file_data.get('risc_os_filetype') or '').lower()
+            synth_ext = RISCOS_FILETYPE_EXTENSION.get(ft, '')
+            if synth_ext:
+                filename = 'file' + synth_ext
         entry = _process_media_file(
-            self, file_path, db_path, file_data.get('filename', ''),
+            self, file_path, db_path, filename,
             base_name, work_dir, output_subdir,
         )
         if 'error' in entry:
             log.warning(f"Skipping {db_path} — {entry['error']}")
-            entry.setdefault('media_kind', media_kind_for_extension(Path(db_path).suffix))
+            entry.setdefault('media_kind',
+                media_kind_for_extension(Path(db_path).suffix) or
+                media_kind_for_riscos_filetype((file_data.get('risc_os_filetype') or '').lower())
+            )
             errors.append(entry)
             continue
         processed.append(entry)

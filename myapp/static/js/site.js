@@ -7,3 +7,13 @@ function copyToClipboard(text, btn) {
         setTimeout(function() { icon.className = 'bi bi-clipboard'; }, 1500);
     });
 }
+
+/* Opt-in Bootstrap tooltips (e.g. the navbar storage chip). */
+document.addEventListener('DOMContentLoaded', function() {
+    if (typeof bootstrap === 'undefined' || !bootstrap.Tooltip) {
+        return;
+    }
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
+        bootstrap.Tooltip.getOrCreateInstance(el);
+    });
+});

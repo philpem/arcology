@@ -1,6 +1,15 @@
 {% from '_pagination.html' import render_pagination_compact, render_letter_bar_compact %}
 {% from '_path_nav.html' import render_path_breadcrumb, render_subdirectory_bar %}
 {% from '_macros.html' import file_download_icon, file_viewer_metadata_icons with context %}
+{# Render the parent-directory breadcrumb for a row: muted, clickable folder/zip
+   links resolved against *base* (the browsed-directory prefix, '' at root), so
+   every row reads consistently as "<parents> / <name>". #}
+{% macro dir_crumb(parts, base, file, pagination_args, archive_paths) -%}
+{%- for i in range(parts|length) -%}
+{%- set build_path = base + parts[:i+1]|join('/') + '/' -%}
+<a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=build_path) | urlencode }}" class="text-muted text-decoration-none" title="Browse {{ build_path }}">{% if build_path.rstrip('/') in archive_paths %}<i class="bi bi-file-zip"></i>{% else %}<i class="bi bi-folder"></i>{% endif %} {{ parts[i] }}</a> /
+{%- endfor -%}
+{%- endmacro %}
         <div class="card" id="files">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span>
@@ -99,23 +108,31 @@
                         {% set partition_color = partition_colors[file.partition.partition_index % partition_colors|length] %}
                         {# Check if this directory row has a recognised product match #}
                         {% set rp_match = recognised_folder_paths.get(file.path) if file.is_directory else none %}
-                        {# Normalise current_path to always end with '/' so build_path concatenation is correct #}
+                        {# Split the path into a parent-directory breadcrumb and the final
+                           component (the file/dir "name"), relative to the browsed directory,
+                           so every row — file, directory or archive — reads the same way:
+                           <parents> / <name>. #}
                         {% set _cp = current_path.rstrip('/') + '/' if current_path else '' %}
-                        {# Strip the current path prefix for display; show only relative path within the browsed directory #}
-                        {% set _raw_display = file.path[_cp|length:] if _cp else file.path %}
-                        {% set file_display_path = _raw_display.lstrip('/') %}
-                        {% set file_display_parts = file_display_path.split('/') if file_display_path else [file.path.split('/')[-1]] %}
+                        {% set _rel = (file.path[_cp|length:] if (_cp and file.path.startswith(_cp)) else file.path).lstrip('/') %}
+                        {% set _parts = _rel.split('/') if _rel else [file.path.split('/')[-1]] %}
+                        {% set _name = _parts[-1] %}
+                        {% set _parents = _parts[:-1] %}
+                        {# Name tooltip: Replay/media title when known, else the full path. #}
+                        {% set _replay = replay_info.get(file.path) if replay_info is defined and replay_info else none %}
+                        {% set _media = media_info.get(file.path) if media_info is defined and media_info else none %}
                         <tr class="{{ 'table-secondary' if file.is_known else '' }}{{ ' fst-italic' if file.is_directory else '' }}" id="file-row-{{ file.id }}">
                             {% if hashdb_mode %}
                             <td>{% if not file.is_directory %}<input type="checkbox" name="file_ids" value="{{ file.id }}" class="file-checkbox">{% endif %}</td>
                             {% endif %}
                             <td>
-                                <span class="badge bg-{{ partition_color }} me-1" title="Partition {{ file.partition.partition_index }}: {{ file.partition.label or file.partition.filesystem.value }}">{{ file.partition.partition_index }}</span>{% if file.is_directory %}
-                                    {# Directory - make it clickable to browse into it #}
+                                <span class="badge bg-{{ partition_color }} me-1" title="Partition {{ file.partition.partition_index }}: {{ file.partition.label or file.partition.filesystem.value }}">{{ file.partition.partition_index }}</span>
+                                {% if current_path %}<span class="text-muted">… /</span> {% endif %}{{ dir_crumb(_parents, _cp, file, pagination_args, archive_paths) }}
+                                {% if file.is_directory %}
+                                    {# Directory — emphasised name, click to browse into it #}
                                     <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=file.path + '/') | urlencode }}"
                                        class="text-primary text-decoration-none"
-                                       title="Browse directory">
-                                        <i class="bi bi-folder-fill"></i> {% if current_path %}<span class="text-muted">… /</span> {% endif %}<strong>{{ file_display_path }}</strong>
+                                       title="Browse directory — {{ file.path }}">
+                                        <i class="bi bi-folder-fill"></i> <strong>{{ _name }}</strong>
                                     </a>
                                     {% if rp_match %}
                                     <span class="badge bg-info ms-1" title="Recognised: {{ rp_match.product.title }} ({{ rp_match.product.database.name }}) — {{ rp_match.required_matched }}/{{ rp_match.required_total }} required matched">
@@ -123,34 +140,11 @@
                                     </span>
                                     {% endif %}
                                 {% elif file.is_archive %}
-                                    {# Archive - render like a directory but with an archive icon #}
-                                    {% set path_parts = file.path.split('/') %}
-                                    {% if current_path %}
-                                        <span class="text-muted">… /</span>
-                                        {% for i in range(file_display_parts|length - 1) %}
-                                            {% set build_path = _cp + file_display_parts[:i+1]|join('/') + '/' %}
-                                            <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=build_path) | urlencode }}"
-                                               class="text-muted text-decoration-none"
-                                               title="Browse {{ build_path }}">
-                                                {% if build_path.rstrip('/') in archive_paths %}<i class="bi bi-file-zip"></i>{% else %}<i class="bi bi-folder"></i>{% endif %}
-                                                {{ file_display_parts[i] }}
-                                            </a> /
-                                        {% endfor %}
-                                    {% elif path_parts|length > 1 %}
-                                        {% for i in range(path_parts|length - 1) %}
-                                            {% set build_path = path_parts[:i+1]|join('/') + '/' %}
-                                            <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=build_path) | urlencode }}"
-                                               class="text-muted text-decoration-none"
-                                               title="Browse {{ build_path }}">
-                                                {% if build_path.rstrip('/') in archive_paths %}<i class="bi bi-file-zip"></i>{% else %}<i class="bi bi-folder"></i>{% endif %}
-                                                {{ path_parts[i] }}
-                                            </a> /
-                                        {% endfor %}
-                                    {% endif %}
+                                    {# Archive — emphasised name with zip icon, click to browse contents #}
                                     <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=file.path + '/') | urlencode }}"
                                        class="text-primary text-decoration-none"
-                                       title="Browse archive contents">
-                                        <i class="bi bi-file-zip-fill"></i> <strong>{{ file_display_parts[-1] }}</strong>
+                                       title="Browse archive contents — {{ file.path }}">
+                                        <i class="bi bi-file-zip-fill"></i> <strong>{{ _name }}</strong>
                                     </a>
                                     {% if file.archive_comment %}
                                     <button type="button" class="btn btn-link btn-sm p-0 ms-1 text-muted"
@@ -164,35 +158,9 @@
                                     </button>
                                     {% endif %}
                                 {% else %}
-                                    {% set path_parts = file.path.split('/') %}
-                                    {% if current_path %}
-                                        {# Show only the path relative to the current directory, prefixed with … #}
-                                        <span class="text-muted">… /</span>
-                                        {% for i in range(file_display_parts|length - 1) %}
-                                            {% set build_path = _cp + file_display_parts[:i+1]|join('/') + '/' %}
-                                            <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=build_path) | urlencode }}"
-                                               class="text-muted text-decoration-none"
-                                               title="Browse {{ build_path }}">
-                                                {% if build_path.rstrip('/') in archive_paths %}<i class="bi bi-file-zip"></i>{% else %}<i class="bi bi-folder"></i>{% endif %}
-                                                {{ file_display_parts[i] }}
-                                            </a> /
-                                        {% endfor %}
-                                        <code>{{ file_display_parts[-1] }}</code>
-                                    {% elif path_parts|length > 1 %}
-                                        {# Show directory path as clickable links, with archive icon for archive components #}
-                                        {% for i in range(path_parts|length - 1) %}
-                                            {% set build_path = path_parts[:i+1]|join('/') + '/' %}
-                                            <a href="?{{ dict(pagination_args, partition_uuid=file.partition.uuid, path=build_path) | urlencode }}"
-                                               class="text-muted text-decoration-none"
-                                               title="Browse {{ build_path }}">
-                                                {% if build_path.rstrip('/') in archive_paths %}<i class="bi bi-file-zip"></i>{% else %}<i class="bi bi-folder"></i>{% endif %}
-                                                {{ path_parts[i] }}
-                                            </a> /
-                                        {% endfor %}
-                                        <code>{{ path_parts[-1] }}</code>
-                                    {% else %}
-                                        <code>{{ file.path }}</code>
-                                    {% endif %}
+                                    {# Regular file — name in monospace; tooltip gives the Replay/media
+                                       title when known, otherwise the full path. #}
+                                    <code title="{% if _replay %}Replay: {{ _replay.title or _name }}{% elif _media %}{{ 'Audio' if _media.media_kind == 'audio' else 'Video' }}: {{ _media.title or _name }}{% else %}{{ file.path }}{% endif %}">{{ _name }}</code>
                                 {% endif %}
                                 {% if not file.is_directory %}
                                 {# Effective restrictions = direct on this file + inherited from ancestor archives #}

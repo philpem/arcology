@@ -1049,8 +1049,9 @@ class RiscosModule(db.Model):
 class ReplayMovie(db.Model):
     """Acorn Replay / ARMovie (RISC OS filetype &AE7) metadata.
 
-    Populated server-side when a REPLAY_PROCESS analysis completes.  One row per
-    ARMovie file found in an extraction (a disc image may contain several).
+    Populated server-side when a REPLAY_PROCESS analysis completes (which both
+    parses the header and transcodes the video).  One row per ARMovie file found
+    in an extraction (a disc image may contain several).
     Like RiscosModule, ARMovie files are only ever encountered as extracted
     files (never standalone artefacts), so ``file_path`` is always set.
     """
@@ -1075,7 +1076,7 @@ class ReplayMovie(db.Model):
     frames_per_chunk: Mapped[float | None] = mapped_column(Float, nullable=True)
     number_of_chunks: Mapped[int | None] = mapped_column(Integer, nullable=True)  # entry count (highest index + 1)
     duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
-    # Transcoded outputs, populated by a REPLAY_TRANSCODE analysis (scotch + ffmpeg).
+    # Transcoded outputs, populated by the REPLAY_PROCESS analysis (scotch + ffmpeg).
     # Relative paths under the 'outputs' storage directory, served via get_output_file.
     mp4_output_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     poster_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)

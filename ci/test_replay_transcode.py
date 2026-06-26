@@ -1,14 +1,15 @@
 """
-Tests for Acorn Replay / ARMovie → MP4 transcoding (REPLAY_TRANSCODE).
+Tests for Acorn Replay / ARMovie → MP4 transcoding (the REPLAY_PROCESS analysis,
+which parses the header AND transcodes the video in one pass).
 
 Covers three layers without needing the real scotch/ffmpeg binaries:
 
   1. The worker tool wrapper ``transcode_armovie_to_mp4`` — subprocess calls are
      mocked; the mock creates the expected output files so the existence checks
      fire as they would in production.
-  2. The web search-index handler ``handle_replay_transcode`` — updates the
-     existing ReplayMovie row (created by REPLAY_PROCESS) with the MP4/poster
-     paths, and never inserts/deletes.
+  2. The web search-index handler ``handle_replay_movies`` — creates a
+     ReplayMovie row carrying both the parsed metadata and (when present) the
+     transcoded MP4/poster paths, in a single pass.
   3. The viewer detail helper ``_viewer_replay_detail`` — turns those stored
      paths into served URLs (mp4_url / poster_url).
 
@@ -361,38 +362,52 @@ class TestSearchIndexAndViewer(unittest.TestCase):
         _db.session.flush()
         return art, mov
 
-    def test_handle_replay_transcode_updates_row(self):
+    def test_handle_replay_movies_creates_row_with_transcode(self):
+        """The merged REPLAY_PROCESS result carries both metadata and transcode
+        outputs; handle_replay_movies creates a fully-populated row in one pass."""
         from myapp.database import ReplayMovie
-        from myapp.services.search_index import handle_replay_transcode
+        from myapp.services.search_index import handle_replay_movies
         with self.app.app_context():
-            art, mov = self._fixture()
+            art, _existing = self._fixture()  # deleted + recreated from the result
             analysis = types.SimpleNamespace(artefact_id=art.id)
-            details = {'transcoded': [{
+            details = {'movies': [{
                 'file_path': 'Movies/Demo',
+                'title': 'Demo',
+                'video_format': 1,
+                'width': 320,
+                'height': 256,
                 'mp4_output_path': 'item_x/art_y/abc.mp4',
                 'poster_path': 'item_x/art_y/abc.jpg',
             }]}
-            handle_replay_transcode(analysis, details)
+            handle_replay_movies(analysis, details)
             self._db.session.flush()
             self._db.session.expire_all()
-            refreshed = self._db.session.get(ReplayMovie, mov.id)
-            self.assertEqual(refreshed.mp4_output_path, 'item_x/art_y/abc.mp4')
-            self.assertEqual(refreshed.poster_path, 'item_x/art_y/abc.jpg')
+            rows = ReplayMovie.query.filter_by(artefact_id=art.id).all()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0].file_path, 'Movies/Demo')
+            self.assertEqual(rows[0].mp4_output_path, 'item_x/art_y/abc.mp4')
+            self.assertEqual(rows[0].poster_path, 'item_x/art_y/abc.jpg')
             self._db.session.rollback()
 
-    def test_handle_replay_transcode_skips_unknown_file(self):
+    def test_handle_replay_movies_failed_transcode_leaves_mp4_null(self):
+        """A movie that parsed but failed to transcode still gets a metadata row,
+        with no MP4/poster (the entry omits the transcode keys)."""
         from myapp.database import ReplayMovie
-        from myapp.services.search_index import handle_replay_transcode
+        from myapp.services.search_index import handle_replay_movies
         with self.app.app_context():
-            art, mov = self._fixture()
+            art, _existing = self._fixture()
             analysis = types.SimpleNamespace(artefact_id=art.id)
-            handle_replay_transcode(analysis, {'transcoded': [{
-                'file_path': 'Movies/DoesNotExist',
-                'mp4_output_path': 'x.mp4',
+            handle_replay_movies(analysis, {'movies': [{
+                'file_path': 'Movies/NoVid',
+                'title': 'NoVid',
+                'video_format': 1,
             }]})
             self._db.session.flush()
             self._db.session.expire_all()
-            self.assertIsNone(self._db.session.get(ReplayMovie, mov.id).mp4_output_path)
+            row = ReplayMovie.query.filter_by(
+                artefact_id=art.id, file_path='Movies/NoVid').one()
+            self.assertIsNone(row.mp4_output_path)
+            self.assertIsNone(row.poster_path)
             self._db.session.rollback()
 
     def test_viewer_detail_builds_urls(self):
@@ -492,18 +507,79 @@ class TestSearchIndexAndViewer(unittest.TestCase):
             self._db.session.rollback()
 
 
-class TestHandlerOrdering(unittest.TestCase):
-    def test_transcode_handler_after_process(self):
-        """handle_replay_transcode must run after handle_replay_movies so the
-        rows it updates already exist (both in live and rebuild paths)."""
+class TestHandlerMapping(unittest.TestCase):
+    def test_replay_process_owns_the_single_handler(self):
+        """REPLAY_PROCESS now both parses and transcodes, so it maps to
+        handle_replay_movies and the old REPLAY_TRANSCODE type is gone."""
         from arcology_shared.enums import AnalysisType
-        from myapp.services.search_index import _HANDLER_MAP
-        keys = list(_HANDLER_MAP.keys())
-        self.assertIn(AnalysisType.REPLAY_TRANSCODE, keys)
-        self.assertLess(
-            keys.index(AnalysisType.REPLAY_PROCESS),
-            keys.index(AnalysisType.REPLAY_TRANSCODE),
-        )
+        from myapp.services.search_index import _HANDLER_MAP, handle_replay_movies
+        self.assertIs(
+            _HANDLER_MAP[AnalysisType.REPLAY_PROCESS], handle_replay_movies)
+        self.assertFalse(hasattr(AnalysisType, 'REPLAY_TRANSCODE'))
+
+
+class TestReplayFileDetection(unittest.TestCase):
+    """is_replay_file() — the discovery predicate used by REPLAY_PROCESS.  Must
+    catch RISC OS filetype &AE7 *and* PC-style Replay extensions so movies zipped
+    on a non-RISC OS filesystem (where the &AE7 filetype is lost) are still
+    recognised."""
+
+    def test_matches_riscos_filetype_ae7(self):
+        from arcology_shared.artefact_types import is_replay_file
+        self.assertTrue(is_replay_file('movie', 'ae7'))
+        self.assertTrue(is_replay_file('movie', 'AE7'))      # case-insensitive
+
+    def test_matches_pc_extensions(self):
+        from arcology_shared.artefact_types import is_replay_file
+        for name in ('clip.rpl', 'clip.rep', 'clip.replay', 'clip.armovie',
+                     'CLIP.RPL', 'CLIP.Replay'):
+            self.assertTrue(is_replay_file(name, None), name)
+            # Extension wins even with no/blank filetype.
+            self.assertTrue(is_replay_file(name, ''), name)
+
+    def test_rejects_non_replay(self):
+        from arcology_shared.artefact_types import is_replay_file
+        self.assertFalse(is_replay_file('readme.txt', None))
+        self.assertFalse(is_replay_file('movie.mp4', 'a64'))   # other media filetype
+        self.assertFalse(is_replay_file('', None))
+        self.assertFalse(is_replay_file('noext', None))
+
+
+class TestArmovieMagicSniff(unittest.TestCase):
+    """file_has_armovie_magic() — the cheap content check that confirms an
+    extension/filetype candidate is genuinely an Acorn Replay file before it is
+    parsed or transcoded."""
+
+    def test_accepts_armovie_bytes(self):
+        from worker.arcworker.tools.armovie import file_has_armovie_magic
+        self.assertTrue(file_has_armovie_magic(b'ARMovie\n160\n...'))
+
+    def test_rejects_other_bytes(self):
+        from worker.arcworker.tools.armovie import file_has_armovie_magic
+        self.assertFalse(file_has_armovie_magic(b'PK\x03\x04 not a movie'))
+        self.assertFalse(file_has_armovie_magic(b''))
+        self.assertFalse(file_has_armovie_magic(b'ARMov'))  # too short
+
+    def test_accepts_armovie_path(self):
+        from worker.arcworker.tools.armovie import file_has_armovie_magic
+        with tempfile.TemporaryDirectory() as d:
+            good = Path(d) / 'movie.rpl'
+            good.write_bytes(b'ARMovie\n' + b'0\n' * 20)
+            self.assertTrue(file_has_armovie_magic(good))
+            bad = Path(d) / 'other.rpl'
+            bad.write_bytes(b'just some text file')
+            self.assertFalse(file_has_armovie_magic(bad))
+
+    def test_missing_file_is_false(self):
+        from worker.arcworker.tools.armovie import file_has_armovie_magic
+        self.assertFalse(file_has_armovie_magic('/no/such/file.rpl'))
+
+    def test_memoryview_not_copied_whole(self):
+        """A memoryview over a large buffer must only have its first bytes read,
+        not be materialised whole."""
+        from worker.arcworker.tools.armovie import file_has_armovie_magic
+        big = memoryview(b'ARMovie' + b'\x00' * (8 * 1024 * 1024))
+        self.assertTrue(file_has_armovie_magic(big))
 
 
 if __name__ == '__main__':

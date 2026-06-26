@@ -9,14 +9,15 @@ Covers:
   PRODUCT_RECOGNITION  — fold extracted files against hash-database product
                          definitions.
   RISCOS_MODULE_PARSE  — parse RISC OS relocatable modules (filetype FFA).
-  REPLAY_PROCESS       — parse Acorn Replay / ARMovie files (filetype AE7).
+  REPLAY_PROCESS       — index Acorn Replay / ARMovie files (filetype AE7):
+                         parse the header AND transcode the video to MP4.
 """
 
 import json
 from pathlib import Path
+from arcology_shared.artefact_types import is_replay_file
 from arcology_shared.enums import AnalysisType, ArtefactType
 from arcology_shared.fuzzyhash import compute_tlsh
-from arcology_shared.hints import HintKey
 from ..config import REPLAY_MODULES_DIR, log
 from ..tools import (
     ArmovieParseError,
@@ -24,6 +25,7 @@ from ..tools import (
     compute_file_hash,
     convert_replay_poster_sprite,
     decode_module,
+    file_has_armovie_magic,
     parse_armovie_header,
     read_file_capped,
     transcode_armovie_to_audio,
@@ -33,9 +35,7 @@ from ..tools.extraction import convert_fcfs_to_raw
 from ..tools.iso9660 import parse_iso9660_pvd
 from ._common import (
     analysis_handler,
-    find_extraction_path,
     iter_resolved_files,
-    resolve_extraction_file,
     scan_partition_files,
     transcode_cached,
 )
@@ -299,44 +299,45 @@ def process_riscos_module_parse(self, analysis: dict, artefact: dict, work_dir: 
     )
 
 
-@analysis_handler("Process Replay file", AnalysisType.REPLAY_PROCESS)
+@analysis_handler("Process Acorn Replay file", AnalysisType.REPLAY_PROCESS)
 def process_replay(self, analysis: dict, artefact: dict, work_dir: Path):
-    """Process Acorn Replay / ARMovie files found in an extraction.
+    """Index and transcode Acorn Replay / ARMovie files found in an extraction.
 
-    Scans partition files for filetype ae7 (ARMovie), reads each from disk, and
-    parses the text header + chunk catalogue into searchable metadata.  Named
-    "process" (not "parse") because this handler will later be extended to
-    transcode the video to a portable format.
+    Scans partition files for ARMovie movies (RISC OS filetype &AE7 or a
+    PC-style ``.rpl`` / ``.replay`` extension) and, for each one, parses the text
+    header + chunk catalogue into searchable metadata *and* transcodes the video
+    to a browser-playable MP4 (or an M4A for sound-only movies) — both in a
+    single pass.  These were once two jobs (REPLAY_PROCESS then REPLAY_TRANSCODE)
+    that each re-discovered, re-magic-checked and re-parsed the very same files;
+    fusing them removes the duplicate scan and the cross-job ordering hazard (the
+    metadata row and its MP4 are now produced together, so the web side creates a
+    fully-populated ReplayMovie row in one step).
 
-    Only meaningful for extractions that contain ARMovie files; a harmless
-    no-op otherwise.
+    Best-effort per file: a movie whose codec needs a RISC OS decompressor module
+    that is not available is recorded as a transcode error but *still* contributes
+    its parsed metadata row (with no MP4).  A file selected only by its extension
+    that turns out not to be ARMovie is skipped silently.
+
+    Only meaningful for extractions that contain ARMovie files; a harmless no-op
+    otherwise.
     """
     analysis_id = analysis['id']
-    hints = json.loads(analysis.get('hints') or '{}')
-    partition_uuid = hints.get(HintKey.PARTITION_UUID)
-    extraction_path = hints.get(HintKey.EXTRACTION_PATH)
-    path_prefix = hints.get(HintKey.PATH_PREFIX, '')  # set when queued from archive extraction
 
-    if not partition_uuid:
-        self.fail_analysis(analysis_id, 'No partition_uuid in analysis hints')
+    # Discover ARMovie files (filetype &AE7 or a Replay extension) via the
+    # shared batch scaffold.
+    scan = scan_partition_files(
+        self, analysis, artefact,
+        select_files=lambda f: is_replay_file(
+            f.get('filename') or f.get('path') or '', f.get('risc_os_filetype')),
+    )
+    if scan is None:
+        self.fail_analysis(
+            analysis_id,
+            'No partition_uuid in hints or could not determine extraction path',
+        )
         return
 
-    # Fetch files with RISC OS filetype ae7 (ARMovie).
-    base_params = {'show_known': 'true'}
-    if path_prefix:
-        base_params['path_prefix'] = path_prefix
-    else:
-        base_params['extraction_depth'] = 0
-
-    all_files = self.api.get_partition_files(partition_uuid, **base_params)
-
-    replay_files = [
-        f for f in all_files
-        if (f.get('risc_os_filetype') or '').lower() == 'ae7'
-        and not f.get('is_directory', False)
-    ]
-
-    if not replay_files:
+    if not scan.files:
         self.complete_analysis(
             analysis_id,
             summary='No Acorn Replay / ARMovie files (filetype ae7) found',
@@ -344,76 +345,165 @@ def process_replay(self, analysis: dict, artefact: dict, work_dir: Path):
         )
         return
 
-    if not extraction_path:
-        extraction_path = find_extraction_path(self, artefact.get('uuid'))
-
-    if not extraction_path:
-        self.fail_analysis(analysis_id, 'Could not determine extraction path')
-        return
+    path_prefix = scan.path_prefix
+    # Only pass --modules-dir when it actually exists (it won't when the worker
+    # runs outside the Docker image that bundles the codecs).
+    modules_dir = REPLAY_MODULES_DIR if REPLAY_MODULES_DIR and Path(REPLAY_MODULES_DIR).is_dir() else None
 
     movies = []
+    transcode_errors = []
     parse_errors = 0
+    not_armovie = 0
 
-    for file_data in replay_files:
-        db_path = file_data['path']
-        risc_os_filetype = file_data.get('risc_os_filetype', '')
+    def _missing(file_data, db_path):
+        log.warning(f"ARMovie file not found on disk: {db_path}")
+        transcode_errors.append({'file_path': db_path, 'error': 'File not found on disk'})
 
-        file_path, _disk_path = resolve_extraction_file(
-            self, extraction_path, db_path, work_dir,
-            path_prefix=path_prefix,
-            risc_os_filetype=risc_os_filetype or None,
-        )
+    for index, (_file_data, file_path, db_path) in enumerate(iter_resolved_files(
+            self, scan.files, scan.extraction_path, work_dir,
+            path_prefix=path_prefix, on_missing=_missing)):
 
-        if file_path is None:
-            log.warning(f"ARMovie file not found on disk: {db_path}")
-            parse_errors += 1
+        # Confirm the ARMovie magic before parsing/transcoding — a file selected
+        # only by its extension (no &AE7 filetype) might not be Replay at all.
+        if not file_has_armovie_magic(file_path):
+            log.info(f"Skipping {db_path}: no ARMovie magic (not an Acorn Replay file)")
+            not_armovie += 1
             continue
 
+        # The header drives both the searchable metadata row and ffmpeg's frame
+        # geometry; the raw bytes are also reused for the embedded poster sprite.
         try:
-            result = parse_armovie_header(file_path)
-            result['file_path'] = db_path
-            movies.append(result)
+            header = parse_armovie_header(file_path)
         except ArmovieParseError as e:
             log.warning(f"Could not parse ARMovie {db_path}: {e}")
             parse_errors += 1
+            continue
         except Exception as e:
             log.warning(f"Unexpected error parsing ARMovie {db_path}: {e}")
             parse_errors += 1
+            continue
 
-    summary_parts = [f'Parsed {len(movies)} Acorn Replay / ARMovie file(s)']
+        # The full parsed header IS the searchable metadata; transcode outputs
+        # (mp4_output_path / poster_path / blob hashes) are merged in on success.
+        entry = dict(header)
+        entry['file_path'] = db_path
+
+        base_name = f'{analysis["uuid"]}_{index}'
+        produce_error: dict = {}
+
+        if header.get('video_format') == 0:
+            # Sound-only movie — no video frames, but still playable as audio.
+            # Many sound-only Replay files carry a poster sprite (a title card);
+            # extract it so the audio player and grid have a thumbnail.  Routed
+            # through transcode_cached so identical ARMovie content is only
+            # decoded once across artefacts.
+            def _produce_audio(file_path=file_path, header=header,
+                               base_name=base_name, produce_error=produce_error):
+                audio_path = work_dir / f'{base_name}.m4a'
+                result = transcode_armovie_to_audio(
+                    file_path, audio_path,
+                    work_dir=work_dir,
+                    modules_dir=modules_dir,
+                )
+                if not result['success']:
+                    produce_error.update(
+                        error=result.get('error', 'Audio transcode failed'),
+                        stage=result.get('stage'))
+                    return None, None
+                poster = _make_replay_poster(file_path, header, work_dir, base_name)
+                return audio_path, poster
+
+            cached = transcode_cached(
+                self, input_path=file_path, output_ext='m4a', produce=_produce_audio)
+            if cached is None:
+                log.warning(f"Audio transcode failed for {db_path}: {produce_error.get('error')}")
+                transcode_errors.append({
+                    'file_path': db_path,
+                    'error': produce_error.get('error', 'Audio transcode failed'),
+                    'stage': produce_error.get('stage'),
+                })
+                # Metadata row is still recorded — only the MP4/poster is missing.
+                movies.append(entry)
+                continue
+            entry['audio_only'] = True
+            entry['has_audio'] = True
+            entry.update({k: v for k, v in cached.items() if k != 'cache_hit'})
+            movies.append(entry)
+            continue
+
+        # Prefer the author-supplied embedded poster sprite as the thumbnail; only
+        # fall back to ffmpeg's first decoded frame when there is no poster sprite.
+        def _produce_video(file_path=file_path, header=header,
+                           base_name=base_name, produce_error=produce_error):
+            mp4_path = work_dir / f'{base_name}.mp4'
+            frame_path = work_dir / f'{base_name}.jpg'
+            sprite_poster = _make_replay_poster(file_path, header, work_dir, base_name)
+            result = transcode_armovie_to_mp4(
+                file_path, mp4_path,
+                width=header.get('width'),
+                height=header.get('height'),
+                frame_rate=header.get('frame_rate'),
+                work_dir=work_dir,
+                modules_dir=modules_dir,
+                poster_path=None if sprite_poster else frame_path,
+            )
+            if not result['success']:
+                produce_error.update(
+                    error=result.get('error', 'Transcode failed'),
+                    stage=result.get('stage'),
+                    has_audio=result.get('has_audio', False))
+                return None, None
+            produce_error.update(has_audio=result.get('has_audio', False))
+            poster = sprite_poster or (frame_path if result.get('poster_path') else None)
+            return mp4_path, poster
+
+        cached = transcode_cached(
+            self, input_path=file_path, output_ext='mp4', produce=_produce_video)
+        if cached is None:
+            log.warning(f"Transcode failed for {db_path}: {produce_error.get('error')}")
+            transcode_errors.append({
+                'file_path': db_path,
+                'error': produce_error.get('error', 'Transcode failed'),
+                'stage': produce_error.get('stage'),
+            })
+            # Metadata row is still recorded — only the MP4/poster is missing.
+            movies.append(entry)
+            continue
+
+        # has_audio is decided at encode time (whether a WAV track was decoded),
+        # so it is unknown on a cache hit where produce() never ran — report None
+        # rather than a possibly-wrong False.  Informational only (no DB column).
+        entry['has_audio'] = (None if cached.get('cache_hit')
+                              else produce_error.get('has_audio', False))
+        entry.update({k: v for k, v in cached.items() if k != 'cache_hit'})
+        movies.append(entry)
+
+    transcoded_n = sum(1 for m in movies if m.get('mp4_output_path'))
+    summary_parts = [f'Indexed {len(movies)} Acorn Replay / ARMovie file(s)',
+                     f'{transcoded_n} transcoded']
+    if transcode_errors:
+        summary_parts.append(f'{len(transcode_errors)} transcode failed')
     if parse_errors:
         summary_parts.append(f'{parse_errors} could not be parsed')
 
     details_dict: dict = {
         'movies': movies,
-        'files_scanned': len(replay_files),
-        'parse_errors': parse_errors,
+        'files_scanned': len(scan.files),
+        'transcode_errors': transcode_errors,
     }
+    if parse_errors:
+        details_dict['parse_errors'] = parse_errors
+    if not_armovie:
+        details_dict['not_armovie'] = not_armovie
     if path_prefix:
         details_dict['path_prefix'] = path_prefix
 
     self.complete_analysis(
         analysis_id,
-        tool_name='armovie_parser',
+        tool_name='armovie_parser,replay-transcode,ffmpeg',
         summary=', '.join(summary_parts),
         details=json.dumps(details_dict),
     )
-
-    # Queue the transcode follow-up only when ARMovie files were actually found
-    # and indexed.  This runs *after* complete_analysis so the ReplayMovie rows
-    # exist before REPLAY_TRANSCODE's result tries to update them with the MP4
-    # path (see handle_replay_transcode in the web search-index service).
-    if movies:
-        transcode_hints = {HintKey.PARTITION_UUID: partition_uuid}
-        if extraction_path:
-            transcode_hints[HintKey.EXTRACTION_PATH] = extraction_path
-        if path_prefix:
-            transcode_hints[HintKey.PATH_PREFIX] = path_prefix
-        self.api.queue_analysis(
-            artefact['uuid'],
-            AnalysisType.REPLAY_TRANSCODE.value,
-            hints=transcode_hints,
-        )
 
 
 def _make_replay_poster(file_path, header, work_dir, base_name):
@@ -457,181 +547,4 @@ def _make_replay_poster(file_path, header, work_dir, base_name):
         return None
     return poster_path
 
-
-@analysis_handler("Transcode Replay video", AnalysisType.REPLAY_TRANSCODE)
-def process_replay_transcode(self, analysis: dict, artefact: dict, work_dir: Path):
-    """Transcode Acorn Replay / ARMovie files found in an extraction to MP4.
-
-    Mirrors :func:`process_replay`'s ae7 file discovery, then for each movie
-    runs scotch's ``replay-transcode`` (decode + mux video/audio into a NUT
-    container) followed by ffmpeg (re-encode to H.264/AAC MP4) and grabs a
-    first-frame poster thumbnail.
-    The MP4 and poster are saved as analysis output files and reported so the
-    web side can attach them to the matching ReplayMovie row.
-
-    Transcoding is best-effort per file: a movie whose codec needs a RISC OS
-    decompressor module that is not available is recorded as an error and
-    skipped, leaving its parsed metadata intact.
-    """
-    analysis_id = analysis['id']
-
-    # Discover filetype ae7 (ARMovie) files via the shared batch scaffold.
-    scan = scan_partition_files(
-        self, analysis, artefact,
-        select_files=lambda f: (f.get('risc_os_filetype') or '').lower() == 'ae7',
-    )
-    if scan is None:
-        self.fail_analysis(
-            analysis_id,
-            'No partition_uuid in hints or could not determine extraction path',
-        )
-        return
-
-    if not scan.files:
-        self.complete_analysis(
-            analysis_id,
-            summary='No Acorn Replay / ARMovie files (filetype ae7) found',
-            details=json.dumps({'transcoded': [], 'files_scanned': 0}),
-        )
-        return
-
-    path_prefix = scan.path_prefix
-    # Only pass --modules-dir when it actually exists (it won't when the worker
-    # runs outside the Docker image that bundles the codecs).
-    modules_dir = REPLAY_MODULES_DIR if REPLAY_MODULES_DIR and Path(REPLAY_MODULES_DIR).is_dir() else None
-
-    transcoded = []
-    transcode_errors = []
-
-    def _missing(file_data, db_path):
-        log.warning(f"ARMovie file not found on disk: {db_path}")
-        transcode_errors.append({'file_path': db_path, 'error': 'File not found on disk'})
-
-    for index, (_file_data, file_path, db_path) in enumerate(iter_resolved_files(
-            self, scan.files, scan.extraction_path, work_dir,
-            path_prefix=path_prefix, on_missing=_missing)):
-
-        # Need the frame geometry from the header to drive ffmpeg's rawvideo
-        # input; the raw bytes are also reused for the embedded poster sprite.
-        try:
-            header = parse_armovie_header(file_path)
-        except ArmovieParseError as e:
-            transcode_errors.append({'file_path': db_path, 'error': f'Header parse failed: {e}'})
-            continue
-
-        base_name = f'{analysis["uuid"]}_{index}'
-        produce_error: dict = {}
-
-        if header.get('video_format') == 0:
-            # Sound-only movie — no video frames, but still playable as audio.
-            # Many sound-only Replay files carry a poster sprite (a title card);
-            # extract it so the audio player and grid have a thumbnail.  Routed
-            # through transcode_cached so identical ARMovie content is only
-            # decoded once across artefacts.
-            def _produce_audio(file_path=file_path, header=header,
-                               base_name=base_name, produce_error=produce_error):
-                audio_path = work_dir / f'{base_name}.m4a'
-                result = transcode_armovie_to_audio(
-                    file_path, audio_path,
-                    work_dir=work_dir,
-                    modules_dir=modules_dir,
-                )
-                if not result['success']:
-                    produce_error.update(
-                        error=result.get('error', 'Audio transcode failed'),
-                        stage=result.get('stage'))
-                    return None, None
-                poster = _make_replay_poster(file_path, header, work_dir, base_name)
-                return audio_path, poster
-
-            cached = transcode_cached(
-                self, input_path=file_path, output_ext='m4a', produce=_produce_audio)
-            if cached is None:
-                log.warning(f"Audio transcode failed for {db_path}: {produce_error.get('error')}")
-                transcode_errors.append({
-                    'file_path': db_path,
-                    'error': produce_error.get('error', 'Audio transcode failed'),
-                    'stage': produce_error.get('stage'),
-                })
-                continue
-            entry = {
-                'file_path': db_path,   # mp4_output_path holds audio for sound-only
-                'has_audio': True,
-                'audio_only': True,
-                'width': None,
-                'height': None,
-            }
-            entry.update({k: v for k, v in cached.items() if k != 'cache_hit'})
-            transcoded.append(entry)
-            continue
-
-        # Prefer the author-supplied embedded poster sprite as the thumbnail; only
-        # fall back to ffmpeg's first decoded frame when there is no poster sprite.
-        def _produce_video(file_path=file_path, header=header,
-                           base_name=base_name, produce_error=produce_error):
-            mp4_path = work_dir / f'{base_name}.mp4'
-            frame_path = work_dir / f'{base_name}.jpg'
-            sprite_poster = _make_replay_poster(file_path, header, work_dir, base_name)
-            result = transcode_armovie_to_mp4(
-                file_path, mp4_path,
-                width=header.get('width'),
-                height=header.get('height'),
-                frame_rate=header.get('frame_rate'),
-                work_dir=work_dir,
-                modules_dir=modules_dir,
-                poster_path=None if sprite_poster else frame_path,
-            )
-            if not result['success']:
-                produce_error.update(
-                    error=result.get('error', 'Transcode failed'),
-                    stage=result.get('stage'),
-                    has_audio=result.get('has_audio', False))
-                return None, None
-            produce_error.update(has_audio=result.get('has_audio', False))
-            poster = sprite_poster or (frame_path if result.get('poster_path') else None)
-            return mp4_path, poster
-
-        cached = transcode_cached(
-            self, input_path=file_path, output_ext='mp4', produce=_produce_video)
-        if cached is None:
-            log.warning(f"Transcode failed for {db_path}: {produce_error.get('error')}")
-            transcode_errors.append({
-                'file_path': db_path,
-                'error': produce_error.get('error', 'Transcode failed'),
-                'stage': produce_error.get('stage'),
-            })
-            continue
-
-        entry = {
-            'file_path': db_path,
-            # has_audio is decided at encode time (whether a WAV track was
-            # decoded), so it is unknown on a cache hit where produce() never
-            # ran — report None rather than a possibly-wrong False.  The miss
-            # path always records the true value in produce_error.
-            'has_audio': (None if cached.get('cache_hit')
-                          else produce_error.get('has_audio', False)),
-            'width': header.get('width'),
-            'height': header.get('height'),
-        }
-        entry.update({k: v for k, v in cached.items() if k != 'cache_hit'})
-        transcoded.append(entry)
-
-    summary_parts = [f'Transcoded {len(transcoded)} ARMovie file(s) to MP4']
-    if transcode_errors:
-        summary_parts.append(f'{len(transcode_errors)} could not be transcoded')
-
-    details_dict: dict = {
-        'transcoded': transcoded,
-        'transcode_errors': transcode_errors,
-        'files_scanned': len(scan.files),
-    }
-    if path_prefix:
-        details_dict['path_prefix'] = path_prefix
-
-    self.complete_analysis(
-        analysis_id,
-        tool_name='replay-transcode,ffmpeg',
-        summary=', '.join(summary_parts),
-        details=json.dumps(details_dict),
-    )
 # vim: ts=4 sw=4 et

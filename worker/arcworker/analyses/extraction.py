@@ -8,6 +8,7 @@ detected archive — at top level or nested).
 
 import json
 import shutil
+from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 from arcology_shared.archive_formats import ArchiveType, get_archive_info
@@ -441,6 +442,7 @@ def _extract_top_level_archive(
         )
         return
 
+    extraction_started_at = datetime.now(timezone.utc)
     result = extractor(input_path, extract_dir)
     result, archive_type, archive_info = _spark_zip_fallback(
         result, archive_type, input_path, extract_dir)
@@ -458,6 +460,7 @@ def _extract_top_level_archive(
     files = enumerate_extracted_files(
         extract_dir, acorn='auto',
         inf_metadata=result.get('inf_metadata'),
+        extraction_started_at=extraction_started_at,
     )
 
     partition = self.api.register_file_listing(
@@ -649,6 +652,12 @@ def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path
     # Track every tool attempted so all process_output ends up in details.
     all_results: dict[str, dict] = {}
 
+    # Timestamp marking the start of extraction.  Files whose mtime lands at or
+    # after this instant carry a date the extraction tool fabricated because the
+    # source filesystem stored none (BBC DFS, non-date-stamped ADFS, …); they
+    # are dropped to "unknown" by enumerate_extracted_files().
+    extraction_started_at = datetime.now(timezone.utc)
+
     # Determine filesystem type.
     # Treat 'unknown' the same as an absent hint so that a successful DIM
     # run can upgrade the filesystem type (fixes the case where
@@ -759,6 +768,7 @@ def process_file_extraction(self, analysis: dict, artefact: dict, work_dir: Path
         inf_metadata=inf_metadata,
         progress_callback=lambda done, total: self.progress.start(
             total=total, label='Hashing extracted files').update(done),
+        extraction_started_at=extraction_started_at,
     )
 
     # Write ISO metadata sidecar AFTER enumerate_extracted_files so it is
@@ -1131,6 +1141,8 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
     archive_type, archive_info, _sniff_overrode = _resolve_archive_type(
         self, archive_path, archive_type)
 
+    extraction_started_at = datetime.now(timezone.utc)
+
     # Choose extraction method based on archive type.
     # FCFS requires a conversion step with a different source path,
     # so handle it before the general dispatch table.
@@ -1198,6 +1210,7 @@ def process_archive_extract(self, analysis: dict, artefact: dict, work_dir: Path
         inf_metadata=result.get('inf_metadata'),
         progress_callback=lambda done, total: self.progress.start(
             total=total, label='Hashing extracted files').update(done),
+        extraction_started_at=extraction_started_at,
     )
 
     # Register extracted files in the same partition with parent_file_id

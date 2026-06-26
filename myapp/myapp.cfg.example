@@ -48,17 +48,21 @@ SQLALCHEMY_TRACK_MODIFICATIONS = False
 # =============================================================================
 UPLOAD_FOLDER = "uploads"           # Relative to instance folder, or absolute path
 OUTPUT_FOLDER = "outputs"           # For analysis outputs (visualisations, etc.)
-MAX_CONTENT_LENGTH = 4 * 1024 * 1024 * 1024  # 4GB max single-request upload
+# Byte-size settings below accept human-readable suffixes when set as environment
+# variables: K/KiB, M/MiB, G/GiB, T/TiB (all powers of 1024, case-insensitive).
+# e.g.  MAX_CONTENT_LENGTH=4G  or  CHUNKED_UPLOAD_THRESHOLD=100M
+# In this .cfg file (Python syntax) use integer arithmetic as shown.
+MAX_CONTENT_LENGTH = 4 * 1024 * 1024 * 1024  # 4 GiB max single-request upload
 # Ceiling on the assembled size of a chunked upload (the CLI's large-file path,
 # which is the only way to exceed MAX_CONTENT_LENGTH). Raise it for very large
 # hard-disk images (e.g. 60-100GB); such images are best uploaded zstd-compressed.
-MAX_UPLOAD_SIZE = 16 * 1024 * 1024 * 1024  # 16GB max assembled chunked upload
+MAX_UPLOAD_SIZE = 16 * 1024 * 1024 * 1024  # 16 GiB max assembled chunked upload
 # Browser uploads at or above CHUNKED_UPLOAD_THRESHOLD bytes are sent in chunks
 # of CHUNKED_UPLOAD_CHUNK_SIZE bytes (resumable, avoids the single-request limit);
 # smaller files use a normal form POST. CHUNK_SIZE must stay well below
 # MAX_CONTENT_LENGTH (each chunk is one request).
-CHUNKED_UPLOAD_THRESHOLD = 100 * 1024 * 1024  # 100MB: chunk web uploads at/above this
-CHUNKED_UPLOAD_CHUNK_SIZE = 10 * 1024 * 1024  # 10MB per chunk
+CHUNKED_UPLOAD_THRESHOLD = 100 * 1024 * 1024  # 100 MiB: chunk web uploads at/above this
+CHUNKED_UPLOAD_CHUNK_SIZE = 10 * 1024 * 1024  # 10 MiB per chunk
 # Staging directory for in-progress chunked uploads (relative paths resolve
 # against the instance path; default <instance_path>/.chunks). An in-progress
 # upload can be many gigabytes — point this at a persisted volume with adequate
@@ -309,8 +313,9 @@ WORKER_STEP_DEADLINE_SECONDS = 20
 # Objects uploaded in parallel when the worker pushes an extraction tree to S3.
 #S3_UPLOAD_CONCURRENCY = 8
 
-# Optional storage quota, in bytes.  Drives the used/total percentage shown on
-# the staff/admin Storage page and the navbar capacity chip.  Mainly useful for
+# Optional storage quota.  Drives the used/total percentage shown on the
+# staff/admin Storage page and the navbar capacity chip.  Mainly useful for
 # S3-compatible backends, which have no inherent free-space figure; local
 # backends report real filesystem free space and ignore this unless set.
-#STORAGE_CAPACITY_BYTES = 1099511627776   # e.g. 1 TiB
+# Accepts a plain integer (bytes) or a human-readable suffix (1T, 500G, 1TiB…).
+#STORAGE_CAPACITY_BYTES = 1T   # 1 TiB; also valid: 1099511627776

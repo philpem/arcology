@@ -18,7 +18,7 @@ from .archives import (
     list_zip_member_names,
     read_zip_comment,
 )
-from .armovie import ArmovieParseError, parse_armovie_header
+from .armovie import ArmovieParseError, file_has_armovie_magic, parse_armovie_header
 from .base import (
     FileTooLargeError,
     SectorReader,
@@ -74,6 +74,7 @@ from .riscos_module import HelpParseError, ModuleParseError, decode_module
 __all__ = [
     'ArmovieParseError',
     'parse_armovie_header',
+    'file_has_armovie_magic',
     'run_tool',
     'run_tool_with_output',
     'get_process_output',
