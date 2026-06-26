@@ -1,0 +1,206 @@
+{
+  "artefacts": [
+    {
+      "artefact_type": "raw_sector",
+      "original_filename": "disk.img",
+      "slug": "root",
+      "storage_directory": "uploads",
+      "storage_path": "disk.img",
+      "uuid": "it-art-0000"
+    },
+    {
+      "artefact_type": "raw_sector",
+      "blob_storage_path": "blobs/30/30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58.img",
+      "derived_from_analysis_id": 1,
+      "file_size": 1048576,
+      "label": "Unknown (partition 0, fat16)",
+      "md5": "b6d81b360a5672d80c27430f39153e2c",
+      "original_filename": "partition_0.img",
+      "sha256": "30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58",
+      "slug": "unknown-partition-0-fat16",
+      "storage_directory": "outputs",
+      "storage_path": "derived/1/7fbfee25039137516ff8bcb4",
+      "uuid": "it-art-0001"
+    },
+    {
+      "artefact_type": "raw_sector",
+      "blob_storage_path": "blobs/07/07854d2fef297a06ba81685e660c332de36d5d18d546927d30daad6d7fda1541.img",
+      "derived_from_analysis_id": 1,
+      "file_size": 524288,
+      "label": "Unknown (partition 1, fat32)",
+      "md5": "59071590099d21dd439896592338bf95",
+      "original_filename": "partition_1.img",
+      "sha256": "07854d2fef297a06ba81685e660c332de36d5d18d546927d30daad6d7fda1541",
+      "slug": "unknown-partition-1-fat32",
+      "storage_directory": "outputs",
+      "storage_path": "derived/1/ffdb1ffa2d388481044897e2",
+      "uuid": "it-art-0002"
+    },
+    {
+      "artefact_type": "unknown",
+      "blob_storage_path": "blobs/0a/0a94b47a63f0a58e8496548a966311b2ebf951c05a91ddfcabc6f5fae4fccd85.img",
+      "derived_from_analysis_id": 1,
+      "file_size": 1048576,
+      "label": "Unknown (Pre-partition space)",
+      "md5": "0f64842f33d2ebdf3cd4b9f02213373a",
+      "original_filename": "unpartitioned_0x0.img",
+      "sha256": "0a94b47a63f0a58e8496548a966311b2ebf951c05a91ddfcabc6f5fae4fccd85",
+      "slug": "unknown-pre-partition-space",
+      "storage_directory": "outputs",
+      "storage_path": "derived/1/bd905f81aa7bc5c8103e99e8",
+      "uuid": "it-art-0003"
+    }
+  ],
+  "case": "mbr_2part",
+  "events": [
+    {
+      "artefact": "it-art-0000",
+      "call": "seed_analysis",
+      "hints": null,
+      "type": "partition_detect"
+    },
+    {
+      "artefact_type": "raw_sector",
+      "auto_analyse": false,
+      "call": "produce_artefact",
+      "label": "Unknown (partition 0, fat16)",
+      "skip_analyses": null
+    },
+    {
+      "artefact": "it-art-0001",
+      "call": "queue_analysis",
+      "hints": {
+        "filesystem": "fat16",
+        "partition_index": 0
+      },
+      "type": "file_extraction"
+    },
+    {
+      "artefact_type": "raw_sector",
+      "auto_analyse": false,
+      "call": "produce_artefact",
+      "label": "Unknown (partition 1, fat32)",
+      "skip_analyses": null
+    },
+    {
+      "artefact": "it-art-0002",
+      "call": "queue_analysis",
+      "hints": {
+        "filesystem": "fat32",
+        "partition_index": 1
+      },
+      "type": "file_extraction"
+    },
+    {
+      "artefact_type": "unknown",
+      "auto_analyse": false,
+      "call": "produce_artefact",
+      "label": "Unknown (Pre-partition space)",
+      "skip_analyses": null
+    },
+    {
+      "call": "update_analysis",
+      "details": {
+        "acorn_partitions": {
+          "detected": false
+        },
+        "adfs": {
+          "adfs_detected": false,
+          "adfs_subformat": null,
+          "adfs_variant": null,
+          "boot_block_at": null,
+          "disc_size": 4194304,
+          "signatures": []
+        },
+        "file": {
+          "success": true,
+          "tool": "file"
+        },
+        "partitions": [
+          {
+            "filesystem": "fat16",
+            "index": 0,
+            "node": "<uploads>/disk.img1",
+            "size_bytes": 1048576,
+            "size_sectors": 2048,
+            "start_byte": 1048576,
+            "start_sector": 2048,
+            "type": "6"
+          },
+          {
+            "filesystem": "fat32",
+            "index": 1,
+            "node": "<uploads>/disk.img2",
+            "size_bytes": 524288,
+            "size_sectors": 1024,
+            "start_byte": 3145728,
+            "start_sector": 6144,
+            "type": "b"
+          }
+        ],
+        "sfdisk": {
+          "partitions": [
+            {
+              "filesystem": "fat16",
+              "index": 0,
+              "node": "<uploads>/disk.img1",
+              "size_bytes": 1048576,
+              "size_sectors": 2048,
+              "start_byte": 1048576,
+              "start_sector": 2048,
+              "type": "6"
+            },
+            {
+              "filesystem": "fat32",
+              "index": 1,
+              "node": "<uploads>/disk.img2",
+              "size_bytes": 524288,
+              "size_sectors": 1024,
+              "start_byte": 3145728,
+              "start_sector": 6144,
+              "type": "b"
+            }
+          ],
+          "sector_size": 512,
+          "success": true,
+          "table_type": "dos",
+          "tool": "sfdisk"
+        },
+        "unpartitioned_notes": [
+          "Gap between partitions 0 and 1 (1,048,576 bytes) omitted: uniform fill 0x00",
+          "Post-partition space (524,288 bytes) omitted: uniform fill 0x00"
+        ]
+      },
+      "error_message": null,
+      "output_path": null,
+      "status": "complete",
+      "summary": "Detected 2 partition(s): fat16, fat32",
+      "tool_name": "sfdisk,adfs_detect,file",
+      "type": "partition_detect"
+    }
+  ],
+  "final_queue": [
+    {
+      "artefact": "it-art-0001",
+      "hints": {
+        "filesystem": "fat16",
+        "partition_index": 0
+      },
+      "type": "file_extraction"
+    },
+    {
+      "artefact": "it-art-0002",
+      "hints": {
+        "filesystem": "fat32",
+        "partition_index": 1
+      },
+      "type": "file_extraction"
+    }
+  ],
+  "output_tree": [
+    "blobs/07/07854d2fef297a06ba81685e660c332de36d5d18d546927d30daad6d7fda1541.img",
+    "blobs/0a/0a94b47a63f0a58e8496548a966311b2ebf951c05a91ddfcabc6f5fae4fccd85.img",
+    "blobs/30/30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58.img"
+  ],
+  "partitions": []
+}
