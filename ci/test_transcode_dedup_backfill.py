@@ -31,24 +31,45 @@ class TestTranscodeDedupBackfill(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from arcology_shared.storage import LocalStorage
         from myapp.app import create_app
         from myapp.extensions import db as _db
         cls.app = create_app()
         cls.app.config['TESTING'] = True
         cls._db = _db
-        cls._tmp = tempfile.TemporaryDirectory()
-        uploads = Path(cls._tmp.name) / 'uploads'
-        outputs = Path(cls._tmp.name) / 'outputs'
-        uploads.mkdir()
-        outputs.mkdir()
-        cls.app.storage = LocalStorage(uploads, outputs)
         with cls.app.app_context():
             _db.create_all()
 
-    @classmethod
-    def tearDownClass(cls):
-        cls._tmp.cleanup()
+    def setUp(self):
+        # Fresh storage per test: the DB rolls back in each test's finally, but
+        # written output objects do not, so a shared backend would leak files
+        # (and canonical paths) between tests and make them order-dependent.
+        from arcology_shared.storage import LocalStorage
+        self._tmp = tempfile.TemporaryDirectory()
+        uploads = Path(self._tmp.name) / 'uploads'
+        outputs = Path(self._tmp.name) / 'outputs'
+        uploads.mkdir()
+        outputs.mkdir()
+        self.app.storage = LocalStorage(uploads, outputs)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+        # dedup_transcode_outputs / invalidate_transcodes commit, so a test's
+        # own rollback cannot undo them; purge the touched tables so committed
+        # rows (blobs, links) do not leak into the next test.
+        from myapp.database import (
+            Artefact,
+            ExtractedFile,
+            Item,
+            MediaFile,
+            OutputBlob,
+            Partition,
+            ReplayMovie,
+        )
+        with self.app.app_context():
+            for model in (ReplayMovie, MediaFile, ExtractedFile, Partition,
+                          Artefact, OutputBlob, Item):
+                self._db.session.query(model).delete(synchronize_session=False)
+            self._db.session.commit()
 
     # -- builders ------------------------------------------------------------
 
@@ -166,6 +187,52 @@ class TestTranscodeDedupBackfill(unittest.TestCase):
                 storage = self.app.storage
                 self.assertFalse(storage.exists(
                     storage.storage_key('outputs', 'legacy/B/clip.mp4')))
+            finally:
+                self._db.session.rollback()
+
+    def test_cross_source_identical_poster_links_canonical_blob(self):
+        from myapp.database import OutputBlob
+        from myapp.services.transcode_dedup import dedup_transcode_outputs
+        sha_a, sha_b = 'a' * 64, 'b' * 64  # distinct sources...
+        poster = b'IDENTICAL-POSTER-SPRITE'  # ...but a byte-identical poster
+        poster_sha = hashlib.sha256(poster).hexdigest()
+        canon_a_poster = f'media/{sha_a}/1/poster.png'
+        canon_b_poster = f'media/{sha_b}/1/poster.png'
+        with self.app.app_context():
+            try:
+                _a1, m1 = self._replay_source('PosterA', sha_a)
+                _a2, m2 = self._replay_source('PosterB', sha_b)
+                m1.mp4_output_path = 'legacy/PA/clip.mp4'
+                m1.poster_path = 'legacy/PA/poster.png'
+                m2.mp4_output_path = 'legacy/PB/clip.mp4'
+                m2.poster_path = 'legacy/PB/poster.png'
+                self._db.session.flush()
+                # Distinct MP4 bytes (own blobs), identical poster bytes.
+                self._write_output('legacy/PA/clip.mp4', b'mp4-A-bytes')
+                self._write_output('legacy/PB/clip.mp4', b'mp4-B-bytes')
+                self._write_output('legacy/PA/poster.png', poster)
+                self._write_output('legacy/PB/poster.png', poster)
+
+                dedup_transcode_outputs()
+
+                # One shared poster blob; both rows point at ITS canonical path.
+                poster_blobs = OutputBlob.query.filter_by(sha256=poster_sha).all()
+                self.assertEqual(len(poster_blobs), 1)
+                self._db.session.refresh(m1)
+                self._db.session.refresh(m2)
+                self.assertEqual(m1.poster_blob_id, poster_blobs[0].id)
+                self.assertEqual(m2.poster_blob_id, poster_blobs[0].id)
+                self.assertEqual(m1.poster_path, poster_blobs[0].storage_path)
+                self.assertEqual(m2.poster_path, poster_blobs[0].storage_path)
+
+                # The second source's canonical poster path must NOT become an
+                # orphan: either it is the shared blob's path, or no file is there.
+                storage = self.app.storage
+                self.assertTrue(storage.exists(
+                    storage.storage_key('outputs', canon_a_poster)))
+                if poster_blobs[0].storage_path != canon_b_poster:
+                    self.assertFalse(storage.exists(
+                        storage.storage_key('outputs', canon_b_poster)))
             finally:
                 self._db.session.rollback()
 

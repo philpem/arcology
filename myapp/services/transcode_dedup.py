@@ -93,10 +93,12 @@ def source_sha256_for(row):
         ).all()
         # Exactly one distinct hash is unambiguous; 0 (not hashed / path drift)
         # or >1 (same path in sibling partitions) are not safe to dedup blindly.
-        return shas[0] if len(shas) == 1 else None
+        # Lowercase to match the worker's content-addressed path (compute_file_hash
+        # emits lowercase hex) and redo's --source-hash normalisation.
+        return shas[0].lower() if len(shas) == 1 and shas[0] else None
 
     artefact = db.session.get(Artefact, row.artefact_id)
-    return artefact.sha256 if artefact and artefact.sha256 else None
+    return artefact.sha256.lower() if artefact and artefact.sha256 else None
 
 
 def _canonical_path(source_sha, leaf):
@@ -167,14 +169,14 @@ def _link_output(row, fk_attr, path_attr, canonical, stats, dry_run):
     if blob is not None:
         # Canonical output already registered (by a prior new-scheme transcode
         # or an earlier same-source row in this run): link and drop the dup.
-        if current_path != canonical and storage.exists(
+        if current_path != blob.storage_path and storage.exists(
                 storage.storage_key('outputs', current_path)):
             if not dry_run:
                 storage.delete(storage.storage_key('outputs', current_path))
             stats.files_reclaimed += 1
         if not dry_run:
             setattr(row, fk_attr, blob.id)
-            setattr(row, path_attr, canonical)
+            setattr(row, path_attr, blob.storage_path)
         return True
 
     # First copy of this source's output. In a dry run, only confirm the file
@@ -190,16 +192,28 @@ def _link_output(row, fk_attr, path_attr, canonical, stats, dry_run):
     if sha256 is None:
         stats.skipped += 1
         return False
-    _relocate(current_path, canonical)
+    # Register the blob FIRST, then move the file — only once we know a new
+    # canonical output is genuinely needed.  get_or_create_blob keys on
+    # (file_size, sha256), so a byte-identical output produced for a DIFFERENT
+    # source (e.g. two clips sharing a title-card poster sprite) returns that
+    # source's existing blob, whose storage_path != canonical.  In that case the
+    # bytes already live at blob.storage_path: drop this duplicate and link the
+    # existing path, mirroring search_index._link_transcode_blobs so the row,
+    # owner-resolution and refcount GC all agree on one canonical path.
     blob, created = get_or_create_blob(
         StorageDirectory.OUTPUTS, canonical, size, sha256)
     if blob is None:
         stats.skipped += 1
         return False
     if created:
+        _relocate(current_path, canonical)
         stats.blobs_created += 1
+    elif current_path != blob.storage_path and storage.exists(
+            storage.storage_key('outputs', current_path)):
+        storage.delete(storage.storage_key('outputs', current_path))
+        stats.files_reclaimed += 1
     setattr(row, fk_attr, blob.id)
-    setattr(row, path_attr, canonical)
+    setattr(row, path_attr, blob.storage_path)
     return True
 
 
