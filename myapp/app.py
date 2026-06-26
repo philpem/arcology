@@ -564,11 +564,13 @@ def _register_cli_commands(app):
     from .cli.cancel_analysis import cancel_analysis
     from .cli.create_admin import create_admin
     from .cli.dedup_artefacts import dedup_artefacts
+    from .cli.dedup_transcode_outputs import dedup_transcode_outputs_cmd
     from .cli.reanalyse import reanalyse
     from .cli.reassign_ownership import reassign_ownership
     from .cli.rebuild_search_index import rebuild_search_index
     from .cli.rebuild_similarity import rebuild_similarity
     from .cli.reconcile_counts import reconcile_counts
+    from .cli.redo_transcode import redo_transcode
     from .cli.refresh_similarity import refresh_similarity
     from .cli.rescan_hashes import rescan_hashes
     from .cli.set_password import set_password
@@ -585,6 +587,8 @@ def _register_cli_commands(app):
     app.cli.add_command(reanalyse)
     app.cli.add_command(cancel_analysis)
     app.cli.add_command(dedup_artefacts)
+    app.cli.add_command(dedup_transcode_outputs_cmd)
+    app.cli.add_command(redo_transcode)
     app.cli.add_command(reassign_ownership)
     app.cli.add_command(backfill_slugs)
     app.cli.add_command(backfill_blobs)

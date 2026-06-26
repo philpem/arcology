@@ -64,6 +64,30 @@ class TestLocalStorageBasicOps(unittest.TestCase):
         os.unlink(src)
         self.assertTrue(self.storage.exists('outputs/item/art/analysis/file.txt'))
 
+    def test_move(self):
+        content = b'move me to a content-addressed home'
+        src = self._write_temp(content)
+        self.storage.put('outputs/legacy/clip.mp4', src)
+        os.unlink(src)
+
+        self.storage.move('outputs/legacy/clip.mp4',
+                          'outputs/media/abc/1/movie.mp4')
+        # Source gone, destination present with identical bytes.
+        self.assertFalse(self.storage.exists('outputs/legacy/clip.mp4'))
+        self.assertTrue(self.storage.exists('outputs/media/abc/1/movie.mp4'))
+        with self.storage.open_read('outputs/media/abc/1/movie.mp4') as f:
+            self.assertEqual(f.read(), content)
+
+    def test_move_same_key_is_noop(self):
+        content = b'unchanged'
+        src = self._write_temp(content)
+        self.storage.put('outputs/x.bin', src)
+        os.unlink(src)
+        self.storage.move('outputs/x.bin', 'outputs/x.bin')
+        self.assertTrue(self.storage.exists('outputs/x.bin'))
+        with self.storage.open_read('outputs/x.bin') as f:
+            self.assertEqual(f.read(), content)
+
     def test_open_read(self):
         content = b'readable content'
         src = self._write_temp(content)
