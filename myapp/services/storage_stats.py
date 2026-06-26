@@ -95,9 +95,13 @@ def deduplication_stats() -> dict:
     # staff/admin `/storage` page, so it deliberately does NOT apply an item
     # *_visibility_clause (which would undercount and misreport dedup totals).
     # The route is gated to STAFF and admins, who are trusted operators.
+    # Zero-length artefacts are excluded: every empty file shares the canonical
+    # empty-file SHA-256, so they collapse into one large group that wastes no
+    # physical bytes (file_size * (count - 1) == 0) yet crowds out the genuine
+    # duplicates this list exists to surface.
     top_groups = db.session.execute(
         db.select(Artefact.file_size, Artefact.sha256, func.count(Artefact.id))
-        .where(Artefact.file_size.isnot(None), Artefact.sha256.isnot(None))
+        .where(Artefact.file_size > 0, Artefact.sha256.isnot(None))
         .group_by(Artefact.file_size, Artefact.sha256)
         .having(func.count(Artefact.id) > 1)
         .order_by(func.count(Artefact.id).desc())

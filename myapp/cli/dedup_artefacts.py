@@ -24,9 +24,12 @@ def dedup_artefacts(apply):
     blob record -- typically left over from uploads that predated the blob
     deduplication migration.  Removing them reclaims disk/object-store space.
     """
+    # Zero-length artefacts are excluded: every empty file shares the canonical
+    # empty-file SHA-256, so they collapse into one large group that reclaims no
+    # physical bytes yet dominates the report.
     groups = (
         db.session.query(Artefact.file_size, Artefact.sha256, func.count(Artefact.id))
-        .filter(Artefact.file_size.isnot(None), Artefact.sha256.isnot(None))
+        .filter(Artefact.file_size > 0, Artefact.sha256.isnot(None))
         .group_by(Artefact.file_size, Artefact.sha256)
         .having(func.count(Artefact.id) > 1)
         .order_by(func.count(Artefact.id).desc())
