@@ -109,7 +109,7 @@ HEARTBEAT_MAX_SECONDS = _int_env('HEARTBEAT_MAX_SECONDS', '21600')  # 6 hours
 # disable the periodic check (recovery then only happens on worker startup).
 STALE_RESET_INTERVAL = _int_env('STALE_RESET_INTERVAL', '300')
 
-# Acorn Replay / ARMovie transcoding (REPLAY_TRANSCODE analysis).
+# Acorn Replay / ARMovie transcoding (REPLAY_PROCESS analysis).
 # Directory containing RISC OS Replay decompressor modules (Decomp*/Decompress,ffd),
 # passed to scotch's replay-transcode as --modules-dir.  Compressed Replay codecs
 # (Moving Lines, Moving Blocks, Super Moving Blocks, …) need the original Acorn

@@ -155,6 +155,14 @@ def handle_replay_movies(analysis: Analysis, details: dict,
                           full_rebuild: bool = False) -> None:
     """Rebuild ReplayMovie rows from a REPLAY_PROCESS result.
 
+    REPLAY_PROCESS now parses *and* transcodes each ARMovie in one pass, so a
+    movie entry carries both the searchable header metadata and (when the
+    transcode succeeded) its MP4/poster output paths.  This handler therefore
+    creates a fully-populated row in a single step — including linking the
+    refcounted ``OutputBlob`` rows for the transcoded outputs, exactly as
+    ``handle_media_transcode`` does — rather than the old two-phase
+    create-then-update split.
+
     Same scoped-deletion semantics as ``handle_riscos_modules`` (see there for
     the path_prefix / full_rebuild race-avoidance rationale).
     """
@@ -175,6 +183,8 @@ def handle_replay_movies(analysis: Analysis, details: dict,
     _copyright_max = ReplayMovie.__table__.c.copyright.type.length
     _path_max = ReplayMovie.__table__.c.file_path.type.length
     _vlabel_max = ReplayMovie.__table__.c.video_label.type.length
+    _mp4_max = ReplayMovie.__table__.c.mp4_output_path.type.length
+    _poster_max = ReplayMovie.__table__.c.poster_path.type.length
 
     def _truncate(value, limit):
         if value is None:
@@ -188,6 +198,10 @@ def handle_replay_movies(analysis: Analysis, details: dict,
                 f"Skipping ARMovie with oversized file_path ({len(file_path)}): {file_path}"
             )
             continue
+        # Transcode outputs are present only for movies that transcoded
+        # successfully; a parse-only/failed-transcode entry leaves them None.
+        mp4_blob_id, poster_blob_id, mp4_path, poster_path = \
+            _link_transcode_blobs(mov)
         # ARMovie titles may legitimately be empty — index the row regardless.
         db.session.add(ReplayMovie(
             artefact_id=analysis.artefact_id,
@@ -208,6 +222,10 @@ def handle_replay_movies(analysis: Analysis, details: dict,
             frames_per_chunk=mov.get('frames_per_chunk'),
             number_of_chunks=mov.get('number_of_chunks'),
             duration_seconds=mov.get('duration_seconds'),
+            mp4_output_path=_truncate(mp4_path, _mp4_max),
+            poster_path=_truncate(poster_path, _poster_max),
+            mp4_output_blob_id=mp4_blob_id,
+            poster_blob_id=poster_blob_id,
         ))
 
 
@@ -257,52 +275,14 @@ def _link_transcode_blobs(
     return mp4_id, poster_id, mp4_path, poster_path
 
 
-def handle_replay_transcode(analysis: Analysis, details: dict,
-                            full_rebuild: bool = False) -> None:
-    """Attach transcoded MP4 / poster paths to existing ReplayMovie rows.
-
-    Update-only (never inserts or deletes): the rows are created by the
-    REPLAY_PROCESS analysis, which always completes — and has its result
-    indexed — before the REPLAY_TRANSCODE job it queues can run.  In the
-    ``rebuild_all`` batch pass, REPLAY_PROCESS precedes REPLAY_TRANSCODE in
-    ``_HANDLER_MAP`` order, so the rows likewise exist by the time this runs.
-    A movie with no matching row (transcode without a recorded parse) is simply
-    skipped — re-running rebuild-search-index repairs it.
-    """
-    _mp4_max = ReplayMovie.__table__.c.mp4_output_path.type.length
-    _poster_max = ReplayMovie.__table__.c.poster_path.type.length
-
-    def _truncate(value, limit):
-        return value[:limit] if value else None
-
-    for entry in details.get('transcoded', []):
-        file_path = entry.get('file_path')
-        if not file_path:
-            continue
-        mp4_blob_id, poster_blob_id, mp4_path, poster_path = \
-            _link_transcode_blobs(entry)
-        ReplayMovie.query.filter_by(
-            artefact_id=analysis.artefact_id,
-            file_path=file_path,
-        ).update(
-            {
-                'mp4_output_path': _truncate(mp4_path, _mp4_max),
-                'poster_path': _truncate(poster_path, _poster_max),
-                'mp4_output_blob_id': mp4_blob_id,
-                'poster_blob_id': poster_blob_id,
-            },
-            synchronize_session=False,
-        )
-
-
 def handle_media_transcode(analysis: Analysis, details: dict,
                            full_rebuild: bool = False) -> None:
     """Rebuild MediaFile rows from a MEDIA_TRANSCODE result.
 
-    Unlike Replay (where REPLAY_PROCESS creates the rows and REPLAY_TRANSCODE
-    only updates them), MEDIA_TRANSCODE is the *only* analysis touching
-    media_files, so this handler inserts the rows.  Same scoped-deletion
-    semantics as ``handle_replay_movies``.
+    Like ``handle_replay_movies`` (and unlike the legacy two-phase Replay flow),
+    a single analysis both creates the rows and attaches the transcoded outputs.
+    MEDIA_TRANSCODE is the *only* analysis touching media_files, so this handler
+    inserts the rows.  Same scoped-deletion semantics as ``handle_replay_movies``.
 
     Entries with no ``file_path`` come from a *direct* media upload (the
     artefact is itself the media); they are indexed with ``file_path = NULL`` so
@@ -373,9 +353,8 @@ _HANDLER_MAP = {
     AnalysisType.DISC_MASTERING_DETECT:  handle_mastering,
     AnalysisType.PARTITION_DETECT:       handle_partition_detect,
     AnalysisType.RISCOS_MODULE_PARSE:    handle_riscos_modules,
+    # Parses metadata AND attaches transcoded MP4/poster in one pass.
     AnalysisType.REPLAY_PROCESS:         handle_replay_movies,
-    # Must come after REPLAY_PROCESS — it updates the rows that handler creates.
-    AnalysisType.REPLAY_TRANSCODE:       handle_replay_transcode,
     AnalysisType.MEDIA_TRANSCODE:        handle_media_transcode,
 }
 

@@ -83,7 +83,7 @@ services:
       - LOG_LEVEL=INFO
       - MAX_ARCHIVE_DEPTH=10  # Maximum recursion depth for nested archives
       - WORKER_API_KEY=${WORKER_API_KEY}
-      # REPLAY_TRANSCODE uses the Acorn Replay decompressor modules bundled in
+      # REPLAY_PROCESS uses the Acorn Replay decompressor modules bundled in
       # the worker image (REPLAY_MODULES_DIR defaults to them). Override here to
       # point at a different/mounted module set. See doc/REPLAY_TRANSCODE.md.
       # Restrict this worker to specific job types (comma-separated AnalysisType names).

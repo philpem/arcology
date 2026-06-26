@@ -185,7 +185,7 @@ def media_kind_for_riscos_filetype(filetype: str) -> str | None:
 # Acorn Replay / ARMovie detection.
 #
 # On RISC OS these files carry filetype &AE7 (ARMovie), which is how the
-# REPLAY_PROCESS / REPLAY_TRANSCODE pipeline normally finds them.  When such a
+# REPLAY_PROCESS pipeline normally finds them.  When such a
 # file is moved to a non-RISC OS filesystem (e.g. zipped on a PC without the
 # Acorn extra field), that filetype is lost, so we also recognise the PC-style
 # extensions people give Replay movies.
