@@ -9,6 +9,7 @@ Creates structured output directories:
         (extracted files)
 """
 
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,25 @@ def _segment(value: dict[str, Any]) -> str:
 def _ensure_dir(path: Path) -> Path:
     """Create a path if needed and return it."""
     path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def reset_output_dir(path: Path) -> Path:
+    """Remove any existing extraction output at *path* and return *path*.
+
+    Output paths are deterministic per analysis UUID (see get_output_path), so
+    a re-run — stale-job reset, worker restart mid-job — targets the *same*
+    directory.  Re-extracting into a non-empty directory merges the fresh
+    extraction's raw RISC OS byte filenames with the previous run's
+    already-normalised Unicode names; normalize_extracted_filenames() then sees
+    the Unicode target already present, skips, and strands a surrogate-escaped
+    duplicate, corrupting the listing.  Clearing first keeps the documented
+    "re-run is idempotent" guarantee.
+
+    The directory itself is NOT recreated: the extractors' mkdir(exist_ok=True)
+    (or copytree) does that immediately afterwards.  Missing paths are a no-op.
+    """
+    shutil.rmtree(path, ignore_errors=True)
     return path
 
 
