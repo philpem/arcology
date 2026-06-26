@@ -16,9 +16,9 @@ import signal
 from contextlib import contextmanager
 from pathlib import Path
 from arcology_shared.artefact_types import (
-    RISCOS_VIEWABLE_FILETYPES,
     RISCOS_VIEWABLE_SUFFIXES,
     VIEWABLE_EXTENSIONS,
+    viewable_artefact_type,
 )
 from arcology_shared.enums import AnalysisType, ArtefactType
 from ..config import log
@@ -60,7 +60,6 @@ def _conversion_timeout(seconds: int, label: str = ''):
 # and this module's exports keep working unchanged.
 _RISCOS_VIEWABLE_SUFFIXES = RISCOS_VIEWABLE_SUFFIXES
 _EXT_VIEWABLE = VIEWABLE_EXTENSIONS
-_RISCOS_HEX_VIEWABLE = RISCOS_VIEWABLE_FILETYPES
 
 
 def _convert_file_to_outputs(
@@ -268,17 +267,12 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
         return
 
     # --- Mode 2: Extraction scan ---
-    # Determine viewable type from DB metadata.  Returns None for
-    # files that are not viewable (not a sprite, draw, or text file).
+    # Determine viewable type from DB metadata (filetype hex, then extension) —
+    # the shared classifier's predicate, so file selection here cannot drift from
+    # classify_content's CONVERTIBLE category.  Returns None for non-viewable files.
     def _viewable_type_from_db(file_data: dict) -> 'ArtefactType | None':
-        ft = (file_data.get('risc_os_filetype') or '').lower()
-        if ft:
-            vt = self._RISCOS_HEX_VIEWABLE.get(ft)
-            if vt:
-                return vt
-        filename = file_data.get('filename', '')
-        ext = Path(filename).suffix.lower()
-        return self._EXT_VIEWABLE.get(ext)
+        return viewable_artefact_type(
+            file_data.get('filename', ''), file_data.get('risc_os_filetype'))
 
     # Discover viewable files via the shared batch scaffold.  The select
     # predicate records each match's viewable type keyed by its DB path so the
