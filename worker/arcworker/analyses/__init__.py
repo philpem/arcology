@@ -32,7 +32,7 @@ from .extraction import (
     _handle_disk_image_bundle,
     _is_riscos_zip,
     _sniff_archive_magic,
-    process_archive_detect,
+    detect_and_queue_archives,
     process_archive_extract,
     process_file_extraction,
 )
@@ -46,7 +46,6 @@ from .flux import (
 )
 from .images import (
     _EXT_VIEWABLE,
-    _RISCOS_HEX_VIEWABLE,
     _RISCOS_VIEWABLE_SUFFIXES,
     _convert_file_to_outputs,
     _detect_viewable_type,
@@ -74,7 +73,7 @@ __all__ = [
     '_SCP_VIA_CONVERSION_TYPES',
     # Extraction
     'process_file_extraction',
-    'process_archive_detect',
+    'detect_and_queue_archives',
     'process_archive_extract',
     '_apply_pling_renames',
     '_sniff_archive_magic',
@@ -88,7 +87,6 @@ __all__ = [
     '_detect_viewable_type',
     '_RISCOS_VIEWABLE_SUFFIXES',
     '_EXT_VIEWABLE',
-    '_RISCOS_HEX_VIEWABLE',
     # Metadata
     'process_checksum_compute',
     'process_metadata_extract',

@@ -184,6 +184,8 @@ flask cancel-analysis --all [--include-running] | --artefact UUID
 flask reassign-ownership --from alice --to bob [--dry-run]
 flask backfill-blobs [--dry-run]    # Fill blob records for late-hashed artefacts
 flask dedup-artefacts [--apply]     # Remove orphaned non-canonical storage objects
+flask dedup-transcode-outputs [--dry-run]   # Collapse legacy duplicate transcodes (no re-encode)
+flask redo-transcode (--artefact UUID | --source-hash SHA) [--no-reanalyse]  # Invalidate + re-encode a bad transcode
 ```
 
 See `doc/ADMIN_COMMANDS.md` for the full flag reference.
@@ -498,6 +500,7 @@ Tests live in `ci/` and run in the `app-tests` job (SQLite in-memory):
 | `test_similarity.py` | Content-set similarity, visibility filtering |
 | `test_taskrunner.py` | Control-plane classification, atomic claim, CLEANUP barrier, drivers |
 | `test_output_restrictions.py` | Output/restriction gates (incl. Replay) |
+| `test_transcode_dedup.py`, `test_transcode_dedup_backfill.py` | Content-addressed transcode dedup, legacy backfill, redo/invalidation |
 
 Run locally:
 

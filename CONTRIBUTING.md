@@ -108,8 +108,7 @@ The worker is a standalone Python process that polls the web app's REST API for 
 |---------------|-------|-------------|
 | `FLUX_VISUALISATION` | Fluxfox, HxCFE | Generates graphical plots of magnetic flux data |
 | `FLUX_DECODE` | HxCFE, Greaseweazle | Converts flux images to sector formats (IMD, HFE, IMG) |
-| `FILE_EXTRACTION` | 7z, DiscImageManager | Extracts files from disk images and registers file listing |
-| `ARCHIVE_DETECT` | (built-in) | Detects archive format of an extracted file |
+| `FILE_EXTRACTION` | 7z, DiscImageManager | Extracts files, registers the listing, and detects archives inline (queues `ARCHIVE_EXTRACT`) |
 | `ARCHIVE_EXTRACT` | 7z, ArcFS tools | Extracts nested archives and registers contained files |
 | `METADATA_EXTRACT` | (built-in) | Computes hashes and extracts format metadata |
 | `PARTITION_DETECT` | sfdisk, ADFS signature detection, `file` | Detects partitions and filesystem types |
@@ -315,7 +314,7 @@ members using their `.name` (the Python identifier), **not** their `.value`. So
 in PostgreSQL as the string `'FILE_EXTRACTION'` (uppercase).
 
 The `analysistype` PostgreSQL enum therefore contains uppercase strings like
-`'FILE_EXTRACTION'`, `'ARCHIVE_DETECT'`, `'PRODUCT_RECOGNITION'`. **Always use the
+`'FILE_EXTRACTION'`, `'ARCHIVE_EXTRACT'`, `'PRODUCT_RECOGNITION'`. **Always use the
 uppercase name in `ADD VALUE` migrations:**
 
 ```python

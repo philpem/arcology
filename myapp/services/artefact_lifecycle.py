@@ -212,8 +212,6 @@ def _analysis_file_path(analysis, hint_file_map: dict) -> str | None:
     Path-bearing analyses:
       ARCHIVE_EXTRACT  — path of the archive file being extracted
                          (from hint file_id → ExtractedFile.path)
-      ARCHIVE_DETECT   — path_prefix of the archive being scanned for
-                         nested archives (empty → top-level, returns None)
       FORMAT_CONVERT   — path_prefix of the archive being converted
                          (empty → direct artefact convert, returns None)
       RISCOS_MODULE_PARSE — path_prefix of the archive context
@@ -235,7 +233,7 @@ def _analysis_file_path(analysis, hint_file_map: dict) -> str | None:
         if fid and fid in hint_file_map:
             return hint_file_map[fid]['path']
         return None
-    if atype in (_AT.ARCHIVE_DETECT, _AT.FORMAT_CONVERT, _AT.RISCOS_MODULE_PARSE):
+    if atype in (_AT.FORMAT_CONVERT, _AT.RISCOS_MODULE_PARSE):
         prefix = h.get(HintKey.PATH_PREFIX, '')
         return prefix if prefix else None
     return None
@@ -273,8 +271,8 @@ def build_processing_tree(root: Artefact) -> tuple[dict, bool, dict, int]:
       }
 
     Analyses that have a file-path context (ARCHIVE_EXTRACT with a file_id,
-    ARCHIVE_DETECT / FORMAT_CONVERT with a path_prefix) are separated out of
-    the flat 'analyses' list and placed in 'path_tree' so the template can
+    FORMAT_CONVERT / RISCOS_MODULE_PARSE with a path_prefix) are separated out
+    of the flat 'analyses' list and placed in 'path_tree' so the template can
     render them as a hierarchical file-path tree.
 
     All data is fetched in flat queries (no N+1) and assembled in Python.

@@ -484,9 +484,10 @@ class ArcologyAPI:
 
         partition_uuid = partition_resp.get('uuid')
 
-        self.post_file_records(partition_uuid, files, progress_callback=progress_callback)
+        path_to_id = self.post_file_records(
+            partition_uuid, files, progress_callback=progress_callback)
 
-        return partition_resp
+        return partition_resp, path_to_id
 
     def post_file_records(
         self,
@@ -494,7 +495,7 @@ class ArcologyAPI:
         files: list[dict],
         batch_size: int = 100,
         progress_callback: Callable[[int, int], None] | None = None,
-    ) -> int:
+    ) -> dict[str, int]:
         """
         Convert a file list from enumerate_extracted_files() into API records
         and POST them to /partitions/{partition_uuid}/files in batches.
@@ -507,7 +508,9 @@ class ArcologyAPI:
                 each batch is posted, for live progress on large listings.
 
         Returns:
-            Total number of file records submitted.
+            A mapping of each input file's ``path`` to its database ExtractedFile
+            id (covering both freshly-created and pre-existing rows), so callers
+            can fold archive detection into registration.
 
         Raises:
             RuntimeError: If any batch fails to post.  A silently dropped batch
@@ -515,6 +518,7 @@ class ArcologyAPI:
                 the analysis reports success.
         """
         total = 0
+        path_to_id: dict[str, int] = {}
         for i in range(0, len(files), batch_size):
             batch = files[i:i + batch_size]
             file_records = []
@@ -561,10 +565,12 @@ class ArcologyAPI:
                     f"Failed to post file records to partition {partition_uuid} "
                     f"(batch starting at record {i}, {len(batch)} records)"
                 )
+            for entry in resp.get('files', []):
+                path_to_id[entry['path']] = entry['id']
             total += len(batch)
             if progress_callback is not None:
                 progress_callback(total, len(files))
-        return total
+        return path_to_id
 
     def queue_analysis(
         self,
@@ -577,7 +583,7 @@ class ArcologyAPI:
 
         Args:
             artefact_uuid: UUID of the artefact to analyze
-            analysis_type: Type of analysis (e.g., 'archive_detect')
+            analysis_type: Type of analysis (e.g., 'archive_extract')
             hints: Optional hints dict (will be JSON-encoded)
 
         Returns:

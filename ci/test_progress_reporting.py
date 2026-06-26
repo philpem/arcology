@@ -210,15 +210,22 @@ class TestPostFileRecordsProgressCallback(unittest.TestCase):
         from worker.arcworker.api import ArcologyAPI
 
         api = ArcologyAPI('http://example.invalid', Path('/tmp'), Path('/tmp'))
-        api.post = lambda endpoint, data: {'ok': True}  # avoid real HTTP
+        # Echo back an id per posted file so post_file_records can build its
+        # path→id map (the contract callers rely on for archive detection).
+        api.post = lambda endpoint, data: {
+            'ok': True,
+            'files': [{'id': int(f['path'][1:]), 'path': f['path']}
+                      for f in data['files']],
+        }
 
         calls = []
         files = [{'path': f'f{i}'} for i in range(250)]
-        total = api.post_file_records(
+        path_to_id = api.post_file_records(
             'puuid', files, batch_size=100,
             progress_callback=lambda posted, tot: calls.append((posted, tot)),
         )
-        self.assertEqual(total, 250)
+        self.assertEqual(len(path_to_id), 250)
+        self.assertEqual(path_to_id['f100'], 100)
         self.assertEqual(calls, [(100, 250), (200, 250), (250, 250)])
 
 

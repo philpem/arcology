@@ -1,11 +1,11 @@
 """Tests for content-gated follow-up dispatch (queue_partition_follow_ups).
 
 After an extraction, a per-kind follow-on analysis (FORMAT_CONVERT, REPLAY_PROCESS,
-MEDIA_TRANSCODE, RISCOS_MODULE_PARSE, ARCHIVE_DETECT) is queued only when the
-extraction actually contains that kind of content; PRODUCT_RECOGNITION is
-hash-based and always runs.  These tests drive AnalysisWorker.queue_partition_follow_ups
-with a stub API and assert exactly which analyses are queued for a given
-present-categories set.
+MEDIA_TRANSCODE, RISCOS_MODULE_PARSE) is queued only when the extraction actually
+contains that kind of content; PRODUCT_RECOGNITION is hash-based and always runs.
+(Archive detection is folded into registration — see test_archive_detection.py.)
+These tests drive AnalysisWorker.queue_partition_follow_ups with a stub API and
+assert exactly which analyses are queued for a given present-categories set.
 
 Run:
     python -m unittest ci.test_followup_dispatch -v
@@ -42,8 +42,9 @@ def _queued(categories, *, extraction_path='out'):
 class TestFollowUpGating(unittest.TestCase):
     def test_none_queues_everything(self):
         # Pre-gating behaviour: unknown categories → queue all follow-ups.
+        # (Archive detection is no longer queued here — it is folded into
+        # registration by detect_and_queue_archives.)
         self.assertEqual(_queued(None), {
-            AnalysisType.ARCHIVE_DETECT.value,
             AnalysisType.PRODUCT_RECOGNITION.value,
             AnalysisType.FORMAT_CONVERT.value,
             AnalysisType.RISCOS_MODULE_PARSE.value,
@@ -67,10 +68,11 @@ class TestFollowUpGating(unittest.TestCase):
             AnalysisType.MEDIA_TRANSCODE.value,
         })
 
-    def test_archive_and_convertible(self):
+    def test_convertible_only(self):
+        # ARCHIVE is handled by detect_and_queue_archives, not here, so an
+        # ARCHIVE+CONVERTIBLE set queues only FORMAT_CONVERT (+ recognition).
         self.assertEqual(_queued({C.ARCHIVE, C.CONVERTIBLE}), {
             AnalysisType.PRODUCT_RECOGNITION.value,
-            AnalysisType.ARCHIVE_DETECT.value,
             AnalysisType.FORMAT_CONVERT.value,
         })
 

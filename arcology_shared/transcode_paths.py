@@ -12,6 +12,14 @@ being re-derived independently in each component.
 # trees, so the per-artefact ``delete_prefix`` GC sweep never touches it.
 CONTENT_ADDRESSED_MEDIA_PREFIX = 'media/'
 
+# Bump to invalidate every cached transcode output (e.g. when the ffmpeg flags
+# or codec choices change).  Part of the content-addressed output path, so a new
+# value simply routes transcodes to a fresh namespace; old outputs are left for
+# the storage GC to reclaim once nothing references them.  Defined here (rather
+# than in the worker) so the worker (writer) and the web app (which dedups and
+# reclaims these outputs) derive the identical path from one source of truth.
+MEDIA_TRANSCODE_TOOL_VERSION = '1'
+
 
 def transcode_output_subdir(sha256: str, tool_version: str) -> str:
     """``outputs/`` subdir for a transcode, keyed on the SOURCE file's SHA-256.

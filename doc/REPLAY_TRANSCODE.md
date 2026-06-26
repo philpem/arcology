@@ -138,16 +138,45 @@ pending or codec unsupported)."*
 `TOOL_TIMEOUT` (default 3600 s) bounds each transcode subprocess — raise it for
 long movies.
 
+## Output deduplication (content-addressed cache)
+
+Transcoded outputs are **content-addressed on the source file's SHA-256**:
+the MP4/poster live at `outputs/media/{source_sha256}/{tool_version}/` (see
+`arcology_shared/transcode_paths.py`) and are linked by a shared, refcounted
+`OutputBlob`. Two artefacts holding byte-identical source media therefore share
+one stored output, and the worker skips ffmpeg on a cache hit
+(`transcode_cached`). The shared bytes are reclaimed by the storage GC only when
+the **last** referencing artefact is deleted.
+
+`tool_version` is `MEDIA_TRANSCODE_TOOL_VERSION` (in `transcode_paths.py`, shared
+by worker and web). Bump it to invalidate **every** cached transcode at once
+(e.g. after changing ffmpeg flags/codecs): a new value routes transcodes to a
+fresh namespace; the old outputs age out via GC.
+
+**Legacy duplicates** (outputs produced before content-addressing) can be
+collapsed onto shared blobs without re-encoding — see `dedup-transcode-outputs`
+in `doc/ADMIN_COMMANDS.md`.
+
 ## Operating
 
 - Parsing + transcoding are queued automatically after extraction (one
   `REPLAY_PROCESS` analysis per extraction with ARMovie files).
-- To re-parse/re-transcode (e.g. after changing `REPLAY_MODULES_DIR`), re-run the
-  analysis:
+
+- **Re-transcoding a *bad* output is NOT a plain `reanalyse`.** Because outputs
+  are cached on the source hash + tool version, re-running the analysis is a
+  cache *hit* and re-serves the same (bad) bytes. Use `redo-transcode`, which
+  invalidates the cached output first, then re-encodes:
 
   ```bash
-  flask reanalyse --analysis <REPLAY_PROCESS-uuid>
+  flask redo-transcode --artefact <artefact-uuid>      # invalidate + re-queue
+  flask redo-transcode --source-hash <source-sha256>   # by source media hash
+  flask redo-transcode --artefact <uuid> --no-reanalyse  # just clear the cache
   ```
+
+  A plain `flask reanalyse --analysis <REPLAY_PROCESS-uuid>` re-parses and
+  re-transcodes only when the cache is cold (or after a `tool_version` bump) —
+  e.g. after changing `REPLAY_MODULES_DIR` for sources not yet cached. See
+  `doc/ADMIN_COMMANDS.md` for the full flag reference.
 
 - Dedicated transcode worker pool (transcoding is CPU-heavy):
 

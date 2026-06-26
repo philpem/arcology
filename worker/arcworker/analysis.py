@@ -392,7 +392,7 @@ class AnalysisWorker:
         path_prefix: str | None = None,
         categories: 'set | None' = None,
     ):
-        """Queue the standard archive-detect, product-recognition, and format-convert follow-ups.
+        """Queue the standard product-recognition, format-convert and metadata follow-ups.
 
         *categories* is the set of :class:`ContentCategory` actually present in
         the extraction (from :func:`present_content_categories`).  A content-typed
@@ -401,6 +401,10 @@ class AnalysisWorker:
         transcode, and so on.  PRODUCT_RECOGNITION is hash-based (independent of
         file kind) and always runs.  ``categories=None`` means "unknown" and
         queues every follow-up — the pre-gating behaviour, kept as a safe default.
+
+        Archive detection is *not* queued here: it is done inline at registration
+        time by ``detect_and_queue_archives`` (which has the files' DB ids), so
+        ARCHIVE is absent from the per-kind dispatch below.
         """
         from arcology_shared.content_categories import ContentCategory
         from arcology_shared.enums import AnalysisType
@@ -408,17 +412,6 @@ class AnalysisWorker:
         def present(category) -> bool:
             return categories is None or category in categories
 
-        if present(ContentCategory.ARCHIVE):
-            archive_hints = {HintKey.PARTITION_UUID: partition_uuid}
-            if extraction_path:
-                archive_hints[HintKey.EXTRACTION_PATH] = extraction_path
-            if path_prefix:
-                archive_hints[HintKey.PATH_PREFIX] = path_prefix
-            self.api.queue_analysis(
-                artefact_uuid,
-                AnalysisType.ARCHIVE_DETECT.value,
-                hints=archive_hints,
-            )
         self.api.queue_analysis(
             artefact_uuid,
             AnalysisType.PRODUCT_RECOGNITION.value,
@@ -644,7 +637,6 @@ class AnalysisWorker:
     _detect_viewable_type         = _analyses._detect_viewable_type
     _RISCOS_VIEWABLE_SUFFIXES     = _analyses._RISCOS_VIEWABLE_SUFFIXES
     _EXT_VIEWABLE                 = _analyses._EXT_VIEWABLE
-    _RISCOS_HEX_VIEWABLE          = _analyses._RISCOS_HEX_VIEWABLE
 
     # =========================================================================
     # Job Processing

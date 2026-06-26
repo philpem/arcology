@@ -57,7 +57,7 @@ def classify_content(filename: str,
     ft = (risc_os_filetype or '').lower()
     categories: set[ContentCategory] = set()
 
-    # ARCHIVE — RISC OS filetype first, then extension (mirrors ARCHIVE_DETECT).
+    # ARCHIVE — RISC OS filetype first, then extension.
     if (get_archive_by_filetype(ft) if ft else None) or get_archive_by_extension(name):
         categories.add(ContentCategory.ARCHIVE)
 
