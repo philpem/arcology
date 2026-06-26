@@ -162,7 +162,8 @@ class TestStorageStats(unittest.TestCase):
 
             # Add an extracted file inside the unique artefact whose content
             # matches the shared group (same size + sha256).
-            unique_art = Artefact.query.filter_by(label="unique").one()
+            unique_art = self.db.session.scalars(
+                self.db.select(Artefact).where(Artefact.label == "unique")).one()
             part = Partition(artefact_id=unique_art.id, partition_index=0,
                              label="Main", filesystem=FilesystemType.DFS)
             self.db.session.add(part)
