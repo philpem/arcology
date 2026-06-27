@@ -1777,12 +1777,18 @@ def _view_analysis_summaries(all_artefact_ids):
 
     has_hidden_analyses = not show_all_analyses and total_analyses_count > len(analyses)
 
+    # Always collect failed analyses separately so the template can show a
+    # prominent warning regardless of whether show_all_analyses is active.
+    failed_analyses = [a for a in all_related_analyses
+                       if a.status == AnalysisStatus.FAILED]
+
     return dict(
         analyses=analyses,
         show_all_analyses=show_all_analyses,
         has_hidden_analyses=has_hidden_analyses,
         total_analyses_count=total_analyses_count,
         status_counts=status_counts,
+        failed_analyses=failed_analyses,
     )
 
 
