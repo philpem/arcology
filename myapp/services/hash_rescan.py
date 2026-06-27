@@ -8,6 +8,7 @@ database-level recognition backfills after HashDB content changes.
 
 import json
 from sqlalchemy import and_, case, func, or_
+from sqlalchemy.orm import joinedload
 from ..database import (
     Analysis,
     AnalysisStatus,
@@ -166,8 +167,6 @@ def find_all_known_files_batch(extracted_files):
         dict mapping extracted_file.id -> list of KnownFile objects
         (each with its .database eagerly loaded)
     """
-    from sqlalchemy.orm import joinedload
-
     # Collect md5 values from known files on this page
     ef_by_md5 = {}  # md5 -> list of ExtractedFile
     for ef in extracted_files:

@@ -20,8 +20,11 @@ from flask import current_app, redirect, send_file
 # imports it lazily), so this guarantees those types are registered before we
 # serve any local file with mimetypes.guess_type().
 from arcology_shared import storage as _storage  # noqa: F401
+from arcology_shared.storage import LocalStorage
 from arcology_shared.transcode_paths import CONTENT_ADDRESSED_MEDIA_PREFIX
-from ..database import Artefact
+from ..database import Artefact, MediaFile, ReplayMovie
+from ..extensions import db
+from ..visibility import can_view_artefact, output_blocked_for
 from .artefact_storage import (
     get_artefact_path,
     get_artefact_storage_key,
@@ -126,8 +129,6 @@ def resolve_output_artefacts(filename):
     ReplayMovie / MediaFile rows referencing them and may have several owners.
     """
     if (filename or '').startswith(CONTENT_ADDRESSED_OUTPUT_PREFIX):
-        from ..database import MediaFile, ReplayMovie
-        from ..extensions import db
         owner_ids: set[int] = set()
         for model in (ReplayMovie, MediaFile):
             owner_ids.update(db.session.scalars(
@@ -159,7 +160,6 @@ def output_access_decision(filename, user, *, sees_all=False):
     is a legitimate, unrestricted route to the same content.  For a legacy
     single-owner path this collapses to the previous per-artefact check.
     """
-    from ..visibility import can_view_artefact, output_blocked_for
     viewable = [
         a for a in resolve_output_artefacts(filename)
         if can_view_artefact(a, user, sees_all=sees_all)
@@ -181,7 +181,6 @@ def serve_output_file(filename):
     Callers must have already enforced artefact visibility via
     resolve_output_artefact().
     """
-    from arcology_shared.storage import LocalStorage
 
     storage = current_app.storage
     key = storage.storage_key('outputs', filename)
