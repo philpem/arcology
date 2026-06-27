@@ -31,6 +31,7 @@ Three share permission levels are supported:
 from sqlalchemy import and_, or_, select, true
 from .database import Artefact, Item, ItemShare, group_memberships
 from .enums import RestrictionType
+from .extensions import db
 
 # Valid share permission levels in ascending order of privilege.
 SHARE_PERMISSIONS = ('viewer', 'editor', 'curator')
@@ -113,7 +114,6 @@ def _has_share_access(item: Item, uid, *, level: str = 'viewer') -> bool:
     """True if uid has a share of at least *level* on item or any of its ancestors."""
     if uid is None:
         return False
-    from .extensions import db
     chain_ids = [item.id] + [a.id for a in item.ancestors]
     if ItemShare.query.filter(
         ItemShare.item_id.in_(chain_ids),
