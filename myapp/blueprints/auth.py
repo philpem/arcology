@@ -5,12 +5,24 @@ Local-login / logout routes plus Flask-Login session management.
 Separate from app.py so the factory stays slim.
 """
 
-from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
+from flask import (
+    Blueprint,
+    abort,
+    current_app,
+    flash,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
 from flask_login import login_required, login_user, logout_user
 from flask_wtf import FlaskForm
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 from wtforms import PasswordField, StringField, SubmitField
 from wtforms.validators import DataRequired
+from ..database import User
+from ..extensions import login_manager
 from ..utils.config import bool_config
 from ..utils.safe_redirect import safe_redirect_path
 
@@ -21,9 +33,6 @@ blueprint = Blueprint(ROUTENAME, __name__, url_prefix='')
 
 def init_app(app):
     """Register Flask-Login user_loader and update login_view endpoint."""
-    from ..database import User
-    from ..extensions import login_manager
-
     login_manager.login_view = 'auth.login'
 
     @login_manager.user_loader
@@ -47,8 +56,6 @@ class LoginForm(FlaskForm):
 
 @blueprint.route("/login", methods=["GET", "POST"])
 def login():
-    from ..database import User
-
     form = LoginForm()
 
     # Enforce LOCAL_LOGIN_ENABLED server-side (the template merely hides the form).
@@ -71,8 +78,7 @@ def login():
         try:
             userrec = User.query.filter(User.username == form.username.data).one()
         except MultipleResultsFound:
-            from flask import current_app as _app
-            _app.logger.error(
+            current_app.logger.error(
                 "USER LOGIN FAILURE: User '%s' has a doppelganger (duplicate username found)",
                 form.username.data)
         except NoResultFound:

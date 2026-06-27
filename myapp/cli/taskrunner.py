@@ -1,4 +1,5 @@
 import click
+from flask import current_app
 from ..taskrunner import TaskRunner
 
 
@@ -21,8 +22,6 @@ def taskrunner():
 
     Exits cleanly on SIGTERM/SIGINT after the current job finishes.
     """
-    from flask import current_app
-
     TaskRunner(current_app._get_current_object()).run()
 
 # vim: ts=4 sw=4 et
