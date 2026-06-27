@@ -4,15 +4,21 @@ Arcology - Artefacts Blueprint
 CRUD operations for digital artefacts with file upload and auto-analysis.
 """
 
+import fnmatch
 import hashlib
 import json
 import mimetypes
 import os
+import posixpath
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
 from flask_wtf.file import FileField, FileRequired
+from natsort import natsorted, ns
+from sqlalchemy import and_, desc, false, func, or_
+from sqlalchemy.orm import defer, joinedload, selectinload
 from werkzeug.exceptions import NotFound
 from wtforms import BooleanField, IntegerField, SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Optional
@@ -24,6 +30,7 @@ from ..database import (
     AnalysisStatus,
     AnalysisType,
     Artefact,
+    ArtefactComponent,
     ArtefactRestriction,
     ArtefactType,
     ExtractedFile,
@@ -80,6 +87,13 @@ from ..services.downloads import (
     serve_output_file,
 )
 from ..services.file_metadata import metadata_by_path
+from ..services.hash_rescan import (
+    create_hashdb_from_artefacts,
+    find_all_known_files_batch,
+    queue_hashdb_link_job,
+    queue_product_recognition_for_partitions,
+    rescan_hashes_for_artefact,
+)
 from ..services.restrictions import (
     artefact_contained_file_restrictions,
     collect_all_file_restrictions,
@@ -97,7 +111,14 @@ from ..services.upload_pipeline import QUEUE_CHECKSUM_ONLY, QUEUE_FULL, ingest_u
 from ..utils.blobs import artefact_blob_storage_path, assign_blob
 from ..utils.config import int_config
 from ..utils.enum_display import enum_value
-from ..utils.path_nav import build_directory_tree
+from ..utils.item_helpers import indented_item_choices
+from ..utils.pagination import (
+    VALID_PER_PAGE,
+    ListPagination,
+    compute_letter_pages,
+    resolve_per_page,
+)
+from ..utils.path_nav import build_directory_tree, compute_subdirectories
 from ..utils.slugs import ensure_unique_slug, generate_slug, lookup_artefact_by_id, lookup_by_identifier
 from ..visibility import (
     artefact_visibility_clause,
@@ -449,7 +470,6 @@ def analysis_status_json(uuid):
     Used by the artefact view page to poll for completion without a full reload.
     Returns: {"pending": N, "running": N, "completed": N, "failed": N, "total": N}
     """
-    from flask import jsonify
     artefact = _get_artefact_or_404(uuid=uuid)
     all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
     counts = {s.value: 0 for s in AnalysisStatus}
@@ -587,7 +607,6 @@ def cautions(uuid):
     derived children (newest protection analysis per artefact), matching the
     rollup, and filtered to one indicator type at a time for a consistent table.
     """
-    from ..utils.pagination import VALID_PER_PAGE, ListPagination, resolve_per_page
 
     artefact = _get_artefact_or_404(uuid=uuid)
     all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
@@ -704,7 +723,6 @@ def _viewer_make_output_helpers():
 
 def _viewer_collect_groups(artefact, all_artefact_ids, file_filter, current_path, _enrich_outputs):
     """Output groups for the viewer grid (Mode 1 own outputs / Mode 2 aggregate)."""
-    from collections import defaultdict
 
     _viewable_types = VIEWER_ARTEFACT_TYPES
     output_groups = []
@@ -830,7 +848,6 @@ def _viewer_subdirectories(artefact, output_groups, file_filter, current_path, a
     subdirectories: list = []
     archive_paths: set = set()
     if not file_filter and artefact.artefact_type not in _viewable_types:
-        from ..utils.path_nav import compute_subdirectories
         source_files_in_scope = [
             g.get('source_file') for g in output_groups if g.get('source_file')
         ]
@@ -854,22 +871,19 @@ def _viewer_filename_filter(output_groups, filename_filter, file_filter):
     """?filename= glob filter applied to the viewer grid (Mode 2)."""
     # ── Filename glob filter (Mode 2 only, applied before facet build) ──────
     if filename_filter and not file_filter:
-        import fnmatch as _fnmatch
-        from posixpath import basename as _basename
         pat = filename_filter.lower()
         if '*' not in pat and '?' not in pat:
             pat = f'*{pat}*'
         output_groups = [
             g for g in output_groups
             if not g.get('source_file') or
-               _fnmatch.fnmatch(_basename(g['source_file']).lower(), pat)
+               fnmatch.fnmatch(posixpath.basename(g['source_file']).lower(), pat)
         ]
     return output_groups
 
 
 def _viewer_filetype_facet(output_groups, all_partition_ids):
     """Filetype facet panel: counts, active filters, and toggle URLs."""
-    from collections import Counter
 
     # ── Filetype facet (Mode 2 only, when there are source_file paths) ───────
     # Type keys: RISC OS hex codes (e.g. 'fff') or '.ext' for extension-based
@@ -942,7 +956,6 @@ def _viewer_filetype_facet(output_groups, all_partition_ids):
 
 def _viewer_summary_counts(output_groups):
     """Per-type output counts for the viewer summary line."""
-    from collections import Counter
 
     # ── Summary counts (post-filter, pre-pagination) ─────────────────────────
     total_counts = Counter()
@@ -955,7 +968,6 @@ def _viewer_summary_counts(output_groups):
 
 def _viewer_paginate(output_groups, use_pagination, _enrich_outputs):
     """Pagination panel for the Mode 2 aggregate grid (and arg preservation)."""
-    from ..utils.pagination import VALID_PER_PAGE, ListPagination, resolve_per_page
 
     # ── Pagination (Mode 2 aggregate only, without ?file=) ───────────────────
     # pagination_args is always populated so column/filter URLs preserve state
@@ -1098,7 +1110,6 @@ def _viewer_thumbnail_bundle(artefact, output_groups, file_filter):
                 viewer_thumbnail_mode = bool(saved_thumb)
 
     if viewer_thumbnail_mode and is_aggregate_mode and not file_filter:
-        from posixpath import dirname as _posix_dirname
         single_img_groups, other_groups = [], []
         for g in output_groups:
             img_count = sum(1 for o in g['outputs'] if o.get('type') == 'image')
@@ -1115,7 +1126,7 @@ def _viewer_thumbnail_bundle(artefact, output_groups, file_filter):
             # directory's multi-image files rather than all floating to the top.
             dir_singles: dict[str, list] = {}
             for g in single_img_groups:
-                d = _posix_dirname(g.get('source_file') or '')
+                d = posixpath.dirname(g.get('source_file') or '')
                 if d not in dir_singles:
                     dir_singles[d] = []
                 dir_singles[d].append(g)
@@ -1124,7 +1135,7 @@ def _viewer_thumbnail_bundle(artefact, output_groups, file_filter):
             dir_order: list[str] = []
             seen_dirs: set = set()
             for g in output_groups:
-                d = _posix_dirname(g.get('source_file') or '')
+                d = posixpath.dirname(g.get('source_file') or '')
                 if d not in seen_dirs:
                     seen_dirs.add(d)
                     dir_order.append(d)
@@ -1148,7 +1159,7 @@ def _viewer_thumbnail_bundle(artefact, output_groups, file_filter):
                         'filetype': None,
                     })
                 for g in other_groups:
-                    if _posix_dirname(g.get('source_file') or '') == d:
+                    if posixpath.dirname(g.get('source_file') or '') == d:
                         new_groups.append(g)
             output_groups = new_groups
     return output_groups, viewer_thumbnail_mode, is_aggregate_mode, prefs_dirty
@@ -1740,11 +1751,9 @@ def _view_analysis_summaries(all_artefact_ids):
     # Defer the large `details` JSON column: the analyses list/counts never read it
     # (only analysis_type/status/artefact/uuid are shown). The few detail-bearing
     # analyses surfaced as cards are fetched separately below (#447).
-    from sqlalchemy.orm import defer
-    from sqlalchemy.orm import joinedload as _jl_a
     all_related_analyses = Analysis.query.filter(
         Analysis.artefact_id.in_(all_artefact_ids)
-    ).options(_jl_a(Analysis.artefact), defer(Analysis.details)).order_by(Analysis.id.desc()).all()
+    ).options(joinedload(Analysis.artefact), defer(Analysis.details)).order_by(Analysis.id.desc()).all()
     total_analyses_count = len(all_related_analyses)
 
     # Status breakdown counts (displayed in the card header)
@@ -1779,17 +1788,16 @@ def _view_analysis_summaries(all_artefact_ids):
 
 def _view_file_listing(file_form, all_artefact_ids):
     """File listing table: filtered query, sorting, pagination, hash matches."""
-    from sqlalchemy.orm import selectinload as _sil
     files_query = ExtractedFile.query.join(Partition).filter(
         Partition.artefact_id.in_(all_artefact_ids)
     ).options(
-        _sil(ExtractedFile.partition),
-        _sil(ExtractedFile.known_file).selectinload(KnownFile.product),
-        _sil(ExtractedFile.known_file).selectinload(KnownFile.database),
+        selectinload(ExtractedFile.partition),
+        selectinload(ExtractedFile.known_file).selectinload(KnownFile.product),
+        selectinload(ExtractedFile.known_file).selectinload(KnownFile.database),
         # The file table reads file.restrictions on every row (download icon,
         # restriction badges, manage button). Eager-load it here to avoid an
         # N+1 of one extracted_file_restrictions query per file (issue #447).
-        _sil(ExtractedFile.restrictions),
+        selectinload(ExtractedFile.restrictions),
     )
 
     # Filter by specific partition if requested.
@@ -1825,8 +1833,7 @@ def _view_file_listing(file_form, all_artefact_ids):
             if ext_raw:
                 files_query = files_query.filter(ExtractedFile.extension == ext_raw)
             else:
-                from sqlalchemy import false as _false
-                files_query = files_query.filter(_false())
+                files_query = files_query.filter(false())
 
     if file_form.path.data:
         path_filter = file_form.path.data.strip()
@@ -1837,7 +1844,6 @@ def _view_file_listing(file_form, all_artefact_ids):
             )
         else:
             # Exact entry (e.g. from search result link) plus all contents
-            from sqlalchemy import or_
             files_query = files_query.filter(
                 or_(
                     ExtractedFile.path == path_filter,
@@ -1854,52 +1860,45 @@ def _view_file_listing(file_form, all_artefact_ids):
     if file_form.hide_known.data == 'hide':
         # Always show archive files even when hiding known files, because
         # archives serve as navigational pseudo-directories in the UI.
-        from sqlalchemy import or_
         files_query = files_query.filter(
             or_(ExtractedFile.known_file_id.is_(None), ExtractedFile.is_archive == True)
         )
     elif file_form.hide_known.data == 'only':
-        from sqlalchemy import or_
         files_query = files_query.filter(
             or_(ExtractedFile.known_file_id.isnot(None), ExtractedFile.is_archive == True)
         )
 
     if file_form.filter_products.data == 'hide':
         # Hide files whose primary known_file match has a product association.
-        from sqlalchemy import or_ as _or
         files_query = files_query.filter(
-            _or(
+            or_(
                 ExtractedFile.known_file_id == None,
                 ~ExtractedFile.known_file.has(KnownFile.product_id != None),
                 ExtractedFile.is_archive == True,
             )
         )
     elif file_form.filter_products.data == 'only':
-        from sqlalchemy import or_ as _or
         files_query = files_query.filter(
-            _or(
+            or_(
                 ExtractedFile.known_file.has(KnownFile.product_id != None),
                 ExtractedFile.is_archive == True,
             )
         )
     
-    from ..utils.pagination import VALID_PER_PAGE, resolve_per_page
     per_page, page, view_all = resolve_per_page('FILES_PER_PAGE', 100)
 
     # Column sorting: sort=<col> ascending, sort=-<col> descending
     sort_param = request.args.get('sort', 'path')
     sort_desc = sort_param.startswith('-')
     sort_col = sort_param.lstrip('-')
-    from sqlalchemy import desc
-    from sqlalchemy import func as _func
     _sort_columns = {
-        'path': _func.lower(ExtractedFile.path),
+        'path': func.lower(ExtractedFile.path),
         'size': ExtractedFile.file_size,
         'filetype': ExtractedFile.risc_os_filetype,
         'known': ExtractedFile.is_known,
         'date': ExtractedFile.modified_time,
     }
-    sort_expr = _sort_columns.get(sort_col, _func.lower(ExtractedFile.path))
+    sort_expr = _sort_columns.get(sort_col, func.lower(ExtractedFile.path))
     if sort_desc:
         sort_expr = desc(sort_expr)
 
@@ -1912,7 +1911,6 @@ def _view_file_listing(file_form, all_artefact_ids):
     # the jump bar has nothing to jump to, so its ~16ms query is pure waste
     # for the common small-artefact case (#486).
     if sort_col == 'path' and files_pagination.pages > 1:
-        from ..utils.pagination import compute_letter_pages
         letter_pages, current_letter = compute_letter_pages(
             files_query, ExtractedFile.path,
             per_page, current_page=page, descending=sort_desc
@@ -1932,13 +1930,11 @@ def _view_file_listing(file_form, all_artefact_ids):
         if not f.is_directory and has_dedup_content(f.file_size, f.sha256)
     }
     if duplicate_keys:
-        from sqlalchemy import and_ as _and
-        from sqlalchemy import or_ as _or
         duplicate_rows = (
             db.session.query(
                 ExtractedFile.file_size,
                 ExtractedFile.sha256,
-                _func.count(ExtractedFile.id),
+                func.count(ExtractedFile.id),
             )
             .join(Partition)
             .join(Artefact, Partition.artefact_id == Artefact.id)
@@ -1949,8 +1945,8 @@ def _view_file_listing(file_form, all_artefact_ids):
             # shown by the file_duplicates list view (which joins Item correctly).
             .join(Item, Artefact.item_id == Item.id)
             .filter(artefact_visibility_clause(current_user))
-            .filter(_or(*[
-                _and(
+            .filter(or_(*[
+                and_(
                     ExtractedFile.file_size == size,
                     ExtractedFile.sha256 == sha256,
                 )
@@ -1967,7 +1963,6 @@ def _view_file_listing(file_form, all_artefact_ids):
 
     # Batch-query all matching KnownFiles across active hash databases
     # for the current page of files, so the template can show multiple badges.
-    from ..services.hash_rescan import find_all_known_files_batch
     file_known_matches = find_all_known_files_batch(files_pagination.items)
 
     # Build query args for pagination links, preserving all active filters
@@ -2004,8 +1999,6 @@ def _view_subdirectories(file_form, files_query, all_partitions, all_artefact_id
     # "directories" that are actually archives.
     archive_paths = set()
     if all_partitions:
-        from sqlalchemy import or_ as _or_flags
-        from ..utils.path_nav import compute_subdirectories
 
         # Infer subdirectories from file paths (covers non-empty directories).
         all_file_paths = [p for (p,) in files_query.with_entities(ExtractedFile.path).all()]
@@ -2027,7 +2020,7 @@ def _view_subdirectories(file_form, files_query, all_partitions, all_artefact_id
             .join(Partition)
             .filter(
                 Partition.artefact_id.in_(all_artefact_ids),
-                _or_flags(
+                or_(
                     ExtractedFile.is_directory == True,
                     ExtractedFile.is_archive == True,
                 ),
@@ -2051,7 +2044,6 @@ def _view_subdirectories(file_form, files_query, all_partitions, all_artefact_id
             if relative_path and '/' not in relative_path:
                 subdir_set.add(relative_path)
 
-        from natsort import natsorted, ns
         subdirectories = natsorted(subdir_set, alg=ns.IGNORECASE)
     return current_path, subdirectories, archive_paths
 
@@ -2354,7 +2346,6 @@ def _view_conversion_status(artefact, all_artefact_ids):
         # path via the file_id stored in hints.
         # Defer the large `details` JSON: this loop only reads hints,
         # error_message, and uuid, so loading details is wasted I/O (#486).
-        from sqlalchemy.orm import defer
         failed_extractions = (
             Analysis.query
             .filter(
@@ -2401,12 +2392,11 @@ def _view_recognised_products(all_partitions):
     recognised_products = []
     if all_partitions:
         partition_ids = [p.id for p in all_partitions]
-        from sqlalchemy.orm import joinedload as _jl
         recognised_products = (
             RecognisedProduct.query
             .join(RecognisedProduct.partition)
             .filter(RecognisedProduct.partition_id.in_(partition_ids))
-            .options(_jl(RecognisedProduct.product).joinedload(KnownProduct.database))
+            .options(joinedload(RecognisedProduct.product).joinedload(KnownProduct.database))
             .order_by(Partition.partition_index, RecognisedProduct.folder_path)
             .all()
         )
@@ -2424,11 +2414,10 @@ def _view_hashdb_context(hashdb_mode):
     # dropdown: {database_id: [{id, title}, ...]} sorted by title.
     hashdb_product_cache = {}
     if hashdb_mode:
-        from sqlalchemy.orm import joinedload as _jl2
         hash_databases = (
             HashDatabase.query
             .filter(HashDatabase.is_deleting.is_(False))
-            .options(_jl2(HashDatabase.known_products))
+            .options(joinedload(HashDatabase.known_products))
             .order_by(HashDatabase.name)
             .all()
         )
@@ -2453,10 +2442,9 @@ def _view_restriction_maps(all_artefact_ids, files_pagination):
     # File-level restrictions on any extracted file within this artefact tree.
     # Used to adjust the download button state when the artefact itself is
     # unrestricted but contains restricted extracted files.
-    from sqlalchemy.orm import joinedload as _jl_efr
     artefact_file_restrictions = (
         ExtractedFileRestriction.query
-        .options(_jl_efr(ExtractedFileRestriction.extracted_file))
+        .options(joinedload(ExtractedFileRestriction.extracted_file))
         .join(ExtractedFile, ExtractedFileRestriction.extracted_file_id == ExtractedFile.id)
         .join(Partition, ExtractedFile.partition_id == Partition.id)
         .filter(Partition.artefact_id.in_(all_artefact_ids))
@@ -2690,7 +2678,6 @@ def _move_item_choices(artefact):
     # NOTE (#486): indented_item_choices loads the entire items table (ORDER BY
     # name) to build the move-target dropdown. Fine at current scale but grows
     # linearly with item count; revisit with a typeahead if the table gets large.
-    from ..utils.item_helpers import indented_item_choices
     return indented_item_choices(
         value_fn=lambda item: item.url_id,
         exclude_ids={artefact.item_id},
@@ -2842,7 +2829,6 @@ def add_to_hashdb(uuid):
     # route does (see hashdb._post_known_file_changes).
     linking_queued = False
     if added and database.is_active:
-        from ..services.hash_rescan import queue_hashdb_link_job
         _, linking_queued = queue_hashdb_link_job(database.id)
 
     if added:
@@ -2878,7 +2864,6 @@ def create_base_hashdb(uuid):
     exclude = request.form.get('exclude_from_similarity') == '1'
     artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
 
-    from ..services.hash_rescan import create_hashdb_from_artefacts
     try:
         database, added, skipped = create_hashdb_from_artefacts(
             name, artefact_ids, description=description,
@@ -2911,7 +2896,6 @@ def upload(item_id):
     form = ArtefactUploadForm()
 
     # Build item choices
-    from ..utils.item_helpers import indented_item_choices
     form.item_id.choices = [(0, '-- Select item --')] + indented_item_choices(viewer=current_user)
 
     # Build type choices with auto-detect as default
@@ -4033,7 +4017,6 @@ def file_near_duplicates(uuid):
 @public_readable
 def component_similar(uuid):
     """Artefacts whose directory subtree (component) matches this one."""
-    from ..database import ArtefactComponent
     component, artefact = (
         db.session.query(ArtefactComponent, Artefact)
         .join(Artefact, ArtefactComponent.artefact_id == Artefact.id)
@@ -4080,7 +4063,6 @@ def similar(item_id=None, artefact_id=None, root_id=None, uuid=None):
 @require_permission('read_write')
 def rescan_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None):
     """Re-link extracted files to active hash databases without re-analysing."""
-    from ..services.hash_rescan import rescan_hashes_for_artefact
     artefact = _get_artefact_or_404(item_id, artefact_id, root_id, uuid)
     _require_manage_artefact_content(artefact)
     updated, total = rescan_hashes_for_artefact(artefact)
@@ -4101,7 +4083,6 @@ def rescan_hashes_route(item_id=None, artefact_id=None, root_id=None, uuid=None)
 @require_permission('read_write')
 def rerun_product_recognition_route(uuid):
     """Queue PRODUCT_RECOGNITION for all partitions of an artefact without re-analysing."""
-    from ..services.hash_rescan import queue_product_recognition_for_partitions
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     if not can_view_artefact(artefact, current_user):
         abort(404)
