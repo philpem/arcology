@@ -103,13 +103,17 @@ def login():
     return render_template("login.html", form=form)
 
 
-@blueprint.route("/logout")
+@blueprint.route("/logout", methods=["POST"])
 @login_required
 def logout():
-    # Delegate to the SSO logout route when single-logout is configured,
-    # so the provider session is also terminated.
+    # POST-only so the navbar's CSRF-protected form is the only way to trigger
+    # logout (a GET logout is forgeable cross-site → forced-logout CSRF).
+    # Delegate to the SSO logout flow when single-logout is configured, so the
+    # provider session is also terminated.  Call it directly rather than
+    # redirecting, so the SSO logout route can stay POST-only too.
     if bool_config('OIDC_SINGLE_LOGOUT') and session.get('oidc_end_session_endpoint'):
-        return redirect(url_for('myapp_blueprints_oidc_auth.sso_logout'))
+        from .oidc_auth import sso_logout
+        return sso_logout()
     logout_user()
     flash("You have now been logged out.", "info")
     return redirect(url_for("auth.login"))

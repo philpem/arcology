@@ -52,7 +52,12 @@
 {% endif %}
 						<li class="nav-item"><a class="nav-link{% if request.endpoint and 'myapp_blueprints_help' in request.endpoint %} active{% endif %}" href="{{ url_for('myapp_blueprints_help.index') }}" title="Help"><i class="bi bi-question-circle"></i> Help</a></li>
 						<li class="nav-item"><a class="nav-link{% if request.endpoint and 'myapp_blueprints_profile' in request.endpoint %} active{% endif %}" href="{{ url_for('myapp_blueprints_profile.index') }}" title="User settings"><i class="bi bi-person"></i> {{ current_user.username }}</a></li>
-						<li class="nav-item"><a class="nav-link" href="{{ url_for('auth.logout') }}" title="Log out"><i class="bi bi-box-arrow-right"></i> Logout</a></li>
+						<li class="nav-item">
+							<form action="{{ url_for('auth.logout') }}" method="post" class="d-inline">
+								<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+								<button type="submit" class="nav-link btn btn-link p-0 px-2" title="Log out"><i class="bi bi-box-arrow-right"></i> Logout</button>
+							</form>
+						</li>
 					</ul>
 {% else %}
 					<ul class="navbar-nav">
