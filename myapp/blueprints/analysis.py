@@ -21,6 +21,7 @@ from ..database import (
 )
 from ..extensions import db
 from ..permissions import require_permission
+from ..services.artefact_lifecycle import get_all_derived_artefact_ids
 from ..utils.pagination import VALID_PER_PAGE, resolve_per_page
 from ..utils.timeutils import naive_utc_now
 from ..visibility import artefact_visibility_clause, can_view_artefact, can_view_item
@@ -66,6 +67,8 @@ def _require_manage_analysis(analysis):
     Reuses the artefact-content gate so analyses inherit the same write rules
     as the artefact they belong to.
     """
+    # Local import: sibling-blueprint dependency kept function-local to avoid a
+    # cross-blueprint circular import at module load.
     from .artefacts import _require_manage_artefact_content
     if analysis.artefact is not None:
         _require_manage_artefact_content(analysis.artefact)
@@ -387,13 +390,14 @@ def _visible_artefact_ids(criterion):
 
 def _visible_artefact_ids_for(artefact):
     """IDs of *artefact* and its derived subtree the current user may view."""
-    from ..services.artefact_lifecycle import get_all_derived_artefact_ids
     all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
     return _visible_artefact_ids(Artefact.id.in_(all_ids))
 
 
 def _manageable_item_artefact_ids(item):
     """IDs of *item*'s artefacts the caller may both view and manage content of."""
+    # Local import: sibling-blueprint dependency kept function-local to avoid a
+    # cross-blueprint circular import at module load.
     from .artefacts import _require_manage_artefact_content
     # Eager-load item: _require_manage_artefact_content reads artefact.item, so
     # without this each artefact triggers a lazy Item load (N+1).
@@ -456,6 +460,8 @@ def set_priority(uuid):
 @require_permission('read_write')
 def set_artefact_priority(uuid):
     """Bulk-set priority on all PENDING analyses for an artefact + derived tree."""
+    # Local import: sibling-blueprint dependency kept function-local to avoid a
+    # cross-blueprint circular import at module load.
     from .artefacts import _require_manage_artefact_content
     artefact = Artefact.query.filter_by(uuid=uuid).first_or_404()
     if not can_view_artefact(artefact, current_user):

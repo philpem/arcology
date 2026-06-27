@@ -3,6 +3,7 @@
 from collections.abc import Iterable
 from ..database import Item, Tag
 from ..extensions import db
+from ..visibility import item_visibility_clause
 
 
 def item_choice_list(model, placeholder: str):
@@ -57,7 +58,6 @@ def indented_item_choices(*, value_fn=lambda item: item.id,
     """
     query = Item.query
     if viewer is not None:
-        from ..visibility import item_visibility_clause
         query = query.filter(item_visibility_clause(viewer))
     all_items = query.order_by(Item.name).all()
     _exclude = exclude_ids or set()

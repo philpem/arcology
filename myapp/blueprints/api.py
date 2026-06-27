@@ -14,6 +14,7 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import contains_eager, joinedload, selectinload
 from sqlalchemy.orm.exc import StaleDataError
+from werkzeug.utils import secure_filename
 from arcology_shared.enums import COMPRESSED_RAW_SECTOR_TYPES
 from arcology_shared.transcode_paths import (
     transcode_movie_name,
@@ -71,7 +72,7 @@ from ..services.artefact_storage import (
     get_artefact_storage_key,
     save_uploaded_file,
 )
-from ..services.artefact_types import detect_artefact_type, queue_analyses_for_artefact
+from ..services.artefact_types import ANALYSIS_MAP, detect_artefact_type, queue_analyses_for_artefact
 from ..services.downloads import (
     output_access_decision,
     serve_artefact_file,
@@ -79,23 +80,29 @@ from ..services.downloads import (
     serve_output_file,
 )
 from ..services.hash_rescan import (
+    apply_database_restrictions,
     find_known_file,
     find_known_files_for_records,
     link_new_known_files,
+    queue_hashdb_link_job,
 )
 from ..services.restrictions import (
     artefact_contained_file_restrictions,
     collect_all_file_restrictions,
     collect_ancestor_file_restrictions,
 )
+from ..services.search_index import populate_search_index_from_analysis
+from ..services.similarity import mark_similarity_dirty, queue_similarity_refresh
 from ..services.upload_pipeline import QUEUE_FULL, QUEUE_NONE, ingest_uploaded_artefact
 from ..utils.api_serializers import (
     analysis_to_dict,
+    analysis_tree_node,
     artefact_to_dict,
     file_to_dict,
     item_to_dict,
     known_file_to_dict,
     partition_to_dict,
+    processing_tree_to_dict,
     share_to_dict,
 )
 from ..utils.blobs import artefact_blob, artefact_blob_storage_path, assign_blob
@@ -1037,7 +1044,6 @@ def get_artefact_analysis_tree(uuid):
 
     Recursively walks: artefact -> analyses -> produced_artefacts -> analyses -> ...
     """
-    from ..utils.api_serializers import analysis_tree_node
     artefact = _get_artefact_or_404(uuid)
     return jsonify({'artefact': analysis_tree_node(artefact)})
 
@@ -1052,7 +1058,6 @@ def get_artefact_processing_tree(uuid):
     analyses (archive extract, format convert, etc.) grouped under their
     file-path context.
     """
-    from ..utils.api_serializers import processing_tree_to_dict
     artefact = _get_artefact_or_404(uuid)
     root = artefact.root_artefact
     return jsonify(processing_tree_to_dict(root))
@@ -1293,7 +1298,6 @@ def update_analysis(id):
 
 
 def _populate_search_index(analysis):
-    from ..services.search_index import populate_search_index_from_analysis
     populate_search_index_from_analysis(analysis)
 
 
@@ -1323,7 +1327,6 @@ def _refresh_similarity(analysis):
         return
     artefact_id = analysis.artefact_id
     try:
-        from ..services.similarity import mark_similarity_dirty, queue_similarity_refresh
         mark_similarity_dirty(artefact_id, commit=False)
         if current_app.config.get('SIMILARITY_AUTO_REFRESH', True):
             queue_similarity_refresh(artefact_id, commit=False)
@@ -1672,7 +1675,6 @@ def produce_artefact(id):
         # is safe to call even if some analyses are already active.
         queued_analyses = []
         if data.get('auto_analyse', True):
-            from ..services.artefact_types import ANALYSIS_MAP
             hints = _merge_produce_hints(analysis, data)
             skip_analyses = data.get('skip_analyses') or []
             queue_analyses_for_artefact(existing, hints, skip_analyses=skip_analyses)
@@ -1694,7 +1696,6 @@ def produce_artefact(id):
     # Queue follow-on analyses unless the caller will handle that explicitly
     queued_analyses = []
     if data.get('auto_analyse', True):
-        from ..services.artefact_types import ANALYSIS_MAP
         hints = _merge_produce_hints(analysis, data)
         skip_analyses = data.get('skip_analyses') or []
         queue_analyses_for_artefact(artefact, hints, skip_analyses=skip_analyses)
@@ -1908,7 +1909,6 @@ def add_files(uuid):
     # over a large disc.  Gate it behind a single cheap existence check so the
     # common case (no flagged databases) costs one indexed lookup instead.
     if added > 0 and _has_restricting_hash_database():
-        from ..services.hash_rescan import apply_database_restrictions
         apply_database_restrictions(partition.artefact)
 
     # Resolve the freshly-created rows' ids (assigned by the commit) and return
@@ -2150,7 +2150,6 @@ def upload_artefact(item_uuid):
 		return error_response(f'Storage backend unavailable (hash): {exc}', 503)
 
 	# Preserve original filename
-	from werkzeug.utils import secure_filename
 	original_filename = secure_filename(file.filename) or 'unnamed'
 
 	# Parse optional hints (JSON string from form field) before creating
@@ -2369,7 +2368,6 @@ def _resolve_chunk_artefact_type(meta):
 	artefact_type override is invalid.  Shared by the sync and async /complete
 	paths and by /complete/status (re-drive).
 	"""
-	from werkzeug.utils import secure_filename
 	original_filename = secure_filename(meta['filename']) or 'unnamed'
 	type_override = meta.get('artefact_type', 'auto')
 	type_overridden = False
@@ -2840,7 +2838,6 @@ def queue_hash_database_link(db_id):
     database = _get_hash_database_or_404(db_id)
     if not database.is_active:
         return jsonify({'status': 'skipped', 'reason': 'database inactive'})
-    from ..services.hash_rescan import queue_hashdb_link_job
     _, queued = queue_hashdb_link_job(database.id)
     return jsonify({'status': 'queued' if queued else 'already_queued'})
 

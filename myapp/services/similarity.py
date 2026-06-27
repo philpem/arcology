@@ -35,6 +35,9 @@ from sqlalchemy import func, or_
 from sqlalchemy.exc import OperationalError
 from arcology_shared.fuzzyhash import HAS_TLSH, TLSH_SIMILAR_DISTANCE, tlsh_diff
 from ..database import (
+    Analysis,
+    AnalysisStatus,
+    AnalysisType,
     Artefact,
     ArtefactComponent,
     ArtefactSimilarity,
@@ -969,7 +972,6 @@ def queue_similarity_refresh(artefact_id, *, commit=True):
     A new job is suppressed when one is already PENDING/RUNNING for the artefact.
     Returns ``(analysis, created)``.
     """
-    from ..database import Analysis, AnalysisStatus, AnalysisType
     existing = (
         Analysis.query
         .filter_by(artefact_id=artefact_id, analysis_type=AnalysisType.SIMILARITY_REFRESH)
