@@ -13,6 +13,7 @@ Routes:
 
 import time
 from urllib.parse import quote as urlquote
+import requests
 from authlib.integrations.flask_client import OAuth
 from flask import Blueprint, abort, current_app, flash, redirect, request, session, url_for
 from flask_login import current_user, login_required, login_user, logout_user
@@ -531,8 +532,6 @@ def _refresh_and_fetch_userinfo() -> dict | None:
     and return fresh userinfo.  Returns None if the refresh token is missing, expired,
     or revoked (caller should terminate the session).
     """
-    import requests as _requests
-
     refresh_token = session.get('oidc_refresh_token', '')
     if not refresh_token:
         return None
@@ -543,7 +542,7 @@ def _refresh_and_fetch_userinfo() -> dict | None:
         if not token_endpoint:
             return None
 
-        resp = _requests.post(token_endpoint, data={
+        resp = requests.post(token_endpoint, data={
             'grant_type': 'refresh_token',
             'refresh_token': refresh_token,
             'client_id': current_app.config.get('OIDC_CLIENT_ID', ''),
