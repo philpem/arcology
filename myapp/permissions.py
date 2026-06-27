@@ -12,6 +12,7 @@ from functools import wraps
 from flask import abort, current_app
 from flask_login import current_user
 from .database import Item, UserPermission
+from .extensions import login_manager
 from .utils.config import bool_config
 from .utils.slugs import lookup_by_identifier
 from .visibility import can_contribute_to_item, can_view_item
@@ -43,7 +44,6 @@ def require_permission(level: str):
         @wraps(f)
         def wrapper(*args, **kwargs):
             if not current_user.is_authenticated:
-                from .extensions import login_manager
                 return login_manager.unauthorized()
             if not (getattr(current_user, 'is_admin', False) or current_user.has_permission(required)):
                 abort(403)
@@ -74,7 +74,6 @@ def public_readable(f):
         if not current_user.is_authenticated:
             if (not current_app.config.get('LOGIN_DISABLED', False)
                     and not bool_config('PUBLIC_MODE')):
-                from .extensions import login_manager
                 return login_manager.unauthorized()
         return f(*args, **kwargs)
     return wrapper
@@ -154,7 +153,6 @@ def public_downloadable(f):
             if current_app.config.get('LOGIN_DISABLED', False):
                 pass
             elif not (bool_config('PUBLIC_MODE') and bool_config('PUBLIC_DOWNLOADS', default=True)):
-                from .extensions import login_manager
                 return login_manager.unauthorized()
         return f(*args, **kwargs)
     return wrapper

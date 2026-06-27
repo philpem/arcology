@@ -12,9 +12,11 @@ Moved verbatim from myapp/blueprints/artefacts.py.
 import json
 import os
 import shutil
+from collections import defaultdict
 from flask import current_app
 from sqlalchemy import or_, select
 from arcology_shared.hints import HintKey
+from arcology_shared.storage import S3Storage
 from ..database import (
     ANALYSIS_PRIORITY_NORMAL,
     Analysis,
@@ -217,23 +219,21 @@ def _analysis_file_path(analysis, hint_file_map: dict) -> str | None:
       RISCOS_MODULE_PARSE — path_prefix of the archive context
                          (empty → top-level scan, returns None)
     """
-    import json as _json
-    from arcology_shared.enums import AnalysisType as _AT
 
     if not analysis.hints:
         return None
     try:
-        h = _json.loads(analysis.hints)
+        h = json.loads(analysis.hints)
     except Exception:
         return None
 
     atype = analysis.analysis_type
-    if atype == _AT.ARCHIVE_EXTRACT:
+    if atype == AnalysisType.ARCHIVE_EXTRACT:
         fid = h.get(HintKey.FILE_ID)
         if fid and fid in hint_file_map:
             return hint_file_map[fid]['path']
         return None
-    if atype in (_AT.FORMAT_CONVERT, _AT.RISCOS_MODULE_PARSE):
+    if atype in (AnalysisType.FORMAT_CONVERT, AnalysisType.RISCOS_MODULE_PARSE):
         prefix = h.get(HintKey.PATH_PREFIX, '')
         return prefix if prefix else None
     return None
@@ -277,9 +277,6 @@ def build_processing_tree(root: Artefact) -> tuple[dict, bool, dict, int]:
 
     All data is fetched in flat queries (no N+1) and assembled in Python.
     """
-    import json as _json
-    from collections import defaultdict
-    from arcology_shared.enums import AnalysisType as _AT
 
     all_ids = [root.id] + get_all_derived_artefact_ids(root)
 
@@ -321,9 +318,9 @@ def build_processing_tree(root: Artefact) -> tuple[dict, bool, dict, int]:
     # Resolve ARCHIVE_EXTRACT file_ids → ExtractedFile paths in one query.
     file_ids = []
     for analysis in all_analyses:
-        if analysis.analysis_type == _AT.ARCHIVE_EXTRACT and analysis.hints:
+        if analysis.analysis_type == AnalysisType.ARCHIVE_EXTRACT and analysis.hints:
             try:
-                fid = _json.loads(analysis.hints).get(HintKey.FILE_ID)
+                fid = json.loads(analysis.hints).get(HintKey.FILE_ID)
                 if fid:
                     file_ids.append(fid)
             except Exception:
@@ -613,7 +610,6 @@ def delete_item_files(item):
     Must be called while the ORM relationships are still intact (before db.session.delete).
     """
     storage = current_app.storage
-    from arcology_shared.storage import S3Storage
 
     for artefact in item.artefacts:
         # Delete stored files for this artefact and all its derived artefacts.

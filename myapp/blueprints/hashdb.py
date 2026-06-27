@@ -34,7 +34,17 @@ from ..database import (
 )
 from ..extensions import db
 from ..permissions import require_permission
+from ..services.hash_rescan import (
+    clear_hashdb_recognition,
+    queue_hashdb_delete_job,
+    queue_hashdb_link_job,
+    queue_hashdb_recognition_backfill,
+    rescan_hashes_for_known_file,
+    rescan_hashes_for_queryset,
+    rescan_links_for_known_file_id,
+)
 from ..utils.db_helpers import model_choice_list, normalize_hash
+from ..utils.pagination import VALID_PER_PAGE, compute_letter_pages, resolve_per_page
 from ..utils.web_forms import redirect_local
 from ..visibility import artefact_visibility_clause
 
@@ -104,7 +114,6 @@ def _post_known_file_changes(database: HashDatabase, new_kf_list: list[KnownFile
     """Queue shared hash-rescan and recognition work after new file imports."""
     if not new_kf_list or not database.is_active:
         return
-    from ..services.hash_rescan import queue_hashdb_link_job
     queue_hashdb_link_job(database.id)
 
 blueprint = Blueprint(ROUTENAME, __name__, url_prefix='/hashdb', template_folder='templates')
@@ -251,11 +260,6 @@ def new():
 @blueprint.route('/<int:id>')
 @login_required
 def view(id):
-    from ..utils.pagination import (
-        VALID_PER_PAGE,
-        compute_letter_pages,
-        resolve_per_page,
-    )
 
     database = _get_database_or_404(id)
 
@@ -525,12 +529,10 @@ def edit(id):
             flash('Similarity exclusion changed — the similarity cache will be '
                   'updated on the next rebuild.', 'info')
         if database.enable_product_recognition and not was_enabled:
-            from ..services.hash_rescan import queue_hashdb_recognition_backfill
             _, queued = queue_hashdb_recognition_backfill(database)
             if queued:
                 flash('Queued product recognition backfill.', 'info')
         elif was_enabled and not database.enable_product_recognition:
-            from ..services.hash_rescan import clear_hashdb_recognition
             clear_hashdb_recognition(database)
             db.session.commit()
     else:
@@ -565,7 +567,6 @@ def _cancel_pending_hashdb_jobs(db_id):
 @login_required
 @require_permission('read_write')
 def delete(id):
-    from ..services.hash_rescan import queue_hashdb_delete_job
     database = db.get_or_404(HashDatabase, id)
     name = database.name
 
@@ -610,13 +611,11 @@ def toggle_recognition(id):
     database.enable_product_recognition = not database.enable_product_recognition
     state = 'enabled' if database.enable_product_recognition else 'disabled'
     if database.enable_product_recognition:
-        from ..services.hash_rescan import queue_hashdb_recognition_backfill
         _, queued = queue_hashdb_recognition_backfill(database)
         flash(f'Folder recognition {state} for "{database.name}".', 'success')
         if queued:
             flash('Queued product recognition backfill.', 'info')
     else:
-        from ..services.hash_rescan import clear_hashdb_recognition
         clear_hashdb_recognition(database)
         db.session.commit()
         flash(f'Folder recognition {state} for "{database.name}".', 'success')
@@ -640,7 +639,6 @@ def bulk_path_matching(id, state):
 
     queued = False
     if database.enable_product_recognition:
-        from ..services.hash_rescan import queue_hashdb_recognition_backfill
         _, queued = queue_hashdb_recognition_backfill(database)
     else:
         db.session.commit()
@@ -971,7 +969,6 @@ def rescan(id):
     A recognition backfill is queued automatically by the link job when it
     finishes (if this database has product recognition enabled).
     """
-    from ..services.hash_rescan import queue_hashdb_link_job
     database = _get_database_or_404(id)
     if not database.is_active:
         flash('This database is inactive, so it is excluded from hash linking. '
@@ -1037,11 +1034,6 @@ def save_all_files(db_id, pid):
     Only files whose hash/size/metadata actually changed are rescanned.
     Rejects the whole submission if any file would end up with no hashes.
     """
-    from ..services.hash_rescan import (
-        queue_hashdb_recognition_backfill,
-        rescan_hashes_for_known_file,
-        rescan_links_for_known_file_id,
-    )
 
     product = KnownProduct.query.filter_by(id=pid, database_id=db_id).first_or_404()
     is_active = product.database.is_active
@@ -1154,7 +1146,6 @@ def delete_known_product(db_id, pid):
     flash(f'Product "{title}" deleted.', 'success')
 
     if is_active and affected_ef_ids:
-        from ..services.hash_rescan import queue_hashdb_recognition_backfill, rescan_hashes_for_queryset
         # Re-evaluate the unlinked files; they may match another active database.
         rescan_hashes_for_queryset(ExtractedFile.query.filter(ExtractedFile.id.in_(affected_ef_ids)))
         if enable_recognition:
@@ -1202,7 +1193,6 @@ def add_known_file(db_id, pid):
     db.session.commit()
     flash(f'File "{filename}" added to "{product.title}".', 'success')
     if product.database.is_active:
-        from ..services.hash_rescan import queue_hashdb_recognition_backfill, rescan_hashes_for_known_file
         rescan_hashes_for_known_file(kf)
         if product.database.enable_product_recognition:
             queue_hashdb_recognition_backfill(product.database)
@@ -1234,11 +1224,6 @@ def edit_known_file(db_id, pid, fid):
     db.session.commit()
     flash(f'File "{kf.filename}" updated.', 'success')
     if is_active:
-        from ..services.hash_rescan import (
-            queue_hashdb_recognition_backfill,
-            rescan_hashes_for_known_file,
-            rescan_links_for_known_file_id,
-        )
         # Re-evaluate files that were linked via the old hashes (they may
         # no longer match), then scan for files matching the new hashes.
         rescan_links_for_known_file_id(kf_id)
@@ -1279,7 +1264,6 @@ def delete_known_file(db_id, pid, fid):
     flash(f'File "{filename}" deleted.', 'success')
 
     if is_active and affected_ef_ids:
-        from ..services.hash_rescan import queue_hashdb_recognition_backfill, rescan_hashes_for_queryset
         # Re-evaluate unlinked files; they may match another active database.
         rescan_hashes_for_queryset(ExtractedFile.query.filter(ExtractedFile.id.in_(affected_ef_ids)))
         if enable_recognition:

@@ -1,5 +1,6 @@
 """Shared API serializer helpers for Arcology models."""
 
+from ..database import Analysis, Artefact
 from ..services.artefact_lifecycle import build_processing_tree
 from .blobs import artefact_blob_storage_path as _blob_storage_path
 from .enum_display import enum_value as _enum_value
@@ -149,7 +150,6 @@ def analysis_tree_node(artefact):
     its produced_artefacts (recursively).  Uses analysis_to_dict for the
     analysis nodes so field definitions aren't duplicated.
     """
-    from ..database import Analysis, Artefact
     node = {
         'uuid': artefact.uuid, 'slug': artefact.slug, 'label': artefact.label,
         'artefact_type': _enum_value(artefact.artefact_type),

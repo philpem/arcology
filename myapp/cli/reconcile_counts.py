@@ -1,5 +1,6 @@
 import click
-from ..database import Partition
+from sqlalchemy import and_, case, func
+from ..database import ExtractedFile, Partition
 from ..extensions import db
 from ..services.hash_rescan import _refresh_partition_unique_counts
 
@@ -35,8 +36,6 @@ def reconcile_counts(batch_size, dry_run):
 
     if dry_run:
         # Report current vs recomputed without mutating anything.
-        from sqlalchemy import and_, case, func
-        from ..database import ExtractedFile
         unique_case = case(
             (and_(ExtractedFile.known_file_id.is_(None),
                   ExtractedFile.is_directory == False), 1),

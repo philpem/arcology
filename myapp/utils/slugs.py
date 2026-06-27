@@ -6,6 +6,12 @@ file paths and URLs. Slugs are immutable once set.
 """
 
 import re
+import time
+
+# NOTE: Only stdlib may be imported at module scope.  ci/test_slug.py loads this
+# file standalone (via importlib, bypassing myapp/__init__.py) so generate_slug()
+# can be tested in the lint stage before `pip install`.  Flask and the ORM models
+# are therefore imported function-locally in the helpers that need them.
 
 
 def generate_slug(text: str, max_length: int = 200) -> str:
@@ -91,7 +97,7 @@ def get_or_create_slug(obj, text_field: str, max_length: int = 200) -> str:
         >>> item.slug
         'risc-os-3-11'
     """
-    from myapp.extensions import db
+    from ..extensions import db  # local: keep module importable without Flask
 
     # Return existing slug if present
     if hasattr(obj, 'slug') and obj.slug:
@@ -107,7 +113,7 @@ def get_or_create_slug(obj, text_field: str, max_length: int = 200) -> str:
         raise ValueError(f"Cannot generate slug: {text_field} is empty and no existing slug")
 
     # Generate a unique slug (mirrors the API creation path)
-    from myapp.database import Item
+    from ..database import Item  # local: keep module importable without Flask
     model_class = type(obj)
     base_slug = generate_slug(text, max_length=max_length)
     scope = None if model_class is Item else {'item_id': obj.item_id}
@@ -179,7 +185,6 @@ def ensure_unique_slug(base_slug: str, model_class, existing_id: int | None = No
         counter += 1
 
     # Fallback with timestamp if too many conflicts
-    import time
     return f"{base_slug}-{int(time.time())}"
 
 
@@ -196,7 +201,7 @@ def lookup_by_identifier(model_class, identifier: str):
     Returns:
         Model instance, or aborts with 404 if not found, ambiguous, or invalid.
     """
-    from flask import abort
+    from flask import abort  # local: keep module importable without Flask
     if re.fullmatch(r'[0-9a-f]{32}', identifier):
         return model_class.query.filter_by(uuid=identifier).first_or_404()
     if len(identifier) >= 8 and re.fullmatch(r'[0-9a-f]{8}', identifier[:8]):
@@ -226,8 +231,8 @@ def lookup_artefact_by_id(item, artefact_id: str):
     Returns:
         Artefact instance, or aborts with 404 if not found, ambiguous, or invalid.
     """
-    from flask import abort
-    from myapp.database import Artefact
+    from flask import abort  # local: keep module importable without Flask
+    from ..database import Artefact  # local: keep module importable without Flask
 
     # Full UUID
     if re.fullmatch(r'[0-9a-f]{32}', artefact_id):

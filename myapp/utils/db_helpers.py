@@ -57,6 +57,8 @@ def insert_ignore_conflict(model, rows, index_elements, *, batch_size=1000):
         return 0
     dialect = db.session.get_bind().dialect.name
     inserted = 0
+    # Local imports: the dialect-specific insert() is selected at runtime from
+    # the active bind, so only the matching backend's construct is imported.
     if dialect == 'postgresql':
         from sqlalchemy.dialects.postgresql import insert as _insert
     elif dialect == 'sqlite':
