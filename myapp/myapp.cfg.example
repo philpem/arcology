@@ -296,6 +296,28 @@ WORKER_STEP_DEADLINE_SECONDS = 20
 # to that group.  Existing shares on the local group are always preserved.
 #OIDC_GROUP_LINK_LOCAL = True
 
+# -----------------------------------------------------------------------------
+# Caching (Flask-Caching)
+# -----------------------------------------------------------------------------
+# Caching is OFF by default (NullCache) — the app always reads fresh from the
+# database.  Point CACHE_REDIS_URL (or REDIS_URL) at a Redis server to enable a
+# shared, version-keyed read-through cache for hot read paths (dashboard stats,
+# …).  Cached values are never stale: any commit that touches catalogue data
+# bumps a content-version counter that is embedded in every cache key.
+#
+# Redis is recommended because the content-version counter must survive
+# restarts and must never reset to a lower value; configure the server with
+# persistence and 'noeviction' (see docker-compose.yml).
+#CACHE_REDIS_URL = "redis://localhost:6379/0"
+#
+# CACHE_TYPE overrides the backend explicitly.  Leave unset to auto-select
+# RedisCache when a URL is present, NullCache otherwise.  'SimpleCache' is an
+# in-process cache for single-process development ONLY — it is not shared
+# across Gunicorn workers and must never be used in production.
+#CACHE_TYPE = "RedisCache"
+#CACHE_DEFAULT_TIMEOUT = 300
+#CACHE_KEY_PREFIX = "arcology:"
+
 # Storage backend: 'local' (default) or 's3'
 # Local mode uses the filesystem (UPLOAD_FOLDER/OUTPUT_FOLDER above).
 # S3 mode enables distributed workers on separate machines.

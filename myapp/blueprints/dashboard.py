@@ -9,8 +9,9 @@ from flask_login import current_user
 from sqlalchemy import case, func, true
 from sqlalchemy.orm import joinedload
 from ..database import Analysis, AnalysisStatus, Artefact, Item
-from ..extensions import db
+from ..extensions import cache, db
 from ..permissions import public_readable
+from ..services.cache import content_version
 from ..visibility import artefact_visibility_clause, item_visibility_clause
 
 ROUTENAME = __name__.replace('.', '_')
@@ -24,6 +25,24 @@ def init_app(app):
 
 
 def _get_stats(user):
+    """Return dashboard statistics, scoped to what *user* may see.
+
+    Read-through cached and keyed by (viewer, content version): any commit that
+    touches catalogue data bumps the version (see services/cache.py), so a
+    cached entry is never stale.  With no cache backend configured this always
+    recomputes.
+    """
+    uid = user.get_id() if user.is_authenticated else 'anon'
+    cache_key = f'dashboard:stats:{uid}:v{content_version()}'
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+    stats = _compute_stats(user)
+    cache.set(cache_key, stats)
+    return stats
+
+
+def _compute_stats(user):
     """Compute dashboard statistics, scoped to what *user* may see."""
     item_clause = item_visibility_clause(user)
     artefact_clause = artefact_visibility_clause(user)
