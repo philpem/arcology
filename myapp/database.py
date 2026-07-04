@@ -1395,18 +1395,26 @@ class KnownFile(db.Model):
 # file_count is derived from the actual known_files rows rather than stored, so
 # it can never drift from them the way the old denormalised counter did (it was
 # incremented on import but only decremented on single-file deletes — a product
-# delete left it overcounting; see issue #637).  A correlated scalar subquery is
-# emitted per loaded HashDatabase row.  hash_databases is a small table and is
-# only loaded as full entities on admin/display paths (the index, the detail
-# view, the REST serializer) — never in the per-file matching hot path, which
-# queries KnownFile directly — so this is cheap and avoids the N+1 a
-# per-instance COUNT would cause on the database listing.
+# delete left it overcounting; see issue #637).  It is a correlated COUNT scalar
+# subquery over known_files.
+#
+# DEFERRED: a NIST-scale database holds millions of known_files, so this COUNT is
+# not free.  Every HashDatabase entity load that is NOT displaying the count
+# (management routes / _get_database_or_404, matching restriction paths) would
+# otherwise pay it for nothing.  So it loads only on demand; the handful of
+# call sites that DISPLAY it opt back in with ``undefer(HashDatabase.file_count)``
+# so the listing stays a single query rather than an N+1:
+#   * the hashdb index route (lists all DBs),
+#   * the /api/hash-databases serializer,
+#   * the single-DB view (_get_database_or_404(..., with_file_count=True)).
+# When adding a new place that shows file_count over a *set* of databases,
+# undefer it there too, or it will N+1.
 HashDatabase.file_count = column_property(
     sa_select(sa_func.count(KnownFile.id))
     .where(KnownFile.database_id == HashDatabase.id)
     .correlate_except(KnownFile)
     .scalar_subquery(),
-    deferred=False,
+    deferred=True,
 )
 
 

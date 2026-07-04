@@ -12,6 +12,7 @@ from flask import Blueprint, Response, abort, flash, jsonify, redirect, render_t
 from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
 from sqlalchemy import func, or_
+from sqlalchemy.orm import undefer
 from wtforms import BooleanField, SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Length, Optional
 from ..database import (
@@ -56,15 +57,25 @@ def _route_redirect(endpoint: str, **values):
     return redirect_local(ROUTENAME, endpoint, **values)
 
 
-def _get_database_or_404(id):
+def _get_database_or_404(id, *, with_file_count=False):
     """Fetch a HashDatabase, treating a soft-deleting one as already gone.
 
     A database marked is_deleting is being reaped by a background worker job
     and must not be viewed, edited, exported, or re-linked — its rows are
     disappearing underneath any such operation.  It is also hidden from
     listings, so 404 is the consistent "no longer here" response.
+
+    ``file_count`` is deferred (a COUNT over up-to-millions of known_files); the
+    default load skips it so management routes don't pay for a count they never
+    show.  Pass ``with_file_count=True`` to undefer it in one query on paths that
+    display it (the detail view).
     """
-    database = db.get_or_404(HashDatabase, id)
+    if with_file_count:
+        database = (HashDatabase.query
+                    .options(undefer(HashDatabase.file_count))
+                    .filter(HashDatabase.id == id).first_or_404())
+    else:
+        database = db.get_or_404(HashDatabase, id)
     if database.is_deleting:
         abort(404)
     return database
@@ -205,8 +216,11 @@ def _queue_hash_rescan_jobs():
 @blueprint.route('/')
 @login_required
 def index():
+    # undefer file_count: the listing displays it for every row, so fold the
+    # COUNT into this one query instead of lazy-loading it per row.
     databases = (
         HashDatabase.query
+        .options(undefer(HashDatabase.file_count))
         .filter(HashDatabase.is_deleting.is_(False))
         .order_by(func.lower(HashDatabase.name))
         .all()
@@ -261,7 +275,7 @@ def new():
 @login_required
 def view(id):
 
-    database = _get_database_or_404(id)
+    database = _get_database_or_404(id, with_file_count=True)
 
     # Products are paginated (a NIST-scale database has hundreds of thousands):
     # only the current page's rows are loaded, and the per-product file tables
