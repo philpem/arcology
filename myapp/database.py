@@ -836,6 +836,15 @@ class Analysis(db.Model):
     progress_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
     progress_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # Number of times this job has been re-queued from RUNNING after going
+    # stale.  A "poison" job that repeatedly crashes or hangs the worker would
+    # otherwise loop forever (claim -> stall -> stale-reset -> re-claim); once
+    # this reaches STALE_JOB_MAX_RETRIES the stale-reset dead-letters it to
+    # FAILED instead of re-queueing.  Cleared on a manual retry (see
+    # _reset_for_retry) so operator intervention grants a fresh attempt budget.
+    stale_reset_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=sa_text('0'), nullable=False)
+
     # Queue priority: higher value = picked up sooner (see ANALYSIS_PRIORITY_* constants).
     # No single-column index: ix_analyses_status_priority_created covers queue scans.
     priority: Mapped[int] = mapped_column(Integer, default=ANALYSIS_PRIORITY_NORMAL, server_default=sa_text('0'))
