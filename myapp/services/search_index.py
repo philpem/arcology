@@ -8,6 +8,7 @@ tables that power the web search and the analysis detail views:
   ArtefactMastering    ← DISC_MASTERING_DETECT
   Partition.gnu_file_type ← PARTITION_DETECT
   RiscosModule         ← RISCOS_MODULE_PARSE
+  SearchDocument       ← FORMAT_CONVERT (converted text, for content: search)
 
 The low-level per-type handlers are exposed individually so the
 ``rebuild-search-index`` CLI command can batch-process all historical
@@ -21,7 +22,7 @@ transaction that records the analysis status.
 
 import json
 from flask import current_app
-from sqlalchemy import text
+from sqlalchemy import or_, text
 from arcology_shared.enums import AnalysisType
 from ..database import (
     Analysis,
@@ -33,6 +34,7 @@ from ..database import (
     Partition,
     ReplayMovie,
     RiscosModule,
+    SearchDocument,
     StorageDirectory,
 )
 from ..extensions import db
@@ -344,6 +346,53 @@ def handle_media_transcode(analysis: Analysis, details: dict,
         ))
 
 
+def handle_search_documents(analysis: Analysis, details: dict,
+                            full_rebuild: bool = False) -> None:
+    """Index converted text into ``search_documents`` from a FORMAT_CONVERT result.
+
+    Each ``type: 'text'`` output carries a capped copy of the converted text
+    (``text``) plus its ``source_file`` (the ``ExtractedFile.path`` for an
+    extraction scan, absent for a direct text artefact).
+
+    FORMAT_CONVERT carries no ``path_prefix``, so deletion is scoped to the exact
+    ``(artefact_id, file_path)`` pairs this analysis owns.  That makes it
+    idempotent and safe when several FORMAT_CONVERT analyses touch one artefact
+    (top-level + nested archives) — each replaces only its own documents rather
+    than clobbering the others.  ``full_rebuild`` is accepted for signature
+    parity with the other handlers but is intentionally *not* a delete-all here
+    (the rebuild CLI clears the whole table once up front instead).
+    """
+    art_id = analysis.artefact_id
+    if art_id is None:
+        return
+    text_outputs = [
+        o for o in details.get('outputs', [])
+        if o.get('type') == 'text' and o.get('text')
+    ]
+    paths = {o.get('source_file') for o in text_outputs}
+
+    # Scoped delete of the rows this analysis is about to (re)write.  A direct
+    # artefact's document has file_path IS NULL, which needs its own predicate.
+    conds = []
+    if None in paths:
+        conds.append(SearchDocument.file_path.is_(None))
+    non_null = [p for p in paths if p is not None]
+    if non_null:
+        conds.append(SearchDocument.file_path.in_(non_null))
+    if conds:
+        SearchDocument.query.filter(
+            SearchDocument.artefact_id == art_id, or_(*conds)
+        ).delete(synchronize_session=False)
+
+    for out in text_outputs:
+        db.session.add(SearchDocument(
+            artefact_id=art_id,
+            file_path=out.get('source_file'),
+            content=out['text'],
+            truncated=bool(out.get('text_truncated')),
+        ))
+
+
 # =============================================================================
 # High-level entry point (used by the API on analysis completion)
 # =============================================================================
@@ -356,6 +405,8 @@ _HANDLER_MAP = {
     # Parses metadata AND attaches transcoded MP4/poster in one pass.
     AnalysisType.REPLAY_PROCESS:         handle_replay_movies,
     AnalysisType.MEDIA_TRANSCODE:        handle_media_transcode,
+    # Indexes converted text into search_documents for the content: search.
+    AnalysisType.FORMAT_CONVERT:         handle_search_documents,
 }
 
 
@@ -439,6 +490,12 @@ def rebuild_all(echo=None) -> dict:
     """
     if echo is None:
         echo = lambda _: None  # noqa: E731
+
+    # FORMAT_CONVERT uses per-path (not delete-all-per-artefact) scoping so
+    # multiple analyses touching one artefact don't clobber each other, which
+    # means it can't clear stale rows on its own.  Wipe the whole document index
+    # once so this full rebuild starts clean, then let each analysis reinsert.
+    SearchDocument.query.delete()
 
     counts = {}
     for analysis_type, handler in _HANDLER_MAP.items():
