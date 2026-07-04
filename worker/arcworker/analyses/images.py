@@ -37,6 +37,12 @@ from ._common import analysis_handler, iter_resolved_files, scan_partition_files
 # SIGALRM is Unix-only but the worker always runs on Linux in Docker.
 _PER_FILE_CONVERT_TIMEOUT = 120
 
+# Cap on the converted text carried in FORMAT_CONVERT details for full-text
+# indexing.  Retro text files are tiny, but this bounds the details payload (and
+# the search_documents row) for a pathological input.  Truncation is flagged so
+# the indexer / UI can note it rather than silently losing content.
+_INDEX_TEXT_CAP = 200_000
+
 
 @contextmanager
 def _conversion_timeout(seconds: int, label: str = ''):
@@ -173,6 +179,10 @@ def _convert_file_to_outputs_inner(
                 'name': true_name,
                 'description': true_name,
                 'tool': 'builtin',
+                # Capped copy of the converted text for full-text indexing
+                # (search_documents).  The full text remains in the saved output.
+                'text': text[:_INDEX_TEXT_CAP],
+                'text_truncated': len(text) > _INDEX_TEXT_CAP,
             })
         except Exception as e:
             log.warning(f"Text conversion failed for {input_path}: {e}")

@@ -40,12 +40,17 @@ from ..database import (
     Partition,
     ReplayMovie,
     RiscosModule,
+    SearchDocument,
     Tag,
     artefact_tags,
 )
 from ..extensions import db
 from ..riscos_filetypes import lookup_filetype_hex
-from ..visibility import artefact_visibility_clause, item_visibility_clause
+from ..visibility import (
+    artefact_visibility_clause,
+    item_visibility_clause,
+    output_blocked_for,
+)
 
 # =============================================================================
 # Query parser
@@ -60,6 +65,8 @@ _ALIASES = {
     'gnufile':    'ident',
     'filesystem': 'fs',
     'prot':       'protection',
+    'contains':   'content',
+    'fulltext':   'content',
     # Acorn Replay / ARMovie metadata keys (lower-cased by the parser)
     'replaytitle':       'replay_title',
     'replayauthor':      'replay_author',
@@ -89,7 +96,7 @@ KNOWN_KEYS = frozenset({
     'protection', 'mastering',
     'module', 'command', 'swi',
     'tag',
-    'text',
+    'text', 'content',
     'replay_title', 'replay_author', 'replay_copyright',
     'replay_vformat', 'replay_sformat',
     'replay_width', 'replay_height', 'replay_framerate', 'replay_duration',
@@ -806,10 +813,12 @@ def _search_tags(tokens, page=1, per_page=PER_PAGE):
 
 
 def _search_artefact_hashes(tokens, page=1, per_page=PER_PAGE):
-    """Search artefact-level hashes (md5, sha256)."""
+    """Search artefact-level hashes (md5, sha1, sha256)."""
     art_filters = []
     for h in tokens.get('md5', []):
         art_filters.append(_hash_filter(Artefact.md5, h, 32))
+    for h in tokens.get('sha1', []):
+        art_filters.append(_hash_filter(Artefact.sha1, h, 40))
     for h in tokens.get('sha256', []):
         art_filters.append(_hash_filter(Artefact.sha256, h, 64))
 
@@ -819,6 +828,7 @@ def _search_artefact_hashes(tokens, page=1, per_page=PER_PAGE):
     hash_filter = [or_(*art_filters)]
     hash_filter += _negated_clauses(tokens, {
         'md5':    lambda v: _hash_filter(Artefact.md5, v, 32),
+        'sha1':   lambda v: _hash_filter(Artefact.sha1, v, 40),
         'sha256': lambda v: _hash_filter(Artefact.sha256, v, 64),
     })
 
@@ -868,20 +878,20 @@ def _fts_available() -> bool:
         return False
 
 
-def _websearch_query_string(tokens: dict) -> str | None:
-    """Reconstruct a ``websearch_to_tsquery`` string from the free-text tokens.
+def _websearch_query_string(tokens: dict, key: str = 'text') -> str | None:
+    """Reconstruct a ``websearch_to_tsquery`` string from the *key*'s tokens.
 
     Positive words are ANDed; a multi-word (quoted) value becomes a phrase; a
-    negated ``!word`` becomes ``-word``.  Returns ``None`` when there is no text
+    negated value becomes ``-value``.  Returns ``None`` when there is no such
     term.  Embedded quotes are neutralised so the reconstructed string can't
     break out of a phrase (``websearch_to_tsquery`` itself never errors).
     """
     parts = []
-    for v in tokens.get('text', []):
+    for v in tokens.get(key, []):
         v = v.replace('"', ' ').strip()
         if v:
             parts.append(f'"{v}"' if ' ' in v else v)
-    for v in _neg(tokens, 'text'):
+    for v in _neg(tokens, key):
         v = v.replace('"', ' ').strip()
         if v:
             parts.append(f'-"{v}"' if ' ' in v else f'-{v}')
@@ -904,6 +914,11 @@ def _render_snippet(raw: str | None):
 def _rank_order(tsvector_sql: str, tsq):
     """ORDER BY clause list: ts_rank_cd desc — most relevant first."""
     return func.ts_rank_cd(literal_column(tsvector_sql), tsq).desc()
+
+
+def _fts_match(tsvector_sql: str, tsq):
+    """A ``tsvector @@ tsquery`` match predicate (PostgreSQL FTS)."""
+    return literal_column(tsvector_sql).op('@@')(tsq)
 
 
 def _attach_snippets(rows, id_attr, text_expr, tsq):
@@ -1058,6 +1073,85 @@ def _search_text_artefacts(tokens, page=1, per_page=PER_PAGE):
     ], has_more, total
 
 
+def _search_documents(tokens, page=1, per_page=PER_PAGE):
+    """Full-text search of converted document content — the ``content:`` key.
+
+    Matches ``search_documents`` (populated from FORMAT_CONVERT text outputs).
+
+    Matching is dialect-specific:
+
+    * **PostgreSQL** — full-text ``search_vector @@ websearch_to_tsquery(...)``,
+      so a quoted ``content:"red foxes are"`` is a phrase match that tolerates
+      whitespace/punctuation between the words, stems (``foxes`` ≈ ``fox``), and
+      ignores stop words.  Results are FTS-ranked with a highlighted snippet.
+    * **SQLite** (tests / lightweight dev) — substring ILIKE on ``content``, no
+      snippet.  Stricter (a phrase must be a literal substring), but SQLite has
+      no FTS; production runs PostgreSQL.
+
+    Security — the indexed text is a rendering of the artefact's bytes, so a
+    content hit for an artefact whose outputs the user may not access
+    (:func:`output_blocked_for`) is withheld *entirely*: the row is dropped, not
+    merely its snippet, so the match itself isn't revealed.  Visibility is
+    enforced with ``artefact_visibility_clause`` like every other sub-search.
+
+    ``total`` is the visibility count; because the restriction gate is applied in
+    Python to the fetched page, a page may render fewer than ``per_page`` rows
+    (and the total slightly over-count) when restricted documents are present —
+    the same benign over-count other buckets already document.
+    """
+    values = tokens.get('content', [])
+    if not values:
+        return [], False, 0
+
+    tsq = None
+    qstr = _websearch_query_string(tokens, key='content') if _fts_available() else None
+    if qstr:
+        # PostgreSQL: lexeme / phrase / stemming match via the FTS query.
+        tsq = func.websearch_to_tsquery('english', qstr)
+        match_clause = _fts_match('search_documents.search_vector', tsq)
+    else:
+        # SQLite / no-FTS fallback: literal substring, words ANDed, negations excluded.
+        doc_filter = [SearchDocument.content.ilike(f'%{v}%') for v in values]
+        doc_filter += [
+            _negate(SearchDocument.content.ilike(f'%{v}%'))
+            for v in _neg(tokens, 'content')
+        ]
+        match_clause = and_(*doc_filter)
+
+    q = (
+        db.session.query(SearchDocument, Artefact, Item)
+        .join(Artefact, SearchDocument.artefact_id == Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(match_clause)
+        .filter(artefact_visibility_clause(current_user))
+    )
+    total = _count_rows(q)
+
+    order = [func.lower(Item.name), func.lower(Artefact.label), SearchDocument.file_path]
+    if tsq is not None:
+        order = [_rank_order('search_documents.search_vector', tsq),
+                 func.lower(Item.name), func.lower(Artefact.label)]
+
+    fetched = (
+        q.order_by(*order)
+        .offset((page - 1) * per_page)
+        .limit(per_page + 1)
+        .all()
+    )
+    has_more = len(fetched) > per_page
+
+    allowed = [
+        {'type': 'document', 'document': d, 'artefact': a, 'item': i}
+        for d, a, i in fetched[:per_page]
+        if not output_blocked_for(current_user, a)
+    ]
+    if tsq is not None:
+        _attach_snippets(
+            [r['document'] for r in allowed], SearchDocument.id,
+            SearchDocument.content, tsq)
+    return allowed, has_more, total
+
+
 def _check_query_warnings(tokens: dict) -> list:
     """Return a list of safe Markup warning strings for questionable query constructs.
 
@@ -1078,8 +1172,8 @@ def _check_query_warnings(tokens: dict) -> list:
     _file_keys     = frozenset({'md5', 'sha1', 'sha256', 'filename', 'path', 'type', 'ext'})
     _disc_keys     = frozenset({'label', 'ident', 'fs'})
     _replay_keys   = frozenset(k for k in KNOWN_KEYS if k.startswith('replay_'))
-    _art_hash_keys = frozenset({'md5', 'sha256'})
-    _solo_keys     = frozenset({'protection', 'mastering', 'module', 'command', 'swi', 'tag', 'text'})
+    _art_hash_keys = frozenset({'md5', 'sha1', 'sha256'})
+    _solo_keys     = frozenset({'protection', 'mastering', 'module', 'command', 'swi', 'tag', 'text', 'content'})
 
     def _group_active(neg_key):
         if neg_key in _file_keys and positive_keys & _file_keys:
@@ -1210,15 +1304,17 @@ def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE, dedupe: b
         'files':           [],
         'artefacts':       [],
         'catalogue_items': [],
+        'documents':       [],
         'has_next':        False,
     }
-    bucket_totals = {'files': 0, 'artefacts': 0, 'catalogue_items': 0}
+    bucket_totals = {'files': 0, 'artefacts': 0, 'catalogue_items': 0, 'documents': 0}
 
     has_file_terms = any(k in tokens for k in ('md5', 'sha1', 'sha256', 'filename', 'path', 'type', 'ext'))
     has_module_terms = any(k in tokens for k in ('module', 'command', 'swi'))
     has_replay_terms = any(k.startswith('replay_') for k in tokens)
     has_disc_terms = any(k in tokens for k in ('label', 'ident', 'fs'))
     has_text = 'text' in tokens
+    has_content = 'content' in tokens
 
     def _add(bucket, rows, has_more, total):
         if rows:
@@ -1258,7 +1354,7 @@ def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE, dedupe: b
         _add('artefacts', tag_results, has_more, total)
 
     # Artefact hash search
-    if any(k in tokens for k in ('md5', 'sha256')):
+    if any(k in tokens for k in ('md5', 'sha1', 'sha256')):
         hash_results, has_more, total = _search_artefact_hashes(tokens, page=page, per_page=per_page)
         _add('artefacts', hash_results, has_more, total)
 
@@ -1269,6 +1365,11 @@ def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE, dedupe: b
 
         art_text_results, has_more, total = _search_text_artefacts(tokens, page=page, per_page=per_page)
         _add('artefacts', art_text_results, has_more, total)
+
+    # Document content search (content:) — its own bucket.
+    if has_content:
+        doc_results, has_more, total = _search_documents(tokens, page=page, per_page=per_page)
+        _add('documents', doc_results, has_more, total)
 
     # Deduplicate file results
     seen_file_ids = set()

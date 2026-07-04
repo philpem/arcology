@@ -28,7 +28,8 @@ def rebuild_search_index():
         f"Done. Protection indicators: {counts.get('DISC_PROTECTION_DETECT', 0)}, "
         f"mastering indicators: {counts.get('DISC_MASTERING_DETECT', 0)}, "
         f"partitions updated: {counts.get('PARTITION_DETECT', 0)}, "
-        f"RISC OS modules: {counts.get('RISCOS_MODULE_PARSE', 0)}."
+        f"RISC OS modules: {counts.get('RISCOS_MODULE_PARSE', 0)}, "
+        f"documents indexed: {counts.get('FORMAT_CONVERT', 0)}."
     )
 
 # vim: ts=4 sw=4 et
