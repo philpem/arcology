@@ -145,6 +145,16 @@
 	</div>
 	<div class="col">
 		<div class="card h-100">
+			<div class="card-header"><i class="bi bi-file-text"></i> Document content</div>
+			<div class="card-body">
+				<p class="card-text text-muted small">Search <em>inside</em> converted text documents.</p>
+				<code class="d-block mb-1">content:copyright</code>
+				<code class="d-block">content:"disc drive"</code>
+			</div>
+		</div>
+	</div>
+	<div class="col">
+		<div class="card h-100">
 			<div class="card-header"><i class="bi bi-cpu"></i> RISC OS Modules</div>
 			<div class="card-body">
 				<p class="card-text text-muted small">Find RISC OS modules by internal name or help title.</p>
@@ -192,13 +202,13 @@
    not this page's row counts — each bucket paginates on the shared page number,
    so a bucket can be empty on the current page while still having matches on
    others.  Keying off row counts made whole tabs vanish on later pages (#624). #}
-{% set grand_total = results.totals.files + results.totals.artefacts + results.totals.catalogue_items %}
+{% set grand_total = results.totals.files + results.totals.artefacts + results.totals.catalogue_items + results.totals.documents %}
 {% if grand_total == 0 %}
 <div class="alert alert-info"><i class="bi bi-info-circle"></i> No results found for <strong>{{ q | e }}</strong>.</div>
 
 {% else %}
 {# The first non-empty bucket (by total) is the initially-open tab. #}
-{% set first_tab = 'files' if results.totals.files else ('artefacts' if results.totals.artefacts else 'items') %}
+{% set first_tab = 'files' if results.totals.files else ('artefacts' if results.totals.artefacts else ('items' if results.totals.catalogue_items else 'documents')) %}
 
 {# --- Tab navigation --- #}
 <ul class="nav nav-tabs mb-3" id="searchTabs">
@@ -223,6 +233,14 @@
 		<a class="nav-link{% if first_tab == 'items' %} active{% endif %}" data-bs-toggle="tab" href="#tab-items">
 			<i class="bi bi-collection"></i> Items
 			<span class="badge bg-secondary ms-1">{{ results.totals.catalogue_items }}</span>
+		</a>
+	</li>
+	{% endif %}
+	{% if results.totals.documents %}
+	<li class="nav-item">
+		<a class="nav-link{% if first_tab == 'documents' %} active{% endif %}" data-bs-toggle="tab" href="#tab-documents">
+			<i class="bi bi-file-text"></i> Documents
+			<span class="badge bg-secondary ms-1">{{ results.totals.documents }}</span>
 		</a>
 	</li>
 	{% endif %}
@@ -371,6 +389,48 @@
 				<td>{{ item.platform.name if item.platform else '-' }}</td>
 				<td>{{ item.category.name if item.category else '-' }}</td>
 				<td><span class="badge bg-secondary">{{ item.search_artefact_count if item.search_artefact_count is defined else item.artefacts|length }}</span></td>
+			</tr>
+			{% endfor %}
+			</tbody>
+		</table>
+	</div>
+	{% endif %}
+</div>
+{% endif %}
+
+{# --- Documents tab (content: matches) --- #}
+{% if results.totals.documents %}
+<div class="tab-pane fade{% if first_tab == 'documents' %} show active{% endif %}" id="tab-documents">
+	{% if not results.documents %}
+	<div class="alert alert-light border"><i class="bi bi-info-circle"></i> No document matches on this page — they are on other pages of this result set.</div>
+	{% else %}
+	<div class="table-responsive">
+		<table class="table table-sm table-hover">
+			<thead><tr>
+				<th>Document</th>
+				<th>Match</th>
+				<th>Item / Artefact</th>
+			</tr></thead>
+			<tbody>
+			{% for r in results.documents %}
+			<tr>
+				<td class="font-monospace">
+					<a href="{{ artefact_url(r.artefact) }}" class="text-decoration-none">{{ r.document.file_path if r.document.file_path else r.artefact.label }}</a>
+				</td>
+				<td class="small text-muted">
+					{% if r.document.search_snippet is defined and r.document.search_snippet %}
+					<span class="search-snippet">{{ r.document.search_snippet }}</span>
+					{% else %}
+					<span class="badge bg-secondary"><i class="bi bi-file-text"></i> content match</span>
+					{% endif %}
+					{% if r.document.truncated %}
+					<span class="badge bg-light text-dark border ms-1" title="Only the first part of this document is indexed for search">excerpt indexed</span>
+					{% endif %}
+				</td>
+				<td class="text-muted small">
+					<a href="{{ url_for('myapp_blueprints_items.view', uuid=r.item.url_id) }}">{{ r.item.name }}</a>
+					/ <a href="{{ artefact_url(r.artefact) }}">{{ r.artefact.label }}</a>
+				</td>
 			</tr>
 			{% endfor %}
 			</tbody>
