@@ -39,7 +39,7 @@ class TestParseQuery(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from myapp.blueprints.search import parse_query
+        from myapp.services.search import parse_query
         cls.parse = staticmethod(parse_query)
 
     def test_empty_string(self):
@@ -216,44 +216,44 @@ class TestParseQuery(unittest.TestCase):
     # Negation
 
     def test_negation_simple(self):
-        from myapp.blueprints.search import NOT_KEY
+        from myapp.services.search import NOT_KEY
         tokens = self.parse('!type:Obey')
         self.assertEqual(tokens.get(NOT_KEY), {'type': ['Obey']})
         # Negation-only query has no positive terms
         self.assertEqual([k for k in tokens if k != NOT_KEY], [])
 
     def test_negation_with_positive(self):
-        from myapp.blueprints.search import NOT_KEY
+        from myapp.services.search import NOT_KEY
         tokens = self.parse('type:Basic !type:Obey')
         self.assertEqual(tokens.get('type'), ['Basic'])
         self.assertEqual(tokens[NOT_KEY], {'type': ['Obey']})
 
     def test_negation_alias_applied(self):
-        from myapp.blueprints.search import NOT_KEY
+        from myapp.services.search import NOT_KEY
         # '!filetype:Obey' should normalise the key to 'type'
         tokens = self.parse('!filetype:Obey')
         self.assertEqual(tokens[NOT_KEY], {'type': ['Obey']})
 
     def test_negation_quoted_value(self):
-        from myapp.blueprints.search import NOT_KEY
+        from myapp.services.search import NOT_KEY
         tokens = self.parse('!label:"Boot Disc"')
         self.assertEqual(tokens[NOT_KEY], {'label': ['Boot Disc']})
 
     def test_negation_not_present_without_bang(self):
-        from myapp.blueprints.search import NOT_KEY
+        from myapp.services.search import NOT_KEY
         tokens = self.parse('type:Obey')
         self.assertNotIn(NOT_KEY, tokens)
 
     def test_bare_bang_word_is_literal_text(self):
         # A bare word starting with '!' (e.g. RISC OS '!Boot') is NOT a negation
-        from myapp.blueprints.search import NOT_KEY
+        from myapp.services.search import NOT_KEY
         tokens = self.parse('!Boot')
         self.assertEqual(tokens.get('text'), ['!Boot'])
         self.assertNotIn(NOT_KEY, tokens)
 
     def test_negation_value_keeps_internal_bang(self):
         # The value of a positive term may itself start with '!'
-        from myapp.blueprints.search import NOT_KEY
+        from myapp.services.search import NOT_KEY
         tokens = self.parse('filename:!RunImage')
         self.assertEqual(tokens.get('filename'), ['!RunImage'])
         self.assertNotIn(NOT_KEY, tokens)
@@ -261,26 +261,26 @@ class TestParseQuery(unittest.TestCase):
     # Unknown key detection
 
     def test_unknown_key_detected(self):
-        from myapp.blueprints.search import KNOWN_KEYS, NOT_KEY
+        from myapp.services.search import KNOWN_KEYS, NOT_KEY
         tokens = self.parse('name:Dummy')
         used = (set(tokens) - {NOT_KEY}) | set(tokens.get(NOT_KEY, {}))
         self.assertTrue(used - KNOWN_KEYS, "Expected 'name' to be flagged as unknown")
 
     def test_known_key_not_flagged(self):
-        from myapp.blueprints.search import KNOWN_KEYS, NOT_KEY
+        from myapp.services.search import KNOWN_KEYS, NOT_KEY
         tokens = self.parse('filename:!RunImage type:fff')
         used = (set(tokens) - {NOT_KEY}) | set(tokens.get(NOT_KEY, {}))
         self.assertEqual(used - KNOWN_KEYS, set())
 
     def test_alias_resolves_to_known_key(self):
         # 'file:' is an alias for 'filename:' — after resolution it must not appear unknown
-        from myapp.blueprints.search import KNOWN_KEYS, NOT_KEY
+        from myapp.services.search import KNOWN_KEYS, NOT_KEY
         tokens = self.parse('file:!RunImage')
         used = (set(tokens) - {NOT_KEY}) | set(tokens.get(NOT_KEY, {}))
         self.assertEqual(used - KNOWN_KEYS, set())
 
     def test_negated_unknown_key_detected(self):
-        from myapp.blueprints.search import KNOWN_KEYS, NOT_KEY
+        from myapp.services.search import KNOWN_KEYS, NOT_KEY
         tokens = self.parse('filename:!RunImage !name:Dummy')
         used = (set(tokens) - {NOT_KEY}) | set(tokens.get(NOT_KEY, {}))
         self.assertIn('name', used - KNOWN_KEYS)
@@ -295,7 +295,7 @@ class TestCheckQueryWarnings(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from myapp.blueprints.search import _check_query_warnings, parse_query
+        from myapp.services.search import _check_query_warnings, parse_query
         cls.warn = staticmethod(lambda q: _check_query_warnings(parse_query(q)))
 
     def _texts(self, q):
@@ -751,7 +751,7 @@ class TestSearchLogic(unittest.TestCase):
             cls.part_id = part.id
 
     def _search(self, query_string):
-        from myapp.blueprints.search import _run_search, parse_query
+        from myapp.services.search import _run_search, parse_query
         with self.app.app_context():
             return _run_search(parse_query(query_string))
 
@@ -1365,9 +1365,9 @@ class TestSearchLogic(unittest.TestCase):
 
     def _numeric_widths(self, val, **kwargs):
         """Return the set of ReplayMovie.width values matching _numeric_filter."""
-        from myapp.blueprints.search import _numeric_filter
         from myapp.database import ReplayMovie
         from myapp.extensions import db as _db
+        from myapp.services.search import _numeric_filter
         with self.app.app_context():
             rows = (_db.session.query(ReplayMovie.width)
                     .filter(_numeric_filter(ReplayMovie.width, val, **kwargs))
@@ -1402,9 +1402,9 @@ class TestSearchLogic(unittest.TestCase):
         self.assertEqual(self._numeric_widths('abc'), set())
 
     def test_numeric_float_column(self):
-        from myapp.blueprints.search import _numeric_filter
         from myapp.database import ReplayMovie
         from myapp.extensions import db as _db
+        from myapp.services.search import _numeric_filter
         with self.app.app_context():
             rows = (_db.session.query(ReplayMovie.duration_seconds)
                     .filter(_numeric_filter(ReplayMovie.duration_seconds, '>=30', is_float=True))
@@ -1554,7 +1554,7 @@ class TestSearchLogic(unittest.TestCase):
 
     def test_has_next_false_when_results_fit_one_page(self):
         # Both fixture files match; per_page=100 fits them on one page.
-        from myapp.blueprints.search import _run_search, parse_query
+        from myapp.services.search import _run_search, parse_query
         with self.app.app_context():
             results = _run_search(parse_query('path:!Impression path:Tools'), per_page=100)
         self.assertFalse(results['has_next'])
@@ -1562,7 +1562,7 @@ class TestSearchLogic(unittest.TestCase):
 
     def test_has_next_true_when_results_exceed_page(self):
         # Both fixture files match; per_page=1 means only one fits, has_next=True.
-        from myapp.blueprints.search import _run_search, parse_query
+        from myapp.services.search import _run_search, parse_query
         with self.app.app_context():
             results = _run_search(parse_query('path:!Impression path:Tools'), per_page=1)
         self.assertTrue(results['has_next'])
@@ -1572,7 +1572,7 @@ class TestSearchLogic(unittest.TestCase):
         # The total must be the real match count, independent of the page size,
         # so the pagination widget can show the true number of pages instead of
         # only ever "current page + 1" (the old next-page-only sentinel).
-        from myapp.blueprints.search import _run_search, parse_query
+        from myapp.services.search import _run_search, parse_query
         with self.app.app_context():
             full = _run_search(parse_query('path:!Impression path:Tools'), per_page=100)
             paged = _run_search(parse_query('path:!Impression path:Tools'), page=1, per_page=1)
@@ -1588,7 +1588,7 @@ class TestSearchLogic(unittest.TestCase):
         # The tab badges render results['totals'][bucket], which must be the true
         # match count (what the pagination line reports) — not the current page's
         # row count, which caps at per_page.  Two fixture files match here.
-        from myapp.blueprints.search import _run_search, parse_query
+        from myapp.services.search import _run_search, parse_query
         with self.app.app_context():
             full = _run_search(parse_query('path:!Impression path:Tools'), per_page=100)
             paged = _run_search(parse_query('path:!Impression path:Tools'), page=1, per_page=1)
@@ -1915,7 +1915,7 @@ class TestMultiValuePagination(unittest.TestCase):
             _db.session.commit()
 
     def _protection_results(self, page, per_page):
-        from myapp.blueprints.search import _run_search, parse_query
+        from myapp.services.search import _run_search, parse_query
         with self.app.app_context():
             tokens = parse_query('protection:bad_crc protection:weak_bits')
             results = _run_search(tokens, page=page, per_page=per_page)
@@ -1947,7 +1947,7 @@ class TestMultiValuePagination(unittest.TestCase):
     def test_total_counts_distinct_artefacts(self):
         # 5 matching artefacts → real total is 5 (so ceil(5/2) = 3 pages),
         # regardless of which page is requested.
-        from myapp.blueprints.search import _run_search, parse_query
+        from myapp.services.search import _run_search, parse_query
         with self.app.app_context():
             tokens = parse_query('protection:bad_crc protection:weak_bits')
             for page in (1, 2, 3):
@@ -2039,7 +2039,7 @@ class TestDeduplication(unittest.TestCase):
             cls.item_url = item.url_id
 
     def _run(self, query, **kw):
-        from myapp.blueprints.search import _run_search, parse_query
+        from myapp.services.search import _run_search, parse_query
         with self.app.app_context():
             return _run_search(parse_query(query), **kw)
 
