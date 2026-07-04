@@ -482,10 +482,19 @@ def create_app(config_name=None):
     )
 
     @app.after_request
-    def set_csp(response):
+    def set_security_headers(response):
         csp = app.config.get('CSP_HEADER', _DEFAULT_CSP)
         if csp:
             response.headers['Content-Security-Policy'] = csp
+        # Defence-in-depth alongside the CSP:
+        # * nosniff stops browsers MIME-sniffing user-uploaded bytes into an
+        #   executable type (e.g. treating an octet-stream download as HTML).
+        # * X-Frame-Options is a clickjacking fallback for the minority of
+        #   browsers that ignore CSP frame-ancestors, and covers deployments
+        #   that disable CSP_HEADER at the app and set it on the proxy instead.
+        # setdefault so an individual route or the reverse proxy can override.
+        response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+        response.headers.setdefault('X-Frame-Options', 'DENY')
         return response
 
     # Register error handlers, blueprints, and CLI commands

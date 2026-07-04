@@ -35,6 +35,29 @@ from .artefact_storage import (
 UUID_HEX_LEN = 32
 
 
+def _safe_inline_mimetype(filename):
+    """Return a Content-Type safe to serve inline for *filename*, else None.
+
+    Inline serving (no ``Content-Disposition: attachment``) renders the bytes
+    in the browser on the application origin.  User-uploaded content must
+    therefore only ever be served inline when its type genuinely cannot execute
+    script: audio, video, and *raster* images.  Everything else — notably
+    ``text/html`` and ``image/svg+xml`` (both scriptable) — returns None so the
+    caller falls back to an attachment download.  Combined with the global
+    ``X-Content-Type-Options: nosniff`` header, this prevents an uploaded
+    ``.html``/``.svg`` artefact from becoming stored XSS via the stream routes.
+    """
+    mime, _ = mimetypes.guess_type(filename or '')
+    if not mime:
+        return None
+    # SVG is an image/* type but carries script; never serve it inline.
+    if mime == 'image/svg+xml':
+        return None
+    if mime.startswith(('audio/', 'video/', 'image/')):
+        return mime
+    return None
+
+
 def serve_artefact_file(artefact, inline=False):
     """Serve an artefact's stored file.
 
@@ -45,23 +68,30 @@ def serve_artefact_file(artefact, inline=False):
     With ``inline=True`` the file is served for in-page playback rather than as
     an attachment download (no Content-Disposition: attachment, explicit
     Content-Type) — used by the media player for browser-playable artefacts.
+    Only genuinely non-scriptable media types (audio/video/raster image) are
+    ever served inline; any other type falls back to an attachment download so
+    an uploaded HTML/SVG file cannot execute script on the app origin.
     """
     storage = current_app.storage
     key = get_artefact_storage_key(artefact)
 
-    # In inline mode, presign WITHOUT a filename so no Content-Disposition:
+    inline_mime = _safe_inline_mimetype(artefact.original_filename) if inline else None
+    serve_inline = inline_mime is not None
+
+    # For inline media, presign WITHOUT a filename so no Content-Disposition:
     # attachment is set (it would force a download instead of in-page playback);
     # the presigned URL still carries the right Content-Type from the key.
-    url = storage.presigned_url(key, filename=None if inline else artefact.original_filename)
+    # Otherwise presign WITH the filename so the object downloads as an
+    # attachment rather than rendering inline.
+    url = storage.presigned_url(key, filename=None if serve_inline else artefact.original_filename)
     if url:
         return redirect(url)
 
     full_path = get_artefact_path(artefact)
     if not os.path.exists(full_path):
         return None
-    if inline:
-        mime, _ = mimetypes.guess_type(artefact.original_filename or full_path)
-        return send_file(full_path, mimetype=mime or 'application/octet-stream')
+    if serve_inline:
+        return send_file(full_path, mimetype=inline_mime)
     return send_file(
         full_path,
         as_attachment=True,
@@ -79,14 +109,15 @@ def serve_extracted_file(ef, inline=False):
     With ``inline=True`` the file is served for in-page playback (explicit
     Content-Type, no attachment disposition, byte-range support via send_file)
     rather than as a download — used by the media player for browser-playable
-    extracted media.
+    extracted media.  As with ``serve_artefact_file``, only non-scriptable
+    media types are served inline; anything else downloads as an attachment.
     """
     file_path = resolve_extracted_file_path(ef)
     if not file_path:
         return None
-    if inline:
-        mime, _ = mimetypes.guess_type(ef.filename or file_path)
-        return send_file(file_path, mimetype=mime or 'application/octet-stream')
+    inline_mime = _safe_inline_mimetype(ef.filename) if inline else None
+    if inline_mime is not None:
+        return send_file(file_path, mimetype=inline_mime)
     return send_file(file_path, as_attachment=True, download_name=ef.filename)
 
 
