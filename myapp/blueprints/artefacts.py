@@ -57,13 +57,11 @@ from ..services import chunked_upload as _chunked
 from ..services.artefact_lifecycle import (
     ArtefactMoveError,
     build_processing_tree,
-    collect_output_cleanup_keys,
     get_all_derived_artefact_ids,
     mark_artefact_pending_deletion,
     move_artefact_to_item,
     queue_artefact_delete,
-    queue_storage_cleanup,
-    reset_artefact_for_reanalysis,
+    queue_deferred_reanalysis,
     validate_artefact_move,
     visible_derived_artefact_ids,
 )
@@ -77,7 +75,6 @@ from ..services.artefact_storage import (
 from ..services.artefact_types import (
     ANALYSIS_MAP,
     detect_artefact_type,
-    queue_analyses_for_artefact,
 )
 from ..services.dedup import has_dedup_content
 from ..services.downloads import (
@@ -3848,21 +3845,19 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
             flash('You do not have permission to raise analysis priority; using the default.', 'warning')
             requested = web_priority
 
-        cleanup_keys = collect_output_cleanup_keys(artefact)
-        reset_artefact_for_reanalysis(artefact)
-        # Queue the cleanup and the replacement analyses in one transaction so
-        # the dispatch barrier (api.get_pending_analyses) and the jobs it guards
-        # become visible together.  The barrier holds back the artefact's new
-        # analyses while this CLEANUP is PENDING/RUNNING — the hard guarantee
-        # that the previous run's output (notably the shared
-        # outputs/.cache/<uuid> partition cache) is deleted before the new run
-        # produces any.  The +1 priority keeps the cleanup near the queue front
-        # so the barrier lifts promptly; it is a latency hint, not the guarantee.
-        queue_storage_cleanup(cleanup_keys, artefact_id=artefact.id, commit=False,
-                              priority=requested + 1)
-        queue_analyses_for_artefact(artefact, hints if hints else None, priority=requested)
+        # Deferred re-analysis: queue a trigger job rather than clearing results
+        # now, so the existing results stay visible until a worker starts the
+        # re-analysis.  The destructive reset and the replacement analyses are
+        # applied at claim time (api.update_analysis -> apply_deferred_reanalysis_reset)
+        # in one transaction, and the trigger then cleans up the previous run's
+        # outputs on the worker.  The CLEANUP dispatch barrier still holds the
+        # replacement analyses back until the outputs (notably the shared
+        # outputs/.cache/<uuid> partition cache) are gone.
+        queue_deferred_reanalysis(artefact, hints=hints if hints else None,
+                                  priority=requested, commit=True)
 
-        flash('Re-analysis queued. Previous results have been cleared.', 'success')
+        flash('Re-analysis queued. Existing results remain visible until a worker '
+              'starts it.', 'success')
         return _redirect_to_artefact_view(artefact)
 
     # Pre-populate form with hints from the most recent analysis that had hints.

@@ -94,9 +94,25 @@ class TestAnalyseRouteClamp(_Base):
             sess['_fresh'] = True
 
     def _queued_priorities(self, artefact_id):
-        """Priorities of the queued (PENDING) non-CLEANUP analyses."""
+        """Priorities of the replacement analyses a re-analysis queues.
+
+        Re-analysis is deferred: the route queues a CLEANUP trigger carrying the
+        resolved priority, and the replacement analyses are queued (at that
+        priority) only when the trigger is claimed.  Drive that claim here so the
+        assertions exercise the full priority-resolution path end to end.
+        """
         from arcology_shared.enums import AnalysisType
-        from myapp.database import Analysis
+        from myapp.database import Analysis, AnalysisStatus
+        from myapp.services.artefact_lifecycle import apply_deferred_reanalysis_reset
+
+        trigger = Analysis.query.filter(
+            Analysis.artefact_id == artefact_id,
+            Analysis.analysis_type == AnalysisType.CLEANUP,
+        ).first()
+        if trigger is not None:
+            trigger.status = AnalysisStatus.RUNNING
+            apply_deferred_reanalysis_reset(trigger)
+            self.db.session.commit()
         return [
             a.priority for a in Analysis.query.filter(
                 Analysis.artefact_id == artefact_id,

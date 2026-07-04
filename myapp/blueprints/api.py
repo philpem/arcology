@@ -58,6 +58,7 @@ from ..services.analysis_queue import (
 )
 from ..services.artefact_lifecycle import (
     ArtefactMoveError,
+    apply_deferred_reanalysis_reset,
     collect_all_analyses,
     delete_artefact_files,
     mark_artefact_pending_deletion,
@@ -65,6 +66,7 @@ from ..services.artefact_lifecycle import (
     move_artefact_to_item,
     queue_artefact_delete,
     queue_item_delete,
+    reanalysis_reset_marker,
     validate_artefact_move,
 )
 from ..services.artefact_storage import (
@@ -1213,6 +1215,18 @@ def update_analysis(id):
             .where(Analysis.status == AnalysisStatus.PENDING)
             .values(status=AnalysisStatus.RUNNING, started_at=datetime.now(timezone.utc).replace(tzinfo=None))
         )
+
+        # Deferred re-analysis: a re-analyse queues a CLEANUP job that stands in
+        # for the destructive reset, leaving the previous run's results visible
+        # until this moment.  Now that the trigger is claimed, apply the reset
+        # and queue the replacement analyses in the SAME transaction as the
+        # claim, so the whole swap commits atomically (a crash rolls the claim
+        # back and the job is re-claimed later).  The marker is stripped by the
+        # reset, so a stale re-claim runs only the leftover storage cleanup.
+        if result.rowcount > 0:
+            claimed = _get_analysis_or_404(id=id)
+            if reanalysis_reset_marker(claimed) is not None:
+                apply_deferred_reanalysis_reset(claimed)
         db.session.commit()
 
         # Fetch the analysis to return (also validates it exists)

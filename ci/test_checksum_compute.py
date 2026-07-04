@@ -83,8 +83,8 @@ class TestQueueAnalysesForArtefact(unittest.TestCase):
             db.session.commit()
 
     def _queue(self, **kwargs):
-        from myapp.blueprints.artefacts import queue_analyses_for_artefact
         from myapp.database import Artefact
+        from myapp.services.artefact_types import queue_analyses_for_artefact
 
         with self.app.app_context():
             from myapp.extensions import db

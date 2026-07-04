@@ -510,8 +510,8 @@ class TestSkipAnalyses(unittest.TestCase):
         with app.app_context():
             from myapp.extensions import db
             db.create_all()
-            from myapp.blueprints.artefacts import queue_analyses_for_artefact
             from myapp.database import Analysis, Artefact, Item, StorageDirectory
+            from myapp.services.artefact_types import queue_analyses_for_artefact
             item = Item(name='test item')
             db.session.add(item)
             db.session.flush()
@@ -542,8 +542,8 @@ class TestSkipAnalyses(unittest.TestCase):
         with app.app_context():
             from myapp.extensions import db
             db.create_all()
-            from myapp.blueprints.artefacts import queue_analyses_for_artefact
             from myapp.database import Analysis, Artefact, Item, StorageDirectory
+            from myapp.services.artefact_types import queue_analyses_for_artefact
             item = Item(name='test item 2')
             db.session.add(item)
             db.session.flush()
