@@ -104,16 +104,17 @@ def _canonical_path(source_sha, leaf):
 
 
 def _hash_output(storage_path):
-    """Return ``(sha256, md5, file_size)`` of an output object, streamed (no OOM).
+    """Return ``(sha256, file_size)`` of an output object, streamed (no OOM).
 
-    Returns ``(None, None, None)`` when the object is missing.
+    Returns ``(None, None)`` when the object is missing.  Only the dedup identity
+    ``(file_size, sha256)`` is needed — blobs store no other hash.
     """
     storage = current_app.storage
     key = storage.storage_key('outputs', storage_path)
     if not storage.exists(key):
-        return None, None, None
-    md5, sha256, size = compute_file_hashes(key, use_storage=True, with_size=True)
-    return sha256, md5, size
+        return None, None
+    _md5, sha256, size = compute_file_hashes(key, use_storage=True, with_size=True)
+    return sha256, size
 
 
 def _relocate(src_path, dst_path):
@@ -173,7 +174,7 @@ def _link_output(row, fk_attr, path_attr, canonical, stats, dry_run):
         stats.blobs_created += 1
         return True
 
-    sha256, md5, size = _hash_output(current_path)
+    sha256, size = _hash_output(current_path)
     if sha256 is None:
         stats.skipped += 1
         return False
@@ -186,7 +187,7 @@ def _link_output(row, fk_attr, path_attr, canonical, stats, dry_run):
     # existing path, mirroring search_index._link_transcode_blobs so the row,
     # owner-resolution and refcount GC all agree on one canonical path.
     blob, created = get_or_create_blob(
-        StorageDirectory.OUTPUTS, canonical, size, sha256, md5)
+        StorageDirectory.OUTPUTS, canonical, size, sha256)
     if blob is None:
         stats.skipped += 1
         return False
