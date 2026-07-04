@@ -1156,6 +1156,37 @@ class MediaFile(db.Model):
     artefact: Mapped["Artefact"] = relationship(back_populates="media_files")
 
 
+class SearchDocument(db.Model):
+    """Indexed full-text content of a converted text document.
+
+    Populated from FORMAT_CONVERT ``type: 'text'`` outputs (see
+    ``services/search_index.py``).  One row per (artefact, file_path):
+    ``file_path`` is NULL for a directly-uploaded text artefact, or the
+    ``ExtractedFile.path`` for a text file inside a disc image / archive.
+
+    The searchable ``search_vector`` tsvector (+ GIN index) is a PostgreSQL
+    generated column added by migration and deliberately *not* mapped here, so
+    SQLite (tests) is unaffected; the ``content:`` search references it by name
+    on the PostgreSQL path and falls back to ILIKE on ``content`` elsewhere.
+    """
+    __tablename__ = "search_documents"
+    __table_args__ = (
+        Index("ix_search_documents_artefact_path", "artefact_id", "file_path"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Composite ix_search_documents_artefact_path covers artefact_id lookups.
+    artefact_id: Mapped[int] = mapped_column(
+        ForeignKey("artefacts.id", ondelete="CASCADE"))
+    # NULL for a direct text artefact; ExtractedFile.path for an extracted file.
+    file_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    truncated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa_false())
+
+    artefact: Mapped["Artefact"] = relationship()
+
+
 # =============================================================================
 # Download Restrictions
 # =============================================================================
