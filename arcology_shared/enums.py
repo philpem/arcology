@@ -128,7 +128,7 @@ class AnalysisType(enum.Enum):
     HASHDB_DELETE          = "hashdb_delete"           # Reap a soft-deleted hash database in worker-driven chunks
 
     # Format conversion / viewing
-    FORMAT_CONVERT         = "format_convert"         # Convert native formats to portable equivalents (Sprite→PNG, Draw→PNG/SVG, Text→UTF-8)
+    FORMAT_CONVERT         = "format_convert"         # Convert native formats to portable equivalents (Sprite→PNG, Draw→PNG/SVG, Text→UTF-8, Word→text)
     MEDIA_TRANSCODE        = "media_transcode"        # Transcode non-native audio/video (AVI/QuickTime/MPEG/...) to browser-playable MP4/M4A (ffmpeg)
 
     # RISC OS / Acorn specific

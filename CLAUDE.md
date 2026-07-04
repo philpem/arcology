@@ -508,6 +508,7 @@ Tests live in `ci/` and run in the `app-tests` job (SQLite in-memory):
 | `test_app_smoke.py` | App start, `/api/health`, API key auth |
 | `test_search.py` | `parse_query()`, `lookup_filetype_hex()`, `_run_search()`, HTTP smoke |
 | `test_document_search.py` | `content:` document FTS — indexing handler, visibility + restriction gating |
+| `test_document_convert.py` | MS Word `.doc`/`.docx` → text conversion + MS_WORD detection wiring |
 | `test_artefact_map.py` | `EXTENSION_MAP`/`ANALYSIS_MAP` consistency |
 | `test_archive_formats.py` | Archive format completeness |
 | `test_slug.py`, `test_url_identifiers.py` | Slugs / URL-safe identifiers |

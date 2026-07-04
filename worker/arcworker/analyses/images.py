@@ -1,11 +1,11 @@
 """
 Format-conversion handler.
 
-Renders RISC OS Sprite, DrawFile and Text artefacts (and bitmap images)
-into web-viewable outputs.  Two operating modes:
+Renders RISC OS Sprite, DrawFile and Text artefacts, MS Word documents and
+bitmap images into web-viewable outputs.  Two operating modes:
 
   Mode 1 — Direct artefact (artefact_type ∈ {ACORN_SPRITE, ACORN_DRAW,
-           ACORN_TEXT, IMAGE}): convert the artefact's own file.
+           ACORN_TEXT, MS_WORD, IMAGE}): convert the artefact's own file.
   Mode 2 — Extraction scan (hints contain ``extraction_path``): walk the
            extraction output directory and convert every viewable file
            found.
@@ -264,9 +264,9 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
     """
     Process FORMAT_CONVERT analysis.  Supports two modes:
 
-    Mode 1 — Direct artefact (artefact_type is ACORN_SPRITE/DRAW/TEXT/IMAGE):
-      Convert the artefact's own file.  Used for directly-uploaded Acorn
-      files; triggered via ANALYSIS_MAP.
+    Mode 1 — Direct artefact (artefact_type is ACORN_SPRITE/DRAW/TEXT,
+      MS_WORD, or IMAGE): Convert the artefact's own file.  Used for
+      directly-uploaded Acorn files and documents; triggered via ANALYSIS_MAP.
 
     Mode 2 — Extraction scan (hints contain 'extraction_path'):
       Scan the extraction output directory for every viewable file, convert
