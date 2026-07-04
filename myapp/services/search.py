@@ -17,7 +17,18 @@ see.
 import re
 from flask_login import current_user
 from markupsafe import Markup, escape
-from sqlalchemy import String, and_, case, cast, distinct, false, func, literal, or_
+from sqlalchemy import (
+    String,
+    and_,
+    case,
+    cast,
+    distinct,
+    false,
+    func,
+    literal,
+    literal_column,
+    or_,
+)
 from sqlalchemy.orm import selectinload
 from ..database import (
     Artefact,
@@ -831,6 +842,88 @@ def _search_artefact_hashes(tokens, page=1, per_page=PER_PAGE):
     ], has_more, total
 
 
+# =============================================================================
+# Full-text search (PostgreSQL) — ranking + snippets for the free-text buckets
+# =============================================================================
+# Matching itself stays on the trigram-backed ILIKE path (unchanged result set,
+# and the only path SQLite has); on PostgreSQL the tsvector columns added by the
+# FTS migration additionally drive ts_rank_cd ordering and ts_headline snippets.
+
+# ts_headline delimiters: control chars that cannot occur in real text, so after
+# HTML-escaping the snippet we can swap them for <mark> tags without any risk of
+# the source text forging highlight markup (XSS-safe).
+_HL_START = '\x02'
+_HL_STOP = '\x03'
+_HEADLINE_OPTS = (
+    f'StartSel={_HL_START}, StopSel={_HL_STOP}, '
+    'MaxWords=24, MinWords=6, ShortWord=2, MaxFragments=2'
+)
+
+
+def _fts_available() -> bool:
+    """True on PostgreSQL, where the search_vector columns and FTS functions live."""
+    try:
+        return db.session.get_bind().dialect.name == 'postgresql'
+    except Exception:
+        return False
+
+
+def _websearch_query_string(tokens: dict) -> str | None:
+    """Reconstruct a ``websearch_to_tsquery`` string from the free-text tokens.
+
+    Positive words are ANDed; a multi-word (quoted) value becomes a phrase; a
+    negated ``!word`` becomes ``-word``.  Returns ``None`` when there is no text
+    term.  Embedded quotes are neutralised so the reconstructed string can't
+    break out of a phrase (``websearch_to_tsquery`` itself never errors).
+    """
+    parts = []
+    for v in tokens.get('text', []):
+        v = v.replace('"', ' ').strip()
+        if v:
+            parts.append(f'"{v}"' if ' ' in v else v)
+    for v in _neg(tokens, 'text'):
+        v = v.replace('"', ' ').strip()
+        if v:
+            parts.append(f'-"{v}"' if ' ' in v else f'-{v}')
+    return ' '.join(parts) if parts else None
+
+
+def _render_snippet(raw: str | None):
+    """Turn a ts_headline result into safe highlighted Markup.
+
+    The raw text (from user-controlled name/description) is HTML-escaped first;
+    only our control-char delimiters are then swapped for ``<mark>`` tags, so no
+    markup in the source can survive as live HTML.
+    """
+    if not raw:
+        return None
+    safe = str(escape(raw)).replace(_HL_START, '<mark>').replace(_HL_STOP, '</mark>')
+    return Markup(safe)
+
+
+def _rank_order(tsvector_sql: str, tsq):
+    """ORDER BY clause list: ts_rank_cd desc — most relevant first."""
+    return func.ts_rank_cd(literal_column(tsvector_sql), tsq).desc()
+
+
+def _attach_snippets(rows, id_attr, text_expr, tsq):
+    """Attach a ``search_snippet`` (highlighted Markup) to each row.
+
+    Runs one ts_headline query over just this page's ids, so the (relatively
+    expensive) headline is computed only for rendered rows.  *rows* is a list of
+    ORM objects exposing ``id``; *text_expr* is the SQL text to summarise.
+    """
+    if not rows:
+        return
+    ids = [r.id for r in rows]
+    headline = func.ts_headline('english', text_expr, tsq, literal(_HEADLINE_OPTS))
+    snippets = dict(
+        db.session.query(id_attr, headline).filter(id_attr.in_(ids)).all()
+    )
+    for r in rows:
+        r.search_snippet = _render_snippet(snippets.get(r.id))
+
+
 def _attach_artefact_counts(items):
     """Annotate each Item with ``search_artefact_count`` — its *visible* artefacts.
 
@@ -881,8 +974,19 @@ def _search_text_items(tokens, page=1, per_page=PER_PAGE):
         .filter(item_visibility_clause(current_user))
     )
     total = _count_rows(q)
+
+    # PostgreSQL: rank by FTS relevance (name weighted above description), with
+    # name as the stable tie-break.  Elsewhere (SQLite), plain name order.
+    order = [func.lower(Item.name)]
+    tsq = None
+    if _fts_available():
+        qstr = _websearch_query_string(tokens)
+        if qstr:
+            tsq = func.websearch_to_tsquery('english', qstr)
+            order = [_rank_order('items.search_vector', tsq), func.lower(Item.name)]
+
     fetched = (
-        q.order_by(func.lower(Item.name))
+        q.order_by(*order)
         .offset((page - 1) * per_page)
         .limit(per_page + 1)
         .all()
@@ -890,6 +994,11 @@ def _search_text_items(tokens, page=1, per_page=PER_PAGE):
     has_more = len(fetched) > per_page
     page_items = fetched[:per_page]
     _attach_artefact_counts(page_items)
+    if tsq is not None:
+        _attach_snippets(
+            page_items, Item.id,
+            func.coalesce(Item.name, '') + literal(' ') + func.coalesce(Item.description, ''),
+            tsq)
     return page_items, has_more, total
 
 
@@ -920,16 +1029,32 @@ def _search_text_artefacts(tokens, page=1, per_page=PER_PAGE):
         .filter(artefact_visibility_clause(current_user))
     )
     total = _count_rows(q)
+
+    order = [func.lower(Item.name), func.lower(Artefact.label)]
+    tsq = None
+    if _fts_available():
+        qstr = _websearch_query_string(tokens)
+        if qstr:
+            tsq = func.websearch_to_tsquery('english', qstr)
+            order = [_rank_order('artefacts.search_vector', tsq),
+                     func.lower(Item.name), func.lower(Artefact.label)]
+
     fetched = (
-        q.order_by(func.lower(Item.name), func.lower(Artefact.label))
+        q.order_by(*order)
         .offset((page - 1) * per_page)
         .limit(per_page + 1)
         .all()
     )
     has_more = len(fetched) > per_page
+    page_rows = fetched[:per_page]
+    if tsq is not None:
+        _attach_snippets(
+            [a for a, _i in page_rows], Artefact.id,
+            func.coalesce(Artefact.label, '') + literal(' ') + func.coalesce(Artefact.description, ''),
+            tsq)
     return [
         {'type': 'artefact_text', 'artefact': a, 'item': i}
-        for a, i in fetched[:per_page]
+        for a, i in page_rows
     ], has_more, total
 
 
