@@ -567,6 +567,7 @@ def _register_error_handlers(app):
 
 
 def _register_cli_commands(app):
+    from .cli.backfill_artefact_sha1 import backfill_artefact_sha1
     from .cli.backfill_blobs import backfill_blobs
     from .cli.backfill_slugs import backfill_slugs
     from .cli.backfill_tlsh import backfill_tlsh
@@ -602,6 +603,7 @@ def _register_cli_commands(app):
     app.cli.add_command(backfill_slugs)
     app.cli.add_command(backfill_blobs)
     app.cli.add_command(backfill_tlsh)
+    app.cli.add_command(backfill_artefact_sha1)
     app.cli.add_command(set_password)
     app.cli.add_command(taskrunner)
 

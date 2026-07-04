@@ -114,6 +114,24 @@ noise. Requires the optional `py-tlsh` library (installed in the Docker images).
 `ExtractedFile` TLSH cannot be backfilled without re-extraction; it populates
 going forward as new artefacts are analysed.
 
+## backfill-artefact-sha1
+
+Compute artefact-level SHA-1 digests for existing artefacts. New uploads get
+their SHA-1 from the worker's CHECKSUM_COMPUTE analysis (alongside MD5/SHA-256);
+this command fills in artefacts that predate SHA-1 tracking, and derived
+artefacts whose hashes come from a blob record that carries no SHA-1. It streams
+each artefact's stored bytes, so no re-analysis is needed.
+
+```bash
+flask backfill-artefact-sha1                     # fill in missing artefact SHA-1s
+flask backfill-artefact-sha1 --dry-run           # preview without changes
+flask backfill-artefact-sha1 --artefact UUID     # a single artefact
+flask backfill-artefact-sha1 --batch-size 100    # smaller commit batches
+```
+
+Safe to re-run — artefacts that already have a SHA-1 are skipped, as are files
+whose storage object can't be read (logged as `SKIP`).
+
 ## backfill-slugs
 
 Populate the `slug` column for Items and Artefacts where it is NULL.  This

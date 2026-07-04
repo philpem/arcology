@@ -183,6 +183,7 @@ flask reanalyse --all | --artefact-type SCP | --platform … | --tag … [--dry-
 flask cancel-analysis --all [--include-running] | --artefact UUID
 flask reassign-ownership --from alice --to bob [--dry-run]
 flask backfill-blobs [--dry-run]    # Fill blob records for late-hashed artefacts
+flask backfill-artefact-sha1 [--dry-run] [--artefact UUID]   # Compute missing artefact SHA-1s
 flask dedup-artefacts [--apply]     # Remove orphaned non-canonical storage objects
 flask dedup-transcode-outputs [--dry-run]   # Collapse legacy duplicate transcodes (no re-encode)
 flask redo-transcode (--artefact UUID | --source-hash SHA) [--no-reanalyse]  # Invalidate + re-encode a bad transcode

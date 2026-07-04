@@ -23,6 +23,7 @@ from ..tools import (
     ArmovieParseError,
     ModuleParseError,
     compute_file_hash,
+    compute_file_hash_full,
     convert_replay_poster_sprite,
     decode_module,
     file_has_armovie_magic,
@@ -60,19 +61,19 @@ def process_checksum_compute(self, analysis: dict, artefact: dict, work_dir: Pat
     analysis_id = analysis['id']
     input_path = self.get_input_path(artefact, work_dir)
 
-    md5, sha256, size = compute_file_hash(input_path)
+    md5, sha1, sha256, size = compute_file_hash_full(input_path)
     # Byte-level fuzzy hash for near-duplicate detection, skipped for flux types.
     tlsh = None
     if artefact.get('artefact_type') not in _TLSH_SKIP_TYPES:
         tlsh = compute_tlsh(input_path)
-    self.api.update_artefact_hashes(artefact['uuid'], md5, sha256, tlsh=tlsh)
+    self.api.update_artefact_hashes(artefact['uuid'], md5, sha256, sha1=sha1, tlsh=tlsh)
 
-    details = {'md5': md5, 'sha256': sha256, 'size': size}
+    details = {'md5': md5, 'sha1': sha1, 'sha256': sha256, 'size': size}
     if tlsh:
         details['tlsh'] = tlsh
     self.complete_analysis(
         analysis_id,
-        summary=f'MD5: {md5}  SHA256: {sha256}',
+        summary=f'MD5: {md5}  SHA1: {sha1}  SHA256: {sha256}',
         details=json.dumps(details),
     )
 

@@ -155,19 +155,15 @@ def get_artefact_path(artefact: Artefact) -> str:
     return full_path
 
 
-def compute_file_hashes(filepath_or_key: str, use_storage: bool = False,
-                        with_size: bool = False):
-    """Compute MD5 and SHA256 hashes for a file.
+def _stream_file_digests(filepath_or_key: str, use_storage: bool):
+    """Single streaming pass → ``(md5, sha1, sha256, size)`` hex digests + bytes.
 
-    Args:
-        filepath_or_key: Either a local filesystem path or a storage key.
-        use_storage: If True, read from the storage backend using key.
-        with_size: If True, also return the byte count as a third tuple element
-            ``(md5, sha256, size)``, counted in the same single pass so a caller
-            needing a blob's ``(file_size, sha256)`` avoids a second read.
-            Default returns ``(md5, sha256)`` for existing callers.
+    Bounded memory (8 KiB chunks), so it is safe on multi-GB artefacts.  Callers
+    take the subset they need; see :func:`compute_file_hashes` /
+    :func:`compute_file_hashes_full`.
     """
     md5_hash = hashlib.md5()
+    sha1_hash = hashlib.sha1()
     sha256_hash = hashlib.sha256()
     size = 0
 
@@ -179,14 +175,46 @@ def compute_file_hashes(filepath_or_key: str, use_storage: bool = False,
     try:
         for chunk in iter(lambda: f.read(8192), b''):
             md5_hash.update(chunk)
+            sha1_hash.update(chunk)
             sha256_hash.update(chunk)
             size += len(chunk)
     finally:
         f.close()
 
+    return md5_hash.hexdigest(), sha1_hash.hexdigest(), sha256_hash.hexdigest(), size
+
+
+def compute_file_hashes(filepath_or_key: str, use_storage: bool = False,
+                        with_size: bool = False):
+    """Compute the ``(md5, sha256)`` pair for a file (the blob dedup identity).
+
+    Args:
+        filepath_or_key: Either a local filesystem path or a storage key.
+        use_storage: If True, read from the storage backend using key.
+        with_size: If True, also return the byte count as a third element
+            ``(md5, sha256, size)``, so a caller needing a blob's
+            ``(file_size, sha256)`` avoids a second read.
+
+    For the full digest set including SHA-1, use :func:`compute_file_hashes_full`.
+    """
+    md5, _sha1, sha256, size = _stream_file_digests(filepath_or_key, use_storage)
     if with_size:
-        return md5_hash.hexdigest(), sha256_hash.hexdigest(), size
-    return md5_hash.hexdigest(), sha256_hash.hexdigest()
+        return md5, sha256, size
+    return md5, sha256
+
+
+def compute_file_hashes_full(filepath_or_key: str, use_storage: bool = False,
+                             with_size: bool = False):
+    """Compute ``(md5, sha1, sha256[, size])`` for a file in one streaming pass.
+
+    The full digest set stored on an artefact — SHA-1 is always included, not
+    optional.  Used by the SHA-1 backfill; the worker fills it live via
+    CHECKSUM_COMPUTE.
+    """
+    md5, sha1, sha256, size = _stream_file_digests(filepath_or_key, use_storage)
+    if with_size:
+        return md5, sha1, sha256, size
+    return md5, sha1, sha256
 
 
 def resolve_extracted_file_path(ef):

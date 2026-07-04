@@ -644,6 +644,7 @@ class Artefact(db.Model):
     
     # Hashes (computed after upload)
     md5: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    sha1: Mapped[str | None] = mapped_column(String(40), nullable=True)
     sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Fuzzy hash (TLSH) for byte-level similarity.  Skipped for flux artefact
     # types (SCP/DFI/A2R) where raw bytes carry timing noise.  NULL when not yet
