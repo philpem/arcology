@@ -27,6 +27,7 @@ from ..tools import (
     convert_sprite,
     parse_acorn_filename,
     read_file_capped,
+    word_to_text,
 )
 from ..utils.paths import artefact_output_subdir
 from ._common import analysis_handler, iter_resolved_files, scan_partition_files
@@ -207,6 +208,22 @@ def _convert_file_to_outputs_inner(
             log.warning(f"Text conversion failed for {input_path}: {e}")
             return None, str(e), warnings
 
+    elif artefact_type == ArtefactType.MS_WORD:
+        true_name, _ = parse_acorn_filename(input_path.name)
+        with _conversion_timeout(_PER_FILE_CONVERT_TIMEOUT, input_path.name):
+            result = word_to_text(input_path)
+        warnings.extend(result.get('warnings', []))
+        if not result['success']:
+            log.warning(f"Word conversion failed for {input_path}: {result.get('error')}")
+            return None, result.get('error') or 'Conversion failed', warnings
+        # Normalise line endings; the converter emits UTF-8 already.
+        text = (result.get('text') or '').replace('\r\n', '\n').replace('\r', '\n')
+        outputs.append(_text_output(
+            self, text, name=true_name, work_dir=work_dir,
+            output_subdir=output_subdir, analysis_uuid=analysis_uuid,
+            file_index=file_index, tool=result.get('tool', 'antiword'),
+        ))
+
     elif artefact_type == ArtefactType.IMAGE:
         from ..tools.images_common import convert_image  # numpy/scour: worker-only
         true_name, _ = parse_acorn_filename(input_path.name)
@@ -268,6 +285,7 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
         ArtefactType.ACORN_SPRITE.value,
         ArtefactType.ACORN_DRAW.value,
         ArtefactType.ACORN_TEXT.value,
+        ArtefactType.MS_WORD.value,
         ArtefactType.IMAGE.value,
     )
 
