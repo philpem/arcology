@@ -188,33 +188,39 @@
 
 {% else %}
 
-{% set total = results.files|length + results.artefacts|length + results.catalogue_items|length %}
-{% if total == 0 %}
+{# Tabs and the "no results" message are driven by the true per-bucket totals,
+   not this page's row counts — each bucket paginates on the shared page number,
+   so a bucket can be empty on the current page while still having matches on
+   others.  Keying off row counts made whole tabs vanish on later pages (#624). #}
+{% set grand_total = results.totals.files + results.totals.artefacts + results.totals.catalogue_items %}
+{% if grand_total == 0 %}
 <div class="alert alert-info"><i class="bi bi-info-circle"></i> No results found for <strong>{{ q | e }}</strong>.</div>
 
 {% else %}
+{# The first non-empty bucket (by total) is the initially-open tab. #}
+{% set first_tab = 'files' if results.totals.files else ('artefacts' if results.totals.artefacts else 'items') %}
 
 {# --- Tab navigation --- #}
 <ul class="nav nav-tabs mb-3" id="searchTabs">
-	{% if results.files %}
+	{% if results.totals.files %}
 	<li class="nav-item">
-		<a class="nav-link active" data-bs-toggle="tab" href="#tab-files">
+		<a class="nav-link{% if first_tab == 'files' %} active{% endif %}" data-bs-toggle="tab" href="#tab-files">
 			<i class="bi bi-file-earmark"></i> Files
 			<span class="badge bg-secondary ms-1">{{ results.totals.files }}</span>
 		</a>
 	</li>
 	{% endif %}
-	{% if results.artefacts %}
+	{% if results.totals.artefacts %}
 	<li class="nav-item">
-		<a class="nav-link{% if not results.files %} active{% endif %}" data-bs-toggle="tab" href="#tab-artefacts">
+		<a class="nav-link{% if first_tab == 'artefacts' %} active{% endif %}" data-bs-toggle="tab" href="#tab-artefacts">
 			<i class="bi bi-disc"></i> Artefacts
 			<span class="badge bg-secondary ms-1">{{ results.totals.artefacts }}</span>
 		</a>
 	</li>
 	{% endif %}
-	{% if results.catalogue_items %}
+	{% if results.totals.catalogue_items %}
 	<li class="nav-item">
-		<a class="nav-link{% if not results.files and not results.artefacts %} active{% endif %}" data-bs-toggle="tab" href="#tab-items">
+		<a class="nav-link{% if first_tab == 'items' %} active{% endif %}" data-bs-toggle="tab" href="#tab-items">
 			<i class="bi bi-collection"></i> Items
 			<span class="badge bg-secondary ms-1">{{ results.totals.catalogue_items }}</span>
 		</a>
@@ -225,8 +231,11 @@
 <div class="tab-content">
 
 {# --- Files tab --- #}
-{% if results.files %}
-<div class="tab-pane fade show active" id="tab-files">
+{% if results.totals.files %}
+<div class="tab-pane fade{% if first_tab == 'files' %} show active{% endif %}" id="tab-files">
+	{% if not results.files %}
+	<div class="alert alert-light border"><i class="bi bi-info-circle"></i> No file matches on this page — they are on other pages of this result set.</div>
+	{% else %}
 	<div class="table-responsive">
 		<table class="table table-sm table-hover">
 			<thead><tr>
@@ -273,12 +282,16 @@
 			</tbody>
 		</table>
 	</div>
+	{% endif %}
 </div>
 {% endif %}
 
 {# --- Artefacts tab --- #}
-{% if results.artefacts %}
-<div class="tab-pane fade{% if not results.files %} show active{% endif %}" id="tab-artefacts">
+{% if results.totals.artefacts %}
+<div class="tab-pane fade{% if first_tab == 'artefacts' %} show active{% endif %}" id="tab-artefacts">
+	{% if not results.artefacts %}
+	<div class="alert alert-light border"><i class="bi bi-info-circle"></i> No artefact matches on this page — they are on other pages of this result set.</div>
+	{% else %}
 	<div class="table-responsive">
 		<table class="table table-sm table-hover">
 			<thead><tr>
@@ -320,12 +333,16 @@
 			</tbody>
 		</table>
 	</div>
+	{% endif %}
 </div>
 {% endif %}
 
 {# --- Items tab --- #}
-{% if results.catalogue_items %}
-<div class="tab-pane fade{% if not results.files and not results.artefacts %} show active{% endif %}" id="tab-items">
+{% if results.totals.catalogue_items %}
+<div class="tab-pane fade{% if first_tab == 'items' %} show active{% endif %}" id="tab-items">
+	{% if not results.catalogue_items %}
+	<div class="alert alert-light border"><i class="bi bi-info-circle"></i> No item matches on this page — they are on other pages of this result set.</div>
+	{% else %}
 	<div class="table-responsive">
 		<table class="table table-sm table-hover">
 			<thead><tr>
@@ -353,6 +370,7 @@
 			</tbody>
 		</table>
 	</div>
+	{% endif %}
 </div>
 {% endif %}
 
