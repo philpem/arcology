@@ -14,10 +14,9 @@ from ..services.artefact_lifecycle import (
     cleanup_analysis_outputs,
     delete_artefact_files,
     get_all_derived_artefact_ids,
-    reset_artefact_for_reanalysis,
+    queue_deferred_reanalysis,
 )
 from ..services.artefact_storage import get_output_folder
-from ..services.artefact_types import queue_analyses_for_artefact
 from ._selection import build_artefact_query
 
 # CLI priority names -> stored priority value, derived from the single source in
@@ -49,11 +48,16 @@ _CLI_PRIORITIES = {label.lower(): value for value, label in ANALYSIS_PRIORITY_TI
               help='Show what would be requeued without making changes')
 def reanalyse(analysis_uuid, item_uuid, tag_name, platform_name, category_name,
               artefact_type_name, select_all, priority_name, dry_run):
-    """Reset and re-queue analysis for artefacts in the database.
+    """Re-queue analysis for artefacts in the database.
 
     Use --analysis <uuid> to retry a single analysis without disturbing other
-    completed work on the same artefact.  All other options reset the entire
-    artefact (all analyses, derived artefacts, partitions and extracted files).
+    completed work on the same artefact (this clears that analysis immediately).
+
+    All other options re-queue the entire artefact (all analyses, derived
+    artefacts, partitions and extracted files).  This is *deferred*: the
+    existing results stay visible until a worker starts the re-analysis, at
+    which point they are cleared and rebuilt.  Combine with --priority low so a
+    bulk re-analysis only runs when workers have nothing else to do.
 
     At least one filter or --all is required for artefact-level reanalysis.
     Filters (--item, --tag, --platform, --category, --artefact-type) can be
@@ -191,25 +195,20 @@ def reanalyse(analysis_uuid, item_uuid, tag_name, platform_name, category_name,
             click.echo(f"  {a.uuid}  {a.artefact_type.name:20s}  {a.label}")
         return
 
-    output_folder = get_output_folder()
     processed = 0
 
     for i, artefact in enumerate(artefacts, 1):
         click.echo(f"  [{i}/{len(artefacts)}] {artefact.uuid}  {artefact.label}")
-        # commit=False on reset, commit=True on queue: one commit per artefact
-        # covers both the bulk deletes and the new analysis inserts.
-        cleanup = reset_artefact_for_reanalysis(artefact, commit=False)
-        queue_analyses_for_artefact(artefact, skip_duplicate_check=True, commit=True,
-                                    priority=priority)
-        cleanup_analysis_outputs(
-            output_folder,
-            cleanup['output_files'],
-            cleanup['output_dirs'],
-            cleanup['cache_dir'],
-            current_app.logger,
-        )
+        # Deferred reset: queue a trigger job instead of clearing results now, so
+        # the existing analysis results stay visible until a worker picks the
+        # re-analysis up (see queue_deferred_reanalysis).  The destructive reset
+        # and replacement-queueing happen at claim time, and the trigger job then
+        # cleans up the previous run's outputs on the worker — no local daemon
+        # thread (which only handled local storage and died on restart).
+        queue_deferred_reanalysis(artefact, hints=None, priority=priority, commit=True)
         processed += 1
 
-    click.echo(f"Done. {processed} artefact(s) reset and requeued for analysis.")
+    click.echo(f"Done. {processed} artefact(s) queued for re-analysis "
+               f"(existing results remain visible until a worker starts each one).")
 
 # vim: ts=4 sw=4 et

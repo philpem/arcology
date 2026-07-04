@@ -181,6 +181,7 @@ def bulk_delete_artefact_dependents(artefact_ids: list[int], *,
                                     batch_size=None,
                                     heartbeat=_noop_heartbeat,
                                     check_cancelled=_noop_check_cancelled,
+                                    exclude_analysis_ids=None,
                                     commit=False) -> int:
     """Bulk-delete all referencing rows across every FK table for the given artefact IDs.
 
@@ -194,8 +195,15 @@ def bulk_delete_artefact_dependents(artefact_ids: list[int], *,
     ``check_cancelled`` callbacks, so the task runner can offload a large
     deletion without holding one giant transaction.  Returns the number of
     extracted files deleted (0 in the unbatched/synchronous path).
+
+    *exclude_analysis_ids* spares the given Analysis rows from deletion.  Used by
+    the deferred re-analysis reset, whose trigger CLEANUP job lives on the root
+    artefact and must survive the reset it drives.
     """
-    Analysis.query.filter(Analysis.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
+    analyses_delete = Analysis.query.filter(Analysis.artefact_id.in_(artefact_ids))
+    if exclude_analysis_ids:
+        analyses_delete = analyses_delete.filter(Analysis.id.notin_(exclude_analysis_ids))
+    analyses_delete.delete(synchronize_session=False)
     # ReplayMovie and MediaFile both have a plain (non-cascading) FK to
     # artefacts, so they must be deleted explicitly before the artefact rows go
     # (the old ORM-cascade path handled this via relationship cascade).
@@ -380,7 +388,8 @@ def build_processing_tree(root: Artefact) -> tuple[dict, bool, dict, int]:
     return _build(root.id), has_active, status_counts, total_count
 
 
-def reset_artefact_for_reanalysis(artefact: Artefact, commit: bool = True):
+def reset_artefact_for_reanalysis(artefact: Artefact, commit: bool = True,
+                                  exclude_analysis_ids=None):
     """
     Reset an artefact to its just-uploaded state ready for re-analysis.
 
@@ -393,6 +402,10 @@ def reset_artefact_for_reanalysis(artefact: Artefact, commit: bool = True):
 
     Pass commit=False to defer the commit to the caller (useful for batch
     operations).  The caller must call db.session.commit() afterwards.
+
+    *exclude_analysis_ids* spares specific Analysis rows on the root artefact
+    from deletion — used by the deferred re-analysis reset so the trigger
+    CLEANUP job driving the reset is not deleted out from under itself.
     """
     cleanup = _collect_cleanup_paths_for_artefact(artefact, 'reset')
 
@@ -416,7 +429,7 @@ def reset_artefact_for_reanalysis(artefact: Artefact, commit: bool = True):
         Artefact.query.filter(Artefact.id.in_(all_derived_ids)).update(
             {Artefact.derived_from_analysis_id: None}, synchronize_session=False)
 
-    bulk_delete_artefact_dependents(all_ids)
+    bulk_delete_artefact_dependents(all_ids, exclude_analysis_ids=exclude_analysis_ids)
 
     # Clear analysis-derived metadata on the root artefact (e.g. the
     # ISO 9660 Primary Volume Descriptor written by METADATA_EXTRACT).
@@ -976,6 +989,115 @@ def collect_output_cleanup_keys(artefact: Artefact) -> dict:
     keys = _collect_item_cleanup_keys(all_ids)
     keys[HintKey.ARTEFACT_KEYS] = []
     return keys
+
+
+def queue_deferred_reanalysis(artefact: Artefact, hints: dict | None = None,
+                              priority: int = ANALYSIS_PRIORITY_NORMAL,
+                              commit: bool = True):
+    """Queue a re-analysis without disturbing the artefact's current results.
+
+    Instead of resetting the artefact up front (which blanks it for the whole
+    time the replacement jobs sit in the queue), this queues a single CLEANUP
+    job marked as a *deferred reset trigger*.  The previous run's analyses,
+    derived artefacts, partitions and outputs stay fully intact and visible.
+
+    When a worker eventually claims the trigger job (queue position ordered by
+    ``priority DESC, created_at`` — so a low-priority bulk re-analysis yields to
+    real work), the API claim path runs the destructive reset and queues the
+    replacement analyses in the same transaction (see
+    ``apply_deferred_reanalysis_reset``).  The trigger job then does its normal
+    storage-output cleanup on the worker, and the CLEANUP dispatch barrier
+    (``pending_claimable_query``) holds the replacement analyses back until it is
+    terminal — so the old outputs (notably the shared ``outputs/.cache/<uuid>``
+    partition cache) are gone before the new run produces any.
+
+    The trigger job carries both the marker *and* the storage cleanup keys, so
+    the worker's ``process_cleanup`` can delete the outputs whichever hints
+    snapshot it reads.  The keys are collected now (the artefact is idle during
+    the queue wait, so its outputs will not change before the reset runs).
+
+    Returns the trigger Analysis row.  Pass commit=False to defer the commit.
+    """
+    cleanup_keys = collect_output_cleanup_keys(artefact)
+    trigger_hints = dict(cleanup_keys)
+    trigger_hints[HintKey.REANALYSIS_RESET] = {
+        'priority': priority,
+        'analysis_hints': hints or None,
+    }
+    job = Analysis(
+        artefact_id=artefact.id,
+        analysis_type=AnalysisType.CLEANUP,
+        status=AnalysisStatus.PENDING,
+        hints=json.dumps(trigger_hints),
+        priority=priority,
+    )
+    db.session.add(job)
+    if commit:
+        db.session.commit()
+    return job
+
+
+def reanalysis_reset_marker(analysis: Analysis) -> dict | None:
+    """Return the deferred-reset marker dict for a CLEANUP job, or None.
+
+    None means this is not a deferred re-analysis trigger (a plain CLEANUP, or
+    a trigger whose reset has already been applied — the marker is stripped
+    once the reset runs, so a stale re-claim does not re-run it).
+    """
+    if analysis.analysis_type != AnalysisType.CLEANUP or not analysis.hints:
+        return None
+    try:
+        parsed = json.loads(analysis.hints)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    marker = parsed.get(HintKey.REANALYSIS_RESET)
+    return marker if isinstance(marker, dict) else None
+
+
+def apply_deferred_reanalysis_reset(trigger: Analysis) -> None:
+    """Perform the destructive reset a deferred re-analysis trigger stands in for.
+
+    Called from the worker-claim path (``PUT /api/analysis/<id>``) once the
+    trigger CLEANUP job has been atomically claimed (status RUNNING).  Runs in
+    the caller's transaction — the caller commits, so the claim, reset and
+    replacement-queueing all land atomically.
+
+    Deletes the previous run's DB rows and derived-artefact files (sparing the
+    trigger itself), queues the replacement analyses, then strips the marker
+    from the trigger's hints so the leftover payload is a plain storage-cleanup
+    job.  Stripping the marker is the idempotency guard: if the worker dies and
+    the job is re-claimed after a stale reset, the marker is gone and only the
+    storage cleanup re-runs — the reset is never applied twice (which would
+    delete the replacement analyses just queued).
+    """
+    marker = reanalysis_reset_marker(trigger)
+    if marker is None:
+        return
+    artefact = trigger.artefact
+    if artefact is None:
+        return
+    priority = marker.get('priority', ANALYSIS_PRIORITY_NORMAL)
+    analysis_hints = marker.get('analysis_hints') or None
+
+    # Local import: artefact_types imports nothing from this module, but keep the
+    # dependency lazy to stay clear of any import-time cycle through the app
+    # factory / blueprint registration that pulls this module in early.
+    from .artefact_types import queue_analyses_for_artefact
+
+    reset_artefact_for_reanalysis(artefact, commit=False,
+                                  exclude_analysis_ids={trigger.id})
+    queue_analyses_for_artefact(artefact, analysis_hints, skip_duplicate_check=True,
+                                commit=False, priority=priority)
+
+    # Strip the marker, leaving only the storage-cleanup payload the worker's
+    # process_cleanup consumes.  Deletes the trigger's own output metadata too:
+    # a trigger job has none, so the collected keys are the previous run's.
+    try:
+        remaining = json.loads(trigger.hints)
+    except (json.JSONDecodeError, TypeError):
+        remaining = {}
+    remaining.pop(HintKey.REANALYSIS_RESET, None)
+    trigger.hints = json.dumps(remaining)
 
 
 def _delete_artefact_subtree(all_ids, cleanup, *, batch_size=None,

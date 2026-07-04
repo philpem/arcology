@@ -195,9 +195,26 @@ This deletes only that analysis and any artefacts it produced, then queues
 a fresh job of the same type.  Use `arco debug errors ARTEFACT_UUID` to
 find the analysis UUID.
 
-**Full artefact reset** — clears all previous analysis results, derived
-artefacts, and output files, then queues fresh analyses based on each
-artefact's type.  At least one filter or `--all` is required.
+**Full artefact reset** — re-runs analysis from scratch for each matched
+artefact (all analyses, derived artefacts, partitions and output files).  At
+least one filter or `--all` is required.
+
+This is **deferred**: rather than clearing each artefact up front, it queues a
+single trigger job per artefact and leaves the existing results fully visible.
+When a worker eventually picks the trigger up, the old results are cleared and
+the fresh analyses are queued in one atomic step.  So a large re-analysis no
+longer blanks the catalogue for the whole time its jobs sit in the queue — each
+artefact keeps its current results until the moment its re-analysis actually
+starts.
+
+Combine with `--priority low` so a bulk re-analysis only runs when the workers
+have no higher-priority work.  The queue is ordered by priority (highest first),
+so low-priority triggers — and the fresh analyses they queue — yield to normal
+uploads and API/CLI submissions:
+
+```bash
+flask reanalyse --all --priority low         # yield to all other work
+```
 
 ```bash
 # Reanalyse everything
@@ -220,9 +237,6 @@ flask reanalyse --category "Games"
 # Combine filters (ANDed together)
 flask reanalyse --platform "Acorn Archimedes" --artefact-type SCP
 flask reanalyse --tag "needs-review" --artefact-type IMG
-
-# Control batch size (default: 50)
-flask reanalyse --all --batch-size 100
 ```
 
 Options:
@@ -236,8 +250,8 @@ Options:
 | `--platform NAME` | Restrict to items on this platform |
 | `--category NAME` | Restrict to items in this category |
 | `--artefact-type TYPE` | Restrict to this artefact type (e.g. `SCP`, `HFE`, `IMG`) |
+| `--priority TIER` | Queue priority for the re-analysis: `low`, `normal` (default), `high`, `urgent`. Use `low` for a background bulk re-analysis that yields to other work |
 | `--dry-run` | Show what would be requeued without making changes |
-| `--batch-size N` | Commit every N artefacts (default: 50) |
 
 ## cancel-analysis
 
