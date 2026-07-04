@@ -60,6 +60,35 @@ def _conversion_timeout(seconds: int, label: str = ''):
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old_handler)
 
+
+def _text_output(self, text: str, *, name: str, work_dir: Path,
+                 output_subdir: str | None, analysis_uuid: str,
+                 file_index: int, tool: str, slug: str = 'text') -> dict:
+    """Write `text` as a UTF-8 ``.txt`` output and build its FORMAT_CONVERT dict.
+
+    The single home for the text-output contract shared by every text-producing
+    converter (ACORN_TEXT today, MS Word and the DTP formats next): the saved
+    ``.txt`` holds the full text (viewable in the browser), while the returned
+    dict carries a capped copy (`text` + `text_truncated`) for full-text
+    indexing into ``search_documents``.  Routing a new format's plain text
+    through here makes it searchable *and* viewable without re-deriving the cap.
+    """
+    out_filename = f'{analysis_uuid}_{file_index}_{slug}.txt'
+    out_path = work_dir / out_filename
+    out_path.write_text(text, encoding='utf-8')
+    saved = self.save_output_file(out_path, out_filename, subdir=output_subdir)
+    return {
+        'type': 'text',
+        'filename': saved,
+        'name': name,
+        'description': name,
+        'tool': tool,
+        # Capped copy of the converted text for full-text indexing
+        # (search_documents).  The full text remains in the saved output.
+        'text': text[:_INDEX_TEXT_CAP],
+        'text_truncated': len(text) > _INDEX_TEXT_CAP,
+    }
+
 # Viewable-file lookup tables now live in arcology_shared (the single source the
 # content classifier also reads); aliased here under their original names so the
 # worker-class attribute bindings (AnalysisWorker._RISCOS_VIEWABLE_SUFFIXES, …)
@@ -169,21 +198,11 @@ def _convert_file_to_outputs_inner(
             # Decode as Latin-1 (covers all Acorn/DOS byte values);
             # normalise RISC OS line endings (0x0A) to LF.
             text = raw.decode('latin-1').replace('\r\n', '\n').replace('\r', '\n')
-            out_filename = f'{analysis_uuid}_{file_index}_text.txt'
-            out_path = work_dir / out_filename
-            out_path.write_text(text, encoding='utf-8')
-            saved = self.save_output_file(out_path, out_filename, subdir=output_subdir)
-            outputs.append({
-                'type': 'text',
-                'filename': saved,
-                'name': true_name,
-                'description': true_name,
-                'tool': 'builtin',
-                # Capped copy of the converted text for full-text indexing
-                # (search_documents).  The full text remains in the saved output.
-                'text': text[:_INDEX_TEXT_CAP],
-                'text_truncated': len(text) > _INDEX_TEXT_CAP,
-            })
+            outputs.append(_text_output(
+                self, text, name=true_name, work_dir=work_dir,
+                output_subdir=output_subdir, analysis_uuid=analysis_uuid,
+                file_index=file_index, tool='builtin',
+            ))
         except Exception as e:
             log.warning(f"Text conversion failed for {input_path}: {e}")
             return None, str(e), warnings
