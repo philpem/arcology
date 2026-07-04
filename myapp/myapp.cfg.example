@@ -239,6 +239,16 @@ WORKER_STEP_DEADLINE_SECONDS = 20
 # After linking, future logins always match by the stored subject (sub).
 #OIDC_MATCH_CLAIM = "preferred_username"
 
+# Whether a first-time SSO login may auto-link onto a pre-existing LOCAL account
+# (one with a real password) when OIDC_MATCH_CLAIM matches by username.  OFF by
+# default: an IdP that lets users pick their own preferred_username could
+# otherwise mint one matching an existing account (e.g. "admin") and seize it.
+# Enable ONLY if your IdP authoritatively owns usernames.  The verified-email
+# match path is unaffected (it has its own authenticity check), as is linking an
+# account that is already SSO-managed.  When off, a username collision with a
+# local account is refused and an administrator must link it deliberately.
+#OIDC_LINK_BY_USERNAME = False
+
 # Keycloak realm/client role names that map to Arcology permission levels.
 # Roles are read from realm_access.roles, resource_access.<client_id>.roles,
 # the top-level "roles" claim, and the "groups" claim (for Azure AD / Okta).

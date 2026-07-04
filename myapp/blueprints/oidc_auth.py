@@ -241,6 +241,9 @@ def _get_or_create_user(userinfo: dict) -> tuple['User | None', 'str | None']:
             )
         else:
             user = _find_by_match_claim(match_claim, claim_value)
+            if user is not None and not _may_link_account(user, match_claim, claim_value, sub):
+                return None, ('An account with this name already exists. '
+                              'Ask an administrator to link it to SSO.')
             if user is not None:
                 user.oidc_sub = sub
                 user.oidc_managed = True
@@ -292,6 +295,35 @@ def _find_by_match_claim(claim: str, value: str) -> 'User | None':
         return User.query.filter_by(username=value).one()
     except (NoResultFound, MultipleResultsFound):
         return None
+
+
+def _may_link_account(user: 'User', match_claim: str, claim_value: str, sub: str) -> bool:
+    """Whether an SSO login may auto-link onto the pre-existing *user*.
+
+    Linking onto a LOCAL account (one with a real password, not already
+    SSO-managed) via a self-asserted claim such as ``preferred_username`` is an
+    account-takeover vector: an IdP that lets users choose their own username
+    could present ``preferred_username='admin'`` and seize the local admin
+    account — and the link overwrites that account's password hash.  Such a link
+    is therefore allowed only when the deployment explicitly trusts the IdP to
+    own the match claim (``OIDC_LINK_BY_USERNAME``).
+
+    Exempt (always allowed): the verified-email path (its authenticity is
+    checked by the caller before we get here), and re-linking an account that is
+    already SSO-managed (``oidc_managed`` / password sentinel ``'!'``) — that is
+    not a local-account takeover.
+    """
+    is_local_account = not user.oidc_managed and user.password_hash != '!'
+    if not is_local_account or match_claim == 'email':
+        return True
+    if bool_config('OIDC_LINK_BY_USERNAME'):
+        return True
+    current_app.logger.warning(
+        'OIDC auto-link refused: local account %r matches claim %r=%r but '
+        'OIDC_LINK_BY_USERNAME is disabled (sub=%r)',
+        user.username, match_claim, claim_value, sub,
+    )
+    return False
 
 
 def _collect_roles(userinfo: dict) -> frozenset:
