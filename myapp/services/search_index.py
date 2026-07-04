@@ -41,6 +41,12 @@ from ..extensions import db
 from ..utils.blobs import get_or_create_blob
 from ..utils.enum_display import enum_value
 
+# Byte cap on the converted text pulled into search_documents when reading a
+# .txt output back from storage (the rebuild fallback below).  Mirrors the
+# worker's character cap _INDEX_TEXT_CAP in worker/arcworker/analyses/images.py,
+# which bounds the copy inlined into the analysis details at conversion time.
+_INDEX_TEXT_CAP = 200_000
+
 # =============================================================================
 # Per-type handler functions
 # =============================================================================
@@ -346,13 +352,43 @@ def handle_media_transcode(analysis: Analysis, details: dict,
         ))
 
 
+def _read_output_text(filename: str | None) -> tuple[str, bool]:
+    """Read a converted ``.txt`` output back from storage, capped for indexing.
+
+    Fallback for FORMAT_CONVERT results that predate the inlined ``text`` payload
+    (added with document full-text search): their details carry only the saved
+    output ``filename``, so ``rebuild-search-index`` reads the text from storage
+    rather than silently skipping the document.  Returns ``(content, truncated)``;
+    ``('', False)`` when the output is absent/unreadable, in which case the row is
+    simply not indexed.  Reads at most the cap (+1 byte to detect truncation) so a
+    large document's full text is never pulled into memory.
+    """
+    if not filename:
+        return '', False
+    try:
+        storage = current_app.storage
+        key = storage.storage_key(StorageDirectory.OUTPUTS.value, filename)
+        with storage.open_read(key) as f:
+            raw = f.read(_INDEX_TEXT_CAP + 1)
+    except Exception:
+        current_app.logger.warning(
+            f"Could not read converted text output {filename!r} from storage "
+            "for search indexing", exc_info=True)
+        return '', False
+    truncated = len(raw) > _INDEX_TEXT_CAP
+    return raw[:_INDEX_TEXT_CAP].decode('utf-8', errors='replace'), truncated
+
+
 def handle_search_documents(analysis: Analysis, details: dict,
                             full_rebuild: bool = False) -> None:
     """Index converted text into ``search_documents`` from a FORMAT_CONVERT result.
 
     Each ``type: 'text'`` output carries a capped copy of the converted text
     (``text``) plus its ``source_file`` (the ``ExtractedFile.path`` for an
-    extraction scan, absent for a direct text artefact).
+    extraction scan, absent for a direct text artefact).  Outputs from analyses
+    that predate the inlined ``text`` payload have only a saved ``filename``; for
+    those the text is read back from storage (:func:`_read_output_text`) so a
+    rebuild indexes them too rather than skipping them.
 
     FORMAT_CONVERT carries no ``path_prefix``, so deletion is scoped to the exact
     ``(artefact_id, file_path)`` pairs this analysis owns.  That makes it
@@ -365,11 +401,28 @@ def handle_search_documents(analysis: Analysis, details: dict,
     art_id = analysis.artefact_id
     if art_id is None:
         return
-    text_outputs = [
-        o for o in details.get('outputs', [])
-        if o.get('type') == 'text' and o.get('text')
-    ]
-    paths = {o.get('source_file') for o in text_outputs}
+
+    # Resolve each text output's content: prefer the inlined capped copy, else
+    # read the saved .txt back from storage.  Only successfully-resolved outputs
+    # are (re)written, so a missing/unreadable output never deletes an existing
+    # indexed row.  Each entry is (source_file, content, truncated).
+    resolved: list[tuple[str | None, str, bool]] = []
+    for out in details.get('outputs', []):
+        if out.get('type') != 'text':
+            continue
+        content = out.get('text')
+        if content:
+            resolved.append(
+                (out.get('source_file'), content, bool(out.get('text_truncated'))))
+            continue
+        content, truncated = _read_output_text(out.get('filename'))
+        if content:
+            resolved.append((out.get('source_file'), content, truncated))
+
+    if not resolved:
+        return
+
+    paths = {src for src, _, _ in resolved}
 
     # Scoped delete of the rows this analysis is about to (re)write.  A direct
     # artefact's document has file_path IS NULL, which needs its own predicate.
@@ -384,12 +437,12 @@ def handle_search_documents(analysis: Analysis, details: dict,
             SearchDocument.artefact_id == art_id, or_(*conds)
         ).delete(synchronize_session=False)
 
-    for out in text_outputs:
+    for source_file, content, truncated in resolved:
         db.session.add(SearchDocument(
             artefact_id=art_id,
-            file_path=out.get('source_file'),
-            content=out['text'],
-            truncated=bool(out.get('text_truncated')),
+            file_path=source_file,
+            content=content,
+            truncated=truncated,
         ))
 
 
