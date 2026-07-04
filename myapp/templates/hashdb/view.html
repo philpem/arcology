@@ -88,8 +88,10 @@
             <div class="col-auto">
                 <span class="text-muted small" title="URL to the original source data or reference this database was derived from">Source</span><br>
                 <span class="small">
-                    {% if database.source_url %}
-                    <a href="{{ database.source_url }}" target="_blank" rel="noopener">{{ database.source_url|truncate(40) }}</a>
+                    {% if database.safe_source_url %}
+                    <a href="{{ database.safe_source_url }}" target="_blank" rel="noopener">{{ database.source_url|truncate(40) }}</a>
+                    {% elif database.source_url %}
+                    <span title="{{ database.source_url }}">{{ database.source_url|truncate(40) }}</span>
                     {% else %}—{% endif %}
                 </span>
             </div>

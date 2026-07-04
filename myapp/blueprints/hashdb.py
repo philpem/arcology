@@ -45,7 +45,7 @@ from ..services.hash_rescan import (
 )
 from ..utils.db_helpers import model_choice_list, normalize_hash
 from ..utils.pagination import VALID_PER_PAGE, compute_letter_pages, resolve_per_page
-from ..utils.web_forms import redirect_local
+from ..utils.web_forms import SafeExternalUrl, redirect_local
 from ..visibility import artefact_visibility_clause
 
 ROUTENAME = __name__.replace('.', '_')
@@ -131,7 +131,7 @@ def init_app(app):
 class HashDatabaseForm(FlaskForm):
     name = StringField('Name', validators=[DataRequired(), Length(max=100)])
     description = TextAreaField('Description', validators=[Optional()])
-    source_url = StringField('Source URL', validators=[Optional()])
+    source_url = StringField('Source URL', validators=[Optional(), SafeExternalUrl()])
     version = StringField('Version', validators=[Optional(), Length(max=50)])
     platform_id = SelectField('Platform', coerce=int, validators=[Optional()])
     enable_product_recognition = BooleanField('Folder recognition')

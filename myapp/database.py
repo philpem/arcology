@@ -46,6 +46,7 @@ from .enums import (  # noqa: F401 — re-exported for backward-compat call site
     UserPermission,
 )
 from .extensions import db
+from .utils.urls import safe_external_url
 
 
 class _TolerantEnum(TypeDecorator):
@@ -417,10 +418,14 @@ class ExternalReference(db.Model):
 
     @property
     def url(self) -> str | None:
+        # base_url / url_template / external_url are user-supplied and rendered
+        # into an <a href> on the (public-readable) item page, so gate the result
+        # through safe_external_url to strip a javascript:/data: pseudo-scheme.
         if self.external_url:
-            return self.external_url
+            return safe_external_url(self.external_url)
         if self.system.base_url and self.system.url_template:
-            return self.system.base_url + self.system.url_template.format(id=self.external_id)
+            return safe_external_url(
+                self.system.base_url + self.system.url_template.format(id=self.external_id))
         return None
 
 
@@ -1286,6 +1291,16 @@ class HashDatabase(db.Model):
     platform: Mapped[Optional["Platform"]] = relationship()
     known_files: Mapped[list["KnownFile"]] = relationship(back_populates="database", cascade="all, delete-orphan")
     known_products: Mapped[list["KnownProduct"]] = relationship(back_populates="database", cascade="all, delete-orphan")
+
+    @property
+    def safe_source_url(self) -> str | None:
+        """source_url gated for href use (strips javascript:/data: schemes).
+
+        source_url is user-supplied (form + JSON import) and rendered into an
+        <a href> on the hashdb view page; templates link this, not the raw
+        column.
+        """
+        return safe_external_url(self.source_url)
 
 
 class KnownProduct(db.Model):
