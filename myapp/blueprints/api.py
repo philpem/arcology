@@ -2166,6 +2166,12 @@ def upload_artefact(item_uuid):
 
 	auto_analyse = request.form.get('auto_analyse', 'true').lower() != 'false'
 
+	# Honour the documented is_private flag and attribute ownership to the
+	# uploader (the web path does both) — otherwise a client requesting a private
+	# artefact on a public item silently gets a world-visible one.
+	api_user, _ = _api_viewer()
+	is_private = request.form.get('is_private', 'false').strip().lower() in ('true', '1', 'yes', 'on')
+
 	# Duplicate check, artefact + slug + analysis queue (single transaction),
 	# and orphan-file cleanup on failure all happen in the shared pipeline.
 	outcome = ingest_uploaded_artefact(
@@ -2180,6 +2186,8 @@ def upload_artefact(item_uuid):
 		sha256=sha256,
 		description=request.form.get('description'),
 		hints=hints,
+		owner_id=api_user.id if api_user is not None else None,
+		is_private=is_private,
 		queue=QUEUE_FULL if auto_analyse else QUEUE_NONE,
 	)
 	result = artefact_to_dict(outcome.artefact)
@@ -2393,6 +2401,10 @@ def _build_chunk_finalize_fn(meta, artefact_type, type_overridden, original_file
 	label = meta['label']
 	description = meta.get('description')
 	hints = meta.get('hints') or None
+	# Preserve the privacy flag and uploader recorded when the session was opened
+	# (mirrors the synchronous path and upload_artefact).
+	is_private = bool(meta.get('is_private', False))
+	owner_id = meta.get('creator_user_id')
 	auto_analyse = meta.get('auto_analyse', True)
 	if isinstance(auto_analyse, str):
 		auto_analyse = auto_analyse.lower() != 'false'
@@ -2413,6 +2425,8 @@ def _build_chunk_finalize_fn(meta, artefact_type, type_overridden, original_file
 			sha256=assembled.sha256,
 			description=description,
 			hints=hints,
+			owner_id=owner_id,
+			is_private=is_private,
 			queue=QUEUE_FULL if auto_analyse else QUEUE_NONE,
 		)
 		return outcome.artefact.uuid
@@ -2502,6 +2516,8 @@ def chunked_upload_complete(upload_uuid):
 		sha256=assembled.sha256,
 		description=meta.get('description'),
 		hints=meta.get('hints') or None,
+		owner_id=meta.get('creator_user_id'),
+		is_private=bool(meta.get('is_private', False)),
 		queue=QUEUE_FULL if auto_analyse else QUEUE_NONE,
 	)
 	result = artefact_to_dict(outcome.artefact)
