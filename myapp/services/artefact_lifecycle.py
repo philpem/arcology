@@ -196,10 +196,11 @@ def bulk_delete_artefact_dependents(artefact_ids: list[int], *,
     extracted files deleted (0 in the unbatched/synchronous path).
     """
     Analysis.query.filter(Analysis.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
-    # ReplayMovie has a plain (non-cascading) FK to artefacts, so it must be
-    # deleted explicitly before the artefact rows go (the old ORM-cascade path
-    # handled this via relationship cascade).
+    # ReplayMovie and MediaFile both have a plain (non-cascading) FK to
+    # artefacts, so they must be deleted explicitly before the artefact rows go
+    # (the old ORM-cascade path handled this via relationship cascade).
     ReplayMovie.query.filter(ReplayMovie.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
+    MediaFile.query.filter(MediaFile.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
     partition_ids = [r[0] for r in db.session.query(Partition.id).filter(
         Partition.artefact_id.in_(artefact_ids)).all()]
     if partition_ids:
