@@ -43,6 +43,8 @@ EXTENSION_MAP = {
 
     # Documents
     '.pdf': ArtefactType.PDF,
+    '.doc':  ArtefactType.MS_WORD,   # legacy binary Word (OLE compound doc)
+    '.docx': ArtefactType.MS_WORD,   # OOXML Word
 
     # Archives
     '.zip': ArtefactType.ZIP,
@@ -250,9 +252,14 @@ VIEWABLE_EXTENSIONS: dict[str, ArtefactType] = {
     '.tga':  ArtefactType.IMAGE,
     '.wmf':  ArtefactType.IMAGE,
     '.emf':  ArtefactType.IMAGE,
+    # Word-processor documents — converted to plain text (searchable + viewable).
+    '.doc':  ArtefactType.MS_WORD,
+    '.docx': ArtefactType.MS_WORD,
 }
 # &D94 (ArtWorks), &D87/&D88 (Impression), &D01 (TechWriter) are intentionally
-# omitted — they require bespoke rendering tools.
+# omitted — they require bespoke rendering tools.  MS Word documents are
+# detected by extension above; RISC OS filetype detection (&AE6) awaits
+# content/magic sniffing (issue #607) for metadata-less extractions.
 RISCOS_VIEWABLE_FILETYPES: dict[str, ArtefactType] = {
     'ff9': ArtefactType.ACORN_SPRITE,
     'aff': ArtefactType.ACORN_DRAW,
