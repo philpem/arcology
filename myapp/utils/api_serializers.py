@@ -55,7 +55,7 @@ def artefact_to_dict(artefact, include_partitions=False, include_storage=False):
         'type_overridden': artefact.type_overridden,
         'original_filename': artefact.original_filename,
         'file_size': artefact.file_size, 'mime_type': artefact.mime_type,
-        'md5': artefact.md5, 'sha256': artefact.sha256,
+        'md5': artefact.md5, 'sha1': artefact.sha1, 'sha256': artefact.sha256,
         'tags': [t.name for t in artefact.tags],
         'restrictions': [r.restriction_type.value for r in artefact.restrictions],
         'is_restricted': artefact.is_restricted,

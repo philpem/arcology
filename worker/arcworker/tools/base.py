@@ -340,13 +340,11 @@ def exception_result(
 
 def compute_file_hash(filepath: Path) -> tuple[str, str, int]:
     """
-    Compute MD5, SHA256 and file size.
+    Compute the ``(md5, sha256, file_size)`` dedup identity for a file.
 
-    Args:
-        filepath: Path to the file to hash
-
-    Returns:
-        Tuple of (md5_hex, sha256_hex, file_size)
+    This is what the blob/dedup paths need — content is keyed on
+    ``(file_size, sha256)``.  When the full digest set (incl. SHA-1) must be
+    recorded on the artefact, use :func:`compute_file_hash_full`.
     """
     md5 = hashlib.md5()
     sha256 = hashlib.sha256()
@@ -359,6 +357,28 @@ def compute_file_hash(filepath: Path) -> tuple[str, str, int]:
             size += len(chunk)
 
     return md5.hexdigest(), sha256.hexdigest(), size
+
+
+def compute_file_hash_full(filepath: Path) -> tuple[str, str, str, int]:
+    """
+    Compute ``(md5, sha1, sha256, file_size)`` in a single streaming pass.
+
+    The full digest set recorded on an artefact by CHECKSUM_COMPUTE.  SHA-1 is
+    always computed — it is part of the artefact's stored hashes, not optional.
+    """
+    md5 = hashlib.md5()
+    sha1 = hashlib.sha1()
+    sha256 = hashlib.sha256()
+    size = 0
+
+    with open(filepath, 'rb') as f:
+        for chunk in iter(lambda: f.read(8192), b''):
+            md5.update(chunk)
+            sha1.update(chunk)
+            sha256.update(chunk)
+            size += len(chunk)
+
+    return md5.hexdigest(), sha1.hexdigest(), sha256.hexdigest(), size
 
 
 def read_file_capped(path: Path, max_bytes: int = MAX_INMEM_BYTES) -> bytes:

@@ -5,7 +5,7 @@ Covers:
   - CHECKSUM_COMPUTE is not listed in ANALYSIS_MAP (it is implicit)
   - queue_analyses_for_artefact() always prepends CHECKSUM_COMPUTE first
   - checksum_only=True queues only CHECKSUM_COMPUTE
-  - PATCH /api/artefacts/<uuid> endpoint updates md5/sha256
+  - PATCH /api/artefacts/<uuid> endpoint updates md5/sha256/sha1
 
 Run:
     SQLALCHEMY_DATABASE_URI=sqlite:///:memory: SECRET_KEY=test WORKER_API_KEY=test \
@@ -203,6 +203,19 @@ class TestPatchArtefactEndpoint(unittest.TestCase):
         resp2 = self.client.patch(url, data=payload, content_type='application/json', headers=headers)
         self.assertEqual(resp1.status_code, 200, resp1.data)
         self.assertEqual(resp2.status_code, 200, resp2.data)
+
+    def test_patch_updates_sha1_lowercased(self):
+        # The worker reports sha1 alongside md5/sha256; it must round-trip in the
+        # serialized artefact and be normalised to lowercase like the other hashes.
+        sha1_val = 'A1B2' + 'e' * 36  # 40 hex chars, mixed case
+        resp = self.client.patch(
+            f'/api/artefacts/{self.artefact_uuid}',
+            data=json.dumps({'sha1': sha1_val}),
+            content_type='application/json',
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.get_json().get('sha1'), sha1_val.lower())
 
 
 if __name__ == '__main__':

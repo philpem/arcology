@@ -752,6 +752,7 @@ def update_artefact(uuid):
 
     Accepted fields:
       - ``md5`` / ``sha256`` — replace the stored hash strings.
+      - ``sha1`` — replace the stored SHA-1 (computed by CHECKSUM_COMPUTE).
       - ``media_metadata`` — JSON object that is **merged** (shallow, at the
         top-level key) into the existing ``media_metadata`` JSON, so different
         sections (e.g. ``iso9660``) can be written independently without
@@ -776,6 +777,8 @@ def update_artefact(uuid):
             logical_storage_path=artefact.storage_path,
             obsolete_storage_paths=obsolete_storage_paths,
         )
+    if 'sha1' in data:
+        artefact.sha1 = (data['sha1'] or '').lower() or None
     if 'tlsh' in data:
         artefact.tlsh = data['tlsh'] or None
     if 'artefact_type' in data and not artefact.type_overridden:
