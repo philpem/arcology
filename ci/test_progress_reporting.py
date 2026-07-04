@@ -178,6 +178,97 @@ class TestStaleHeartbeat(_ApiBase):
             self.assertEqual(alive.progress_current, 5)
 
 
+class TestStaleRetryCap(_ApiBase):
+    """A poison job that keeps going stale must not be re-queued forever.
+
+    reset_stale_analyses_core() increments stale_reset_count on each re-queue and
+    dead-letters the job to FAILED once it reaches STALE_JOB_MAX_RETRIES, breaking
+    the claim -> stall -> stale-reset -> re-claim loop.
+    """
+
+    def _reset_stale(self, max_retries):
+        from myapp.services.analysis_queue import reset_stale_analyses_core
+
+        prev = self.app.config.get('STALE_JOB_MAX_RETRIES', 5)
+        self.app.config['STALE_JOB_MAX_RETRIES'] = max_retries
+        try:
+            return reset_stale_analyses_core()
+        finally:
+            self.app.config['STALE_JOB_MAX_RETRIES'] = prev
+
+    def test_requeue_increments_count(self):
+        from myapp.database import Analysis, AnalysisStatus
+
+        with self.app.app_context():
+            old = datetime.utcnow() - timedelta(hours=2)
+            a = self._running_analysis('inc', started_at=old)
+            aid = a.id
+            self.assertEqual(a.stale_reset_count, 0)
+
+            requeued = self._reset_stale(max_retries=5)
+            self.assertEqual(requeued, 1)
+
+            a = self.db.session.get(Analysis, aid)
+            self.assertEqual(a.status, AnalysisStatus.PENDING)
+            self.assertEqual(a.stale_reset_count, 1)
+
+    def test_dead_letters_after_cap(self):
+        from myapp.database import Analysis, AnalysisStatus
+
+        with self.app.app_context():
+            old = datetime.utcnow() - timedelta(hours=2)
+            a = self._running_analysis('poison', started_at=old)
+            aid = a.id
+            # Already re-queued up to the cap: this staleness must fail it.
+            a.stale_reset_count = 5
+            self.db.session.commit()
+
+            requeued = self._reset_stale(max_retries=5)
+            # It is dead-lettered, not counted among the re-queued.
+            self.assertEqual(requeued, 0)
+
+            a = self.db.session.get(Analysis, aid)
+            self.assertEqual(a.status, AnalysisStatus.FAILED)
+            self.assertFalse(a.success)
+            self.assertIsNotNone(a.error_message)
+            # Not re-queued, so the count is left as-is (no further attempts).
+            self.assertEqual(a.stale_reset_count, 5)
+            self.assertIsNone(a.progress_updated_at)
+
+    def test_cap_disabled_retries_forever(self):
+        from myapp.database import Analysis, AnalysisStatus
+
+        with self.app.app_context():
+            old = datetime.utcnow() - timedelta(hours=2)
+            a = self._running_analysis('forever', started_at=old)
+            aid = a.id
+            a.stale_reset_count = 999
+            self.db.session.commit()
+
+            # max_retries=0 disables the cap -> still re-queued despite the count.
+            requeued = self._reset_stale(max_retries=0)
+            self.assertEqual(requeued, 1)
+
+            a = self.db.session.get(Analysis, aid)
+            self.assertEqual(a.status, AnalysisStatus.PENDING)
+
+    def test_manual_retry_resets_count(self):
+        from myapp.blueprints.analysis import _reset_for_retry
+        from myapp.database import AnalysisStatus
+
+        with self.app.app_context():
+            a = self._running_analysis('manual')
+            a.status = AnalysisStatus.FAILED
+            a.stale_reset_count = 5
+            self.db.session.commit()
+
+            _reset_for_retry(a)
+            self.db.session.commit()
+
+            self.assertEqual(a.status, AnalysisStatus.PENDING)
+            self.assertEqual(a.stale_reset_count, 0)
+
+
 class TestEnumerateProgressCallback(unittest.TestCase):
     def _tree(self):
         d = Path(tempfile.mkdtemp(prefix='arco-enum-'))
