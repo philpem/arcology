@@ -15,7 +15,7 @@ from ..database import Category, ExternalSystem, HashDatabase, Platform, Tag
 from ..extensions import db
 from ..permissions import public_readable, require_permission
 from ..utils.db_helpers import model_choice_list
-from ..utils.web_forms import redirect_local
+from ..utils.web_forms import SafeExternalUrl, redirect_local
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -62,7 +62,7 @@ class ExternalSystemForm(FlaskForm):
     name = StringField('Name', validators=[DataRequired(), Length(max=100)])
     system_type = StringField('System Type', validators=[Optional()],
                               description='e.g., collection_management, accession_register')
-    base_url = StringField('Base URL', validators=[Optional()])
+    base_url = StringField('Base URL', validators=[Optional(), SafeExternalUrl()])
     url_template = StringField('URL Template', validators=[Optional()],
                                description='e.g., /items/{id}')
     description = TextAreaField('Description', validators=[Optional()])
