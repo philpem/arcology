@@ -20,6 +20,7 @@ from ..services.search import (
     _check_query_warnings,
     _run_search,
     parse_query,
+    result_hints,
     run_duplicate_search,
 )
 from ..utils.pagination import VALID_PER_PAGE, ListPagination, resolve_per_page
@@ -63,6 +64,9 @@ def index():
     query_warnings = _check_query_warnings(tokens)
     run = bool(q) and query_error is None
     results = _run_search(tokens, page=page, per_page=per_page, dedupe=dedupe) if run else None
+    # Hints that depend on the result counts (e.g. an exact filename: that
+    # matched nothing) are appended once the search has run.
+    query_warnings = query_warnings + result_hints(tokens, results)
     # Real result count drives the pagination.  Each bucket paginates
     # independently but shares one page number, so the number of pages needed to
     # view everything is the largest bucket's page count; _run_search reports

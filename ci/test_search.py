@@ -406,6 +406,48 @@ class TestCheckQueryWarnings(unittest.TestCase):
 
 
 # =============================================================================
+# Unit tests: result_hints (count-dependent, no database required)
+# =============================================================================
+
+class TestResultHints(unittest.TestCase):
+    """Unit tests for result_hints — pure, driven by result totals."""
+
+    @classmethod
+    def setUpClass(cls):
+        from myapp.services.search import parse_query, result_hints
+        cls.hints = staticmethod(
+            lambda q, totals: result_hints(parse_query(q), {'totals': totals}))
+
+    def _zero_files(self):
+        return {'files': 0, 'artefacts': 0, 'catalogue_items': 0}
+
+    def test_exact_filename_zero_files_hints_wildcard(self):
+        hints = self.hints('filename:readme', self._zero_files())
+        self.assertEqual(len(hints), 1)
+        self.assertIn('filename:readme*', str(hints[0]))
+
+    def test_wildcard_filename_no_hint(self):
+        self.assertEqual(self.hints('filename:readme*', self._zero_files()), [])
+
+    def test_filename_with_matches_no_hint(self):
+        self.assertEqual(self.hints('filename:readme', {'files': 5}), [])
+
+    def test_no_filename_term_no_hint(self):
+        self.assertEqual(self.hints('label:System', self._zero_files()), [])
+
+    def test_no_results_object_no_hint(self):
+        from myapp.services.search import parse_query, result_hints
+        self.assertEqual(result_hints(parse_query('filename:readme'), None), [])
+
+    def test_hint_value_is_html_escaped(self):
+        # A filename value with HTML metacharacters must be escaped in the hint.
+        hints = self.hints('filename:"a<b>"', self._zero_files())
+        self.assertEqual(len(hints), 1)
+        self.assertNotIn('<b>', str(hints[0]))
+        self.assertIn('&lt;b&gt;', str(hints[0]))
+
+
+# =============================================================================
 # Unit tests: RISC OS filetype lookup (no database required)
 # =============================================================================
 
