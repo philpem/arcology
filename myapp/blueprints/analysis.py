@@ -162,9 +162,15 @@ def index():
 
     per_page, page, view_all = resolve_per_page('ANALYSES_PER_PAGE', 50)
 
-    # Eager-load artefact to avoid N+1 lazy loads in template
+    # Eager-load the artefact plus its item and immediate parent: the template's
+    # artefact_url() reads artefact.item.url_id and artefact.root_artefact (which
+    # walks parent_artefact), so without these each listed row triggered extra
+    # lazy queries — up to 10 000 under the "view all" page size.  joinedload
+    # covers roots and one-level-derived artefacts (the overwhelming majority);
+    # a deeper chain still lazy-loads the remaining levels.
     pagination = query.options(
-        joinedload(Analysis.artefact)
+        joinedload(Analysis.artefact).joinedload(Artefact.item),
+        joinedload(Analysis.artefact).joinedload(Artefact.parent_artefact),
     ).order_by(_status_sort_order(), Analysis.created_at.desc()).paginate(page=page, per_page=per_page)
 
     # Single query for all status counts using conditional aggregation.  These
