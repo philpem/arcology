@@ -1257,9 +1257,11 @@ class TestBulkDeleteItem(unittest.TestCase):
                 HashDatabase,
                 Item,
                 KnownProduct,
+                MediaFile,
                 Partition,
                 Platform,
                 RecognisedProduct,
+                ReplayMovie,
                 RestrictionType,
                 RiscosModule,
                 Tag,
@@ -1375,6 +1377,14 @@ class TestBulkDeleteItem(unittest.TestCase):
                 reason='test',
             )
             self.db.session.add_all([prot, mast, mod, rest])
+
+            # Media rows: ReplayMovie and MediaFile both carry a plain
+            # (non-cascading) FK to artefacts, so bulk deletion must remove them
+            # explicitly or the artefact delete hits a FK violation.
+            replay = ReplayMovie(artefact_id=derived.id, file_path='/movie.arm')
+            media = MediaFile(artefact_id=derived.id, file_path='/clip.avi',
+                              media_kind='video')
+            self.db.session.add_all([replay, media])
             self.db.session.commit()
 
             # Save IDs before bulk delete invalidates the ORM objects
@@ -1410,11 +1420,87 @@ class TestBulkDeleteItem(unittest.TestCase):
             self.assertEqual(ArtefactMastering.query.filter_by(artefact_id=artefact_id).count(), 0)
             self.assertEqual(RiscosModule.query.filter_by(artefact_id=artefact_id).count(), 0)
             self.assertEqual(ArtefactRestriction.query.filter_by(artefact_id=artefact_id).count(), 0)
+            self.assertEqual(ReplayMovie.query.filter_by(artefact_id=derived_id).count(), 0)
+            self.assertEqual(MediaFile.query.filter_by(artefact_id=derived_id).count(), 0)
             self.assertEqual(ExternalReference.query.filter_by(item_id=item_id).count(), 0)
             # Tags and external system should survive
             self.assertIsNotNone(db.session.get(Tag, tag_id))
             self.assertIsNotNone(db.session.get(Tag, art_tag_id))
             self.assertIsNotNone(ExternalSystem.query.filter_by(name='Bulk Del System').first())
+
+    def test_reanalyse_reset_with_media_files(self):
+        """reset_artefact_for_reanalysis must delete derived MediaFile/ReplayMovie rows.
+
+        Reproduces the `flask reanalyse` FK violation: a derived artefact
+        produced by a previous run carries a MediaFile (MEDIA_TRANSCODE output)
+        with a plain, non-cascading FK to artefacts.  The reset deletes the
+        derived artefacts, so those media rows must be cleared first or the
+        artefact delete raises media_files_artefact_id_fkey.
+        """
+        with self.app.app_context():
+            from arcology_shared.enums import AnalysisType, ArtefactType
+            from myapp.database import (
+                Analysis,
+                AnalysisStatus,
+                Artefact,
+                Item,
+                MediaFile,
+                Platform,
+                ReplayMovie,
+            )
+            from myapp.services.artefact_lifecycle import reset_artefact_for_reanalysis
+
+            platform = Platform(name='Reanalyse Media Platform')
+            self.db.session.add(platform)
+            self.db.session.flush()
+
+            item = Item(name='Reanalyse Media Item', platform_id=platform.id)
+            self.db.session.add(item)
+            self.db.session.flush()
+
+            root = Artefact(
+                item_id=item.id, label='Root Disc',
+                artefact_type=ArtefactType.RAW_SECTOR,
+                original_filename='disc.iso', storage_path='uploads/disc.iso',
+            )
+            self.db.session.add(root)
+            self.db.session.flush()
+            root_id = root.id
+
+            analysis = Analysis(
+                artefact_id=root.id,
+                analysis_type=AnalysisType.ARCHIVE_EXTRACT,
+                status=AnalysisStatus.COMPLETED,
+            )
+            self.db.session.add(analysis)
+            self.db.session.flush()
+
+            derived = Artefact(
+                item_id=item.id, label='Extracted Video',
+                artefact_type=ArtefactType.RAW_SECTOR,
+                original_filename='clip.avi', storage_path='outputs/clip.avi',
+                parent_artefact_id=root.id,
+                derived_from_analysis_id=analysis.id,
+            )
+            self.db.session.add(derived)
+            self.db.session.flush()
+            derived_id = derived.id
+
+            self.db.session.add_all([
+                MediaFile(artefact_id=derived.id, file_path='/clip.avi',
+                          media_kind='video'),
+                ReplayMovie(artefact_id=derived.id, file_path='/movie.arm'),
+            ])
+            self.db.session.commit()
+
+            # Must not raise a FK violation.
+            reset_artefact_for_reanalysis(root, commit=True)
+
+            # Derived artefact and its media rows are gone; root survives.
+            self.assertIsNotNone(db.session.get(Artefact, root_id))
+            self.assertIsNone(db.session.get(Artefact, derived_id))
+            self.assertEqual(MediaFile.query.filter_by(artefact_id=derived_id).count(), 0)
+            self.assertEqual(ReplayMovie.query.filter_by(artefact_id=derived_id).count(), 0)
 
     def test_bulk_delete_empty_item(self):
         """bulk_delete_item should handle an item with no artefacts."""
