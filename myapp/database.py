@@ -124,7 +124,6 @@ class UploadBlob(db.Model):
     id: Mapped[int] = mapped_column(primary_key=True)
     file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
-    md5: Mapped[str | None] = mapped_column(String(32), nullable=True)
     storage_path: Mapped[str] = mapped_column(String(1000), nullable=False, unique=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
@@ -143,7 +142,6 @@ class OutputBlob(db.Model):
     id: Mapped[int] = mapped_column(primary_key=True)
     file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
-    md5: Mapped[str | None] = mapped_column(String(32), nullable=True)
     storage_path: Mapped[str] = mapped_column(String(1000), nullable=False, unique=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)

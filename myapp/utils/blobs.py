@@ -13,18 +13,19 @@ def blob_model(storage_directory):
     raise ValueError(f"Unsupported storage directory: {storage_directory!r}")
 
 
-def get_or_create_blob(storage_directory, storage_path, file_size, sha256, md5=None):
+def get_or_create_blob(storage_directory, storage_path, file_size, sha256):
     """Return ``(blob, created)`` for known content.
 
-    Unknown size/hash values cannot be deduplicated and return ``(None, False)``.
-    A size of zero is valid and is deliberately distinguished from ``None``.
+    Blobs are deduplicated on ``(file_size, sha256)`` alone — that pair is the
+    content identity, so no other hash is stored on the blob.  Unknown size/hash
+    values cannot be deduplicated and return ``(None, False)``.  A size of zero is
+    valid and is deliberately distinguished from ``None``.
     """
     if file_size is None or not sha256:
         return None, False
 
     model = blob_model(storage_directory)
     sha256 = sha256.lower()
-    md5 = md5.lower() if md5 else None
     existing = model.query.filter_by(file_size=file_size, sha256=sha256).first()
     if existing:
         return existing, False
@@ -32,7 +33,6 @@ def get_or_create_blob(storage_directory, storage_path, file_size, sha256, md5=N
     blob = model(
         file_size=file_size,
         sha256=sha256,
-        md5=md5,
         storage_path=storage_path,
     )
     try:
@@ -59,8 +59,10 @@ def assign_blob(
 ):
     """Assign canonical blob storage to an artefact.
 
-    Returns ``(blob, created)``. Compatibility storage/hash columns are kept in
-    sync while callers and external API consumers migrate to blob relationships.
+    Returns ``(blob, created)``. The blob stores only its ``(file_size, sha256)``
+    dedup identity; the artefact keeps the full set of compatibility hash columns
+    (md5/sha256) that callers and external API consumers read, so those are the
+    ones kept in sync here.
     """
     model = blob_model(storage_directory)
     current_blob = artefact_blob(artefact)
@@ -94,8 +96,6 @@ def assign_blob(
         # The corrected identity already has a canonical blob. Every artefact
         # referencing the old blob points at the same physical bytes, so move
         # the whole reference set and retire the obsolete blob together.
-        if normalised_md5:
-            blob.md5 = normalised_md5
         for linked_artefact in list(current_blob.artefacts):
             linked_artefact.file_size = file_size
             linked_artefact.sha256 = normalised_sha256
@@ -113,8 +113,6 @@ def assign_blob(
         # the shared blob also keeps every reference to those bytes consistent.
         current_blob.file_size = file_size
         current_blob.sha256 = normalised_sha256
-        if normalised_md5:
-            current_blob.md5 = normalised_md5
         for linked_artefact in current_blob.artefacts:
             linked_artefact.file_size = file_size
             linked_artefact.sha256 = normalised_sha256
@@ -123,7 +121,7 @@ def assign_blob(
         blob = current_blob
     elif blob is None:
         blob, created = get_or_create_blob(
-            storage_directory, storage_path, file_size, sha256, md5
+            storage_directory, storage_path, file_size, sha256
         )
 
     if storage_directory == StorageDirectory.UPLOADS:
