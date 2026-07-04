@@ -8,8 +8,7 @@
     }
   ],
   "run_types": [
-    "archive_extract",
-    "archive_detect"
+    "archive_extract"
   ],
   "required_tools": [
     "unzip"

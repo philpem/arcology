@@ -229,32 +229,37 @@ class FakeServerAPI(ArcologyAPI):
     def _post_files(self, data, query, partition_uuid):
         # Mirror the web app's add_files: prefix a child file's path with its
         # parent archive's path (when the parent is_archive), dedup by
-        # (partition, path), and assign an integer id.  Records are sorted by
+        # (partition, path), assign an integer id, and return the id of every
+        # incoming file keyed by its *original* (pre-prefix) path so the worker
+        # can fold archive detection into registration.  Records are sorted by
         # final path before id assignment so ids are deterministic across runs
         # (the worker enumerates via rglob, whose order is not stable, but ids
         # are opaque and used only relationally, so ordering them by path is a
         # harmless way to make the golden reproducible).
         records = data.get('files', [])
-        existing_paths = {f['path'] for f in self.files
-                          if f['partition_uuid'] == partition_uuid}
+        existing = {f['path']: f for f in self.files
+                    if f['partition_uuid'] == partition_uuid}
+        # (stored_path, incoming_path, record)
         prepared = []
         for rec in records:
-            path = rec['path']
+            incoming = rec['path']
+            path = incoming
             parent_id = rec.get('parent_file_id')
             if parent_id is not None:
                 parent = self.files_by_id.get(int(parent_id))
                 if parent and parent.get('is_archive'):
                     if not path.startswith(parent['path'] + '/'):
                         path = parent['path'] + '/' + path
-            prepared.append((path, rec))
+            prepared.append((path, incoming, rec))
 
         added = 0
         skipped = 0
-        for path, rec in sorted(prepared, key=lambda pr: pr[0]):
-            if path in existing_paths:
+        id_by_incoming: dict[str, int] = {}
+        for path, incoming, rec in sorted(prepared, key=lambda pr: pr[0]):
+            if path in existing:
                 skipped += 1
+                id_by_incoming[incoming] = existing[path]['id']
                 continue
-            existing_paths.add(path)
             self._file_seq += 1
             stored = dict(rec)
             stored['id'] = self._file_seq
@@ -267,13 +272,23 @@ class FakeServerAPI(ArcologyAPI):
             stored.setdefault('extraction_depth', rec.get('extraction_depth', 0))
             self.files.append(stored)
             self.files_by_id[stored['id']] = stored
+            existing[path] = stored
+            id_by_incoming[incoming] = stored['id']
             added += 1
+
+        # The server tracks total_files incrementally as batches arrive.
+        partition = self.partitions.get(partition_uuid)
+        if partition is not None:
+            partition['total_files'] = (partition.get('total_files') or 0) + added
 
         event = {'call': 'post_files', 'partition': partition_uuid, 'added': added}
         if skipped:
             event['skipped'] = skipped
         self.events.append(event)
-        response = {'added': added}
+        response = {
+            'added': added,
+            'files': [{'id': fid, 'path': p} for p, fid in id_by_incoming.items()],
+        }
         if skipped:
             response['skipped'] = skipped
         return 200, response

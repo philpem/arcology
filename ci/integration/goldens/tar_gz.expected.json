@@ -24,21 +24,12 @@
       "container_format": "TAR Archive",
       "filesystem": "archive",
       "label": null,
-      "total_files": 2
+      "total_files": null
     },
     {
       "added": 2,
       "call": "post_files",
       "partition": "it-part-0001"
-    },
-    {
-      "artefact": "it-art-0000",
-      "call": "queue_analysis",
-      "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract",
-        "partition_uuid": "it-part-0001"
-      },
-      "type": "archive_detect"
     },
     {
       "artefact": "it-art-0000",
@@ -56,24 +47,6 @@
         "partition_uuid": "it-part-0001"
       },
       "type": "format_convert"
-    },
-    {
-      "artefact": "it-art-0000",
-      "call": "queue_analysis",
-      "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract",
-        "partition_uuid": "it-part-0001"
-      },
-      "type": "riscos_module_parse"
-    },
-    {
-      "artefact": "it-art-0000",
-      "call": "queue_analysis",
-      "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract",
-        "partition_uuid": "it-part-0001"
-      },
-      "type": "replay_process"
     },
     {
       "call": "update_analysis",
@@ -94,14 +67,6 @@
     {
       "artefact": "it-art-0000",
       "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract",
-        "partition_uuid": "it-part-0001"
-      },
-      "type": "archive_detect"
-    },
-    {
-      "artefact": "it-art-0000",
-      "hints": {
         "partition_uuid": "it-part-0001"
       },
       "type": "product_recognition"
@@ -113,22 +78,6 @@
         "partition_uuid": "it-part-0001"
       },
       "type": "format_convert"
-    },
-    {
-      "artefact": "it-art-0000",
-      "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract",
-        "partition_uuid": "it-part-0001"
-      },
-      "type": "riscos_module_parse"
-    },
-    {
-      "artefact": "it-art-0000",
-      "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract",
-        "partition_uuid": "it-part-0001"
-      },
-      "type": "replay_process"
     }
   ],
   "output_tree": [

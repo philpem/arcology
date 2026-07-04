@@ -33,6 +33,24 @@ class PipelineError(RuntimeError):
     pass
 
 
+class _NullProgress:
+    """No-op stand-in for ``AnalysisWorker.progress`` (a ``ProgressReporter``).
+
+    The real reporter is created per job inside ``process_analysis`` — which the
+    driver deliberately bypasses — and forwards throttled ``update_analysis``
+    progress calls to the API.  Those emit on a wall-clock throttle, so wiring
+    the real reporter would add non-deterministic progress events to the golden.
+    Progress reporting is orthogonal to the pipeline behaviour under test, so a
+    no-op with the chainable ``start().update()`` surface is used instead.
+    """
+
+    def start(self, total=None, label=None):
+        return self
+
+    def update(self, done=None):
+        return True
+
+
 class PipelineDriver:
     def __init__(self, case_dir: Path):
         self.case_dir = Path(case_dir)
@@ -138,6 +156,10 @@ class PipelineDriver:
             artefact = fake.artefacts[analysis['artefact_uuid']]
             work_dir = work / analysis['uuid']
             work_dir.mkdir(parents=True, exist_ok=True)
+            # process_analysis (bypassed here) installs a per-job ProgressReporter
+            # on worker.progress; provide a no-op so handlers that report progress
+            # don't hit a None attribute.
+            worker.progress = _NullProgress()
             handler(worker, analysis, artefact, work_dir)
             steps += 1
 

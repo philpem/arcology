@@ -24,70 +24,12 @@
       "container_format": "ZIP Archive",
       "filesystem": "archive",
       "label": null,
-      "total_files": 3
+      "total_files": null
     },
     {
       "added": 3,
       "call": "post_files",
       "partition": "it-part-0001"
-    },
-    {
-      "artefact": "it-art-0000",
-      "call": "queue_analysis",
-      "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract",
-        "partition_uuid": "it-part-0001"
-      },
-      "type": "archive_detect"
-    },
-    {
-      "artefact": "it-art-0000",
-      "call": "queue_analysis",
-      "hints": {
-        "partition_uuid": "it-part-0001"
-      },
-      "type": "product_recognition"
-    },
-    {
-      "artefact": "it-art-0000",
-      "call": "queue_analysis",
-      "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract",
-        "partition_uuid": "it-part-0001"
-      },
-      "type": "format_convert"
-    },
-    {
-      "artefact": "it-art-0000",
-      "call": "queue_analysis",
-      "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract",
-        "partition_uuid": "it-part-0001"
-      },
-      "type": "riscos_module_parse"
-    },
-    {
-      "artefact": "it-art-0000",
-      "call": "queue_analysis",
-      "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract",
-        "partition_uuid": "it-part-0001"
-      },
-      "type": "replay_process"
-    },
-    {
-      "call": "update_analysis",
-      "details": {
-        "archive_type": "zip",
-        "derived_artefacts": 0,
-        "file_count": 3
-      },
-      "error_message": null,
-      "output_path": "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract",
-      "status": "complete",
-      "summary": "Extracted 3 files from ZIP Archive",
-      "tool_name": "unzip",
-      "type": "archive_extract"
     },
     {
       "archive_comment": null,
@@ -110,33 +52,40 @@
       "type": "archive_extract"
     },
     {
-      "call": "update_analysis",
-      "details": {
-        "archives_found": 1,
-        "compressors_found": 0,
-        "depth_limit_exceeded": 0
+      "artefact": "it-art-0000",
+      "call": "queue_analysis",
+      "hints": {
+        "partition_uuid": "it-part-0001"
       },
-      "error_message": null,
-      "output_path": null,
-      "status": "complete",
-      "summary": "Detected 1 archives (0 compressors), queued 1 for extraction",
-      "tool_name": null,
-      "type": "archive_detect"
-    },
-    {
-      "added": 1,
-      "call": "post_files",
-      "partition": "it-part-0001"
+      "type": "product_recognition"
     },
     {
       "artefact": "it-art-0000",
       "call": "queue_analysis",
       "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0007_archive-extract/partition_0_0",
-        "partition_uuid": "it-part-0001",
-        "path_prefix": "inner.zip"
+        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract",
+        "partition_uuid": "it-part-0001"
       },
-      "type": "archive_detect"
+      "type": "format_convert"
+    },
+    {
+      "call": "update_analysis",
+      "details": {
+        "archive_type": "zip",
+        "derived_artefacts": 0,
+        "file_count": 3
+      },
+      "error_message": null,
+      "output_path": "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract",
+      "status": "complete",
+      "summary": "Extracted 3 files from ZIP Archive",
+      "tool_name": "unzip",
+      "type": "archive_extract"
+    },
+    {
+      "added": 1,
+      "call": "post_files",
+      "partition": "it-part-0001"
     },
     {
       "artefact": "it-art-0000",
@@ -150,21 +99,11 @@
       "artefact": "it-art-0000",
       "call": "queue_analysis",
       "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0007_archive-extract/partition_0_0",
+        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0002_archive-extract/partition_0_0",
         "partition_uuid": "it-part-0001",
         "path_prefix": "inner.zip"
       },
       "type": "format_convert"
-    },
-    {
-      "artefact": "it-art-0000",
-      "call": "queue_analysis",
-      "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0007_archive-extract/partition_0_0",
-        "partition_uuid": "it-part-0001",
-        "path_prefix": "inner.zip"
-      },
-      "type": "riscos_module_parse"
     },
     {
       "call": "update_analysis",
@@ -175,25 +114,11 @@
         "unzip": {}
       },
       "error_message": null,
-      "output_path": "it-item_it-item/it-art-0000_root/it-an-0007_archive-extract/partition_0_0",
+      "output_path": "it-item_it-item/it-art-0000_root/it-an-0002_archive-extract/partition_0_0",
       "status": "complete",
       "summary": "Extracted 1 files from ZIP Archive archive",
       "tool_name": "unzip",
       "type": "archive_extract"
-    },
-    {
-      "call": "update_analysis",
-      "details": {
-        "archives_found": 0,
-        "compressors_found": 0,
-        "depth_limit_exceeded": 0
-      },
-      "error_message": null,
-      "output_path": null,
-      "status": "complete",
-      "summary": "Detected 0 archives (0 compressors), queued 0 for extraction",
-      "tool_name": null,
-      "type": "archive_detect"
     }
   ],
   "final_queue": [
@@ -215,22 +140,6 @@
     {
       "artefact": "it-art-0000",
       "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract",
-        "partition_uuid": "it-part-0001"
-      },
-      "type": "riscos_module_parse"
-    },
-    {
-      "artefact": "it-art-0000",
-      "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract",
-        "partition_uuid": "it-part-0001"
-      },
-      "type": "replay_process"
-    },
-    {
-      "artefact": "it-art-0000",
-      "hints": {
         "partition_uuid": "it-part-0001"
       },
       "type": "product_recognition"
@@ -238,27 +147,18 @@
     {
       "artefact": "it-art-0000",
       "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0007_archive-extract/partition_0_0",
+        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0002_archive-extract/partition_0_0",
         "partition_uuid": "it-part-0001",
         "path_prefix": "inner.zip"
       },
       "type": "format_convert"
-    },
-    {
-      "artefact": "it-art-0000",
-      "hints": {
-        "extraction_path": "it-item_it-item/it-art-0000_root/it-an-0007_archive-extract/partition_0_0",
-        "partition_uuid": "it-part-0001",
-        "path_prefix": "inner.zip"
-      },
-      "type": "riscos_module_parse"
     }
   ],
   "output_tree": [
     "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract/data/numbers.bin",
     "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract/inner.zip",
     "it-item_it-item/it-art-0000_root/it-an-0001_archive-extract/readme.txt",
-    "it-item_it-item/it-art-0000_root/it-an-0007_archive-extract/partition_0_0/inner/secret.txt"
+    "it-item_it-item/it-art-0000_root/it-an-0002_archive-extract/partition_0_0/inner/secret.txt"
   ],
   "partitions": [
     {
@@ -351,7 +251,7 @@
       "label": null,
       "partition_index": 0,
       "slug": "0",
-      "total_files": 3,
+      "total_files": 4,
       "uuid": "it-part-0001"
     }
   ]
