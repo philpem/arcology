@@ -568,7 +568,12 @@ scotch `replay-transcode` + ffmpeg (Acorn Replay → MP4; see
   heartbeat caps at `HEARTBEAT_MAX_SECONDS` (default 6h) so a wedged handler
   eventually becomes eligible. Stale jobs are re-queued at startup and every
   `STALE_RESET_INTERVAL` (300s). Reset is a full re-run (safe — the pipeline is
-  idempotent).
+  idempotent). Each re-queue bumps `Analysis.stale_reset_count`; once it reaches
+  `STALE_JOB_MAX_RETRIES` (default 5, `0` disables) `reset_stale_analyses_core()`
+  dead-letters the job to `FAILED` instead of re-queueing, so a *poison* job that
+  repeatedly crashes/hangs the worker can't loop forever (claim → stall →
+  reset → re-claim). A manual retry (`_reset_for_retry`) zeroes the counter for a
+  fresh budget.
 - **S3 Content-Type must be set at upload, not inferred at read.** S3 backends
   don't auto-detect MIME from the key, so an object uploaded without `ContentType`
   downloads instead of rendering inline. `S3Storage.put()`/`put_tree()` already

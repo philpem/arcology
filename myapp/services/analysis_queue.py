@@ -217,12 +217,23 @@ def pending_claimable_query(apply_heavy_cap=True):
 
 
 def reset_stale_analyses_core():
-    """Re-queue RUNNING jobs stuck longer than the stale timeout.  Returns count.
+    """Re-queue RUNNING jobs stuck longer than the stale timeout.
 
-    A single atomic UPDATE rather than a read-modify-write loop: a non-atomic
-    approach has a race window where a worker can commit status='completed'
-    between the read and the commit, causing the reset to overwrite the
-    completion and re-queue an already-finished job.
+    Returns the number of jobs re-queued to PENDING (the "recovered" count the
+    worker logs on startup).  Jobs that have already been re-queued
+    ``STALE_JOB_MAX_RETRIES`` times are *not* re-queued again: they are
+    dead-lettered to FAILED so a "poison" job (one that repeatedly crashes or
+    hangs the worker) cannot loop forever — claim, stall, stale-reset, re-claim,
+    stall — occupying a worker slot every cycle and burying the recovery log.
+    Set ``STALE_JOB_MAX_RETRIES`` to 0 (or below) to disable the cap and keep the
+    old unbounded-retry behaviour.
+
+    Atomic UPDATEs rather than a read-modify-write loop: a non-atomic approach
+    has a race window where a worker can commit status='completed' between the
+    read and the commit, causing the reset to overwrite the completion and
+    re-queue an already-finished job.  The dead-letter and re-queue UPDATEs key
+    on disjoint ``stale_reset_count`` ranges, so together they transition each
+    stale job exactly once.
 
     Heartbeat-based staleness: a job is stuck only if it has shown no sign of
     life (progress update or heartbeat, else its start) for the whole timeout
@@ -230,12 +241,43 @@ def reset_stale_analyses_core():
     and is therefore never reset.  Commits.
     """
     timeout_seconds = current_app.config.get('STALE_JOB_TIMEOUT_SECONDS', 3600)
+    max_retries = current_app.config.get('STALE_JOB_MAX_RETRIES', 5)
     # started_at is stored as naive UTC
     cutoff = naive_utc_now() - timedelta(seconds=timeout_seconds)
+    stale = (Analysis.status == AnalysisStatus.RUNNING) & (
+        func.coalesce(Analysis.progress_updated_at, Analysis.started_at) < cutoff)
+
+    dead_lettered = 0
+    if max_retries and max_retries > 0:
+        # Jobs that have already burnt their retry budget: fail them instead of
+        # re-queueing so the loop terminates and the bad job surfaces in the UI
+        # (an operator can inspect it and retry manually, which resets the count).
+        dead_result = db.session.execute(
+            update(Analysis)
+            .where(stale)
+            .where(Analysis.stale_reset_count >= max_retries)
+            .values(
+                status=AnalysisStatus.FAILED,
+                success=False,
+                error_message=(
+                    f'Job went stale and was re-queued {max_retries} time(s) '
+                    'without completing; the worker likely crashed or hung while '
+                    'processing it.  Marked failed to break the stale-recovery '
+                    'loop — retry manually to try again.'),
+                completed_at=naive_utc_now(),
+                progress_message=None,
+                progress_current=None,
+                progress_total=None,
+                progress_updated_at=None,
+            )
+        )
+        dead_lettered = dead_result.rowcount
+        # Constrain the re-queue pass to jobs still within budget.
+        stale = stale & (Analysis.stale_reset_count < max_retries)
+
     result = db.session.execute(
         update(Analysis)
-        .where(Analysis.status == AnalysisStatus.RUNNING)
-        .where(func.coalesce(Analysis.progress_updated_at, Analysis.started_at) < cutoff)
+        .where(stale)
         .values(
             status=AnalysisStatus.PENDING,
             error_message=None,
@@ -252,9 +294,14 @@ def reset_stale_analyses_core():
             progress_current=None,
             progress_total=None,
             progress_updated_at=None,
+            stale_reset_count=Analysis.stale_reset_count + 1,
         )
     )
     db.session.commit()
+    if dead_lettered:
+        current_app.logger.warning(
+            'Dead-lettered %d analysis job(s) to FAILED after exceeding '
+            'STALE_JOB_MAX_RETRIES=%d stale re-queues', dead_lettered, max_retries)
     return result.rowcount
 
 # vim: ts=4 sw=4 et

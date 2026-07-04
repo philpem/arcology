@@ -106,7 +106,12 @@ def _require_analysis_status(analysis, expected_status, message):
 
 
 def _reset_for_retry(analysis):
-    """Clear worker-populated fields so the job can be re-queued cleanly."""
+    """Clear worker-populated fields so the job can be re-queued cleanly.
+
+    Also zeroes ``stale_reset_count``: a manual/operator retry is an explicit
+    decision to try again, so it grants a fresh stale-recovery budget rather
+    than immediately re-tripping the dead-letter cap (see
+    ``reset_stale_analyses_core``)."""
     analysis.status = AnalysisStatus.PENDING
     analysis.error_message = None
     analysis.started_at = None
@@ -122,6 +127,7 @@ def _reset_for_retry(analysis):
     analysis.progress_current = None
     analysis.progress_total = None
     analysis.progress_updated_at = None
+    analysis.stale_reset_count = 0
 
 
 def _status_sort_order():
