@@ -58,6 +58,25 @@ def _safe_inline_mimetype(filename):
     return None
 
 
+def is_safe_output_path(filename) -> bool:
+    """Reject output paths that could authorise as one artefact but serve another.
+
+    ``output_access_decision`` derives the owning artefact from the UUID in the
+    *second path component* of the raw filename, while ``serve_output_file``
+    serves the ``realpath`` of that filename (confined only to the outputs
+    root).  A ``..`` segment collapses at serve time to a different artefact's
+    directory, so the two would key on different artefacts — an authorisation
+    bypass across every analysis output.  Requiring every path segment to be a
+    plain name (no empty / ``.`` / ``..`` segment, i.e. no traversal and no
+    leading-slash absolute path) keeps the authorised path and the served path
+    identical.  Applied by BOTH ``output_access_decision`` and
+    ``serve_output_file`` so neither can be reached with an unsafe path.
+    """
+    if not filename:
+        return False
+    return not any(seg in ('', '.', '..') for seg in filename.split('/'))
+
+
 def serve_artefact_file(artefact, inline=False):
     """Serve an artefact's stored file.
 
@@ -191,6 +210,10 @@ def output_access_decision(filename, user, *, sees_all=False):
     is a legitimate, unrestricted route to the same content.  For a legacy
     single-owner path this collapses to the previous per-artefact check.
     """
+    # A traversing path would authorise against a different artefact than it
+    # serves (see is_safe_output_path); treat it as nonexistent.
+    if not is_safe_output_path(filename):
+        return 'not_found'
     viewable = [
         a for a in resolve_output_artefacts(filename)
         if can_view_artefact(a, user, sees_all=sees_all)
@@ -212,6 +235,11 @@ def serve_output_file(filename):
     Callers must have already enforced artefact visibility via
     resolve_output_artefact().
     """
+
+    # Defence in depth: never serve a traversing path even if a caller reaches
+    # this without going through output_access_decision (which also rejects it).
+    if not is_safe_output_path(filename):
+        return None
 
     storage = current_app.storage
     key = storage.storage_key('outputs', filename)
