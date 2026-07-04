@@ -33,6 +33,7 @@ from .base import (
     run_tool_with_output,
     tool_result,
 )
+from .documents import word_to_text
 from .extraction import (
     enumerate_extracted_files,
     extract_acorn_disc_image_manager,
@@ -76,6 +77,7 @@ __all__ = [
     'ArmovieParseError',
     'parse_armovie_header',
     'file_has_armovie_magic',
+    'word_to_text',
     'run_tool',
     'run_tool_with_output',
     'get_process_output',
