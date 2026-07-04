@@ -510,7 +510,9 @@ class Item(db.Model):
     pending_deletion: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=sa_false(), index=True
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    # Indexed: the dashboard "recent items" list and the item "uploaded" sort
+    # both ORDER BY created_at DESC.
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     platform: Mapped[Optional["Platform"]] = relationship(back_populates="items")
@@ -647,10 +649,15 @@ class Artefact(db.Model):
     file_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     mime_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     
-    # Hashes (computed after upload)
-    md5: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    sha1: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Hashes (computed after upload).  Individually indexed so a hash: search
+    # (and the sha256→sha1→md5 match-degradation path) is an index lookup rather
+    # than a seq scan — mirrors ExtractedFile/KnownFile, which index md5/sha1.
+    # The existing composite ix_artefacts_size_sha256 leads on file_size (for the
+    # dedup GROUP BY) so it can't serve a sha256-only lookup; hence the standalone
+    # sha256 index here.
+    md5: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
+    sha1: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    sha256: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
     # Fuzzy hash (TLSH) for byte-level similarity.  Skipped for flux artefact
     # types (SCP/DFI/A2R) where raw bytes carry timing noise.  NULL when not yet
     # computed, the file is too small, or py-tlsh is unavailable.
@@ -675,8 +682,9 @@ class Artefact(db.Model):
     derived_from_analysis_id: Mapped[int | None] = mapped_column(
         ForeignKey("analyses.id", ondelete="SET NULL"), index=True, nullable=True
     )
-    
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    # Indexed: artefact lists sort by upload time (Item view "uploaded" sort).
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     item: Mapped["Item"] = relationship(back_populates="artefacts")
