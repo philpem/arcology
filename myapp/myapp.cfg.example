@@ -89,6 +89,14 @@ WORKER_API_KEY = ""
 # longest expected analysis run time.  Default: 3600 (1 hour).
 STALE_JOB_TIMEOUT_SECONDS = 3600
 
+# How many times a job may be re-queued after going stale before it is
+# dead-lettered to FAILED instead of retried again.  A "poison" job that
+# repeatedly crashes or hangs the worker would otherwise loop forever (claim ->
+# stall -> stale-reset -> re-claim); this caps the retries and surfaces the bad
+# job in the UI (an operator can inspect it and retry manually, which resets the
+# count).  Set to 0 to disable the cap and keep unbounded retries.  Default: 5.
+STALE_JOB_MAX_RETRIES = 5
+
 # Maximum time (in seconds) a single worker-driven HashDB step may run on the
 # server: the per-request PostgreSQL statement_timeout for recognition steps,
 # and the wall-clock budget for link steps (which run many short statements and

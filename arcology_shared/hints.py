@@ -63,6 +63,18 @@ class HintKey:
     OUTPUT_DIR_PREFIXES = 'output_dir_prefixes'
     CACHE_PREFIXES = 'cache_prefixes'
 
+    # --- Deferred re-analysis marker ---
+    # Present in a CLEANUP job's hints when that job is a *deferred re-analysis
+    # reset trigger* rather than a plain storage cleanup: the previous run's
+    # results are left intact and visible until this job reaches the front of
+    # the worker queue, at which point the API claim path performs the DB reset
+    # and queues the replacement analyses (see queue_deferred_reanalysis and
+    # apply_deferred_reanalysis_reset in myapp/services/artefact_lifecycle.py).
+    # The value is a dict {'priority': int, 'analysis_hints': dict|None}.  The
+    # worker's process_cleanup ignores this key; it deletes only the standard
+    # CLEANUP payload keys above, which are carried alongside it.
+    REANALYSIS_RESET = 'reanalysis_reset'
+
 
 # Upload hints a user may pass via ``arco upload --hint KEY=VALUE``.  Single
 # source of truth for the CLI help text, the client docstring, and the

@@ -56,6 +56,18 @@ end-to-end in-process; the **worker hard-excludes** them
 - Claim eligibility (incl. the CLEANUP re-analysis barrier) and stale-reset live
   in `myapp/services/analysis_queue.py` (`pending_claimable_query()`,
   `reset_stale_analyses_core()`), shared by the worker-poll endpoint and runner.
+- **Deferred (reset-on-claim) re-analysis.** A re-analyse (`flask reanalyse`, the
+  web analyse route) does *not* clear the artefact up front — that would blank it
+  for the whole time its jobs wait in the queue. Instead `queue_deferred_reanalysis()`
+  (`myapp/services/artefact_lifecycle.py`) queues one CLEANUP job carrying a
+  `HintKey.REANALYSIS_RESET` marker and leaves the previous run fully visible. When
+  a worker claims that trigger (queue position ⇒ a `--priority low` bulk re-analysis
+  yields to real work), the API claim path (`update_analysis` →
+  `apply_deferred_reanalysis_reset()`) performs the destructive reset and queues the
+  replacement analyses in the *same transaction* as the claim; the CLEANUP barrier
+  then holds those replacements until the trigger's storage cleanup is terminal.
+  The marker is stripped on first apply, so a stale re-claim re-runs only the
+  storage cleanup — never the reset. Covered by `ci/test_deferred_reanalysis.py`.
 - The task runner is **single-instance** — don't scale it. Intervals are
   `TASKRUNNER_*` config keys. To add a DB-only analysis type, add it to
   `CONTROL_PLANE_ANALYSIS_TYPES` **and** `DISPATCH` in
@@ -501,6 +513,7 @@ Tests live in `ci/` and run in the `app-tests` job (SQLite in-memory):
 | `test_worker_io.py` | Bounded-memory access (`SectorReader`, `read_file_capped`, sparse-image regression) |
 | `test_similarity.py` | Content-set similarity, visibility filtering |
 | `test_taskrunner.py` | Control-plane classification, atomic claim, CLEANUP barrier, drivers |
+| `test_deferred_reanalysis.py` | Deferred (reset-on-claim) re-analysis: trigger queuing, claim-time swap, idempotency, barrier |
 | `test_output_restrictions.py` | Output/restriction gates (incl. Replay) |
 | `test_transcode_dedup.py`, `test_transcode_dedup_backfill.py` | Content-addressed transcode dedup, legacy backfill, redo/invalidation |
 
@@ -568,7 +581,12 @@ scotch `replay-transcode` + ffmpeg (Acorn Replay → MP4; see
   heartbeat caps at `HEARTBEAT_MAX_SECONDS` (default 6h) so a wedged handler
   eventually becomes eligible. Stale jobs are re-queued at startup and every
   `STALE_RESET_INTERVAL` (300s). Reset is a full re-run (safe — the pipeline is
-  idempotent).
+  idempotent). Each re-queue bumps `Analysis.stale_reset_count`; once it reaches
+  `STALE_JOB_MAX_RETRIES` (default 5, `0` disables) `reset_stale_analyses_core()`
+  dead-letters the job to `FAILED` instead of re-queueing, so a *poison* job that
+  repeatedly crashes/hangs the worker can't loop forever (claim → stall →
+  reset → re-claim). A manual retry (`_reset_for_retry`) zeroes the counter for a
+  fresh budget.
 - **S3 Content-Type must be set at upload, not inferred at read.** S3 backends
   don't auto-detect MIME from the key, so an object uploaded without `ContentType`
   downloads instead of rendering inline. `S3Storage.put()`/`put_tree()` already
