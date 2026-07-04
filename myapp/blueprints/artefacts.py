@@ -65,6 +65,7 @@ from ..services.artefact_lifecycle import (
     queue_storage_cleanup,
     reset_artefact_for_reanalysis,
     validate_artefact_move,
+    visible_derived_artefact_ids,
 )
 from ..services.artefact_storage import (
     compute_file_hashes,
@@ -471,7 +472,7 @@ def analysis_status_json(uuid):
     Returns: {"pending": N, "running": N, "completed": N, "failed": N, "total": N}
     """
     artefact = _get_artefact_or_404(uuid=uuid)
-    all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    all_ids = visible_derived_artefact_ids(artefact, current_user)
     counts = {s.value: 0 for s in AnalysisStatus}
     rows = (
         db.session.query(Analysis.status, db.func.count(Analysis.id))
@@ -495,7 +496,7 @@ def dirtree_html(uuid):
     partition (used when the user has already selected a partition filter).
     """
     artefact = _get_artefact_or_404(uuid=uuid)
-    all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    all_ids = visible_derived_artefact_ids(artefact, current_user)
 
     all_partitions = (
         Partition.query
@@ -609,7 +610,7 @@ def cautions(uuid):
     """
 
     artefact = _get_artefact_or_404(uuid=uuid)
-    all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    all_artefact_ids = visible_derived_artefact_ids(artefact, current_user)
     cautions_data = collect_protection_cautions(all_artefact_ids)
 
     by_type = cautions_data['by_type']
@@ -1566,7 +1567,7 @@ def _render_viewer(artefact):
         current_path += '/'
     # Filename glob filter — applied to the source file's basename in Mode 2.
     filename_filter = request.args.get('filename', '').strip()
-    all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    all_artefact_ids = visible_derived_artefact_ids(artefact, current_user)
     # Partition IDs across the whole artefact tree, fetched once — the
     # archive-path, filetype-facet, and explicit-content sections below all
     # need the same set (previously three identical queries per request).
@@ -2600,8 +2601,10 @@ def _render_artefact_view(artefact):
 
     # Collect all artefact IDs: current + all derived (recursively).
     # Used for both partitions/files and analyses so that follow-on jobs
-    # queued against derived partition artefacts are visible here.
-    all_artefact_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    # queued against derived partition artefacts are visible here.  A derived
+    # artefact can be independently private even when this root is public, so
+    # re-filter by visibility rather than trusting the root's guard.
+    all_artefact_ids = visible_derived_artefact_ids(artefact, current_user)
 
     analyses_ctx = _view_analysis_summaries(all_artefact_ids)
 
