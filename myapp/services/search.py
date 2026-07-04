@@ -1030,6 +1030,32 @@ def _check_query_warnings(tokens: dict) -> list:
     return warnings
 
 
+def result_hints(tokens: dict, results: dict | None) -> list:
+    """Post-search hints that depend on the *result counts*, not just the query.
+
+    Complements :func:`_check_query_warnings` (which is purely static): here we
+    can nudge a user whose query was valid but returned nothing useful.
+
+    Currently: a ``filename:`` term is an *exact* match unless it carries a
+    wildcard (``_ilike_path``), so ``filename:readme`` finding nothing is usually
+    a partial-match the user expected — suggest the wildcard form.
+    """
+    hints = []
+    if not results:
+        return hints
+    if results.get('totals', {}).get('files', 0) == 0:
+        for v in tokens.get('filename', []):
+            if '*' not in v:
+                vesc = escape(v)
+                hints.append(Markup(
+                    f"<code>filename:{vesc}</code> matches that name exactly and found "
+                    f"nothing — try <code>filename:{vesc}*</code> or "
+                    f"<code>filename:*{vesc}*</code> for a partial match."
+                ))
+                break
+    return hints
+
+
 def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE, dedupe: bool = False) -> dict:
     """Execute queries and return result buckets.
 
