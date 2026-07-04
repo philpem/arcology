@@ -18,6 +18,7 @@ import re
 from flask_login import current_user
 from markupsafe import Markup, escape
 from sqlalchemy import String, and_, case, cast, distinct, false, func, literal, or_
+from sqlalchemy.orm import selectinload
 from ..database import (
     Artefact,
     ArtefactMastering,
@@ -365,6 +366,19 @@ def _file_order():
     )
 
 
+def _file_eager_options():
+    """Eager-load the restriction collections the file-result rows render.
+
+    ``file_download_icon`` reads ``artefact.restrictions`` and
+    ``extracted_file.restrictions`` for every row; without this each rendered row
+    lazy-loads both, i.e. ~2 extra queries per file (up to ~100 on a full page).
+    """
+    return (
+        selectinload(Artefact.restrictions),
+        selectinload(ExtractedFile.restrictions),
+    )
+
+
 def _paginate_file_query(q, page, per_page, dedupe=False):
     """Order, paginate and (optionally) consolidate a file-result query.
 
@@ -379,7 +393,8 @@ def _paginate_file_query(q, page, per_page, dedupe=False):
         return _dedupe_file_rows(q, page=page, per_page=per_page)
     total = _count_distinct(q, ExtractedFile.id)
     fetched = (
-        q.order_by(*_file_order())
+        q.options(*_file_eager_options())
+        .order_by(*_file_order())
         .offset((page - 1) * per_page)
         .limit(per_page + 1)
         .all()
@@ -619,6 +634,7 @@ def _dedupe_file_rows(q, page=1, per_page=PER_PAGE):
             .join(Partition, ExtractedFile.partition_id == Partition.id)
             .join(Artefact, Partition.artefact_id == Artefact.id)
             .join(Item, Artefact.item_id == Item.id)
+            .options(*_file_eager_options())
             .filter(ExtractedFile.id.in_(list(counts)))
             # Re-assert visibility on the reload: the ids are already constrained
             # by the visibility-filtered base above, but keep the safety local
@@ -815,6 +831,29 @@ def _search_artefact_hashes(tokens, page=1, per_page=PER_PAGE):
     ], has_more, total
 
 
+def _attach_artefact_counts(items):
+    """Annotate each Item with ``search_artefact_count`` — its *visible* artefacts.
+
+    The items result tab shows an artefact count per row.  Reading
+    ``item.artefacts | length`` in the template lazy-loads every artefact of
+    every item (an N+1 that also counts private artefacts the viewer can't see);
+    one grouped, visibility-filtered COUNT here replaces it.
+    """
+    if not items:
+        return
+    ids = [i.id for i in items]
+    counts = dict(
+        db.session.query(Artefact.item_id, func.count(Artefact.id))
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(Artefact.item_id.in_(ids))
+        .filter(artefact_visibility_clause(current_user))
+        .group_by(Artefact.item_id)
+        .all()
+    )
+    for item in items:
+        item.search_artefact_count = counts.get(item.id, 0)
+
+
 def _search_text_items(tokens, page=1, per_page=PER_PAGE):
     """Free-text search on item name/description.
 
@@ -849,7 +888,9 @@ def _search_text_items(tokens, page=1, per_page=PER_PAGE):
         .all()
     )
     has_more = len(fetched) > per_page
-    return fetched[:per_page], has_more, total
+    page_items = fetched[:per_page]
+    _attach_artefact_counts(page_items)
+    return page_items, has_more, total
 
 
 def _search_text_artefacts(tokens, page=1, per_page=PER_PAGE):
@@ -1120,7 +1161,8 @@ def run_duplicate_search(key: str, page: int = 1, per_page: int = PER_PAGE):
     )
     total = _count_distinct(q, ExtractedFile.id)
     rows = (
-        q.order_by(*_file_order())
+        q.options(*_file_eager_options())
+        .order_by(*_file_order())
         .offset((page - 1) * per_page)
         .limit(per_page)
         .all()

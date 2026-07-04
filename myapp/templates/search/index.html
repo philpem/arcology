@@ -364,7 +364,7 @@
 				</td>
 				<td>{{ item.platform.name if item.platform else '-' }}</td>
 				<td>{{ item.category.name if item.category else '-' }}</td>
-				<td><span class="badge bg-secondary">{{ item.artefacts|length }}</span></td>
+				<td><span class="badge bg-secondary">{{ item.search_artefact_count if item.search_artefact_count is defined else item.artefacts|length }}</span></td>
 			</tr>
 			{% endfor %}
 			</tbody>

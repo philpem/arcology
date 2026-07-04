@@ -90,12 +90,18 @@ def index():
             if count is not None and count > 1:
                 dupe_info[ef.id] = {'count': count, 'key': getattr(ef, 'dupe_key', None)}
 
-    known_protection_types = sorted(
-        v for (v,) in db.session.query(distinct(ArtefactProtection.protection_type)).all()
-    )
-    known_mastering_types = sorted(
-        v for (v,) in db.session.query(distinct(ArtefactMastering.mastering_type)).all()
-    )
+    # Distinct protection/mastering types only populate the quick-reference cards
+    # on the empty landing page (results is None); skip the two DISTINCT scans on
+    # every actual search.
+    known_protection_types = []
+    known_mastering_types = []
+    if results is None:
+        known_protection_types = sorted(
+            v for (v,) in db.session.query(distinct(ArtefactProtection.protection_type)).all()
+        )
+        known_mastering_types = sorted(
+            v for (v,) in db.session.query(distinct(ArtefactMastering.mastering_type)).all()
+        )
 
     return render_template(
         'search/index.html',
