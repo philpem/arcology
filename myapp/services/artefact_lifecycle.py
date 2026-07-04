@@ -44,7 +44,7 @@ from ..database import (
 from ..extensions import db
 from ..utils.blobs import artefact_blob
 from ..utils.slugs import ensure_unique_slug
-from ..visibility import can_change_owner, can_contribute_to_item
+from ..visibility import artefact_visibility_clause, can_change_owner, can_contribute_to_item
 from .artefact_storage import (
     get_artefact_storage_key,
     get_output_folder,
@@ -64,6 +64,27 @@ def get_all_derived_artefact_ids(artefact: Artefact) -> list[int]:
     cte = cte.union_all(recursive)
     rows = db.session.execute(select(cte.c.id)).all()
     return [r[0] for r in rows]
+
+
+def visible_derived_artefact_ids(artefact: Artefact, user) -> list[int]:
+    """IDs of *artefact* and its derived subtree that *user* may view.
+
+    A derived artefact can be independently private (``Artefact.effective_private``
+    is true when its own ``is_private`` flag is set) even when its root is
+    public, so any view that aggregates across the derivation tree — file
+    listings, analyses, partitions, protection cautions, the viewer grid — must
+    re-filter by visibility.  Trusting only the root check (as the per-object
+    route guard does) would leak a deliberately-private derived artefact's
+    metadata into the still-public root's page.  Single source for that filtered
+    id collection, shared by the artefact-view stack and the analysis listing.
+    """
+    all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    return [
+        row[0] for row in db.session.query(Artefact.id)
+        .join(Item, Artefact.item_id == Item.id)
+        .filter(Artefact.id.in_(all_ids), artefact_visibility_clause(user))
+        .all()
+    ]
 
 
 def collect_all_analyses(artefact: Artefact) -> list:

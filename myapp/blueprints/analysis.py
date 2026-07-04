@@ -21,7 +21,7 @@ from ..database import (
 )
 from ..extensions import db
 from ..permissions import require_permission
-from ..services.artefact_lifecycle import get_all_derived_artefact_ids
+from ..services.artefact_lifecycle import visible_derived_artefact_ids
 from ..utils.pagination import VALID_PER_PAGE, resolve_per_page
 from ..utils.timeutils import naive_utc_now
 from ..visibility import artefact_visibility_clause, can_view_artefact, can_view_item
@@ -390,8 +390,7 @@ def _visible_artefact_ids(criterion):
 
 def _visible_artefact_ids_for(artefact):
     """IDs of *artefact* and its derived subtree the current user may view."""
-    all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
-    return _visible_artefact_ids(Artefact.id.in_(all_ids))
+    return visible_derived_artefact_ids(artefact, current_user)
 
 
 def _manageable_item_artefact_ids(item):
