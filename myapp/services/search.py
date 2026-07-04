@@ -916,6 +916,11 @@ def _rank_order(tsvector_sql: str, tsq):
     return func.ts_rank_cd(literal_column(tsvector_sql), tsq).desc()
 
 
+def _fts_match(tsvector_sql: str, tsq):
+    """A ``tsvector @@ tsquery`` match predicate (PostgreSQL FTS)."""
+    return literal_column(tsvector_sql).op('@@')(tsq)
+
+
 def _attach_snippets(rows, id_attr, text_expr, tsq):
     """Attach a ``search_snippet`` (highlighted Markup) to each row.
 
@@ -1072,8 +1077,16 @@ def _search_documents(tokens, page=1, per_page=PER_PAGE):
     """Full-text search of converted document content — the ``content:`` key.
 
     Matches ``search_documents`` (populated from FORMAT_CONVERT text outputs).
-    On PostgreSQL the results are FTS-ranked with a highlighted snippet; on
-    SQLite matching falls back to substring ILIKE with no snippet.
+
+    Matching is dialect-specific:
+
+    * **PostgreSQL** — full-text ``search_vector @@ websearch_to_tsquery(...)``,
+      so a quoted ``content:"red foxes are"`` is a phrase match that tolerates
+      whitespace/punctuation between the words, stems (``foxes`` ≈ ``fox``), and
+      ignores stop words.  Results are FTS-ranked with a highlighted snippet.
+    * **SQLite** (tests / lightweight dev) — substring ILIKE on ``content``, no
+      snippet.  Stricter (a phrase must be a literal substring), but SQLite has
+      no FTS; production runs PostgreSQL.
 
     Security — the indexed text is a rendering of the artefact's bytes, so a
     content hit for an artefact whose outputs the user may not access
@@ -1090,29 +1103,34 @@ def _search_documents(tokens, page=1, per_page=PER_PAGE):
     if not values:
         return [], False, 0
 
-    # Substring matching: the SQLite path, and a permissive superset on PG.
-    doc_filter = [SearchDocument.content.ilike(f'%{v}%') for v in values]
-    doc_filter += [
-        _negate(SearchDocument.content.ilike(f'%{v}%'))
-        for v in _neg(tokens, 'content')
-    ]
+    tsq = None
+    qstr = _websearch_query_string(tokens, key='content') if _fts_available() else None
+    if qstr:
+        # PostgreSQL: lexeme / phrase / stemming match via the FTS query.
+        tsq = func.websearch_to_tsquery('english', qstr)
+        match_clause = _fts_match('search_documents.search_vector', tsq)
+    else:
+        # SQLite / no-FTS fallback: literal substring, words ANDed, negations excluded.
+        doc_filter = [SearchDocument.content.ilike(f'%{v}%') for v in values]
+        doc_filter += [
+            _negate(SearchDocument.content.ilike(f'%{v}%'))
+            for v in _neg(tokens, 'content')
+        ]
+        match_clause = and_(*doc_filter)
+
     q = (
         db.session.query(SearchDocument, Artefact, Item)
         .join(Artefact, SearchDocument.artefact_id == Artefact.id)
         .join(Item, Artefact.item_id == Item.id)
-        .filter(and_(*doc_filter))
+        .filter(match_clause)
         .filter(artefact_visibility_clause(current_user))
     )
     total = _count_rows(q)
 
     order = [func.lower(Item.name), func.lower(Artefact.label), SearchDocument.file_path]
-    tsq = None
-    if _fts_available():
-        qstr = _websearch_query_string(tokens, key='content')
-        if qstr:
-            tsq = func.websearch_to_tsquery('english', qstr)
-            order = [_rank_order('search_documents.search_vector', tsq),
-                     func.lower(Item.name), func.lower(Artefact.label)]
+    if tsq is not None:
+        order = [_rank_order('search_documents.search_vector', tsq),
+                 func.lower(Item.name), func.lower(Artefact.label)]
 
     fetched = (
         q.order_by(*order)
