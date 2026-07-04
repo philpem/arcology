@@ -598,6 +598,7 @@ class TestSearchLogic(unittest.TestCase):
                 storage_path='side_a.hfe',
                 storage_directory=StorageDirectory.UPLOADS,
                 md5='aaaabbbbccccdddd0000111122223333',
+                sha1='dada' + 'b' * 36,
                 sha256='a' * 64,
             )
             _db.session.add(art)
@@ -1551,6 +1552,16 @@ class TestSearchLogic(unittest.TestCase):
 
     def test_artefact_md5_search(self):
         results = self._search('md5:aaaabbbbccccdddd0000111122223333')
+        hash_results = [r for r in results['artefacts'] if r['type'] == 'artefact_hash']
+        self.assertTrue(len(hash_results) > 0)
+
+    def test_artefact_sha1_search(self):
+        results = self._search('sha1:dada' + 'b' * 36)
+        hash_results = [r for r in results['artefacts'] if r['type'] == 'artefact_hash']
+        self.assertTrue(len(hash_results) > 0)
+
+    def test_artefact_sha1_prefix_search(self):
+        results = self._search('sha1:dadabbbb')
         hash_results = [r for r in results['artefacts'] if r['type'] == 'artefact_hash']
         self.assertTrue(len(hash_results) > 0)
 

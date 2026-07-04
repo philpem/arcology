@@ -806,10 +806,12 @@ def _search_tags(tokens, page=1, per_page=PER_PAGE):
 
 
 def _search_artefact_hashes(tokens, page=1, per_page=PER_PAGE):
-    """Search artefact-level hashes (md5, sha256)."""
+    """Search artefact-level hashes (md5, sha1, sha256)."""
     art_filters = []
     for h in tokens.get('md5', []):
         art_filters.append(_hash_filter(Artefact.md5, h, 32))
+    for h in tokens.get('sha1', []):
+        art_filters.append(_hash_filter(Artefact.sha1, h, 40))
     for h in tokens.get('sha256', []):
         art_filters.append(_hash_filter(Artefact.sha256, h, 64))
 
@@ -819,6 +821,7 @@ def _search_artefact_hashes(tokens, page=1, per_page=PER_PAGE):
     hash_filter = [or_(*art_filters)]
     hash_filter += _negated_clauses(tokens, {
         'md5':    lambda v: _hash_filter(Artefact.md5, v, 32),
+        'sha1':   lambda v: _hash_filter(Artefact.sha1, v, 40),
         'sha256': lambda v: _hash_filter(Artefact.sha256, v, 64),
     })
 
@@ -1078,7 +1081,7 @@ def _check_query_warnings(tokens: dict) -> list:
     _file_keys     = frozenset({'md5', 'sha1', 'sha256', 'filename', 'path', 'type', 'ext'})
     _disc_keys     = frozenset({'label', 'ident', 'fs'})
     _replay_keys   = frozenset(k for k in KNOWN_KEYS if k.startswith('replay_'))
-    _art_hash_keys = frozenset({'md5', 'sha256'})
+    _art_hash_keys = frozenset({'md5', 'sha1', 'sha256'})
     _solo_keys     = frozenset({'protection', 'mastering', 'module', 'command', 'swi', 'tag', 'text'})
 
     def _group_active(neg_key):
@@ -1258,7 +1261,7 @@ def _run_search(tokens: dict, page: int = 1, per_page: int = PER_PAGE, dedupe: b
         _add('artefacts', tag_results, has_more, total)
 
     # Artefact hash search
-    if any(k in tokens for k in ('md5', 'sha256')):
+    if any(k in tokens for k in ('md5', 'sha1', 'sha256')):
         hash_results, has_more, total = _search_artefact_hashes(tokens, page=page, per_page=per_page)
         _add('artefacts', hash_results, has_more, total)
 
