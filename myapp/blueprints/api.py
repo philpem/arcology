@@ -12,7 +12,7 @@ from functools import wraps
 from flask import Blueprint, abort, current_app, g, jsonify, request
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.orm import contains_eager, joinedload, selectinload
+from sqlalchemy.orm import contains_eager, joinedload, selectinload, undefer
 from sqlalchemy.orm.exc import StaleDataError
 from werkzeug.utils import secure_filename
 from arcology_shared.enums import COMPRESSED_RAW_SECTOR_TYPES
@@ -2593,8 +2593,10 @@ def chunked_upload_complete_status(upload_uuid):
 @blueprint.route('/hash-databases', methods=['GET'])
 @require_auth('read_only')
 def list_hash_databases():
+    # undefer file_count: serialised for every row, so load it in one query.
     databases = (
         HashDatabase.query
+        .options(undefer(HashDatabase.file_count))
         .filter(HashDatabase.is_deleting.is_(False))
         .order_by(HashDatabase.name)
         .all()
