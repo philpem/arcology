@@ -29,11 +29,12 @@
     <div class="list-group list-group-flush" style="--depth-base: 0rem; --depth-step: 1.5rem;">
         {% for node in nodes recursive %}
         <div class="list-group-item d-flex justify-content-between depth-indent" style="--depth: {{ loop.depth }};">
-            <div><strong>{{ node.name }}</strong> <span class="badge bg-secondary" title="{{ node.items|length }} item(s) directly {{ preposition }} this {{ noun|lower }}{% if node.children %} &mdash; child {{ noun_plural|lower }} may have additional items{% endif %}">{{ node.items|length }}</span></div>
+            {% set node_item_count = item_counts.get(node.id, 0) %}
+            <div><strong>{{ node.name }}</strong> <span class="badge bg-secondary" title="{{ node_item_count }} item(s) directly {{ preposition }} this {{ noun|lower }}{% if node.children %} &mdash; child {{ noun_plural|lower }} may have additional items{% endif %}">{{ node_item_count }}</span></div>
             {% if user_can_write %}
             <div>
                 <a href="{{ url_for(edit_endpoint, id=node.id) }}" class="btn btn-sm btn-outline-primary" aria-label="Edit {{ node.name }}"><i class="bi bi-pencil"></i></a>
-                {% if not node.items and not node.children %}
+                {% if node_item_count == 0 and not node.children %}
                 {{ delete_trigger(
                     url_for(delete_endpoint, id=node.id),
                     node.name, title='Delete '~noun,

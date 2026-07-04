@@ -5,17 +5,27 @@ Platforms, categories, tags, and external systems.
 """
 
 from flask import Blueprint, flash, render_template
-from flask_login import login_required
+from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
 from sqlalchemy import func
-from sqlalchemy.orm import selectinload
 from wtforms import SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Length, Optional
-from ..database import Category, ExternalSystem, HashDatabase, Platform, Tag
+from ..database import (
+    Artefact,
+    Category,
+    ExternalSystem,
+    HashDatabase,
+    Item,
+    Platform,
+    Tag,
+    artefact_tags,
+    item_tags,
+)
 from ..extensions import db
 from ..permissions import public_readable, require_permission
 from ..utils.db_helpers import model_choice_list
 from ..utils.web_forms import SafeExternalUrl, redirect_local
+from ..visibility import artefact_visibility_clause, item_visibility_clause
 
 ROUTENAME = __name__.replace('.', '_')
 
@@ -116,6 +126,46 @@ def _delete_with_guards(obj, endpoint: str, success_label: str, guards: list[tup
     return _route_redirect(endpoint)
 
 
+def _visible_item_counts_by(fk_column) -> dict:
+    """``{taxonomy_id: visible-item-count}`` for a Platform/Category FK column.
+
+    One visibility-filtered ``GROUP BY`` instead of ``node.items|length`` per
+    tree node, which loaded every Item entity just to count it (and counted
+    private items on these public-readable pages).  Direct items only — matching
+    the previous per-node relationship count.
+    """
+    rows = (
+        db.session.query(fk_column, func.count(Item.id))
+        .filter(fk_column.is_not(None), item_visibility_clause(current_user))
+        .group_by(fk_column)
+        .all()
+    )
+    return dict(rows)
+
+
+def _visible_tag_item_counts() -> dict:
+    """``{tag_id: visible-item-count}`` via a GROUP BY over item_tags."""
+    return dict(
+        db.session.query(item_tags.c.tag_id, func.count(item_tags.c.item_id))
+        .join(Item, Item.id == item_tags.c.item_id)
+        .filter(item_visibility_clause(current_user))
+        .group_by(item_tags.c.tag_id)
+        .all()
+    )
+
+
+def _visible_tag_artefact_counts() -> dict:
+    """``{tag_id: visible-artefact-count}`` via a GROUP BY over artefact_tags."""
+    return dict(
+        db.session.query(artefact_tags.c.tag_id, func.count(artefact_tags.c.artefact_id))
+        .join(Artefact, Artefact.id == artefact_tags.c.artefact_id)
+        .join(Item, Item.id == Artefact.item_id)
+        .filter(artefact_visibility_clause(current_user))
+        .group_by(artefact_tags.c.tag_id)
+        .all()
+    )
+
+
 # =============================================================================
 # Platforms
 # =============================================================================
@@ -127,6 +177,7 @@ def platforms():
     return render_template(
         'taxonomy/tree_list.html',
         nodes=platforms,
+        item_counts=_visible_item_counts_by(Item.platform_id),
         noun='Platform', noun_plural='Platforms', icon='pc-display', preposition='on',
         new_endpoint=f'{ROUTENAME}.new_platform',
         edit_endpoint=f'{ROUTENAME}.edit_platform',
@@ -195,6 +246,7 @@ def categories():
     return render_template(
         'taxonomy/tree_list.html',
         nodes=categories,
+        item_counts=_visible_item_counts_by(Item.category_id),
         noun='Category', noun_plural='Categories', icon='folder', preposition='in',
         new_endpoint=f'{ROUTENAME}.new_category',
         edit_endpoint=f'{ROUTENAME}.edit_category',
@@ -257,11 +309,13 @@ def delete_category(id):
 @blueprint.route('/tags')
 @public_readable
 def tags():
-    tags = (Tag.query
-            .options(selectinload(Tag.items), selectinload(Tag.artefacts))
-            .order_by(func.lower(Tag.name))
-            .all())
-    return render_template('taxonomy/tags.html', tags=tags)
+    # Visibility-filtered GROUP BY counts instead of loading every tagged Item /
+    # Artefact entity per tag (tag.items|length) — which also counted private
+    # rows on this public-readable page.
+    tags = Tag.query.order_by(func.lower(Tag.name)).all()
+    return render_template('taxonomy/tags.html', tags=tags,
+                           item_counts=_visible_tag_item_counts(),
+                           artefact_counts=_visible_tag_artefact_counts())
 
 
 @blueprint.route('/tags/new', methods=['GET', 'POST'])
