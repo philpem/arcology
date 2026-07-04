@@ -315,6 +315,9 @@
 					<span class="badge bg-secondary"><i class="bi bi-hash"></i> hash match</span>
 					{% elif r.type == 'artefact_text' %}
 					<span class="badge bg-secondary"><i class="bi bi-file-text"></i> name/description match</span>
+					{% if r.artefact.search_snippet is defined and r.artefact.search_snippet %}
+					<div class="small text-muted mt-1 search-snippet">{{ r.artefact.search_snippet }}</div>
+					{% endif %}
 					{% elif r.type == 'module' %}
 					<span class="badge bg-success text-white"><i class="bi bi-cpu"></i> {{ r.module_title }}</span>
 					{% if r.module_version %}<span class="text-muted">v{{ r.module_version }}</span>{% endif %}
@@ -361,6 +364,9 @@
 					</small>
 					{% endif %}
 					<a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a>
+					{% if item.search_snippet is defined and item.search_snippet %}
+					<div class="small text-muted mt-1 search-snippet">{{ item.search_snippet }}</div>
+					{% endif %}
 				</td>
 				<td>{{ item.platform.name if item.platform else '-' }}</td>
 				<td>{{ item.category.name if item.category else '-' }}</td>

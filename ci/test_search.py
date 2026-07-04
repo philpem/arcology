@@ -448,6 +448,59 @@ class TestResultHints(unittest.TestCase):
 
 
 # =============================================================================
+# Unit tests: full-text search helpers (pure — no database required)
+# =============================================================================
+
+class TestFtsHelpers(unittest.TestCase):
+    """websearch query reconstruction and XSS-safe snippet rendering."""
+
+    def test_websearch_single_and_multiple_words(self):
+        from myapp.services.search import _websearch_query_string, parse_query
+        self.assertEqual(_websearch_query_string(parse_query('impression')), 'impression')
+        # Two bare words are ANDed by websearch_to_tsquery's default.
+        self.assertEqual(_websearch_query_string(parse_query('risc disc')), 'risc disc')
+
+    def test_websearch_quoted_phrase_becomes_phrase(self):
+        from myapp.services.search import _websearch_query_string, parse_query
+        self.assertEqual(_websearch_query_string(parse_query('"risc os"')), '"risc os"')
+
+    def test_websearch_negation(self):
+        from myapp.services.search import NOT_KEY, _websearch_query_string
+        # Bare "!word" is literal in this parser; a negated text term only arrives
+        # under NOT_KEY (defensive path).  A negated text value becomes -value.
+        tokens = {'text': ['bbc'], NOT_KEY: {'text': ['game']}}
+        self.assertEqual(_websearch_query_string(tokens), 'bbc -game')
+
+    def test_websearch_none_without_text(self):
+        from myapp.services.search import _websearch_query_string, parse_query
+        self.assertIsNone(_websearch_query_string(parse_query('label:System')))
+
+    def test_websearch_neutralises_embedded_quotes(self):
+        from myapp.services.search import _websearch_query_string, parse_query
+        # A value carrying a double-quote must not break out of the phrase.
+        out = _websearch_query_string(parse_query('"a"b"'))
+        self.assertNotIn('"a"b"', out)
+
+    def test_render_snippet_none(self):
+        from myapp.services.search import _render_snippet
+        self.assertIsNone(_render_snippet(None))
+        self.assertIsNone(_render_snippet(''))
+
+    def test_render_snippet_sentinels_become_mark(self):
+        from myapp.services.search import _HL_START, _HL_STOP, _render_snippet
+        out = str(_render_snippet(f'foo {_HL_START}bar{_HL_STOP} baz'))
+        self.assertEqual(out, 'foo <mark>bar</mark> baz')
+
+    def test_render_snippet_escapes_source_html(self):
+        from myapp.services.search import _HL_START, _HL_STOP, _render_snippet
+        # HTML in the source text must be escaped; only our sentinels become tags.
+        out = str(_render_snippet(f'<script>x</script> {_HL_START}hit{_HL_STOP}'))
+        self.assertNotIn('<script>', out)
+        self.assertIn('&lt;script&gt;', out)
+        self.assertIn('<mark>hit</mark>', out)
+
+
+# =============================================================================
 # Unit tests: RISC OS filetype lookup (no database required)
 # =============================================================================
 
