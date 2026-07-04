@@ -7,7 +7,7 @@ index) that powers the actual FTS is added only on PostgreSQL — SQLite falls
 back to ILIKE on ``content``.
 
 Revision ID: 00006a48c0c8
-Revises: 00006a48bb61
+Revises: 00006a48bc25
 Create Date: 2026-07-04
 
 """
@@ -16,7 +16,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = '00006a48c0c8'
-down_revision = '00006a48bb61'
+down_revision = '00006a48bc25'
 branch_labels = None
 depends_on = None
 
