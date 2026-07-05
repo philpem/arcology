@@ -583,7 +583,11 @@ def tree(uuid):
     root = artefact.root_artefact
     if root is not artefact:
         return redirect(url_for(f'{ROUTENAME}.tree', uuid=root.uuid))
-    tree_data, has_active, status_counts, total_count = build_processing_tree(root)
+    # Re-filter the derivation subtree by visibility: a derived artefact can be
+    # independently private under this public root, and the flat tree query would
+    # otherwise leak its metadata.
+    visible = set(visible_derived_artefact_ids(root, current_user))
+    tree_data, has_active, status_counts, total_count = build_processing_tree(root, visible_ids=visible)
     return render_template(
         'artefacts/tree.html',
         artefact=root,

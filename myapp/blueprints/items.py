@@ -327,6 +327,11 @@ def new():
             preset_parent = Item.query.filter(
                 (Item.uuid == parent_uuid) | (Item.uuid.like(f'{parent_uuid}%'))
             ).first()
+            # Don't reveal a private parent the user can't view: its name and
+            # ancestor chain render in the form breadcrumb, so an unfiltered
+            # prefix lookup would leak private item names (enumerable by prefix).
+            if preset_parent and not can_view_item(preset_parent, current_user):
+                preset_parent = None
             if preset_parent:
                 form.parent_id.data = preset_parent.id
 
