@@ -21,7 +21,8 @@ from sqlalchemy import and_, desc, false, func, or_
 from sqlalchemy.orm import defer, joinedload, selectinload
 from werkzeug.exceptions import NotFound
 from wtforms import BooleanField, IntegerField, SelectField, StringField, TextAreaField
-from wtforms.validators import DataRequired, Optional
+from wtforms.validators import DataRequired, Optional, ValidationError
+from arcology_shared.hints import HintKey
 from ..database import (
     ANALYSIS_PRIORITY_HIGH,
     ANALYSIS_PRIORITY_TIERS,
@@ -52,7 +53,7 @@ from ..database import (
 )
 from ..extensions import db
 from ..permissions import public_downloadable, public_readable, require_permission
-from ..riscos_filetypes import lookup_filetype_hex
+from ..riscos_filetypes import lookup_filetype_hex, resolve_default_filetype
 from ..services import chunked_upload as _chunked
 from ..services.artefact_lifecycle import (
     ArtefactMoveError,
@@ -207,6 +208,8 @@ class ArtefactUploadForm(FlaskForm):
                                description='Helps analysis tools identify format')
     dfi_clock_mhz = IntegerField('DFI clock frequency (MHz)', validators=[Optional()],
                                   description='Override sample frequency for DFI files recorded at non-standard rates (e.g. 100)')
+    acorn_default_filetype = StringField('Default Acorn filetype', validators=[Optional()],
+                                          description='For ZIP/TAR of a HostFS/NFS directory: type applied to files with no ,xxx suffix (e.g. "Text" or "fff")')
     artefact_type = SelectField('Type (auto-detected)', coerce=str, validators=[Optional()],
                                  description='Leave as "Auto-detect" unless incorrect')
     description = TextAreaField('Description', validators=[Optional()])
@@ -214,6 +217,9 @@ class ArtefactUploadForm(FlaskForm):
                               description='Visible only to you and administrators.')
     auto_analyse = BooleanField('Run automatic analysis', default=True)
     upload_more = BooleanField('Upload more', default=False)
+
+    def validate_acorn_default_filetype(self, field):
+        _validate_default_filetype_field(field)
 
 
 class ArtefactEditForm(FlaskForm):
@@ -237,12 +243,32 @@ class AnalyseForm(FlaskForm):
                                    description='e.g., adfs, fat12, hfs')
     dfi_clock_mhz = IntegerField('DFI clock frequency (MHz)', validators=[Optional()],
                                   description='Override sample frequency for DFI files recorded at non-standard rates (e.g. 100)')
+    acorn_default_filetype = StringField('Default Acorn filetype', validators=[Optional()],
+                                          description='For ZIP/TAR of a HostFS/NFS directory: type applied to files with no ,xxx suffix (e.g. "Text" or "fff")')
     notes = TextAreaField('Additional notes', validators=[Optional()])
     # Choices are (re)assigned per-request in the analyse() route so the default
     # tracks WEB_UI_ANALYSIS_PRIORITY and the Urgent tier can be hidden for users
     # without the can_prioritise_analyses grant.  Raising above the default is
     # enforced server-side regardless of the rendered choices.
     priority = SelectField('Queue priority', coerce=int, validators=[Optional()])
+
+    def validate_acorn_default_filetype(self, field):
+        _validate_default_filetype_field(field)
+
+
+def _validate_default_filetype_field(field):
+    """Shared WTForms validator for the 'Default Acorn filetype' field.
+
+    Accepts a blank value (feature off), a known filetype name, or a valid
+    hex code.  Raises ValidationError otherwise so the form re-renders with
+    an inline error rather than silently dropping the value.
+    """
+    if not field.data or not field.data.strip():
+        return
+    if resolve_default_filetype(field.data) is None:
+        raise ValidationError(
+            "Unrecognised filetype. Use a name (e.g. 'Text') or hex code (e.g. 'fff')."
+        )
 
 
 class FileSearchForm(FlaskForm):
@@ -2946,6 +2972,9 @@ def upload(item_id):
                 hints['platform'] = platform.name
         if form.dfi_clock_mhz.data:
             hints['dfi_clock_mhz'] = form.dfi_clock_mhz.data
+        if form.acorn_default_filetype.data and form.acorn_default_filetype.data.strip():
+            hints[HintKey.ACORN_DEFAULT_FILETYPE] = resolve_default_filetype(
+                form.acorn_default_filetype.data)
         web_priority = current_app.config.get('WEB_UI_ANALYSIS_PRIORITY', ANALYSIS_PRIORITY_HIGH)
 
         # Create the artefact, slug, and analysis queue entries atomically.
@@ -3828,6 +3857,9 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
             hints['filesystem'] = form.filesystem_hint.data
         if form.dfi_clock_mhz.data:
             hints['dfi_clock_mhz'] = form.dfi_clock_mhz.data
+        if form.acorn_default_filetype.data and form.acorn_default_filetype.data.strip():
+            hints[HintKey.ACORN_DEFAULT_FILETYPE] = resolve_default_filetype(
+                form.acorn_default_filetype.data)
         if form.notes.data:
             hints['notes'] = form.notes.data
 
@@ -3877,6 +3909,8 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
                     form.filesystem_hint.data = last_hints['filesystem']
                 if 'dfi_clock_mhz' in last_hints:
                     form.dfi_clock_mhz.data = last_hints['dfi_clock_mhz']
+                if HintKey.ACORN_DEFAULT_FILETYPE in last_hints:
+                    form.acorn_default_filetype.data = last_hints[HintKey.ACORN_DEFAULT_FILETYPE]
                 if 'notes' in last_hints:
                     form.notes.data = last_hints['notes']
             except (json.JSONDecodeError, KeyError, TypeError):

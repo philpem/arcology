@@ -100,10 +100,13 @@ def main():
 	upload_parser.add_argument('--no-analyse', action='store_true', help='Skip automatic analysis')
 	upload_parser.add_argument('--hint', action='append', metavar='KEY=VALUE', dest='hints',
 	                           help='Analysis hint as KEY=VALUE (repeatable). '
-	                                'Example: --hint dfi_clock_mhz=100. '
+	                                'Examples: --hint dfi_clock_mhz=100, '
+	                                '--hint acorn_default_filetype=Text. '
 	                                'Supported keys: ' + ', '.join(UPLOAD_HINT_KEYS) + '. '
 	                                '(dfi_clock_mhz is an integer MHz value for DFI clock '
-	                                'override; the rest are free-text strings.)')
+	                                'override; acorn_default_filetype is a RISC OS filetype '
+	                                'name or hex applied to untyped files in a top-level '
+	                                'ZIP/TAR; the rest are free-text strings.)')
 
 	# ---- download ----
 	download_parser = subparsers.add_parser('download', help='Download an artefact')
