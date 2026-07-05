@@ -1286,7 +1286,7 @@ class UserArtefactBypass(db.Model):
     restriction_type: Mapped[RestrictionType] = mapped_column(SQLEnum(RestrictionType))
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     granted_by_id: Mapped[int | None] = mapped_column(ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
-    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     user: Mapped["User"] = relationship(back_populates="artefact_bypasses",
                                         foreign_keys=[user_id])
