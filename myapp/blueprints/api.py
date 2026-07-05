@@ -1379,8 +1379,21 @@ def get_pending_analyses():
 
     # The CLEANUP re-analysis dispatch barrier lives in pending_claimable_query()
     # so the worker poll and the taskrunner claim share identical eligibility.
+    #
+    # Eager-load everything analysis_to_dict(include_artefact, include_storage)
+    # reads off each artefact — item, owner, the upload/output blob (for the
+    # storage path), tags and restrictions.  Without this the serialisation
+    # lazy-loads ~5 relationships per row; a full 50-row queue polled by several
+    # workers every few seconds was firing tens of thousands of point queries a
+    # minute against the DB.
     query = pending_claimable_query().options(
-        joinedload(Analysis.artefact).joinedload(Artefact.item))
+        joinedload(Analysis.artefact).joinedload(Artefact.item),
+        joinedload(Analysis.artefact).joinedload(Artefact.owner),
+        joinedload(Analysis.artefact).joinedload(Artefact.upload_blob),
+        joinedload(Analysis.artefact).joinedload(Artefact.output_blob),
+        joinedload(Analysis.artefact).selectinload(Artefact.tags),
+        joinedload(Analysis.artefact).selectinload(Artefact.restrictions),
+    )
     types_param = request.args.get('types', '')
     if types_param:
         requested_names = [t.strip() for t in types_param.split(',') if t.strip()]
