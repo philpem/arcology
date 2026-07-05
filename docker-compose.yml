@@ -158,9 +158,24 @@ services:
           cpus: '1'
           memory: 2G
 
-  # PostgreSQL database server
+  # PostgreSQL database server.
+  #
+  # pgautoupgrade's :latest tag rolls the PostgreSQL MAJOR version forward
+  # whenever it is re-pulled, and this image then performs a one-way, irreversible
+  # pg_upgrade of the on-disk cluster with no rollback — a routine
+  # `docker compose pull && up` can silently rewrite your database.  So we pin a
+  # specific tag instead, defaulting to 18-alpine (the same PostgreSQL version
+  # and Alpine variant that :latest currently resolves to, so existing clusters
+  # see no change) rather than tracking latest.  Override POSTGRES_IMAGE_TAG in
+  # your .env to match your cluster if it differs.  Constraints:
+  #   * pgautoupgrade only upgrades — pin AT or ABOVE the running version, never
+  #     below, or it fails to start trying to "downgrade";
+  #   * keep the SAME variant (Alpine vs Debian/bookworm) — switching musl<->glibc
+  #     changes text collation and can corrupt index ordering;
+  #   * when you deliberately raise the major, TAKE A BACKUP FIRST (see
+  #     doc/BACKUP_RESTORE.md).
   db:
-    image: pgautoupgrade/pgautoupgrade:latest
+    image: pgautoupgrade/pgautoupgrade:${POSTGRES_IMAGE_TAG:-18-alpine}
     restart: unless-stopped
     # set shared memory limit when using docker compose
     shm_size: 128mb

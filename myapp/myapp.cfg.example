@@ -7,7 +7,12 @@ DEBUG_DB_PROFILING = False
 # Debugging -- SQLAlchemy debug info
 DEBUG_DB_LOG = False
 
-# Cookie encryption key - this needs to be set uniquely for each installation
+# Cookie/session signing key.  REQUIRED: the app refuses to start while this is
+# unset or left at this placeholder (an auto-generated per-process key would
+# break sessions/CSRF across Gunicorn workers).  Generate a unique value:
+#   python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
+# In Docker you can leave it unset — Dentrypoint.sh supplies a shared ephemeral
+# key (sessions then reset on restart).
 SECRET_KEY = "0123456789ABCDEF"
 
 # Database connection string
@@ -42,6 +47,22 @@ SQLALCHEMY_TRACK_MODIFICATIONS = False
 # =============================================================================
 #PUBLIC_MODE = False
 #PUBLIC_DOWNLOADS = True
+
+# =============================================================================
+# Proxy and cookie security
+#
+# TRUST_PROXY_HEADERS (default True): trust X-Forwarded-* from one upstream
+# proxy so url_for(_external=True) and OIDC redirects use the public
+# host/scheme.  These headers are client-spoofable — set this False when
+# gunicorn is exposed to clients directly (no trusted proxy in front).
+#
+# SESSION_COOKIE_SECURE (default False): send the session cookie only over
+# HTTPS.  Set True on any TLS deployment; leave False for plain-HTTP local dev.
+# SESSION_COOKIE_SAMESITE (default "Lax"): session cookie SameSite policy.
+# =============================================================================
+#TRUST_PROXY_HEADERS = True
+#SESSION_COOKIE_SECURE = False
+#SESSION_COOKIE_SAMESITE = "Lax"
 
 # =============================================================================
 # Arcology-specific settings

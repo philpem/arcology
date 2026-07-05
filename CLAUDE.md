@@ -141,7 +141,7 @@ to it.
 ```bash
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-cp myapp/myapp.cfg.example myapp/myapp.cfg   # SECRET_KEY auto-generates in dev
+cp myapp/myapp.cfg.example myapp/myapp.cfg   # then set a real SECRET_KEY (required)
 flask db upgrade                             # Apply migrations / create schema
 flask create-admin                           # Create admin user
 python -m myapp                              # http://localhost:5000
@@ -556,8 +556,12 @@ scotch `replay-transcode` + ffmpeg (Acorn Replay → MP4; see
   current code — bring it to `00006a21fc7c` first using the original code.
 - **Config**: `myapp.cfg` is optional; env vars take precedence.
   `SQLALCHEMY_DATABASE_URI`, `SECRET_KEY`, `WORKER_API_KEY` are read from the
-  env if not in the cfg. `SECRET_KEY` auto-generates (with a warning) if missing
-  or too short — set it explicitly for persistent sessions.
+  env if not in the cfg. `create_app()` **requires** `SECRET_KEY` — it refuses to
+  start when the key is missing or the placeholder (a per-process auto-generated
+  key would break sessions/CSRF across Gunicorn workers); a provided but short
+  key is used with a warning. The Docker entrypoint (`Dentrypoint.sh`) supplies
+  one shared ephemeral key for the whole container when none is set, so
+  `docker compose up` needs no key; set it explicitly for persistent sessions.
 - The Docker entrypoint runs `flask db upgrade` + `flask create-admin` on every
   start (both idempotent). `create-admin` reads `ADMIN_USERNAME`/`ADMIN_PASSWORD`
   non-interactively; passwords must be ≥12 chars.
