@@ -111,11 +111,19 @@
                     </div>
                     <div class="collapse mb-3" id="hints-section">
                         <div class="card card-body bg-light">
-                            <p class="text-muted small mb-3">Rarely needed. Override the clock frequency for DFI flux images.</p>
-                            <div class="mb-0 d-none" id="dfi-clock-group">
+                            <p class="text-muted small mb-3">Rarely needed. Override the clock frequency for DFI flux images, or set a default RISC OS filetype for archives of a HostFS/NFS directory.</p>
+                            <div class="mb-3 d-none" id="dfi-clock-group">
                                 {{ form.dfi_clock_mhz.label(class="form-label") }}
                                 {{ form.dfi_clock_mhz(class="form-control", type="number", min="1") }}
                                 <div class="form-text">{{ form.dfi_clock_mhz.description }}</div>
+                            </div>
+                            <div class="mb-0 d-none" id="acorn-filetype-group">
+                                {{ form.acorn_default_filetype.label(class="form-label") }}
+                                {{ form.acorn_default_filetype(class="form-control", placeholder="e.g. Text or fff") }}
+                                <div class="form-text">{{ form.acorn_default_filetype.description }}</div>
+                                {% for error in form.acorn_default_filetype.errors %}
+                                <div class="text-danger small">{{ error }}</div>
+                                {% endfor %}
                             </div>
                         </div>
                     </div>

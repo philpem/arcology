@@ -509,6 +509,7 @@ Tests live in `ci/` and run in the `app-tests` job (SQLite in-memory):
 | `test_checksum_compute.py` | Hash computation |
 | `test_fk_violations.py` | FK cascade deletes, M2M cleanup, nullable FK edges |
 | `test_inf_processing.py` | INF parsing, BBC↔DOS translation, `process_inf_sidecars()` |
+| `test_default_filetype.py` | Acorn default-filetype hint: name/hex resolution, ingest normalisation, `enumerate_extracted_files(default_filetype=…)` |
 | `test_chunked_upload.py`, `test_chunked_finalize.py`, `test_cli_chunked.py` | Chunked upload (sync + async + CLI) |
 | `test_worker_io.py` | Bounded-memory access (`SectorReader`, `read_file_capped`, sparse-image regression) |
 | `test_similarity.py` | Content-set similarity, visibility filtering |

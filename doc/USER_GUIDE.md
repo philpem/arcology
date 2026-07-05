@@ -166,6 +166,14 @@ artefacts by analysis (e.g. a decoded `.img` produced from a `.scp` flux dump).
 5. Optionally set a label (defaults to the original filename) and description.
 6. The **Auto Analyse** checkbox (on by default) queues appropriate analyses
    immediately after upload.
+   - When you select a **ZIP/TAR archive**, an optional **Default Acorn
+     filetype** field appears under **Format hints**. Use it when the archive
+     is a dump of a HostFS/NFS directory whose files carry no `,xxx` filetype
+     suffix: the type you enter (a name like `Text` or a hex code like `fff`)
+     is applied to every extracted file that has no filetype of its own,
+     reproducing how RISC OS treats suffix-less files. Files that *do* carry a
+     `,xxx` suffix keep their own type. The default is not applied to files
+     inside nested archives. You can also set this later via **Re-analyse**.
 7. To stay on the upload form after submitting (useful for bulk uploads),
    tick the **Upload more** checkbox before clicking Upload. The form will
    reload ready for the next file instead of redirecting to the artefact page.

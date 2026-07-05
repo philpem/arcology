@@ -67,6 +67,16 @@
                                 <div class="form-text">{{ form.dfi_clock_mhz.description }}</div>
                             </div>
                             {% endif %}
+                            {% if artefact.artefact_type.name in ['ZIP', 'TARGZ', 'RAR', 'SEVENZ', 'ARC', 'TBAFS', 'XFILES'] %}
+                            <div class="mb-0">
+                                {{ form.acorn_default_filetype.label(class="form-label") }}
+                                {{ form.acorn_default_filetype(class="form-control", placeholder="e.g. Text or fff") }}
+                                <div class="form-text">{{ form.acorn_default_filetype.description }}</div>
+                                {% for error in form.acorn_default_filetype.errors %}
+                                <div class="text-danger small">{{ error }}</div>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
                         </div>
                     </div>
 
@@ -112,9 +122,11 @@
     var platform  = document.getElementById('platform_id');
     var fsHint    = document.getElementById('filesystem_hint');
     var dfiClock  = document.getElementById('dfi_clock_mhz');
+    var acornFt   = document.getElementById('acorn_default_filetype');
     var hasValue  = (platform && platform.value && platform.value !== '0') ||
                     (fsHint && fsHint.value.trim()) ||
-                    (dfiClock && dfiClock.value.trim());
+                    (dfiClock && dfiClock.value.trim()) ||
+                    (acornFt && acornFt.value.trim());
     if (hasValue) {
         hintsCollapse.show();
         hintsChevron.classList.replace('bi-chevron-down', 'bi-chevron-up');
