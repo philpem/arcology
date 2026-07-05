@@ -12,9 +12,10 @@ import glob
 import hashlib
 import os
 import re
+import shutil
 import tempfile
 import uuid
-from flask import current_app
+from flask import after_this_request, current_app
 from werkzeug.utils import secure_filename
 from ..database import (
     Analysis,
@@ -217,6 +218,26 @@ def compute_file_hashes_full(filepath_or_key: str, use_storage: bool = False,
     return md5, sha1, sha256
 
 
+def _cleanup_temp_after_response(tmp_dir):
+    """Remove *tmp_dir* once the current response has finished streaming.
+
+    Used for S3-backed extracted-file downloads, where the file is fetched to a
+    temp dir and handed to send_file.  Registered via after_this_request +
+    call_on_close so the bytes are fully sent before the directory is removed.
+    Best-effort no-op if there is no request context.
+    """
+    try:
+        @after_this_request
+        def _schedule(response):
+            response.call_on_close(lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
+            return response
+    except RuntimeError:
+        # No active request (e.g. a CLI caller): the file is still needed by the
+        # caller, so leave the temp dir for the OS to reap rather than deleting
+        # it out from under them.
+        pass
+
+
 def resolve_extracted_file_path(ef):
     """Resolve an ExtractedFile to its actual path on disk.
 
@@ -321,26 +342,25 @@ def resolve_extracted_file_path(ef):
                     s3_candidates.append(compact_storage_key(s3_prefix, dp.lstrip('/')))
 
                 for key in s3_candidates:
+                    tmp_dir = tempfile.mkdtemp(prefix='arcology_ef_')
+                    dest = os.path.join(tmp_dir, key.rsplit('/', 1)[-1])
                     try:
-                        tmp_dir = tempfile.mkdtemp(prefix='arcology_ef_')
-                        dest = os.path.join(tmp_dir, key.rsplit('/', 1)[-1])
                         storage.get(key, dest)
-                        return dest
                     except (FileNotFoundError, ClientError) as e:
                         # storage.get() raises FileNotFoundError for S3 404s;
                         # catch ClientError too for direct botocore errors.
+                        shutil.rmtree(tmp_dir, ignore_errors=True)
                         if isinstance(e, ClientError) and e.response['Error']['Code'] not in ('404', 'NoSuchKey'):
                             raise
-                        # Clean up empty temp dir
-                        try:
-                            os.unlink(dest)
-                        except OSError:
-                            pass
-                        try:
-                            os.rmdir(tmp_dir)
-                        except OSError:
-                            pass
                         continue
+                    # Success: the caller send_file()s this path, which streams
+                    # during the WSGI send (after the view returns), so the temp
+                    # dir can't be removed inline.  Schedule cleanup once the
+                    # response has finished — otherwise every S3-backed
+                    # extracted-file download leaks a temp dir under /tmp until
+                    # the container dies.
+                    _cleanup_temp_after_response(tmp_dir)
+                    return dest
 
                 continue
 
