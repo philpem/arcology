@@ -67,6 +67,7 @@ ANALYSIS_MAP = {
     # for archives found inside disc images).  The worker detects top-level
     # artefact archives (no partition_uuid hint) and extracts them directly.
     ArtefactType.ZIP: [AnalysisType.ARCHIVE_EXTRACT],
+    ArtefactType.TAR: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.TARGZ: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.RAR: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.SEVENZ: [AnalysisType.ARCHIVE_EXTRACT],
