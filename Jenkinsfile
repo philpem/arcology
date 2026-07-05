@@ -32,7 +32,7 @@ pipeline {
                     sh '''
                         python3 -m venv .venv-ci
                         . .venv-ci/bin/activate
-                        pip install -q -r requirements.txt
+                        pip install -q -r requirements.txt -r ci/requirements-extra.txt
 
                         echo "=== Checking imports ==="
                         python ci/check_imports.py

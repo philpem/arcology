@@ -1,0 +1,17 @@
+# Additional test-only dependencies needed so the full CI suite actually
+# exercises worker-side code paths instead of silently skipping tests.
+#
+# zstandard  -- CLI dependency (cli/pyproject.toml), needed by the
+#               bulk-import sidecar-bundling tests.
+# Pillow     -- worker dependency (see worker/requirements.txt), needed by
+#               ci/test_image_conversion.py.
+# scour      -- worker dependency (see worker/requirements.txt), needed by
+#               ci/test_image_conversion.py (SVG post-processing).
+#
+# Kept out of requirements.txt because the main web app does not require
+# them. Installed alongside requirements.txt by both the GitHub Actions
+# app-tests job and the Jenkins "Application Tests" stage -- keep those two
+# in sync by editing this file rather than either CI script directly.
+zstandard
+Pillow
+scour
