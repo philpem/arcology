@@ -36,6 +36,7 @@ from ..database import (
     RecognisedProduct,
     ReplayMovie,
     RiscosModule,
+    SearchDocument,
     StorageDirectory,
     UploadBlob,
     artefact_tags,
@@ -223,6 +224,12 @@ def bulk_delete_artefact_dependents(artefact_ids: list[int], *,
     ArtefactMastering.query.filter(ArtefactMastering.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
     RiscosModule.query.filter(RiscosModule.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
     ArtefactRestriction.query.filter(ArtefactRestriction.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
+    # search_documents has ON DELETE CASCADE, which fires only when the artefact
+    # row itself is deleted.  A re-analysis RESET keeps the root artefact and
+    # just clears its dependents, so its stale document-search rows (indexed from
+    # the previous run's FORMAT_CONVERT text outputs) would otherwise keep
+    # matching `content:` searches and point at extracted files the reset removed.
+    SearchDocument.query.filter(SearchDocument.artefact_id.in_(artefact_ids)).delete(synchronize_session=False)
     db.session.execute(artefact_tags.delete().where(artefact_tags.c.artefact_id.in_(artefact_ids)))
     return deleted
 
