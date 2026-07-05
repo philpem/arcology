@@ -37,6 +37,7 @@ class ArtefactType(enum.Enum):
 
     # Archives (containing other artefacts)
     ZIP        = "zip"
+    TAR        = "tar"               # Uncompressed TAR archive
     TARGZ      = "tar_gz"
     RAR        = "rar"
     SEVENZ     = "7z"                # 7-Zip archive

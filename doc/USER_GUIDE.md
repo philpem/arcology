@@ -193,7 +193,8 @@ Supported artefact types and their recognised extensions:
 | DD_BZ2 (compressed raw) | `.dd.bz2` |
 | PDF | `.pdf` |
 | ZIP | `.zip` |
-| TAR.GZ | `.tar.gz` |
+| TAR | `.tar` |
+| TAR.GZ | `.tar.gz`, `.tgz` |
 | RAR | `.rar` |
 | ARC (RISC OS archive) | `.arc`, `.arcfs`, `.spk`, `.spark` |
 

@@ -67,7 +67,7 @@
                                 <div class="form-text">{{ form.dfi_clock_mhz.description }}</div>
                             </div>
                             {% endif %}
-                            {% if artefact.artefact_type.name in ['ZIP', 'TARGZ', 'RAR', 'SEVENZ', 'ARC', 'TBAFS', 'XFILES'] %}
+                            {% if artefact.artefact_type.name in ['ZIP', 'TAR', 'TARGZ', 'RAR', 'SEVENZ', 'ARC', 'TBAFS', 'XFILES'] %}
                             <div class="mb-0">
                                 {{ form.acorn_default_filetype.label(class="form-label") }}
                                 {{ form.acorn_default_filetype(class="form-control", placeholder="e.g. Text or fff") }}
