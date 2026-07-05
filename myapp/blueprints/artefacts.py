@@ -2387,7 +2387,7 @@ def _view_conversion_status(artefact, all_artefact_ids):
                     hints = json.loads(ae.hints or '{}')
                 except (json.JSONDecodeError, TypeError):
                     hints = {}
-                file_id = hints.get('file_id')
+                file_id = hints.get(HintKey.FILE_ID)
                 if file_id:
                     failed_file_ids[int(file_id)] = {
                         'error': ae.error_message or 'Extraction failed',
@@ -2969,9 +2969,9 @@ def upload(item_id):
         if form.platform_id.data and form.platform_id.data != 0:
             platform = db.session.get(Platform, form.platform_id.data)
             if platform:
-                hints['platform'] = platform.name
+                hints[HintKey.PLATFORM] = platform.name
         if form.dfi_clock_mhz.data:
-            hints['dfi_clock_mhz'] = form.dfi_clock_mhz.data
+            hints[HintKey.DFI_CLOCK_MHZ] = form.dfi_clock_mhz.data
         if form.acorn_default_filetype.data and form.acorn_default_filetype.data.strip():
             hints[HintKey.ACORN_DEFAULT_FILETYPE] = resolve_default_filetype(
                 form.acorn_default_filetype.data)
@@ -3852,11 +3852,11 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
         if form.platform_id.data and form.platform_id.data != 0:
             platform = db.session.get(Platform, form.platform_id.data)
             if platform:
-                hints['platform'] = platform.name
+                hints[HintKey.PLATFORM] = platform.name
         if form.filesystem_hint.data:
-            hints['filesystem'] = form.filesystem_hint.data
+            hints[HintKey.FILESYSTEM] = form.filesystem_hint.data
         if form.dfi_clock_mhz.data:
-            hints['dfi_clock_mhz'] = form.dfi_clock_mhz.data
+            hints[HintKey.DFI_CLOCK_MHZ] = form.dfi_clock_mhz.data
         if form.acorn_default_filetype.data and form.acorn_default_filetype.data.strip():
             hints[HintKey.ACORN_DEFAULT_FILETYPE] = resolve_default_filetype(
                 form.acorn_default_filetype.data)
@@ -3901,14 +3901,14 @@ def analyse(item_id=None, artefact_id=None, root_id=None, uuid=None):
         if last_with_hints:
             try:
                 last_hints = json.loads(last_with_hints.hints)
-                if 'platform' in last_hints:
-                    platform = Platform.query.filter_by(name=last_hints['platform']).first()
+                if HintKey.PLATFORM in last_hints:
+                    platform = Platform.query.filter_by(name=last_hints[HintKey.PLATFORM]).first()
                     if platform:
                         form.platform_id.data = platform.id
-                if 'filesystem' in last_hints:
-                    form.filesystem_hint.data = last_hints['filesystem']
-                if 'dfi_clock_mhz' in last_hints:
-                    form.dfi_clock_mhz.data = last_hints['dfi_clock_mhz']
+                if HintKey.FILESYSTEM in last_hints:
+                    form.filesystem_hint.data = last_hints[HintKey.FILESYSTEM]
+                if HintKey.DFI_CLOCK_MHZ in last_hints:
+                    form.dfi_clock_mhz.data = last_hints[HintKey.DFI_CLOCK_MHZ]
                 if HintKey.ACORN_DEFAULT_FILETYPE in last_hints:
                     form.acorn_default_filetype.data = last_hints[HintKey.ACORN_DEFAULT_FILETYPE]
                 if 'notes' in last_hints:
