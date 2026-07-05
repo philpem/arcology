@@ -261,6 +261,37 @@ class TestProduceArtefactIdempotency(unittest.TestCase):
             ).count()
             self.assertEqual(count, 1)
 
+    def test_idempotent_retry_requeues_missing_followon_analyses(self):
+        """A retry re-queues follow-on analyses the first call never committed.
+
+        The happy path commits the artefact and its follow-on analyses in two
+        separate transactions.  If the first call dies in between, the artefact
+        exists with zero analyses; the worker's retry must re-queue them rather
+        than return the existing artefact with an empty queue.
+        """
+        resp1 = self._produce()
+        self.assertEqual(resp1.status_code, 201)
+        derived_uuid = resp1.get_json()['artefact']['uuid']
+
+        with self.app.app_context():
+            from myapp.database import Analysis, Artefact
+            derived = Artefact.query.filter_by(uuid=derived_uuid).first()
+            # Simulate the crash: artefact committed, follow-on analyses lost.
+            Analysis.query.filter_by(artefact_id=derived.id).delete()
+            self.db.session.commit()
+            self.assertEqual(
+                Analysis.query.filter_by(artefact_id=derived.id).count(), 0)
+
+        resp2 = self._produce()
+        self.assertEqual(resp2.status_code, 200, resp2.data)
+
+        with self.app.app_context():
+            from myapp.database import Analysis, Artefact
+            derived = Artefact.query.filter_by(uuid=derived_uuid).first()
+            self.assertGreater(
+                Analysis.query.filter_by(artefact_id=derived.id).count(), 0,
+                'retry did not re-queue the missing follow-on analyses')
+
     def test_different_storage_paths_create_separate_artefacts(self):
         """Two calls with different storage_paths both succeed and create separate rows."""
         resp1 = self._produce('outputs/part0.img')
