@@ -2,6 +2,19 @@
 # Dockerfile for Arcology
 #
 
+# Version stage: derive the version stamp from .git in a throwaway builder so
+# the repository history never lands in a layer of the *final* image.  A plain
+# `COPY .git` into the final image ships the entire history (extractable by
+# anyone who can pull it, and deleting it in a later layer only adds a
+# whiteout); doing it in a discarded build stage keeps versioning automatic
+# while leaking nothing.  Reuses the same base as the final stage so no extra
+# image is pulled.  Requires .git in the build context (see .dockerignore).
+FROM python:3-alpine AS version
+RUN apk add --no-cache git
+COPY .git /src/.git
+RUN git --git-dir=/src/.git describe --tags --always --long > /VERSION 2>/dev/null \
+        || echo "unknown" > /VERSION
+
 FROM python:3-alpine
 
 COPY requirements.txt /
@@ -32,14 +45,11 @@ COPY arcology_shared/ /app/arcology_shared/
 COPY migrations/ /app/migrations/
 COPY doc/ /app/doc/
 COPY .flaskenv /app/
-COPY .git /app/.git
 WORKDIR /app
 
-RUN apk add --no-cache git && \
-    (git -C /app describe --tags --always --long > /app/VERSION 2>/dev/null \
-        || echo "unknown" > /app/VERSION) && \
-    apk del git && \
-    rm -rf /app/.git
+# Version stamp, computed automatically in the `version` stage above and copied
+# in as just the resulting string — no .git in this (final) image.
+COPY --from=version /VERSION /app/VERSION
 
 EXPOSE 8000
 #CMD ["gunicorn", "-b", "0.0.0.0:8000", "myapp.app"]

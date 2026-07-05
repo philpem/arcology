@@ -1,5 +1,24 @@
 #!/bin/sh -e
 
+# Supply one shared ephemeral SECRET_KEY for the whole container before ANY
+# process starts create_app() — the taskrunner branch below, `flask db upgrade`,
+# `flask create-admin`, and every Gunicorn worker.  create_app() now REFUSES to
+# start without a key (it will not mint a per-process one, which would give each
+# forked Gunicorn worker a different secret and break sessions/CSRF).  This is
+# the single place the container fills in a dev/ephemeral fallback so a
+# zero-config `docker compose up` still works.  Only fill in when the key is
+# absent or the shipped placeholder — never clobber an operator-provided key
+# (even a short one), so setting SECRET_KEY yourself persists sessions across
+# restarts.
+case "$SECRET_KEY" in
+    ""|"0123456789ABCDEF"|"CHANGE_ME")
+        echo "!!! SECRET_KEY not set — generating one shared ephemeral key for this run"
+        echo "!!! Sessions will be lost on restart; set SECRET_KEY to persist them"
+        SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+        export SECRET_KEY
+        ;;
+esac
+
 # Task runner mode: a single-instance, DB-only maintenance loop reusing this
 # (web) image.  It must NOT run migrations — the web service owns `flask db
 # upgrade`; running it from two services races.  `exec` so flask runs as PID 1
