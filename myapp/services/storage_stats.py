@@ -7,26 +7,50 @@ aggregates over the blob tables (``UploadBlob`` / ``OutputBlob``); no storage
 backend enumeration is performed.
 
 Physical content is stored once per ``(file_size, sha256)`` blob, while many
-``Artefact`` rows may reference one blob.  "Logical" bytes are what the
-collection would occupy *without* deduplication (each referencing artefact
-counted); "physical" bytes are what is actually stored (each blob counted once).
+rows may reference one blob.  "Logical" bytes are what the collection would
+occupy *without* deduplication (each reference counted); "physical" bytes are
+what is actually stored (each blob counted once).
+
+A blob is referenced from more than one place.  Upload blobs are referenced
+only by ``Artefact.upload_blob_id``.  Output blobs are referenced by
+``Artefact.output_blob_id`` **and** by the content-addressed transcode anchors
+on ``ReplayMovie`` / ``MediaFile`` (``mp4_output_blob_id`` / ``poster_blob_id``)
+— an MP4/poster blob typically has no ``Artefact.output_blob_id`` pointing at
+it.  Logical accounting must count every reference path, otherwise transcode
+blobs inflate physical while contributing nothing to logical, driving "saved"
+negative and the ratio below 1.0×.
 """
 
 import time
 from flask import current_app
-from sqlalchemy import func
+from sqlalchemy import func, union_all
 from ..database import (
     Artefact,
     ExtractedFile,
     Item,
+    MediaFile,
     OutputBlob,
     Partition,
+    ReplayMovie,
     StorageDirectory,
     UploadBlob,
     User,
 )
 from ..extensions import db
 from .dedup import dedup_content_clause
+
+# Every FK path that references a blob, grouped by blob table.  "Logical" bytes
+# and the shared-blob count sum over all of these — not just ``Artefact.*`` — so
+# transcode outputs (referenced only via ReplayMovie/MediaFile) are accounted
+# for.  Keep in sync with the FK columns on those models in ``database.py``.
+UPLOAD_REFERENCE_COLUMNS = (Artefact.upload_blob_id,)
+OUTPUT_REFERENCE_COLUMNS = (
+    Artefact.output_blob_id,
+    ReplayMovie.mp4_output_blob_id,
+    ReplayMovie.poster_blob_id,
+    MediaFile.mp4_output_blob_id,
+    MediaFile.poster_blob_id,
+)
 
 # Most-duplicated content groups shown on the stats page.
 TOP_DUPLICATE_GROUPS = 20
@@ -63,22 +87,37 @@ def _blob_totals(model):
     return int(count), int(total)
 
 
-def _logical_bytes(blob_model, fk_column):
-    """Sum of blob sizes counted once per referencing artefact (logical)."""
+def _blob_references(columns):
+    """UNION ALL of non-null blob-id references across the given FK columns.
+
+    Returns a subquery with one ``blob_id`` row per reference — so a blob
+    referenced *k* times appears *k* times.  ``columns`` may span several tables
+    (e.g. ``Artefact``, ``ReplayMovie``, ``MediaFile``); each SELECT draws its
+    FROM from the column's own table.
+    """
+    return union_all(*(
+        db.select(col.label('blob_id')).where(col.isnot(None))
+        for col in columns
+    )).subquery()
+
+
+def _logical_bytes(blob_model, columns):
+    """Sum of blob sizes counted once per reference across ``columns`` (logical)."""
+    refs = _blob_references(columns)
     return int(db.session.scalar(
         db.select(func.coalesce(func.sum(blob_model.file_size), 0))
-        .select_from(Artefact)
-        .join(blob_model, fk_column == blob_model.id)
+        .select_from(refs)
+        .join(blob_model, refs.c.blob_id == blob_model.id)
     ) or 0)
 
 
-def _shared_blob_count(fk_column):
-    """Number of blobs referenced by more than one artefact."""
+def _shared_blob_count(columns):
+    """Number of blobs referenced more than once across ``columns``."""
+    refs = _blob_references(columns)
     grouped = (
-        db.select(fk_column)
-        .where(fk_column.isnot(None))
-        .group_by(fk_column)
-        .having(func.count(Artefact.id) > 1)
+        db.select(refs.c.blob_id)
+        .group_by(refs.c.blob_id)
+        .having(func.count() > 1)
         .subquery()
     )
     return int(db.session.scalar(db.select(func.count()).select_from(grouped)) or 0)
@@ -90,15 +129,15 @@ def deduplication_stats() -> dict:
     output_count, output_physical = _blob_totals(OutputBlob)
     physical = upload_physical + output_physical
 
-    upload_logical = _logical_bytes(UploadBlob, Artefact.upload_blob_id)
-    output_logical = _logical_bytes(OutputBlob, Artefact.output_blob_id)
+    upload_logical = _logical_bytes(UploadBlob, UPLOAD_REFERENCE_COLUMNS)
+    output_logical = _logical_bytes(OutputBlob, OUTPUT_REFERENCE_COLUMNS)
     logical = upload_logical + output_logical
 
     saved = logical - physical
     ratio = (logical / physical) if physical else None
 
-    shared = _shared_blob_count(Artefact.upload_blob_id) + \
-        _shared_blob_count(Artefact.output_blob_id)
+    shared = _shared_blob_count(UPLOAD_REFERENCE_COLUMNS) + \
+        _shared_blob_count(OUTPUT_REFERENCE_COLUMNS)
 
     # Most-duplicated logical content (same query as `flask dedup-artefacts`).
     # Intentionally system-wide: this is operational storage accounting for the
