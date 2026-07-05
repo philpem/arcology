@@ -117,6 +117,46 @@ class TestStorageStats(unittest.TestCase):
         self.db.session.commit()
         return empty_sha
 
+    def _seed_transcode_blob(self, *, size, anchors):
+        """One transcode OutputBlob referenced only via ``anchors``.
+
+        Transcoded MP4/poster outputs are content-addressed ``OutputBlob`` rows
+        referenced by ``ReplayMovie`` / ``MediaFile`` (``mp4_output_blob_id``),
+        *not* by ``Artefact.output_blob_id`` — the reference path the dedup
+        accounting used to miss.  ``anchors`` is a list of anchor model classes;
+        one row of each references the single blob.
+        """
+        from arcology_shared.enums import ArtefactType
+        from myapp.database import (
+            Artefact,
+            Item,
+            OutputBlob,
+            Platform,
+            StorageDirectory,
+        )
+
+        item = Item(name="Media item", platform=Platform(name="Media"))
+        self.db.session.add(item)
+        self.db.session.flush()
+        art = Artefact(
+            item_id=item.id, label="media",
+            artefact_type=ArtefactType.HFE,
+            original_filename="media.hfe", storage_path="media.hfe",
+            storage_directory=StorageDirectory.UPLOADS,
+            file_size=10, sha256="b" * 64,
+        )
+        self.db.session.add(art)
+        self.db.session.flush()
+        blob = OutputBlob(file_size=size, sha256="a" * 64,
+                          storage_path="media/aaaa/1/movie.mp4")
+        self.db.session.add(blob)
+        self.db.session.flush()
+        for model in anchors:
+            self.db.session.add(model(
+                artefact_id=art.id, mp4_output_blob_id=blob.id))
+        self.db.session.commit()
+        return blob
+
     # -- deduplication statistics -------------------------------------------
 
     def test_dedup_stats_logical_physical_and_savings(self):
@@ -135,6 +175,34 @@ class TestStorageStats(unittest.TestCase):
             # One duplicated content group (the shared 100-byte content).
             self.assertEqual(len(stats["top_groups"]), 1)
             self.assertEqual(stats["top_groups"][0]["count"], 2)
+
+    def test_dedup_stats_counts_transcode_output_blob(self):
+        """A transcode blob referenced only via MediaFile is counted in both
+        physical and logical — it must not inflate physical while contributing
+        nothing to logical (which would drive "saved" negative)."""
+        from myapp.database import MediaFile
+        from myapp.services.storage_stats import deduplication_stats
+        with self.app.app_context():
+            self._seed_transcode_blob(size=1000, anchors=[MediaFile])
+            stats = deduplication_stats()
+            self.assertEqual(stats["physical_bytes"], 1000)
+            self.assertEqual(stats["logical_bytes"], 1000)   # not 0
+            self.assertEqual(stats["saved_bytes"], 0)        # not -1000
+            self.assertEqual(stats["output_blob_count"], 1)
+            self.assertAlmostEqual(stats["dedup_ratio"], 1.0, places=4)
+
+    def test_dedup_stats_transcode_blob_shared_across_anchors(self):
+        """One transcode blob shared by a ReplayMovie AND a MediaFile row counts
+        as a shared blob whose second reference is genuine dedup savings."""
+        from myapp.database import MediaFile, ReplayMovie
+        from myapp.services.storage_stats import deduplication_stats
+        with self.app.app_context():
+            self._seed_transcode_blob(size=1000, anchors=[ReplayMovie, MediaFile])
+            stats = deduplication_stats()
+            self.assertEqual(stats["physical_bytes"], 1000)  # stored once
+            self.assertEqual(stats["logical_bytes"], 2000)   # referenced twice
+            self.assertEqual(stats["saved_bytes"], 1000)
+            self.assertEqual(stats["shared_blob_count"], 1)
 
     def test_dedup_stats_excludes_zero_length_artefacts(self):
         """Zero-length artefacts share the empty-file SHA-256 but waste no

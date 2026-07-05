@@ -64,7 +64,7 @@
                     </div>
                     <div class="col">
                         <div class="text-muted small">Saved</div>
-                        <div class="fs-4 text-success">{{ format_size(dedup.saved_bytes) }}</div>
+                        <div class="fs-4 {{ 'text-success' if dedup.saved_bytes >= 0 else 'text-danger' }}">{{ format_size(dedup.saved_bytes) }}</div>
                     </div>
                 </div>
                 <table class="table table-sm mb-0">
