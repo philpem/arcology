@@ -143,18 +143,23 @@ def file_to_dict(f):
     }
 
 
-def analysis_tree_node(artefact):
+def analysis_tree_node(artefact, *, visible_ids=None):
     """Build a recursive derivation-tree dict for an artefact.
 
     Each artefact node contains its analyses, and each analysis contains
     its produced_artefacts (recursively).  Uses analysis_to_dict for the
     analysis nodes so field definitions aren't duplicated.
+
+    *visible_ids* — when given (a set of artefact ids the caller may view, from
+    ``visible_derived_artefact_ids``) — prunes produced artefacts the caller may
+    not see.  A derived artefact can be independently private under a public
+    root, so any externally-exposed caller MUST pass this.
     """
     node = {
         'uuid': artefact.uuid, 'slug': artefact.slug, 'label': artefact.label,
         'artefact_type': _enum_value(artefact.artefact_type),
         'original_filename': artefact.original_filename,
-        'parent_artefact_uuid': artefact.parent.uuid if artefact.parent_artefact_id else None,
+        'parent_artefact_uuid': artefact.parent_artefact.uuid if artefact.parent_artefact_id else None,
         'derived_from_analysis_uuid': artefact.derived_from_analysis.uuid if artefact.derived_from_analysis_id else None,
     }
     analyses = Analysis.query.filter_by(artefact_id=artefact.id).order_by(Analysis.id).all()
@@ -162,12 +167,14 @@ def analysis_tree_node(artefact):
     for an in analyses:
         an_dict = analysis_to_dict(an)
         produced = Artefact.query.filter_by(derived_from_analysis_id=an.id).order_by(Artefact.id).all()
-        an_dict['produced_artefacts'] = [analysis_tree_node(p) for p in produced]
+        if visible_ids is not None:
+            produced = [p for p in produced if p.id in visible_ids]
+        an_dict['produced_artefacts'] = [analysis_tree_node(p, visible_ids=visible_ids) for p in produced]
         node['analyses'].append(an_dict)
     return node
 
 
-def processing_tree_to_dict(root_artefact):
+def processing_tree_to_dict(root_artefact, *, visible_ids=None):
     """Return the full processing tree as a JSON-safe dict.
 
     Delegates to _build_processing_tree (efficient flat queries, no N+1) and
@@ -191,7 +198,8 @@ def processing_tree_to_dict(root_artefact):
           'total_count': n
         }
     """
-    tree_node, _has_active, status_counts, total_count = build_processing_tree(root_artefact)
+    tree_node, _has_active, status_counts, total_count = build_processing_tree(
+        root_artefact, visible_ids=visible_ids)
 
     def _path_tree_to_dict(node):
         return {

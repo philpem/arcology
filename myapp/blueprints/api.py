@@ -69,6 +69,7 @@ from ..services.artefact_lifecycle import (
     queue_item_delete,
     reanalysis_reset_marker,
     validate_artefact_move,
+    visible_derived_artefact_ids,
 )
 from ..services.artefact_storage import (
     compute_file_hashes,
@@ -1051,7 +1052,9 @@ def get_artefact_analysis_tree(uuid):
     Recursively walks: artefact -> analyses -> produced_artefacts -> analyses -> ...
     """
     artefact = _get_artefact_or_404(uuid)
-    return jsonify({'artefact': analysis_tree_node(artefact)})
+    user, sees_all = _api_viewer()
+    visible = set(visible_derived_artefact_ids(artefact, user, sees_all=sees_all))
+    return jsonify({'artefact': analysis_tree_node(artefact, visible_ids=visible)})
 
 
 @blueprint.route('/artefacts/<string:uuid>/processing-tree', methods=['GET'])
@@ -1066,7 +1069,14 @@ def get_artefact_processing_tree(uuid):
     """
     artefact = _get_artefact_or_404(uuid)
     root = artefact.root_artefact
-    return jsonify(processing_tree_to_dict(root))
+    user, sees_all = _api_viewer()
+    visible = set(visible_derived_artefact_ids(root, user, sees_all=sees_all))
+    # A derived artefact can be viewable while its root is independently private;
+    # the processing tree is a root-level view, so refuse it when the root itself
+    # is not viewable rather than leak the private root and its subtree.
+    if root.id not in visible:
+        abort(404)
+    return jsonify(processing_tree_to_dict(root, visible_ids=visible))
 
 
 @blueprint.route('/artefacts/<string:uuid>/analysis/recursive', methods=['GET'])
@@ -1077,7 +1087,9 @@ def get_artefact_analyses_recursive(uuid):
     Optional query param: ?status=failed to filter by status.
     """
     artefact = _get_artefact_or_404(uuid)
-    analyses = collect_all_analyses(artefact)
+    user, sees_all = _api_viewer()
+    visible = set(visible_derived_artefact_ids(artefact, user, sees_all=sees_all))
+    analyses = collect_all_analyses(artefact, visible_ids=visible)
 
     status_filter = request.args.get('status')
     if status_filter:

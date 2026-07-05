@@ -67,7 +67,7 @@ def get_all_derived_artefact_ids(artefact: Artefact) -> list[int]:
     return [r[0] for r in rows]
 
 
-def visible_derived_artefact_ids(artefact: Artefact, user) -> list[int]:
+def visible_derived_artefact_ids(artefact: Artefact, user, sees_all: bool = False) -> list[int]:
     """IDs of *artefact* and its derived subtree that *user* may view.
 
     A derived artefact can be independently private (``Artefact.effective_private``
@@ -78,23 +78,36 @@ def visible_derived_artefact_ids(artefact: Artefact, user) -> list[int]:
     route guard does) would leak a deliberately-private derived artefact's
     metadata into the still-public root's page.  Single source for that filtered
     id collection, shared by the artefact-view stack and the analysis listing.
+
+    *sees_all* is the worker/all-content flag from ``_api_viewer()`` — the worker
+    key must be able to walk private subtrees it was asked to process.
     """
     all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
     return [
         row[0] for row in db.session.query(Artefact.id)
         .join(Item, Artefact.item_id == Item.id)
-        .filter(Artefact.id.in_(all_ids), artefact_visibility_clause(user))
+        .filter(Artefact.id.in_(all_ids), artefact_visibility_clause(user, sees_all=sees_all))
         .all()
     ]
 
 
-def collect_all_analyses(artefact: Artefact) -> list:
+def collect_all_analyses(artefact: Artefact, *, visible_ids=None) -> list:
     """Collect all analyses for an artefact and its derived artefacts.
 
     Uses the CTE-based get_all_derived_artefact_ids to avoid N+1 queries,
     then fetches all analyses in a single query.
+
+    *visible_ids* — when given (a set/collection of artefact ids the caller may
+    view, from ``visible_derived_artefact_ids``) — restricts the walk to those
+    artefacts.  A derived artefact can be independently private under a public
+    root, so any externally-exposed caller MUST pass this; internal callers
+    (storage cleanup) that need the whole subtree leave it ``None``.
     """
     all_ids = [artefact.id] + get_all_derived_artefact_ids(artefact)
+    if visible_ids is not None:
+        all_ids = [aid for aid in all_ids if aid in visible_ids]
+        if not all_ids:
+            return []
     return Analysis.query.filter(Analysis.artefact_id.in_(all_ids)).order_by(Analysis.id.desc()).all()
 
 
@@ -295,7 +308,7 @@ def _build_file_path_tree(path_analyses: list[tuple[str, object]]) -> dict:
     return root
 
 
-def build_processing_tree(root: Artefact) -> tuple[dict, bool, dict, int]:
+def build_processing_tree(root: Artefact, *, visible_ids=None) -> tuple[dict, bool, dict, int]:
     """Build a nested tree structure for the processing tree view.
 
     Returns (tree_node, has_active_analyses, status_counts, total_count).
@@ -313,9 +326,16 @@ def build_processing_tree(root: Artefact) -> tuple[dict, bool, dict, int]:
     render them as a hierarchical file-path tree.
 
     All data is fetched in flat queries (no N+1) and assembled in Python.
+
+    *visible_ids* — when given (from ``visible_derived_artefact_ids``) —
+    restricts the tree to artefacts the caller may view.  A derived artefact can
+    be independently private under a public root, so any externally-exposed
+    caller MUST pass this to avoid leaking that private child's metadata.
     """
 
     all_ids = [root.id] + get_all_derived_artefact_ids(root)
+    if visible_ids is not None:
+        all_ids = [aid for aid in all_ids if aid in visible_ids]
 
     # Exclude any derived artefact queued for deletion so it disappears from the
     # processing tree of its still-visible parent (the root itself is already
