@@ -35,11 +35,39 @@
 					</ul>
 
 {% if current_user.is_authenticated or public_mode %}
-					<form class="d-flex me-lg-3 my-2 my-lg-0" role="search" method="get" action="{{ url_for('myapp_blueprints_search.index') }}">
+{% set search_q = request.args.get('q', '') if request.endpoint == 'myapp_blueprints_search.index' else '' %}
+					{# Wide navbar: collapse search behind an icon that opens a dropdown
+					   (click, keyboard, or hover — see site.js).  The collapsed
+					   hamburger menu keeps the box inline where there's room. #}
+					<ul class="navbar-nav d-none d-lg-flex me-lg-3">
+						<li class="nav-item dropdown">
+							{# Keeps data-bs-toggle so Bootstrap wires Escape / outside-click
+							   close, touch and aria; site.js swallows the click's *toggle*
+							   so hover-then-click can't close it (see there).  Without JS the
+							   link falls back to the full search page. #}
+							<a class="nav-link" href="{{ url_for('myapp_blueprints_search.index') }}"
+							   role="button" id="navbarSearchToggle"
+							   data-bs-toggle="dropdown" data-bs-auto-close="outside"
+							   aria-expanded="false" aria-label="Search" title="Search (press /)">
+								<i class="bi bi-search"></i>
+							</a>
+							<div class="dropdown-menu dropdown-menu-end p-2 navbar-search-menu" aria-labelledby="navbarSearchToggle">
+								<form role="search" method="get" action="{{ url_for('myapp_blueprints_search.index') }}">
+									<div class="input-group input-group-sm">
+										<input class="form-control" type="search" name="q" placeholder="Search everything…"
+										       aria-label="Search" autocomplete="off" data-navbar-search-input
+										       value="{{ search_q }}">
+										<button class="btn btn-outline-secondary" type="submit" title="Search"><i class="bi bi-search"></i></button>
+									</div>
+								</form>
+							</div>
+						</li>
+					</ul>
+					<form class="d-flex d-lg-none my-2" role="search" method="get" action="{{ url_for('myapp_blueprints_search.index') }}">
 						<div class="input-group input-group-sm">
 							<input class="form-control" type="search" name="q" placeholder="Search everything…"
 							       aria-label="Search"
-							       value="{{ request.args.get('q', '') if request.endpoint == 'myapp_blueprints_search.index' else '' }}">
+							       value="{{ search_q }}">
 							<button class="btn btn-outline-light" type="submit" title="Search"><i class="bi bi-search"></i></button>
 						</div>
 					</form>

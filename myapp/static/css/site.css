@@ -3,6 +3,8 @@
 body { display: flex; flex-direction: column; min-height: 100vh; }
 main { flex: 1; }
 .navbar-brand i { margin-right: 0.25rem; }
+/* Give the navbar search dropdown enough room for the input group. */
+.navbar-search-menu { min-width: 20rem; }
 code { font-size: 0.875em; word-break: break-all; }
 .depth-indent { padding-left: calc(var(--depth-base, 1rem) + (var(--depth, 0) * var(--depth-step, 1.5rem))); }
 
