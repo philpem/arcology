@@ -1,7 +1,6 @@
 
 import json
 import os
-import secrets
 from urllib.parse import urlsplit
 from flask import Flask, g, render_template, request, url_for
 from flask_login import current_user
@@ -27,6 +26,7 @@ _ENV_STR_KEYS = (
     'OIDC_ROLE_STAFF', 'OIDC_ROLE_API_ACCESS', 'OIDC_ROLE_PRIORITISE',
     'OIDC_GROUP_SYNC_CLAIM',
     'JINJA_BYTECODE_CACHE', 'JINJA_BYTECODE_CACHE_DIR', 'JINJA_PREWARM',
+    'SESSION_COOKIE_SAMESITE',
     'SENTRY_DSN', 'WORKER_SENTRY_DSN',
     # String so relative cap expressions ("50%", "-1") survive env passthrough;
     # resolve_heavy_cap() parses int / percentage / negative forms.
@@ -36,6 +36,7 @@ _ENV_BOOL_KEYS = (
     'DEBUG', 'DEBUG_DB_LOG', 'DEBUG_DB_PROFILING',
     'SQLALCHEMY_TRACK_MODIFICATIONS',
     'PUBLIC_MODE', 'PUBLIC_DOWNLOADS',
+    'TRUST_PROXY_HEADERS', 'SESSION_COOKIE_SECURE',
     'OIDC_ENABLED', 'LOCAL_LOGIN_ENABLED', 'OIDC_REQUIRE_ROLE',
     'OIDC_AUTO_REDIRECT', 'OIDC_SINGLE_LOGOUT', 'OIDC_LINK_BY_USERNAME',
     'OIDC_GROUP_SYNC_ENABLED', 'OIDC_GROUP_LINK_LOCAL',
@@ -163,14 +164,28 @@ class AppClass(Flask):
 def create_app(config_name=None):
     # create and configure the application
     app = AppClass(__name__)
-    # Trust X-Forwarded-* headers from one upstream proxy (nginx, Caddy, Traefik, etc.)
-    # so that url_for(_external=True) and OIDC redirect URIs use the public hostname/scheme.
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
     app.config.from_pyfile(config_name or 'myapp.cfg', silent=True)
 
     # Load settings from the environment, overriding the config file where set,
     # so myapp.cfg is entirely optional in Docker.
     _load_config_from_env(app)
+
+    # Session cookie hardening.  Flask pre-seeds these keys (HTTPONLY=True,
+    # SECURE=False, SAMESITE=None) so setdefault can't touch them; SECURE stays
+    # opt-in via SESSION_COOKIE_SECURE (env/cfg) so plain-HTTP dev still works —
+    # set it True on any TLS deployment.  Default SameSite to Lax (residual-CSRF
+    # mitigation) unless a value was explicitly configured.
+    if app.config.get('SESSION_COOKIE_SAMESITE') is None:
+        app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+
+    # Trust X-Forwarded-* headers from one upstream proxy (nginx, Caddy, Traefik,
+    # etc.) so url_for(_external=True) and OIDC redirect URIs use the public
+    # hostname/scheme.  These headers are client-spoofable, so trust them ONLY
+    # when actually fronted by a proxy (the default).  Set TRUST_PROXY_HEADERS=0
+    # when gunicorn is exposed to clients directly, otherwise a caller can forge
+    # the host/scheme and its logged source IP.
+    if app.config.setdefault('TRUST_PROXY_HEADERS', True):
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
     # Abort if no database URI is configured
     if not app.config.get('SQLALCHEMY_DATABASE_URI'):
@@ -190,12 +205,31 @@ def create_app(config_name=None):
             "a negative value would demote web UI jobs behind API/CLI jobs"
         )
 
-    # Warn and auto-generate SECRET_KEY if missing, left at the default placeholder, or too short
+    # Require a real SECRET_KEY.  We deliberately do NOT mint one here: under
+    # gunicorn each worker runs create_app() after fork, so an auto-generated
+    # per-process key gives every worker a different secret and sessions/CSRF
+    # only validate on the worker that issued them.  A missing or placeholder key
+    # is a hard error; a provided key that is merely short is used (it is
+    # consistent across workers — length is the operator's call) with a warning.
+    # In Docker, Dentrypoint.sh supplies one shared ephemeral key for the whole
+    # container before any process starts, so a zero-config `docker compose up`
+    # still works; this error is for a non-container start that forgot to set it.
     secret_key = app.config.get('SECRET_KEY', '')
-    if not secret_key or secret_key in ['0123456789ABCDEF', 'CHANGE_ME'] or len(secret_key) < 32:
-        app.logger.warning("!!! SECRET_KEY not set, left at default, or too short - generating random key for this session")
-        app.logger.warning("!!! Sessions will be lost on server restart - set SECRET_KEY in myapp.cfg or as an environment variable")
-        app.config['SECRET_KEY'] = secrets.token_urlsafe(32)
+    if not secret_key or secret_key in ('0123456789ABCDEF', 'CHANGE_ME'):
+        raise RuntimeError(
+            "SECRET_KEY is not configured (unset or left at the placeholder). "
+            "Refusing to start: an auto-generated per-process key breaks sessions "
+            "and CSRF across gunicorn workers. Set SECRET_KEY in the environment "
+            "or myapp.cfg — generate one with "
+            "`python3 -c 'import secrets; print(secrets.token_urlsafe(48))'`. "
+            "(In Docker, Dentrypoint.sh generates a shared ephemeral key "
+            "automatically if you do not set one.)"
+        )
+    if len(secret_key) < 32:
+        app.logger.warning(
+            "SECRET_KEY is shorter than 32 characters — use a longer random value "
+            "for a real deployment (e.g. secrets.token_urlsafe(48))."
+        )
 
     # Connection pool tuning: allow enough connections for Gunicorn workers
     # under concurrent load.  Defaults can be overridden in myapp.cfg or env.
