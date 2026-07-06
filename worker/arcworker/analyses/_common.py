@@ -426,7 +426,7 @@ def scan_partition_files(self, analysis: dict, artefact: dict, *, select_files):
 
 def iter_resolved_files(self, files, extraction_path, work_dir, *,
                         path_prefix='', reporter=None, on_missing=None):
-    """Yield ``(file_data, file_path, disk_path)`` for each resolvable file.
+    """Yield ``(file_data, file_path, db_path)`` for each resolvable file.
 
     The shared back half of the batch scaffold: wraps
     :func:`resolve_extraction_file` (passing the file's ``risc_os_filetype`` and
@@ -435,11 +435,22 @@ def iter_resolved_files(self, files, extraction_path, work_dir, *,
     handler can bucket them into its own error list).  When *reporter* is given
     it is driven by the count of successfully-resolved files (not the raw scan
     position), so progress does not skip values when files are missing.
+
+    ``file_path`` is the resolved *on-disk* location (with any ``path_prefix``
+    stripped and ``,xxx`` filetype suffix re-added — used to read the bytes);
+    ``db_path`` is the file's full ``ExtractedFile.path``.  Handlers record
+    ``db_path`` (never the prefix-stripped disk path) so the values they store —
+    FORMAT_CONVERT ``source_file``, ``RiscosModule.file_path``,
+    ``ReplayMovie.file_path``, ``MediaFile.file_path`` — match ``file.path`` in
+    the web file listing and light up its View / info buttons.  For files inside
+    a nested archive (``path_prefix`` set) the two paths differ, so yielding
+    ``db_path`` here rather than the stripped disk path is what keeps those
+    buttons working for archive contents.
     """
     resolved = 0
     for file_data in files:
         db_path = file_data['path']
-        file_path, disk_path = resolve_extraction_file(
+        file_path, _disk_path = resolve_extraction_file(
             self, extraction_path, db_path, work_dir,
             path_prefix=path_prefix,
             risc_os_filetype=file_data.get('risc_os_filetype') or None,
@@ -451,7 +462,7 @@ def iter_resolved_files(self, files, extraction_path, work_dir, *,
         resolved += 1
         if reporter is not None:
             reporter.update(resolved)
-        yield file_data, file_path, disk_path
+        yield file_data, file_path, db_path
 
 
 def transcode_cached(worker, *, input_path: Path, output_ext: str, produce,

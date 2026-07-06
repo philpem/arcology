@@ -322,9 +322,8 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
             file_data.get('filename', ''), file_data.get('risc_os_filetype'))
 
     # Discover viewable files via the shared batch scaffold.  The select
-    # predicate annotates each selected DB record with its viewable type.  The
-    # conversion loop must not key this by path: iter_resolved_files may return
-    # a display path with path-prefix stripping or suffix normalisation applied.
+    # predicate annotates each selected DB record with its viewable type, which
+    # the conversion loop reads back off file_data rather than re-deriving.
     def _select(file_data: dict) -> bool:
         vt = _viewable_type_from_db(file_data)
         if vt is not None:
