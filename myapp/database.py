@@ -1215,7 +1215,8 @@ class ArtefactRestriction(db.Model):
     artefact_id: Mapped[int] = mapped_column(ForeignKey("artefacts.id"), index=True)
     restriction_type: Mapped[RestrictionType] = mapped_column(SQLEnum(RestrictionType))
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    added_by_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"), nullable=True)
+    added_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), server_default=sa_text('CURRENT_TIMESTAMP'))
 
     artefact: Mapped["Artefact"] = relationship(back_populates="restrictions")
@@ -1239,7 +1240,8 @@ class ExtractedFileRestriction(db.Model):
     extracted_file_id: Mapped[int] = mapped_column(ForeignKey("extracted_files.id"), index=True)
     restriction_type: Mapped[RestrictionType] = mapped_column(SQLEnum(RestrictionType))
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    added_by_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"), nullable=True)
+    added_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     extracted_file: Mapped["ExtractedFile"] = relationship(back_populates="restrictions")
@@ -1286,7 +1288,7 @@ class UserArtefactBypass(db.Model):
     restriction_type: Mapped[RestrictionType] = mapped_column(SQLEnum(RestrictionType))
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     granted_by_id: Mapped[int | None] = mapped_column(ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
-    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     user: Mapped["User"] = relationship(back_populates="artefact_bypasses",
                                         foreign_keys=[user_id])

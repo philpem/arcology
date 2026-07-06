@@ -27,6 +27,20 @@ Support for extracting nested archives from RISC OS disk images and directly upl
 
 _†SparkFS filetypes ZIP archives as &DDC. If `riscosarc` extraction fails, the worker falls back to `unzip` and reclassifies the archive as `ZIP (RISC OS)` so that RISC OS `,xxx` filetype suffixes are still parsed from extracted filenames._
 
+### Default Acorn filetype (HostFS/NFS dumps)
+
+A plain ZIP or TAR of a HostFS/NFS directory carries no RISC OS metadata, so
+files that had no `,xxx` filetype suffix arrive **untyped**. The upload and
+re-analyse forms expose an optional **Default Acorn filetype** hint
+(`acorn_default_filetype`, also settable via `arco upload --hint
+acorn_default_filetype=Text`). Its value — a filetype name (`Text`) or hex code
+(`fff`), normalised to canonical hex at ingest — is applied by the top-level
+`ARCHIVE_EXTRACT` handler to every extracted file that no other source (`,xxx`
+suffix, INF sidecar, ISO ARCHIMEDES map) has already typed. This reproduces how
+RISC OS assigns a configured default type to suffix-less files. The default is
+applied to the archive's **own** files only; it is not carried into nested
+archives (which either carry their own RISC OS metadata or are left untyped).
+
 _*Compressor = single-file, decompresses to file with same name (not a directory)_
 
 ### PC Formats
