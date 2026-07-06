@@ -74,6 +74,7 @@ ANALYSIS_MAP = {
     ArtefactType.ARC: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.TBAFS:  [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.XFILES: [AnalysisType.ARCHIVE_EXTRACT],
+    ArtefactType.LHA:    [AnalysisType.ARCHIVE_EXTRACT],
 
     # Acorn/RISC OS native viewable formats — convert to portable equivalents
     ArtefactType.ACORN_SPRITE: [AnalysisType.FORMAT_CONVERT],

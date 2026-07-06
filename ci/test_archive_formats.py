@@ -143,6 +143,20 @@ class TestArchiveFormatHelpers(unittest.TestCase):
     def test_get_archive_by_extension_targz(self):
         self.assertEqual(get_archive_by_extension('backup.tar.gz'), ArchiveType.TARGZ)
 
+    def test_get_archive_by_extension_lha(self):
+        self.assertEqual(get_archive_by_extension('game.lha'), ArchiveType.LHA)
+        self.assertEqual(get_archive_by_extension('demo.lzh'), ArchiveType.LHA)
+
+    def test_lha_artefact_wiring(self):
+        from arcology_shared.artefact_types import (
+            ARCHIVE_ARTEFACT_TYPES,
+            detect_artefact_type,
+        )
+        from arcology_shared.enums import ArtefactType
+        self.assertEqual(detect_artefact_type('game.lha'), ArtefactType.LHA)
+        self.assertEqual(detect_artefact_type('demo.lzh'), ArtefactType.LHA)
+        self.assertIn(ArtefactType.LHA, ARCHIVE_ARTEFACT_TYPES)
+
     def test_get_archive_by_extension_case_insensitive(self):
         self.assertEqual(get_archive_by_extension('ARCHIVE.ZIP'), ArchiveType.ZIP)
 

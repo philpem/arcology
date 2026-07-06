@@ -39,6 +39,7 @@ class ArchiveType(Enum):
     TARBZ2 = "tar_bz2"
     TARXZ = "tar_xz"
     SEVENZ = "7z"
+    LHA = "lha"              # LHA / LZH archive
 
     # PC Single-file compressors
     GZIP = "gzip"            # .gz files
@@ -217,6 +218,15 @@ ARCHIVE_FORMATS = {
         'extensions': ['.7z'],
         'tool': '7z',
         'description': '7-Zip archive',
+        'extract_creates_dir': True,
+    },
+    ArchiveType.LHA: {
+        'name': 'LHA / LZH Archive',
+        'category': ArchiveCategory.ARCHIVE,
+        'risc_os_filetype': None,
+        'extensions': ['.lha', '.lzh'],
+        'tool': 'lha',
+        'description': 'LHA / LZH archive (Amiga and BBS era)',
         'extract_creates_dir': True,
     },
 

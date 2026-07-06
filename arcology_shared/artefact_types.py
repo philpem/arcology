@@ -65,6 +65,8 @@ EXTENSION_MAP = {
     '.b21':   ArtefactType.TBAFS,
     '.tbafs': ArtefactType.TBAFS,
     '.b23':   ArtefactType.XFILES,
+    '.lha':   ArtefactType.LHA,
+    '.lzh':   ArtefactType.LHA,
 
     # Acorn/RISC OS native viewable formats
     '.spr':  ArtefactType.ACORN_SPRITE,
@@ -388,7 +390,7 @@ COMPRESSOR_SUFFIXES = ('.zst', '.gz', '.bz2')
 ARCHIVE_ARTEFACT_TYPES = frozenset({
     ArtefactType.ZIP, ArtefactType.TAR, ArtefactType.TARGZ, ArtefactType.RAR,
     ArtefactType.SEVENZ, ArtefactType.ARC, ArtefactType.TBAFS,
-    ArtefactType.XFILES,
+    ArtefactType.XFILES, ArtefactType.LHA,
 })
 
 # Derived extension sets, for callers that classify by category rather than

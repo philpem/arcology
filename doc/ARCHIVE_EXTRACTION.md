@@ -50,6 +50,7 @@ _*Compressor = single-file, decompresses to file with same name (not a directory
 | .zip | ZIP | Archive | unzip/7z | 3 |
 | .rar | RAR | Archive | unrar | 3 |
 | .7z | 7-Zip | Archive | 7z | 3 |
+| .lha/.lzh | LHA/LZH | Archive | lha (lhasa) | 3 |
 | .tar | TAR | Archive | tar | 3 |
 | .tar.gz/.tgz | TAR+GZIP | Archive | tar | 3 |
 | .tar.bz2/.tbz2 | TAR+BZIP2 | Archive | tar | 3 |

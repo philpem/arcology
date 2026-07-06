@@ -7,6 +7,7 @@ Contains wrappers for external analysis tools.
 from .archives import (
     decompress_single_file,
     extract_7z,
+    extract_lha,
     extract_rar,
     extract_riscosarc,
     extract_tar,
@@ -135,6 +136,7 @@ __all__ = [
     'extract_tar',
     'extract_rar',
     'extract_7z',
+    'extract_lha',
     'decompress_single_file',
     'detect_armlock',
     'remove_armlock',

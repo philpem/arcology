@@ -698,6 +698,22 @@ def extract_rar(input_path: Path, output_dir: Path) -> dict[str, Any]:
     )
 
 
+def extract_lha(input_path: Path, output_dir: Path) -> dict[str, Any]:
+    """Extract an LHA / LZH archive via ``lha`` (lhasa).
+
+    ``x`` keeps the stored directory structure; ``w=<dir>`` sets the output
+    directory.  Confinement is asserted so a hostile archive can't escape it.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return _run_extraction_command(
+        tool='lha',
+        cmd=['lha', f'xw={output_dir}', str(input_path)],
+        output_dir=output_dir,
+        summary='Extracted {file_count} files from LHA/LZH archive',
+        assert_confined=True,
+    )
+
+
 def extract_7z(input_path: Path, output_dir: Path) -> dict[str, Any]:
     """
     Extract 7-Zip archive.

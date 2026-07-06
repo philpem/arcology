@@ -44,6 +44,7 @@ class ArtefactType(enum.Enum):
     ARC        = "arc"               # ArcFS / Spark (RISC OS archive)
     TBAFS      = "tbafs"             # TBAFS archive (RISC OS filetype &B21)
     XFILES     = "xfiles"            # X-Files archive (RISC OS filetype &B23)
+    LHA        = "lha"               # LHA / LZH archive (Amiga / BBS era)
 
     # Acorn/RISC OS native formats (viewable/convertible)
     ACORN_SPRITE = "acorn_sprite"    # Acorn Sprite file (may contain multiple named images)
