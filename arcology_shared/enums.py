@@ -46,6 +46,7 @@ class ArtefactType(enum.Enum):
     XFILES     = "xfiles"            # X-Files archive (RISC OS filetype &B23)
     LHA        = "lha"               # LHA / LZH archive (Amiga / BBS era)
     ARJ        = "arj"               # ARJ archive (PC / BBS era)
+    ZOO        = "zoo"               # Zoo archive (PC / Amiga BBS era)
 
     # Acorn/RISC OS native formats (viewable/convertible)
     ACORN_SPRITE = "acorn_sprite"    # Acorn Sprite file (may contain multiple named images)

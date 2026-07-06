@@ -68,6 +68,7 @@ EXTENSION_MAP = {
     '.lha':   ArtefactType.LHA,
     '.lzh':   ArtefactType.LHA,
     '.arj':   ArtefactType.ARJ,
+    '.zoo':   ArtefactType.ZOO,
 
     # Acorn/RISC OS native viewable formats
     '.spr':  ArtefactType.ACORN_SPRITE,
@@ -392,6 +393,7 @@ ARCHIVE_ARTEFACT_TYPES = frozenset({
     ArtefactType.ZIP, ArtefactType.TAR, ArtefactType.TARGZ, ArtefactType.RAR,
     ArtefactType.SEVENZ, ArtefactType.ARC, ArtefactType.TBAFS,
     ArtefactType.XFILES, ArtefactType.LHA, ArtefactType.ARJ,
+    ArtefactType.ZOO,
 })
 
 # Derived extension sets, for callers that classify by category rather than

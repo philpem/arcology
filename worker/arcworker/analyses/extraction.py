@@ -37,6 +37,7 @@ from ..tools import (
     extract_xfiles,
     extract_zip,
     extract_zip_riscos,
+    extract_zoo,
     has_riscos_zip_metadata,
     list_zip_member_names,
     parse_iso_riscos_filetypes,
@@ -304,6 +305,7 @@ _BASE_EXTRACTORS = {
     ArchiveType.SEVENZ:     extract_7z,
     ArchiveType.LHA:        extract_lha,
     ArchiveType.ARJ:        extract_arj,
+    ArchiveType.ZOO:        extract_zoo,
 }
 
 # Nested extraction additionally handles DOS disc images found inside a

@@ -731,6 +731,24 @@ def extract_arj(input_path: Path, output_dir: Path) -> dict[str, Any]:
     )
 
 
+def extract_zoo(input_path: Path, output_dir: Path) -> dict[str, Any]:
+    """Extract a Zoo archive via ``zoo``.
+
+    zoo unpacks into the working directory, so it is run with ``cwd`` set to the
+    freshly-created (empty) output dir; ``x`` extracts with stored paths and,
+    since the dir starts empty, no overwrite prompts fire.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return _run_extraction_command(
+        tool='zoo',
+        cmd=['zoo', 'x', str(Path(input_path).resolve())],
+        output_dir=output_dir,
+        cwd=str(output_dir),
+        summary='Extracted {file_count} files from Zoo archive',
+        assert_confined=True,
+    )
+
+
 def extract_7z(input_path: Path, output_dir: Path) -> dict[str, Any]:
     """
     Extract 7-Zip archive.

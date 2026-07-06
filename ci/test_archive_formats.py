@@ -150,6 +150,9 @@ class TestArchiveFormatHelpers(unittest.TestCase):
     def test_get_archive_by_extension_arj(self):
         self.assertEqual(get_archive_by_extension('files.arj'), ArchiveType.ARJ)
 
+    def test_get_archive_by_extension_zoo(self):
+        self.assertEqual(get_archive_by_extension('stuff.zoo'), ArchiveType.ZOO)
+
     def test_lha_artefact_wiring(self):
         from arcology_shared.artefact_types import (
             ARCHIVE_ARTEFACT_TYPES,
@@ -168,6 +171,15 @@ class TestArchiveFormatHelpers(unittest.TestCase):
         from arcology_shared.enums import ArtefactType
         self.assertEqual(detect_artefact_type('files.arj'), ArtefactType.ARJ)
         self.assertIn(ArtefactType.ARJ, ARCHIVE_ARTEFACT_TYPES)
+
+    def test_zoo_artefact_wiring(self):
+        from arcology_shared.artefact_types import (
+            ARCHIVE_ARTEFACT_TYPES,
+            detect_artefact_type,
+        )
+        from arcology_shared.enums import ArtefactType
+        self.assertEqual(detect_artefact_type('stuff.zoo'), ArtefactType.ZOO)
+        self.assertIn(ArtefactType.ZOO, ARCHIVE_ARTEFACT_TYPES)
 
     def test_get_archive_by_extension_case_insensitive(self):
         self.assertEqual(get_archive_by_extension('ARCHIVE.ZIP'), ArchiveType.ZIP)

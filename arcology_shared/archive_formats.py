@@ -41,6 +41,7 @@ class ArchiveType(Enum):
     SEVENZ = "7z"
     LHA = "lha"              # LHA / LZH archive
     ARJ = "arj"              # ARJ archive
+    ZOO = "zoo"              # Zoo archive
 
     # PC Single-file compressors
     GZIP = "gzip"            # .gz files
@@ -237,6 +238,15 @@ ARCHIVE_FORMATS = {
         'extensions': ['.arj'],
         'tool': 'arj',
         'description': 'ARJ archive (PC and BBS era)',
+        'extract_creates_dir': True,
+    },
+    ArchiveType.ZOO: {
+        'name': 'Zoo Archive',
+        'category': ArchiveCategory.ARCHIVE,
+        'risc_os_filetype': None,
+        'extensions': ['.zoo'],
+        'tool': 'zoo',
+        'description': 'Zoo archive (PC and Amiga BBS era)',
         'extract_creates_dir': True,
     },
 

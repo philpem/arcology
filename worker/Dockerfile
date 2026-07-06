@@ -400,7 +400,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 		python3 python3-pip python3-dev python3-requests python3-numpy python3-boto3 git \
 		p7zip-full zstd gzip bzip2 xz-utils \
 		unzip unrar tar util-linux \
-		lhasa arj \
+		lhasa arj zoo \
 		file fdisk \
 		default-jre \
 		antiword catdoc poppler-utils unrtf \
