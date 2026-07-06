@@ -181,9 +181,12 @@ class ArcologyClient:
 		  these to queue_analyses_for_artefact() so they apply to every queued job.
 		  The accepted user-facing keys are the single source of truth in
 		  arcology_shared.hints.UPLOAD_HINT_KEYS:
-		    dfi_clock_mhz  (int)  — override DiscFerret sample frequency in MHz
-		    platform       (str)  — platform hint (e.g. 'BBC Micro')
-		    filesystem     (str)  — filesystem hint (e.g. 'adfs', 'fat12')
+		    dfi_clock_mhz          (int)  — override DiscFerret sample frequency in MHz
+		    platform               (str)  — platform hint (e.g. 'BBC Micro')
+		    filesystem             (str)  — filesystem hint (e.g. 'adfs', 'fat12')
+		    acorn_default_filetype (str)  — RISC OS filetype for untyped files in a
+		                                    top-level ZIP/TAR of a HostFS/NFS directory
+		                                    (name or hex, e.g. 'Text' or 'fff')
 		"""
 		if os.path.getsize(filepath) > CHUNKED_THRESHOLD:
 			return self.upload_artefact_chunked(
