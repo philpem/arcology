@@ -40,6 +40,7 @@ class ArchiveType(Enum):
     TARXZ = "tar_xz"
     SEVENZ = "7z"
     LHA = "lha"              # LHA / LZH archive
+    ARJ = "arj"              # ARJ archive
 
     # PC Single-file compressors
     GZIP = "gzip"            # .gz files
@@ -227,6 +228,15 @@ ARCHIVE_FORMATS = {
         'extensions': ['.lha', '.lzh'],
         'tool': 'lha',
         'description': 'LHA / LZH archive (Amiga and BBS era)',
+        'extract_creates_dir': True,
+    },
+    ArchiveType.ARJ: {
+        'name': 'ARJ Archive',
+        'category': ArchiveCategory.ARCHIVE,
+        'risc_os_filetype': None,
+        'extensions': ['.arj'],
+        'tool': 'arj',
+        'description': 'ARJ archive (PC and BBS era)',
         'extract_creates_dir': True,
     },
 

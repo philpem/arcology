@@ -27,6 +27,7 @@ from ..tools import (
     enumerate_extracted_files,
     extract_7z,
     extract_acorn_disc_image_manager,
+    extract_arj,
     extract_dos_7z,
     extract_lha,
     extract_rar,
@@ -302,6 +303,7 @@ _BASE_EXTRACTORS = {
     ArchiveType.RAR:        extract_rar,
     ArchiveType.SEVENZ:     extract_7z,
     ArchiveType.LHA:        extract_lha,
+    ArchiveType.ARJ:        extract_arj,
 }
 
 # Nested extraction additionally handles DOS disc images found inside a

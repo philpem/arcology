@@ -714,6 +714,23 @@ def extract_lha(input_path: Path, output_dir: Path) -> dict[str, Any]:
     )
 
 
+def extract_arj(input_path: Path, output_dir: Path) -> dict[str, Any]:
+    """Extract an ARJ archive via ``arj``.
+
+    arj unpacks into the working directory, so it is run with ``cwd`` set to the
+    output dir; ``x`` keeps stored paths and ``-y`` answers prompts yes.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return _run_extraction_command(
+        tool='arj',
+        cmd=['arj', 'x', '-y', str(Path(input_path).resolve())],
+        output_dir=output_dir,
+        cwd=str(output_dir),
+        summary='Extracted {file_count} files from ARJ archive',
+        assert_confined=True,
+    )
+
+
 def extract_7z(input_path: Path, output_dir: Path) -> dict[str, Any]:
     """
     Extract 7-Zip archive.
