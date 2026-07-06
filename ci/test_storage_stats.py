@@ -330,6 +330,8 @@ class TestStorageStats(unittest.TestCase):
             self.assertIsNotNone(summary)
             self.assertEqual(summary["kind"], "local")
             self.assertIn("free", summary["label"])
+            # The chip shows free space only — the total lives in the tooltip.
+            self.assertNotIn(" of ", summary["label"])
             # Tooltip detail carries the breakdown rows.
             names = [name for name, _ in summary["detail"]]
             self.assertEqual(names, ["Collection", "Free", "Disk size"])
@@ -343,6 +345,7 @@ class TestStorageStats(unittest.TestCase):
             summary = navbar_storage_summary()
             self.assertEqual(summary["kind"], "s3")
             self.assertIn("free", summary["label"])
+            self.assertNotIn(" of ", summary["label"])
             names = [name for name, _ in summary["detail"]]
             self.assertEqual(names, ["Collection", "Free", "Quota"])
 

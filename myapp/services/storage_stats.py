@@ -322,8 +322,10 @@ def navbar_storage_summary() -> dict | None:
         percent = cap['percent_used']
 
         if total is not None:
-            # Free space is the headline; the tooltip carries the breakdown.
-            label = f"{format_size(free)} free of {format_size(total)}"
+            # Free space is the *only* headline; the tooltip carries the full
+            # breakdown (collection size, free %, and the disk size / quota the
+            # free figure is measured against), keeping the navbar chip compact.
+            label = f"{format_size(free)} free"
             free_pct = round(100.0 - percent) if percent is not None else None
             total_name = 'Disk size' if cap['kind'] == 'local' else 'Quota'
             detail = [
