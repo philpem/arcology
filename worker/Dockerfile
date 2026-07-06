@@ -402,7 +402,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 		unzip unrar tar util-linux \
 		file fdisk \
 		default-jre \
-		antiword catdoc poppler-utils \
+		antiword catdoc poppler-utils unrtf \
 		ffmpeg \
 		libcairo2 libfontconfig1 python3-cairo python3-cairocffi python3-pillow \
 		fonts-freefont-ttf \

@@ -98,6 +98,25 @@ def ppt_to_text(path: Path) -> dict:
         error='PowerPoint .ppt text extraction failed (catppt/catdoc unavailable or errored)')
 
 
+def _strip_unrtf_header(text: str) -> str:
+    """Drop unrtf's ``###``-prefixed informational lines, leaving the body."""
+    body = '\n'.join(ln for ln in text.splitlines() if not ln.startswith('###'))
+    return body.strip('\n')
+
+
+def rtf_to_text(path: Path) -> dict:
+    """Extract text from an RTF document via ``unrtf --text``.
+
+    ``--nopict`` skips embedded pictures; unrtf prefixes a few ``###`` comment
+    lines which :func:`_strip_unrtf_header` removes.
+    """
+    return _text_from_tool(
+        [['unrtf', '--text', '--nopict', str(path)]],
+        tool='unrtf',
+        error='RTF text extraction failed (unrtf unavailable or errored)',
+        postprocess=_strip_unrtf_header)
+
+
 def word_to_text(path: Path) -> dict:
     """Extract plain text from a Microsoft Word document (.doc or .docx).
 

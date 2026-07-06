@@ -30,6 +30,7 @@ from ..tools import (
     pdf_to_text,
     ppt_to_text,
     read_file_capped,
+    rtf_to_text,
     word_to_text,
     xls_to_text,
 )
@@ -57,6 +58,7 @@ _DOCUMENT_TEXT_CONVERTERS = {
     ArtefactType.PDF: pdf_to_text,
     ArtefactType.MS_EXCEL: xls_to_text,
     ArtefactType.MS_POWERPOINT: ppt_to_text,
+    ArtefactType.RTF: rtf_to_text,
 }
 
 

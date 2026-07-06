@@ -245,6 +245,37 @@ class TestPowerpointWiring(unittest.TestCase):
         self.assertEqual(ANALYSIS_MAP[ArtefactType.MS_POWERPOINT], [AnalysisType.FORMAT_CONVERT])
 
 
+class TestRtfWiring(unittest.TestCase):
+
+    def test_rtf_conversion_graceful_without_tool(self):
+        from worker.arcworker.tools.documents import rtf_to_text
+        p = _write_tmp(rb'{\rtf1 hello}', '.rtf')
+        try:
+            res = rtf_to_text(p)
+            self.assertFalse(res['success'])
+            self.assertIsInstance(res.get('error'), str)
+        finally:
+            p.unlink(missing_ok=True)
+
+    def test_strip_unrtf_header(self):
+        from worker.arcworker.tools.documents import _strip_unrtf_header
+        raw = "### header line\n### fonts: 2\nActual body text\nmore text\n"
+        self.assertEqual(_strip_unrtf_header(raw), "Actual body text\nmore text")
+
+    def test_rtf_detection_and_wiring(self):
+        from arcology_shared.artefact_types import (
+            detect_artefact_type,
+            viewable_artefact_type,
+        )
+        from arcology_shared.content_categories import ContentCategory, classify_content
+        from arcology_shared.enums import AnalysisType, ArtefactType
+        from myapp.services.artefact_types import ANALYSIS_MAP
+        self.assertEqual(detect_artefact_type('letter.rtf'), ArtefactType.RTF)
+        self.assertEqual(viewable_artefact_type('letter.rtf', None), ArtefactType.RTF)
+        self.assertIn(ContentCategory.CONVERTIBLE, classify_content('letter.rtf', None))
+        self.assertEqual(ANALYSIS_MAP[ArtefactType.RTF], [AnalysisType.FORMAT_CONVERT])
+
+
 if __name__ == '__main__':
     unittest.main()
 

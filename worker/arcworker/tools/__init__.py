@@ -33,7 +33,13 @@ from .base import (
     run_tool_with_output,
     tool_result,
 )
-from .documents import pdf_to_text, ppt_to_text, word_to_text, xls_to_text
+from .documents import (
+    pdf_to_text,
+    ppt_to_text,
+    rtf_to_text,
+    word_to_text,
+    xls_to_text,
+)
 from .extraction import (
     enumerate_extracted_files,
     extract_acorn_disc_image_manager,
@@ -81,6 +87,7 @@ __all__ = [
     'pdf_to_text',
     'xls_to_text',
     'ppt_to_text',
+    'rtf_to_text',
     'run_tool',
     'run_tool_with_output',
     'get_process_output',
