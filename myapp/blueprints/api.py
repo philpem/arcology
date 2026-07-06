@@ -1539,6 +1539,26 @@ def _merge_produce_hints(analysis, data):
     return hints or None
 
 
+def _fit(value, maxlen, field):
+    """Truncate an over-length worker-supplied string to its DB column width.
+
+    Extracted-file paths are built by prefixing nested-archive paths, and
+    filenames / RISC OS attributes come straight from the media, so any of them
+    can exceed the column limit.  On PostgreSQL (which, unlike SQLite, enforces
+    VARCHAR length) an over-length INSERT raises "value too long"; the worker
+    then retries the same batch forever until the stale-recovery machinery
+    dead-letters the job.  Truncate defensively and log, matching the
+    search-index indexing path.
+    """
+    if value is not None and len(value) > maxlen:
+        current_app.logger.warning(
+            'Truncating %s from %d to %d chars: %r…',
+            field, len(value), maxlen, value[:60],
+        )
+        return value[:maxlen]
+    return value
+
+
 @blueprint.route('/analysis/<int:id>/produce-artefact', methods=['POST'])
 @require_auth('read_upload')
 def produce_artefact(id):
@@ -1594,9 +1614,27 @@ def produce_artefact(id):
             f"produce_artefact: returning existing artefact {existing_artefact.uuid} "
             f"(idempotent retry for analysis {analysis.id})"
         )
+        # Re-queue follow-on analyses on the existing artefact.  The happy path
+        # commits the artefact and its follow-on analyses in two separate
+        # transactions; if the first call died in between, the artefact exists
+        # with zero analyses and a naive retry would return here without ever
+        # queueing them (the derived image would silently never be analysed).
+        # queue_analyses_for_artefact skips PENDING/RUNNING duplicates, so this
+        # is a no-op on an ordinary duplicate retry.  Mirrors the IntegrityError
+        # branch below.
+        queued_analyses = []
+        if data.get('auto_analyse', True):
+            hints = _merge_produce_hints(analysis, data)
+            skip_analyses = data.get('skip_analyses') or []
+            queue_analyses_for_artefact(existing_artefact, hints, skip_analyses=skip_analyses)
+            skip_set = set(skip_analyses)
+            queued_analyses = [
+                t.value for t in ANALYSIS_MAP.get(existing_artefact.artefact_type, [])
+                if t.name not in skip_set
+            ]
         return jsonify({
             'artefact': artefact_to_dict(existing_artefact),
-            'queued_analyses': [],
+            'queued_analyses': queued_analyses,
         }), 200
 
     # On the first produce_artefact call for this analysis, remove any derived
@@ -1655,15 +1693,15 @@ def produce_artefact(id):
     # Create derived artefact
     artefact = Artefact(
         item_id=analysis.artefact.item_id,
-        label=data['label'],
+        label=_fit(data['label'], 255, 'Artefact.label'),
         artefact_type=artefact_type,
         type_overridden=False,
         description=data.get('description'),
-        original_filename=data['original_filename'],
+        original_filename=_fit(data['original_filename'], 255, 'Artefact.original_filename'),
         storage_path=data['storage_path'],
         storage_directory=storage_directory,
         file_size=data.get('file_size'),
-        mime_type=data.get('mime_type'),
+        mime_type=_fit(data.get('mime_type'), 100, 'Artefact.mime_type'),
         parent_artefact_id=analysis.artefact_id,
         derived_from_analysis_id=analysis.id,
         # Derived artefacts inherit the source artefact's owner and privacy flag.
@@ -1886,9 +1924,9 @@ def add_files(uuid):
 
         ef = ExtractedFile(
             partition_id=partition.id,
-            path=path,
-            filename=f['filename'],
-            extension=f.get('extension'),
+            path=_fit(path, 1000, 'ExtractedFile.path'),
+            filename=_fit(f['filename'], 255, 'ExtractedFile.filename'),
+            extension=_fit(f.get('extension'), 255, 'ExtractedFile.extension'),
             file_size=f.get('file_size'),
             modified_time=modified_time,
             md5=f.get('md5'),
@@ -1900,7 +1938,7 @@ def add_files(uuid):
             risc_os_filetype=f.get('risc_os_filetype'),
             load_address=f.get('load_address'),
             exec_address=f.get('exec_address'),
-            attributes=f.get('attributes'),
+            attributes=_fit(f.get('attributes'), 50, 'ExtractedFile.attributes'),
             parent_file_id=f.get('parent_file_id'),
             extraction_depth=f.get('extraction_depth', 0)
         )
