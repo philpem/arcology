@@ -269,6 +269,28 @@ def _convert_file_to_outputs_inner(
             'tool': result['tool'],
         })
 
+    elif artefact_type == ArtefactType.ILBM:
+        from ..tools.images_common import convert_ilbm  # ImageMagick: worker-only
+        true_name, _ = parse_acorn_filename(input_path.name)
+        tmp_out = work_dir / f'ilbm_{file_index}'
+        with _conversion_timeout(_PER_FILE_CONVERT_TIMEOUT, input_path.name):
+            result = convert_ilbm(input_path, tmp_out, analysis_uuid)
+        if not result['success']:
+            log.warning(f"ILBM conversion failed for {input_path}: {result.get('error')}")
+            return None, result.get('error') or 'Conversion failed', warnings
+        saved = self.save_output_file(
+            Path(result['output_path']),
+            f'{analysis_uuid}_{file_index}_ilbm.png',
+            subdir=output_subdir,
+        )
+        outputs.append({
+            'type': 'image',
+            'filename': saved,
+            'name': true_name,
+            'description': true_name,
+            'tool': result['tool'],
+        })
+
     return outputs, None, warnings
 
 
@@ -309,6 +331,7 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
         ArtefactType.ACORN_DRAW.value,
         ArtefactType.ACORN_TEXT.value,
         ArtefactType.IMAGE.value,
+        ArtefactType.ILBM.value,
         *(t.value for t in _DOCUMENT_TEXT_CONVERTERS),
     )
 

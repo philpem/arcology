@@ -62,6 +62,7 @@ class ArtefactType(enum.Enum):
 
     # Common image formats (raster and vector metafiles)
     IMAGE        = "image"           # JPEG, PNG, GIF, BMP, TIFF, WebP, PCX, TGA, WMF, EMF
+    ILBM         = "ilbm"            # Amiga IFF/ILBM bitmap → PNG (ImageMagick)
 
     # Time-based media (playable in the viewer; non-native containers are
     # transcoded to MP4/M4A by MEDIA_TRANSCODE, native ones played directly)

@@ -92,6 +92,7 @@ ANALYSIS_MAP = {
 
     # Common image formats — pass through or convert to PNG/SVG
     ArtefactType.IMAGE: [AnalysisType.FORMAT_CONVERT],
+    ArtefactType.ILBM:  [AnalysisType.FORMAT_CONVERT],   # Amiga IFF/ILBM → PNG
 
     # Time-based media — MEDIA_TRANSCODE probes (ffprobe) every media file for
     # codec/track metadata and only re-encodes the ones browsers can't play

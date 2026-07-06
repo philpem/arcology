@@ -62,6 +62,30 @@ _VECTOR_EXTS: dict[str, tuple[tuple[str, object], ...]] = {
 }
 
 
+def convert_ilbm(input_path: Path, output_dir: Path, analysis_uuid: str) -> dict:
+    """Convert an IFF/ILBM image (Amiga / DPaint) to PNG via ImageMagick.
+
+    Returns the same result shape as :func:`convert_image` (``success`` /
+    ``output_path`` / ``tool`` / ``error``).  ``[0]`` selects the first frame so
+    a multi-image IFF still yields a single output file.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    out_path = output_dir / f'{analysis_uuid}_ilbm.png'
+    try:
+        result, output = run_tool_with_output(
+            ['convert', f'{input_path}[0]', str(out_path)])
+    except FileNotFoundError:
+        return tool_result(False, tool='imagemagick',
+                           error='ImageMagick (convert) not available')
+    if result.returncode == 0 and out_path.exists():
+        return tool_result(True, tool='imagemagick',
+                           output_path=str(out_path), process_output=output)
+    return tool_result(
+        False, tool='imagemagick',
+        error=result.stderr.decode(errors='replace')[:1000] or 'ILBM conversion failed',
+        process_output=output)
+
+
 def convert_image(input_path: Path, output_dir: Path, analysis_uuid: str) -> dict:
     """
     Convert a common image file to a web-viewable format.

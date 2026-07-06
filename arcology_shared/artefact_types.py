@@ -91,6 +91,11 @@ EXTENSION_MAP = {
     # Windows vector metafiles (converted to SVG)
     '.wmf':  ArtefactType.IMAGE,
     '.emf':  ArtefactType.IMAGE,
+
+    # Amiga IFF / ILBM bitmaps (converted to PNG via ImageMagick)
+    '.iff':  ArtefactType.ILBM,
+    '.ilbm': ArtefactType.ILBM,
+    '.lbm':  ArtefactType.ILBM,
 }
 
 # --- Time-based media (audio / video) ---------------------------------------
@@ -261,6 +266,9 @@ VIEWABLE_EXTENSIONS: dict[str, ArtefactType] = {
     '.tga':  ArtefactType.IMAGE,
     '.wmf':  ArtefactType.IMAGE,
     '.emf':  ArtefactType.IMAGE,
+    '.iff':  ArtefactType.ILBM,
+    '.ilbm': ArtefactType.ILBM,
+    '.lbm':  ArtefactType.ILBM,
     # Word-processor documents — converted to plain text (searchable + viewable).
     '.doc':  ArtefactType.MS_WORD,
     '.docx': ArtefactType.MS_WORD,

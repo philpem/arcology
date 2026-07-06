@@ -318,6 +318,26 @@ class TestHtmlConvert(unittest.TestCase):
         self.assertEqual(ANALYSIS_MAP[ArtefactType.HTML], [AnalysisType.FORMAT_CONVERT])
 
 
+class TestIlbmWiring(unittest.TestCase):
+    # convert_ilbm() itself needs ImageMagick + the worker-only image stack
+    # (scour), so it is exercised in the worker rather than here; the detection
+    # wiring below is the dialect-independent part.
+
+    def test_ilbm_detection_and_wiring(self):
+        from arcology_shared.artefact_types import (
+            detect_artefact_type,
+            viewable_artefact_type,
+        )
+        from arcology_shared.content_categories import ContentCategory, classify_content
+        from arcology_shared.enums import AnalysisType, ArtefactType
+        from myapp.services.artefact_types import ANALYSIS_MAP
+        for name in ('art.iff', 'art.ilbm', 'art.lbm'):
+            self.assertEqual(detect_artefact_type(name), ArtefactType.ILBM)
+            self.assertEqual(viewable_artefact_type(name, None), ArtefactType.ILBM)
+            self.assertIn(ContentCategory.CONVERTIBLE, classify_content(name, None))
+        self.assertEqual(ANALYSIS_MAP[ArtefactType.ILBM], [AnalysisType.FORMAT_CONVERT])
+
+
 if __name__ == '__main__':
     unittest.main()
 
