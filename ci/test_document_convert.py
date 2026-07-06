@@ -162,6 +162,37 @@ class TestWordDetectionWiring(unittest.TestCase):
         self.assertEqual(ANALYSIS_MAP[ArtefactType.MS_WORD], [AnalysisType.FORMAT_CONVERT])
 
 
+class TestPdfWiring(unittest.TestCase):
+
+    def test_pdf_conversion_graceful_without_tool(self):
+        from worker.arcworker.tools.documents import pdf_to_text
+        # pdftotext lives only in the worker image (absent here), or would reject
+        # this garbage — either way a clean failure, never an exception.
+        p = _write_tmp(b'%PDF-1.4 not really a pdf', '.pdf')
+        try:
+            res = pdf_to_text(p)
+            self.assertFalse(res['success'])
+            self.assertIsInstance(res.get('error'), str)
+        finally:
+            p.unlink(missing_ok=True)
+
+    def test_pdf_detection_and_wiring(self):
+        from arcology_shared.artefact_types import (
+            detect_artefact_type,
+            viewable_artefact_type,
+        )
+        from arcology_shared.content_categories import ContentCategory, classify_content
+        from arcology_shared.enums import ArtefactType
+        self.assertEqual(detect_artefact_type('manual.pdf'), ArtefactType.PDF)
+        self.assertEqual(viewable_artefact_type('manual.pdf', None), ArtefactType.PDF)
+        self.assertIn(ContentCategory.CONVERTIBLE, classify_content('manual.pdf', None))
+
+    def test_pdf_queues_format_convert(self):
+        from arcology_shared.enums import AnalysisType, ArtefactType
+        from myapp.services.artefact_types import ANALYSIS_MAP
+        self.assertIn(AnalysisType.FORMAT_CONVERT, ANALYSIS_MAP[ArtefactType.PDF])
+
+
 if __name__ == '__main__':
     unittest.main()
 

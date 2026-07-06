@@ -255,6 +255,7 @@ VIEWABLE_EXTENSIONS: dict[str, ArtefactType] = {
     # Word-processor documents — converted to plain text (searchable + viewable).
     '.doc':  ArtefactType.MS_WORD,
     '.docx': ArtefactType.MS_WORD,
+    '.pdf':  ArtefactType.PDF,
 }
 # &D94 (ArtWorks), &D87/&D88 (Impression), &D01 (TechWriter) are intentionally
 # omitted — they require bespoke rendering tools.  MS Word documents are

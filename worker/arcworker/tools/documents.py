@@ -10,6 +10,7 @@ Currently supported:
   - Microsoft Word ``.doc``  (legacy OLE binary, Word 2-2003) via ``antiword``,
     falling back to ``catdoc``.
   - Microsoft Word ``.docx`` (OOXML) via the standard library.
+  - PDF via ``pdftotext`` (poppler).
 
 See ``doc/plans/DOCUMENT_FULLTEXT_PLAN.md``.
 """
@@ -31,6 +32,47 @@ _W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
 # Per-conversion subprocess timeout (antiword/catdoc are fast; this only guards
 # against a pathological input wedging the tool).
 _WORD_TOOL_TIMEOUT = 120
+
+# PDFs can be large; give their extraction a longer bound than the Word tools.
+_DOC_TOOL_TIMEOUT = 300
+
+
+def _text_from_tool(attempts, *, tool, error, postprocess=None):
+    """Run the first available command that emits UTF-8 text to stdout.
+
+    ``attempts`` is a list of argv lists tried in order: a missing binary
+    (``FileNotFoundError``) or a non-zero exit falls through to the next.  On
+    success the stdout is decoded UTF-8 (errors replaced) and, if given, run
+    through ``postprocess(text) -> text``.  Returns the standard
+    ``tool_result`` — success carries ``text``; total failure carries ``error``.
+    """
+    last_output = None
+    for cmd in attempts:
+        try:
+            result, output = run_tool_with_output(cmd, timeout=_DOC_TOOL_TIMEOUT)
+        except FileNotFoundError:
+            log.debug("%s not available for text extraction", cmd[0])
+            continue
+        last_output = output
+        if result.returncode == 0:
+            text = result.stdout.decode('utf-8', errors='replace')
+            if postprocess is not None:
+                text = postprocess(text)
+            return tool_result(True, tool=cmd[0], text=text, process_output=output)
+    return tool_result(False, tool=tool, error=error, process_output=last_output)
+
+
+def pdf_to_text(path: Path) -> dict:
+    """Extract text from a PDF via ``pdftotext`` (poppler).
+
+    ``-nopgbrk`` drops form-feed page breaks; ``-enc UTF-8`` forces UTF-8 out.
+    Image-only (scanned) PDFs legitimately yield little or no text — that's a
+    successful conversion with empty output, not an error (OCR is out of scope).
+    """
+    return _text_from_tool(
+        [['pdftotext', '-q', '-nopgbrk', '-enc', 'UTF-8', str(path), '-']],
+        tool='pdftotext',
+        error='PDF text extraction failed (pdftotext unavailable or errored)')
 
 
 def word_to_text(path: Path) -> dict:

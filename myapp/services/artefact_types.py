@@ -54,8 +54,8 @@ ANALYSIS_MAP = {
     ArtefactType.DD_GZ: [AnalysisType.PARTITION_DETECT],
     ArtefactType.DD_BZ2: [AnalysisType.PARTITION_DETECT],
 
-    # Documents/images - just metadata/checksums
-    ArtefactType.PDF: [AnalysisType.METADATA_EXTRACT],
+    # PDF — metadata plus text extraction (pdftotext) for search + a text view.
+    ArtefactType.PDF: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_CONVERT],
 
     # Sidecar/companion files (a disk image's ddrescue .map, readme, checksums)
     # have NO automatic analyses — they exist to be viewed/downloaded alongside
