@@ -193,6 +193,32 @@ class TestPdfWiring(unittest.TestCase):
         self.assertIn(AnalysisType.FORMAT_CONVERT, ANALYSIS_MAP[ArtefactType.PDF])
 
 
+class TestExcelWiring(unittest.TestCase):
+
+    def test_xls_conversion_graceful_without_tool(self):
+        from worker.arcworker.tools.documents import xls_to_text
+        p = _write_tmp(b'\xd0\xcf\x11\xe0not-a-real-xls', '.xls')
+        try:
+            res = xls_to_text(p)
+            self.assertFalse(res['success'])
+            self.assertIsInstance(res.get('error'), str)
+        finally:
+            p.unlink(missing_ok=True)
+
+    def test_xls_detection_and_wiring(self):
+        from arcology_shared.artefact_types import (
+            detect_artefact_type,
+            viewable_artefact_type,
+        )
+        from arcology_shared.content_categories import ContentCategory, classify_content
+        from arcology_shared.enums import AnalysisType, ArtefactType
+        from myapp.services.artefact_types import ANALYSIS_MAP
+        self.assertEqual(detect_artefact_type('accounts.xls'), ArtefactType.MS_EXCEL)
+        self.assertEqual(viewable_artefact_type('accounts.xls', None), ArtefactType.MS_EXCEL)
+        self.assertIn(ContentCategory.CONVERTIBLE, classify_content('accounts.xls', None))
+        self.assertEqual(ANALYSIS_MAP[ArtefactType.MS_EXCEL], [AnalysisType.FORMAT_CONVERT])
+
+
 if __name__ == '__main__':
     unittest.main()
 

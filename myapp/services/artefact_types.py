@@ -82,6 +82,7 @@ ANALYSIS_MAP = {
 
     # Word-processor / DTP documents — convert to plain text (search + view)
     ArtefactType.MS_WORD:      [AnalysisType.FORMAT_CONVERT],
+    ArtefactType.MS_EXCEL:     [AnalysisType.FORMAT_CONVERT],
 
     # Common image formats — pass through or convert to PNG/SVG
     ArtefactType.IMAGE: [AnalysisType.FORMAT_CONVERT],

@@ -75,6 +75,18 @@ def pdf_to_text(path: Path) -> dict:
         error='PDF text extraction failed (pdftotext unavailable or errored)')
 
 
+def xls_to_text(path: Path) -> dict:
+    """Extract text from a legacy binary Excel ``.xls`` via ``xls2csv`` (catdoc).
+
+    Emits the cell contents as CSV on stdout (``-d utf-8`` output charset) —
+    linear text that is fine for full-text search and a basic view.
+    """
+    return _text_from_tool(
+        [['xls2csv', '-d', 'utf-8', str(path)]],
+        tool='xls2csv',
+        error='Excel .xls text extraction failed (xls2csv/catdoc unavailable or errored)')
+
+
 def word_to_text(path: Path) -> dict:
     """Extract plain text from a Microsoft Word document (.doc or .docx).
 

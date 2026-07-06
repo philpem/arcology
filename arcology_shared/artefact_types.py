@@ -45,6 +45,7 @@ EXTENSION_MAP = {
     '.pdf': ArtefactType.PDF,
     '.doc':  ArtefactType.MS_WORD,   # legacy binary Word (OLE compound doc)
     '.docx': ArtefactType.MS_WORD,   # OOXML Word
+    '.xls':  ArtefactType.MS_EXCEL,  # legacy binary Excel (OLE compound doc)
 
     # Archives
     '.zip': ArtefactType.ZIP,
@@ -256,6 +257,7 @@ VIEWABLE_EXTENSIONS: dict[str, ArtefactType] = {
     '.doc':  ArtefactType.MS_WORD,
     '.docx': ArtefactType.MS_WORD,
     '.pdf':  ArtefactType.PDF,
+    '.xls':  ArtefactType.MS_EXCEL,
 }
 # &D94 (ArtWorks), &D87/&D88 (Impression), &D01 (TechWriter) are intentionally
 # omitted — they require bespoke rendering tools.  MS Word documents are

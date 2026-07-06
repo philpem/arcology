@@ -30,6 +30,7 @@ from ..tools import (
     pdf_to_text,
     read_file_capped,
     word_to_text,
+    xls_to_text,
 )
 from ..utils.paths import artefact_output_subdir
 from ._common import analysis_handler, iter_resolved_files, scan_partition_files
@@ -53,6 +54,7 @@ _INDEX_TEXT_CAP = 200_000
 _DOCUMENT_TEXT_CONVERTERS = {
     ArtefactType.MS_WORD: word_to_text,
     ArtefactType.PDF: pdf_to_text,
+    ArtefactType.MS_EXCEL: xls_to_text,
 }
 
 
