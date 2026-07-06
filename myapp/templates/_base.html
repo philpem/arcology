@@ -49,13 +49,21 @@
 					<ul class="navbar-nav">
 {% if storage_summary %}
 {% set pct = storage_summary.percent_used %}
+{% set storage_colour = 'text-danger' if (pct is not none and pct >= 90) else ('text-warning' if (pct is not none and pct >= 75) else 'text-light') %}
 						<li class="nav-item d-flex align-items-center">
-							<span class="navbar-text px-2 small {% if pct is not none and pct >= 90 %}text-danger{% elif pct is not none and pct >= 75 %}text-warning{% else %}text-light{% endif %}"
+{% if user_is_staff %}
+							{# The free-space figure doubles as the Storage link for staff. #}
+							<a class="nav-link small {{ storage_colour }}{% if request.endpoint and 'myapp_blueprints_storage' in request.endpoint %} active{% endif %}" href="{{ url_for('myapp_blueprints_storage.index') }}"
+							   data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="bottom"
+							   data-bs-title="{% for name, value in storage_summary.detail %}{{ name }}: {{ value }}{% if not loop.last %}<br>{% endif %}{% endfor %}<br>Storage &amp; deduplication"><i class="bi bi-hdd-stack"></i> {{ storage_summary.label }}</a>
+{% else %}
+							<span class="navbar-text px-2 small {{ storage_colour }}"
 							      data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="bottom"
 							      data-bs-title="{% for name, value in storage_summary.detail %}{{ name }}: {{ value }}{% if not loop.last %}<br>{% endif %}{% endfor %}"><i class="bi bi-hdd"></i> {{ storage_summary.label }}</span>
-						</li>
 {% endif %}
-{% if user_is_staff %}
+						</li>
+{% elif user_is_staff %}
+						{# Capacity figures unavailable — keep a plain Storage link so staff can still reach it. #}
 						<li class="nav-item"><a class="nav-link{% if request.endpoint and 'myapp_blueprints_storage' in request.endpoint %} active{% endif %}" href="{{ url_for('myapp_blueprints_storage.index') }}" title="Storage &amp; deduplication"><i class="bi bi-hdd-stack"></i> Storage</a></li>
 {% endif %}
 {% if current_user.is_admin %}
