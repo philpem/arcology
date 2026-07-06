@@ -15,11 +15,18 @@ Currently supported:
 See ``doc/plans/DOCUMENT_FULLTEXT_PLAN.md``.
 """
 
+import html.parser
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 from ..config import log
-from .base import exception_result, run_tool_with_output, tool_result
+from .base import (
+    FileTooLargeError,
+    exception_result,
+    read_file_capped,
+    run_tool_with_output,
+    tool_result,
+)
 
 # Bound on the decompressed ``word/document.xml`` we will parse from a .docx.
 # A .docx is a ZIP, so an unbounded read of its markup would be a zip-bomb
@@ -115,6 +122,69 @@ def rtf_to_text(path: Path) -> dict:
         tool='unrtf',
         error='RTF text extraction failed (unrtf unavailable or errored)',
         postprocess=_strip_unrtf_header)
+
+
+# Tags that introduce a line break in the extracted text, and tags whose
+# contents are not human-readable body text.
+_HTML_BREAK_TAGS = frozenset({
+    'p', 'br', 'div', 'li', 'tr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'table', 'ul', 'ol', 'blockquote', 'section', 'article', 'header',
+    'footer', 'pre', 'hr',
+})
+_HTML_SKIP_TAGS = frozenset({'script', 'style'})
+
+
+class _HTMLTextExtractor(html.parser.HTMLParser):
+    """Collect readable text from HTML, dropping script/style and marking breaks."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+        self._skip = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in _HTML_SKIP_TAGS:
+            self._skip += 1
+        elif tag in _HTML_BREAK_TAGS:
+            self._parts.append('\n')
+
+    def handle_startendtag(self, tag, attrs):
+        if tag in _HTML_BREAK_TAGS:
+            self._parts.append('\n')
+
+    def handle_endtag(self, tag):
+        if tag in _HTML_SKIP_TAGS and self._skip:
+            self._skip -= 1
+        elif tag in _HTML_BREAK_TAGS:
+            self._parts.append('\n')
+
+    def handle_data(self, data):
+        if not self._skip:
+            self._parts.append(data)
+
+    def get_text(self) -> str:
+        lines = [ln.strip() for ln in ''.join(self._parts).splitlines()]
+        return '\n'.join(ln for ln in lines if ln)
+
+
+def html_to_text(path: Path) -> dict:
+    """Extract readable text from an HTML document using the standard library.
+
+    Drops ``<script>`` / ``<style>`` content and inserts line breaks at block
+    tags; entities are decoded.  No external tool.  Decoded as UTF-8 (errors
+    replaced) — good enough for search across the messy encodings of old pages.
+    """
+    try:
+        raw = read_file_capped(path)
+    except FileTooLargeError as exc:
+        return tool_result(False, tool='html', error=str(exc))
+    extractor = _HTMLTextExtractor()
+    try:
+        extractor.feed(raw.decode('utf-8', errors='replace'))
+        extractor.close()
+    except Exception:
+        return exception_result('html', 'HTML text extraction failed')
+    return tool_result(True, tool='html', text=extractor.get_text())
 
 
 def word_to_text(path: Path) -> dict:

@@ -26,6 +26,7 @@ from ..config import log
 from ..tools import (
     convert_draw,
     convert_sprite,
+    html_to_text,
     parse_acorn_filename,
     pdf_to_text,
     ppt_to_text,
@@ -59,6 +60,7 @@ _DOCUMENT_TEXT_CONVERTERS = {
     ArtefactType.MS_EXCEL: xls_to_text,
     ArtefactType.MS_POWERPOINT: ppt_to_text,
     ArtefactType.RTF: rtf_to_text,
+    ArtefactType.HTML: html_to_text,
 }
 
 

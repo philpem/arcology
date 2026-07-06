@@ -55,6 +55,7 @@ class ArtefactType(enum.Enum):
     MS_EXCEL     = "ms_excel"        # Microsoft Excel (.xls legacy binary) → CSV text
     MS_POWERPOINT = "ms_powerpoint"  # Microsoft PowerPoint (.ppt legacy binary) → text
     RTF          = "rtf"             # Rich Text Format document → plain text
+    HTML         = "html"            # HTML document → readable plain text
 
     # Common image formats (raster and vector metafiles)
     IMAGE        = "image"           # JPEG, PNG, GIF, BMP, TIFF, WebP, PCX, TGA, WMF, EMF

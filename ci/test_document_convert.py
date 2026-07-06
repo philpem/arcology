@@ -276,6 +276,48 @@ class TestRtfWiring(unittest.TestCase):
         self.assertEqual(ANALYSIS_MAP[ArtefactType.RTF], [AnalysisType.FORMAT_CONVERT])
 
 
+class TestHtmlConvert(unittest.TestCase):
+    """HTML uses the standard library, so its conversion runs here for real."""
+
+    def _convert(self, html_bytes: bytes):
+        from worker.arcworker.tools.documents import html_to_text
+        p = _write_tmp(html_bytes, '.html')
+        try:
+            return html_to_text(p)
+        finally:
+            p.unlink(missing_ok=True)
+
+    def test_extracts_text_and_drops_script_style(self):
+        html = (b'<html><head><title>T</title><style>.x{color:red}</style></head>'
+                b'<body><h1>Heading</h1><p>Hello &amp; welcome</p>'
+                b'<script>var x = 1;</script><p>line two</p></body></html>')
+        res = self._convert(html)
+        self.assertTrue(res['success'], res)
+        self.assertIn('Hello & welcome', res['text'])
+        self.assertIn('Heading', res['text'])
+        self.assertIn('line two', res['text'])
+        self.assertNotIn('color:red', res['text'])
+        self.assertNotIn('var x', res['text'])
+
+    def test_paragraphs_become_separate_lines(self):
+        res = self._convert(b'<p>alpha</p><p>beta</p>')
+        self.assertEqual(res['text'], 'alpha\nbeta')
+
+    def test_detection_and_wiring(self):
+        from arcology_shared.artefact_types import (
+            detect_artefact_type,
+            viewable_artefact_type,
+        )
+        from arcology_shared.content_categories import ContentCategory, classify_content
+        from arcology_shared.enums import AnalysisType, ArtefactType
+        from myapp.services.artefact_types import ANALYSIS_MAP
+        for name in ('page.html', 'page.htm'):
+            self.assertEqual(detect_artefact_type(name), ArtefactType.HTML)
+            self.assertEqual(viewable_artefact_type(name, None), ArtefactType.HTML)
+            self.assertIn(ContentCategory.CONVERTIBLE, classify_content(name, None))
+        self.assertEqual(ANALYSIS_MAP[ArtefactType.HTML], [AnalysisType.FORMAT_CONVERT])
+
+
 if __name__ == '__main__':
     unittest.main()
 

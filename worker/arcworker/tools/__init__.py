@@ -34,6 +34,7 @@ from .base import (
     tool_result,
 )
 from .documents import (
+    html_to_text,
     pdf_to_text,
     ppt_to_text,
     rtf_to_text,
@@ -88,6 +89,7 @@ __all__ = [
     'xls_to_text',
     'ppt_to_text',
     'rtf_to_text',
+    'html_to_text',
     'run_tool',
     'run_tool_with_output',
     'get_process_output',
