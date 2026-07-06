@@ -100,6 +100,10 @@ class TestDetectArtefactType(unittest.TestCase):
     def test_tar_gz_explicit(self):
         self._check('archive.tar.gz', ArtefactType.TARGZ)
 
+    def test_bare_tar(self):
+        # Uncompressed tar has its own first-class type (not UNKNOWN).
+        self._check('hostfs-dump.tar', ArtefactType.TAR)
+
     def test_case_insensitive(self):
         self._check('DISC.DFI.GZ', ArtefactType.DFI)
 

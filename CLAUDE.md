@@ -98,7 +98,7 @@ arcology/
 ├── worker/                     # Analysis worker (separate container)
 │   ├── worker.py               # Entry point
 │   ├── Dockerfile              # Multi-stage build compiling external tools (slow)
-│   └── arcworker/              # analysis.py (job handlers), api.py, config.py, compression.py, tools/
+│   └── arcworker/              # analysis.py (poll loop + dispatch), analyses/ (job handlers), api.py, config.py, compression.py, tools/
 ├── cli/                        # arco client (arccli/: main, client, config, formatting, commands/)
 ├── docker-compose.yml          # Full stack: web + worker + PostgreSQL
 ├── Dockerfile / Dentrypoint.sh # Web container + startup (db migrate + gunicorn)
@@ -340,7 +340,11 @@ auto-registered by `_register_blueprints()` in `app.py`.
 ### Adding an analysis type
 1. Add to `AnalysisType` in `arcology_shared/enums.py`.
 2. Add to `ANALYSIS_MAP` in `myapp/services/artefact_types.py`.
-3. Implement the handler in `worker/arcworker/analysis.py`.
+3. Implement the handler in a module under `worker/arcworker/analyses/`
+   (new or existing), decorated `@analysis_handler(description,
+   AnalysisType.MY_NEW_TYPE)` — the decorator auto-registers it in the dispatch
+   table (`_analyses.HANDLERS`, see `analyses/_common.py`); `analysis.py` owns
+   only the poll loop and dispatch, not the handler bodies.
 4. Migration: `ALTER TYPE analysistype ADD VALUE IF NOT EXISTS 'MY_NEW_TYPE'`
    (see Database changes — uppercase NAME, autocommit block, cleanup downgrade).
 
@@ -363,17 +367,18 @@ reference):
 3. `worker/arcworker/tools/flux.py` — `newtype_to_scp_<tool>()` returning the
    standard result dict (model on `dfi_to_scp_hxcfe()`; A2R: `gw convert in.a2r out.scp`).
 4. `worker/arcworker/tools/__init__.py` — export it.
-5. `worker/arcworker/analysis.py` — import it; add the type to
+5. `worker/arcworker/analyses/flux.py` — import it; add the type to
    `_SCP_VIA_CONVERSION_TYPES`; add `elif` branches in
    `process_flux_visualisation()` and `process_flux_decode()` (register the SCP
-   sibling with **no** `skip_analyses`); add to `_PROMOTABLE_EXTENSIONS`.
+   sibling with **no** `skip_analyses`). Then add the extension to
+   `_PROMOTABLE_EXTENSIONS` in `worker/arcworker/analyses/extraction.py`.
 6. Hand-crafted migration adding the enum value.
 7. `ci/test_flux_decode.py` — add a `TestNEWTYPESource` mirroring `TestDFISource`.
 
 ### Adding an archive format
 1. Add to `ArchiveType` in `arcology_shared/archive_formats.py`.
 2. Add to `ARCHIVE_FORMATS` (same file).
-3. Add an extraction branch in `process_archive_extract` (`worker/arcworker/analysis.py`).
+3. Add an extraction branch in `process_archive_extract` (`worker/arcworker/analyses/extraction.py`).
 4. Update `doc/ARCHIVE_EXTRACTION.md`.
 
 ### Analysis pipeline flow
@@ -488,7 +493,8 @@ INF format extend `_parse_inf_line()`. Covered by `ci/test_inf_processing.py`.
 | `myapp/blueprints/search.py` | Global search (`parse_query()`, `_run_search()`) |
 | `myapp/blueprints/api.py` | REST API for workers and CLI |
 | `myapp/riscos_filetypes.py` | RISC OS filetype mapping (`lookup_filetype_hex()`) |
-| `worker/arcworker/analysis.py` | Worker job handlers |
+| `worker/arcworker/analysis.py` | Worker poll loop + dispatch (`_analyses.HANDLERS`) |
+| `worker/arcworker/analyses/` | Job handlers, one module per stage (`@analysis_handler`) |
 | `worker/arcworker/tools/extraction.py` | Extraction, INF sidecars, BBC↔DOS translation |
 | `cli/arccli/main.py`, `client.py` | CLI entry point + HTTP client |
 | `myapp/app.py` | App factory, error handlers, blueprint registration |
@@ -509,6 +515,7 @@ Tests live in `ci/` and run in the `app-tests` job (SQLite in-memory):
 | `test_checksum_compute.py` | Hash computation |
 | `test_fk_violations.py` | FK cascade deletes, M2M cleanup, nullable FK edges |
 | `test_inf_processing.py` | INF parsing, BBC↔DOS translation, `process_inf_sidecars()` |
+| `test_default_filetype.py` | Acorn default-filetype hint: name/hex resolution, ingest normalisation, `enumerate_extracted_files(default_filetype=…)` |
 | `test_chunked_upload.py`, `test_chunked_finalize.py`, `test_cli_chunked.py` | Chunked upload (sync + async + CLI) |
 | `test_worker_io.py` | Bounded-memory access (`SectorReader`, `read_file_capped`, sparse-image regression) |
 | `test_similarity.py` | Content-set similarity, visibility filtering |

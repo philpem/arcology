@@ -190,4 +190,61 @@ def lookup_filetype_hex(name_or_hex: str) -> str | None:
 
     return None
 
+
+def resolve_default_filetype(value: str) -> str | None:
+    """Resolve a user-supplied default-filetype value to canonical hex.
+
+    Accepts a known filetype *name* ('Text', 'Data'), a known hex code
+    ('fff'), or any syntactically valid 1–3 digit hex code even if it is
+    not named in :data:`FILETYPE_MAP` (RISC OS defines 4096 filetypes; the
+    map names only the common ones).  The result is lowercase and
+    zero-padded to three digits.  Returns ``None`` if *value* is neither a
+    known name nor a valid hex code.
+
+    Examples:
+        resolve_default_filetype('Text')  -> 'fff'
+        resolve_default_filetype('FFF')   -> 'fff'
+        resolve_default_filetype('abc')   -> 'abc'   (valid hex, unnamed)
+        resolve_default_filetype('junk')  -> None
+    """
+    if not value:
+        return None
+    hexcode = lookup_filetype_hex(value)
+    if hexcode:
+        return hexcode
+    normalised = value.strip().lower()
+    if normalised and len(normalised) <= 3 and all(c in '0123456789abcdef' for c in normalised):
+        return normalised.zfill(3)
+    return None
+
+
+def normalize_default_filetype_hint(hints: dict | None) -> dict | None:
+    """Normalise the Acorn default-filetype hint in *hints* to canonical hex.
+
+    Mutates and returns *hints* with ``HintKey.ACORN_DEFAULT_FILETYPE`` set to
+    its canonical lowercase hex form.  An empty/whitespace value is dropped.
+    Raises :class:`ValueError` (with a user-facing message) if the value is
+    neither a known filetype name nor a valid hex code, so callers can turn it
+    into a form error or a 400 response.
+
+    Used at every ingest point (web upload/analyse forms and the REST upload
+    endpoints) so the worker only ever sees a clean 3-digit hex value.
+    """
+    from arcology_shared.hints import HintKey
+
+    if not hints or HintKey.ACORN_DEFAULT_FILETYPE not in hints:
+        return hints
+    raw = hints[HintKey.ACORN_DEFAULT_FILETYPE]
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        del hints[HintKey.ACORN_DEFAULT_FILETYPE]
+        return hints
+    resolved = resolve_default_filetype(str(raw))
+    if resolved is None:
+        raise ValueError(
+            f"Unrecognised Acorn filetype '{raw}'. Use a filetype name "
+            f"(e.g. 'Text') or a hex code (e.g. 'fff')."
+        )
+    hints[HintKey.ACORN_DEFAULT_FILETYPE] = resolved
+    return hints
+
 # vim: ts=4 sw=4 et

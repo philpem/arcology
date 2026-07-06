@@ -430,7 +430,11 @@ components:
         hints:
           type: string
           nullable: true
-          description: JSON-encoded hints passed to the worker, e.g. `{"platform":"bbc_micro"}`.
+          description: >-
+            JSON-encoded hints passed to the worker, e.g. `{"platform":"bbc_micro"}`.
+            For a top-level ZIP/TAR of a HostFS/NFS directory,
+            `{"acorn_default_filetype":"Text"}` (name or hex) types otherwise-untyped
+            extracted files; it is validated and normalised to canonical hex at upload.
         output_url:
           type: string
           nullable: true

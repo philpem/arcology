@@ -18,6 +18,7 @@ from pathlib import Path
 from arcology_shared.content_categories import ContentCategory, classify_content
 from arcology_shared.enums import AnalysisType, ArtefactType
 from arcology_shared.fuzzyhash import compute_tlsh
+from arcology_shared.hints import HintKey
 from ..config import REPLAY_MODULES_DIR, log
 from ..tools import (
     ArmovieParseError,
@@ -206,7 +207,7 @@ def process_format_identify(self, analysis: dict, artefact: dict, work_dir: Path
         self.api.queue_analysis(
             artefact['uuid'],
             AnalysisType.ARCHIVE_EXTRACT.value,
-            hints={'archive_type': sniffed.value},
+            hints={HintKey.ARCHIVE_TYPE: sniffed.value},
         )
         self.complete_analysis(
             analysis_id,

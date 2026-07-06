@@ -386,6 +386,13 @@ def _extract_top_level_archive(
     analysis_id = analysis['id']
     item = artefact.get('item', {'uuid': 'default', 'slug': 'default'})
 
+    # User-supplied default RISC OS filetype for untyped files (HostFS/NFS
+    # dumps carry no ,xxx suffix on plain files).  Applies to this archive's
+    # own files only — not recursed into nested archives, which either carry
+    # their own RISC OS metadata or fall to content-based detection.
+    hints = json.loads(analysis.get('hints') or '{}')
+    default_filetype = hints.get(HintKey.ACORN_DEFAULT_FILETYPE)
+
     # Rebuild clean: the path is deterministic per analysis, so a re-run must
     # not merge into the previous run's tree (see reset_output_dir).
     extract_dir = reset_output_dir(
@@ -468,6 +475,7 @@ def _extract_top_level_archive(
         extract_dir, acorn='auto',
         inf_metadata=result.get('inf_metadata'),
         extraction_started_at=extraction_started_at,
+        default_filetype=default_filetype,
     )
 
     partition, path_to_id = self.api.register_file_listing(

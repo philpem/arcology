@@ -313,10 +313,23 @@ def cancel(uuid):
     if wrong_status:
         return wrong_status
 
-    db.session.delete(analysis)
+    # Delete only if the job is STILL pending at write time.  The status check
+    # above is a read; a worker can atomically claim the job (PENDING -> RUNNING)
+    # between that read and this delete, so an unconditional delete would remove
+    # a job that is now running — including a deferred-reanalysis CLEANUP trigger
+    # whose storage cleanup would then never run.  The rowcount guard makes the
+    # cancel a no-op once the job has been claimed.
+    deleted = (
+        Analysis.query
+        .filter(Analysis.id == analysis.id, Analysis.status == AnalysisStatus.PENDING)
+        .delete(synchronize_session=False)
+    )
     db.session.commit()
 
-    flash('Analysis cancelled.', 'success')
+    if not deleted:
+        flash('Analysis is no longer pending — it may have just started running.', 'warning')
+    else:
+        flash('Analysis cancelled.', 'success')
     return redirect(url_for(f'{ROUTENAME}.index'))
 
 
