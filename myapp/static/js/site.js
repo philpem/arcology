@@ -55,3 +55,37 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 });
+
+/* "/" focuses the search box (like GitHub), unless you're already typing. */
+document.addEventListener('DOMContentLoaded', function() {
+    var toggle = document.getElementById('navbarSearchToggle');
+    if (!toggle) {
+        return;
+    }
+    document.addEventListener('keydown', function(e) {
+        if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) {
+            return;
+        }
+        var t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA'
+                  || t.tagName === 'SELECT' || t.isContentEditable)) {
+            return;  // don't hijack "/" while the user is typing in a field
+        }
+        // Wide screens: open the dropdown (its shown handler focuses the field).
+        if (toggle.offsetParent !== null
+                && typeof bootstrap !== 'undefined' && bootstrap.Dropdown) {
+            e.preventDefault();
+            bootstrap.Dropdown.getOrCreateInstance(toggle).show();
+            return;
+        }
+        // Collapsed menu: focus whichever search box is actually visible.
+        var visible = Array.prototype.filter.call(
+            document.querySelectorAll('input[type="search"][name="q"]'),
+            function(el) { return el.offsetParent !== null; });
+        if (visible[0]) {
+            e.preventDefault();
+            visible[0].focus();
+            visible[0].select();
+        }
+    });
+});
