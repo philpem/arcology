@@ -50,6 +50,7 @@ from ..database import (
     UserPermission,
 )
 from ..extensions import csrf, db
+from ..riscos_filetypes import normalize_default_filetype_hint
 from ..services import chunked_upload as _chunked
 from ..services.analysis_queue import (
     pending_claimable_query,
@@ -2193,6 +2194,10 @@ def upload_artefact(item_uuid):
 				return error_response('hints must be a JSON object')
 		except json.JSONDecodeError:
 			return error_response('hints must be valid JSON')
+	try:
+		hints = normalize_default_filetype_hint(hints)
+	except ValueError as exc:
+		return error_response(str(exc))
 
 	auto_analyse = request.form.get('auto_analyse', 'true').lower() != 'false'
 
@@ -2331,6 +2336,10 @@ def chunked_upload_init():
 	hints = data.get('hints')
 	if hints is not None and not isinstance(hints, dict):
 		return error_response('hints must be a JSON object')
+	try:
+		hints = normalize_default_filetype_hint(hints)
+	except ValueError as exc:
+		return error_response(str(exc))
 
 	creator = getattr(g, 'api_user', None)
 	upload_uuid = _chunked.init_chunk_session({

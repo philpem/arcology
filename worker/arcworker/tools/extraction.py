@@ -329,6 +329,7 @@ def enumerate_extracted_files(
     inf_metadata: dict[str, dict] | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
     extraction_started_at: datetime | None = None,
+    default_filetype: str | None = None,
 ) -> list[dict]:
     """
     Enumerate files in an extraction directory and return structured file list.
@@ -363,6 +364,14 @@ def enumerate_extracted_files(
             own "now", written because the source filesystem/platform stored no
             real date (BBC DFS, non-date-stamped ADFS, other no-RTC media).
             Future and obviously-corrupt timestamps are dropped regardless.
+        default_filetype: Optional RISC OS filetype hex string (e.g. ``'fff'``)
+            applied to every file that still has no ``risc_os_filetype`` after
+            all other detection (suffix, ``filetype_map``, INF sidecars).  This
+            reproduces HostFS/NFS behaviour for archives of a host directory,
+            where a file with no ``,xxx`` suffix takes a configured default
+            type.  Applied independently of *acorn* so a dump containing no
+            typed files at all is still defaulted.  Ignored (with a warning) if
+            it is not a valid 1–3 digit hex code.
 
     Returns:
         List of file dicts with path, size, hashes, and optional
@@ -372,6 +381,16 @@ def enumerate_extracted_files(
 
     if acorn == 'auto':
         acorn = _has_acorn_filetypes(output_dir)
+
+    # Defensive: the value is normalised to canonical hex at ingest, but guard
+    # against a malformed hint reaching the worker rather than typing every
+    # file with garbage.
+    if default_filetype is not None:
+        default_filetype = default_filetype.strip().lower()
+        if not re.fullmatch(r'[0-9a-f]{1,3}', default_filetype):
+            _log.warning(
+                f"Ignoring invalid default_filetype hint {default_filetype!r}")
+            default_filetype = None
 
     # Reference "now" for timestamp validation, captured once so every file in
     # this run is judged against the same instant.
@@ -450,6 +469,12 @@ def enumerate_extracted_files(
                     file_entry['risc_os_filetype'] = inf_entry['risc_os_filetype']
                 if 'modified_time' in inf_entry:
                     file_entry['modified_time'] = inf_entry['modified_time']
+
+        # Apply the default RISC OS filetype last, to files that no other
+        # source (suffix, filetype_map, INF) has typed.  Reproduces HostFS/NFS
+        # semantics: a file with no ,xxx suffix takes the configured default.
+        if default_filetype and 'risc_os_filetype' not in file_entry:
+            file_entry['risc_os_filetype'] = default_filetype
 
         # Compute hashes so they can be stored in the DB at registration time.
         # This avoids needing to locate the file on disk later (e.g. for hash

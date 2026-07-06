@@ -212,6 +212,12 @@ async function refreshItemChoices(selectId) {
                lower.endsWith('.dfi.bz2');
     }
 
+    /** Return true for archive files that may hold an untyped HostFS/NFS tree. */
+    function isArchive(filename) {
+        return /\.(zip|tar|tgz|tar\.gz|tar\.bz2|tbz2|tar\.xz|txz|rar|7z|arc|spk|zoo)$/i
+            .test(filename);
+    }
+
     // --- Hints section collapse ---
 
     var hintsEl      = document.getElementById('hints-section');
@@ -232,6 +238,17 @@ async function refreshItemChoices(selectId) {
 
     // Restore state from previous submit (Upload More flow).
     if (sessionStorage.getItem(HINTS_STORAGE_KEY) === '1') {
+        hintsCollapse.show();
+        setChevron(true);
+    }
+
+    // If the default-filetype field came back populated (e.g. a validation
+    // error re-render), reveal it and the hints section so the value/error is
+    // visible rather than hidden behind the d-none group.
+    var acornInit = document.getElementById('acorn_default_filetype');
+    if (acornInit && acornInit.value.trim()) {
+        var acornInitGroup = document.getElementById('acorn-filetype-group');
+        if (acornInitGroup) acornInitGroup.classList.remove('d-none');
         hintsCollapse.show();
         setChevron(true);
     }
@@ -288,6 +305,19 @@ async function refreshItemChoices(selectId) {
         } else {
             dfiGroup.classList.add('d-none');
             document.getElementById('dfi_clock_mhz').value = '';
+        }
+
+        // Show the default-Acorn-filetype field only for archive files
+        // (a ZIP/TAR of a HostFS/NFS directory carries untyped files).
+        var acornGroup = document.getElementById('acorn-filetype-group');
+        if (acornGroup) {
+            if (isArchive(file.name)) {
+                acornGroup.classList.remove('d-none');
+                hintsCollapse.show();
+            } else {
+                acornGroup.classList.add('d-none');
+                document.getElementById('acorn_default_filetype').value = '';
+            }
         }
     }
 
@@ -488,6 +518,10 @@ async function refreshItemChoices(selectId) {
         if (dfi && dfi.value) {
             var n = parseInt(dfi.value, 10);
             if (!isNaN(n)) hints.dfi_clock_mhz = n;
+        }
+        var acornFt = document.getElementById('acorn_default_filetype');
+        if (acornFt && acornFt.value.trim()) {
+            hints.acorn_default_filetype = acornFt.value.trim();
         }
         return hints;
     }
