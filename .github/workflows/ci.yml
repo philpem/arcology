@@ -106,12 +106,16 @@ jobs:
           cache-dependency-path: requirements.txt
 
       - name: Install dependencies
-        # zstandard is a CLI dependency (cli/pyproject.toml) needed by the
-        # bulk-import sidecar-bundling tests; the main app does not require it.
-        # pillow and scour are worker dependencies (image/SVG conversion) —
-        # without them the 13 tests in ci/test_image_conversion.py silently
-        # skip, so the result-dict contract they assert is never checked.
-        run: pip install -r requirements.txt zstandard pillow scour
+        # worker/requirements.txt (scour, Pillow, ...) and cli/ (zstandard)
+        # are installed too so ci/test_image_conversion.py and the CLI
+        # bulk-import sidecar-bundling tests actually run instead of silently
+        # skipping. Installing from those components' own dependency files
+        # (rather than a separate CI-only list) keeps one source of truth per
+        # component. Keep this in sync with the Jenkinsfile "Application
+        # Tests" stage.
+        run: |
+          pip install -r requirements.txt -r worker/requirements.txt
+          pip install ./cli
 
       - name: Check imports
         run: python ci/check_imports.py
@@ -147,7 +151,7 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies (incl. optional py-tlsh)
-        run: pip install -r requirements.txt py-tlsh
+        run: pip install -r requirements.txt -r ci/requirements-tlsh.txt
 
       - name: Verify py-tlsh loaded (guard against silent skips)
         run: python -c "import arcology_shared.fuzzyhash as f; assert f.HAS_TLSH, 'py-tlsh failed to import'; print('TLSH available')"

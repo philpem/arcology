@@ -50,6 +50,7 @@ from ..database import (
     UserPermission,
 )
 from ..extensions import csrf, db
+from ..riscos_filetypes import normalize_default_filetype_hint
 from ..services import chunked_upload as _chunked
 from ..services.analysis_queue import (
     pending_claimable_query,
@@ -1379,8 +1380,21 @@ def get_pending_analyses():
 
     # The CLEANUP re-analysis dispatch barrier lives in pending_claimable_query()
     # so the worker poll and the taskrunner claim share identical eligibility.
+    #
+    # Eager-load everything analysis_to_dict(include_artefact, include_storage)
+    # reads off each artefact — item, owner, the upload/output blob (for the
+    # storage path), tags and restrictions.  Without this the serialisation
+    # lazy-loads ~5 relationships per row; a full 50-row queue polled by several
+    # workers every few seconds was firing tens of thousands of point queries a
+    # minute against the DB.
     query = pending_claimable_query().options(
-        joinedload(Analysis.artefact).joinedload(Artefact.item))
+        joinedload(Analysis.artefact).joinedload(Artefact.item),
+        joinedload(Analysis.artefact).joinedload(Artefact.owner),
+        joinedload(Analysis.artefact).joinedload(Artefact.upload_blob),
+        joinedload(Analysis.artefact).joinedload(Artefact.output_blob),
+        joinedload(Analysis.artefact).selectinload(Artefact.tags),
+        joinedload(Analysis.artefact).selectinload(Artefact.restrictions),
+    )
     types_param = request.args.get('types', '')
     if types_param:
         requested_names = [t.strip() for t in types_param.split(',') if t.strip()]
@@ -2218,6 +2232,10 @@ def upload_artefact(item_uuid):
 				return error_response('hints must be a JSON object')
 		except json.JSONDecodeError:
 			return error_response('hints must be valid JSON')
+	try:
+		hints = normalize_default_filetype_hint(hints)
+	except ValueError as exc:
+		return error_response(str(exc))
 
 	auto_analyse = request.form.get('auto_analyse', 'true').lower() != 'false'
 
@@ -2356,6 +2374,10 @@ def chunked_upload_init():
 	hints = data.get('hints')
 	if hints is not None and not isinstance(hints, dict):
 		return error_response('hints must be a JSON object')
+	try:
+		hints = normalize_default_filetype_hint(hints)
+	except ValueError as exc:
+		return error_response(str(exc))
 
 	creator = getattr(g, 'api_user', None)
 	upload_uuid = _chunked.init_chunk_session({

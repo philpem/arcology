@@ -1,0 +1,6 @@
+# py-tlsh is a C++ extension kept out of requirements.txt so CI / minimal
+# installs do not need a build toolchain (see arcology_shared/fuzzyhash.py,
+# which degrades gracefully when it's absent). Installed in its own isolated
+# CI job (see .github/workflows/ci.yml: tlsh-plumbing) so a build failure
+# here never affects the main app-tests job.
+py-tlsh

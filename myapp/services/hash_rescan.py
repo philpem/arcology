@@ -9,6 +9,7 @@ database-level recognition backfills after HashDB content changes.
 import json
 from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import joinedload
+from arcology_shared.hints import HintKey
 from ..database import (
     Analysis,
     AnalysisStatus,
@@ -598,7 +599,7 @@ def queue_product_recognition_for_partitions(partition_ids):
                 artefact_id=partition.artefact_id,
                 analysis_type=AnalysisType.PRODUCT_RECOGNITION,
                 status=AnalysisStatus.PENDING,
-                hints=json.dumps({'partition_uuid': partition.uuid}),
+                hints=json.dumps({HintKey.PARTITION_UUID: partition.uuid}),
             ))
             queued += 1
     if queued:

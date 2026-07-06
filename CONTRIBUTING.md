@@ -81,7 +81,8 @@ The worker is a standalone Python process that polls the web app's REST API for 
 **Key files:**
 
 - `worker/worker.py` -- Entry point. Reads config from environment variables and starts the worker loop.
-- `worker/arcworker/analysis.py` -- `AnalysisWorker` class. Contains the main poll loop and all analysis handler methods (one per analysis type).
+- `worker/arcworker/analysis.py` -- `AnalysisWorker` class: the main poll loop and job dispatch (via the `_analyses.HANDLERS` registry).
+- `worker/arcworker/analyses/` -- the analysis handlers themselves, one module per stage (`flux.py`, `extraction.py`, `partition.py`, `metadata.py`, …), each registered with `@analysis_handler(description, AnalysisType.X)` from `analyses/_common.py`.
 - `worker/arcworker/api.py` -- `ArcologyAPI` class. HTTP client that talks to the web app's REST API.
 - `worker/arcworker/config.py` -- Configuration from environment variables.
 - `worker/arcworker/compression.py` -- Decompression utilities for compressed artefacts.
@@ -279,7 +280,8 @@ arcology/
 │   ├── worker.py               # Entry point
 │   ├── Dockerfile              # Multi-stage build with analysis tools
 │   └── arcworker/              # Worker package
-│       ├── analysis.py         # Job processing and handlers
+│       ├── analysis.py         # Poll loop + job dispatch
+│       ├── analyses/           # Job handlers (@analysis_handler, one per stage)
 │       ├── api.py              # REST API client
 │       ├── config.py           # Environment-based config
 │       ├── compression.py      # Decompression utilities
@@ -301,9 +303,9 @@ arcology/
 ### Adding a New Analysis Type
 
 1. Add the new type to `AnalysisType` in `arcology_shared/enums.py`.
-2. Add it to the `ANALYSIS_MAP` in `myapp/blueprints/artefacts.py` so it gets auto-queued for the appropriate artefact types.
-3. Implement a `process_<type>` handler method in `worker/arcworker/analysis.py`.
-4. Register the handler in the `handlers` dict inside `AnalysisWorker.process_analysis()`.
+2. Add it to the `ANALYSIS_MAP` in `myapp/services/artefact_types.py` so it gets auto-queued for the appropriate artefact types.
+3. Implement a `process_<type>` handler in a module under `worker/arcworker/analyses/` (new or existing).
+4. Decorate the handler `@analysis_handler(description, AnalysisType.MY_NEW_TYPE)` (from `analyses/_common.py`) — it auto-registers in the dispatch table; there is no manual handlers dict to edit.
 5. Write a migration to add the value to the PostgreSQL `analysistype` enum (see [Enum case pitfall](#enum-case-pitfall) below).
 
 #### Enum case pitfall
@@ -366,7 +368,7 @@ Archive format definitions live in `arcology_shared/archive_formats.py`.
    - `tool` -- name of the extraction tool (informational)
    - `extract_creates_dir` -- `True` for multi-file archives, `False` for single-file compressors
 3. Add an extraction branch for the new type inside `process_archive_extract` in
-   `worker/arcworker/analysis.py`, calling the appropriate tool wrapper.
+   `worker/arcworker/analyses/extraction.py`, calling the appropriate tool wrapper.
 4. **`is_acorn_archive`** -- if the format stores RISC OS `,xxx` filetype suffixes
    on filenames (e.g. `ReadMe,fff`), add the new `ArchiveType` to the
    `is_acorn_archive` set near the top of the file-registration loop in

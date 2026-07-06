@@ -340,9 +340,9 @@ def find_extraction_path(self, artefact_uuid: str) -> str | None:
         opath = a.get('output_path')
         if not opath:
             continue
-        if atype == 'file_extraction' and not file_extraction_path:
+        if atype == AnalysisType.FILE_EXTRACTION.value and not file_extraction_path:
             file_extraction_path = opath
-        elif atype == 'archive_extract' and not archive_extract_path:
+        elif atype == AnalysisType.ARCHIVE_EXTRACT.value and not archive_extract_path:
             archive_extract_path = opath
     return file_extraction_path or archive_extract_path
 

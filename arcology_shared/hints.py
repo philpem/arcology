@@ -57,6 +57,14 @@ class HintKey:
     # and DFI_CLOCK_MHZ (above) are also user-settable.
     PLATFORM = 'platform'
 
+    # Default RISC OS filetype (lowercase hex, e.g. 'fff') applied to files
+    # extracted from a top-level archive that carry no filetype of their own.
+    # This reproduces HostFS/NFS behaviour, where a file with no ``,xxx``
+    # suffix takes a configured default type.  Set by the upload/analyse form
+    # and ``arco upload --hint``; consumed by the top-level ARCHIVE_EXTRACT
+    # handler.  The wire value is normalised to canonical hex at ingest.
+    ACORN_DEFAULT_FILETYPE = 'acorn_default_filetype'
+
     # --- CLEANUP job payload keys ---
     ARTEFACT_KEYS = 'artefact_keys'
     OUTPUT_FILE_KEYS = 'output_file_keys'
@@ -83,6 +91,7 @@ UPLOAD_HINT_KEYS: tuple[str, ...] = (
     HintKey.DFI_CLOCK_MHZ,
     HintKey.PLATFORM,
     HintKey.FILESYSTEM,
+    HintKey.ACORN_DEFAULT_FILETYPE,
 )
 
 # Subset of UPLOAD_HINT_KEYS whose values must be coerced to ``int`` before

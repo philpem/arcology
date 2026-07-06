@@ -46,6 +46,7 @@ EXTENSION_MAP = {
 
     # Archives
     '.zip': ArtefactType.ZIP,
+    '.tar': ArtefactType.TAR,
     '.tar.gz': ArtefactType.TARGZ,
     '.tgz': ArtefactType.TARGZ,
     '.rar': ArtefactType.RAR,
@@ -367,7 +368,7 @@ COMPRESSOR_SUFFIXES = ('.zst', '.gz', '.bz2')
 
 # Archive container artefact types (extract via ARCHIVE_EXTRACT).
 ARCHIVE_ARTEFACT_TYPES = frozenset({
-    ArtefactType.ZIP, ArtefactType.TARGZ, ArtefactType.RAR,
+    ArtefactType.ZIP, ArtefactType.TAR, ArtefactType.TARGZ, ArtefactType.RAR,
     ArtefactType.SEVENZ, ArtefactType.ARC, ArtefactType.TBAFS,
     ArtefactType.XFILES,
 })

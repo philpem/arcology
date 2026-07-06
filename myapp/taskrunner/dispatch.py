@@ -8,6 +8,7 @@ runner records that summary and the full dict as the analysis result.
 
 import json
 from arcology_shared.enums import CONTROL_PLANE_ANALYSIS_TYPES
+from arcology_shared.hints import HintKey
 from ..database import AnalysisType, Artefact, Item, Partition
 from ..extensions import db
 from ..services.artefact_lifecycle import (
@@ -37,7 +38,7 @@ def _dispatch_hash_rescan(analysis, *, heartbeat, check_cancelled):
 
 
 def _dispatch_product_recognition(analysis, *, heartbeat, check_cancelled):
-    partition_uuid = _hints(analysis).get('partition_uuid')
+    partition_uuid = _hints(analysis).get(HintKey.PARTITION_UUID)
     if not partition_uuid:
         raise ValueError('no partition_uuid in analysis hints')
     partition = Partition.query.filter_by(uuid=partition_uuid).first()
