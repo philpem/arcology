@@ -53,6 +53,7 @@ class ArtefactType(enum.Enum):
     # Word-processor / DTP documents (converted to plain text for search + viewing)
     MS_WORD      = "ms_word"         # Microsoft Word (.doc legacy binary, .docx OOXML)
     MS_EXCEL     = "ms_excel"        # Microsoft Excel (.xls legacy binary) → CSV text
+    MS_POWERPOINT = "ms_powerpoint"  # Microsoft PowerPoint (.ppt legacy binary) → text
 
     # Common image formats (raster and vector metafiles)
     IMAGE        = "image"           # JPEG, PNG, GIF, BMP, TIFF, WebP, PCX, TGA, WMF, EMF

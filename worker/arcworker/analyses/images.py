@@ -28,6 +28,7 @@ from ..tools import (
     convert_sprite,
     parse_acorn_filename,
     pdf_to_text,
+    ppt_to_text,
     read_file_capped,
     word_to_text,
     xls_to_text,
@@ -55,6 +56,7 @@ _DOCUMENT_TEXT_CONVERTERS = {
     ArtefactType.MS_WORD: word_to_text,
     ArtefactType.PDF: pdf_to_text,
     ArtefactType.MS_EXCEL: xls_to_text,
+    ArtefactType.MS_POWERPOINT: ppt_to_text,
 }
 
 

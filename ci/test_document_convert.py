@@ -219,6 +219,32 @@ class TestExcelWiring(unittest.TestCase):
         self.assertEqual(ANALYSIS_MAP[ArtefactType.MS_EXCEL], [AnalysisType.FORMAT_CONVERT])
 
 
+class TestPowerpointWiring(unittest.TestCase):
+
+    def test_ppt_conversion_graceful_without_tool(self):
+        from worker.arcworker.tools.documents import ppt_to_text
+        p = _write_tmp(b'\xd0\xcf\x11\xe0not-a-real-ppt', '.ppt')
+        try:
+            res = ppt_to_text(p)
+            self.assertFalse(res['success'])
+            self.assertIsInstance(res.get('error'), str)
+        finally:
+            p.unlink(missing_ok=True)
+
+    def test_ppt_detection_and_wiring(self):
+        from arcology_shared.artefact_types import (
+            detect_artefact_type,
+            viewable_artefact_type,
+        )
+        from arcology_shared.content_categories import ContentCategory, classify_content
+        from arcology_shared.enums import AnalysisType, ArtefactType
+        from myapp.services.artefact_types import ANALYSIS_MAP
+        self.assertEqual(detect_artefact_type('deck.ppt'), ArtefactType.MS_POWERPOINT)
+        self.assertEqual(viewable_artefact_type('deck.ppt', None), ArtefactType.MS_POWERPOINT)
+        self.assertIn(ContentCategory.CONVERTIBLE, classify_content('deck.ppt', None))
+        self.assertEqual(ANALYSIS_MAP[ArtefactType.MS_POWERPOINT], [AnalysisType.FORMAT_CONVERT])
+
+
 if __name__ == '__main__':
     unittest.main()
 

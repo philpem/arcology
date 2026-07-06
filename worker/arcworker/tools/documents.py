@@ -87,6 +87,17 @@ def xls_to_text(path: Path) -> dict:
         error='Excel .xls text extraction failed (xls2csv/catdoc unavailable or errored)')
 
 
+def ppt_to_text(path: Path) -> dict:
+    """Extract text from a legacy binary PowerPoint ``.ppt`` via ``catppt`` (catdoc).
+
+    ``-d utf-8`` selects the UTF-8 output charset.  Emits the slides' text.
+    """
+    return _text_from_tool(
+        [['catppt', '-d', 'utf-8', str(path)]],
+        tool='catppt',
+        error='PowerPoint .ppt text extraction failed (catppt/catdoc unavailable or errored)')
+
+
 def word_to_text(path: Path) -> dict:
     """Extract plain text from a Microsoft Word document (.doc or .docx).
 
