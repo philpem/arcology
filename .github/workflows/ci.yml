@@ -106,10 +106,16 @@ jobs:
           cache-dependency-path: requirements.txt
 
       - name: Install dependencies
-        # See ci/requirements-extra.txt for why these extra packages are
-        # needed and why they're kept out of requirements.txt. Keep this in
-        # sync with the Jenkinsfile "Application Tests" stage.
-        run: pip install -r requirements.txt -r ci/requirements-extra.txt
+        # worker/requirements.txt (scour, Pillow, ...) and cli/ (zstandard)
+        # are installed too so ci/test_image_conversion.py and the CLI
+        # bulk-import sidecar-bundling tests actually run instead of silently
+        # skipping. Installing from those components' own dependency files
+        # (rather than a separate CI-only list) keeps one source of truth per
+        # component. Keep this in sync with the Jenkinsfile "Application
+        # Tests" stage.
+        run: |
+          pip install -r requirements.txt -r worker/requirements.txt
+          pip install ./cli
 
       - name: Check imports
         run: python ci/check_imports.py
