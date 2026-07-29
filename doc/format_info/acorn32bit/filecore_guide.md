@@ -24,9 +24,9 @@ A FileCore disc can use one of two **map types** (old or new) and one of three *
 | **D** | Old | New | 1024 | 2 sides, 80 trk, 5 sec | 77 | 10 chars | Arthur / RISC OS 2 |
 | **E** | New | New | 1024 (floppy) or 512 (HD) | 2 sides, 80 trk, 5 sec | 77 | 10 chars | RISC OS 3.10 |
 | **F** | New | New | 512 (HD) or 1024 (floppy) | 2 sides, 80 trk, 10 sec | 77 | 10 chars | RISC OS 3.6 (big discs) |
-| **E+** | New | Big | 1024 (floppy) or 512 (HD) | as E | ~32,000+ | 255 chars | RISC OS 4 |
-| **F+** | New | Big | 512 | as F | ~32,000+ | 255 chars | RISC OS 4 |
-| **G** | New | Big | 2048 or 4096 | — (HD only) | ~32,000+ | 255 chars | RISC OS 5 |
+| **E+** | New | Big | 1024 (floppy) or 512 (HD) | as E | 4 MB dir limit | 255 chars | RISC OS 4 |
+| **F+** | New | Big | 512 | as F | 4 MB dir limit | 255 chars | RISC OS 4 |
+| **G** | New | Big | 2048 or 4096 | — (HD only) | 4 MB dir limit | 255 chars | RISC OS 5 |
 
 **S, M, and L** use an identical filesystem structure — the old map and old directory formats described in this document. They differ only in physical geometry: S is a 160 KB single-sided 40-track floppy, M is a 320 KB single-sided 80-track floppy, and L is a 640 KB double-sided 80-track floppy. Hard discs formatted with old-map ADFS also use the same structure with 256-byte sectors and geometry determined by the drive. (See [mdfs.net ADFS structure](https://mdfs.net/Docs/Comp/Disk/Format/ADFS) for a thorough treatment of the 8-bit formats.)
 
@@ -62,7 +62,7 @@ Having identified the map type, determine the directory format by examining the 
 
 - **New directories on old-map media** (D): Same entry structure as old directories but `0x800` bytes (2048 bytes = 2 × 1024-byte sectors) and up to 77 entries. Attributes are stored in a separate byte (offset `+0x19` of the entry) rather than in the name bits. The validation string may be `"Hugo"` or `"Nick"`.
 
-- **New directories** (E, F): Similar structure to old directories but with a different field layout in the tail. The validation string may be `"Nick"` **or** `"Hugo"` — do not test for `"Nick"` alone. RISC OS writes `"Nick"` for directories it creates, but formatting software often writes `"Hugo"` for the root directory: on both sample hard discs (`HDD_2025-10-25_riscos_a5000cfcard.dd` and `HDD_CP30174E_AM7AX9W.dd`) the root directory is `"Hugo"` while all 4,857 subdirectories between them are `"Nick"`. New directories are one sector in size (typically 1024 or 2048 bytes on floppies, or a size related to the LFAU on hard discs). They hold up to 77 entries. (PRM vol. 2, ch. 28, "Directories".)
+- **New directories** (E, F): Same structure as D, except that the parent field in the tail is a SIN rather than a sector address (§3.3). Always `0x800` bytes (2048), holding up to 77 entries — `NewDirSize` is a hard constant in `s/Defns`, not derived from the sector size or the LFAU. The validation string may be `"Nick"` **or** `"Hugo"` — do not test for `"Nick"` alone. RISC OS writes `"Nick"` for directories it creates, but formatting software often writes `"Hugo"` for the root: on both sample hard discs the root is `"Hugo"` while all 4,857 subdirectories are `"Nick"`. (PRM vol. 2, ch. 28, "Directories".)
 
 - **Big directories** (E+, F+, G): Identified by the 4-byte signature `"SBPr"` at offset `+0x04` of the directory header and `"oven"` in the tail. Big directories are variable-length (always a multiple of 2048 bytes), can grow dynamically up to 4 MB, and support filenames up to 255 characters. The `format_version` field (disc record offset `+0x2C`) equals 1 when the disc uses big directories. The source (`s/BigDirCode`, `TestBigDir`) detects big directories by testing `DiscRecord_BigDir_DiscVersion == 1`.
 
@@ -149,7 +149,7 @@ The disc record is the single most important structure on a FileCore disc. Every
 | +0x30 | 4 | `root_size` | Size of root directory in bytes (`DiscRecord_BigDir_RootDirSize`, big directories). |
 | +0x34 | 8 | — | Reserved (`DiscRecord_BigDir_Reserved`). |
 
-The record ends at `+0x3C`, i.e. it is **60 bytes** (`SzDiscRecSigSpace` in `hdr/FileCore`), not 64. Two other sizes appear in the source and are worth knowing: `SzDiscRecSig` = 32 (the pre-3.6 record, through `disc_name`) and `SzDiscRecSig2` = 52 (through `root_size`), the latter being the portion published in the public header and stored in the boot block (§2.2). There is no "disc needs checking" flag at `+0x34` or anywhere else in the disc record. Both authorities agree: `hdr/FileCore` defines `DiscRecord_BigDir_Reserved # 8` there, and the Phase 2 Functional Specification (§7.5), from which the rest of this table derives, lists offsets 52–59 as "Reserved, must be 0". FileCore has no on-disc "dirty" or "needs checking" state at all — the only such flag in the source is `BufDirDirty`, an in-RAM directory-buffer writeback bit in `s/FileCore25`. An earlier revision of this table claimed a `flags` byte here; treat that as spurious and do not reinstate it.
+The record ends at `+0x3C`, i.e. it is **60 bytes** (`SzDiscRecSigSpace` in `hdr/FileCore`), not 64. Two other sizes appear in the source and are worth knowing: `SzDiscRecSig` = 32 (the pre-3.6 record, through `disc_name`) and `SzDiscRecSig2` = 52 (through `root_size`), the latter being the portion published in the public header and stored in the boot block (§2.2). There is no "disc needs checking" flag at `+0x34`, and no on-disc "dirty" state anywhere in FileCore — `hdr/FileCore` and the Phase 2 Functional Specification (§7.5) both make `0x34`–`0x3B` reserved. (The only such flag in the source is `BufDirDirty`, an in-RAM directory-buffer writeback bit in `s/FileCore25`.)
 
 ### 2.2 The Boot Block (Hard Discs, and Multi-Zone Floppies)
 
@@ -166,7 +166,7 @@ Its layout is:
 | +0x1FD | 2 | Non-ADFS partition start cylinder (low byte, then high byte) |
 | +0x1FF | 1 | Checksum |
 
-The three bytes `+0x1FC`–`+0x1FE` are a **non-ADFS partition descriptor**, used to record where a foreign partition (historically RISC iX) begins. They are not a FileCore flag byte plus padding, as earlier revisions of this table claimed.
+The three bytes `+0x1FC`–`+0x1FE` are a **non-ADFS partition descriptor**, recording where a foreign partition (historically RISC iX) begins — not a FileCore flag byte plus padding.
 
 Three authorities agree on this layout. The PRM (vol. 2, ch. 28, "The boot block") gives the table above. `hdr/FileCore` makes the disc record 60 bytes (`SzDiscRecSigSpace`), which lands exactly on `0x1C0`–`0x1FB`. And `s/Defns` defines `DefectListDiscAdd * &400+&800` (= `0xC00`), `SzDefectList * &200`, then `# SzDefectList-4-MaxStruc` of defect list, `ParkDiscAdd # 4`, and `DefectStruc # MaxStruc` with `MaxStruc * 64` — that 64-byte `DefectStruc` is a *space reservation* covering the record, the partition descriptor and the checksum together, not the size of the record itself. Its comment reads: *"The last 64 bytes describe the disc to FileCore. Any other bytes may be used as params for the low level drivers."*
 
@@ -209,9 +209,9 @@ The root directory's location depends on the map and sector type:
 
   In either case, the `root_dir` field contains a full SIN with a fragment ID ≥ 3 rather than the special form `0x0002xx`. Formatting software places the root directory as the first object after the map in the same zone, using the first available fragment ID for that zone.
 
-To resolve the indirect address to a physical disc address, you must walk the zone map to find all fragments with ID 2, concatenate them in order, then index into the result at the sharing offset. See §3.2 for the full procedure.
+To resolve the indirect address, **apply the sharing offset within the ID-2 piece that contains the zone map** — the piece beginning at the map's own disc address (§2.4). Do *not* concatenate every ID-2 fragment on the disc and index into that.
 
-**Fragment ID 2 is not an ordinary object identifier, and its pieces should not always be naively concatenated the way §3.2 describes for a normal file.** ID 2 is reserved/special: on a multi-zone floppy it commonly shows up as *multiple, physically unrelated* pieces that happen to share the same ID — for example, on `adfs1600F.adf`, ID 2 appears once in zone 0's logical range (a 64-unit piece covering the boot block at disc address `0xC00`) and again, completely separately, in zone 2's logical range (a 160-unit piece covering the double-copied zone map plus the root directory, at disc address `0xC6800`–`0xC8FFF`). These are not two fragments of one contiguous object the way a fragmented file's pieces would be. Resolving `root_dir`'s sharing offset by concatenating *every* ID-2 piece across all zones in ascending order gives the wrong address (it lands 4096 bytes short, inside the boot-block piece's neighbourhood); the correct address only falls out of applying the sharing offset within the single piece that actually contains the map and root directory — in this case, zone 2's piece alone. Treat ID 2 as "the reserved ID used for map/boot/root-directory bookkeeping in whichever zone each lives," not as one walkable multi-zone object.
+The distinction matters because **fragment ID 2 is a reserved bookkeeping ID, not an ordinary object identifier**. Unlike a fragmented file's pieces, its occurrences are physically unrelated. On `adfs1600F.adf`, ID 2 appears once in zone 0's range (64 units covering the boot block at `0xC00`) and again, separately, in zone 2's range (160 units covering the double-copied map plus the root directory, `0xC6800`–`0xC8FFF`); concatenating both and indexing lands 4096 bytes short. Read ID 2 as "the reserved ID used for map, boot block and root-directory bookkeeping in whichever zone each happens to live". The general procedure in §3.2 applies to ordinary objects (ID ≥ 3).
 
 ### 2.4 The Zone Map (New Map Only)
 
@@ -219,24 +219,18 @@ The zone map is the allocation structure for new-map discs. It consists of `nzon
 
 **Caveat — don't compute the map's disc address as `(nzones / 2) × (disc_size / nzones)`.** Zones are not equal-sized slices of `disc_size`. On a sample 4-zone, 1024-byte-sector, `zone_spare`=1600-bit F-format floppy (`adfs1600F.adf`), the naive formula gives `2 × (1638400/4) = 819200`, but the true map start (confirmed against `ZoneCheck`/`CrossCheck`, §A.1) is `813056` — six sectors earlier.
 
-The two raw per-zone bit budgets from §C.1 (`(sector_size − 64) × 8` for zone 0, `(sector_size − 4) × 8` for others) are the *maximum theoretical capacity* used to choose `bpmb`/`nzones` at format time — they are **not** each zone's real byte extent on an already-formatted disc. The real per-zone extent is smaller, and it is easy to over-subtract `zone_spare` when correcting for this (subtracting it from only the non-zero zones, or subtracting it in full from every zone, both give the wrong answer — see below). The correct correction, verified by decoding the actual allocation bit stream of all four zones on the sample image (every zone's real content independently ends at the same bit offset, `sector_size×8 − zone_spare + 32`, confirmed by locating the literal terminating `1` bit of each zone's last fragment):
-
-```
-HN = 32                                    # non-zero zone header, in bits (4 bytes)
-reserved = zone_spare − HN                 # the correction term — NOT zone_spare itself
-
-zone0_bits = (sector_size − 64) × 8 − reserved
-zoneN_bits = (sector_size − 4)  × 8 − reserved      # same value for every zone > 0
-```
-
-These simplify, and are much less error-prone stated this way — prefer these forms:
+A zone's **real extent** — the number of allocation units it actually describes — follows directly from `hdr/FileCore`'s definition of `zone_spare` as the number of bits in a zone that are *not* map bits (§2.1):
 
 ```
 zoneN_bits = sector_size × 8 − zone_spare
 zone0_bits = sector_size × 8 − zone_spare − 480     # 480 = the 60-byte disc record copy
 ```
 
-i.e. subtract `zone_spare − 32` (not `zone_spare`) from *both* raw formulas, including zone 0's. Multiply each by `bpmb` to get that zone's disc byte extent, then sum the extents of zones `0 .. nzones/2 − 1` to get the map's disc address. For the sample disk (`sector_size`=1024, `zone_spare`=1600, `bpmb`=64): `zone0_bits`=6112 → 391168 bytes; `zoneN_bits`=6592 → 421888 bytes; map start = `391168 + 421888 = 813056` — exact match. (As a further consistency check, summing all four zones' extents this way gives 1656832 bytes, 18432 bytes more than `disc_size`=1638400; decoding zone 3's bit stream shows a fragment ID 1 — the defect list — of exactly 18432 bytes near the end of that zone, which accounts for the difference: the formatter pads the last zone with a defect-list reservation to burn off the excess between nominal zone capacity and the disc's true size.)
+Multiply each by `bpmb` to get that zone's byte extent, then sum the extents of zones `0 .. nzones/2 − 1` to get the map's disc address.
+
+Two traps are worth naming. The raw per-zone budgets quoted in §C.1 (`(sector_size − 64) × 8` for zone 0, `(sector_size − 4) × 8` for the rest) are the *maximum theoretical capacity* used to choose `bpmb` and `nzones` at format time, not the real extents of a formatted disc. And correcting them means subtracting `zone_spare − 32` from **both** — subtracting the full `zone_spare`, or applying the correction only to zones after 0, each gives a wrong answer.
+
+These extents were verified by decoding the allocation bit stream of all four zones on the sample image: every zone's real content ends at the same bit offset, `sector_size × 8 − zone_spare + 32`, located by finding the terminating `1` bit of each zone's last fragment. For the sample disk (`sector_size`=1024, `zone_spare`=1600, `bpmb`=64): `zone0_bits`=6112 → 391168 bytes; `zoneN_bits`=6592 → 421888 bytes; map start = `391168 + 421888 = 813056` — exact match. (As a further consistency check, summing all four zones' extents this way gives 1656832 bytes, 18432 bytes more than `disc_size`=1638400; decoding zone 3's bit stream shows a fragment ID 1 — the defect list — of exactly 18432 bytes near the end of that zone, which accounts for the difference: the formatter pads the last zone with a defect-list reservation to burn off the excess between nominal zone capacity and the disc's true size.)
 
 The same formula is confirmed on both sample hard discs. `HDD_2025-10-25_riscos_a5000cfcard.dd` (`sector_size`=512, `zone_spare`=48, `bpmb`=1024, `nzones`=124) gives `zone0_bits`=3568, `zoneN_bits`=4048 and a map start of `250496 × 1024 = 256507904` (`0xF4A0000`) — where a valid zone 0 map block is indeed found. `HDD_CP30174E_AM7AX9W.dd` (`sector_size`=512, `zone_spare`=32, `bpmb`=512, `nzones`=82) gives 3584/4064 and `0x5120000`, likewise correct.
 
@@ -244,7 +238,7 @@ Note that of the three multi-zone sample images, only `adfs1600F.adf` and the A5
 
 The trailing `zone_spare − 32` bits of each zone's map sector are slack that describes no disc space. Formatters treat them differently and a decoder must tolerate both: `adfs1600F.adf` simply leaves them as zero bits, whereas `HDD_2025-10-25_riscos_a5000cfcard.dd` writes a terminated fragment ID 1 (defect) descriptor filling the slack in every one of its 124 zones.
 
-For multi-zone floppies, prefer reading the disc record from the boot block (§2.2) over computing this address at all; if you must locate the map block directly, use the corrected formula above and confirm the candidate sector with its `ZoneCheck`/`CrossCheck` (§A.1) before trusting it — the arithmetic here is easy to get subtly wrong (as this section itself originally did).
+For multi-zone floppies, prefer reading the disc record from the boot block (§2.2) over computing this address at all; if you must locate the map block directly, use the formula above and confirm the candidate sector with its `ZoneCheck`/`CrossCheck` (§A.1) before trusting it.
 
 The map is **double-copied**: a second copy of all `nzones` sectors follows immediately after the first. This allows recovery if one copy is damaged. The total map area on disc is therefore `2 × nzones` sectors. (Nick Reeves, "New Disc File Structure for RISC OS": "A double copied map".)
 
@@ -287,9 +281,9 @@ Old-map discs (S, M, L, D) have a simple free space table rather than a bit stre
 
 The disc name is reconstructed as `name[0]=sector0[0]`, `name[1]=sector1[0]`, `name[2]=sector0[1]`, `name[3]=sector1[1]`, ... alternating through both 5-byte runs. Confirmed against `adfs640L.adl` and `adfs800D.adf`, whose free-space-map bytes reconstruct to `"00_05_Sun"` and `"00_06_Sun"` respectively (both padded with a trailing NUL rather than a space) — matching the same naming pattern found verbatim in `adfs800E.adf`'s extended disc-record `disc_name` field, `"00_07_Sun "`.
 
-**Caveat on the Level 3 field:** FileCore itself does not know about it. `s/Defns` lays out sector 0 as `FreeStart # 82*3`, then `EndSpaceList` (a zero-size label), then `# 1 ;reserved`, then `OldName0 # 5` — i.e. `+0xF6` is a **single reserved byte** and the name run begins at `+0xF7`, exactly as tabulated above. The "Level 3 fileserver partition" reading comes from [mdfs.net](https://mdfs.net/Docs/Comp/Disk/Format/ADFS), which is documenting 8-bit ADFS rather than FileCore and lists the field as three bytes at `0F6`–`0F8`; note that this overlaps the disc name run that the same document places at `0F7`–`0FB`. Treat `+0xF6` as one reserved byte for FileCore purposes. (`s/Defns` also marks both name fields "RETRO DEFINITION", confirming that the disc name was retrofitted into previously reserved space.)
+**Caveat on the Level 3 field:** FileCore does not know about it. `s/Defns` lays out sector 0 as `FreeStart # 82*3`, then `EndSpaceList` (a zero-size label), then `# 1 ;reserved`, then `OldName0 # 5` — so `+0xF6` is a **single reserved byte** and the name run begins at `+0xF7`, as tabulated above. (Both name fields are marked "RETRO DEFINITION", confirming the disc name was retrofitted into reserved space.)
 
-None of the sample images are Level 3 fileserver partitions, so this reference only confirms that sector 0's `+0xF6` byte reads zero on ordinary discs and that the disc name genuinely starts at `+0xF7` on sector 0 (there is no room left for a 3-byte L3 field there without overlapping the name, which real disc bytes rule out). Sector 1 has no spare bytes for an L3 field at all once its 5-byte name run, 2-byte disc identifier, boot option, end-of-list pointer, and checksum are accounted for (`5+2+1+1+1 = 10` bytes, exactly filling `+0xF6`–`+0xFF`) — so despite what some secondary sources list as a second 3-byte L3 field on sector 1, there appears to be no space for one.
+The "Level 3 fileserver partition" reading comes from [mdfs.net](https://mdfs.net/Docs/Comp/Disk/Format/ADFS), which documents 8-bit ADFS rather than FileCore and gives the field as three bytes at `0F6`–`0F8` — overlapping the disc name run that the same document places at `0F7`–`0FB`. Real disc bytes rule that overlap out. Sector 1 has no room for the second L3 field some sources list either: its 5-byte name run, 2-byte disc identifier, boot option, end-of-list pointer and checksum fill `+0xF6`–`+0xFF` exactly (`5+2+1+1+1 = 10`). Treat `+0xF6` as one reserved byte; none of the sample images are Level 3 partitions, so all they confirm is that it reads zero on ordinary discs.
 
 Files on old-map discs must be stored contiguously. If there is no single free extent large enough, RISC OS reports "Compaction required" or "Can't extend". The `*Compact` command defragments the disc.
 
@@ -346,28 +340,15 @@ This is confirmed by the RISC OS 5 source. `s/Defns` defines `MaxFreeLinkBits * 
 
 so the link width is `min(idlen, 15)` regardless of how wide the ID field is. Fifteen bits addresses offsets up to 32,767, which still covers a 4096-byte sector (32,768 bits) with one bit to spare, so G format needs no change here.
 
-**Zone spare bits:** A fragment's bit pattern (its `idlen`-bit ID, zero or more `0` padding bits, and a terminating `1` bit) can straddle a zone boundary — starting in one zone's map sector and continuing into the next. `zone_spare` is the *maximum* number of bits at the start of a zone that could be needed for this overflow, sized at format time for the worst case (typically at least `idlen + 1` bits). It is **not** a guarantee that every zone boundary actually has a spanning fragment, and it is **not** the number of bits actually used when one does occur — those must be discovered by decoding, not assumed.
+**Zone spare bits, and where a zone's stream ends.** A descriptor's bit pattern can in principle straddle a zone boundary, continuing into the next zone's map sector, and `zone_spare` bounds how many bits that could take. It is a worst-case allowance, not a per-boundary constant: you cannot assume any given boundary has continuation bits, nor how many.
 
-This means a decoder cannot unconditionally skip `zone_spare` bits at the start of every zone (other than zone 0). Whether there is anything to skip, and how much, depends entirely on whether the *previous* zone's last fragment actually ran off the end of its sector without finding a terminating `1` bit:
+Two consequences for a decoder. First, **never unconditionally skip `zone_spare` bits at the start of a zone.** If the previous zone's last descriptor terminated normally, the next zone begins a brand-new descriptor at its very first allocation bit, and skipping sails straight past it — on `adfs1600F.adf` that loses the ID 2 fragment at the start of zone 2, which is the zone map and the root directory, and misplaces everything after it. Second, **a zone's real disc coverage ends at `zone_header_bits + zone_bits(zone)`** (§2.4), not at the end of the sector; the trailing `zone_spare − 32` bits are slack describing no disc space. Decoding blindly to `sector_size × 8` reads that slack as a descriptor and, because it has no terminating `1` bit, wrongly concludes that a fragment spanned.
 
-- If the previous zone's last fragment **did** find its terminator before the end of the sector, the current zone starts a brand-new fragment at its very first allocation-bit position — there are no continuation bits to skip at all.
-- If the previous zone's last fragment **did not** find its terminator (reached the end of the sector still reading padding), then the current zone's first bits belong to that fragment, and decoding must continue reading zero bits until the actual terminating `1` bit is found — which may be anywhere from 1 bit up to `zone_spare` bits in. Only once that terminator is found does a new fragment start in the current zone.
+Stopping dead at the extent is wrong too, because a zone's last real descriptor may legitimately overrun into the slack. On `HDD_2025-10-25_riscos_a5000cfcard.dd` the formatter fills the slack of all 124 zones with a terminated ID 1 descriptor, and in the final zone the trailing defect run starts before the extent and ends inside it.
 
-Confirmed by direct decode of `adfs1600F.adf` (4 zones, `zone_spare` = 1600 bits): zone 1's last real fragment (free space) terminates cleanly at local bit 6592, well short of the zone boundary — so zone 2 has **zero** actual continuation bits, and a brand-new fragment (ID 2 — the double-copied zone map plus the root directory, confirmed at disc address `0xC6800`–`0xC8FFF`) starts at zone 2's very first allocation bit. A decoder that unconditionally skips `zone_spare` bits at the start of zone 2 would skip straight past this fragment and misdecode everything after it, including losing the root directory.
+> **The rule that decodes all four sample images correctly:** decode each zone to the end of its sector; if the final descriptor has no terminating `1` bit, discard it as slack and do **not** let it set `pending_span`. Descriptors at or beyond `zone_bits(zone)` describe no disc space.
 
-In fact **no fragment spans a zone boundary in any of the sample images** — across all 211 zones of the four new-map samples, no zone's bit stream runs out without a terminator. The spanning case described above therefore follows the specification rather than any observed disc, and the `pending_span` path below should be treated as untested code.
-
-**Where a zone's bit stream ends — the most common decoding mistake.** A zone's *real disc coverage* ends at `zone_header_bits + zone_bits(zone)`, using the extent formula from §2.4. The remaining `zone_spare − 32` bits of the sector are **slack** that maps to no disc space. Decoding blindly to `sector_size × 8` reads that slack as a fragment; since the slack has no terminating `1` bit, the decoder then wrongly concludes that a fragment spanned into the next zone.
-
-On `adfs1600F.adf` the consequences are severe: every zone yields a spurious trailing fragment, `pending_span` is falsely set after each one, and the next zone's first 1600 bits are consumed as phantom continuation. That skips straight past the ID 2 fragment at the start of zone 2 — **the zone map and the root directory** — and misplaces everything after it. Earlier revisions of this section's pseudocode made exactly this mistake.
-
-Stopping dead at the extent is not right either, because a zone's last real descriptor may legitimately *overrun* into the slack. On `HDD_2025-10-25_riscos_a5000cfcard.dd` the formatter writes a terminated ID 1 descriptor covering the slack of all 124 zones, and in the final zone the trailing defect run starts before the extent and ends inside the slack — truncating at the extent would report it as unterminated.
-
-**The robust rule, which decodes all four sample images correctly, is therefore:**
-
-> Decode each zone to the end of its sector. If the final descriptor in a zone has no terminating `1` bit, it is slack padding — discard it, and do **not** let it set `pending_span`. Descriptors lying at or beyond `zone_bits(zone)` describe no disc space and can be ignored for allocation purposes.
-
-This is what the pseudocode below does.
+No fragment actually spans a zone boundary in any sample image — across all 211 zones, no zone's stream runs out without a terminator. The `pending_span` path below therefore follows the specification rather than observed media, and should be treated as untested code.
 
 **Pseudocode to decode all zones (state threads forward from one zone to the next):**
 
@@ -543,7 +524,7 @@ In **new directories** (E, F — `0x800` bytes or LFAU-dependent), the tail has 
 
 (Source: Nick Reeves' E Format Design Document.)
 
-Earlier revisions of this section had the title and name transposed for E and F. The order above is confirmed against the sample hard discs; the decisive case is a directory whose name is exactly 10 characters, where the two readings are distinguishable. `$.!BootPSLCD` on `HDD_CP30174E_AM7AX9W.dd` holds, from tail offset `+0x06`:
+Title precedes name — the opposite order is a common misreading. `s/Defns` defines only two non-big tail layouts, and its "New Directory End" block places `NewDirTitle` before `NewDirName` for D, E and F alike. A directory whose name is exactly 10 characters makes the two readings distinguishable on disc; `$.!BootPSLCD` on `HDD_CP30174E_AM7AX9W.dd` holds, from tail offset `+0x06`:
 
 ```
 '!BootPSLCD' 00 00 00 00 00 00 00 00 00 '!BootPSLCD'
@@ -588,6 +569,8 @@ Directory entries follow immediately after the header.
 | +0x18 | 4 | `BigDirObNamePtr` — offset into name heap for this entry's name |
 
 The entry list has no terminating zero byte; `BigDirEntries` in the header gives the count. Entries are always word-aligned.
+
+There is no fixed cap on the number of entries — the limit is the 4 MB maximum directory size. Each entry costs 28 bytes here, plus a 4-byte backup word and at least 4 bytes of name heap, so a big directory tops out near 116,000 entries with one-character names and proportionately fewer as names lengthen. (The often-quoted ~32,000 figure is `2^15 − 3`, the *disc-wide* object limit when `idlen` = 15, which is a different constraint.)
 
 The **name heap** is a separate region within the directory where the variable-length name strings are packed. Each name is CR-terminated (`0x0D`) and padded with zero bytes to a 4-byte boundary.
 
@@ -685,13 +668,13 @@ Big directories differ from old/new directories in several ways:
 
 - **Variable directory size**: Big directories can grow. When a new entry is added and there isn't enough space, FileCore extends the directory by reallocating its disc object. The maximum size is 4 MB.
 
-- **4-byte SIN field**: The indirect disc address field is widened from 3 to 4 bytes, allowing `idlen` to exceed 16 bits and supporting more than 32,765 objects per disc.
+- **4-byte SIN field**: The indirect disc address field is widened from 3 to 4 bytes, allowing `idlen` to go beyond the small map's 15-bit ceiling (`MaxIdLenSmlMap`) to as much as 21 bits, and so past the 32,765-object limit that ceiling implies.
 
 - **Different magic numbers**: `"SBPr"` and `"oven"` replace `"Hugo"` and `"Nick"`.
 
 ### 5.2 The Name Heap
 
-The name heap is a contiguous block within the directory, located after the directory entries. Names are stored as CR-terminated (`0x0D`) strings, each padded with zero bytes to a 4-byte boundary. The heap may contain gaps from deleted entries; FileCore does not compact the heap on every deletion but may do so when the directory is rewritten.
+The heap's layout is given in §3.4. One behavioural point belongs here: it may contain gaps left by deleted entries. FileCore does not compact the heap on every deletion, though it may do so when the directory is rewritten — so `BigDirNamesSize` is an allocation figure, not a count of live name bytes.
 
 ### 5.3 Compatibility
 
@@ -790,7 +773,7 @@ checksum = checksum XOR (checksum >> 8)
 checksum = checksum & 0xFF
 ```
 
-**The fold must be done as two sequential steps.** Collapsing them into the single expression `(checksum XOR (checksum >> 16) XOR (checksum >> 8)) & 0xFF` is *not* equivalent — it silently drops the `>> 24` term, so bits 24–31 never reach the result. An earlier revision of this section made that mistake, and the resulting algorithm reproduces essentially no real check bytes. Expanded, the correct fold is `checksum XOR (checksum >> 16) XOR (checksum >> 8) XOR (checksum >> 24)`.
+**The fold must be done as two sequential steps.** Collapsing them into the single expression `(checksum XOR (checksum >> 16) XOR (checksum >> 8)) & 0xFF` is *not* equivalent — it silently drops the `>> 24` term, so bits 24–31 never reach the result and the algorithm reproduces essentially no real check bytes. Expanded, the correct fold is `checksum XOR (checksum >> 16) XOR (checksum >> 8) XOR (checksum >> 24)`.
 
 The "end of real entries" (`R0` in the source) is `5 + 26 × n`, where `n` is the number of used entries — i.e. the offset of the terminating NUL name byte after the last entry.
 
@@ -821,7 +804,9 @@ Beyond checksums, several structural invariants should hold:
 
 - **Free chain integrity**: Every free fragment must be reachable from its zone's `FreeLink`, and the chain must terminate with an ID of 0. Orphaned free fragments (ID 0 but not on the chain) waste space but are not fatal.
 
-- **Fragment ID uniqueness**: A fragment ID is unique *per disc object*, not per fragment — the same ID (≥ 3) can legitimately appear as multiple separate fragments, and this is not limited to one occurrence per zone. Two (or more) fragments with the same ID can sit in the *same* zone, separated by unrelated data, just as readily as they can sit in different zones: extending a file whose in-place extension isn't possible allocates a new fragment with the same ID (§4.3), and there's no rule forcing that new fragment into a different zone. This is exactly the case Appendix B.2 describes as one of compaction's normal targets ("reunite file fragments... in the same zone separated by other data") — so a repair tool must not treat multiple same-ID fragments within one zone as suspicious, and must not assume "at most one fragment per ID per zone" as a shortcut when scanning: correctly resolving a SIN requires decoding a zone's *entire* bit stream and collecting every matching descriptor, in the order encountered, not stopping at the first match. Note that the `start_zone = fragment_id / ids_per_zone` hint from §3.2 is a *search-starting-point* optimisation, not a validity invariant, and a fragment turning up in an earlier zone than that hint predicts is **not**, by itself, evidence of corruption: fragment IDs are allocated disc-wide as "the smallest unused ID" (§4.1), reused once a deleted object frees one up, with no relationship between an ID's numeric value and which zone the object it gets reassigned to actually lives in (placement is driven by proximity to the parent directory, not by the ID). A repair tool that flags this as an error will produce false positives on any disc that has had files deleted and recreated over its lifetime — which is essentially all of them.
+- **Fragment ID uniqueness**: A fragment ID is unique *per disc object*, not per fragment. The same ID (≥ 3) may appear as several separate fragments, and **not only one per zone** — two fragments with the same ID can sit in the same zone separated by unrelated data, which is exactly what a file extension that couldn't be done in place leaves behind (§4.3), and what Appendix B.2 lists as a normal target for compaction. So a repair tool must not treat multiple same-ID fragments in one zone as suspicious, and must not use "at most one fragment per ID per zone" as a scanning shortcut: resolving a SIN correctly means decoding a zone's *entire* bit stream and collecting every match, in order.
+
+  Nor is the `start_zone = fragment_id / ids_per_zone` hint from §3.2 a validity invariant — it is only a search starting point. A fragment appearing in an earlier zone than the hint predicts is **not** evidence of corruption: IDs are allocated disc-wide as "the smallest unused ID" (§4.1) and reused when a deleted object frees one, so an ID's numeric value says nothing about where the object using it now lives (placement follows the parent directory). A tool that flags this will produce false positives on any disc that has had files deleted and recreated — that is, on essentially all of them.
 
 - **Total allocation unit count**: Do **not** test that the total number of allocation units across all zones equals `disc_size / bpmb`. It normally exceeds it, and a repair tool applying that test as an equality reports every healthy multi-zone disc as corrupt.
 
@@ -1108,7 +1093,7 @@ Parameters:
 - `nzones` = 1
 - `idlen` = 15
 - `log2_bpmb` = 7, bpmb = 128 (one allocation unit = 128 bytes = 1/8 sector) — matches the value actually found on a real 800K E-format disc (`adfs800E.adf`); see the note below on why `log2_bpmb` = 10 doesn't work here.
-- `zone_spare` = 1312 (`0x520`) — this is the value actually found on `adfs800E.adf`. It has no functional effect here: with `nzones` = 1 there is no zone boundary for it to reserve bits across, so its value is irrelevant on a single-zone disc. (An earlier version of this example claimed `zone_spare` = 0 "to match `adfs800E.adf`"; the other parameters in this example genuinely were cross-checked against that image and do match, but this one field was not, and the real disc record holds 1312, not 0.)
+- `zone_spare` = 1312 (`0x520`), the value found on `adfs800E.adf`. It has no functional effect on a single-zone disc — with `nzones` = 1 there is no zone boundary for it to reserve bits across — but do not assume it is therefore zero.
 - `root_dir` = `0x000203` (515 decimal: fragment ID 2, sharing offset 3)
 
 Layout:
@@ -1119,7 +1104,7 @@ Layout:
 
 The system object (fragment ID 2) is 32 allocation units (4096 bytes: 2 map sectors + 2 root-directory sectors). It contains the primary map block, the backup map block, and the root directory.
 
-**Why not `log2_bpmb` = 10 (bpmb = 1 sector), as the "typical" row in §C.1 suggests?** Because the fragment descriptor's *total bit width equals its allocation-unit count* (§3.1) — a descriptor can never be shorter than `idlen + 1` bits (15 + 1 = 16 here), since the `idlen`-bit ID field alone needs that much room before the terminating `1` bit. With `bpmb` = 1024 bytes, the system object's real content (4096 bytes) is only **4** allocation units — less than the 16-unit floor forced by `idlen`. The descriptor's bit width can't be made to equal 4 without truncating the ID field itself, so a naïve "content bytes ÷ bpmb" calculation that ignores this floor (as an earlier version of this example did, claiming "4 allocation units" but then writing out an 18-bit descriptor — 18 ≠ 4) is self-contradictory. `bpmb` = 128 avoids the problem entirely, since 4096/128 = 32 units comfortably clears the 16-unit floor; this is presumably why real formatting software doesn't use the §C.1 "typical" value for small floppies. (This is also the value actually found on `adfs800E.adf`; that disc already has files on it, so its real fragment layout differs from this fresh-format walkthrough, but its fragment ID 2 is independently confirmed to be exactly 32 allocation units — matching this worked example.)
+**Why not `log2_bpmb` = 10 (bpmb = 1 sector), as the "typical" row in §C.1 suggests?** Because the fragment descriptor's *total bit width equals its allocation-unit count* (§3.1) — a descriptor can never be shorter than `idlen + 1` bits (15 + 1 = 16 here), since the `idlen`-bit ID field alone needs that much room before the terminating `1` bit. With `bpmb` = 1024 bytes, the system object's real content (4096 bytes) is only **4** allocation units — less than the 16-unit floor forced by `idlen`. The descriptor's bit width cannot be made to equal 4 without truncating the ID field, so a naïve "content bytes ÷ bpmb" calculation that ignores this floor is self-contradictory. `bpmb` = 128 avoids the problem entirely, since 4096/128 = 32 units comfortably clears the 16-unit floor; this is presumably why real formatting software doesn't use the §C.1 "typical" value for small floppies. (This is also the value actually found on `adfs800E.adf`; that disc already has files on it, so its real fragment layout differs from this fresh-format walkthrough, but its fragment ID 2 is independently confirmed to be exactly 32 allocation units — matching this worked example.)
 
 Map bit stream (7680 bits):
 - Fragment ID 2 (system object): 15-bit ID = `0x0002`, then padding and `1` bit. It covers 32 allocation units, so the descriptor is 32 bits total: `15 + 16 + 1 = 32` bits: `[15-bit id=2][16 zero bits][1]`.
@@ -1141,7 +1126,7 @@ For old-map discs, the initialisation is simpler:
 
 2. **Write the root directory** at its fixed disc address (e.g. `0x200` for L-format). Initialise with the header (`"Hugo"`), an empty entry list (NUL first byte), and the tail with check byte.
 
-3. **Write the disc name** split across the two map sectors, exactly as described in §2.5: the *even*-indexed characters (0, 2, 4, 6, 8) go at sector 0 offset `+0xF7`, and the *odd*-indexed characters (1, 3, 5, 7, 9) at sector 1 offset `+0xF6`. Both runs are 5 bytes. (Earlier revisions of this step gave `+0xF9` for both sectors and swapped the parities; reading at `+0xF9` returns part of the total-sectors field, not the name.)
+3. **Write the disc name** split across the two map sectors, exactly as described in §2.5: the *even*-indexed characters (0, 2, 4, 6, 8) go at sector 0 offset `+0xF7`, and the *odd*-indexed characters (1, 3, 5, 7, 9) at sector 1 offset `+0xF6`. Both runs are 5 bytes. Note that `+0xF9` is *not* the start of either run — on sector 0 it falls inside the total-sectors field.
 
 Old-map floppies (S, M, L, D) have no boot block — the old map has no disc record concept at all (§2.1). Hard discs with old maps do have a boot block at `0xC00` with a disc record and defect list, initialised as in step 2 of §C.3. Note this is distinct from new-map floppies: multi-zone new-map floppies (F format) *do* have a boot block, per §2.2.
 
@@ -1151,7 +1136,7 @@ Old-map floppies (S, M, L, D) have no boot block — the old map has no disc rec
 
 **Allocation unit** — The smallest unit of disc space managed by the zone map. One allocation unit = 2^log2_bpmb bytes (the "bytes per map bit" value from the disc record). Every fragment occupies a whole number of allocation units.
 
-**Big directory** — Variable-length directory format used by E+, F+, and G. Identified by the `"SBPr"` / `"oven"` magic strings. Supports up to ~32,000 entries with filenames up to 255 characters, stored in a name heap.
+**Big directory** — Variable-length directory format used by E+, F+, and G. Identified by the `"SBPr"` / `"oven"` magic strings. Entry count is bounded by the 4 MB maximum directory size rather than by a fixed limit; filenames may be up to 255 characters, stored in a name heap.
 
 **Boot block** — A 512-byte structure at disc address `0xC00` on hard discs, and on new-map floppies with more than one zone (F format). Contains the defect list, a 60-byte copy of the disc record (at offset `+0x1C0`), a flag byte, and a one-byte checksum at `+0x1FF`. Single-zone new-map floppies (E format) and old-map floppies (S, M, L, D) have no boot block.
 
