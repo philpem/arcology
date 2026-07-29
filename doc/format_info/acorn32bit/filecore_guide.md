@@ -149,7 +149,7 @@ The disc record is the single most important structure on a FileCore disc. Every
 | +0x30 | 4 | `root_size` | Size of root directory in bytes (`DiscRecord_BigDir_RootDirSize`, big directories). |
 | +0x34 | 8 | — | Reserved (`DiscRecord_BigDir_Reserved`). |
 
-The record ends at `+0x3C`, i.e. it is **60 bytes** (`SzDiscRecSigSpace` in `hdr/FileCore`), not 64. Two other sizes appear in the source and are worth knowing: `SzDiscRecSig` = 32 (the pre-3.6 record, through `disc_name`) and `SzDiscRecSig2` = 52 (through `root_size`), the latter being the portion published in the public header and stored in the boot block (§2.2). There is no "disc needs checking" flag at `+0x34` or anywhere else in the disc record — `0x34`–`0x3B` is reserved.
+The record ends at `+0x3C`, i.e. it is **60 bytes** (`SzDiscRecSigSpace` in `hdr/FileCore`), not 64. Two other sizes appear in the source and are worth knowing: `SzDiscRecSig` = 32 (the pre-3.6 record, through `disc_name`) and `SzDiscRecSig2` = 52 (through `root_size`), the latter being the portion published in the public header and stored in the boot block (§2.2). There is no "disc needs checking" flag at `+0x34` or anywhere else in the disc record. Both authorities agree: `hdr/FileCore` defines `DiscRecord_BigDir_Reserved # 8` there, and the Phase 2 Functional Specification (§7.5), from which the rest of this table derives, lists offsets 52–59 as "Reserved, must be 0". FileCore has no on-disc "dirty" or "needs checking" state at all — the only such flag in the source is `BufDirDirty`, an in-RAM directory-buffer writeback bit in `s/FileCore25`. An earlier revision of this table claimed a `flags` byte here; treat that as spurious and do not reinstate it.
 
 ### 2.2 The Boot Block (Hard Discs, and Multi-Zone Floppies)
 
@@ -159,17 +159,16 @@ Its layout is:
 
 | Offset from 0xC00 | Size | Content |
 |--------------------|------|---------|
-| +0x000 | 0x1BC | Defect list (terminated by `0x200000xx`) |
-| +0x1BC | 4 | Park position disc address (`ParkDiscAdd`) |
-| +0x1C0 | 0x040 | `DefectStruc` — 64-byte area describing the disc to FileCore |
-| ↳ +0x1C0 | 0x034 | Disc record (the 52-byte `SzDiscRecSig2` portion) |
-| ↳ +0x1FC | 1 | Boot block flag byte |
-| ↳ +0x1FD | 2 | Reserved |
-| ↳ +0x1FF | 1 | Checksum |
+| +0x000 → | — | Defect list, growing **upwards** (terminated by `0x200000xx`) |
+| → +0x1BF | — | Hardware-dependent information, growing **downwards** (includes the 4-byte park position address `ParkDiscAdd` at `+0x1BC`) |
+| +0x1C0 | 0x03C | Disc record (60 bytes, `0x1C0`–`0x1FB`) |
+| +0x1FC | 1 | Non-ADFS partition format identifier and flags: bits 0–3 format id (1 ⇒ RISC iX), bits 4–7 flags (reserved, must be zero) |
+| +0x1FD | 2 | Non-ADFS partition start cylinder (low byte, then high byte) |
+| +0x1FF | 1 | Checksum |
 
-The layout comes from `s/Defns`, which defines `DefectListDiscAdd * &400+&800` (= `0xC00`), `SzDefectList * &200` (512 bytes) and then, working from the start of the block, `# SzDefectList-4-MaxStruc` of defect list, a 4-byte `ParkDiscAdd`, and `DefectStruc # MaxStruc` with `MaxStruc * 64`. Its comment reads: *"The list consists of words containing the disc address (in bytes) of bad sectors, the end is marked by a value &200000xx, where &xx forms a check byte on the earlier list. The last 64 bytes describe the disc to FileCore. Any other bytes may be used as params for the low level drivers."*
+The three bytes `+0x1FC`–`+0x1FE` are a **non-ADFS partition descriptor**, used to record where a foreign partition (historically RISC iX) begins. They are not a FileCore flag byte plus padding, as earlier revisions of this table claimed.
 
-Note the consequence: although the disc record proper is 60 bytes (§2.1), only its first 52 (`SzDiscRecSig2`, up to and including `root_size`) are carried in the boot block — the assembler asserts `SzDiscRecSig2 <= MaxStruc`. The remaining bytes of the 64-byte area hold driver parameters, the flag byte and the checksum. The zone 0 map block (§2.4) has no such restriction and holds the full 60-byte copy at its own `+0x04`.
+Three authorities agree on this layout. The PRM (vol. 2, ch. 28, "The boot block") gives the table above. `hdr/FileCore` makes the disc record 60 bytes (`SzDiscRecSigSpace`), which lands exactly on `0x1C0`–`0x1FB`. And `s/Defns` defines `DefectListDiscAdd * &400+&800` (= `0xC00`), `SzDefectList * &200`, then `# SzDefectList-4-MaxStruc` of defect list, `ParkDiscAdd # 4`, and `DefectStruc # MaxStruc` with `MaxStruc * 64` — that 64-byte `DefectStruc` is a *space reservation* covering the record, the partition descriptor and the checksum together, not the size of the record itself. Its comment reads: *"The last 64 bytes describe the disc to FileCore. Any other bytes may be used as params for the low level drivers."*
 
 **The boot block checksum is a single byte at `+0x1FF`** — the very last byte of the block — not a 16-bit value at `+0x1FE`. It is an ascending byte sum with carry rollover over the preceding bytes:
 
@@ -185,7 +184,7 @@ uint8_t boot_block_check(const uint8_t *bb)   /* bb points at disc address 0xC00
 }
 ```
 
-Verified against all three sample images that have a boot block: `adfs1600F.adf` (`0xBE`), `HDD_2025-10-25_riscos_a5000cfcard.dd` (`0x69`) and `HDD_CP30174E_AM7AX9W.dd` (`0xAD`). On all three, `+0x1FE` reads `0x00`, so these images cannot distinguish a sum taken over `0x000`–`0x1FE` from one over `0x000`–`0x1FD`; the range above is the conventional one. Note that FileCore itself contains no boot-block checksum code — the boot block is written by formatting software (ADFS/`HForm`), so the on-disc evidence above is the authority here, not the FileCore source.
+The PRM states it exactly: *"an 8 bit add with carry on each of the other bytes in the block, starting with value 0"* — so the sum runs over `0x000`–`0x1FE` inclusive and the result is stored at `0x1FF`. Verified against all three sample images that have a boot block: `adfs1600F.adf` (`0xBE`), `HDD_2025-10-25_riscos_a5000cfcard.dd` (`0x69`) and `HDD_CP30174E_AM7AX9W.dd` (`0xAD`). Note that FileCore itself contains no boot-block checksum code — the boot block is written by formatting software (ADFS/`HForm`) — so the PRM and the on-disc evidence, not the FileCore source, are the authorities here.
 
 The defect list contains 32-bit disc addresses of bad sectors. Each entry gives the byte address of a defective sector. The list is terminated by a word of the form `0x200000xx` where `xx` is a checksum byte — the low byte of the sum of all preceding list bytes. (With no defects the list is just `0x20000000`.) For discs larger than 512 MB, a second defect list is appended, using sector addresses and terminated by `0x400000yy`. (PRM vol. 2, ch. 28, "The boot block"; PRM vol. 5a, ch. 110, "Defect lists".)
 
@@ -288,7 +287,9 @@ Old-map discs (S, M, L, D) have a simple free space table rather than a bit stre
 
 The disc name is reconstructed as `name[0]=sector0[0]`, `name[1]=sector1[0]`, `name[2]=sector0[1]`, `name[3]=sector1[1]`, ... alternating through both 5-byte runs. Confirmed against `adfs640L.adl` and `adfs800D.adf`, whose free-space-map bytes reconstruct to `"00_05_Sun"` and `"00_06_Sun"` respectively (both padded with a trailing NUL rather than a space) — matching the same naming pattern found verbatim in `adfs800E.adf`'s extended disc-record `disc_name` field, `"00_07_Sun "`.
 
-**Caveat on the Level 3 field:** none of the sample images are Level 3 fileserver partitions, so this reference only confirms that sector 0's `+0xF6` byte reads zero on ordinary discs and that the disc name genuinely starts at `+0xF7` on sector 0 (there is no room left for a 3-byte L3 field there without overlapping the name, which real disc bytes rule out). Sector 1 has no spare bytes for an L3 field at all once its 5-byte name run, 2-byte disc identifier, boot option, end-of-list pointer, and checksum are accounted for (`5+2+1+1+1 = 10` bytes, exactly filling `+0xF6`–`+0xFF`) — so despite what some secondary sources list as a second 3-byte L3 field on sector 1, there appears to be no space for one.
+**Caveat on the Level 3 field:** FileCore itself does not know about it. `s/Defns` lays out sector 0 as `FreeStart # 82*3`, then `EndSpaceList` (a zero-size label), then `# 1 ;reserved`, then `OldName0 # 5` — i.e. `+0xF6` is a **single reserved byte** and the name run begins at `+0xF7`, exactly as tabulated above. The "Level 3 fileserver partition" reading comes from [mdfs.net](https://mdfs.net/Docs/Comp/Disk/Format/ADFS), which is documenting 8-bit ADFS rather than FileCore and lists the field as three bytes at `0F6`–`0F8`; note that this overlaps the disc name run that the same document places at `0F7`–`0FB`. Treat `+0xF6` as one reserved byte for FileCore purposes. (`s/Defns` also marks both name fields "RETRO DEFINITION", confirming that the disc name was retrofitted into previously reserved space.)
+
+None of the sample images are Level 3 fileserver partitions, so this reference only confirms that sector 0's `+0xF6` byte reads zero on ordinary discs and that the disc name genuinely starts at `+0xF7` on sector 0 (there is no room left for a 3-byte L3 field there without overlapping the name, which real disc bytes rule out). Sector 1 has no spare bytes for an L3 field at all once its 5-byte name run, 2-byte disc identifier, boot option, end-of-list pointer, and checksum are accounted for (`5+2+1+1+1 = 10` bytes, exactly filling `+0xF6`–`+0xFF`) — so despite what some secondary sources list as a second 3-byte L3 field on sector 1, there appears to be no space for one.
 
 Files on old-map discs must be stored contiguously. If there is no single free extent large enough, RISC OS reports "Compaction required" or "Can't extend". The `*Compact` command defragments the disc.
 
