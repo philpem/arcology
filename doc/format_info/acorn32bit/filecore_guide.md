@@ -46,7 +46,7 @@ A pragmatic identification approach for a disc image of unknown format (from [md
 
 1. Read at offset `0x200` (512 bytes from the start). If bytes 1–4 are `"Hugo"` or `"Nick"`, this is the root directory of a 256-byte-sector old-map disc (S, M, or L).
 
-2. If no match, read at offset `0x400` (1024 bytes). If bytes 1–4 are `"Hugo"` or `"Nick"`, this is a 1024-byte-sector disc (D, E, or F). Step 4 distinguishes old from new map.
+2. If no match, read at offset `0x400` (1024 bytes). If bytes 1–4 are `"Hugo"` or `"Nick"`, this is an **old-map D-format disc** — `0x400` is D's fixed root-directory address (§2.3). E and F discs will *not* match here: their root is wherever `root_dir` points, and on a single-zone E floppy `0x400` holds the backup copy of the zone 0 map block. Fall through to steps 3–4 for those.
 
 3. On a hard disc, read the boot block at disc address `0xC00`. The disc record is at offset `+0x1C0` within it. If `idlen` (disc record offset `+0x04`) is non-zero, the disc uses a new map. This also applies to multi-zone new-map floppies (F format) — see §2.2. If the boot block fields aren't plausible (e.g. all zero), the disc may be a single-zone new-map floppy (E format); fall through to step 4.
 
@@ -437,7 +437,9 @@ The sharing unit is one sector (or `2^share_size` sectors on RISC OS 3.6+ discs)
 3. Concatenate the fragments, in the order encountered — bit position ascending within a zone, then zone ascending — to form the disc object's physical extent(s).
 4. If the sharing offset is non-zero, the object starts at byte `(sharing_offset - 1) * sharing_unit` within the disc object.
 
-**To find the zone containing a fragment's first occurrence**, the PRM gives a hint: `start_zone = fragment_id / ids_per_zone`, where `ids_per_zone = zone_bits / (idlen + 1)`. The fragment may have additional pieces elsewhere — in the same zone (separated by unrelated data, the common case left behind by a file extension that couldn't be done in place; see §4.3 and Appendix B.2) as well as in subsequent zones. Fragment IDs are unique per disc object, not per fragment — see the note in §A.3 for what this means for repair tooling that walks the map.
+**To find the zone containing a fragment's first occurrence**, use `start_zone = fragment_id / ids_per_zone`, where `ids_per_zone = zone_bits / (idlen + 1)` — matching `IdsPerZone` in `s/FileCore33`, which computes `(sector_size × 8 − zone_spare) / (idlen + 1)`. This is more than a search hint: it inverts the allocation rule, since a new ID is taken from the range belonging to the zone the object is placed in (§4.1), and compaction never moves a fragment between zones (§B.5). It held exactly for all 12,015 objects across the sample images. Treat it as a reliable starting point rather than a validity test, and still scan for further pieces (see above).
+
+**Fragment ID 0 in a directory entry means "no disc space", not "free space".** A zero-length file is recorded with a SIN whose fragment ID is 0 — `0x000001` in practice, sharing offset 1. Do not try to resolve it against the map, where ID 0 marks free space; just return zero bytes. There are 111 such entries on `HDD_2025-10-25_riscos_a5000cfcard.dd` and 5 on `HDD_CP30174E_AM7AX9W.dd`, all of length 0. The fragment may have additional pieces elsewhere — in the same zone (separated by unrelated data, the common case left behind by a file extension that couldn't be done in place; see §4.3 and Appendix B.2) as well as in subsequent zones. Fragment IDs are unique per disc object, not per fragment — see the note in §A.3 for what this means for repair tooling that walks the map.
 
 ### 3.3 Directory Structure (Old and New Directories)
 
@@ -485,11 +487,11 @@ On small-sector old directories (S, M, L), there is no separate attributes byte.
 
 The actual character is in bits 0–6, making filenames effectively 7-bit ASCII on S/M/L discs. The attribute table in the ADFS 1.30 ROM is the literal string `"RWLDE"`, indexed by byte position. (Verified against the [ADFS 1.30 disassembly](https://acornaeology.uk/acorn-adfs/1.30.html): `set_rwl_attribute_bit` at &99C9, `print_entry_name_and_access` at &92DE.)
 
-**Old vs new directory tail differences:**
+**Directory tail layouts:**
 
-There are three tail layouts depending on directory type. All are read "backwards" from the end of the directory:
+`s/Defns` defines exactly two tail layouts for non-big directories — "Old Directory End" and "New Directory End". Both are read *backwards* from the end of the directory.
 
-In **small-sector old directories** (S, M, L — `0x500` bytes total), the tail starts at offset `0x4CB`:
+In **small-sector directories** (S, M, L — `0x500` bytes total), the tail starts at offset `0x4CB`:
 
 - `0x00` end marker (1 byte)
 - Directory name (10 bytes)
@@ -500,31 +502,20 @@ In **small-sector old directories** (S, M, L — `0x500` bytes total), the tail 
 - End validation `"Hugo"` (4 bytes)
 - Check byte (1 byte — always zero on 8-bit ADFS, computed by 32-bit ADFS)
 
-In **large-sector old directories** (D — `0x800` bytes total), the tail starts at offset `0x7D7`:
+In **large-sector directories** (D, E and F — `0x800` bytes total), the tail starts at offset `0x7D7`:
 
 - `0x00` end marker (1 byte)
 - Reserved (2 bytes, zero)
-- Parent start sector (3 bytes)
+- Parent disc address (3 bytes) — a **start sector** on D, an **indirect disc address (SIN)** on E and F
 - Directory title (19 bytes)
 - Directory name (10 bytes)
 - End sequence number (1 byte)
-- End validation `"Hugo"` or `"Nick"` (4 bytes)
+- End validation `"Hugo"` or `"Nick"` (4 bytes — see §1.3)
 - Check byte (1 byte)
 
-In **new directories** (E, F — `0x800` bytes or LFAU-dependent), the tail has the same fields **in the same order** as the large-sector old directory. Only the addressing differs:
+D, E and F share one layout; only the interpretation of the parent field differs. (Source: Nick Reeves' E Format Design Document.)
 
-- `0x00` end marker (1 byte)
-- Reserved (2 bytes, zero)
-- Parent indirect disc address / SIN (3 bytes, not a raw sector address)
-- Directory title (19 bytes)
-- Directory name (10 bytes)
-- End sequence number (1 byte)
-- End validation `"Nick"` or `"Hugo"` (4 bytes — see §1.3)
-- Check byte (1 byte)
-
-(Source: Nick Reeves' E Format Design Document.)
-
-Title precedes name — the opposite order is a common misreading. `s/Defns` defines only two non-big tail layouts, and its "New Directory End" block places `NewDirTitle` before `NewDirName` for D, E and F alike. A directory whose name is exactly 10 characters makes the two readings distinguishable on disc; `$.!BootPSLCD` on `HDD_CP30174E_AM7AX9W.dd` holds, from tail offset `+0x06`:
+The two layouts also differ in field *order*, not just size: the small-sector one places the name before the parent and title, whereas the large-sector one places the title before the name. That second point is a common misreading — `s/Defns` puts `NewDirTitle` before `NewDirName` for D, E and F alike. A directory whose name is exactly 10 characters makes the two readings distinguishable on disc; `$.!BootPSLCD` on `HDD_CP30174E_AM7AX9W.dd` holds, from tail offset `+0x06`:
 
 ```
 '!BootPSLCD' 00 00 00 00 00 00 00 00 00 '!BootPSLCD'
@@ -617,7 +608,7 @@ FileCore's allocation strategy is sophisticated, designed to minimise fragmentat
 
 1. **Choose a zone**: FileCore prefers the zone containing the parent directory, expanding outward. For whole-file saves (`SAVE`), it tries hard to find a single contiguous extent, compacting zones if necessary. For sequential writes (`OPENOUT`), it allocates a starting extent and may extend later.
 
-2. **Allocate space in the zone map**: Find a free fragment large enough (or combine adjacent free fragments). Split the free fragment if it's larger than needed. Assign a new fragment ID — the smallest unused ID, starting from 3.
+2. **Allocate space in the zone map**: Find a free fragment large enough (or combine adjacent free fragments). Split the free fragment if it's larger than needed. Assign a new fragment ID — the smallest unused ID **within the chosen zone's own ID range**, which runs from `zone × ids_per_zone` upwards (`UnusedId` in `s/FileCore33`). IDs are therefore *not* allocated from one disc-wide pool: only zone 0's range starts at 0, and there IDs 0, 1 and 2 are reserved, so zone 0's first usable ID is 3.
 
 3. **Update the map bit stream**: Rewrite the fragment descriptor for the allocated region with the new ID. Update the free chain links in affected zones.
 
@@ -806,7 +797,7 @@ Beyond checksums, several structural invariants should hold:
 
 - **Fragment ID uniqueness**: A fragment ID is unique *per disc object*, not per fragment. The same ID (≥ 3) may appear as several separate fragments, and **not only one per zone** — two fragments with the same ID can sit in the same zone separated by unrelated data, which is exactly what a file extension that couldn't be done in place leaves behind (§4.3), and what Appendix B.2 lists as a normal target for compaction. So a repair tool must not treat multiple same-ID fragments in one zone as suspicious, and must not use "at most one fragment per ID per zone" as a scanning shortcut: resolving a SIN correctly means decoding a zone's *entire* bit stream and collecting every match, in order.
 
-  Nor is the `start_zone = fragment_id / ids_per_zone` hint from §3.2 a validity invariant — it is only a search starting point. A fragment appearing in an earlier zone than the hint predicts is **not** evidence of corruption: IDs are allocated disc-wide as "the smallest unused ID" (§4.1) and reused when a deleted object frees one, so an ID's numeric value says nothing about where the object using it now lives (placement follows the parent directory). A tool that flags this will produce false positives on any disc that has had files deleted and recreated — that is, on essentially all of them.
+  The `start_zone = fragment_id / ids_per_zone` relation from §3.2, by contrast, *is* structural rather than arbitrary: IDs come from the target zone's own range (§4.1), and it held exactly for all 12,015 objects across the sample images. A mismatch is worth logging as a strong hint of damage — but confirm it by scanning rather than acting on the arithmetic alone, and be certain you have excluded free-chain fragments first (below), since misreading one as an object is the easiest way to manufacture a false mismatch.
 
 - **Total allocation unit count**: Do **not** test that the total number of allocation units across all zones equals `disc_size / bpmb`. It normally exceeds it, and a repair tool applying that test as an equality reports every healthy multi-zone disc as corrupt.
 
@@ -814,7 +805,12 @@ Beyond checksums, several structural invariants should hold:
 
   The correct invariant is therefore: every allocation unit below `disc_size / bpmb` must be covered exactly once, and everything at or above it must be ID 1. Measured on the samples — `adfs1600F.adf` overshoots by 18,432 bytes, `HDD_CP30174E_AM7AX9W.dd` by 237,568, and `HDD_2025-10-25_riscos_a5000cfcard.dd` by 1,024,000, each with a matching ID 1 run starting precisely at `disc_size`. (On the last of these, allow also for the per-zone `zone_spare` slack descriptors of §2.4: its trailing ID 1 run is 1,040,384 bytes = 1,024,000 + 16,384 of slack.)
 
-- **Cross-references with directories**: Every fragment ID ≥ 3 that appears in the map should correspond to a SIN referenced by some directory entry somewhere on the disc. Fragments with no directory reference are "lost" objects — allocated space that is wasted. A repair tool can free these.
+- **Cross-references with directories**: Every fragment ID ≥ 3 in the map should correspond to a SIN referenced by some directory entry. Fragments with no directory reference are "lost" objects — allocated space that is wasted, and which a repair tool may free.
+
+  This one holds cleanly in practice: across the four new-map sample images there are **no** unreferenced objects at all (8,230 and 3,781 map objects on the two hard discs, every one reachable from a directory). That makes it a usable check — but only after two traps are avoided, both of which manufacture phantom orphans:
+
+  - **Exclude free-chain fragments before comparing.** A free fragment's ID field holds a link, not an ID (§3.1), and those link values land in the same numeric range as real IDs. Failing to exclude them adds 8 phantom "objects" on `HDD_CP30174E_AM7AX9W.dd` alone — which, being unreferenced, a naive tool would then free.
+  - **Fragment ID 0 is not an object.** Zero-length files reference ID 0 (§3.2); it is not a lost object and there is nothing to free.
 
 ### A.4 Boot Block Checks
 
@@ -931,7 +927,7 @@ Because the fragment ID does not change during a move, no directory entries need
 
 ### B.5 Cross-Zone Considerations
 
-FileCore's compaction operates one zone at a time. It does not move data between zones (that would change the fragment's zone membership, which affects how the fragment is found during SIN resolution). However, the `*Compact` command iterates over all zones, compacting each in turn.
+FileCore's compaction operates one zone at a time — the routine is literally `CompactZone`, taking a zone number in R0 (`s/FileCore32`). It does not move data between zones (that would change the fragment's zone membership, which affects how the fragment is found during SIN resolution, and would break the ID-to-zone relation of §3.2). However, the `*Compact` command iterates over all zones, compacting each in turn.
 
 A file that spans multiple zones has one fragment per zone. Compaction within each zone can improve the contiguity of that zone's fragment but cannot merge fragments across zone boundaries.
 
@@ -945,7 +941,7 @@ Several constraints limit what compaction can do:
 
 - **Shared objects**: Fragments containing shared objects (a directory and its small sub-files) are more complex to move, as the sharing offsets in directory entries would need updating. FileCore avoids moving shared fragments during automatic compaction.
 
-- **System object (ID 2)**: The boot block, zone map, and root directory live in fragment ID 2. This cannot be moved by normal compaction.
+- **System object (ID 2)**: The boot block, zone map, and root directory live in fragment ID 2. This cannot be moved by normal compaction — `s/FileCore32` tests `id <= 2` (`RSBS LR, R8, #2 ; C=1 <=> id<=2`) and keeps the reserved IDs out of the move machinery.
 
 - **Data safety**: FileCore writes the data to the destination before updating the map. If power is lost between the write and the map update, the data exists in both locations but only the old map entry points to it — no data is lost. The zone checksum will detect the inconsistency on the next mount.
 
