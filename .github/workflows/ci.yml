@@ -54,7 +54,10 @@ jobs:
         run: python ci/check_syntax.py
 
       - name: Install ruff
-        run: pip install ruff
+        # Pinned deliberately. Unpinned, a new upstream release turns CI red on
+        # unchanged code: ruff 0.16 widened its default ruleset and reports 454
+        # pre-existing errors in this tree. Triage those (issue #729) before bumping.
+        run: pip install ruff==0.15.20
 
       - name: Ruff lint (pyflakes ruleset)
         run: ruff check .
