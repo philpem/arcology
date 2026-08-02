@@ -568,6 +568,8 @@ Directory entries follow immediately after the header.
 | +0x14 | 4 | `BigDirObNameLen` — length of object name in bytes |
 | +0x18 | 4 | `BigDirObNamePtr` — offset into name heap for this entry's name |
 
+Only the low 8 bits of `BigDirAtts` have a defined meaning, matching the single-byte attribute layout of old/new directories (§3.3). The upper 24 bits are not specified by any source consulted for this guide; real media has been observed with non-zero, non-attribute-looking values there (e.g. `0x2d363308` on two subdirectory entries of one sample disc) while the low byte still matched the standard layout. Treat the upper 24 bits as reserved/unspecified rather than erroring on them.
+
 The entry list has no terminating zero byte; `BigDirEntries` in the header gives the count. Entries are always word-aligned.
 
 There is no fixed cap on the number of entries — the limit is the 4 MB maximum directory size. Each entry costs 28 bytes here, plus a 4-byte backup word and at least 4 bytes of name heap, so a big directory tops out near 116,000 entries with one-character names and proportionately fewer as names lengthen. (The often-quoted ~32,000 figure is `2^15 − 3`, the *disc-wide* object limit when `idlen` = 15, which is a different constraint.)
