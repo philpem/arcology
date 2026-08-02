@@ -1194,7 +1194,7 @@ Old-map floppies (S, M, L, D) have no boot block — the old map has no disc rec
 
 **ZoneCheck** — Checksum byte at offset `+0x00` in each zone header. Computed by summing all 32-bit words in the sector with carry, subtracting the existing check byte, and folding to 8 bits via XOR (see §A.1).
 
-**zone_spare** — Disc record field: the number of bits at the start of each non-zero zone reserved for a fragment whose bit pattern spans the zone boundary from the preceding zone. These continuation bits carry no fragment ID and belong to the last fragment of the preceding zone. See §3.1.
+**zone_spare** — Disc record field: per `hdr/FileCore`'s definition, the number of bits in each zone after zone 0 that are *not* map bits — the 4-byte zone header plus a **trailing** slack region at the *end* of the zone's allocation bit stream (§2.4's extent formulas follow directly from this reading). Do not read this as bits reserved at the *start* of a zone for a fragment spanning in from the previous one — that framing (found in the PRM) describes a disc-wide worst-case upper bound on cross-zone continuation, not a per-boundary constant, and unconditionally skipping bits at a zone's start on that basis loses real fragments. See §3.1.
 
 ---
 
