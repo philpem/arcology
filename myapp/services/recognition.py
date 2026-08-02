@@ -333,7 +333,7 @@ def recognise_products_step(*, database_id=None, partition_id=None,
             .with_entities(
                 ExtractedFile.partition_id, ExtractedFile.path,
                 ExtractedFile.md5, ExtractedFile.sha1, ExtractedFile.sha256)
-            .filter(ExtractedFile.is_directory == False, or_(*conditions))  # noqa: E712
+            .filter(ExtractedFile.is_directory == False, or_(*conditions))
         )
         if partition_id is not None:
             rows_q = rows_q.filter(ExtractedFile.partition_id == partition_id)
@@ -378,7 +378,7 @@ def recognise_products_step(*, database_id=None, partition_id=None,
                 .with_entities(
                     ExtractedFile.partition_id, ExtractedFile.path,
                     ExtractedFile.md5, ExtractedFile.sha1, ExtractedFile.sha256)
-                .filter(ExtractedFile.is_directory == False, or_(*chunk))  # noqa: E712
+                .filter(ExtractedFile.is_directory == False, or_(*chunk))
                 .all()
             )
             for part_id, path, f_md5, f_sha1, f_sha256 in file_rows:

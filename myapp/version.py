@@ -34,6 +34,7 @@ def _detect_version():
             text=True,
             timeout=5,
             cwd=repo_root,
+            check=False,
         )
         if result.returncode == 0:
             raw = result.stdout.strip()

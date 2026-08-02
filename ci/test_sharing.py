@@ -85,7 +85,7 @@ class TestSharingModels(unittest.TestCase):
     def test_user_group_membership(self):
         from myapp.database import Group
         with self.app.app_context():
-            owner, _ = _make_user(self.db, 'share-model-owner')
+            _owner, _ = _make_user(self.db, 'share-model-owner')
             other, _ = _make_user(self.db, 'share-model-other')
             g = Group(name='model-test-group', source='local')
             self.db.session.add(g)
@@ -594,7 +594,7 @@ class TestSharingApi(unittest.TestCase):
                          headers=self._auth(self.owner_key))
         # Create a third user to share with
         with self.app.app_context():
-            third, third_key = _make_user(self.db, 'api-curator-share-third')
+            third, _third_key = _make_user(self.db, 'api-curator-share-third')
             third_id = third.id
         # Curator adds a viewer share for the third user
         r = self.client.post(f'/api/items/{parent_uuid}/shares',

@@ -814,8 +814,9 @@ class AnalysisWorker:
                     # analyses for this artefact have finished.
                     try:
                         self._cleanup_partition_cache(artefact['uuid'])
-                    except Exception:
-                        pass  # Best-effort cleanup, don't block on errors
+                    except Exception as cleanup_exc:
+                        # Best-effort cleanup, don't block on errors
+                        log.debug(f"Partition cache cleanup failed for {artefact['uuid']}: {cleanup_exc}")
         finally:
             stop_monitor.set()
             monitor_thread.join(timeout=5.0)

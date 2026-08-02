@@ -34,9 +34,9 @@ os.environ.setdefault('SQLALCHEMY_DATABASE_URI', 'sqlite:///:memory:')
 os.environ.setdefault('SECRET_KEY', 'ci-document-convert-test-secret')
 os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 
-from unittest.mock import patch  # noqa: E402
-from worker.arcworker.tools import documents  # noqa: E402
-from worker.arcworker.tools.documents import (  # noqa: E402
+from unittest.mock import patch
+from worker.arcworker.tools import documents
+from worker.arcworker.tools.documents import (
     _docx_xml_to_text,
     word_to_text,
 )

@@ -47,7 +47,7 @@ def backfill_tlsh(force, batch_size):
             key = get_artefact_storage_key(art)
             with current_app.storage.open_read(key) as fh:
                 digest = compute_tlsh_stream(fh)
-        except Exception as e:  # noqa: BLE001 - report and continue
+        except Exception as e:
             click.echo(f"  skip {art.uuid}: {e}", err=True)
             continue
         if digest:

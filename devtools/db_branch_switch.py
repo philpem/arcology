@@ -23,7 +23,7 @@ MIGRATIONS_DIR = 'migrations/versions'
 
 
 def _git(*args):
-    result = subprocess.run(['git'] + list(args), capture_output=True, text=True)
+    result = subprocess.run(['git'] + list(args), capture_output=True, text=True, check=False)
     if result.returncode != 0:
         print(f"git error: {result.stderr.strip()}", file=sys.stderr)
         sys.exit(1)
@@ -69,7 +69,7 @@ def _find_downgrade_target(migration_files):
             revisions[rev] = down_rev
 
     all_new = set(revisions)
-    for _rev, down_rev in revisions.items():
+    for down_rev in revisions.values():
         if down_rev not in all_new:
             return down_rev  # None means "base"
 
@@ -96,6 +96,7 @@ def main():
     probe = subprocess.run(
         ['git', 'rev-parse', '--verify', args.target_branch],
         capture_output=True,
+        check=False,
     )
     if probe.returncode != 0:
         print(f"Error: branch '{args.target_branch}' not found.", file=sys.stderr)

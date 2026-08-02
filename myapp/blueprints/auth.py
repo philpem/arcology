@@ -84,19 +84,18 @@ def login():
         except NoResultFound:
             pass
 
-        if userrec is not None:
-            if userrec.checkPassword(form.password.data):
-                login_user(userrec)
-                # Redirect to the page the user was trying to reach, or the dashboard.
-                # SECURITY: confine next= to a same-origin relative path.  A naive
-                # startswith('/') check is bypassable via browser normalisation
-                # (e.g. /\evil.com -> //evil.com, /%09/evil.com -> //evil.com);
-                # is_safe_redirect_path handles control chars and backslashes.
-                next_url = safe_redirect_path(
-                    request.args.get("next"),
-                    url_for("myapp_blueprints_dashboard.index"),
-                )
-                return redirect(next_url)
+        if userrec is not None and userrec.checkPassword(form.password.data):
+            login_user(userrec)
+            # Redirect to the page the user was trying to reach, or the dashboard.
+            # SECURITY: confine next= to a same-origin relative path.  A naive
+            # startswith('/') check is bypassable via browser normalisation
+            # (e.g. /\evil.com -> //evil.com, /%09/evil.com -> //evil.com);
+            # is_safe_redirect_path handles control chars and backslashes.
+            next_url = safe_redirect_path(
+                request.args.get("next"),
+                url_for("myapp_blueprints_dashboard.index"),
+            )
+            return redirect(next_url)
 
     if request.method == 'POST':
         flash("Error logging in - please check your username and password and ensure that CAPS LOCK is turned off.", "error")

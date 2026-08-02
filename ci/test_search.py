@@ -31,7 +31,7 @@ os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 # Unit tests: parse_query (no database required)
 # =============================================================================
 
-from myapp.extensions import db  # noqa: E402  (Query.get -> Session.get migration)
+from myapp.extensions import db
 
 
 class TestParseQuery(unittest.TestCase):

@@ -258,13 +258,9 @@ def get_track_bytes(f: BinaryIO, track_entry: dict, side: int,
             b = src[i]
             if (b & 0x0F) == 0x0F:
                 opcode = b
-                if opcode == 0x0F:    # NOP
+                if opcode == 0x0F or opcode == 0x8F:    # NOP
                     i += 1
-                elif opcode == 0x8F:  # SETINDEX
-                    i += 1
-                elif opcode == 0x4F:  # SETBITRATE
-                    i += 2
-                elif opcode == 0xCF:  # SKIPBITS
+                elif opcode == 0x4F or opcode == 0xCF:  # SETBITRATE
                     i += 2
                 elif opcode == 0x2F:  # RAND (weak bits)
                     weak_offsets.append(len(clean))
@@ -857,8 +853,7 @@ def analyse_hfe_mastering(path: Path, scan_count: int = 5,
                             s.get('declared_size', 0) for s in sectors
                             if s.get('data') is not None)
                         fill = sector_data_bytes / len(track_bytes)
-                        if fill > track_max_fill:
-                            track_max_fill = fill
+                        track_max_fill = max(track_max_fill, fill)
 
                     for sector in sectors:
                         data = sector.get('data')

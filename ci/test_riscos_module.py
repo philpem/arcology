@@ -287,11 +287,11 @@ class TestParseHelpString(unittest.TestCase):
         self.assertEqual(other, '')
 
     def test_with_version_letter(self):
-        title, ver, date, other = _parse_help_string('ADFS\t2.30a (15 Feb 1990)')
+        _title, ver, _date, _other = _parse_help_string('ADFS\t2.30a (15 Feb 1990)')
         self.assertEqual(ver, '2.30a')
 
     def test_with_extra_info(self):
-        title, ver, date, other = _parse_help_string('MyMod\t1.00 (01 Jan 2000) (c) Acorn')
+        _title, _ver, _date, other = _parse_help_string('MyMod\t1.00 (01 Jan 2000) (c) Acorn')
         self.assertEqual(other, '(c) Acorn')
 
     def test_unmatched_raises(self):
@@ -334,7 +334,7 @@ class TestReadString(unittest.TestCase):
 
     def test_string_at_offset(self):
         data = b'XXXTest\x00'
-        s, pos = _read_string(data, 3)
+        s, _pos = _read_string(data, 3)
         self.assertEqual(s, 'Test')
 
 

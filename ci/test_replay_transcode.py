@@ -309,11 +309,10 @@ class TestPosterSprite(unittest.TestCase):
 
     def test_make_replay_poster_skips_when_no_sprite(self):
         from worker.arcworker.analyses import metadata
-        with tempfile.TemporaryDirectory() as td:
-            with patch.object(metadata, 'convert_replay_poster_sprite') as conv:
-                poster = metadata._make_replay_poster(
-                    b'\x00' * 16, {'sprite_size': 0}, Path(td), 'base',
-                )
+        with tempfile.TemporaryDirectory() as td, patch.object(metadata, 'convert_replay_poster_sprite') as conv:
+            poster = metadata._make_replay_poster(
+                b'\x00' * 16, {'sprite_size': 0}, Path(td), 'base',
+            )
         self.assertIsNone(poster)
         conv.assert_not_called()
 
@@ -429,7 +428,7 @@ class TestSearchIndexAndViewer(unittest.TestCase):
         from myapp.blueprints.artefacts import _viewer_replay_detail
         from myapp.database import ExtractedFile, FilesystemType, Partition
         with self.app.app_context():
-            art, mov = self._fixture()
+            art, _mov = self._fixture()
             part = Partition(
                 artefact_id=art.id, partition_index=0,
                 filesystem=FilesystemType.UNKNOWN,
@@ -453,7 +452,7 @@ class TestSearchIndexAndViewer(unittest.TestCase):
     def test_viewer_detail_no_transcode_yet(self):
         from myapp.blueprints.artefacts import _viewer_replay_detail
         with self.app.app_context():
-            art, mov = self._fixture()
+            art, _mov = self._fixture()
             with self.app.test_request_context():
                 detail = _viewer_replay_detail('Movies/Demo', [art.id])
             self.assertIsNone(detail['mp4_url'])
@@ -500,7 +499,7 @@ class TestSearchIndexAndViewer(unittest.TestCase):
         """The ?path= subdirectory filter prunes movies outside the prefix."""
         from myapp.blueprints.artefacts import _viewer_replay_groups
         with self.app.app_context():
-            art, mov = self._fixture()
+            art, _mov = self._fixture()
             with self.app.test_request_context():
                 self.assertEqual(len(_viewer_replay_groups([art.id], 'Movies/')), 1)
                 self.assertEqual(len(_viewer_replay_groups([art.id], 'Other/')), 0)

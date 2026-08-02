@@ -191,9 +191,8 @@ class TestHashdbRecognitionStep(unittest.TestCase):
 
         with self.app.app_context():
             with patch('myapp.services.hashdb_jobs.recognise_products_step',
-                       side_effect=OperationalError('x', {}, _Orig())):
-                with self.assertRaises(OperationalError):
-                    run_hashdb_recognition_job(self.db_id)
+                       side_effect=OperationalError('x', {}, _Orig())), self.assertRaises(OperationalError):
+                run_hashdb_recognition_job(self.db_id)
             hdb = self.db.session.get(HashDatabase, self.db_id)
             self.assertEqual(hdb.product_recognition_status,
                              ProductRecognitionStatus.FAILED)

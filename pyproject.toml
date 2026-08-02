@@ -1,8 +1,10 @@
 # Ruff lint configuration.
 #
-# Defaults (E4, E7, E9, F) cover pycodestyle-essential + pyflakes. We extend
-# them with isort (I), pyupgrade (UP) and flake8-bugbear (B). To pull in more
-# rule groups (e.g. SIM, C4, RUF), add to `extend-select` below.
+# `select` is explicit (not `extend-select` over Ruff's defaults) so a future
+# Ruff release can't silently widen the ruleset under CI again — see issue
+# #729, where an unpinned Ruff moved from 0.15 to 0.16 and turned master red
+# on unchanged code via 454 newly-firing default-ruleset errors. New rule
+# families only fire here once someone deliberately adds their code below.
 
 [tool.ruff]
 target-version = "py310"
@@ -16,11 +18,35 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-extend-select = [
+select = [
+    "E4", "E7", "E9", "F",  # Ruff's own defaults: pycodestyle-essential + pyflakes
     "I",   # isort — sorted, grouped imports
     "UP",  # pyupgrade — modernise syntax for target-version
     "B",   # flake8-bugbear — likely bugs (mutable defaults, broad except, etc.)
+    "C402", "C408",         # flake8-comprehensions — unnecessary generator/dict/list calls
+    "EXE001",               # flake8-executable — shebang present but file not +x
+    "FURB122", "FURB188",   # refurb — for-loop file writes, slice → removeprefix/suffix
+    "G201",                 # flake8-logging-format — logging.error(exc_info=) → logging.exception()
+    "ISC004",               # implicit string concat inside a collection literal
+    "PERF102", "PERF402",   # perflint — wrong dict iterator, manual list copy
+    "PIE790", "PIE810",     # flake8-pie — unnecessary pass, repeated starts/endswith
+    "PLC3002",              # pylint — unnecessary direct lambda call
+    "PLR0402", "PLR1730",   # pylint — manual from-import, if/else min/max
+    "PLW1510",              # pylint — subprocess.run without explicit check=
+    "RUF007", "RUF010", "RUF012", "RUF013", "RUF022", "RUF046", "RUF059", "RUF100",
+    "S110", "S112",         # flake8-bandit — try/except/pass|continue swallowing errors silently
+    "SIM102", "SIM103", "SIM114", "SIM117",  # flake8-simplify
 ]
+# Deliberately NOT selected (reviewed under issue #729, not just unvetted):
+#   BLE (flake8-blind-except) — the worker/task-runner analysis pipeline and
+#     optional-dependency import guards deliberately catch bare `Exception` to
+#     report job failures / fall back gracefully rather than crash. Same kind
+#     of call as the E711/E712 ignore below: the rule is actively wrong for
+#     how this codebase works.
+#   DTZ (flake8-datetimez) — DB `DateTime` columns are naive-UTC by convention
+#     (populated via tz-aware `datetime.now(timezone.utc)`, stored naive by
+#     Postgres/SQLite); code and tests correctly compare against naive
+#     datetimes to match what SQLAlchemy returns from the DB.
 ignore = [
     # SQLAlchemy filter expressions need ==/!= rather than is/is not, since
     # `Column == None` compiles to `IS NULL` whereas `Column is None` is a

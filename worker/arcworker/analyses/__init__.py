@@ -19,7 +19,7 @@ A few private helpers and data tables are additionally bound onto
 bodies reference them via ``self.``.
 """
 
-from ._common import HANDLERS  # noqa: F401  (re-export)
+from ._common import HANDLERS
 
 # Importing the handler modules is what populates HANDLERS — keep every
 # handler module listed here.
@@ -63,41 +63,41 @@ from .partition import process_partition_detect
 
 __all__ = [
     'HANDLERS',
-    'process_cleanup',
-    # Flux
-    'process_flux_visualisation',
-    'process_detect_track_density',
-    'process_flux_decode',
-    'process_disc_mastering_detect',
-    'process_disc_protection_detect',
-    '_SCP_VIA_CONVERSION_TYPES',
-    # Extraction
-    'process_file_extraction',
-    'detect_and_queue_archives',
-    'process_archive_extract',
-    '_apply_pling_renames',
-    '_sniff_archive_magic',
-    '_is_riscos_zip',
-    '_extract_top_level_archive',
-    '_handle_disk_image_bundle',
+    '_EXT_VIEWABLE',
     '_PROMOTABLE_EXTENSIONS',
-    # Images
-    'process_format_convert',
+    '_RISCOS_VIEWABLE_SUFFIXES',
+    '_SCP_VIA_CONVERSION_TYPES',
+    '_apply_pling_renames',
     '_convert_file_to_outputs',
     '_detect_viewable_type',
-    '_RISCOS_VIEWABLE_SUFFIXES',
-    '_EXT_VIEWABLE',
-    # Metadata
-    'process_checksum_compute',
-    'process_metadata_extract',
-    'process_format_identify',
-    'process_replay',
-    'process_riscos_module_parse',
-    # Media
-    'process_media_transcode',
+    '_extract_top_level_archive',
+    '_handle_disk_image_bundle',
+    '_is_riscos_zip',
+    '_sniff_archive_magic',
+    'detect_and_queue_archives',
+    'process_archive_extract',
     # Armlock
     'process_armlock_remove',
+    # Metadata
+    'process_checksum_compute',
+    'process_cleanup',
+    'process_detect_track_density',
+    'process_disc_mastering_detect',
+    'process_disc_protection_detect',
+    # Extraction
+    'process_file_extraction',
+    'process_flux_decode',
+    # Flux
+    'process_flux_visualisation',
+    # Images
+    'process_format_convert',
+    'process_format_identify',
+    # Media
+    'process_media_transcode',
+    'process_metadata_extract',
     # Partition
     'process_partition_detect',
+    'process_replay',
+    'process_riscos_module_parse',
 ]
 # vim: ts=4 sw=4 et

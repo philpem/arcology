@@ -13,8 +13,8 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from cli.arccli.commands import bulk_import as bi  # noqa: E402
-from cli.arccli.commands.bulk_import import (  # noqa: E402
+from cli.arccli.commands import bulk_import as bi
+from cli.arccli.commands.bulk_import import (
     _build_sidecar_bundle,
     _bundle_eligible,
     _dedupe_image_forms,

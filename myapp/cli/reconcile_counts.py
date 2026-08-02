@@ -41,14 +41,14 @@ def reconcile_counts(batch_size, dry_run):
                   ExtractedFile.is_directory == False), 1),
             else_=0,
         )
-        rows = dict(
-            (pid, (t, u)) for pid, t, u in
+        rows = {
+            pid: (t, u) for pid, t, u in
             db.session.query(
                 ExtractedFile.partition_id,
                 func.count(ExtractedFile.id),
                 func.coalesce(func.sum(unique_case), 0),
             ).group_by(ExtractedFile.partition_id).all()
-        )
+        }
         drifted = 0
         for part in Partition.query.all():
             want_total, want_unique = rows.get(part.id, (0, 0))

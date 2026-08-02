@@ -380,8 +380,8 @@ def build_processing_tree(root: Artefact, *, visible_ids=None) -> tuple[dict, bo
                 fid = json.loads(analysis.hints).get(HintKey.FILE_ID)
                 if fid:
                     file_ids.append(fid)
-            except Exception:
-                pass
+            except Exception as e:
+                current_app.logger.debug(f"Malformed ARCHIVE_EXTRACT hints on analysis {analysis.id}: {e}")
 
     hint_file_map: dict[int, dict] = {}
     if file_ids:

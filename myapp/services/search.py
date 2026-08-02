@@ -352,7 +352,7 @@ def _dedup_by_artefact(rows):
     seen = set()
     deduped = []
     for row in rows:
-        _, a, i = row
+        _, a, _i = row
         if a.id not in seen:
             seen.add(a.id)
             deduped.append(row)
@@ -1184,9 +1184,7 @@ def _check_query_warnings(tokens: dict) -> list:
             return True
         if neg_key in _replay_keys and positive_keys & _replay_keys:
             return True
-        if neg_key in _solo_keys and neg_key in positive_keys:
-            return True
-        return False
+        return bool(neg_key in _solo_keys and neg_key in positive_keys)
 
     for neg_key in negated:
         if neg_key not in KNOWN_KEYS:

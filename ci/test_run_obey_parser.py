@@ -9,7 +9,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from cli.arccli.commands.hashdb_generate import (  # noqa: E402
+from cli.arccli.commands.hashdb_generate import (
     _product_context,
     _resolve_obey_path,
     apply_canonical_filter,
@@ -635,8 +635,8 @@ class TestCanonicalSources(unittest.TestCase):
             '!FormEd    FormEd 1\\.01\n'
             '!FormEd    ANSI C Release 3 -> FormEd 2.45 (from Acorn C R3)\n'
         )
-        pat0, ov0 = rules['!formed'][0]
-        pat1, ov1 = rules['!formed'][1]
+        _pat0, ov0 = rules['!formed'][0]
+        _pat1, ov1 = rules['!formed'][1]
         self.assertIsNone(ov0)
         self.assertEqual(ov1, 'FormEd 2.45 (from Acorn C R3)')
 

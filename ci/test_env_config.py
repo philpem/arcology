@@ -87,9 +87,8 @@ class TestEnvConfig(unittest.TestCase):
                 self.assertEqual(parse_byte_size(raw), expected)
 
         for bad in ('', 'abc', '1X', '1GB', '1KB'):
-            with self.subTest(bad=bad):
-                with self.assertRaises(ValueError):
-                    parse_byte_size(bad)
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                parse_byte_size(bad)
 
     def test_empty_csp_header_disables_but_other_empties_ignored(self):
         app = self._build_app_with_env(CSP_HEADER='', OIDC_DISCOVERY_URL='')

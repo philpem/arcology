@@ -352,9 +352,7 @@ def media_is_browser_playable(filename: str, *, has_video: bool,
         if vc not in _PASSTHROUGH_VIDEO_CODECS:
             return False
         # An audio track, if present, must also be browser-decodable.
-        if ac and ac not in _PASSTHROUGH_AUDIO_CODECS:
-            return False
-        return True
+        return not (ac and ac not in _PASSTHROUGH_AUDIO_CODECS)
 
     # Audio-only.  Accept both audio containers and browser-native *video*
     # containers carrying only an audio stream (e.g. an AAC track in an .mp4 or
@@ -364,9 +362,7 @@ def media_is_browser_playable(filename: str, *, has_video: bool,
     # Require a known-good audio codec: an absent codec means ffprobe found no
     # playable audio stream (corrupt/empty/misnamed file), which must NOT be
     # passed through as a broken player — fall through to a (failing) transcode.
-    if not ac or ac not in _PASSTHROUGH_AUDIO_CODECS:
-        return False
-    return True
+    return not (not ac or ac not in _PASSTHROUGH_AUDIO_CODECS)
 
 
 # Compressor suffixes recognised on top of a raw-sector extension, in order

@@ -53,6 +53,5 @@ def downgrade():
     is nothing schema-level to undo.  Re-running an extraction regenerates the
     per-archive ARCHIVE_EXTRACT jobs.
     """
-    pass
 
 # vim: ts=4 sw=4 et

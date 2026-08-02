@@ -35,7 +35,7 @@ _WORKER_KEY = os.environ['WORKER_API_KEY']
 _AUTH = {'X-API-Key': _WORKER_KEY}
 
 
-from myapp.extensions import db  # noqa: E402  (Query.get -> Session.get migration)
+from myapp.extensions import db
 
 
 def _make_fixtures(db):

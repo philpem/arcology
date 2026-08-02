@@ -22,6 +22,7 @@ Adding a new Acorn partition scheme
    priority order.
 """
 
+import itertools
 import json
 import struct
 from pathlib import Path
@@ -317,10 +318,7 @@ def _is_valid_filecore_disc_record_strict(boot_block: bytes) -> bool:
 
     # disc_size must be a whole number of sectors.
     disc_size = struct.unpack_from('<I', disc_record, _DR_DISC_SIZE)[0]
-    if disc_size % (1 << log2_sector_size) != 0:
-        return False
-
-    return True
+    return disc_size % (1 << log2_sector_size) == 0
 
 
 # =========================================================================
@@ -961,16 +959,15 @@ def detect_partitions_sfdisk(input_path: Path) -> dict:
         # BPB / bootstrap data, producing bogus entries with absurd sector
         # numbers.  If the BPB fields all validate, discard every sfdisk
         # partition and let the caller fall through to unpartitioned handling.
-        if table_type == 'dos' and partitions:
-            if detect_fat_filesystem(input_path) is not None:
-                msg = (
-                    "sfdisk: DOS partition table rejected — boot sector "
-                    "contains a valid FAT BPB (unpartitioned FAT volume)"
-                )
-                log.info(msg)
-                warnings.append(msg)
-                dropped_partitions = partitions
-                partitions = []
+        if table_type == 'dos' and partitions and detect_fat_filesystem(input_path) is not None:
+            msg = (
+                "sfdisk: DOS partition table rejected — boot sector "
+                "contains a valid FAT BPB (unpartitioned FAT volume)"
+            )
+            log.info(msg)
+            warnings.append(msg)
+            dropped_partitions = partitions
+            partitions = []
 
         # SECONDARY CHECK: discard partitions that start beyond the image.
         # A partition whose start offset is >= file_size does not exist in
@@ -1001,7 +998,7 @@ def detect_partitions_sfdisk(input_path: Path) -> dict:
         # detection methods rather than extracting nonsensical ranges.
         if len(partitions) > 1:
             sorted_parts = sorted(partitions, key=lambda p: p['start_byte'])
-            for a, b in zip(sorted_parts, sorted_parts[1:], strict=False):
+            for a, b in itertools.pairwise(sorted_parts):
                 a_end = a['start_byte'] + a['size_bytes']
                 if a_end > b['start_byte']:
                     msg = (
@@ -1146,12 +1143,11 @@ def detect_acorn_adfs(input_path: Path) -> dict:
         # occupy the same physical sector so they are mutually exclusive, and
         # a real FAT BPB is a much stronger identifier than an 8-bit checksum.
         # (The 0xC00 check below is for a different sector and is unaffected.)
-        if len(header) >= 512 and detect_fat_filesystem(header[:512]) is None:
-            if sum(header[0:512]) & 0xFF == 0:
-                if _is_valid_filecore_disc_record(header[4:]):
-                    signatures.append('Valid ADFS boot block checksum (sector 0)')
-                    adfs_variant = 'new_map'
-                    boot_block_sector0 = True
+        if (len(header) >= 512 and detect_fat_filesystem(header[:512]) is None
+                and sum(header[0:512]) & 0xFF == 0 and _is_valid_filecore_disc_record(header[4:])):
+            signatures.append('Valid ADFS boot block checksum (sector 0)')
+            adfs_variant = 'new_map'
+            boot_block_sector0 = True
 
         # Check ADFS boot block checksum at disc address 0xC00 (hard-disc
         # new-map formats: F, F+).  The disc record lives at +0x1C0 within

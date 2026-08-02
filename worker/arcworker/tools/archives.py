@@ -120,11 +120,10 @@ def _check_7z_paths(input_path: Path) -> None:
 
         if line.startswith('Path = '):
             path = line[7:]
-        elif line.startswith('Attributes = '):
-            # Detect symlinks via Unix permission string ('lrwxrwxrwx')
-            # or a standalone 'L' flag used by some 7z builds.
-            if _7Z_SYMLINK_RE.search(line[13:]):
-                is_symlink = True
+        # Detect symlinks via Unix permission string ('lrwxrwxrwx')
+        # or a standalone 'L' flag used by some 7z builds.
+        elif line.startswith('Attributes = ') and _7Z_SYMLINK_RE.search(line[13:]):
+            is_symlink = True
 
     # Validate the last member block (output may not end with '----------').
     if past_header and path is not None:
@@ -800,7 +799,7 @@ def decompress_single_file(input_path: Path, output_file: Path, compressor: str)
     except JobCancelledException:
         raise  # propagate cancellation; don't mask it as a tool failure
     except Exception as e:
-        return tool_result(False, tool=compressor, error=f'{compressor} failed: {str(e)}')
+        return tool_result(False, tool=compressor, error=f'{compressor} failed: {e!s}')
 
 
 # ---------------------------------------------------------------------------

@@ -29,7 +29,7 @@ os.environ.setdefault('SECRET_KEY', 'ci-hierarchy-test-secret')
 os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 
 
-from myapp.extensions import db  # noqa: E402  (Query.get -> Session.get migration)
+from myapp.extensions import db
 
 
 def _create_app_and_db():

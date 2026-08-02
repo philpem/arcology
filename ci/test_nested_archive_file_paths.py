@@ -30,12 +30,13 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from typing import ClassVar
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from worker.arcworker.analyses._common import iter_resolved_files  # noqa: E402
+from worker.arcworker.analyses._common import iter_resolved_files
 
 
 class _FakeWorker:
@@ -62,7 +63,7 @@ class _FakeWorker:
 
 class NestedArchiveFilePathTest(unittest.TestCase):
     PREFIX = '!Inst_Kill/Killer/!ARCFS/RESOURCES'
-    FILES = [
+    FILES: ClassVar[list] = [
         {'path': f'{PREFIX}/ArcFSFiler', 'risc_os_filetype': 'ffa'},
         {'path': f'{PREFIX}/ImageFSFix', 'risc_os_filetype': 'ffa'},
         {'path': f'{PREFIX}/ResourceFS', 'risc_os_filetype': 'ffa'},

@@ -204,7 +204,8 @@ def _walk_directory(
         # ISO 9660 filename: strip version suffix (;N) and trailing dot
         try:
             raw_name = record[33:33 + len_fi].decode('ascii', errors='replace')
-        except Exception:
+        except Exception as e:
+            log.debug(f"Skipping unreadable ISO 9660 directory record name: {e}")
             continue
         # Strip version suffix (';1', ';2', …)
         if ';' in raw_name:

@@ -107,28 +107,28 @@ class TestSCPSource(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_produces_imd_sibling(self):
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.SCP, self.work_dir)
+        worker, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode(ArtefactType.SCP, self.work_dir)
         types_registered = [
             c.args[3] for c in worker.api.register_derived_artefact.call_args_list
         ]
         self.assertIn(ArtefactType.IMD, types_registered)
 
     def test_produces_hfe_sibling(self):
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.SCP, self.work_dir)
+        worker, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode(ArtefactType.SCP, self.work_dir)
         types_registered = [
             c.args[3] for c in worker.api.register_derived_artefact.call_args_list
         ]
         self.assertIn(ArtefactType.HFE, types_registered)
 
     def test_produces_raw_sector(self):
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.SCP, self.work_dir)
+        worker, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode(ArtefactType.SCP, self.work_dir)
         types_registered = [
             c.args[3] for c in worker.api.register_derived_artefact.call_args_list
         ]
         self.assertIn(ArtefactType.RAW_SECTOR, types_registered)
 
     def test_imd_sibling_has_skip_analyses(self):
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.SCP, self.work_dir)
+        worker, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode(ArtefactType.SCP, self.work_dir)
         imd_calls = [
             c for c in worker.api.register_derived_artefact.call_args_list
             if c.args[3] == ArtefactType.IMD
@@ -137,7 +137,7 @@ class TestSCPSource(unittest.TestCase):
         self.assertIn(AnalysisType.FLUX_DECODE.name, imd_calls[0].kwargs.get('skip_analyses', []))
 
     def test_hfe_sibling_has_skip_analyses(self):
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.SCP, self.work_dir)
+        worker, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode(ArtefactType.SCP, self.work_dir)
         hfe_calls = [
             c for c in worker.api.register_derived_artefact.call_args_list
             if c.args[3] == ArtefactType.HFE
@@ -150,7 +150,7 @@ class TestSCPSource(unittest.TestCase):
         self.assertIn(AnalysisType.FLUX_VISUALISATION.name, skip)
 
     def test_raw_sector_has_no_skip_analyses(self):
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.SCP, self.work_dir)
+        worker, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode(ArtefactType.SCP, self.work_dir)
         rs_calls = [
             c for c in worker.api.register_derived_artefact.call_args_list
             if c.args[3] == ArtefactType.RAW_SECTOR
@@ -159,16 +159,16 @@ class TestSCPSource(unittest.TestCase):
         self.assertNotIn('skip_analyses', rs_calls[0].kwargs)
 
     def test_gw_receives_source_path(self):
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.SCP, self.work_dir)
+        _worker, _mock_imd, _mock_hfe, mock_gw = _run_flux_decode(ArtefactType.SCP, self.work_dir)
         gw_input = mock_gw.call_args.args[0]
         self.assertEqual(gw_input.suffix, '.scp')
 
     def test_calls_imd_conversion(self):
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.SCP, self.work_dir)
+        _worker, mock_imd, _mock_hfe, _mock_gw = _run_flux_decode(ArtefactType.SCP, self.work_dir)
         self.assertTrue(mock_imd.called)
 
     def test_calls_hfe_conversion(self):
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.SCP, self.work_dir)
+        _worker, _mock_imd, mock_hfe, _mock_gw = _run_flux_decode(ArtefactType.SCP, self.work_dir)
         self.assertTrue(mock_hfe.called)
 
 
@@ -186,7 +186,7 @@ class TestHFESource(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_produces_imd_sibling(self):
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.HFE, self.work_dir)
+        worker, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode(ArtefactType.HFE, self.work_dir)
         types_registered = [
             c.args[3] for c in worker.api.register_derived_artefact.call_args_list
         ]
@@ -194,21 +194,21 @@ class TestHFESource(unittest.TestCase):
 
     def test_no_hfe_sibling(self):
         """Source is already HFE — no HFE sibling should be produced."""
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.HFE, self.work_dir)
+        worker, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode(ArtefactType.HFE, self.work_dir)
         types_registered = [
             c.args[3] for c in worker.api.register_derived_artefact.call_args_list
         ]
         self.assertNotIn(ArtefactType.HFE, types_registered)
 
     def test_produces_raw_sector(self):
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.HFE, self.work_dir)
+        worker, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode(ArtefactType.HFE, self.work_dir)
         types_registered = [
             c.args[3] for c in worker.api.register_derived_artefact.call_args_list
         ]
         self.assertIn(ArtefactType.RAW_SECTOR, types_registered)
 
     def test_imd_sibling_has_skip_analyses(self):
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.HFE, self.work_dir)
+        worker, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode(ArtefactType.HFE, self.work_dir)
         imd_calls = [
             c for c in worker.api.register_derived_artefact.call_args_list
             if c.args[3] == ArtefactType.IMD
@@ -218,17 +218,17 @@ class TestHFESource(unittest.TestCase):
 
     def test_gw_receives_source_path(self):
         """gw must receive the source HFE, not the derived IMD."""
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.HFE, self.work_dir)
+        _worker, _mock_imd, _mock_hfe, mock_gw = _run_flux_decode(ArtefactType.HFE, self.work_dir)
         gw_input = mock_gw.call_args.args[0]
         self.assertEqual(gw_input.suffix, '.hfe')
 
     def test_no_hfe_conversion_called(self):
         """hxcfe HFE conversion must not be called (source is already HFE)."""
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.HFE, self.work_dir)
+        _worker, _mock_imd, mock_hfe, _mock_gw = _run_flux_decode(ArtefactType.HFE, self.work_dir)
         self.assertFalse(mock_hfe.called)
 
     def test_calls_imd_conversion(self):
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.HFE, self.work_dir)
+        _worker, mock_imd, _mock_hfe, _mock_gw = _run_flux_decode(ArtefactType.HFE, self.work_dir)
         self.assertTrue(mock_imd.called)
 
 
@@ -247,41 +247,41 @@ class TestIMDSource(unittest.TestCase):
 
     def test_no_imd_sibling(self):
         """Source is already IMD — no IMD sibling should be registered."""
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.IMD, self.work_dir)
+        worker, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode(ArtefactType.IMD, self.work_dir)
         types_registered = [
             c.args[3] for c in worker.api.register_derived_artefact.call_args_list
         ]
         self.assertNotIn(ArtefactType.IMD, types_registered)
 
     def test_no_hfe_sibling(self):
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.IMD, self.work_dir)
+        worker, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode(ArtefactType.IMD, self.work_dir)
         types_registered = [
             c.args[3] for c in worker.api.register_derived_artefact.call_args_list
         ]
         self.assertNotIn(ArtefactType.HFE, types_registered)
 
     def test_produces_raw_sector(self):
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.IMD, self.work_dir)
+        worker, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode(ArtefactType.IMD, self.work_dir)
         types_registered = [
             c.args[3] for c in worker.api.register_derived_artefact.call_args_list
         ]
         self.assertIn(ArtefactType.RAW_SECTOR, types_registered)
 
     def test_only_raw_sector_registered(self):
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.IMD, self.work_dir)
+        worker, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode(ArtefactType.IMD, self.work_dir)
         self.assertEqual(worker.api.register_derived_artefact.call_count, 1)
 
     def test_gw_receives_source_path(self):
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.IMD, self.work_dir)
+        _worker, _mock_imd, _mock_hfe, mock_gw = _run_flux_decode(ArtefactType.IMD, self.work_dir)
         gw_input = mock_gw.call_args.args[0]
         self.assertEqual(gw_input.suffix, '.imd')
 
     def test_no_imd_conversion_called(self):
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.IMD, self.work_dir)
+        _worker, mock_imd, _mock_hfe, _mock_gw = _run_flux_decode(ArtefactType.IMD, self.work_dir)
         self.assertFalse(mock_imd.called)
 
     def test_no_hfe_conversion_called(self):
-        worker, mock_imd, mock_hfe, mock_gw = _run_flux_decode(ArtefactType.IMD, self.work_dir)
+        _worker, _mock_imd, mock_hfe, _mock_gw = _run_flux_decode(ArtefactType.IMD, self.work_dir)
         self.assertFalse(mock_hfe.called)
 
 
@@ -354,19 +354,19 @@ class TestDFISource(unittest.TestCase):
 
     def test_calls_dfi_to_scp(self):
         """dfi_to_scp_hxcfe must be called with the DFI source path."""
-        worker, mock_dfi, mock_imd, mock_hfe, mock_gw = _run_flux_decode_dfi(self.work_dir)
+        _worker, mock_dfi, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode_dfi(self.work_dir)
         self.assertTrue(mock_dfi.called)
         self.assertEqual(mock_dfi.call_args.args[0].suffix, '.dfi')
 
     def test_produces_scp_sibling(self):
         """SCP sibling must be registered so its own FLUX_DECODE runs."""
-        worker, mock_dfi, mock_imd, mock_hfe, mock_gw = _run_flux_decode_dfi(self.work_dir)
+        worker, _mock_dfi, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode_dfi(self.work_dir)
         types_registered = [c.args[3] for c in worker.api.register_derived_artefact.call_args_list]
         self.assertIn(ArtefactType.SCP, types_registered)
 
     def test_scp_sibling_has_no_skip_analyses(self):
         """SCP sibling must not suppress FLUX_DECODE — it needs to run the full pipeline."""
-        worker, mock_dfi, mock_imd, mock_hfe, mock_gw = _run_flux_decode_dfi(self.work_dir)
+        worker, _mock_dfi, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode_dfi(self.work_dir)
         scp_calls = [c for c in worker.api.register_derived_artefact.call_args_list
                      if c.args[3] == ArtefactType.SCP]
         self.assertEqual(len(scp_calls), 1)
@@ -374,30 +374,30 @@ class TestDFISource(unittest.TestCase):
 
     def test_no_imd_hfe_gw_called(self):
         """hxcfe IMD/HFE conversion and gw must not run during DFI FLUX_DECODE."""
-        worker, mock_dfi, mock_imd, mock_hfe, mock_gw = _run_flux_decode_dfi(self.work_dir)
+        _worker, _mock_dfi, mock_imd, mock_hfe, mock_gw = _run_flux_decode_dfi(self.work_dir)
         self.assertFalse(mock_imd.called)
         self.assertFalse(mock_hfe.called)
         self.assertFalse(mock_gw.called)
 
     def test_only_scp_registered(self):
         """Only the SCP sibling should be registered — no IMD, HFE, or RAW_SECTOR."""
-        worker, mock_dfi, mock_imd, mock_hfe, mock_gw = _run_flux_decode_dfi(self.work_dir)
+        worker, _mock_dfi, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode_dfi(self.work_dir)
         self.assertEqual(worker.api.register_derived_artefact.call_count, 1)
 
     def test_clock_mhz_hint_passed_to_tool(self):
         """When dfi_clock_mhz hint is set, dfi_to_scp_hxcfe receives it."""
-        worker, mock_dfi, mock_imd, mock_hfe, mock_gw = _run_flux_decode_dfi(
+        _worker, mock_dfi, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode_dfi(
             self.work_dir, hints={'dfi_clock_mhz': 100})
         self.assertEqual(mock_dfi.call_args.kwargs.get('clock_mhz'), 100)
 
     def test_no_clock_mhz_hint_passes_none(self):
         """Without a dfi_clock_mhz hint, clock_mhz must be None."""
-        worker, mock_dfi, mock_imd, mock_hfe, mock_gw = _run_flux_decode_dfi(self.work_dir)
+        _worker, mock_dfi, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode_dfi(self.work_dir)
         self.assertIsNone(mock_dfi.call_args.kwargs.get('clock_mhz'))
 
     def test_failure_propagated(self):
         """If dfi_to_scp_hxcfe fails, no sibling is registered."""
-        worker, mock_dfi, mock_imd, mock_hfe, mock_gw = _run_flux_decode_dfi(
+        worker, _mock_dfi, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode_dfi(
             self.work_dir, mock_scp_result={'success': False, 'error': 'hxcfe failed'})
         worker.api.register_derived_artefact.assert_not_called()
         worker.fail_analysis.assert_called_once()
@@ -418,19 +418,19 @@ class TestA2RSource(unittest.TestCase):
 
     def test_calls_a2r_to_scp(self):
         """a2r_to_scp_gw must be called with the A2R source path."""
-        worker, mock_conv, mock_imd, mock_hfe, mock_gw = _run_flux_decode_a2r(self.work_dir)
+        _worker, mock_conv, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode_a2r(self.work_dir)
         self.assertTrue(mock_conv.called)
         self.assertEqual(mock_conv.call_args.args[0].suffix, '.a2r')
 
     def test_produces_scp_sibling(self):
         """SCP sibling must be registered so its own FLUX_DECODE runs."""
-        worker, mock_conv, mock_imd, mock_hfe, mock_gw = _run_flux_decode_a2r(self.work_dir)
+        worker, _mock_conv, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode_a2r(self.work_dir)
         types_registered = [c.args[3] for c in worker.api.register_derived_artefact.call_args_list]
         self.assertIn(ArtefactType.SCP, types_registered)
 
     def test_scp_sibling_has_no_skip_analyses(self):
         """SCP sibling must not suppress FLUX_DECODE — it needs to run the full pipeline."""
-        worker, mock_conv, mock_imd, mock_hfe, mock_gw = _run_flux_decode_a2r(self.work_dir)
+        worker, _mock_conv, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode_a2r(self.work_dir)
         scp_calls = [c for c in worker.api.register_derived_artefact.call_args_list
                      if c.args[3] == ArtefactType.SCP]
         self.assertEqual(len(scp_calls), 1)
@@ -438,19 +438,19 @@ class TestA2RSource(unittest.TestCase):
 
     def test_no_imd_hfe_gw_called(self):
         """hxcfe IMD/HFE conversion and gw sector conversion must not run during A2R FLUX_DECODE."""
-        worker, mock_conv, mock_imd, mock_hfe, mock_gw = _run_flux_decode_a2r(self.work_dir)
+        _worker, _mock_conv, mock_imd, mock_hfe, mock_gw = _run_flux_decode_a2r(self.work_dir)
         self.assertFalse(mock_imd.called)
         self.assertFalse(mock_hfe.called)
         self.assertFalse(mock_gw.called)
 
     def test_only_scp_registered(self):
         """Only the SCP sibling should be registered — no IMD, HFE, or RAW_SECTOR."""
-        worker, mock_conv, mock_imd, mock_hfe, mock_gw = _run_flux_decode_a2r(self.work_dir)
+        worker, _mock_conv, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode_a2r(self.work_dir)
         self.assertEqual(worker.api.register_derived_artefact.call_count, 1)
 
     def test_failure_propagated(self):
         """If a2r_to_scp_gw fails, no sibling is registered."""
-        worker, mock_conv, mock_imd, mock_hfe, mock_gw = _run_flux_decode_a2r(
+        worker, _mock_conv, _mock_imd, _mock_hfe, _mock_gw = _run_flux_decode_a2r(
             self.work_dir, mock_scp_result={'success': False, 'error': 'gw failed'})
         worker.api.register_derived_artefact.assert_not_called()
         worker.fail_analysis.assert_called_once()
@@ -916,12 +916,12 @@ class TestIndependentSidesSplit(unittest.TestCase):
 
     def test_merged_raw_sector_not_registered_when_independent(self):
         """The merged single-image gw convert must NOT be called when independent sides detected."""
-        worker, mock_merged_gw, _ = _run_flux_decode_independent_sides(self.work_dir, independent_sides_detected=True)
+        _worker, mock_merged_gw, _ = _run_flux_decode_independent_sides(self.work_dir, independent_sides_detected=True)
         mock_merged_gw.assert_not_called()
 
     def test_one_side_gw_call_per_head(self):
         """sector_image_to_raw_greaseweazle_one_side is called twice (head 0 and head 1)."""
-        worker, _, mock_side_gw = _run_flux_decode_independent_sides(self.work_dir, independent_sides_detected=True)
+        _worker, _, mock_side_gw = _run_flux_decode_independent_sides(self.work_dir, independent_sides_detected=True)
         self.assertEqual(mock_side_gw.call_count, 2)
         heads_used = [c.args[3] for c in mock_side_gw.call_args_list]
         self.assertIn(0, heads_used)
@@ -929,7 +929,7 @@ class TestIndependentSidesSplit(unittest.TestCase):
 
     def test_single_sided_gw_format_chosen(self):
         """Single-sided format (acorn.dfs.ss80) selected when geometry is DS DFS 80-track."""
-        worker, _, mock_side_gw = _run_flux_decode_independent_sides(
+        _worker, _, mock_side_gw = _run_flux_decode_independent_sides(
             self.work_dir, independent_sides_detected=True, geometry=_DFS_DS80_GEOMETRY
         )
         formats_used = [c.args[2] for c in mock_side_gw.call_args_list]
@@ -938,7 +938,7 @@ class TestIndependentSidesSplit(unittest.TestCase):
 
     def test_normal_disc_uses_merged_path(self):
         """Normal (non-independent) disc produces one merged RAW_SECTOR via gw."""
-        worker, mock_merged_gw, mock_side_gw = _run_flux_decode_independent_sides(
+        _worker, mock_merged_gw, mock_side_gw = _run_flux_decode_independent_sides(
             self.work_dir, independent_sides_detected=False
         )
         mock_merged_gw.assert_called_once()

@@ -281,8 +281,7 @@ def resolve_extracted_file_path(ef):
         parent = ef.parent_file
         if parent and parent.is_archive:
             strip_prefix = parent.path + '/'
-            if disk_path.startswith(strip_prefix):
-                disk_path = disk_path[len(strip_prefix):]
+            disk_path = disk_path.removeprefix(strip_prefix)
 
     # Stripped form first (handles extractors that put files directly in
     # output_dir); unstripped fallback for archives with a matching top-level

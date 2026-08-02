@@ -42,11 +42,11 @@ def init_app(app):
 
     @app.context_processor
     def _inject_oidc():
-        return dict(
-            oidc_enabled=bool_config('OIDC_ENABLED', app=app),
-            oidc_provider_name=app.config.get('OIDC_PROVIDER_NAME', 'SSO'),
-            local_login_enabled=bool_config('LOCAL_LOGIN_ENABLED', default=True, app=app),
-        )
+        return {
+            'oidc_enabled': bool_config('OIDC_ENABLED', app=app),
+            'oidc_provider_name': app.config.get('OIDC_PROVIDER_NAME', 'SSO'),
+            'local_login_enabled': bool_config('LOCAL_LOGIN_ENABLED', default=True, app=app),
+        }
 
     if not bool_config('OIDC_ENABLED', app=app):
         return
@@ -168,8 +168,8 @@ def sso_callback():
             id_token = token.get('id_token')
             if id_token:
                 session['oidc_id_token'] = id_token
-        except Exception:
-            pass
+        except Exception as e:
+            current_app.logger.debug(f"Failed to cache OIDC single-logout metadata: {e}")
 
     next_url = session.pop('oidc_next', None)
     return redirect(next_url or url_for('myapp_blueprints_dashboard.index'))
@@ -549,8 +549,8 @@ def _redirect_clearing_provider_session(token: dict):
             if id_token:
                 target += f'&id_token_hint={urlquote(id_token, safe="")}'
             return redirect(target)
-    except Exception:
-        pass
+    except Exception as e:
+        current_app.logger.debug(f"Failed to build OIDC end-session redirect: {e}")
     return redirect(url_for('auth.login'))
 
 

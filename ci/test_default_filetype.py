@@ -23,12 +23,12 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from arcology_shared.hints import HintKey  # noqa: E402
-from myapp.riscos_filetypes import (  # noqa: E402
+from arcology_shared.hints import HintKey
+from myapp.riscos_filetypes import (
     normalize_default_filetype_hint,
     resolve_default_filetype,
 )
-from worker.arcworker.tools.extraction import enumerate_extracted_files  # noqa: E402
+from worker.arcworker.tools.extraction import enumerate_extracted_files
 
 # =============================================================================
 # resolve_default_filetype

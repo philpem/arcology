@@ -17,7 +17,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from arcology_shared.replay_codecs import (  # noqa: E402
+from arcology_shared.replay_codecs import (
     SOUND_CODEC_NAMES,
     VIDEO_CODEC_NAMES,
     sound_codec_name,

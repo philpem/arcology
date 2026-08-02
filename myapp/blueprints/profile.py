@@ -20,7 +20,6 @@ blueprint = Blueprint(ROUTENAME, __name__, url_prefix='/profile', template_folde
 
 def init_app(app):
     """Profile blueprint init (menu link is via username in navbar)."""
-    pass
 
 
 def _route_redirect(endpoint: str, **values):

@@ -32,7 +32,6 @@ blueprint = Blueprint(ROUTENAME, __name__, url_prefix='/admin', template_folder=
 
 def init_app(app):
     """Admin blueprint init (link shown in right-hand navbar for admins)."""
-    pass
 
 
 @blueprint.before_request

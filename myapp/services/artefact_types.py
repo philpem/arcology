@@ -98,7 +98,7 @@ ANALYSIS_MAP = {
 }
 
 
-def queue_analyses_for_artefact(artefact: Artefact, hints: dict = None,
+def queue_analyses_for_artefact(artefact: Artefact, hints: dict | None = None,
                                 checksum_only: bool = False,
                                 skip_duplicate_check: bool = False,
                                 commit: bool = True,

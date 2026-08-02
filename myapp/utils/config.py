@@ -9,7 +9,7 @@ which disagreed about what counts as true.
 from flask import current_app
 from arcology_shared.config import parse_byte_size
 
-__all__ = ['parse_byte_size', 'parse_bool', 'bool_config', 'int_config']
+__all__ = ['bool_config', 'int_config', 'parse_bool', 'parse_byte_size']
 
 # The single truth table for boolean flags.  Truthy strings (case-insensitive):
 # '1', 'true', 'yes'.  Every other string — including 'on'/'off' and typos — is

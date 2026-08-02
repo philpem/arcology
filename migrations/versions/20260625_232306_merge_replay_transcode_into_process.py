@@ -55,6 +55,5 @@ def downgrade():
     nothing schema-level to undo.  Re-running the analysis pipeline (or
     rebuild-search-index after a re-analysis) regenerates the rows.
     """
-    pass
 
 # vim: ts=4 sw=4 et

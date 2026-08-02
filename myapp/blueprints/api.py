@@ -1879,9 +1879,8 @@ def add_files(uuid):
         parent_file_id = f.get('parent_file_id')
         if parent_file_id:
             parent_file = db.session.get(ExtractedFile, parent_file_id)
-            if parent_file and parent_file.is_archive:
-                if not path.startswith(parent_file.path + '/'):
-                    path = parent_file.path + '/' + path
+            if parent_file and parent_file.is_archive and not path.startswith(parent_file.path + '/'):
+                path = parent_file.path + '/' + path
 
         candidates.append((path, f))
 

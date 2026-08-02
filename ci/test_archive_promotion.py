@@ -20,8 +20,8 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 
-from arcology_shared.enums import ArtefactType  # noqa: E402
-from worker.arcworker.analyses.extraction import (  # noqa: E402
+from arcology_shared.enums import ArtefactType
+from worker.arcworker.analyses.extraction import (
     _is_compressed_disk_image,
     _promotable_artefact_type,
 )

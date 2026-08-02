@@ -28,7 +28,7 @@ os.environ.setdefault('SECRET_KEY', 'ci-url-id-test-secret-key')
 os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 
 
-from myapp.extensions import db  # noqa: E402  (Query.get -> Session.get migration)
+from myapp.extensions import db
 
 
 def _make_item(db, name='Test Item', platform_id=None, category_id=None):
@@ -85,9 +85,8 @@ class TestLookupByIdentifier(unittest.TestCase):
         from werkzeug.exceptions import NotFound
         from myapp.database import Item
         from myapp.utils.slugs import lookup_by_identifier
-        with self.app.app_context():
-            with self.assertRaises(NotFound):
-                lookup_by_identifier(Item, identifier)
+        with self.app.app_context(), self.assertRaises(NotFound):
+            lookup_by_identifier(Item, identifier)
 
     def test_full_uuid_resolves(self):
         item = self._lookup(self.item_uuid)
@@ -219,9 +218,8 @@ class TestPrefixCollisionLookupByIdentifier(unittest.TestCase):
         from werkzeug.exceptions import NotFound
         from myapp.database import Item
         from myapp.utils.slugs import lookup_by_identifier
-        with self.app.app_context():
-            with self.assertRaises(NotFound):
-                lookup_by_identifier(Item, identifier)
+        with self.app.app_context(), self.assertRaises(NotFound):
+            lookup_by_identifier(Item, identifier)
 
     def test_prefix_alone_is_ambiguous_returns_404(self):
         self._lookup_404(self.SHARED_PREFIX)

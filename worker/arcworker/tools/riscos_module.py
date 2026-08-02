@@ -123,17 +123,14 @@ QUIRKS = {
 
 class HelpParseError(Exception):
     """Raised when a module help string cannot be parsed."""
-    pass
 
 
 class PrettyPrintUnimplemented(Exception):
     """Raised when an unrecognised OS_PrettyPrint token is encountered."""
-    pass
 
 
 class ModuleParseError(Exception):
     """Raised when a module binary cannot be parsed at all."""
-    pass
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +233,7 @@ def _decode_command_table(data, command_table):
         if pos + 16 > len(data):
             break
 
-        (code, info, command_syntax_pos, command_help_pos) = struct.unpack(
+        (_code, info, command_syntax_pos, command_help_pos) = struct.unpack(
             "< IIII", data[pos:pos + 16]
         )
 
@@ -294,8 +291,8 @@ def decode_module(data, module_hash=None):
         module_hash = hashlib.sha256(data).hexdigest()
 
     # Read module header (13 words = 52 bytes)
-    (start, init, final, service, title_string_off, help_string_off, command_table,
-     swi_chunk, swi_handler, swi_decoding_table, swi_decoding_code,
+    (_start, _init, _final, _service, title_string_off, help_string_off, command_table,
+     swi_chunk, swi_handler, swi_decoding_table, _swi_decoding_code,
      messages_file, module_flags_off) = struct.unpack("< IIIIIII IIII II", data[:52])
 
     # Validate title string offset

@@ -558,8 +558,8 @@ def dirtree_html(uuid):
     # Fetch LIMIT+1 rows so we can tell whether the cap was actually hit
     # (if we get exactly LIMIT+1 back, we truncated; exactly LIMIT means the
     # DB is at or below the cap).  Mirrors the hashdb.py SEARCH_LIMIT pattern.
-    path_rows = _base_file_q().filter(ExtractedFile.is_directory == False).limit(_TREE_PATH_LIMIT + 1).all()  # noqa: E712
-    dir_rows  = _base_file_q().filter(ExtractedFile.is_directory == True).limit(_TREE_PATH_LIMIT + 1).all()  # noqa: E712
+    path_rows = _base_file_q().filter(ExtractedFile.is_directory == False).limit(_TREE_PATH_LIMIT + 1).all()
+    dir_rows  = _base_file_q().filter(ExtractedFile.is_directory == True).limit(_TREE_PATH_LIMIT + 1).all()
 
     is_truncated = len(path_rows) > _TREE_PATH_LIMIT or len(dir_rows) > _TREE_PATH_LIMIT
     if len(path_rows) > _TREE_PATH_LIMIT:
@@ -574,7 +574,7 @@ def dirtree_html(uuid):
         .join(Partition)
         .filter(
             Partition.artefact_id.in_(all_ids),
-            ExtractedFile.is_archive == True,  # noqa: E712
+            ExtractedFile.is_archive == True,
         )
     )
     if partition_uuid_filter:
@@ -922,64 +922,63 @@ def _viewer_filetype_facet(output_groups, all_partition_ids):
     clear_filter_args = {}
 
     source_paths = [g['source_file'] for g in output_groups if g.get('source_file')]
-    if source_paths:
-        if all_partition_ids:
-            filetype_rows = (
-                ExtractedFile.query
-                .filter(
-                    ExtractedFile.partition_id.in_(all_partition_ids),
-                    ExtractedFile.path.in_(source_paths),
-                )
-                .with_entities(ExtractedFile.path, ExtractedFile.risc_os_filetype,
-                                ExtractedFile.extension)
-                .all()
+    if source_paths and all_partition_ids:
+        filetype_rows = (
+            ExtractedFile.query
+            .filter(
+                ExtractedFile.partition_id.in_(all_partition_ids),
+                ExtractedFile.path.in_(source_paths),
             )
-            # Prefer risc_os_filetype; fall back to '.ext' for non-RISC OS files.
-            path_to_filetype = {}
-            for r in filetype_rows:
-                if r.risc_os_filetype:
-                    path_to_filetype[r.path] = r.risc_os_filetype
-                elif r.extension:
-                    path_to_filetype[r.path] = f'.{r.extension}'
+            .with_entities(ExtractedFile.path, ExtractedFile.risc_os_filetype,
+                            ExtractedFile.extension)
+            .all()
+        )
+        # Prefer risc_os_filetype; fall back to '.ext' for non-RISC OS files.
+        path_to_filetype = {}
+        for r in filetype_rows:
+            if r.risc_os_filetype:
+                path_to_filetype[r.path] = r.risc_os_filetype
+            elif r.extension:
+                path_to_filetype[r.path] = f'.{r.extension}'
 
-            # Tag each group with its effective type key
-            for group in output_groups:
-                group['filetype'] = path_to_filetype.get(group.get('source_file'))
+        # Tag each group with its effective type key
+        for group in output_groups:
+            group['filetype'] = path_to_filetype.get(group.get('source_file'))
 
-            # Build facet as a list of (type_key, count) sorted by count desc,
-            # then key asc as tiebreaker. Template iterates this list directly.
-            counts = Counter(
-                g['filetype'] for g in output_groups if g.get('filetype')
-            )
-            filetype_facet = sorted(
-                counts.items(), key=lambda kv: (-kv[1], kv[0])
-            )
+        # Build facet as a list of (type_key, count) sorted by count desc,
+        # then key asc as tiebreaker. Template iterates this list directly.
+        counts = Counter(
+            g['filetype'] for g in output_groups if g.get('filetype')
+        )
+        filetype_facet = sorted(
+            counts.items(), key=lambda kv: (-kv[1], kv[0])
+        )
 
-            # Apply filetype filter from ?filetype=ff9,fff,.wmf
-            filetype_param = request.args.get('filetype', '')
-            active_filetypes = set(filetype_param.split(',')) - {''}
-            if active_filetypes:
-                output_groups = [
-                    g for g in output_groups
-                    if g.get('filetype') in active_filetypes
-                ]
+        # Apply filetype filter from ?filetype=ff9,fff,.wmf
+        filetype_param = request.args.get('filetype', '')
+        active_filetypes = set(filetype_param.split(',')) - {''}
+        if active_filetypes:
+            output_groups = [
+                g for g in output_groups
+                if g.get('filetype') in active_filetypes
+            ]
 
-            # Build toggle URLs for the template
-            base_args = {k: v for k, v in request.args.items()
-                         if k not in ('filetype', 'page')}
-            for ft, _ in filetype_facet:
-                toggled = active_filetypes ^ {ft}
-                args = dict(base_args)
-                if toggled:
-                    args['filetype'] = ','.join(sorted(toggled))
-                filetype_toggle_urls[ft] = args
-            clear_filter_args = dict(base_args)
-    return output_groups, dict(
-        filetype_facet=filetype_facet,
-        active_filetypes=active_filetypes,
-        filetype_toggle_urls=filetype_toggle_urls,
-        clear_filter_args=clear_filter_args,
-    )
+        # Build toggle URLs for the template
+        base_args = {k: v for k, v in request.args.items()
+                     if k not in ('filetype', 'page')}
+        for ft, _ in filetype_facet:
+            toggled = active_filetypes ^ {ft}
+            args = dict(base_args)
+            if toggled:
+                args['filetype'] = ','.join(sorted(toggled))
+            filetype_toggle_urls[ft] = args
+        clear_filter_args = dict(base_args)
+    return output_groups, {
+        'filetype_facet': filetype_facet,
+        'active_filetypes': active_filetypes,
+        'filetype_toggle_urls': filetype_toggle_urls,
+        'clear_filter_args': clear_filter_args,
+    }
 
 
 def _viewer_summary_counts(output_groups):
@@ -1022,13 +1021,13 @@ def _viewer_paginate(output_groups, use_pagination, _enrich_outputs):
         for group in output_groups:
             _enrich_outputs(group['outputs'])
 
-    return output_groups, dict(
-        pagination=pagination,
-        pagination_args=pagination_args,
-        file_dir_args=file_dir_args,
-        view_all=view_all,
-        valid_per_page=VALID_PER_PAGE,
-    )
+    return output_groups, {
+        'pagination': pagination,
+        'pagination_args': pagination_args,
+        'file_dir_args': file_dir_args,
+        'view_all': view_all,
+        'valid_per_page': VALID_PER_PAGE,
+    }
 
 
 def _viewer_preferences():
@@ -1068,20 +1067,19 @@ def _viewer_explicit_gate(artefact, output_groups, all_partition_ids, _output_bl
     )
 
     explicit_file_paths: set[str] = set()
-    if not artefact_is_explicit:
-        if all_partition_ids:
-            explicit_efs = (
-                ExtractedFile.query
-                .join(ExtractedFileRestriction,
-                      ExtractedFileRestriction.extracted_file_id == ExtractedFile.id)
-                .filter(
-                    ExtractedFileRestriction.restriction_type == explicit_type,
-                    ExtractedFile.partition_id.in_(all_partition_ids),
-                )
-                .with_entities(ExtractedFile.path)
-                .all()
+    if not artefact_is_explicit and all_partition_ids:
+        explicit_efs = (
+            ExtractedFile.query
+            .join(ExtractedFileRestriction,
+                  ExtractedFileRestriction.extracted_file_id == ExtractedFile.id)
+            .filter(
+                ExtractedFileRestriction.restriction_type == explicit_type,
+                ExtractedFile.partition_id.in_(all_partition_ids),
             )
-            explicit_file_paths = {row.path for row in explicit_efs}
+            .with_entities(ExtractedFile.path)
+            .all()
+        )
+        explicit_file_paths = {row.path for row in explicit_efs}
 
     for group in output_groups:
         # Replay/media groups carry their own explicit/restricted/stable_id from
@@ -1307,7 +1305,7 @@ def _viewer_replay_detail(file_filter, all_artefact_ids):
         .filter(
             Partition.artefact_id.in_(all_artefact_ids),
             ExtractedFile.path == file_filter,
-            ExtractedFile.is_directory == False,  # noqa: E712
+            ExtractedFile.is_directory == False,
         )
         .limit(1)
         .first()
@@ -1413,7 +1411,7 @@ def _media_src_url(row, all_artefact_ids):
             .filter(
                 Partition.artefact_id.in_(all_artefact_ids),
                 ExtractedFile.path == row.file_path,
-                ExtractedFile.is_directory == False,  # noqa: E712
+                ExtractedFile.is_directory == False,
             )
             .limit(1)
             .scalar()
@@ -1523,7 +1521,7 @@ def _viewer_media_detail(file_filter, all_artefact_ids, artefact):
             .filter(
                 Partition.artefact_id.in_(all_artefact_ids),
                 ExtractedFile.path == row.file_path,
-                ExtractedFile.is_directory == False,  # noqa: E712
+                ExtractedFile.is_directory == False,
             )
             .limit(1)
             .first()
@@ -1668,36 +1666,36 @@ def _render_viewer(artefact):
     if prefs_dirty:
         db.session.commit()
 
-    ctx = dict(
-        artefact=artefact,
-        output_groups=output_groups,
-        viewer_status=viewer_status,
-        failed_conversion_list=failed_conversion_list,
-        module_detail=module_detail,
-        replay_detail=replay_detail,
-        replay_present=replay_present,
-        media_detail=media_detail,
-        media_present=media_present,
-        user_can_bypass_explicit=user_can_bypass_explicit,
-        total_counts=total_counts,
-        total_groups=total_groups,
-        viewer_columns=viewer_columns,
-        viewer_col_class=viewer_col_class,
-        valid_viewer_columns=_VALID_VIEWER_COLUMNS,
-        viewer_thumbnail_mode=viewer_thumbnail_mode,
-        is_aggregate_mode=is_aggregate_mode,
-        current_path=current_path,
-        subdirectories=subdirectories,
-        archive_paths=archive_paths,
-        file_filter=file_filter,
-        filename_filter=filename_filter,
-        file_list_args={k: v for k, v in [
+    ctx = {
+        'artefact': artefact,
+        'output_groups': output_groups,
+        'viewer_status': viewer_status,
+        'failed_conversion_list': failed_conversion_list,
+        'module_detail': module_detail,
+        'replay_detail': replay_detail,
+        'replay_present': replay_present,
+        'media_detail': media_detail,
+        'media_present': media_present,
+        'user_can_bypass_explicit': user_can_bypass_explicit,
+        'total_counts': total_counts,
+        'total_groups': total_groups,
+        'viewer_columns': viewer_columns,
+        'viewer_col_class': viewer_col_class,
+        'valid_viewer_columns': _VALID_VIEWER_COLUMNS,
+        'viewer_thumbnail_mode': viewer_thumbnail_mode,
+        'is_aggregate_mode': is_aggregate_mode,
+        'current_path': current_path,
+        'subdirectories': subdirectories,
+        'archive_paths': archive_paths,
+        'file_filter': file_filter,
+        'filename_filter': filename_filter,
+        'file_list_args': {k: v for k, v in [
             ('path', current_path or None),
             ('filename', filename_filter or None),
         ] if v},
-        clear_filename_args={k: v for k, v in request.args.items()
+        'clear_filename_args': {k: v for k, v in request.args.items()
                               if k not in ('filename', 'page')},
-    )
+    }
     ctx.update(facet_ctx)
     ctx.update(page_ctx)
     return render_template('artefacts/viewer.html', **ctx)
@@ -1805,13 +1803,13 @@ def _view_analysis_summaries(all_artefact_ids):
 
     has_hidden_analyses = not show_all_analyses and total_analyses_count > len(analyses)
 
-    return dict(
-        analyses=analyses,
-        show_all_analyses=show_all_analyses,
-        has_hidden_analyses=has_hidden_analyses,
-        total_analyses_count=total_analyses_count,
-        status_counts=status_counts,
-    )
+    return {
+        'analyses': analyses,
+        'show_all_analyses': show_all_analyses,
+        'has_hidden_analyses': has_hidden_analyses,
+        'total_analyses_count': total_analyses_count,
+        'status_counts': status_counts,
+    }
 
 
 def _view_file_listing(file_form, all_artefact_ids):
@@ -2002,19 +2000,19 @@ def _view_file_listing(file_form, all_artefact_ids):
     hashdb_toggle_args = {k: v for k, v in pagination_args.items() if k != 'mode'}
     current_sort = sort_param
 
-    return files_query, files_pagination, dict(
-        files=files_pagination.items,
-        files_pagination=files_pagination,
-        pagination_args=pagination_args,
-        hashdb_toggle_args=hashdb_toggle_args,
-        valid_per_page=VALID_PER_PAGE,
-        view_all=view_all,
-        current_sort=current_sort,
-        letter_pages=letter_pages,
-        current_letter=current_letter,
-        file_known_matches=file_known_matches,
-        duplicate_counts=duplicate_counts,
-    )
+    return files_query, files_pagination, {
+        'files': files_pagination.items,
+        'files_pagination': files_pagination,
+        'pagination_args': pagination_args,
+        'hashdb_toggle_args': hashdb_toggle_args,
+        'valid_per_page': VALID_PER_PAGE,
+        'view_all': view_all,
+        'current_sort': current_sort,
+        'letter_pages': letter_pages,
+        'current_letter': current_letter,
+        'file_known_matches': file_known_matches,
+        'duplicate_counts': duplicate_counts,
+    }
 
 
 def _view_subdirectories(file_form, files_query, all_partitions, all_artefact_ids):
@@ -2117,10 +2115,10 @@ def _view_archive_banner(artefact, current_path, all_partitions, all_artefact_id
                     f"{artefact.label} ({p.container_format})" if p.container_format else artefact.label
                 )
                 break
-    return dict(
-        archive_comment_banner=archive_comment_banner,
-        archive_comment_label=archive_comment_label,
-    )
+    return {
+        'archive_comment_banner': archive_comment_banner,
+        'archive_comment_label': archive_comment_label,
+    }
 
 
 def collect_protection_cautions(all_artefact_ids):
@@ -2199,13 +2197,13 @@ def collect_protection_cautions(all_artefact_ids):
                           '_source_label': a.artefact.label if a.artefact else None}
                 density.append(notice)
 
-    return dict(
-        indicators=indicators,
-        by_type=by_type,
-        density=density,
-        analysis_uuid=representative_uuid,
-        source_count=len(source_uuids),
-    )
+    return {
+        'indicators': indicators,
+        'by_type': by_type,
+        'density': density,
+        'analysis_uuid': representative_uuid,
+        'source_count': len(source_uuids),
+    }
 
 
 def _view_analysis_detail_cards(all_artefact_ids):
@@ -2282,16 +2280,16 @@ def _view_analysis_detail_cards(all_artefact_ids):
                 and armlock_analysis is not None):
             break
 
-    return dict(
-        mastering_analysis=mastering_analysis,
-        protection_analysis=protection_analysis,
-        partition_detect_details=partition_detect_details,
-        armlock_analysis=armlock_analysis,
-        flux_visualisation_analysis=flux_visualisation_analysis,
-        density_detect_analysis=density_detect_analysis,
-        caution_inline_limit=CAUTION_INLINE_LIMIT,
-        caution_multi_source=cautions['source_count'] > 1,
-    )
+    return {
+        'mastering_analysis': mastering_analysis,
+        'protection_analysis': protection_analysis,
+        'partition_detect_details': partition_detect_details,
+        'armlock_analysis': armlock_analysis,
+        'flux_visualisation_analysis': flux_visualisation_analysis,
+        'density_detect_analysis': density_detect_analysis,
+        'caution_inline_limit': CAUTION_INLINE_LIMIT,
+        'caution_multi_source': cautions['source_count'] > 1,
+    }
 
 
 def _view_iso_metadata(artefact):
@@ -2459,10 +2457,10 @@ def _view_hashdb_context(hashdb_mode):
     else:
         hash_databases = []
 
-    return dict(
-        hash_databases=hash_databases,
-        hashdb_product_cache=hashdb_product_cache,
-    )
+    return {
+        'hash_databases': hash_databases,
+        'hashdb_product_cache': hashdb_product_cache,
+    }
 
 
 def _view_restriction_maps(all_artefact_ids, files_pagination):
@@ -2561,12 +2559,12 @@ def _view_restriction_maps(all_artefact_ids, files_pagination):
         for fid in set(file_ancestor_restrictions) | set(file_descendant_restrictions)
     }
 
-    return dict(
-        artefact_file_restrictions=artefact_file_restrictions,
-        file_inherited_restrictions=file_inherited_restrictions,
-        file_ancestor_restrictions=file_ancestor_restrictions,
-        file_descendant_restrictions=file_descendant_restrictions,
-    )
+    return {
+        'artefact_file_restrictions': artefact_file_restrictions,
+        'file_inherited_restrictions': file_inherited_restrictions,
+        'file_ancestor_restrictions': file_ancestor_restrictions,
+        'file_descendant_restrictions': file_descendant_restrictions,
+    }
 
 
 def _view_derived_entries(artefact):
@@ -2610,11 +2608,11 @@ def _view_admin_bypass(artefact, all_artefact_ids=None):
         bypass_eligible_users = []
         bypass_grantable_rtypes = []
 
-    return dict(
-        artefact_user_bypasses=artefact_user_bypasses,
-        bypass_eligible_users=bypass_eligible_users,
-        bypass_grantable_rtypes=bypass_grantable_rtypes,
-    )
+    return {
+        'artefact_user_bypasses': artefact_user_bypasses,
+        'bypass_eligible_users': bypass_eligible_users,
+        'bypass_grantable_rtypes': bypass_grantable_rtypes,
+    }
 
 
 # Number of similar artefacts shown in the sidebar preview card before the
@@ -2661,31 +2659,31 @@ def _render_artefact_view(artefact):
     similar_preview = similar_artefacts(artefact, current_user, limit=SIMILAR_SIDEBAR_LIMIT)
     similar_folder_counts = component_match_counts(all_artefact_ids, current_user)
 
-    ctx = dict(
-        artefact=artefact,
-        file_form=file_form,
-        all_partitions=all_partitions,
-        subdirectories=subdirectories,
-        current_path=current_path,
-        archive_paths=archive_paths,
-        partition_metadata=partition_metadata,
-        iso9660_metadata=iso9660_metadata,
-        hashdb_mode=hashdb_mode,
-        RestrictionType=RestrictionType,
-        viewable_filenames=viewable_filenames,
-        failed_conversion_info=failed_conversion_info,
-        has_converted_outputs=has_converted_outputs,
-        module_info=module_info,
-        replay_info=replay_info,
-        media_info=media_info,
-        recognised_products=recognised_products,
-        recognised_folder_paths=recognised_folder_paths,
-        derived_entries=derived_entries,
-        sidecar_entries=sidecar_entries,
-        similar_preview=similar_preview,
-        similar_folder_counts=similar_folder_counts,
-        move_item_choices=_move_item_choices(artefact),
-    )
+    ctx = {
+        'artefact': artefact,
+        'file_form': file_form,
+        'all_partitions': all_partitions,
+        'subdirectories': subdirectories,
+        'current_path': current_path,
+        'archive_paths': archive_paths,
+        'partition_metadata': partition_metadata,
+        'iso9660_metadata': iso9660_metadata,
+        'hashdb_mode': hashdb_mode,
+        'RestrictionType': RestrictionType,
+        'viewable_filenames': viewable_filenames,
+        'failed_conversion_info': failed_conversion_info,
+        'has_converted_outputs': has_converted_outputs,
+        'module_info': module_info,
+        'replay_info': replay_info,
+        'media_info': media_info,
+        'recognised_products': recognised_products,
+        'recognised_folder_paths': recognised_folder_paths,
+        'derived_entries': derived_entries,
+        'sidecar_entries': sidecar_entries,
+        'similar_preview': similar_preview,
+        'similar_folder_counts': similar_folder_counts,
+        'move_item_choices': _move_item_choices(artefact),
+    }
     ctx.update(analyses_ctx)
     ctx.update(files_ctx)
     ctx.update(banner_ctx)
@@ -2733,7 +2731,7 @@ def add_to_hashdb(uuid):
     # Preserve directory navigation state across the redirect
     nav_partition_uuid = request.form.get('partition_uuid', '').strip() or None
     nav_path = request.form.get('nav_path', '').strip() or None
-    redirect_kwargs = dict(item_id=artefact.item.url_id, artefact_id=artefact.url_slug, mode='hashdb')
+    redirect_kwargs = {'item_id': artefact.item.url_id, 'artefact_id': artefact.url_slug, 'mode': 'hashdb'}
     if nav_partition_uuid:
         redirect_kwargs['partition_uuid'] = nav_partition_uuid
     if nav_path:

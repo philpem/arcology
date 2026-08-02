@@ -33,7 +33,7 @@ _WORKER_KEY = os.environ['WORKER_API_KEY']
 _AUTH = {'X-API-Key': _WORKER_KEY}
 
 
-from myapp.extensions import db  # noqa: E402  (Query.get -> Session.get migration)
+from myapp.extensions import db
 
 
 def _make_fixtures(db, app):
@@ -83,9 +83,8 @@ class TestRequestAnalysisIdempotency(unittest.TestCase):
 
         with cls.app.app_context():
             _db.create_all()
-            _, cls.artefact_uuid = (
-                lambda item, art: (item, art.uuid)
-            )(*_make_fixtures(_db, cls.app))
+            _, artefact = _make_fixtures(_db, cls.app)
+            cls.artefact_uuid = artefact.uuid
 
     def _post_analysis(self, analysis_type='metadata_extract'):
         return self.client.post(

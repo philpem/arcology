@@ -161,8 +161,8 @@ def sanitize_filename(filename: str) -> str:
     try:
         raw = filename.encode('utf-8', errors='surrogateescape')
         return decode_riscos_latin1(raw)
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug(f"RISC OS Latin1 recovery failed for {filename!r}: {e}")
 
     # Last resort: replace surrogates with the Unicode replacement character.
     return filename.encode('utf-8', errors='replace').decode('utf-8')

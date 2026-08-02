@@ -131,7 +131,7 @@ class TestResolvePerPage(unittest.TestCase):
         with self.app.test_request_context('/?per_page=100'):
             user = self.db.session.get(self.User, self.test_user_id)
             self._login_user(user)
-            per_page, page, view_all = self.resolve_per_page('ITEMS_PER_PAGE', 25)
+            per_page, _page, view_all = self.resolve_per_page('ITEMS_PER_PAGE', 25)
             self.assertEqual(per_page, 100)
             self.assertFalse(view_all)
 
@@ -152,7 +152,7 @@ class TestResolvePerPage(unittest.TestCase):
             user.set_preference('per_page', 100)
             self.db.session.commit()
             self._login_user(user)
-            per_page, page, view_all = self.resolve_per_page('ITEMS_PER_PAGE', 25)
+            per_page, _page, _view_all = self.resolve_per_page('ITEMS_PER_PAGE', 25)
             self.assertEqual(per_page, 100)
 
     def test_config_fallback_when_no_preference(self):
@@ -162,7 +162,7 @@ class TestResolvePerPage(unittest.TestCase):
             user.preferences = None
             self.db.session.commit()
             self._login_user(user)
-            per_page, page, view_all = self.resolve_per_page('ITEMS_PER_PAGE', 25)
+            per_page, _page, _view_all = self.resolve_per_page('ITEMS_PER_PAGE', 25)
             self.assertEqual(per_page, 25)
 
     def test_view_all_not_saved(self):
@@ -186,7 +186,7 @@ class TestResolvePerPage(unittest.TestCase):
             user.set_preference('per_page', 999)
             self.db.session.commit()
             self._login_user(user)
-            per_page, page, view_all = self.resolve_per_page('ITEMS_PER_PAGE', 25)
+            per_page, _page, _view_all = self.resolve_per_page('ITEMS_PER_PAGE', 25)
             self.assertEqual(per_page, 25)
 
     def test_invalid_param_falls_back_to_preference(self):
@@ -196,7 +196,7 @@ class TestResolvePerPage(unittest.TestCase):
             user.set_preference('per_page', 100)
             self.db.session.commit()
             self._login_user(user)
-            per_page, page, view_all = self.resolve_per_page('ITEMS_PER_PAGE', 25)
+            per_page, _page, _view_all = self.resolve_per_page('ITEMS_PER_PAGE', 25)
             self.assertEqual(per_page, 100)
 
 

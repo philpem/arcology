@@ -22,7 +22,6 @@ blueprint = Blueprint(ROUTENAME, __name__, url_prefix='/storage', template_folde
 def init_app(app):
     """No main-menu item: the navbar link is rendered conditionally for staff
     in _base.html (the main menu shows to every user)."""
-    pass
 
 
 @blueprint.route('/')

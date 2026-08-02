@@ -252,7 +252,7 @@ def _resolve_obey_path(token: str, varmap: dict[str, str] | None = None) -> str 
     argument placeholders, external/unresolved variables).
     """
     token = _strip_quotes(token).strip()
-    if not token or token.startswith('-') or token.startswith('%'):
+    if not token or token.startswith(('-', '%')):
         return None
 
     expanded = _expand(token, varmap or {})
@@ -355,7 +355,7 @@ def parse_run_obey(text: str, extra_vars: dict[str, str] | None = None) -> list[
 def _app_relative(app_dir_name: str, path: str) -> str:
     """Return *path* relative to *app_dir_name* (or the path itself)."""
     prefix = app_dir_name + '/'
-    return path[len(prefix):] if path.startswith(prefix) else path
+    return path.removeprefix(prefix)
 
 
 def _filetype_mandatory(f: dict) -> bool:
@@ -364,9 +364,7 @@ def _filetype_mandatory(f: dict) -> bool:
     if filetype in REQUIRED_FILETYPES:
         return True
     filename = f.get('filename', '')
-    if filetype == FT_SPRITE and re.match(r'^!Sprites\d*$', filename, re.IGNORECASE):
-        return True
-    return False
+    return bool(filetype == FT_SPRITE and re.match(r'^!Sprites\d*$', filename, re.IGNORECASE))
 
 
 def _find_app_file(app_files: list[dict], leaf: str) -> dict | None:
@@ -398,7 +396,7 @@ def get_launched_set(client: ArcologyClient, app_files: list[dict],
             boot_vars = _build_var_map(
                 _clean_obey_lines(boot_data.decode('latin-1', errors='replace'))
             )
-        except Exception as exc:  # noqa: BLE001 - !Boot vars are best-effort
+        except Exception as exc:
             log.debug('    Could not read !Boot: %s', exc)
 
     try:
@@ -408,7 +406,7 @@ def get_launched_set(client: ArcologyClient, app_files: list[dict],
         if verbose:
             log.info('    !Run launches: %s', ', '.join(sorted(launched)) or '(none parsed)')
         return launched
-    except Exception as exc:  # noqa: BLE001 - best-effort; fall back to heuristic
+    except Exception as exc:
         log.debug('    Could not read/parse !Run: %s', exc)
         return set()
 
@@ -513,15 +511,15 @@ def build_product_title(app_dir_name: str, context: str | None = None,
 # in priority order, with the human-readable label shown by --explain.
 NO_MANDATORY_REASONS = (
     ('no-launch-target',
-     'no launch target found (!Run not parsed in a recognised form and no '
-     'RISC OS executable filetype metadata on any file)'),
+     ('no launch target found (!Run not parsed in a recognised form and no '
+     'RISC OS executable filetype metadata on any file)')),
     ('known',
      'launch target already present in an active hash database (is_known)'),
     ('shared',
      'launch target content shared across applications (not unique)'),
     ('global',
-     'launch target also present elsewhere in the catalogue '
-     '(cross-catalogue --global-check)'),
+     ('launch target also present elsewhere in the catalogue '
+     '(cross-catalogue --global-check)')),
     ('no-md5',
      'launch target has no MD5 hash (uniqueness is judged on MD5)'),
     ('unknown', 'undetermined'),
@@ -584,7 +582,7 @@ def make_is_unique(client: ArcologyClient, md5_appkeys: dict[str, set],
         if global_check:
             try:
                 data = client.hash_lookup(md5=f.get('md5'), sha1=f.get('sha1'))
-            except Exception:  # noqa: BLE001 - network hiccup: trust local result
+            except Exception:
                 return True
             if data.get('known_file') and not include_known:
                 return False
@@ -777,7 +775,7 @@ def _appdir_fingerprint(files: list[dict]) -> frozenset:
 def _matches_app_base(app_dir_name: str, product_name: str) -> bool:
     """True if *product_name* looks like the app's own release (its name starts
     with the app-dir's base name, e.g. !65Host ↔ "65Host 1.14")."""
-    base = app_dir_name[1:] if app_dir_name.startswith('!') else app_dir_name
+    base = app_dir_name.removeprefix('!')
     return bool(re.match(r'^' + re.escape(base) + r'(\b|\s|$)',
                          product_name or '', re.IGNORECASE))
 
@@ -910,7 +908,7 @@ def _golden_rank(product: dict) -> tuple:
     prefer a context (product name) that starts with the app's base name (the
     standalone/golden release rather than a bundle), then the shorter name."""
     app = product.get('_app_dir', '') or ''
-    base = app[1:] if app.startswith('!') else app
+    base = app.removeprefix('!')
     ctx = product.get('_context', '') or ''
     starts = bool(re.match(r'^' + re.escape(base) + r'(\b|\s|$)', ctx, re.IGNORECASE))
     return (starts, -len(ctx))

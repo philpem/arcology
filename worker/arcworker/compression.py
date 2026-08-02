@@ -58,8 +58,11 @@ def stream_to_file(
 
     def _drain_stderr() -> None:
         try:
+            # Deliberately not `list(iter(...))`/`.extend(...)`: this keeps
+            # whatever chunks were already read if `.read()` raises OSError
+            # partway through, instead of discarding the partial buffer.
             for chunk in iter(lambda: proc.stderr.read(4096), b''):
-                stderr_buf.append(chunk)
+                stderr_buf.append(chunk)  # noqa: PERF402
         except OSError:
             pass
 

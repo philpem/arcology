@@ -102,19 +102,18 @@ def parse_migration(filepath):
                 if isinstance(target, ast.Name):
                     if target.id == 'revision' and isinstance(node.value, ast.Constant):
                         info['revision'] = node.value.value
-                    elif target.id == 'down_revision':
-                        if isinstance(node.value, ast.Constant):
-                            info['down_revision'] = node.value.value
+                    elif target.id == 'down_revision' and isinstance(node.value, ast.Constant):
+                        info['down_revision'] = node.value.value
 
         elif isinstance(node, ast.FunctionDef) and node.name == 'downgrade':
             # Check if body is just 'pass' or empty
             body = node.body
             if len(body) == 1 and isinstance(body[0], ast.Pass):
                 info['has_empty_downgrade'] = True
-            elif len(body) == 1 and isinstance(body[0], ast.Expr):
-                if isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
-                    # Body is just a docstring
-                    info['has_empty_downgrade'] = True
+            elif (len(body) == 1 and isinstance(body[0], ast.Expr)
+                    and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str)):
+                # Body is just a docstring
+                info['has_empty_downgrade'] = True
 
     return info
 

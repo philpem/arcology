@@ -60,8 +60,8 @@ class TestControlPlaneClassification(unittest.TestCase):
         self.assertEqual(set(DISPATCH), set(CONTROL_PLANE_ANALYSIS_TYPES))
 
     def test_worker_does_not_register_control_plane_handlers(self):
-        import worker.arcworker.analyses as analyses
         from arcology_shared.enums import CONTROL_PLANE_ANALYSIS_TYPES
+        from worker.arcworker import analyses
         registered = set(analyses.HANDLERS)  # keyed by AnalysisType.value
         leaked = {t.value for t in CONTROL_PLANE_ANALYSIS_TYPES} & registered
         self.assertEqual(leaked, set())

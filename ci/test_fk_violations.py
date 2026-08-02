@@ -30,7 +30,7 @@ os.environ.setdefault('SECRET_KEY', 'ci-fk-test-secret-key-not-for-production')
 os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 
 
-from myapp.extensions import db  # noqa: E402  (Query.get -> Session.get migration)
+from myapp.extensions import db
 
 
 def _enable_sqlite_fks(app, _db):

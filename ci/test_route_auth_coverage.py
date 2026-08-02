@@ -56,7 +56,7 @@ def _build_url(url_adapter, rule):
         args = {arg: dummy for arg in rule.arguments}
         try:
             return url_adapter.build(rule.endpoint, args, method='GET')
-        except Exception:
+        except Exception:  # noqa: S112 — expected: this dummy type didn't fit the converter, try the next
             continue
     return None
 

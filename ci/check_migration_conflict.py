@@ -43,7 +43,7 @@ def git_ls_tree(ref, path):
     """List filenames at path on the given git ref."""
     result = subprocess.run(
         ['git', 'ls-tree', '--name-only', ref, path + '/'],
-        capture_output=True, text=True
+        capture_output=True, text=True, check=False
     )
     if result.returncode != 0:
         return None
@@ -55,7 +55,7 @@ def git_show(ref, filepath):
     """Get file contents from a git ref."""
     result = subprocess.run(
         ['git', 'show', f'{ref}:{filepath}'],
-        capture_output=True, text=True
+        capture_output=True, text=True, check=False
     )
     if result.returncode != 0:
         return None

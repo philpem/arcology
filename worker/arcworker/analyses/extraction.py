@@ -67,7 +67,7 @@ def _apply_pling_renames(extract_dir: Path, rename_map: dict[str, str]) -> None:
     # every component where '_' was replaced with '!' (a pling entry).
     dir_renames: dict[str, str] = {}
 
-    for _raw_lower, display_path in rename_map.items():
+    for display_path in rename_map.values():
         display_parts = display_path.split('/')
         for i, dp in enumerate(display_parts[:-1]):  # skip the filename itself
             if not dp.startswith('!'):
@@ -85,7 +85,7 @@ def _apply_pling_renames(extract_dir: Path, rename_map: dict[str, str]) -> None:
             dir_renames[src_rel] = dst_rel
 
     # Also handle pling on the filename itself (unusual but possible).
-    for _raw_lower, display_path in rename_map.items():
+    for display_path in rename_map.values():
         display_parts = display_path.split('/')
         fname = display_parts[-1]
         if fname.startswith('!'):

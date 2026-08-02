@@ -22,7 +22,7 @@ os.environ.setdefault('SECRET_KEY', 'ci-api-serializer-test-secret-key')
 os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 
 
-from myapp.extensions import db  # noqa: E402  (Query.get -> Session.get migration)
+from myapp.extensions import db
 
 
 class TestArtefactToDictSlugs(unittest.TestCase):

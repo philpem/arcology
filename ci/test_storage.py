@@ -448,9 +448,8 @@ class TestExtractionPathCompaction(unittest.TestCase):
         storage.bucket = 'test-bucket'
         storage._client = mock.Mock()
         key = 'outputs/' + ('x' * MAX_S3_KEY_BYTES)
-        with self.assertLogs('arcology_shared.storage', level='ERROR') as logs:
-            with self.assertRaises(OSError):
-                storage.put(key, '/tmp/source.bin')
+        with self.assertLogs('arcology_shared.storage', level='ERROR') as logs, self.assertRaises(OSError):
+            storage.put(key, '/tmp/source.bin')
         self.assertIn('exceeding the 479-byte limit', '\n'.join(logs.output))
         storage._client.upload_file.assert_not_called()
 
@@ -461,9 +460,8 @@ class TestExtractionPathCompaction(unittest.TestCase):
         storage.bucket = 'test-bucket'
         storage._client = mock.Mock()
         dst_key = 'outputs/' + ('x' * MAX_S3_KEY_BYTES)
-        with self.assertLogs('arcology_shared.storage', level='ERROR') as logs:
-            with self.assertRaises(OSError):
-                storage.move('outputs/source.bin', dst_key)
+        with self.assertLogs('arcology_shared.storage', level='ERROR') as logs, self.assertRaises(OSError):
+            storage.move('outputs/source.bin', dst_key)
         self.assertIn('exceeding the 479-byte limit', '\n'.join(logs.output))
         storage._client.copy_object.assert_not_called()
         storage._client.delete_object.assert_not_called()

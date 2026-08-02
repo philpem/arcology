@@ -20,6 +20,7 @@ import sys
 import tempfile
 import time
 import unittest
+from typing import ClassVar
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
@@ -319,7 +320,7 @@ class TestChunkedFinalizeAPIEndpoints(unittest.TestCase):
         _chunked.shutdown_executor(wait=True)
         shutil.rmtree(cls._tmpdir, ignore_errors=True)
 
-    _AUTH = {'X-API-Key': os.environ['WORKER_API_KEY']}
+    _AUTH: ClassVar[dict] = {'X-API-Key': os.environ['WORKER_API_KEY']}
 
     def _init(self, total_chunks=2, **extra):
         payload = {'filename': 'async.img', 'total_chunks': total_chunks,

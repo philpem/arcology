@@ -315,9 +315,7 @@ def _is_plausible_timestamp(
     if dt < _TIMESTAMP_FLOOR:
         return False
     started = _as_utc(extraction_started_at)
-    if started is not None and dt >= started - _TIMESTAMP_SKEW:
-        return False
-    return True
+    return not (started is not None and dt >= started - _TIMESTAMP_SKEW)
 
 
 def enumerate_extracted_files(

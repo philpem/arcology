@@ -26,13 +26,13 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from worker.arcworker.tools import fs_riscos_armlock as armlock  # noqa: E402
-from worker.arcworker.tools.base import (  # noqa: E402
+from worker.arcworker.tools import fs_riscos_armlock as armlock
+from worker.arcworker.tools.base import (
     FileTooLargeError,
     open_sector_reader,
     read_file_capped,
 )
-from worker.arcworker.tools.fs_riscos_armlock import detect_armlock  # noqa: E402
+from worker.arcworker.tools.fs_riscos_armlock import detect_armlock
 
 
 def _build_filecore_dir() -> bytes:
@@ -101,9 +101,8 @@ class TestSectorReader(unittest.TestCase):
         p = Path(name)
         try:
             p.write_bytes(b'abc')
-            with open_sector_reader(p) as buf:
-                with self.assertRaises(IndexError):
-                    buf[3]
+            with open_sector_reader(p) as buf, self.assertRaises(IndexError):
+                buf[3]
         finally:
             os.unlink(p)
 

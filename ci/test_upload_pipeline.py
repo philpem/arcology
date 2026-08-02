@@ -94,16 +94,16 @@ class UploadPipelineTestBase(unittest.TestCase):
     def _ingest(self, **overrides):
         from arcology_shared.enums import ArtefactType
         from myapp.services.upload_pipeline import ingest_uploaded_artefact
-        kwargs = dict(
-            label='Test Disc',
-            artefact_type=ArtefactType.RAW_SECTOR,
-            type_overridden=False,
-            original_filename='test.adf',
-            storage_name='abc123.adf',
-            file_size=1024,
-            md5='d' * 32,
-            sha256='e' * 64,
-        )
+        kwargs = {
+            'label': 'Test Disc',
+            'artefact_type': ArtefactType.RAW_SECTOR,
+            'type_overridden': False,
+            'original_filename': 'test.adf',
+            'storage_name': 'abc123.adf',
+            'file_size': 1024,
+            'md5': 'd' * 32,
+            'sha256': 'e' * 64,
+        }
         kwargs.update(overrides)
         return ingest_uploaded_artefact(self._item(), **kwargs)
 
@@ -168,9 +168,8 @@ class TestIngestService(UploadPipelineTestBase):
 
         with self.app.app_context():
             with mock.patch('myapp.services.upload_pipeline.ensure_unique_slug',
-                            side_effect=RuntimeError('boom')):
-                with self.assertRaises(RuntimeError):
-                    self._ingest()
+                            side_effect=RuntimeError('boom')), self.assertRaises(RuntimeError):
+                self._ingest()
             self.assertEqual(Artefact.query.count(), 0)
             self.assertEqual(Analysis.query.count(), 0)
             self.assertIn('uploads/abc123.adf', self.storage.deleted)
@@ -180,10 +179,12 @@ class TestIngestService(UploadPipelineTestBase):
         from myapp.database import Artefact
 
         with self.app.app_context():
-            with mock.patch('myapp.services.upload_pipeline.ensure_unique_slug',
-                            side_effect=IntegrityError('stmt', {}, Exception('dup'))):
-                with self.assertRaises(IntegrityError):
-                    self._ingest()
+            with (
+                mock.patch('myapp.services.upload_pipeline.ensure_unique_slug',
+                           side_effect=IntegrityError('stmt', {}, Exception('dup'))),
+                self.assertRaises(IntegrityError),
+            ):
+                self._ingest()
             self.assertEqual(Artefact.query.count(), 0)
             self.assertIn('uploads/abc123.adf', self.storage.deleted)
 

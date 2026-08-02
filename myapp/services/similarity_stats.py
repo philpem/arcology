@@ -43,7 +43,7 @@ def _percentile(sorted_vals, p):
         return 0
     if p >= 100:
         return sorted_vals[-1]
-    k = max(0, min(len(sorted_vals) - 1, int(round((p / 100.0) * len(sorted_vals) + 0.5)) - 1))
+    k = max(0, min(len(sorted_vals) - 1, round((p / 100.0) * len(sorted_vals) + 0.5) - 1))
     return sorted_vals[k]
 
 

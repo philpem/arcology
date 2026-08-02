@@ -357,8 +357,7 @@ def _parse_size(text: str) -> int:
     allowed (e.g. '50GB').  Raises ValueError on malformed input.
     """
     t = text.strip().upper()
-    if t.endswith('B'):
-        t = t[:-1]
+    t = t.removesuffix('B')
     if not t:
         raise ValueError(f'invalid size: {text!r}')
     unit = t[-1] if t[-1] in _SIZE_UNITS else ''
@@ -502,9 +501,8 @@ def discover_files_flat(archive_dir: Path,
 
         parts = rel.parts
 
-        if skip_dirs and len(parts) > 1:
-            if any(part in skip_dirs for part in parts[:-1]):
-                continue
+        if skip_dirs and len(parts) > 1 and any(part in skip_dirs for part in parts[:-1]):
+            continue
 
         label = str(rel) if len(parts) > 1 else parts[0]
 

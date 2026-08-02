@@ -18,9 +18,9 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 
-import worker.arcworker.analyses.extraction as ext  # noqa: E402
-from arcology_shared.bundle import BUNDLE_MARKER  # noqa: E402
-from worker.arcworker.analyses.extraction import (  # noqa: E402
+import worker.arcworker.analyses.extraction as ext
+from arcology_shared.bundle import BUNDLE_MARKER
+from worker.arcworker.analyses.extraction import (
     _disk_image_bundle_member,
     _image_base_name,
 )

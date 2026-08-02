@@ -505,11 +505,10 @@ def edit(uuid, item):
                                        preset_parent=None, can_set_private=can_priv)
 
         # Cycle prevention: ensure the chosen parent is not a descendant of this item
-        if new_parent_id is not None:
-            if new_parent and item.is_ancestor_of(new_parent):
-                flash('Cannot move an item to one of its own descendants.', 'danger')
-                return _render_item_form(form, item=item, title='Edit Item',
-                                       preset_parent=None, can_set_private=can_priv)
+        if new_parent_id is not None and new_parent and item.is_ancestor_of(new_parent):
+            flash('Cannot move an item to one of its own descendants.', 'danger')
+            return _render_item_form(form, item=item, title='Edit Item',
+                                   preset_parent=None, can_set_private=can_priv)
 
         assign_item_fields(
             item,

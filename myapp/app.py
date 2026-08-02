@@ -155,11 +155,11 @@ class AppClass(Flask):
         # Let Flask initialise itself
         super().__init__(*args, **kwargs)
         # Create an empty menu list
-        self._myapp_menudata = list()
+        self._myapp_menudata = []
 
     def add_menu_item(self, label, endpoint, sortorder=0):
         """ Add a menu item to the application menu """
-        self._myapp_menudata.append(dict(label=label, endpoint=endpoint, sortorder=sortorder))
+        self._myapp_menudata.append({'label': label, 'endpoint': endpoint, 'sortorder': sortorder})
 
 def create_app(config_name=None):
     # create and configure the application
@@ -424,8 +424,8 @@ def create_app(config_name=None):
 
         Adds the main menu data into the template context. Menu items are sorted by sort-order, then (case-insensitively) by label.
         """
-        return dict(menu=sorted(app._myapp_menudata,
-                                key=lambda mi: (mi['sortorder'], mi['label'].lower())))
+        return {'menu': sorted(app._myapp_menudata,
+                                key=lambda mi: (mi['sortorder'], mi['label'].lower()))}
 
     # -- user permission context processor --
     @app.context_processor
@@ -444,9 +444,9 @@ def create_app(config_name=None):
         if can_write:
             from .services.storage_stats import navbar_storage_summary
             storage_summary = navbar_storage_summary()
-        return dict(user_can_write=can_write, user_is_staff=is_staff,
-                    public_mode=pm, public_downloads=pd,
-                    storage_summary=storage_summary)
+        return {'user_can_write': can_write, 'user_is_staff': is_staff,
+                    'public_mode': pm, 'public_downloads': pd,
+                    'storage_summary': storage_summary}
 
     # -- version context processor --
     import datetime
@@ -454,7 +454,7 @@ def create_app(config_name=None):
     @app.context_processor
     def inject_version():
         """Inject app_version and now into every template context."""
-        return dict(app_version=get_version(), now=datetime.datetime.now())
+        return {'app_version': get_version(), 'now': datetime.datetime.now()}
 
     # -- template filter: analysis status -> Bootstrap badge class --
     @app.template_filter('status_badge_class')
@@ -587,8 +587,8 @@ def _register_blueprints(app):
             if hasattr(module, 'init_app'):
                 module.init_app(app)
 
-        except Exception as e:
-            app.logger.error(f"Failed to load blueprint {modname}: {e}", exc_info=True)
+        except Exception:
+            app.logger.exception(f"Failed to load blueprint {modname}")
             continue
 
 def _register_error_handlers(app):

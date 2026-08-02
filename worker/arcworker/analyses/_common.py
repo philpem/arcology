@@ -258,8 +258,9 @@ def analysis_handler(description: str, analysis_type: AnalysisType | None = None
                         success=False,
                         error_message=f'Input file missing (artefact deleted?): {e}',
                     )
-                except Exception:
-                    pass  # API will 404 if analysis was cascade-deleted
+                except Exception as report_exc:
+                    # API will 404 if analysis was cascade-deleted
+                    log.debug(f"Failed to report missing-input failure for analysis {analysis_id}: {report_exc}")
             except Exception as e:
                 log.exception(f"Analysis {analysis_id} ({analysis_uuid}) failed during {description}")
                 try:

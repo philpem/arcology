@@ -54,12 +54,15 @@ jobs:
         run: python ci/check_syntax.py
 
       - name: Install ruff
-        # Pinned deliberately. Unpinned, a new upstream release turns CI red on
-        # unchanged code: ruff 0.16 widened its default ruleset and reports 454
-        # pre-existing errors in this tree. Triage those (issue #729) before bumping.
-        run: pip install ruff==0.15.20
+        # Pinned deliberately — an unpinned linter in CI makes every build
+        # depend on upstream release timing (see issue #729, where Ruff 0.16
+        # widened its default ruleset and turned CI red on unchanged code).
+        # pyproject.toml now uses an explicit `select`, so a future Ruff
+        # release can't silently add new firing rules; bump this pin
+        # deliberately when adopting a newer Ruff.
+        run: pip install ruff==0.16.1
 
-      - name: Ruff lint (pyflakes ruleset)
+      - name: Ruff lint (project ruleset)
         run: ruff check .
 
       - name: Unit tests (stdlib only, no dependencies)

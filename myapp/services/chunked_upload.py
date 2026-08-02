@@ -191,9 +191,9 @@ def purge_stale_chunks() -> None:
                 shutil.rmtree(path, ignore_errors=True)
                 continue
             meta = _read_meta_dir(path)
-            if meta and meta.get('finalize_state') in (FINALIZE_DONE, FINALIZE_FAILED):
-                if now - meta.get('finalized_at', 0) > result_ttl:
-                    shutil.rmtree(path, ignore_errors=True)
+            if (meta and meta.get('finalize_state') in (FINALIZE_DONE, FINALIZE_FAILED)
+                    and now - meta.get('finalized_at', 0) > result_ttl):
+                shutil.rmtree(path, ignore_errors=True)
         except OSError:
             pass
 

@@ -17,9 +17,9 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 
-import arcology_shared.bundle as shared_bundle  # noqa: E402
-from cli.arccli.commands import bulk_import as cli  # noqa: E402
-from worker.arcworker.tools.archives import read_zip_comment  # noqa: E402
+import arcology_shared.bundle as shared_bundle
+from cli.arccli.commands import bulk_import as cli
+from worker.arcworker.tools.archives import read_zip_comment
 
 
 class TestCliUsesShared(unittest.TestCase):

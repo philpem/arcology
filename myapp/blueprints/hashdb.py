@@ -114,11 +114,7 @@ def _existing_known_file(database_id: int, product_id: int, md5: str | None, sha
         database_id=database_id, product_id=product_id, md5=md5
     ).first():
         return True
-    if sha1 and not md5 and KnownFile.query.filter_by(
-        database_id=database_id, product_id=product_id, sha1=sha1
-    ).first():
-        return True
-    return False
+    return bool(sha1 and not md5 and KnownFile.query.filter_by(database_id=database_id, product_id=product_id, sha1=sha1).first())
 
 
 def _post_known_file_changes(database: HashDatabase, new_kf_list: list[KnownFile]):
@@ -332,7 +328,7 @@ def view(id):
             row[0] for row in
             db.session.query(KnownFile.product_id)
             .filter(KnownFile.product_id.in_(page_product_ids),
-                    KnownFile.is_required == True)  # noqa: E712
+                    KnownFile.is_required == True)
             .distinct()
             .all()
         }

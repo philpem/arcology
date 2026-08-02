@@ -22,8 +22,8 @@ for _p in (_REPO_ROOT, _CLI_ROOT):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from arccli.client import ArcologyError  # noqa: E402
-from arccli.commands.hashdb import cmd_hashdb_import  # noqa: E402
+from arccli.client import ArcologyError
+from arccli.commands.hashdb import cmd_hashdb_import
 
 _DOC = {
     'database': {'name': 'CLI DB'},

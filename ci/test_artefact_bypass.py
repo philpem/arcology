@@ -30,7 +30,7 @@ os.environ.setdefault('SECRET_KEY', 'ci-bypass-test-secret-key-not-for-productio
 os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 
 
-from myapp.extensions import db  # noqa: E402  (Query.get -> Session.get migration)
+from myapp.extensions import db
 
 
 def _enable_sqlite_fks(app, _db):
@@ -401,7 +401,7 @@ class TestAncestorBypass(unittest.TestCase):
 
             parent = _make_artefact(self.db, 'AncParent', 'ancflux.scp')
             child = _make_artefact(self.db, 'AncChild', 'ancdecoded.img', parent=parent)
-            ef, restr = _restrict_file(self.db, child, RestrictionType.EXPLICIT)
+            _ef, restr = _restrict_file(self.db, child, RestrictionType.EXPLICIT)
             user = _make_user(self.db, 'ancpatron')
             # Grant is created against the PARENT artefact (what the admin views).
             self.db.session.add(UserArtefactBypass(

@@ -142,13 +142,12 @@ def _parse_catalogue(region: bytes, number_of_chunks: int) -> int | None:
             semis = after_offset.split(';')
             # semis[0] is video_bytes; the rest are sound tracks.
             tracks = len(semis) - 1
-            if tracks > max_tracks:
-                max_tracks = tracks
+            max_tracks = max(max_tracks, tracks)
             lines_read += 1
             if number_of_chunks and lines_read >= number_of_chunks:
                 break
         return max_tracks if lines_read else None
-    except Exception as e:  # noqa: BLE001 - best-effort, never fatal
+    except Exception as e:
         log.debug("ARMovie catalogue parse failed: %s", e)
         return None
 
@@ -212,7 +211,7 @@ def _parse_armovie_stream(fh) -> dict:
     head = fh.read(_HEADER_READ_BYTES)
     try:
         text = head.decode('latin-1', errors='replace')
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         raise ArmovieParseError(f"Could not decode header: {e}") from e
 
     # Lines are newline-terminated; tolerate a trailing '\r' per line.

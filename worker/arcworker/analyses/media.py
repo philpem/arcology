@@ -235,8 +235,8 @@ def process_media_transcode(self, analysis: dict, artefact: dict, work_dir: Path
     transcoded_count = sum(1 for e in processed if e.get('mp4_output_path'))
     passthrough_count = len(processed) - transcoded_count
     summary_parts = [
-        f'Processed {len(processed)} media file(s) '
-        f'({transcoded_count} transcoded, {passthrough_count} passthrough)'
+        (f'Processed {len(processed)} media file(s) '
+        f'({transcoded_count} transcoded, {passthrough_count} passthrough)')
     ]
     if errors:
         summary_parts.append(f'{len(errors)} failed')

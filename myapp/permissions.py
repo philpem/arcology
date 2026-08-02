@@ -71,10 +71,9 @@ def public_readable(f):
     """
     @wraps(f)
     def wrapper(*args, **kwargs):
-        if not current_user.is_authenticated:
-            if (not current_app.config.get('LOGIN_DISABLED', False)
-                    and not bool_config('PUBLIC_MODE')):
-                return login_manager.unauthorized()
+        if not current_user.is_authenticated and (not current_app.config.get('LOGIN_DISABLED', False)
+                and not bool_config('PUBLIC_MODE')):
+            return login_manager.unauthorized()
         return f(*args, **kwargs)
     return wrapper
 

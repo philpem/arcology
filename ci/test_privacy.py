@@ -322,7 +322,7 @@ class TestPrivacyManagement(unittest.TestCase):
         cls.db = db
         with cls.app.app_context():
             db.create_all()
-            owner, cls.key_owner = _make_user(db, 'mgmt-owner')
+            _owner, cls.key_owner = _make_user(db, 'mgmt-owner')
             other, cls.key_other = _make_user(db, 'mgmt-other')
             _admin, cls.key_admin = _make_user(db, 'mgmt-admin', is_admin=True)
             cls.other_id = other.id

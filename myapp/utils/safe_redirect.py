@@ -38,9 +38,7 @@ def is_safe_redirect_path(target) -> bool:
         return False
     if not target.startswith('/'):
         return False
-    if target.startswith('//'):
-        return False
-    return True
+    return not target.startswith('//')
 
 
 def safe_redirect_path(target, default: str) -> str:
