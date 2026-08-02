@@ -252,6 +252,8 @@ Each zone's map block is one sector. Zone 0's block has a 4-byte zone header fol
 | +0x01 | 2 | `FreeLink` — 15-bit offset to first free fragment (bit offset from byte 1), top bit always set |
 | +0x03 | 1 | `CrossCheck` — XOR byte; all zones' CrossCheck bytes should XOR to `0xFF` |
 
+A `FreeLink` value of exactly `0x8000` (bit 15 set, all other bits zero) means this zone has no free space at all — the free chain is empty. This special case is easy to miss: it isn't exercised by the worked `FreeLink` calculation in §C.4, which computes a non-empty value.
+
 See §3.1 for how to decode the bit stream.
 
 ### 2.5 The Old Free Space Map
