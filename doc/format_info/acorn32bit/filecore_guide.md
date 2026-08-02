@@ -1014,7 +1014,7 @@ For a multi-zone disc (hard disc, or a multi-zone floppy such as F format), the 
 
 #### Step 1: Zero-fill the image
 
-Create a file of `disc_size + 0` bytes (or `disc_size` bytes if not adding an FCFS trailer), filled with zeros.
+Create a file of `disc_size` bytes, filled with zeros.
 
 #### Step 2: Write the boot block (hard discs, and multi-zone floppies)
 
