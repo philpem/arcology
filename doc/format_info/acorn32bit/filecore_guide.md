@@ -668,7 +668,14 @@ Big directories differ from old/new directories in several ways:
 
 - **Variable directory size**: Big directories can grow. When a new entry is added and there isn't enough space, FileCore extends the directory by reallocating its disc object. The maximum size is 4 MB.
 
-- **4-byte SIN field**: The indirect disc address field is widened from 3 to 4 bytes, allowing `idlen` to go beyond the small map's 15-bit ceiling (`MaxIdLenSmlMap`) to as much as 21 bits, and so past the 32,765-object limit that ceiling implies.
+- **4-byte SIN field**: The indirect disc address field is widened from 3 to 4 bytes, allowing `idlen` to go beyond the small map's 15-bit ceiling (`MaxIdLenSmlMap`) to as much as 21 bits, and so past the 32,765-object limit that ceiling implies. No field table for the widened form is given by any source consulted for this guide. Empirically verified against a real RISC OS 4 disc (`format_version` = 1, `idlen` = 17: hand-decoding this hypothesis located the real root directory and its entries correctly, self-consistent name-heap offsets and all) as the same bit split as the 3-byte SIN (§3.2), just in a wider container:
+
+  | Bits | Field |
+  |------|-------|
+  | 31–8 | Fragment ID |
+  | 7–0 | Sharing offset |
+
+  Caveat: no fragment ID on the disc tested actually required the 17th bit or higher (max observed ID was `0xdd7c`, 16 bits) — the case that genuinely exercises the widening beyond 16 bits, rather than just providing a wider container for the same range, remains unconfirmed against real media.
 
 - **Different magic numbers**: `"SBPr"` and `"oven"` replace `"Hugo"` and `"Nick"`.
 
