@@ -1002,7 +1002,7 @@ Disc address 0x000:
   (On hard discs, and multi-zone floppies such as F format:)
   Disc address 0xC00:
   +-- Boot block                                         --+
-  |   [defect list][disc record][flag][checksum]            |
+  |   [defect list][disc record][partition descriptor][checksum] |
   +--                                                    --+
 ```
 
@@ -1022,7 +1022,7 @@ At disc address `0xC00`:
 
 1. Write an empty defect list: a single word `0x20000000 | checkbyte` at offset `+0x000`. With no defects, the checkbyte is computed over an empty list, which gives `0x20000000`.
 2. Write the disc record at offset `+0x1C0` (60 bytes — that is all the boot block has room for; see §2.2).
-3. Write the boot block flag byte at `+0x1FC`.
+3. Write the non-ADFS partition descriptor at `+0x1FC`–`+0x1FE` (§2.2) — zero for an image with no foreign partition.
 4. Compute and write the boot block checksum — a single byte at `+0x1FF` (§2.2).
 
 #### Step 3: Initialise the zone map
@@ -1134,7 +1134,7 @@ Old-map floppies (S, M, L, D) have no boot block — the old map has no disc rec
 
 **Big directory** — Variable-length directory format used by E+, F+, and G. Identified by the `"SBPr"` / `"oven"` magic strings. Entry count is bounded by the 4 MB maximum directory size rather than by a fixed limit; filenames may be up to 255 characters, stored in a name heap.
 
-**Boot block** — A 512-byte structure at disc address `0xC00` on hard discs, and on new-map floppies with more than one zone (F format). Contains the defect list, a 60-byte copy of the disc record (at offset `+0x1C0`), a flag byte, and a one-byte checksum at `+0x1FF`. Single-zone new-map floppies (E format) and old-map floppies (S, M, L, D) have no boot block.
+**Boot block** — A 512-byte structure at disc address `0xC00` on hard discs, and on new-map floppies with more than one zone (F format). Contains the defect list, a 60-byte copy of the disc record (at offset `+0x1C0`), a non-ADFS partition descriptor at `+0x1FC`–`+0x1FE`, and a one-byte checksum at `+0x1FF`. Single-zone new-map floppies (E format) and old-map floppies (S, M, L, D) have no boot block.
 
 **bpmb** (`log2_bpmb`) — Disc record field: log₂ of the number of bytes per map bit (i.e. per allocation unit). Determines the map granularity.
 
