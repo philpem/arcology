@@ -1150,7 +1150,7 @@ Old-map floppies (S, M, L, D) have no boot block — the old map has no disc rec
 
 **Disc record** — A 60-byte structure (the extended form, RISC OS 3.6+) describing the disc's geometry and map parameters; the earlier 32- and 52-byte forms are prefixes of the same layout (§2.1), with the remaining extended fields reading as zero on pre-3.6 media. Found in the boot block (hard discs) or at the start of zone 0's map block (new-map discs). Key fields include `log2_sector_size`, `sectors_per_track`, `heads`, `idlen`, `log2_bpmb`, `nzones`, `root_dir`, and `disc_size`.
 
-**Exec address** — The 32-bit execution address in a directory entry. For date-stamped files (top 12 bits of load address = `0xFFF`), the low 8 bits of the exec address hold the low byte of the 40-bit centisecond timestamp.
+**Exec address** — The 32-bit execution address in a directory entry. For date-stamped files (top 12 bits of load address = `0xFFF`), **all 32 bits** of the exec address are the low 32 bits of the 40-bit centisecond timestamp — not just the low 8. The load address's low byte supplies the remaining high 8 bits (see "Load address" below).
 
 **Filetype** — A 12-bit value encoded in bits 19–8 of the load address when the file is date-stamped (top 12 bits = `0xFFF`). Identifies the file's type (e.g. `0xFFD` = Data, `0xFFF` = Text).
 
