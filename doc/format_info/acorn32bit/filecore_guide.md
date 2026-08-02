@@ -1036,7 +1036,7 @@ b. Write the 4-byte zone header:
    - `FreeLink`: bit offset to the first free fragment (computed below).
    - `CrossCheck`: set so that all zones' CrossCheck bytes XOR to `0xFF`.
 
-c. For zone 0 only: write the disc record copy at offset `+0x04` (60 bytes of the 64-byte disc record, as the first 4 bytes of zone 0 are the zone header).
+c. For zone 0 only: write the 60-byte disc record copy at offset `+0x04`, immediately after the 4-byte zone header — 64 bytes total before the allocation bit stream begins.
 
 d. Write the allocation bit stream. For a single-zone disc, the stream contains exactly two fragments:
    - **Fragment ID 2 (system object)**: Covers the map sectors + root directory (+ boot block, if any — see below). Set the `idlen`-bit ID field to `2`, followed by enough `0` bits and a terminating `1` to cover the required number of allocation units.
@@ -1146,7 +1146,7 @@ Old-map floppies (S, M, L, D) have no boot block — the old map has no disc rec
 
 **Disc address** — A byte offset from the start of the disc image. All FileCore addresses are byte offsets, not sector numbers (even on old-map discs where the free space map uses 256-byte units).
 
-**Disc record** — A 20–64 byte structure describing the disc's geometry and map parameters. Found in the boot block (hard discs) or at the start of zone 0's map block (new-map discs). Key fields include `log2_sector_size`, `sectors_per_track`, `heads`, `idlen`, `log2_bpmb`, `nzones`, `root_dir`, and `disc_size`.
+**Disc record** — A 60-byte structure (the extended form, RISC OS 3.6+) describing the disc's geometry and map parameters; the earlier 32- and 52-byte forms are prefixes of the same layout (§2.1), with the remaining extended fields reading as zero on pre-3.6 media. Found in the boot block (hard discs) or at the start of zone 0's map block (new-map discs). Key fields include `log2_sector_size`, `sectors_per_track`, `heads`, `idlen`, `log2_bpmb`, `nzones`, `root_dir`, and `disc_size`.
 
 **Exec address** — The 32-bit execution address in a directory entry. For date-stamped files (top 12 bits of load address = `0xFFF`), the low 8 bits of the exec address hold the low byte of the 40-bit centisecond timestamp.
 
@@ -1190,7 +1190,7 @@ Old-map floppies (S, M, L, D) have no boot block — the old map has no disc rec
 
 **SIN** — System Internal Number. A disc address used in new-map directory entries. The top `idlen` bits (after shifting) give the fragment ID; the remaining bits give the sharing offset. Resolved by walking the zone maps to find all fragments with that ID, then applying the offset.
 
-**Zone** — One sector of the new map. Each zone manages a region of disc and contains a 4-byte header (`ZoneCheck`, `FreeLink`, `CrossCheck`) followed by a packed bit stream. Zone 0 additionally holds the disc record (64 bytes).
+**Zone** — One sector of the new map. Each zone manages a region of disc and contains a 4-byte header (`ZoneCheck`, `FreeLink`, `CrossCheck`) followed by a packed bit stream. Zone 0 additionally holds the 60-byte disc record immediately after its header — 64 bytes total before the allocation bit stream begins (§2.4).
 
 **ZoneCheck** — Checksum byte at offset `+0x00` in each zone header. Computed by summing all 32-bit words in the sector with carry, subtracting the existing check byte, and folding to 8 bits via XOR (see §A.1).
 
