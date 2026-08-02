@@ -149,7 +149,7 @@ The disc record is the single most important structure on a FileCore disc. Every
 | +0x30 | 4 | `root_size` | Size of root directory in bytes (`DiscRecord_BigDir_RootDirSize`, big directories). |
 | +0x34 | 8 | — | Reserved (`DiscRecord_BigDir_Reserved`). |
 
-The record ends at `+0x3C`, i.e. it is **60 bytes** (`SzDiscRecSigSpace` in `hdr/FileCore`), not 64. Two other sizes appear in the source and are worth knowing: `SzDiscRecSig` = 32 (the pre-3.6 record, through `disc_name`) and `SzDiscRecSig2` = 52 (through `root_size`), the latter being the portion published in the public header and stored in the boot block (§2.2). There is no "disc needs checking" flag at `+0x34`, and no on-disc "dirty" state anywhere in FileCore — `hdr/FileCore` and the Phase 2 Functional Specification (§7.5) both make `0x34`–`0x3B` reserved. (The only such flag in the source is `BufDirDirty`, an in-RAM directory-buffer writeback bit in `s/FileCore25`.)
+The record ends at `+0x3C`, i.e. it is **60 bytes** (`SzDiscRecSigSpace` in `hdr/FileCore`), not 64. Two other sizes appear in the source and are worth knowing: `SzDiscRecSig` = 32 (the pre-3.6 record, through `disc_name`) and `SzDiscRecSig2` = 52 (through `root_size`), the size published in the public header file. That 52-byte figure is a struct-definition size, not what's physically written to disc — the boot block itself stores the full 60-byte record (§2.2, §C.3). There is no "disc needs checking" flag at `+0x34`, and no on-disc "dirty" state anywhere in FileCore — `hdr/FileCore` and the Phase 2 Functional Specification (§7.5) both make `0x34`–`0x3B` reserved. (The only such flag in the source is `BufDirDirty`, an in-RAM directory-buffer writeback bit in `s/FileCore25`.)
 
 ### 2.2 The Boot Block (Hard Discs, and Multi-Zone Floppies)
 
@@ -251,6 +251,8 @@ Each zone's map block is one sector. Zone 0's block has a 4-byte zone header fol
 | +0x00 | 1 | `ZoneCheck` — checksum byte |
 | +0x01 | 2 | `FreeLink` — 15-bit offset to first free fragment (bit offset from byte 1), top bit always set |
 | +0x03 | 1 | `CrossCheck` — XOR byte; all zones' CrossCheck bytes should XOR to `0xFF` |
+
+A `FreeLink` value of exactly `0x8000` (bit 15 set, all other bits zero) means this zone has no free space at all — the free chain is empty. This special case is easy to miss: it isn't exercised by the worked `FreeLink` calculation in §C.4, which computes a non-empty value.
 
 See §3.1 for how to decode the bit stream.
 
@@ -525,7 +527,14 @@ Reading title(19) then name(10) gives a title of `"!BootPSLCD"` zero-padded to 1
 
 A directory is reported as **"Broken"** if the master sequence number and validation string at the start (bytes `0x000`–`0x004`) do not match those at the end (`0x4FA`–`0x4FE` for small directories, `0x7FA`–`0x7FE` for large/new directories).
 
-**Load/execution address encoding:** If the top 12 bits of the load address are all set (`0xFFFxxxxx`), the file is date-stamped: bits 19–8 of the load address are the 12-bit filetype, and the remaining bits of load address and the execution address together form a 40-bit centisecond timestamp (epoch: 00:00:00 1 January 1900).
+**Load/execution address encoding:** If the top 12 bits of the load address are all set (`0xFFFxxxxx`), the file is date-stamped: bits 19–8 of the load address are the 12-bit filetype, and the remaining bits of load address and the execution address together form a 40-bit centisecond timestamp (epoch: 00:00:00 1 January 1900). The full split:
+
+| Timestamp bits | Source | Notes |
+|-----------------|--------|-------|
+| 39–32 (high byte) | Load address bits 7–0 | The load address's *only* contribution to the timestamp |
+| 31–0 (low 32 bits) | Exec address bits 31–0 | All 32 bits of exec, not just part of it |
+
+Unit: centiseconds (1/100 s) since the epoch above. `centiseconds = (load_low_byte << 32) | exec`.
 
 ### 3.4 Big Directory Structure (E+, F+, G)
 
@@ -558,6 +567,8 @@ Directory entries follow immediately after the header.
 | +0x10 | 4 | `BigDirAtts` — attributes |
 | +0x14 | 4 | `BigDirObNameLen` — length of object name in bytes |
 | +0x18 | 4 | `BigDirObNamePtr` — offset into name heap for this entry's name |
+
+Only the low 8 bits of `BigDirAtts` have a defined meaning, matching the single-byte attribute layout of old/new directories (§3.3). The upper 24 bits are not specified by any source consulted for this guide; real media has been observed with non-zero, non-attribute-looking values there (e.g. `0x2d363308` on two subdirectory entries of one sample disc) while the low byte still matched the standard layout. Treat the upper 24 bits as reserved/unspecified rather than erroring on them.
 
 The entry list has no terminating zero byte; `BigDirEntries` in the header gives the count. Entries are always word-aligned.
 
@@ -596,7 +607,9 @@ Here is the complete procedure to read a file given its pathname on a new-map di
 
 6. **Read the file data**: The fragments, concatenated in the order found (bit position within a zone, then zone order — §3.2), contain the file data. Read `length` bytes starting from the sharing offset within the first fragment.
 
-For **old-map discs**, step 5 is simpler: the directory entry contains a direct disc address (in 256-byte units for L/D format). The file is stored contiguously at that address.
+For **old-map discs**, step 5 differs by sub-format. **D format**: the directory entry's sector number (256-byte units) converts directly to a byte offset, unchanged — D's logical sector numbering is already the interleaved physical order the image file is stored in. **S/M/L format**: it is *not* that simple. The directory entry's sector number is in the *sequential* logical convention (§1.1: all of side 0's tracks, then all of side 1's), but `.ADL`/`.ADF` image files are always laid out in interleaved physical order regardless of map type — the same order D/E/F use. An S/M/L sector number must therefore be translated through that sequential-to-interleaved geometry (`sector_in_track + (track × heads + side) × sectors_per_track`; geometry — tracks-per-side, heads — is inferred from the disc's total sector count, since old-map floppies have no disc record: 640/1280/2560 sectors for S/M/L respectively) before it is a valid byte offset into the image file.
+
+Track 0 (the first 16 sectors) needs no translation either way, since side 0's first track is the same 16 sectors under both conventions — which is why this is easy to miss with a small test file or the root directory (both conventionally within track 0). Worked example on an L-format disc (2 heads, 16 sectors/track): sector 26 is track 1, sector 10 of side 0 under the sequential convention (`26 = 1×16 + 10`); converting that (track, side, sector) triple back out via the interleaved formula (`sector_in_track + (track × heads + side) × sectors_per_track`) gives `10 + (1×2+0)×16 = 42` — sector 42 is the true byte offset (`42 × 256 = 0x2A00`) of this file's data in the image file, not `26 × 256 = 0x1A00`. A second consequence follows from the same fact: a logically contiguous S/M/L file that spans a track boundary is *not* contiguous in the image file either, and must be read as multiple extents split at each track boundary.
 
 ---
 
@@ -659,7 +672,14 @@ Big directories differ from old/new directories in several ways:
 
 - **Variable directory size**: Big directories can grow. When a new entry is added and there isn't enough space, FileCore extends the directory by reallocating its disc object. The maximum size is 4 MB.
 
-- **4-byte SIN field**: The indirect disc address field is widened from 3 to 4 bytes, allowing `idlen` to go beyond the small map's 15-bit ceiling (`MaxIdLenSmlMap`) to as much as 21 bits, and so past the 32,765-object limit that ceiling implies.
+- **4-byte SIN field**: The indirect disc address field is widened from 3 to 4 bytes, allowing `idlen` to go beyond the small map's 15-bit ceiling (`MaxIdLenSmlMap`) to as much as 21 bits, and so past the 32,765-object limit that ceiling implies. No field table for the widened form is given by any source consulted for this guide. Empirically verified against a real RISC OS 4 disc (`format_version` = 1, `idlen` = 17: hand-decoding this hypothesis located the real root directory and its entries correctly, self-consistent name-heap offsets and all) as the same bit split as the 3-byte SIN (§3.2), just in a wider container:
+
+  | Bits | Field |
+  |------|-------|
+  | 31–8 | Fragment ID |
+  | 7–0 | Sharing offset |
+
+  Caveat: no fragment ID on the disc tested actually required the 17th bit or higher (max observed ID was `0xdd7c`, 16 bits) — the case that genuinely exercises the widening beyond 16 bits, rather than just providing a wider container for the same range, remains unconfirmed against real media.
 
 - **Different magic numbers**: `"SBPr"` and `"oven"` replace `"Hugo"` and `"Nick"`.
 
@@ -703,7 +723,7 @@ loop:
     AND    LR, LR, #&FF
 ```
 
-In pseudocode: sum all 32-bit words in the sector using add-with-carry (forming a 33-bit running sum), subtract the existing check byte, then fold the 32-bit result down to 8 bits via XOR. A mismatch indicates the zone sector has been corrupted.
+In pseudocode: sum all 32-bit words in the sector, in reverse (last word first, matching the assembly's pre-decrement addressing), using a genuine 32-bit accumulator and the CPU's single-bit carry flag — not a widened accumulator. Subtract the existing check byte, then fold the 32-bit result down to 8 bits via XOR. The final carry-out of the last addition is simply dropped, not folded back into the sum — there is no instruction after the loop to do so. A mismatch indicates the zone sector has been corrupted.
 
 In C:
 
@@ -714,21 +734,40 @@ In C:
 uint8_t zone_check(const uint8_t *sector, unsigned len)
 {
     const uint32_t *p = (const uint32_t *)(sector + len);
-    uint64_t sum = 0;                 /* 33-bit accumulator */
+    uint32_t sum = 0;                 /* genuine 32-bit accumulator */
+    unsigned carry = 0;               /* the CPU's single-bit carry flag */
 
     while (p != (const uint32_t *)sector) {
         p--;
-        sum += (uint32_t)*p + (sum >> 32);   /* ADCS: add with carry */
-        sum &= 0x1FFFFFFFF;                  /* keep 33 bits */
+        uint32_t word = *p;
+        uint32_t s1 = sum + word;
+        unsigned c1 = s1 < sum;               /* did that add overflow? */
+        uint32_t s2 = s1 + carry;
+        unsigned c2 = s2 < s1;                /* did adding the carry-in overflow? */
+        sum = s2;
+        carry = c1 | c2;                      /* ADCS: add with carry */
     }
+    /* carry now holds the final ADCS's carry-out, and is discarded here -
+       there is no instruction after the loop to fold it back in. */
 
-    uint32_t s = (uint32_t)sum;
-    s -= sector[0];                   /* subtract existing check byte */
-    s = s ^ (s >> 16);               /* fold 32 → 16 */
-    s = s ^ (s >> 8);                /* fold 16 → 8 */
-    return (uint8_t)(s & 0xFF);
+    sum -= sector[0];                 /* subtract existing check byte */
+    sum = sum ^ (sum >> 16);          /* fold 32 → 16 */
+    sum = sum ^ (sum >> 8);           /* fold 16 → 8 */
+    return (uint8_t)(sum & 0xFF);
 }
 ```
+
+**A tempting but wrong alternative**, worth ruling out explicitly since it's an easy mistake to make from the pseudocode alone: widening the accumulator to 64 bits and masking to 33 bits every iteration (`sum &= 0x1FFFFFFFF`) is *not* equivalent to the assembly's genuine 32-bit `ADCS` chain. That form computes `sum = sum + word + (sum >> 32)` each iteration — it adds the previous iteration's carry bit in as an operand while that same bit is *also* still resident in the accumulator's own bit 32, nothing having cleared it first. A real `ADCS` instruction consumes its carry-in exactly once per addition and produces exactly one fresh carry-out; this form can effectively count a carry twice across iterations. The two forms only diverge when that happens, which most individual test cases don't trigger — including, notably, any sector short enough or regular enough not to produce two carries in quick succession — which is why a bug of this shape can pass casual testing and even a self-consistency check (compute a checksum, verify it reads back the same way) without being noticed.
+
+The following 16-byte (4-word) inputs demonstrate the divergence — same bytes, both algorithms applied per the code above, decimal-verified against an independent implementation:
+
+| Sector words (offsets `+0x00`, `+0x04`, `+0x08`, `+0x0C`, little-endian) | Correct (32-bit accumulator) | Wrong (33-bit accumulator) |
+|---|---|---|
+| `F7B317E7 AA756808 FECA80D8 9E3E23D9` | `0x96` | `0x97` |
+| `AD4D89DE 24D4A54D 6793FF47 D2B9E979` | `0x65` | `0x64` |
+| `842957D8 4561F377 955B0D51 FF0ECF0B` | `0x5A` | `0x5B` |
+
+(For contrast, `00000001 00000002 00000003 00000004` gives `0x09` under both forms — most inputs don't distinguish them, which is exactly what makes this bug easy to miss.)
 
 **CrossCheck (offset +0x03):** The XOR of all zones' CrossCheck bytes should equal `0xFF`. A mismatch suggests one or more zone sectors have been corrupted or belong to a different disc.
 
@@ -1002,7 +1041,7 @@ Disc address 0x000:
   (On hard discs, and multi-zone floppies such as F format:)
   Disc address 0xC00:
   +-- Boot block                                         --+
-  |   [defect list][disc record][flag][checksum]            |
+  |   [defect list][disc record][partition descriptor][checksum] |
   +--                                                    --+
 ```
 
@@ -1014,7 +1053,7 @@ For a multi-zone disc (hard disc, or a multi-zone floppy such as F format), the 
 
 #### Step 1: Zero-fill the image
 
-Create a file of `disc_size + 0` bytes (or `disc_size` bytes if not adding an FCFS trailer), filled with zeros.
+Create a file of `disc_size` bytes, filled with zeros.
 
 #### Step 2: Write the boot block (hard discs, and multi-zone floppies)
 
@@ -1022,7 +1061,7 @@ At disc address `0xC00`:
 
 1. Write an empty defect list: a single word `0x20000000 | checkbyte` at offset `+0x000`. With no defects, the checkbyte is computed over an empty list, which gives `0x20000000`.
 2. Write the disc record at offset `+0x1C0` (60 bytes — that is all the boot block has room for; see §2.2).
-3. Write the boot block flag byte at `+0x1FC`.
+3. Write the non-ADFS partition descriptor at `+0x1FC`–`+0x1FE` (§2.2) — zero for an image with no foreign partition.
 4. Compute and write the boot block checksum — a single byte at `+0x1FF` (§2.2).
 
 #### Step 3: Initialise the zone map
@@ -1036,7 +1075,7 @@ b. Write the 4-byte zone header:
    - `FreeLink`: bit offset to the first free fragment (computed below).
    - `CrossCheck`: set so that all zones' CrossCheck bytes XOR to `0xFF`.
 
-c. For zone 0 only: write the disc record copy at offset `+0x04` (60 bytes of the 64-byte disc record, as the first 4 bytes of zone 0 are the zone header).
+c. For zone 0 only: write the 60-byte disc record copy at offset `+0x04`, immediately after the 4-byte zone header — 64 bytes total before the allocation bit stream begins.
 
 d. Write the allocation bit stream. For a single-zone disc, the stream contains exactly two fragments:
    - **Fragment ID 2 (system object)**: Covers the map sectors + root directory (+ boot block, if any — see below). Set the `idlen`-bit ID field to `2`, followed by enough `0` bits and a terminating `1` to cover the required number of allocation units.
@@ -1060,6 +1099,8 @@ Immediately after the last map block (within fragment ID 2), write an empty root
 
 **For big directories (E+, F+, G):**
 1. Write the header: sequence number, `BigDirVersion` = 0, start name `"SBPr"`, `BigDirNameLen` = 1, `BigDirSize` = directory size, `BigDirEntries` = 0, `BigDirNamesSize` = 4 (padded `"$"`), `BigDirParent` = 0.
+
+   *Caveat:* at least one real RISC OS 4 disc has been observed with the root's `BigDirParent` set to the root's own SIN (self-reference) rather than 0 — analogous to the old-map convention that a root directory's parent points back to itself (§2.3). This has not been reconciled against the `BigDirParent` = 0 given here; don't assume either value holds universally without testing against real media.
 2. Write `"$"` (CR-terminated, padded to 4 bytes) as the directory name in the header.
 3. Write the empty name heap (no entries).
 4. Write the tail: `"oven"`, end sequence number (matching header), reserved = 0, check byte.
@@ -1134,7 +1175,7 @@ Old-map floppies (S, M, L, D) have no boot block — the old map has no disc rec
 
 **Big directory** — Variable-length directory format used by E+, F+, and G. Identified by the `"SBPr"` / `"oven"` magic strings. Entry count is bounded by the 4 MB maximum directory size rather than by a fixed limit; filenames may be up to 255 characters, stored in a name heap.
 
-**Boot block** — A 512-byte structure at disc address `0xC00` on hard discs, and on new-map floppies with more than one zone (F format). Contains the defect list, a 60-byte copy of the disc record (at offset `+0x1C0`), a flag byte, and a one-byte checksum at `+0x1FF`. Single-zone new-map floppies (E format) and old-map floppies (S, M, L, D) have no boot block.
+**Boot block** — A 512-byte structure at disc address `0xC00` on hard discs, and on new-map floppies with more than one zone (F format). Contains the defect list, a 60-byte copy of the disc record (at offset `+0x1C0`), a non-ADFS partition descriptor at `+0x1FC`–`+0x1FE`, and a one-byte checksum at `+0x1FF`. Single-zone new-map floppies (E format) and old-map floppies (S, M, L, D) have no boot block.
 
 **bpmb** (`log2_bpmb`) — Disc record field: log₂ of the number of bytes per map bit (i.e. per allocation unit). Determines the map granularity.
 
@@ -1142,13 +1183,13 @@ Old-map floppies (S, M, L, D) have no boot block — the old map has no disc rec
 
 **CrossCheck** — Byte at offset `+0x03` in each zone header. The XOR of all zones' CrossCheck bytes must equal `0xFF`. Detects zone-level corruption or a zone belonging to a different disc.
 
-**Defect list** — A list of known bad-sector addresses stored in the boot block (hard discs only). Terminated by a word with bits 29–31 set and a check byte in bits 0–7. Fragment ID 1 in the zone map marks defective regions.
+**Defect list** — A list of known bad-sector addresses stored in the boot block: hard discs, and multi-zone new-map floppies (F format) that have one (§2.2); single-zone floppies and old-map discs have no boot block and so no defect list. Terminated by a word with bits 29–31 set and a check byte in bits 0–7. Fragment ID 1 in the zone map marks defective regions.
 
-**Disc address** — A byte offset from the start of the disc image. All FileCore addresses are byte offsets, not sector numbers (even on old-map discs where the free space map uses 256-byte units).
+**Disc address** — A byte offset from the start of the disc image. All FileCore addresses are byte offsets, not sector numbers — including on old-map discs, where the free space map's 256-byte-unit sector number converts directly to a byte offset **for D format**, but *not* for S/M/L, whose sector numbers are in a different (sequential) logical convention from the image file's own (always interleaved) physical layout and must be translated first. See §3.5.
 
-**Disc record** — A 20–64 byte structure describing the disc's geometry and map parameters. Found in the boot block (hard discs) or at the start of zone 0's map block (new-map discs). Key fields include `log2_sector_size`, `sectors_per_track`, `heads`, `idlen`, `log2_bpmb`, `nzones`, `root_dir`, and `disc_size`.
+**Disc record** — A 60-byte structure (the extended form, RISC OS 3.6+) describing the disc's geometry and map parameters; the earlier 32- and 52-byte forms are prefixes of the same layout (§2.1), with the remaining extended fields reading as zero on pre-3.6 media. Found in the boot block (hard discs) or at the start of zone 0's map block (new-map discs). Key fields include `log2_sector_size`, `sectors_per_track`, `heads`, `idlen`, `log2_bpmb`, `nzones`, `root_dir`, and `disc_size`.
 
-**Exec address** — The 32-bit execution address in a directory entry. For date-stamped files (top 12 bits of load address = `0xFFF`), the low 8 bits of the exec address hold the low byte of the 40-bit centisecond timestamp.
+**Exec address** — The 32-bit execution address in a directory entry. For date-stamped files (top 12 bits of load address = `0xFFF`), **all 32 bits** of the exec address are the low 32 bits of the 40-bit centisecond timestamp — not just the low 8. The load address's low byte supplies the remaining high 8 bits (see "Load address" below).
 
 **Filetype** — A 12-bit value encoded in bits 19–8 of the load address when the file is date-stamped (top 12 bits = `0xFFF`). Identifies the file's type (e.g. `0xFFD` = Data, `0xFFF` = Text).
 
@@ -1162,7 +1203,7 @@ Old-map floppies (S, M, L, D) have no boot block — the old map has no disc rec
 
 **idlen** — Disc record field: the number of bits used for fragment IDs in the zone map. Determines the maximum number of objects on disc (2^idlen − 3 usable IDs). Typically 15 for floppies and old-format hard discs. The Acorn Phase 1 spec (Ursula) raised the limit to 19 for big map discs; RISC OS 5 (FileCore 3.75, 2017) raised it further to 21.
 
-**LFAU** — Largest Fragment Allocation Unit. Defined as max(sector_size, bpmb). This is the minimum granularity at which disc space is actually allocated; files smaller than one LFAU share a fragment with their parent directory.
+**LFAU** — Largest File Allocation Unit. Defined as max(sector_size, bpmb). This is the minimum granularity at which disc space is actually allocated; files smaller than one LFAU share a fragment with their parent directory.
 
 **Load address** — The 32-bit load address in a directory entry. When the top 12 bits are `0xFFF`, the entry is date-stamped: bits 19–8 hold the filetype and bits 7–0 hold the high byte of the 40-bit timestamp. Otherwise it is an actual memory load address (Acorn legacy).
 
@@ -1190,11 +1231,11 @@ Old-map floppies (S, M, L, D) have no boot block — the old map has no disc rec
 
 **SIN** — System Internal Number. A disc address used in new-map directory entries. The top `idlen` bits (after shifting) give the fragment ID; the remaining bits give the sharing offset. Resolved by walking the zone maps to find all fragments with that ID, then applying the offset.
 
-**Zone** — One sector of the new map. Each zone manages a region of disc and contains a 4-byte header (`ZoneCheck`, `FreeLink`, `CrossCheck`) followed by a packed bit stream. Zone 0 additionally holds the disc record (64 bytes).
+**Zone** — One sector of the new map. Each zone manages a region of disc and contains a 4-byte header (`ZoneCheck`, `FreeLink`, `CrossCheck`) followed by a packed bit stream. Zone 0 additionally holds the 60-byte disc record immediately after its header — 64 bytes total before the allocation bit stream begins (§2.4).
 
 **ZoneCheck** — Checksum byte at offset `+0x00` in each zone header. Computed by summing all 32-bit words in the sector with carry, subtracting the existing check byte, and folding to 8 bits via XOR (see §A.1).
 
-**zone_spare** — Disc record field: the number of bits at the start of each non-zero zone reserved for a fragment whose bit pattern spans the zone boundary from the preceding zone. These continuation bits carry no fragment ID and belong to the last fragment of the preceding zone. See §3.1.
+**zone_spare** — Disc record field: per `hdr/FileCore`'s definition, the number of bits in each zone after zone 0 that are *not* map bits — the 4-byte zone header plus a **trailing** slack region at the *end* of the zone's allocation bit stream (§2.4's extent formulas follow directly from this reading). Do not read this as bits reserved at the *start* of a zone for a fragment spanning in from the previous one — that framing (found in the PRM) describes a disc-wide worst-case upper bound on cross-zone continuation, not a per-boundary constant, and unconditionally skipping bits at a zone's start on that basis loses real fragments. See §3.1.
 
 ---
 
