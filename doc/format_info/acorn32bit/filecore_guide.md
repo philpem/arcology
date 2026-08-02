@@ -1142,7 +1142,7 @@ Old-map floppies (S, M, L, D) have no boot block — the old map has no disc rec
 
 **CrossCheck** — Byte at offset `+0x03` in each zone header. The XOR of all zones' CrossCheck bytes must equal `0xFF`. Detects zone-level corruption or a zone belonging to a different disc.
 
-**Defect list** — A list of known bad-sector addresses stored in the boot block (hard discs only). Terminated by a word with bits 29–31 set and a check byte in bits 0–7. Fragment ID 1 in the zone map marks defective regions.
+**Defect list** — A list of known bad-sector addresses stored in the boot block: hard discs, and multi-zone new-map floppies (F format) that have one (§2.2); single-zone floppies and old-map discs have no boot block and so no defect list. Terminated by a word with bits 29–31 set and a check byte in bits 0–7. Fragment ID 1 in the zone map marks defective regions.
 
 **Disc address** — A byte offset from the start of the disc image. All FileCore addresses are byte offsets, not sector numbers (even on old-map discs where the free space map uses 256-byte units).
 
