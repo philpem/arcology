@@ -1076,6 +1076,8 @@ Immediately after the last map block (within fragment ID 2), write an empty root
 
 **For big directories (E+, F+, G):**
 1. Write the header: sequence number, `BigDirVersion` = 0, start name `"SBPr"`, `BigDirNameLen` = 1, `BigDirSize` = directory size, `BigDirEntries` = 0, `BigDirNamesSize` = 4 (padded `"$"`), `BigDirParent` = 0.
+
+   *Caveat:* at least one real RISC OS 4 disc has been observed with the root's `BigDirParent` set to the root's own SIN (self-reference) rather than 0 — analogous to the old-map convention that a root directory's parent points back to itself (§2.3). This has not been reconciled against the `BigDirParent` = 0 given here; don't assume either value holds universally without testing against real media.
 2. Write `"$"` (CR-terminated, padded to 4 bytes) as the directory name in the header.
 3. Write the empty name heap (no entries).
 4. Write the tail: `"oven"`, end sequence number (matching header), reserved = 0, check byte.
