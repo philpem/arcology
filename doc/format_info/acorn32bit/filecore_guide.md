@@ -1164,7 +1164,7 @@ Old-map floppies (S, M, L, D) have no boot block — the old map has no disc rec
 
 **idlen** — Disc record field: the number of bits used for fragment IDs in the zone map. Determines the maximum number of objects on disc (2^idlen − 3 usable IDs). Typically 15 for floppies and old-format hard discs. The Acorn Phase 1 spec (Ursula) raised the limit to 19 for big map discs; RISC OS 5 (FileCore 3.75, 2017) raised it further to 21.
 
-**LFAU** — Largest Fragment Allocation Unit. Defined as max(sector_size, bpmb). This is the minimum granularity at which disc space is actually allocated; files smaller than one LFAU share a fragment with their parent directory.
+**LFAU** — Largest File Allocation Unit. Defined as max(sector_size, bpmb). This is the minimum granularity at which disc space is actually allocated; files smaller than one LFAU share a fragment with their parent directory.
 
 **Load address** — The 32-bit load address in a directory entry. When the top 12 bits are `0xFFF`, the entry is date-stamped: bits 19–8 hold the filetype and bits 7–0 hold the high byte of the 40-bit timestamp. Otherwise it is an actual memory load address (Acorn legacy).
 
