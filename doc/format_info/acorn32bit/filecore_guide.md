@@ -721,7 +721,7 @@ loop:
     AND    LR, LR, #&FF
 ```
 
-In pseudocode: sum all 32-bit words in the sector using add-with-carry (forming a 33-bit running sum), subtract the existing check byte, then fold the 32-bit result down to 8 bits via XOR. A mismatch indicates the zone sector has been corrupted.
+In pseudocode: sum all 32-bit words in the sector, in reverse (last word first, matching the assembly's pre-decrement addressing), using a genuine 32-bit accumulator and the CPU's single-bit carry flag — not a widened accumulator. Subtract the existing check byte, then fold the 32-bit result down to 8 bits via XOR. The final carry-out of the last addition is simply dropped, not folded back into the sum — there is no instruction after the loop to do so. A mismatch indicates the zone sector has been corrupted.
 
 In C:
 
@@ -732,21 +732,40 @@ In C:
 uint8_t zone_check(const uint8_t *sector, unsigned len)
 {
     const uint32_t *p = (const uint32_t *)(sector + len);
-    uint64_t sum = 0;                 /* 33-bit accumulator */
+    uint32_t sum = 0;                 /* genuine 32-bit accumulator */
+    unsigned carry = 0;               /* the CPU's single-bit carry flag */
 
     while (p != (const uint32_t *)sector) {
         p--;
-        sum += (uint32_t)*p + (sum >> 32);   /* ADCS: add with carry */
-        sum &= 0x1FFFFFFFF;                  /* keep 33 bits */
+        uint32_t word = *p;
+        uint32_t s1 = sum + word;
+        unsigned c1 = s1 < sum;               /* did that add overflow? */
+        uint32_t s2 = s1 + carry;
+        unsigned c2 = s2 < s1;                /* did adding the carry-in overflow? */
+        sum = s2;
+        carry = c1 | c2;                      /* ADCS: add with carry */
     }
+    /* carry now holds the final ADCS's carry-out, and is discarded here -
+       there is no instruction after the loop to fold it back in. */
 
-    uint32_t s = (uint32_t)sum;
-    s -= sector[0];                   /* subtract existing check byte */
-    s = s ^ (s >> 16);               /* fold 32 → 16 */
-    s = s ^ (s >> 8);                /* fold 16 → 8 */
-    return (uint8_t)(s & 0xFF);
+    sum -= sector[0];                 /* subtract existing check byte */
+    sum = sum ^ (sum >> 16);          /* fold 32 → 16 */
+    sum = sum ^ (sum >> 8);           /* fold 16 → 8 */
+    return (uint8_t)(sum & 0xFF);
 }
 ```
+
+**A tempting but wrong alternative**, worth ruling out explicitly since it's an easy mistake to make from the pseudocode alone: widening the accumulator to 64 bits and masking to 33 bits every iteration (`sum &= 0x1FFFFFFFF`) is *not* equivalent to the assembly's genuine 32-bit `ADCS` chain. That form computes `sum = sum + word + (sum >> 32)` each iteration — it adds the previous iteration's carry bit in as an operand while that same bit is *also* still resident in the accumulator's own bit 32, nothing having cleared it first. A real `ADCS` instruction consumes its carry-in exactly once per addition and produces exactly one fresh carry-out; this form can effectively count a carry twice across iterations. The two forms only diverge when that happens, which most individual test cases don't trigger — including, notably, any sector short enough or regular enough not to produce two carries in quick succession — which is why a bug of this shape can pass casual testing and even a self-consistency check (compute a checksum, verify it reads back the same way) without being noticed.
+
+The following 16-byte (4-word) inputs demonstrate the divergence — same bytes, both algorithms applied per the code above, decimal-verified against an independent implementation:
+
+| Sector words (offsets `+0x00`, `+0x04`, `+0x08`, `+0x0C`, little-endian) | Correct (32-bit accumulator) | Wrong (33-bit accumulator) |
+|---|---|---|
+| `F7B317E7 AA756808 FECA80D8 9E3E23D9` | `0x96` | `0x97` |
+| `AD4D89DE 24D4A54D 6793FF47 D2B9E979` | `0x65` | `0x64` |
+| `842957D8 4561F377 955B0D51 FF0ECF0B` | `0x5A` | `0x5B` |
+
+(For contrast, `00000001 00000002 00000003 00000004` gives `0x09` under both forms — most inputs don't distinguish them, which is exactly what makes this bug easy to miss.)
 
 **CrossCheck (offset +0x03):** The XOR of all zones' CrossCheck bytes should equal `0xFF`. A mismatch suggests one or more zone sectors have been corrupted or belong to a different disc.
 
