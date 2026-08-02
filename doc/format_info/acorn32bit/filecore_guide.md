@@ -527,7 +527,14 @@ Reading title(19) then name(10) gives a title of `"!BootPSLCD"` zero-padded to 1
 
 A directory is reported as **"Broken"** if the master sequence number and validation string at the start (bytes `0x000`–`0x004`) do not match those at the end (`0x4FA`–`0x4FE` for small directories, `0x7FA`–`0x7FE` for large/new directories).
 
-**Load/execution address encoding:** If the top 12 bits of the load address are all set (`0xFFFxxxxx`), the file is date-stamped: bits 19–8 of the load address are the 12-bit filetype, and the remaining bits of load address and the execution address together form a 40-bit centisecond timestamp (epoch: 00:00:00 1 January 1900).
+**Load/execution address encoding:** If the top 12 bits of the load address are all set (`0xFFFxxxxx`), the file is date-stamped: bits 19–8 of the load address are the 12-bit filetype, and the remaining bits of load address and the execution address together form a 40-bit centisecond timestamp (epoch: 00:00:00 1 January 1900). The full split:
+
+| Timestamp bits | Source | Notes |
+|-----------------|--------|-------|
+| 39–32 (high byte) | Load address bits 7–0 | The load address's *only* contribution to the timestamp |
+| 31–0 (low 32 bits) | Exec address bits 31–0 | All 32 bits of exec, not just part of it |
+
+Unit: centiseconds (1/100 s) since the epoch above. `centiseconds = (load_low_byte << 32) | exec`.
 
 ### 3.4 Big Directory Structure (E+, F+, G)
 
