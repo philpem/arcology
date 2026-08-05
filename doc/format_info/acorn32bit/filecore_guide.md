@@ -95,7 +95,7 @@ else:
     # and the test above is only meaningful for floppies.
 ```
 
-**Do not use `disc_size > 512MB` or `big_flag` to distinguish E from F** — that tests something else entirely (RISC OS 3.6's hard-disc "big disc" partition flag) and gives the wrong answer for floppies. Confirmed on `adfs1600F.adf`, a genuine 1.6 MB F-format floppy (10 sectors/track, 4 zones): its `disc_size` is 1,638,400 bytes (nowhere near 512 MB) and `big_flag` is 0, so that test would call it "E".
+**Do not use `disc_size > 512MB` or `big_flag` to distinguish E from F** — that tests something else entirely (whether the disc record is the small- or large-form structure, §2.1; not a live disc-size test in current source) and gives the wrong answer for floppies. Confirmed on `adfs1600F.adf`, a genuine 1.6 MB F-format floppy (10 sectors/track, 4 zones): its `disc_size` is 1,638,400 bytes (nowhere near 512 MB) and `big_flag` is 0, so that test would call it "E".
 
 ---
 
@@ -139,10 +139,10 @@ The disc record is the single most important structure on a FileCore disc. Every
 |--------|------|-------|-------|
 | +0x14 | 2 | `disc_id` | Cycle ID, incremented on each write to disc structure. |
 | +0x16 | 10 | `disc_name` | Padded disc name. |
-| +0x20 | 4 | `disc_type` | Filing system number. |
+| +0x20 | 4 | `disc_type` | FileType of the disc image (`DiscRecord_DiscType`), obtained by broadcasting `Service_IdentifyDisc` at mount time — whichever filing-system module claims the disc returns its own registered filetype, which is stored here (`FileType_Data` if the service call went unserviced, i.e. the disc couldn't be identified). Functionally identifies which filing system formatted the disc, but the value itself is a RISC OS filetype obtained through the standard identification mechanism, not a small enumerated filing-system-number scheme. |
 | +0x24 | 4 | `disc_size_2` | High 32 bits of disc size (for discs > 4 GB). |
 | +0x28 | 1 | `share_size` | Log₂ of sharing granularity in sectors. |
-| +0x29 | 1 | `big_flag` | Bit 0: set if RISC OS partition >512 MB (`DiscRecord_BigMap_BigFlag`). Bits 1–7: reserved, must be 0. |
+| +0x29 | 1 | `big_flag` | Bit 0 (`DiscRecord_BigMap_BigFlag`): 0 for the small-form disc record, 1 for the large/extended form — `hdr/FileCore`'s own comment is just *"0 for small disc, 1 for big"*, no size threshold stated at the field itself. A `disc size > 512 MB` check does exist in `s/Identify`, but it's wrapped in a disabled conditional-assembly block (`[ {FALSE} ... ]`, commented *"Don't check for upper limit — its OK to be bigger"*) — dead code in current source, so don't treat this bit as a live ">512 MB" test. Bits 1–7: reserved, must be 0. |
 | +0x2A | 1 | `nzones_hi` | High byte of nzones (total nzones = `nzones | (nzones_hi << 8)`). |
 | +0x2B | 1 | | Reserved, must be 0. |
 | +0x2C | 4 | `format_version` | Disc format version (`DiscRecord_BigDir_DiscVersion`). 0 = old/new directories, 1 = big directories. |
