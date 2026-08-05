@@ -139,7 +139,7 @@ The disc record is the single most important structure on a FileCore disc. Every
 |--------|------|-------|-------|
 | +0x14 | 2 | `disc_id` | Cycle ID, incremented on each write to disc structure. |
 | +0x16 | 10 | `disc_name` | Padded disc name. |
-| +0x20 | 4 | `disc_type` | Filing system number. |
+| +0x20 | 4 | `disc_type` | FileType of the disc image (`DiscRecord_DiscType`), obtained by broadcasting `Service_IdentifyDisc` at mount time — whichever filing-system module claims the disc returns its own registered filetype, which is stored here (`FileType_Data` if the service call went unserviced, i.e. the disc couldn't be identified). Functionally identifies which filing system formatted the disc, but the value itself is a RISC OS filetype obtained through the standard identification mechanism, not a small enumerated filing-system-number scheme. |
 | +0x24 | 4 | `disc_size_2` | High 32 bits of disc size (for discs > 4 GB). |
 | +0x28 | 1 | `share_size` | Log₂ of sharing granularity in sectors. |
 | +0x29 | 1 | `big_flag` | Bit 0: set if RISC OS partition >512 MB (`DiscRecord_BigMap_BigFlag`). Bits 1–7: reserved, must be 0. |
