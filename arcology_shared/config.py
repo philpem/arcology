@@ -34,4 +34,23 @@ def parse_byte_size(value) -> int:
     except ValueError:
         raise ValueError(f"Invalid byte-size value: {value!r}") from None
 
+
+# The single truth table for boolean flags.  Truthy strings (case-insensitive):
+# '1', 'true', 'yes'.  Every other string — including 'on'/'off' and typos — is
+# false, so a misspelled value fails closed rather than silently enabling a flag.
+_TRUTHY_STRINGS = ('1', 'true', 'yes')
+
+
+def parse_bool(value, default: bool = False) -> bool:
+    """Coerce a config/env value to bool using the shared truth table.
+
+    ``None`` yields *default*; strings use the truthy-string set above;
+    everything else is coerced with ``bool()``.
+    """
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value.lower() in _TRUTHY_STRINGS
+    return bool(value)
+
 # vim: ts=4 sw=4 et

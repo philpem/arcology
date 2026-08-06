@@ -83,6 +83,17 @@ services:
       - LOG_LEVEL=INFO
       - MAX_ARCHIVE_DEPTH=10  # Maximum recursion depth for nested archives
       - WORKER_API_KEY=${WORKER_API_KEY}
+      # Sentry. Passed through individually rather than via `env_file: - .env`
+      # (as web/taskrunner do) so the worker keeps no database credentials or
+      # session secret -- it reaches the DB only through the REST API.
+      # Without these the worker's sentry_sdk never initialises and its
+      # capture_exception() on a failed job goes nowhere.
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - SENTRY_WORKER_DSN=${SENTRY_WORKER_DSN:-}
+      # Errors only by default: the worker's spans are not what Sentry is
+      # watched for here, and tracing is what exhausts the span quota.
+      - SENTRY_WORKER_TRACES_SAMPLE_RATE=${SENTRY_WORKER_TRACES_SAMPLE_RATE:-0}
+      - SENTRY_SEND_DEFAULT_PII=${SENTRY_SEND_DEFAULT_PII:-true}
       # REPLAY_PROCESS uses the Acorn Replay decompressor modules bundled in
       # the worker image (REPLAY_MODULES_DIR defaults to them). Override here to
       # point at a different/mounted module set. See doc/REPLAY_TRANSCODE.md.

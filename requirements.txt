@@ -46,7 +46,13 @@ authlib
 unittest-xml-reporting
 
 # Sentry API (optional)
-sentry-sdk
+# Upper bound (against house style of leaving versions open) because the
+# traces_sampler in myapp/app.py reads the request path from the 2.x sampling
+# context key "wsgi_environ", set by the WSGI integration.  If that shape
+# changes the sampler silently stops matching and every worker poll gets traced
+# again -- which exhausts the span quota within days, with no error to notice.
+# Before lifting this, re-check what the sampler is handed and update it.
+sentry-sdk<3
 
 # Optional: byte-level fuzzy hashing (TLSH) for near-duplicate file detection.
 # Installed in the web and worker Docker images (which have a C++ toolchain);
