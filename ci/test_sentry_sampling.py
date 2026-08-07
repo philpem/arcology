@@ -44,15 +44,36 @@ class TestTracesSampler(unittest.TestCase):
         from myapp.app import build_traces_sampler
         self.sampler = build_traces_sampler({})
 
-    def test_machine_polling_is_not_traced(self):
-        """The 96.2% of spans that no human ever waits on."""
-        for path in ('/api/analysis/pending',
-                     '/api/health',
-                     '/api/analysis/reset-stale',
+    def test_paths_with_nothing_to_measure_are_never_traced(self):
+        """A bare `SELECT 1` healthcheck and static files have no query to watch."""
+        for path in ('/api/health',
                      '/static/css/site.css',
                      '/static/js/site.js'):
             with self.subTest(path=path):
                 self.assertEqual(self.sampler(_ctx(path)), 0.0)
+
+    def test_poll_endpoints_are_sampled_thinly_not_dropped(self):
+        """These do real DB work, and run tens of thousands of times a day.
+
+        A query regression on the poll loop is expensive precisely because of
+        that frequency, so keep a thin sample rather than going blind.
+        """
+        for path in ('/api/analysis/pending',
+                     '/api/analysis/reset-stale'):
+            with self.subTest(path=path):
+                rate = self.sampler(_ctx(path))
+                self.assertGreater(rate, 0.0, 'poll latency must stay visible')
+                self.assertLessEqual(
+                    rate, 0.05,
+                    'poll volume is ~51k/day; a high rate re-floods the quota')
+
+    def test_untraced_paths_ignore_the_poll_rate(self):
+        """Raising the poll rate must not start tracing healthcheck/static."""
+        from myapp.app import build_traces_sampler
+        sampler = build_traces_sampler({'SENTRY_POLL_TRACES_SAMPLE_RATE': 1.0})
+        self.assertEqual(sampler(_ctx('/api/health')), 0.0)
+        self.assertEqual(sampler(_ctx('/static/css/site.css')), 0.0)
+        self.assertEqual(sampler(_ctx('/api/analysis/pending')), 1.0)
 
     def test_ui_pollers_are_sampled_not_dropped(self):
         """Kept visible for latency, but capped so open tabs can't dominate."""
@@ -81,7 +102,7 @@ class TestTracesSampler(unittest.TestCase):
 
     def test_api_analysis_detail_is_not_caught_by_the_pending_prefix(self):
         """/api/analysis/<id> must survive the /api/analysis/pending prefix."""
-        self.assertEqual(self.sampler(_ctx('/api/analysis/pending')), 0.0)
+        self.assertLess(self.sampler(_ctx('/api/analysis/pending')), 1.0)
         self.assertEqual(self.sampler(_ctx('/api/analysis/123')), 1.0)
         self.assertEqual(self.sampler(_ctx('/api/analyses')), 1.0)
 
@@ -108,6 +129,7 @@ class TestTracesSampler(unittest.TestCase):
         self.assertEqual(sampler(_ctx('/api/analysis/pending')), 0.001)
         self.assertEqual(sampler(_ctx('/stats.json')), 0.25)
         self.assertEqual(sampler(_ctx('/artefacts/abc')), 0.5)
+        self.assertEqual(sampler(_ctx('/api/health')), 0.0)
 
     def test_new_rate_keys_are_env_overridable(self):
         """The typed env loader must know about the new float keys."""
@@ -186,7 +208,8 @@ class TestSentryInitWiring(unittest.TestCase):
         self.assertIn('traces_sampler', kwargs)
 
         sampler = kwargs['traces_sampler']
-        self.assertEqual(sampler(_ctx('/api/analysis/pending')), 0.0)
+        self.assertEqual(sampler(_ctx('/api/health')), 0.0)
+        self.assertEqual(sampler(_ctx('/api/analysis/pending')), 0.01)
         self.assertEqual(sampler(_ctx('/artefacts/abc')), 1.0)
 
         # Profiling bills against a separate, previously-exhausted quota.

@@ -81,18 +81,29 @@ _ENV_JSON_KEYS = (
 # CSP_HEADER='' disables the Content-Security-Policy header.
 _ENV_STR_EMPTY_OK = frozenset({'CSP_HEADER'})
 
-# Request paths excluded from Sentry performance tracing (see
-# build_traces_sampler() below).
+# Request-path groups for Sentry performance tracing (see build_traces_sampler()).
 #
-# Machine-to-machine polling: fires on a fixed timer, always looks identical, and
-# nothing human ever waits on it.  Measured over one billing cycle these three
-# endpoints were 96.2% of all spans emitted -- enough to exhaust the span quota
-# roughly ten days into every month.
+# Machine-to-machine traffic fires on a fixed timer, always looks identical, and
+# nothing human waits on it.  Measured over one billing cycle it was 96.2% of all
+# spans emitted -- enough to exhaust the span quota roughly ten days into every
+# month.  It is split in two because the reason for excluding it differs.
+
+# Nothing worth measuring: the healthcheck is a bare `SELECT 1` and static assets
+# touch no database at all.  Never traced, at any sample rate.
 _UNTRACED_PATH_PREFIXES = (
-    '/api/analysis/pending',      # worker poll loop, ~1.7s aggregate
     '/api/health',                # docker-compose healthcheck, 30s
-    '/api/analysis/reset-stale',  # stale-job sweep, 50s
     '/static/',                   # Flask serves static assets itself
+)
+# High-frequency, but they do real database work -- and precisely because they run
+# tens of thousands of times a day, a query regression here is expensive: 50ms
+# added to the poll loop is ~43 minutes of extra database time daily.  Sampled at
+# a low rate (SENTRY_POLL_TRACES_SAMPLE_RATE) so a systemic slowdown is still
+# visible while the volume stays negligible.  Note this is head-based sampling:
+# Sentry picks before the request runs, so it catches "the endpoint got slower",
+# not "this one poll was slow".
+_POLL_PATH_PREFIXES = (
+    '/api/analysis/pending',      # worker poll loop, ~1.7s aggregate
+    '/api/analysis/reset-stale',  # stale-job sweep, 50s
 )
 # Browser UI pollers (templates/_polling.html), every 5-8s per open tab.  Sampled
 # rather than dropped: their queries are worth watching for latency, but an open
@@ -110,7 +121,7 @@ def build_traces_sampler(config):
     sampling decision is unit-testable without standing up Sentry.
     """
     default_rate = config.get('SENTRY_TRACES_SAMPLE_RATE', 1.0)
-    poll_rate = config.get('SENTRY_POLL_TRACES_SAMPLE_RATE', 0.0)
+    poll_rate = config.get('SENTRY_POLL_TRACES_SAMPLE_RATE', 0.01)
     ui_poll_rate = config.get('SENTRY_UI_POLL_TRACES_SAMPLE_RATE', 0.05)
 
     def traces_sampler(sampling_context):
@@ -119,9 +130,11 @@ def build_traces_sampler(config):
         # name is assigned after sampling has already happened, so matching
         # against it would silently no-op.
         path = sampling_context.get('wsgi_environ', {}).get('PATH_INFO', '')
-        # The rate is returned regardless of parent_sampled: an inbound
+        # Rates are returned regardless of parent_sampled: an inbound
         # sentry-trace header must not be able to re-admit polling traffic.
         if path.startswith(_UNTRACED_PATH_PREFIXES):
+            return 0.0
+        if path.startswith(_POLL_PATH_PREFIXES):
             return poll_rate
         if path.endswith(_UI_POLL_PATH_SUFFIXES):
             return ui_poll_rate
