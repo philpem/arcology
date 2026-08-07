@@ -94,7 +94,7 @@ class ArcologyClient:
 			return {}
 		return resp.json()
 
-	def get(self, endpoint: str, params: dict = None) -> dict:
+	def get(self, endpoint: str, params: dict | None = None) -> dict:
 		"""GET request to API endpoint."""
 		resp = self.session.get(self._url(endpoint), params=params, timeout=self.timeout)
 		return self._handle_response(resp)
@@ -164,9 +164,9 @@ class ArcologyClient:
 		return self.delete(f'items/{uuid}')
 
 	def upload_artefact(self, item_uuid: str, filepath: str, label: str,
-	                    artefact_type: str = None, description: str = None,
+	                    artefact_type: str | None = None, description: str | None = None,
 	                    auto_analyse: bool = True,
-	                    hints: dict = None,
+	                    hints: dict | None = None,
 	                    progress_cb=None, status_cb=None, tick_cb=None) -> dict:
 		"""Upload a file as a new artefact.
 
@@ -221,9 +221,9 @@ class ArcologyClient:
 		return self._handle_response(resp)
 
 	def upload_artefact_chunked(self, item_uuid: str, filepath: str, label: str,
-	                             artefact_type: str = None, description: str = None,
+	                             artefact_type: str | None = None, description: str | None = None,
 	                             auto_analyse: bool = True,
-	                             hints: dict = None,
+	                             hints: dict | None = None,
 	                             chunk_size: int = CHUNK_SIZE,
 	                             progress_cb=None, status_cb=None, tick_cb=None) -> dict:
 		"""Upload a large file using the resumable chunked upload protocol.
@@ -498,7 +498,7 @@ class ArcologyClient:
 	def get_analysis(self, uuid: str) -> dict:
 		return self.get(f'analysis/{uuid}')
 
-	def get_artefact_analyses_recursive(self, uuid: str, status: str = None) -> dict:
+	def get_artefact_analyses_recursive(self, uuid: str, status: str | None = None) -> dict:
 		params = {}
 		if status:
 			params['status'] = status
@@ -581,9 +581,9 @@ class ArcologyClient:
 	# ---- Upload with retry ----
 
 	def upload_artefact_retry(self, item_uuid: str, filepath: str, label: str,
-	                          artefact_type: str = None, description: str = None,
+	                          artefact_type: str | None = None, description: str | None = None,
 	                          auto_analyse: bool = True,
-	                          hints: dict = None,
+	                          hints: dict | None = None,
 	                          max_retries: int = 3,
 	                          progress_cb=None) -> dict:
 		"""Upload with exponential-backoff retry.
@@ -654,7 +654,7 @@ class ArcologyClient:
 		"""Queue a worker-side relink job for a hash database."""
 		return self.post_json(f'hash-databases/{db_id}/link', {})
 
-	def hash_lookup(self, md5: str = None, sha1: str = None) -> dict:
+	def hash_lookup(self, md5: str | None = None, sha1: str | None = None) -> dict:
 		"""Look up a file by hash: returns any matching KnownFile and every
 		extracted-file occurrence across the (visible) collection."""
 		params = {}

@@ -437,8 +437,8 @@ class ArcologyAPI:
         artefact_uuid: str,
         files: list[dict],
         filesystem: str = 'unknown',
-        label: str = None,
-        container_format: str = None,
+        label: str | None = None,
+        container_format: str | None = None,
         partition_index: int = 0,
         archive_comment: str | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
@@ -579,7 +579,7 @@ class ArcologyAPI:
         self,
         artefact_uuid: str,
         analysis_type: str,
-        hints: dict = None
+        hints: dict | None = None
     ) -> dict:
         """
         Queue a new analysis for an artefact.

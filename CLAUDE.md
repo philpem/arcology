@@ -216,7 +216,11 @@ See `doc/ADMIN_COMMANDS.md` for the full flag reference.
 - **Python 3.10+** (PEP 585 type hints in newer code).
 - **Linting**: CI runs `ruff check .` over the **entire repo**. Run it (and
   `ruff check --fix .`) before committing; the pre-push hook enforces it. Most
-  common issues: unsorted imports (I001), undefined names (F821).
+  common issues: unsorted imports (I001), undefined names (F821). The ruleset is
+  an explicit `select` in `pyproject.toml` — never `extend-select` on top of
+  Ruff's defaults, which shift between releases and once turned `master` red on
+  unchanged code. The rejected-rule triage is recorded there in comments; the CI
+  version pin (`.github/workflows/ci.yml`) is the second line of defence.
 - **Avoid legacy SQLAlchemy APIs.** The app-tests runner escalates
   `DeprecationWarning` (incl. SQLAlchemy `LegacyAPIWarning`) to a hard error, so
   legacy calls that only warn locally **fail in CI**. Use `db.session.get(Model, pk)`

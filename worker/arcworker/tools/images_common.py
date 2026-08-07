@@ -171,7 +171,7 @@ def _convert_pillow(input_path: Path, output_dir: Path,
     # Redirect C-level stderr (fd 2) so that LibTIFF error messages printed
     # directly by libtiff before the OSError is raised can be captured and
     # included in the failure record.
-    _stderr_tmp = tempfile.TemporaryFile()
+    _stderr_tmp = tempfile.TemporaryFile()  # noqa: SIM115 - dup2'd onto fd 2; must outlive this statement
     _stderr_saved = os.dup(2)
     os.dup2(_stderr_tmp.fileno(), 2)
     _exc: Exception | None = None

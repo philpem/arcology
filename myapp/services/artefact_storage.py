@@ -171,7 +171,7 @@ def _stream_file_digests(filepath_or_key: str, use_storage: bool):
     if use_storage:
         f = current_app.storage.open_read(filepath_or_key)
     else:
-        f = open(filepath_or_key, 'rb')
+        f = open(filepath_or_key, 'rb')  # noqa: SIM115 - one of two handle sources; closed in the finally below
 
     try:
         for chunk in iter(lambda: f.read(8192), b''):
