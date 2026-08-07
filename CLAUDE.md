@@ -535,6 +535,26 @@ SQLALCHEMY_DATABASE_URI=sqlite:///:memory: SECRET_KEY=test WORKER_API_KEY=test \
 Also verify manually when relevant: web CRUD/upload/search, API endpoints,
 analysis pipeline, and migrations (both directions).
 
+**`sqlite:///:memory:` shares one connection across threads.** Flask-SQLAlchemy
+binds an in-memory SQLite DB to a `StaticPool` — a *single* DBAPI connection
+handed to every thread — so two Sessions interleave transactions on it (one
+thread's app-context teardown issues a ROLLBACK that discards another thread's
+in-flight INSERT). Symptoms are `StaleDataError`, `no such savepoint:
+sa_savepoint_N` and `cannot commit - no transaction is active`, intermittent and
+load-dependent, so they surface under the parallel runner and not in isolation.
+Any test that drives **background threads** against the ORM (e.g. the
+chunked-upload finalise pool) must use a **file-backed** SQLite URI in its temp
+dir — that gets the default QueuePool, one connection per thread, as production
+PostgreSQL does. Set it in the environment *before* `create_app()`;
+Flask-SQLAlchemy builds the engine in `init_app()`, so mutating `app.config`
+afterwards is too late. See `_file_backed_db()` and the `StaticPool` guard in
+`ci/test_chunked_finalize.py` (gh#736).
+
+Separately — hygiene, not part of that fix — a chunked-upload test should point
+`CHUNK_DIR` (and the other path config) at its own temp dir rather than
+inheriting the shared `<instance_path>/.chunks`, whose sessions outlive the run
+and which every finalise walks in `purge_stale_chunks()`.
+
 ## Dependencies
 
 Python (`requirements.txt`): Flask, SQLAlchemy, Flask-SQLAlchemy, Flask-Migrate,
