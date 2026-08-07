@@ -145,9 +145,8 @@ def _make_dir_entry(name11: bytes, attr: int) -> bytes:
 
 class TestReadFatVolumeLabelFAT16(unittest.TestCase):
     def _write(self, data: bytes) -> Path:
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.img')
-        tmp.write(data)
-        tmp.close()
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.img') as tmp:
+            tmp.write(data)
         self.addCleanup(os.unlink, tmp.name)
         return Path(tmp.name)
 
@@ -288,9 +287,8 @@ def _build_fat32_image(
 
 class TestReadFatVolumeLabelFAT32(unittest.TestCase):
     def _write(self, data: bytes) -> Path:
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.img')
-        tmp.write(data)
-        tmp.close()
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.img') as tmp:
+            tmp.write(data)
         self.addCleanup(os.unlink, tmp.name)
         return Path(tmp.name)
 

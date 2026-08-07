@@ -1,8 +1,14 @@
 # Ruff lint configuration.
 #
-# Defaults (E4, E7, E9, F) cover pycodestyle-essential + pyflakes. We extend
-# them with isort (I), pyupgrade (UP) and flake8-bugbear (B). To pull in more
-# rule groups (e.g. SIM, C4, RUF), add to `extend-select` below.
+# The ruleset is pinned with an explicit `select` rather than layered on top of
+# Ruff's defaults. Ruff 0.16 widened those defaults and turned CI red on
+# unchanged code (issue #729); an explicit list stops a future release doing
+# that again. The guarantee is against *default-set* widening only — a new rule
+# added under a selected prefix (E, F, I, UP, B) still lands, so the version pin
+# in .github/workflows/ci.yml stays as the second line of defence.
+#
+# To pull in another rule group, add it to `select` below, then fix or `ignore`
+# whatever it reports.
 
 [tool.ruff]
 target-version = "py310"
@@ -16,11 +22,39 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-extend-select = [
-    "I",   # isort — sorted, grouped imports
-    "UP",  # pyupgrade — modernise syntax for target-version
-    "B",   # flake8-bugbear — likely bugs (mutable defaults, broad except, etc.)
+select = [
+    # Ruff's historical default set: pycodestyle essentials + pyflakes.
+    "E4",       # imports (E401 multiple on one line, E402 not at top of file)
+    "E7",       # statement-level errors (comparisons, bare except, ...)
+    "E9",       # syntax / IO errors
+    "F",        # pyflakes — undefined names, unused imports, f-string bugs
+    # Long-standing additions.
+    "I",        # isort — sorted, grouped imports
+    "UP",       # pyupgrade — modernise syntax for target-version
+    "B",        # flake8-bugbear — likely bugs (mutable defaults, broad except, etc.)
+    # Adopted from Ruff 0.16's widened defaults (issue #729 triage).
+    "RUF013",   # implicit Optional — `x: int = None` is a real annotation bug
+    "SIM115",   # open() outside a context manager — leaked handles in a long-lived worker
+    "PLW1510",  # subprocess.run without an explicit `check=` — silent command failures
 ]
+# Rejected from Ruff 0.16's defaults (issue #729 triage). Counts are from that
+# triage run against 0.16.1; these are deliberately *not* `ignore` entries,
+# because the explicit `select` above never enables them in the first place.
+#
+#   RUF059 (157)  unused unpacked variable — 150 of them are `mock.patch` decorator
+#                 arguments in ci/, where not asserting on a mock is the point.
+#   BLE001  (86)  blind except — worker and analysis code catches `Exception` on
+#                 purpose so one bad artefact cannot take down a run.
+#   RUF100  (48)  unused noqa — every hit is a directive for a rule this config does
+#                 not enable (E402/E712/BLE001). Enabling it would strip comments
+#                 that document *why* the code is written the way it is.
+#   DTZ     (19)  naive datetime — the DB columns store naive UTC; moving to
+#                 tz-aware datetimes is a schema decision, not a lint fix.
+#   EXE001   (9)  shebang without the exec bit — all nine are run as `python <file>`,
+#                 and the rule keys off a filesystem bit a checkout need not preserve,
+#                 which is the same "red on unchanged code" failure mode as #729.
+#   C4, PIE, S, FURB, PERF, RUF0xx and the rest of SIM (~90)
+#                 style-only. Sampled sites showed no defect; revisit individually.
 ignore = [
     # SQLAlchemy filter expressions need ==/!= rather than is/is not, since
     # `Column == None` compiles to `IS NULL` whereas `Column is None` is a

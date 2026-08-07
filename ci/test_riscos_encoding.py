@@ -224,13 +224,9 @@ class TestHasRiscosZipMetadata(unittest.TestCase):
 
     def _write_zip(self, entries, suffix='.zip'):
         """Write ZIP bytes to a temp file and return its path."""
-        f = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-        try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
             f.write(_make_zip_bytes(entries))
-            f.flush()
-            return Path(f.name)
-        finally:
-            f.close()
+        return Path(f.name)
 
     def test_detects_acorn_extra_field(self):
         """Returns True when a central-directory entry has the 0x4341 block."""
@@ -270,8 +266,8 @@ class TestHasRiscosZipMetadata(unittest.TestCase):
 
     def test_empty_file_returns_false(self):
         """Returns False gracefully for a zero-byte file."""
-        f = tempfile.NamedTemporaryFile(suffix='.zip', delete=False)
-        f.close()
+        with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as f:
+            pass  # deliberately left zero-length
         try:
             self.assertFalse(has_riscos_zip_metadata(Path(f.name)))
         finally:
@@ -279,9 +275,8 @@ class TestHasRiscosZipMetadata(unittest.TestCase):
 
     def test_not_a_zip_returns_false(self):
         """Returns False gracefully for a non-ZIP file."""
-        f = tempfile.NamedTemporaryFile(suffix='.zip', delete=False)
-        f.write(b'this is not a zip file at all')
-        f.close()
+        with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as f:
+            f.write(b'this is not a zip file at all')
         try:
             self.assertFalse(has_riscos_zip_metadata(Path(f.name)))
         finally:

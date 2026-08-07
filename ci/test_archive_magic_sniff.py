@@ -23,9 +23,8 @@ from worker.arcworker.analyses.extraction import _sniff_archive_magic
 class TestSniffArchiveMagic(unittest.TestCase):
 
     def _write(self, data: bytes) -> Path:
-        fh = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
-        fh.write(data)
-        fh.close()
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as fh:
+            fh.write(data)
         self.addCleanup(os.unlink, fh.name)
         return Path(fh.name)
 

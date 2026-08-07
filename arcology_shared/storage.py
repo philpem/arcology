@@ -558,7 +558,7 @@ class S3Storage(StorageBackend):
             resp = self._client.get_object(Bucket=self.bucket, Key=key)
             # Wrap the streaming body in a SpooledTemporaryFile so callers
             # get a seekable file-like object.
-            spool = tempfile.SpooledTemporaryFile(max_size=64 * 1024 * 1024)
+            spool = tempfile.SpooledTemporaryFile(max_size=64 * 1024 * 1024)  # noqa: SIM115 - returned to the caller, who owns closing it
             for chunk in resp['Body'].iter_chunks(8192):
                 spool.write(chunk)
             spool.seek(0)
