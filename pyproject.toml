@@ -36,6 +36,10 @@ select = [
     "RUF013",   # implicit Optional — `x: int = None` is a real annotation bug
     "SIM115",   # open() outside a context manager — leaked handles in a long-lived worker
     "PLW1510",  # subprocess.run without an explicit `check=` — silent command failures
+    "EXE001",   # shebang without the exec bit — keeps `./script.py` working as the
+                # shebang advertises. Git tracks the mode, so this survives a clone.
+                # (EXE002, the converse, is deliberately not selected — an executable
+                # helper without a shebang is a reasonable thing to add.)
 ]
 # Rejected from Ruff 0.16's defaults (issue #729 triage). Counts are from that
 # triage run against 0.16.1; these are deliberately *not* `ignore` entries,
@@ -50,9 +54,6 @@ select = [
 #                 that document *why* the code is written the way it is.
 #   DTZ     (19)  naive datetime — the DB columns store naive UTC; moving to
 #                 tz-aware datetimes is a schema decision, not a lint fix.
-#   EXE001   (9)  shebang without the exec bit — all nine are run as `python <file>`,
-#                 and the rule keys off a filesystem bit a checkout need not preserve,
-#                 which is the same "red on unchanged code" failure mode as #729.
 #   C4, PIE, S, FURB, PERF, RUF0xx and the rest of SIM (~90)
 #                 style-only. Sampled sites showed no defect; revisit individually.
 ignore = [
