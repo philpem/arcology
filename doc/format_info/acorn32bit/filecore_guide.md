@@ -28,7 +28,11 @@ A FileCore disc can use one of two **map types** (old or new) and one of three *
 | **F+** | New | Big | 512 | as F | 4 MB dir limit | 255 chars | RISC OS 4 |
 | **G** | New | Big | 2048 or 4096 | — (HD only) | 4 MB dir limit | 255 chars | RISC OS 5 |
 
-**S, M, and L** use an identical filesystem structure — the old map and old directory formats described in this document. They differ only in physical geometry: S is a 160 KB single-sided 40-track floppy, M is a 320 KB single-sided 80-track floppy, and L is a 640 KB double-sided 80-track floppy. Hard discs formatted with old-map ADFS also use the same structure with 256-byte sectors and geometry determined by the drive. (See [mdfs.net ADFS structure](https://mdfs.net/Docs/Comp/Disk/Format/ADFS) for a thorough treatment of the 8-bit formats.)
+**S, M, and L** use an identical filesystem structure — the old map and old directory formats described in this document. They differ only in physical geometry: S is a 160 KB single-sided 40-track floppy, M is a 320 KB single-sided 80-track floppy, and L is a 640 KB double-sided 80-track floppy. (See [mdfs.net ADFS structure](https://mdfs.net/Docs/Comp/Disk/Format/ADFS) for a thorough treatment of the 8-bit formats.)
+
+**Old-map *hard* discs share the old map but not the old directories.** They use 256-byte sectors with geometry determined by the drive, and `0x800`-byte, 77-entry **new** directories — not the `0x500`, 47-entry old ones. This follows from how FileCore decides: old directories are selected only for a disc identified as a FileCore *floppy* with 256-byte sectors and 16 sectors per track (§1.3). A hard disc fails that test whatever its sector size, and takes `D_Root` (`0x400`) for its root accordingly (§2.3). So an Archimedes ST506 or early IDE image should be read with `0x800` directories, not `0x500`.
+
+This one is derived from the source (`ReadFsMap` and `s/Identify`, §1.3) rather than observed: none of the sample images behind this guide is an old-map hard disc, so the conclusion has not been checked against real media. It is at least consistent with RISC OS 3.7 being able to read Archimedes-era hard discs at all, since the rule above is what that version of FileCore applies to them.
 
 **E and F** (and their + variants) share the same on-disc structures — new map, new directories, and boot block. The format letter reflects the disc record parameters (sector size, sectors per track, number of zones) rather than any structural difference. F format was introduced in RISC OS 3.6 for 1.6 MB floppies with 10 sectors per track and 4 zones; E format uses 5 sectors per track and typically 1 zone. Hard discs use the same structures regardless of whether they are labelled E or F — the distinction is just the default parameter choices at format time. Similarly, E+ and F+ differ only in parameters; both use big directories and the new map. (Source: `Doc/Formats` in the FileCore source tree.)
 
@@ -38,7 +42,7 @@ A FileCore disc can use one of two **map types** (old or new) and one of three *
 
 Read the disc record (see §2). The `nzones` field distinguishes the two map types by implication — but the most reliable test is to check for the **old map signature**:
 
-- **Old map (S, M, L, D)**: A flat free-space table occupying two 256-byte sectors at disc addresses `0x000` and `0x100`. Not a bit stream. See §2.5 for the full layout.
+- **Old map (S, M, L, D, and old-map hard discs)**: A flat free-space table occupying two 256-byte sectors at disc addresses `0x000` and `0x100`. Not a bit stream. See §2.5 for the full layout.
 
 - **New map (E, F, E+, F+, G)**: The disc record has `nzones >= 1` and `idlen >= 1`. The allocation data is a packed bit stream in zone sectors. There is no flat free-space table.
 
@@ -46,7 +50,7 @@ A pragmatic identification approach for a disc image of unknown format (from [md
 
 1. Read at offset `0x200` (512 bytes from the start). If bytes 1–4 are `"Hugo"` or `"Nick"`, this is the root directory of a 256-byte-sector old-map disc (S, M, or L).
 
-2. If no match, read at offset `0x400` (1024 bytes). If bytes 1–4 are `"Hugo"` or `"Nick"`, this is an **old-map D-format disc** — `0x400` is D's fixed root-directory address (§2.3). E and F discs will *not* match here: their root is wherever `root_dir` points, and on a single-zone E floppy `0x400` holds the backup copy of the zone 0 map block. Fall through to steps 3–4 for those.
+2. If no match, read at offset `0x400` (1024 bytes). If bytes 1–4 are `"Hugo"` or `"Nick"`, this is an **old-map disc with new directories** — D format, or an old-map hard disc (§1.1). `0x400` is `D_Root` in `s/Defns`, the root-directory address FileCore uses for every old-map disc that isn't S/M/L (`0x200` = `L_Root` is the S/M/L case caught in step 1). E and F discs will *not* match here: their root is wherever `root_dir` points, and on a single-zone E floppy `0x400` holds the backup copy of the zone 0 map block. Fall through to steps 3–4 for those.
 
 3. On a hard disc, read the boot block at disc address `0xC00`. The disc record is at offset `+0x1C0` within it. If `idlen` (disc record offset `+0x04`) is non-zero, the disc uses a new map. This also applies to multi-zone new-map floppies (F format) — see §2.2. If the boot block fields aren't plausible (e.g. all zero), the disc may be a single-zone new-map floppy (E format); fall through to step 4.
 
@@ -60,7 +64,9 @@ Having identified the map type, determine the directory format by examining the 
 
 - **Old directories** (S, M, L): Exactly `0x500` bytes (5 × 256-byte sectors), up to 47 entries. The header and tail contain the validation string `"Hugo"` — 8-bit ADFS does not support `"Nick"`. Attributes are encoded in name bytes rather than a separate field (see §3.3). The check byte at the end of the directory is always zero on 8-bit ADFS; 32-bit ADFS computes it (see §A.2).
 
-- **New directories on old-map media** (D): Same entry structure as old directories but `0x800` bytes (2048 bytes = 2 × 1024-byte sectors) and up to 77 entries. Attributes are stored in a separate byte (offset `+0x19` of the entry) rather than in the name bits. The validation string may be `"Hugo"` or `"Nick"`.
+  **The discriminator is not the sector size.** FileCore does not infer the directory format from `log2_sector_size`; it reads an in-RAM `DiscFlags` bit, `OldDirFlag` (`s/Defns`: *"set <=> old small dirs"*), which `TestDir` (`s/FileCore40`) tests on every directory operation. `ReadFsMap` (`s/FileCore20`) derives that bit at mount time, and its own comment gives the rule: *"OldDirFlag set only if Floppy, 256 bytes sectors and 16 sectors per track"* — a three-way test of `DiscRecord_DiscType == FileType_FileCoreFloppyDisc`, `log2_sector_size == 8` and `sectors_per_track == 16`. The new-map path clears the bit unconditionally. Since `s/Identify` assigns `FileType_FileCoreHardDisc` to hard discs and `FileType_FileCoreFloppyDisc` to floppies, **old directories occur only on S, M and L floppies**; every other FileCore disc, old-map hard discs included, uses `0x800` new directories (§1.1).
+
+- **New directories on old-map media** (D, and old-map hard discs): Same entry structure as old directories but `0x800` bytes and up to 77 entries. `NewDirSize` is a hard constant, so the byte count is the same either way — 2 sectors on D's 1024-byte sectors, 8 on a 256-byte-sector hard disc. Attributes are stored in a separate byte (offset `+0x19` of the entry) rather than in the name bits. The validation string may be `"Hugo"` or `"Nick"`.
 
 - **New directories** (E, F): Same structure as D, except that the parent field in the tail is a SIN rather than a sector address (§3.3). Always `0x800` bytes (2048), holding up to 77 entries — `NewDirSize` is a hard constant in `s/Defns`, not derived from the sector size or the LFAU. The validation string may be `"Nick"` **or** `"Hugo"` — do not test for `"Nick"` alone. RISC OS writes `"Nick"` for directories it creates, but formatting software often writes `"Hugo"` for the root: on both sample hard discs the root is `"Hugo"` while all 4,857 subdirectories are `"Nick"`. (PRM vol. 2, ch. 28, "Directories".)
 
@@ -77,8 +83,13 @@ disc_record = read boot_block at 0xC00
 if disc_record is all zero or implausible:
     disc_record = read disc_record at 0x04   # zone 0 map block, floppy
 if disc_record.idlen == 0:
-    format = old map (L or D)
-    dir_type = old
+    format = old map
+    # Do NOT assume old directories here: only S/M/L use them.
+    # The root's location tells you which (§1.2, §1.3):
+    if root at 0x200 validates:   # L_Root
+        dir_type = old            # S, M, L         (0x500, 47 entries)
+    else:                         # root at 0x400 = D_Root
+        dir_type = new            # D, or old-map hard disc (0x800, 77 entries)
 else:
     format = new map
     if disc_record.format_version == 1:   # offset 0x2C
@@ -117,37 +128,39 @@ The disc record is the single most important structure on a FileCore disc. Every
 
 **The disc record structure (20 bytes minimum, extended to 60 bytes from RISC OS 3.6):**
 
-| Offset | Size | Field | Notes |
-|--------|------|-------|-------|
-| +0x00 | 1 | `log2_sector_size` | Log₂ of sector size in bytes (8 = 256, 9 = 512, 10 = 1024). |
-| +0x01 | 1 | `sectors_per_track` | Sectors per track (physical geometry). |
-| +0x02 | 1 | `heads` | Number of disc surfaces — but *n−1* on old ADFS floppy formats (`hdr/FileCore`). |
-| +0x03 | 1 | `density` | Encoding density (0 = hard disc, 1 = single, 2 = double, 3 = double+, 4 = quad, 8 = octal). |
-| +0x04 | 1 | `idlen` | Fragment ID width in bits. 0 for old map. Max 15 (new map), 19 (big map, Ursula), or 21 (RISC OS 5). |
-| +0x05 | 1 | `log2_bpmb` | Log₂ of bytes per map bit (allocation unit size). |
-| +0x06 | 1 | `skew` | Track-to-track sector skew for head positioning. |
-| +0x07 | 1 | `boot_option` | Boot action (0 = none, 1 = load, 2 = run, 3 = exec). |
-| +0x08 | 1 | `low_sector` | Bits 0–5 (`DiscRecord_LowSector_Mask`): lowest sector number on a track. Bit 6 `DiscRecord_SequenceSides_Flag`: tracks are numbered 0..s−1 on side 0, then s..2s−1 on side 1 (see §1.1). Bit 7 `DiscRecord_DoubleStep_Flag`: double stepping. |
-| +0x09 | 1 | `nzones` | Number of zones in the allocation map (low byte). |
-| +0x0A | 2 | `zone_spare` | `hdr/FileCore` defines this as *"# bits in zones after 0 which are not map bits"* — i.e. the 32-bit zone header plus the trailing slack. That definition yields the extent formulas in §2.4 directly. The PRM instead describes it as the worst-case number of bits reservable for a fragment spanning in from the previous zone; that is a disc-wide upper bound, not a per-boundary constant (see §3.1). |
-| +0x0C | 4 | `root_dir` | Disc address of the root directory (see §2.3). |
-| +0x10 | 4 | `disc_size` | Total disc size in bytes (low 32 bits). |
+| Offset | Size | Field | PRM / source | Notes |
+|--------|------|-------|--------------|-------|
+| +0x00 | 1 | `log2_sector_size` | `log2secsize` / `DiscRecord_Log2SectorSize` | Log₂ of sector size in bytes (8 = 256, 9 = 512, 10 = 1024). |
+| +0x01 | 1 | `sectors_per_track` | `secspertrack` / `DiscRecord_SecsPerTrk` | Sectors per track (physical geometry). |
+| +0x02 | 1 | `heads` | `heads` / `DiscRecord_Heads` | Number of disc surfaces — but *n−1* on old ADFS floppy formats (`hdr/FileCore`). |
+| +0x03 | 1 | `density` | `density` / `DiscRecord_Density` | Encoding density (0 = hard disc, 1 = single, 2 = double, 3 = double+, 4 = quad, 8 = octal). |
+| +0x04 | 1 | `idlen` | `idlen` / `DiscRecord_IdLen` | Fragment ID width in bits. 0 for old map. Max 15 (new map), 19 (big map, Ursula), or 21 (RISC OS 5). |
+| +0x05 | 1 | `log2_bpmb` | `log2bpmb` / `DiscRecord_Log2bpmb` | Log₂ of bytes per map bit (allocation unit size). |
+| +0x06 | 1 | `skew` | `skew` / `DiscRecord_Skew` | Track-to-track sector skew for head positioning. |
+| +0x07 | 1 | `boot_option` | `bootoption` / `DiscRecord_BootOpt` | Boot action (0 = none, 1 = load, 2 = run, 3 = exec). |
+| +0x08 | 1 | `low_sector` | `lowsector` / `DiscRecord_LowSector` | Bits 0–5 (`DiscRecord_LowSector_Mask`): lowest sector number on a track. Bit 6 `DiscRecord_SequenceSides_Flag`: tracks are numbered 0..s−1 on side 0, then s..2s−1 on side 1 (see §1.1). Bit 7 `DiscRecord_DoubleStep_Flag`: double stepping. |
+| +0x09 | 1 | `nzones` | `nzones` / `DiscRecord_NZones` | Number of zones in the allocation map (low byte). |
+| +0x0A | 2 | `zone_spare` | `zone_spare` / `DiscRecord_ZoneSpare` | `hdr/FileCore` defines this as *"# bits in zones after 0 which are not map bits"* — i.e. the 32-bit zone header plus the trailing slack. That definition yields the extent formulas in §2.4 directly. The PRM instead describes it as the worst-case number of bits reservable for a fragment spanning in from the previous zone; that is a disc-wide upper bound, not a per-boundary constant (see §3.1). |
+| +0x0C | 4 | `root_dir` | `root` / `DiscRecord_Root` | Disc address of the root directory (see §2.3). |
+| +0x10 | 4 | `disc_size` | `disc_size` / `DiscRecord_DiscSize` | Total disc size in bytes (low 32 bits). |
 
 **Extended fields (RISC OS 3.6+, at offsets 0x14–0x3F):**
 
-| Offset | Size | Field | Notes |
-|--------|------|-------|-------|
-| +0x14 | 2 | `disc_id` | Cycle ID, incremented on each write to disc structure. |
-| +0x16 | 10 | `disc_name` | Padded disc name. |
-| +0x20 | 4 | `disc_type` | FileType of the disc image (`DiscRecord_DiscType`), obtained by broadcasting `Service_IdentifyDisc` at mount time — whichever filing-system module claims the disc returns its own registered filetype, which is stored here (`FileType_Data` if the service call went unserviced, i.e. the disc couldn't be identified). Functionally identifies which filing system formatted the disc, but the value itself is a RISC OS filetype obtained through the standard identification mechanism, not a small enumerated filing-system-number scheme. |
-| +0x24 | 4 | `disc_size_2` | High 32 bits of disc size (for discs > 4 GB). |
-| +0x28 | 1 | `share_size` | Log₂ of sharing granularity in sectors. |
-| +0x29 | 1 | `big_flag` | Bit 0 (`DiscRecord_BigMap_BigFlag`): 0 for the small-form disc record, 1 for the large/extended form — `hdr/FileCore`'s own comment is just *"0 for small disc, 1 for big"*, no size threshold stated at the field itself. A `disc size > 512 MB` check does exist in `s/Identify`, but it's wrapped in a disabled conditional-assembly block (`[ {FALSE} ... ]`, commented *"Don't check for upper limit — its OK to be bigger"*) — dead code in current source, so don't treat this bit as a live ">512 MB" test. Bits 1–7: reserved, must be 0. |
-| +0x2A | 1 | `nzones_hi` | High byte of nzones (total nzones = `nzones | (nzones_hi << 8)`). |
-| +0x2B | 1 | | Reserved, must be 0. |
-| +0x2C | 4 | `format_version` | Disc format version (`DiscRecord_BigDir_DiscVersion`). 0 = old/new directories, 1 = big directories. |
-| +0x30 | 4 | `root_size` | Size of root directory in bytes (`DiscRecord_BigDir_RootDirSize`, big directories). |
-| +0x34 | 8 | — | Reserved (`DiscRecord_BigDir_Reserved`). |
+| Offset | Size | Field | PRM / source | Notes |
+|--------|------|-------|--------------|-------|
+| +0x14 | 2 | `disc_id` | `disc_id` / `DiscRecord_DiscId` | Cycle ID, incremented on each write to disc structure. |
+| +0x16 | 10 | `disc_name` | `disc_name` / `DiscRecord_DiscName` | Padded disc name. |
+| +0x20 | 4 | `disc_type` | `disctype` / `DiscRecord_DiscType` | FileType of the disc image, obtained by broadcasting `Service_IdentifyDisc` at mount time — whichever filing-system module claims the disc returns its own registered filetype, which is stored here (`FileType_Data` if the service call went unserviced, i.e. the disc couldn't be identified). Functionally identifies which filing system formatted the disc, but the value itself is a RISC OS filetype obtained through the standard identification mechanism, not a small enumerated filing-system-number scheme. |
+| +0x24 | 4 | `disc_size_2` | — / `DiscRecord_BigMap_DiscSize2` | High 32 bits of disc size (for discs > 4 GB). |
+| +0x28 | 1 | `share_size` | — / `DiscRecord_BigMap_ShareSize` | Log₂ of sharing granularity in sectors. |
+| +0x29 | 1 | `big_flag` | — / `DiscRecord_BigMap_Flags` | The field is a **flags byte**; the guide's name follows its bit 0. Bit 0 (`DiscRecord_BigMap_BigFlag`): 0 for the small-form disc record, 1 for the large/extended form — `hdr/FileCore`'s own comment is just *"0 for small disc, 1 for big"*, no size threshold stated at the field itself. A `disc size > 512 MB` check does exist in `s/Identify`, but it's wrapped in a disabled conditional-assembly block (`[ {FALSE} ... ]`, commented *"Don't check for upper limit — its OK to be bigger"*) — dead code in current source, so don't treat this bit as a live ">512 MB" test. Bits 1–7: reserved, must be 0. |
+| +0x2A | 1 | `nzones_hi` | — / `DiscRecord_BigMap_NZones2` | High byte of nzones (total nzones = `nzones \| (nzones_hi << 8)`). |
+| +0x2B | 1 | | — / `DiscRecord_BigMap_Reserved` | Reserved, must be 0. |
+| +0x2C | 4 | `format_version` | — / `DiscRecord_BigDir_DiscVersion` | Disc format version. 0 = old/new directories, 1 = big directories. |
+| +0x30 | 4 | `root_size` | — / `DiscRecord_BigDir_RootDirSize` | Size of root directory in bytes (big directories). |
+| +0x34 | 8 | — | — / `DiscRecord_BigDir_Reserved` | Reserved. |
+
+The PRM column is empty from `+0x24` onwards, and that absence is itself informative: PRM vol. 2 ch. 28 names the record only as far as `disctype` and marks `+0x24`–`+0x3B` simply as reserved. Everything below that line is a RISC OS 3.6 addition, documented in vol. 5a ch. 110 and in `hdr/FileCore`.
 
 The record ends at `+0x3C`, i.e. it is **60 bytes** (`SzDiscRecSigSpace` in `hdr/FileCore`), not 64. Two other sizes appear in the source and are worth knowing: `SzDiscRecSig` = 32 (the pre-3.6 record, through `disc_name`) and `SzDiscRecSig2` = 52 (through `root_size`), the size published in the public header file. That 52-byte figure is a struct-definition size, not what's physically written to disc — the boot block itself stores the full 60-byte record (§2.2, §C.3). There is no "disc needs checking" flag at `+0x34`, and no on-disc "dirty" state anywhere in FileCore — `hdr/FileCore` and the Phase 2 Functional Specification (§7.5) both make `0x34`–`0x3B` reserved. (The only such flag in the source is `BufDirDirty`, an in-RAM directory-buffer writeback bit in `s/FileCore25`.)
 
@@ -194,11 +207,13 @@ FileCore discs do not use x86-style MBR partition tables.
 
 ### 2.3 The Root Directory
 
-The root directory's location depends on the map and sector type:
+The root directory's location depends on the map type and the directory type:
 
-- **Old map, 256-byte sectors (S, M, L, and old-map hard discs)**: The root directory is at a fixed disc address: `0x200` (sector 2). It occupies 5 sectors (`0x500` bytes) through to `0x6FF`. The parent of the root directory points back to itself.
+On old-map discs the root is at one of two fixed addresses, chosen by the same `OldDirFlag` that selects the directory format (§1.3) — so the split is by *directory* type, not by sector size:
 
-- **Old map, 1024-byte sectors (D)**: The root directory is at disc address `0x400` (logical sector 1 in 1024-byte terms). It occupies 2 sectors (`0x800` bytes).
+- **Old map, old directories (S, M, L)**: The root directory is at disc address `0x200` (`L_Root` in `s/Defns`, sector 2). It occupies 5 sectors (`0x500` bytes) through to `0x6FF`. The parent of the root directory points back to itself.
+
+- **Old map, new directories (D, and old-map hard discs)**: The root directory is at disc address `0x400` (`D_Root`). It occupies `0x800` bytes — 2 sectors on D's 1024-byte sectors, 8 on a 256-byte-sector hard disc.
 
 - **New map (E, F, E+, F+, G)**: The root directory's disc address is stored in the disc record's `root_dir` field (offset `+0x0C`). For standard E/F format discs, this is an **indirect disc address** (internal address) of the form `0x0002xx`, where `02` is the fragment ID of the system object (boot block + zone map + root directory) and `xx` is the sharing offset within that object. The root directory is stored immediately after the zone map sectors within fragment ID 2.
 
@@ -258,28 +273,30 @@ See §3.1 for how to decode the bit stream.
 
 ### 2.5 The Old Free Space Map
 
-Old-map discs (S, M, L, D) have a simple free space table rather than a bit stream. The map occupies two 256-byte sectors at disc addresses `0x000` and `0x100`.
+Old-map discs (S, M, L, D, and old-map hard discs) have a simple free space table rather than a bit stream. The map occupies two 256-byte sectors at disc addresses `0x000` and `0x100`.
 
 **Sector 0 (free space start addresses):**
 
-| Offset | Size | Content |
-|--------|------|---------|
-| +0x00 | 82 × 3 | Start sector of each free extent (3 bytes each, in units of 256 bytes) |
-| +0xF6 | 1 | Level 3 fileserver partition sector, or zero (see caveat below) |
-| +0xF7 | 5 | Zero, or the *even*-indexed characters (0, 2, 4, 6, 8) of the 10-character RISC OS disc name, interleaved with sector 1 |
-| +0xFC | 3 | Total number of sectors on disc |
-| +0xFF | 1 | Checksum of sector 0 |
+| Offset | Size | Field | Content |
+|--------|------|-------|---------|
+| +0x00 | 82 × 3 | `FreeStart` | Disc address of each free extent, shifted right 8 (× 256 for a byte offset) |
+| +0xF6 | 1 | — | Reserved (`EndSpaceList` marks the end of `FreeStart` here). Level 3 fileserver partition sector per some sources — see caveat below |
+| +0xF7 | 5 | `OldName0` | Zero, or the *even*-indexed characters (0, 2, 4, 6, 8) of the 10-character RISC OS disc name, interleaved with sector 1 |
+| +0xFC | 3 | `OldSize` | Total disc size, in 256-byte units |
+| +0xFF | 1 | `Check0` | Checksum of sector 0 |
 
 **Sector 1 (free space lengths):**
 
-| Offset | Size | Content |
-|--------|------|---------|
-| +0x00 | 82 × 3 | Length of each free extent (3 bytes each, in units of 256 bytes) |
-| +0xF6 | 5 | Zero, or the *odd*-indexed characters (1, 3, 5, 7, 9) of the 10-character RISC OS disc name, interleaved with sector 0 |
-| +0xFB | 2 | Disc identifier (random 16-bit value set at format time) |
-| +0xFD | 1 | Boot option (set by `*OPT 4`) |
-| +0xFE | 1 | Pointer to end of free space list: `3 × (number of free extents)` |
-| +0xFF | 1 | Checksum of sector 1 |
+| Offset | Size | Field | Content |
+|--------|------|-------|---------|
+| +0x00 | 82 × 3 | `FreeLen` | Length of each free extent, in 256-byte units |
+| +0xF6 | 5 | `OldName1` | Zero, or the *odd*-indexed characters (1, 3, 5, 7, 9) of the 10-character RISC OS disc name, interleaved with sector 0 |
+| +0xFB | 2 | `OldId` | Disc identifier (random 16-bit value set at format time) |
+| +0xFD | 1 | `OldBoot` | Boot option (set by `*OPT 4`) |
+| +0xFE | 1 | `FreeEnd` | Pointer to end of free space list: `3 × (number of free extents)` |
+| +0xFF | 1 | `Check1` | Checksum of sector 1 |
+
+The field names above are used by both the PRM and `s/Defns`, which agree throughout on this structure.
 
 The disc name is reconstructed as `name[0]=sector0[0]`, `name[1]=sector1[0]`, `name[2]=sector0[1]`, `name[3]=sector1[1]`, ... alternating through both 5-byte runs. Confirmed against `adfs640L.adl` and `adfs800D.adf`, whose free-space-map bytes reconstruct to `"00_05_Sun"` and `"00_06_Sun"` respectively (both padded with a trailing NUL rather than a space) — matching the same naming pattern found verbatim in `adfs800E.adf`'s extended disc-record `disc_name` field, `"00_07_Sun "`.
 
@@ -423,12 +440,16 @@ for zone in 0 .. nzones - 1:
 
 ### 3.2 Resolving an Indirect Disc Address
 
+> **This section is new-map only.** On an **old-map** disc (S, M, L, D, and old-map hard discs) the directory entry's `DirIndDiscAdd` is not a SIN at all — there is no fragment ID, no sharing offset and no map walk. It is the object's disc address shifted right 8, so multiplying by 256 gives a byte address directly, and the object is contiguous. See §3.3 and the old-map branch of §3.5; nothing below applies.
+
 On new-map discs, files and directories are identified by a **System Internal Number (SIN)**, also called an indirect disc address. This is a 3-byte (24-bit) value:
 
 - Bits 8–23: Fragment ID (the `idlen`-bit object identifier)
 - Bits 0–7: Sharing offset (1–255, representing offsets 0–254 in sharing units; 0 means the object has its own fragment and is not shared)
 
 The sharing unit is one sector (or `2^share_size` sectors on RISC OS 3.6+ discs).
+
+**Big directories use a 4-byte SIN.** On E+, F+ and G the field is `BigDirIndDiscAdd` (4 bytes, at `+0x0C` of the entry) rather than the 3-byte form above — the same bit split in a wider container, which is what lets `idlen` exceed the small map's 15-bit ceiling. The layout and the evidence for it are in §5.1; the resolution procedure below is otherwise unchanged.
 
 **To resolve a SIN to a physical disc address:**
 
@@ -447,22 +468,43 @@ The sharing unit is one sector (or `2^share_size` sectors on RISC OS 3.6+ discs)
 
 Old and new directories share a common structure with minor layout differences. Both have:
 
-- A **header** at the start: 1-byte master sequence number + 4-byte start name (`"Hugo"` or `"Nick"`).
+- A **header** at the start: 1-byte master sequence number (`StartMasSeq`) + 4-byte start name (`StartName`, `"Hugo"` or `"Nick"`).
 - A **body** of fixed-size 26-byte directory entries, sorted alphabetically by name.
 - A **tail** at the end: matching end name, title, parent disc address, and a check byte.
 
 **Directory entry (26 bytes):**
 
-| Offset | Size | Field |
-|--------|------|-------|
-| +0x00 | 10 | Object name (NUL- or CR-terminated if shorter than 10 characters) |
-| +0x0A | 4 | Load address |
-| +0x0E | 4 | Execution address |
-| +0x12 | 4 | Length in bytes |
-| +0x16 | 3 | Indirect disc address (SIN) for new map, or start sector for old map |
-| +0x19 | 1 | On large-sector directories (D and later): attributes byte. On small-sector old directories (S/M/L): per-entry sequence number. |
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| +0x00 | 10 | `DirObName` | Object name (NUL- or CR-terminated if shorter than 10 characters) |
+| +0x0A | 4 | `DirLoad` | Load address |
+| +0x0E | 4 | `DirExec` | Execution address |
+| +0x12 | 4 | `DirLen` | Length in bytes |
+| +0x16 | 3 | `DirIndDiscAdd` | Indirect disc address. **New map**: a SIN (§3.2). **Old map**: the disc address shifted right 8, i.e. multiply by 256 for a byte offset — *not* a sector number (see below). This is the field that locates the object's contents; §3.5 is the end-to-end procedure. |
+| +0x19 | 1 | `OldDirObSeq` / `NewDirAtts` | One byte under two names. On large-sector directories (D and later) it is the attributes byte; on small-sector old directories (S/M/L) it is the object sequence number. `s/Defns` defines the second name as an alias of the first — `NewDirAtts * OldDirObSeq` — so they are the same offset, not two fields. |
+
+These are the PRM's names, which `s/Defns` shares; the entry layout is identical in both. Total `OldDirEntrySz` = `NewDirEntrySz` = 26 bytes.
 
 The entries are terminated by a NUL byte in the name field of the next (empty) slot.
+
+**`DirIndDiscAdd` on old-map discs is a byte address, not a sector number.** The PRM states it directly: *"The indirect disc address of an object on an old map disc is the most significant 3 bytes of its physical disc address."* So the stored 24-bit value is the byte address shifted right 8, and
+
+```
+byte_offset = stored_value × 256
+```
+
+**always — independent of the sector size.** `ReadIndDiscAdd` (`s/FileCore40`) shifts the field back left by 8 on old map and leaves it alone on new map:
+
+```
+        BL      TestMap                 ;(R3->Z)   Z=1 <=> new map
+        ADD     R0, R4, #DirIndDiscAdd
+        Read3
+        MOVNE   LR, LR, LSL #8          ; NE = old map: shift left 8
+```
+
+`GenIndDiscOp` (`s/FileCore15`) then confirms what that address is — *"if we have an old map disc, the indirect disc addr is simply the byte address of the file. Simply shift to sector address"* — dividing by the sector size only when it hands the address to the low-level driver.
+
+Calling this value a "start sector" is a trap on **D format**, whose sectors are 1024 bytes: the multiplier is still 256, so a reader who scales by the sector size lands four times too far into the image. The 256-byte quantum here is the same one the map uses (§2.5) and is unrelated to the disc's sector size. On S, M and L the two coincide — sectors *are* 256 bytes — which is why the distinction is easy to miss. See §3.5 for the full read procedure, including the separate S/M/L geometry translation that applies on top of this.
 
 **Attributes:** On large-sector directories (D, E, F, E+, F+, G), the byte at offset `+0x19` stores attributes. The on-disc representation matches FileCore's internal format:
 
@@ -489,33 +531,49 @@ On small-sector old directories (S, M, L), there is no separate attributes byte.
 
 The actual character is in bits 0–6, making filenames effectively 7-bit ASCII on S/M/L discs. The attribute table in the ADFS 1.30 ROM is the literal string `"RWLDE"`, indexed by byte position. (Verified against the [ADFS 1.30 disassembly](https://acornaeology.uk/acorn-adfs/1.30.html): `set_rwl_attribute_bit` at &99C9, `print_entry_name_and_access` at &92DE.)
 
+**`OldDirObSeq`: what the S/M/L sequence byte actually holds.** It is not an independent per-object counter. FileCore stamps it with the *directory's* master sequence number, so an entry's byte records which directory update last touched that object. `IncObjSeqNum` (`s/FileCore40`) writes `StartMasSeq + 1`:
+
+```
+; Increment old format object seqence number, also invalidates dir buffer
+IncObjSeqNum
+        BL      TestDir              ;(R3->LR,Z)
+        Pull    "PC",EQ              ; returns immediately on new/big dirs
+        BL      InvalidateBufDir
+        BL      NextDirSeqNum        ;(R5->LR)
+        STRB    LR,[R4,#OldDirObSeq]
+```
+
+and the `WriteDir` that follows calls `IncDirSeqNum`, which advances `StartMasSeq` to that same value — so on disc the two agree for the most recently touched entry, and older entries carry the sequence number current when they were last modified. That makes the byte a usable "which entries changed most recently" hint when scavenging a damaged directory.
+
+It is written on object creation (`MakeDirEntry`, `s/FileCore35`), rename (`s/FileCore60`, `s/BigDirCode`) and write-info/write-attr (`s/FileCore45`). The `TestDir` early return means it is a no-op on new and big directories, which is why the same byte can safely be attributes there — the old/new split at `+0x19` is behavioural, not merely a difference of layout. Being derived from `StartMasSeq`, it is BCD and wraps at 99 like its parent (§A.5).
+
 **Directory tail layouts:**
 
 `s/Defns` defines exactly two tail layouts for non-big directories — "Old Directory End" and "New Directory End". Both are read *backwards* from the end of the directory.
 
 In **small-sector directories** (S, M, L — `0x500` bytes total), the tail starts at offset `0x4CB`:
 
-- `0x00` end marker (1 byte)
-- Directory name (10 bytes)
-- Parent start sector (3 bytes)
-- Directory title (19 bytes)
+- `OldDirLastMark` — `0x00` end marker (1 byte)
+- `OldDirName` — directory name (10 bytes)
+- `OldDirParent` — parent disc address (3 bytes; old-map encoding, × 256 for a byte offset)
+- `OldDirTitle` — directory title (19 bytes)
 - Reserved (14 bytes, zero)
-- End sequence number (1 byte, BCD)
-- End validation `"Hugo"` (4 bytes)
-- Check byte (1 byte — always zero on 8-bit ADFS, computed by 32-bit ADFS)
+- `EndMasSeq` — end sequence number (1 byte, BCD)
+- `EndName` — end validation `"Hugo"` (4 bytes)
+- `DirCheckByte` — check byte (1 byte — always zero on 8-bit ADFS, computed by 32-bit ADFS)
 
 In **large-sector directories** (D, E and F — `0x800` bytes total), the tail starts at offset `0x7D7`:
 
-- `0x00` end marker (1 byte)
+- `NewDirLastMark` — `0x00` end marker (1 byte)
 - Reserved (2 bytes, zero)
-- Parent disc address (3 bytes) — a **start sector** on D, an **indirect disc address (SIN)** on E and F
-- Directory title (19 bytes)
-- Directory name (10 bytes)
-- End sequence number (1 byte)
-- End validation `"Hugo"` or `"Nick"` (4 bytes — see §1.3)
-- Check byte (1 byte)
+- `NewDirParent` — parent disc address (3 bytes). Both encodings are indirect disc addresses; what differs is the form. On **D** (old map) it is the byte address shifted right 8, so × 256 gives a byte offset. On **E and F** (new map) it is a **SIN** (§3.2).
+- `NewDirTitle` — directory title (19 bytes)
+- `NewDirName` — directory name (10 bytes)
+- `EndMasSeq` — end sequence number (1 byte)
+- `EndName` — end validation `"Hugo"` or `"Nick"` (4 bytes — see §1.3)
+- `DirCheckByte` — check byte (1 byte)
 
-D, E and F share one layout; only the interpretation of the parent field differs. (Source: Nick Reeves' E Format Design Document.)
+D, E and F share one layout; only the interpretation of the parent field differs. (Source: Nick Reeves' E Format Design Document.) `EndMasSeq`, `EndName` and `DirCheckByte` are shared between the two layouts — `s/Defns` asserts the large-sector tail's offsets for these three against the small-sector definitions rather than redeclaring them. The directory header is likewise common to both: `StartMasSeq` (1 byte) then `StartName` (4 bytes).
 
 The two layouts also differ in field *order*, not just size: the small-sector one places the name before the parent and title, whereas the large-sector one places the title before the name. That second point is a common misreading — `s/Defns` puts `NewDirTitle` before `NewDirName` for D, E and F alike. A directory whose name is exactly 10 characters makes the two readings distinguishable on disc; `$.!BootPSLCD` on `HDD_CP30174E_AM7AX9W.dd` holds, from tail offset `+0x06`:
 
@@ -539,6 +597,8 @@ Unit: centiseconds (1/100 s) since the epoch above. `centiseconds = (load_low_by
 ### 3.4 Big Directory Structure (E+, F+, G)
 
 Big directories were introduced in RISC OS 4 to support long filenames (up to 255 characters) and more than 77 entries. They are variable-length, always a multiple of 2048 bytes, and can grow on demand up to a maximum of 4 MB. (Acorn FileCore Phase 2 Functional Specification, §3.1–3.6.)
+
+The field names in this section are `s/BigDirCode` / `s/Defns` names. Unlike the structures above, there is no PRM column to give: the PRM predates RISC OS 4 and does not document big directories at all, so the source is the sole naming authority here.
 
 **Big directory header (28 bytes + directory name):**
 
@@ -593,7 +653,7 @@ The header, entry and tail tables above are as defined in `s/Defns`, together wi
 
 ### 3.5 Walkthrough: Reading a File
 
-Here is the complete procedure to read a file given its pathname on a new-map disc:
+Here is the complete procedure to read a file given its pathname. Steps 1–4 are common to every format; step 5 onwards splits by map type.
 
 1. **Find the root directory**: Resolve `root_dir` from the disc record (§2.3). Read the directory data from the resulting disc address.
 
@@ -601,13 +661,23 @@ Here is the complete procedure to read a file given its pathname on a new-map di
 
 3. **Search for the filename**: Walk the directory entries. For old/new directories, compare the 10-character name field (case-insensitive). For big directories, look up each entry's name from the name heap.
 
-4. **Check if it's a directory**: If the attributes byte has bit 3 set, the entry is a subdirectory. Resolve its SIN and recurse from step 2.
+4. **Check if it's a directory**: On large-sector and big directories, the entry is a subdirectory if the attributes byte has bit 3 set. On small-sector old directories (S/M/L) there is no attributes byte — the directory flag is bit 7 of name byte 3 (§3.3). Resolve the entry's disc address and recurse from step 2.
+
+Step 5 onwards depends on the map type.
+
+#### New map (E, F, E+, F+, G)
 
 5. **Resolve the SIN to disc extents**: Walk the zone map collecting all fragments with the matching fragment ID (§3.2). Apply the sharing offset if non-zero.
 
 6. **Read the file data**: The fragments, concatenated in the order found (bit position within a zone, then zone order — §3.2), contain the file data. Read `length` bytes starting from the sharing offset within the first fragment.
 
-For **old-map discs**, step 5 differs by sub-format. **D format**: the directory entry's sector number (256-byte units) converts directly to a byte offset, unchanged — D's logical sector numbering is already the interleaved physical order the image file is stored in. **S/M/L format**: it is *not* that simple. The directory entry's sector number is in the *sequential* logical convention (§1.1: all of side 0's tracks, then all of side 1's), but `.ADL`/`.ADF` image files are always laid out in interleaved physical order regardless of map type — the same order D/E/F use. An S/M/L sector number must therefore be translated through that sequential-to-interleaved geometry (`sector_in_track + (track × heads + side) × sectors_per_track`; geometry — tracks-per-side, heads — is inferred from the disc's total sector count, since old-map floppies have no disc record: 640/1280/2560 sectors for S/M/L respectively) before it is a valid byte offset into the image file.
+#### Old map (S, M, L, D, and old-map hard discs)
+
+There is no map walk and no fragmentation: the object is contiguous in disc-address space. The entry's `DirIndDiscAdd` is the object's disc address shifted right 8, so **multiply by 256 for a byte address** (§3.3), and the length is `DirLen` at `+0x12`. Whether that byte address is directly usable as an offset into an image file then depends on the sub-format.
+
+**D format**: yes, directly — `value × 256` is the byte offset, unchanged, because D's logical sector numbering is already the interleaved physical order the image file is stored in. The multiplier is 256 even though D's sectors are 1024 bytes; see §3.3.
+
+**S/M/L format**: it is *not* that simple. On these discs sectors *are* 256 bytes, so the stored value doubles as a logical sector number — but it is in the *sequential* convention (§1.1: all of side 0's tracks, then all of side 1's), whereas `.ADL`/`.ADF` image files are always laid out in interleaved physical order regardless of map type — the same order D/E/F use. That sector number must therefore be translated through the sequential-to-interleaved geometry (`sector_in_track + (track × heads + side) × sectors_per_track`; geometry — tracks-per-side, heads — is inferred from the disc's total sector count, since old-map floppies have no disc record: 640/1280/2560 sectors for S/M/L respectively) before it is a valid byte offset into the image file.
 
 Track 0 (the first 16 sectors) needs no translation either way, since side 0's first track is the same 16 sectors under both conventions — which is why this is easy to miss with a small test file or the root directory (both conventionally within track 0). Worked example on an L-format disc (2 heads, 16 sectors/track): sector 26 is track 1, sector 10 of side 0 under the sequential convention (`26 = 1×16 + 10`); converting that (track, side, sector) triple back out via the interleaved formula (`sector_in_track + (track × heads + side) × sectors_per_track`) gives `10 + (1×2+0)×16 = 42` — sector 42 is the true byte offset (`42 × 256 = 0x2A00`) of this file's data in the image file, not `26 × 256 = 0x1A00`. A second consequence follows from the same fact: a logically contiguous S/M/L file that spans a track boundary is *not* contiguous in the image file either, and must be read as multiple extents split at each track boundary.
 
@@ -861,7 +931,25 @@ The boot block has its own checksum in its last byte, at offset `+0x1FF` (§2.2)
 
 Both old/new and big directories store the master sequence number in both the header and the tail. FileCore increments both atomically during writes. A mismatch indicates an interrupted write. The standard repair is to set both to the higher value and recompute the check byte.
 
-For old/new directories, the sequence number is a single byte in BCD, and therefore wraps at 99 (`0x99`), not at 255. Across the 4,859 directories of the two sample hard discs, 70 and 78 distinct sequence values occur, with maxima of `0x91` and `0x99`, and not one value on either disc has a nibble greater than 9. For big directories, it is also a single byte (`StartMasSeq` at offset +0x00 and `BigDirEndMasSeq` in the tail).
+**The sequence number is BCD, and wraps at 99 (`0x99`) — not at 255.** The PRM gives the wrap as 255, but the source disagrees. `NextDirSeqNum` (`s/FileCore40`) is explicit, both in its comment and in its arithmetic:
+
+```
+; calculate next BCD dir sequence number
+NextDirSeqNum
+        LDRB    LR,[R5,#StartMasSeq]    ;get old master sequence number
+        ADD     LR,LR,#1                ;increment in bcd
+        CMPS    LR,#&9A
+        MOVHS   LR,#0                   ;wrap 0x99 -> 0x00
+        AND     R0,LR,#&F
+        CMPS    R0,#&A
+        ADDHS   LR,LR,#&10-10           ;low-nibble carry adjust (+6)
+```
+
+Increment, wrap to zero above `0x99`, and the classic `+6` adjustment when the low nibble passes 9. The sample discs agree: across the 4,859 directories of the two sample hard discs, 70 and 78 distinct sequence values occur, with maxima of `0x91` and `0x99`, and not one value on either disc has a nibble greater than 9.
+
+This applies to **big directories too**. `NextDirSeqNum` asserts `BigDirStartMasSeq = StartMasSeq`, and `IncDirSeqNum`'s big-directory branch calls the same routine, storing the result to `BigDirStartMasSeq` and `BigDirEndMasSeq`. Big directories therefore share the identical BCD increment and wrap — the field is a single byte there as well (`StartMasSeq` at offset +0x00, `BigDirEndMasSeq` in the tail).
+
+On S/M/L discs the same BCD value is also stamped into each entry's `OldDirObSeq` byte as objects are modified (§3.3).
 
 ### A.6 Practical Repair Strategy
 
@@ -1183,9 +1271,9 @@ Old-map floppies (S, M, L, D) have no boot block — the old map has no disc rec
 
 **CrossCheck** — Byte at offset `+0x03` in each zone header. The XOR of all zones' CrossCheck bytes must equal `0xFF`. Detects zone-level corruption or a zone belonging to a different disc.
 
-**Defect list** — A list of known bad-sector addresses stored in the boot block: hard discs, and multi-zone new-map floppies (F format) that have one (§2.2); single-zone floppies and old-map discs have no boot block and so no defect list. Terminated by a word with bits 29–31 set and a check byte in bits 0–7. Fragment ID 1 in the zone map marks defective regions.
+**Defect list** — A list of known bad-sector addresses stored in the boot block: hard discs, and multi-zone new-map floppies (F format) that have one (§2.2); single-zone floppies and old-map *floppies* have no boot block and so no defect list, but old-map hard discs do have one (§C.5). Terminated by a word with bits 29–31 set and a check byte in bits 0–7. Fragment ID 1 in the zone map marks defective regions.
 
-**Disc address** — A byte offset from the start of the disc image. All FileCore addresses are byte offsets, not sector numbers — including on old-map discs, where the free space map's 256-byte-unit sector number converts directly to a byte offset **for D format**, but *not* for S/M/L, whose sector numbers are in a different (sequential) logical convention from the image file's own (always interleaved) physical layout and must be translated first. See §3.5.
+**Disc address** — A byte offset from the start of the disc image. All FileCore addresses are byte offsets, not sector numbers. Where a structure stores one in 3 bytes — a directory entry's `DirIndDiscAdd` on an old-map disc, the free space map's extent starts and lengths — the stored value is the address shifted right 8, so multiply by **256** to recover the byte offset. That 256-byte quantum is fixed and unrelated to the disc's sector size; on D format, whose sectors are 1024 bytes, the multiplier is still 256 (§3.3). For **D** the resulting offset is directly usable; for **S/M/L** it is not, their sector numbering being in a sequential logical convention that differs from the image file's own (always interleaved) physical layout, so it must be translated first. See §3.5.
 
 **Disc record** — A 60-byte structure (the extended form, RISC OS 3.6+) describing the disc's geometry and map parameters; the earlier 32- and 52-byte forms are prefixes of the same layout (§2.1), with the remaining extended fields reading as zero on pre-3.6 media. Found in the boot block (hard discs) or at the start of zone 0's map block (new-map discs). Key fields include `log2_sector_size`, `sectors_per_track`, `heads`, `idlen`, `log2_bpmb`, `nzones`, `root_dir`, and `disc_size`.
 
