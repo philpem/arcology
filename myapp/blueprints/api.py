@@ -1862,23 +1862,46 @@ def add_files(uuid):
     if 'files' not in data:
         return error_response('files array required')
 
-    # Resolve the final (possibly archive-nested) path for each incoming file
-    # up front so duplicate detection and known-file matching can both run as
-    # single batch queries instead of one query per file.  A partition listing
-    # can contain thousands of files; the per-file N+1 pattern here was slow
-    # enough under concurrent extraction to blow the worker's HTTP timeout.
-    candidates = []
-    for f in data['files']:
-        if 'path' not in f or 'filename' not in f:
-            continue
+    # Resolve the final (possibly archive-nested) path for each incoming file up
+    # front so parent lookup, duplicate detection and known-file matching all
+    # run as single batch queries instead of one query per file.  A partition
+    # listing can contain thousands of files; the per-file N+1 pattern here was
+    # slow enough under concurrent extraction to blow the worker's HTTP timeout.
+    incoming = [f for f in data['files']
+                if 'path' in f and 'filename' in f]
 
+    # Batch-load the parent archive rows this request refers to.  Only the path
+    # and is_archive flag are needed, so select those columns rather than whole
+    # ORM objects.  In an ARCHIVE_EXTRACT batch every file carries a
+    # parent_file_id, so the previous per-file lookup ran once per file (up to
+    # batch_size=100 per request, ~20k point SELECTs for a large nested archive).
+    #
+    # Relies on parent_file_id always naming an already-committed row: the
+    # worker learns the id from an earlier registration's response, so a parent
+    # is never created in the same batch as its children.  Unlike the session.get()
+    # this replaced, a query does not see unflushed instances -- a same-batch
+    # parent would silently fail to nest rather than erroring.
+    parent_ids = {f['parent_file_id'] for f in incoming if f.get('parent_file_id')}
+    parent_by_id = {}
+    if parent_ids:
+        parent_by_id = {
+            row.id: row
+            for row in db.session.query(
+                ExtractedFile.id, ExtractedFile.path, ExtractedFile.is_archive
+            )
+            .filter(ExtractedFile.id.in_(parent_ids))
+            .all()
+        }
+
+    candidates = []
+    for f in incoming:
         # If this file was extracted from an archive (has parent_file_id),
         # nest it under the parent archive's path so the archive appears
         # as a virtual directory in the UI.
         path = f['path']
         parent_file_id = f.get('parent_file_id')
         if parent_file_id:
-            parent_file = db.session.get(ExtractedFile, parent_file_id)
+            parent_file = parent_by_id.get(parent_file_id)
             if parent_file and parent_file.is_archive:
                 if not path.startswith(parent_file.path + '/'):
                     path = parent_file.path + '/' + path
@@ -1974,6 +1997,13 @@ def add_files(uuid):
     partition.total_files = (partition.total_files or 0) + added
     partition.unique_files = (partition.unique_files or 0) + added_unique
     try:
+        # Flush to assign the new rows' ids, then read them while the instances
+        # are still live.  commit() expires every instance, so collecting ids
+        # afterwards made each `ef.id` re-SELECT that entire row -- one full-row
+        # query per registered file, the heaviest N+1 on this endpoint.
+        db.session.flush()
+        for incoming_path, ef in created:
+            id_by_incoming_path[incoming_path] = ef.id
         db.session.commit()
     except OperationalError as exc:
         db.session.rollback()
@@ -1992,13 +2022,10 @@ def add_files(uuid):
     if added > 0 and _has_restricting_hash_database():
         apply_database_restrictions(partition.artefact)
 
-    # Resolve the freshly-created rows' ids (assigned by the commit) and return
-    # the id of every incoming file keyed by its original path, so the worker can
-    # fold archive detection into registration (queue ARCHIVE_EXTRACT per archive
-    # with the file id) instead of re-scanning the partition in a separate job.
-    for incoming_path, ef in created:
-        id_by_incoming_path[incoming_path] = ef.id
-
+    # id_by_incoming_path was filled in above (pre-commit, at flush time) and
+    # holds the id of every incoming file keyed by its original path, so the
+    # worker can fold archive detection into registration (queue ARCHIVE_EXTRACT
+    # per archive with the file id) instead of re-scanning the partition.
     response = {
         'added': added,
         'files': [{'id': fid, 'path': p} for p, fid in id_by_incoming_path.items()],

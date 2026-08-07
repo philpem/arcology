@@ -27,7 +27,10 @@ _ENV_STR_KEYS = (
     'OIDC_GROUP_SYNC_CLAIM',
     'JINJA_BYTECODE_CACHE', 'JINJA_BYTECODE_CACHE_DIR', 'JINJA_PREWARM',
     'SESSION_COOKIE_SAMESITE',
-    'SENTRY_DSN', 'WORKER_SENTRY_DSN',
+    # Worker-side Sentry overrides are spelled SENTRY_WORKER_* and are read
+    # straight from os.environ by worker/arcworker/config.py -- they are
+    # deliberately absent here, since the web app has no use for them.
+    'SENTRY_DSN',
     # String so relative cap expressions ("50%", "-1") survive env passthrough;
     # resolve_heavy_cap() parses int / percentage / negative forms.
     'ANALYSIS_HEAVY_RUNNING_CAP',
@@ -41,6 +44,7 @@ _ENV_BOOL_KEYS = (
     'OIDC_AUTO_REDIRECT', 'OIDC_SINGLE_LOGOUT', 'OIDC_LINK_BY_USERNAME',
     'OIDC_GROUP_SYNC_ENABLED', 'OIDC_GROUP_LINK_LOCAL',
     'SIMILARITY_AUTO_REFRESH', 'SIMILARITY_USE_IDF',
+    'SENTRY_SEND_DEFAULT_PII',
 )
 _ENV_INT_KEYS = (
     'WEB_UI_ANALYSIS_PRIORITY', 'STALE_JOB_TIMEOUT_SECONDS',
@@ -66,7 +70,7 @@ _ENV_BYTE_SIZE_KEYS = (
 )
 _ENV_FLOAT_KEYS = (
     'SENTRY_TRACES_SAMPLE_RATE', 'SENTRY_PROFILES_SAMPLE_RATE',
-    'WORKER_SENTRY_TRACES_SAMPLE_RATE', 'WORKER_SENTRY_PROFILES_SAMPLE_RATE',
+    'SENTRY_POLL_TRACES_SAMPLE_RATE', 'SENTRY_UI_POLL_TRACES_SAMPLE_RATE',
     'TASKRUNNER_POLL_BACKOFF_FLOOR', 'TASKRUNNER_POLL_BACKOFF_CEILING',
 )
 # Dict-valued keys, supplied as a JSON object in the env var.
@@ -76,6 +80,67 @@ _ENV_JSON_KEYS = (
 # String keys for which an explicit empty value is meaningful (not "unset").
 # CSP_HEADER='' disables the Content-Security-Policy header.
 _ENV_STR_EMPTY_OK = frozenset({'CSP_HEADER'})
+
+# Request-path groups for Sentry performance tracing (see build_traces_sampler()).
+#
+# Machine-to-machine traffic fires on a fixed timer, always looks identical, and
+# nothing human waits on it.  Measured over one billing cycle it was 96.2% of all
+# spans emitted -- enough to exhaust the span quota roughly ten days into every
+# month.  It is split in two because the reason for excluding it differs.
+
+# Nothing worth measuring: the healthcheck is a bare `SELECT 1` and static assets
+# touch no database at all.  Never traced, at any sample rate.
+_UNTRACED_PATH_PREFIXES = (
+    '/api/health',                # docker-compose healthcheck, 30s
+    '/static/',                   # Flask serves static assets itself
+)
+# High-frequency, but they do real database work -- and precisely because they run
+# tens of thousands of times a day, a query regression here is expensive: 50ms
+# added to the poll loop is ~43 minutes of extra database time daily.  Sampled at
+# a low rate (SENTRY_POLL_TRACES_SAMPLE_RATE) so a systemic slowdown is still
+# visible while the volume stays negligible.  Note this is head-based sampling:
+# Sentry picks before the request runs, so it catches "the endpoint got slower",
+# not "this one poll was slow".
+_POLL_PATH_PREFIXES = (
+    '/api/analysis/pending',      # worker poll loop, ~1.7s aggregate
+    '/api/analysis/reset-stale',  # stale-job sweep, 50s
+)
+# Browser UI pollers (templates/_polling.html), every 5-8s per open tab.  Sampled
+# rather than dropped: their queries are worth watching for latency, but an open
+# dashboard is ~720 requests/hour and a handful of tabs would dominate the quota
+# on their own.
+_UI_POLL_PATH_SUFFIXES = ('status.json', 'stats.json')
+
+
+def build_traces_sampler(config):
+    """Build the Sentry traces_sampler callable for this app's configuration.
+
+    Human traffic is traced in full (including every SQLAlchemy query span --
+    that is what makes slow queries findable); machine polling is dropped or
+    thinned.  Module-level rather than a closure inside create_app() so the
+    sampling decision is unit-testable without standing up Sentry.
+    """
+    default_rate = config.get('SENTRY_TRACES_SAMPLE_RATE', 1.0)
+    poll_rate = config.get('SENTRY_POLL_TRACES_SAMPLE_RATE', 0.01)
+    ui_poll_rate = config.get('SENTRY_UI_POLL_TRACES_SAMPLE_RATE', 0.05)
+
+    def traces_sampler(sampling_context):
+        # Match on the raw WSGI path, *not* on the dotted transaction name shown
+        # in the Sentry UI ("myapp_blueprints_api.get_pending_analyses") -- that
+        # name is assigned after sampling has already happened, so matching
+        # against it would silently no-op.
+        path = sampling_context.get('wsgi_environ', {}).get('PATH_INFO', '')
+        # Rates are returned regardless of parent_sampled: an inbound
+        # sentry-trace header must not be able to re-admit polling traffic.
+        if path.startswith(_UNTRACED_PATH_PREFIXES):
+            return 0.0
+        if path.startswith(_POLL_PATH_PREFIXES):
+            return poll_rate
+        if path.endswith(_UI_POLL_PATH_SUFFIXES):
+            return ui_poll_rate
+        return default_rate
+
+    return traces_sampler
 
 
 def _load_config_from_env(app):
@@ -251,9 +316,16 @@ def create_app(config_name=None):
         sentry_sdk.init(
                 dsn=app.config['SENTRY_DSN'],
                 integrations=[FlaskIntegration(), SqlalchemyIntegration()],
-                traces_sample_rate=app.config.get('SENTRY_TRACES_SAMPLE_RATE', 1.0),
-                profiles_sample_rate=app.config.get('SENTRY_PROFILES_SAMPLE_RATE', 1.0),
-                send_default_pii=True,
+                traces_sampler=build_traces_sampler(app.config),
+                # Off by default: profiling bills against a separate quota that
+                # had been fully consumed -- every profile was rejected on
+                # arrival for entire cycles, so the flame graphs cost CPU to
+                # build and were never delivered.  Opt back in explicitly.
+                profiles_sample_rate=app.config.get('SENTRY_PROFILES_SAMPLE_RATE', 0.0),
+                # Defaults on: Arcology is typically a private installation, and
+                # request/user detail is what makes an error report actionable.
+                # Turn off where the Sentry org is not as trusted as the app.
+                send_default_pii=bool_config('SENTRY_SEND_DEFAULT_PII', True, app=app),
                 )
 
     # Route Python warnings (notably SQLAlchemy's cartesian-product SAWarning)

@@ -186,6 +186,43 @@ instead, then commit.
 
 ---
 
+## Data Leaving the Installation: Sentry
+
+Everything above governs who may see data *within* an installation. Sentry is
+the one path by which data can leave it, so it is worth stating plainly.
+
+Sentry is **optional and off by default** — it activates only when `SENTRY_DSN`
+is set (`SENTRY_WORKER_DSN` overrides it for the worker). With no DSN
+configured, nothing is transmitted anywhere.
+
+When it *is* configured, `SENTRY_SEND_DEFAULT_PII` (default **true**) controls
+whether events carry personally-identifying detail:
+
+| | `true` (default) | `false` |
+|---|---|---|
+| Exception type, stack trace, source lines | yes | yes |
+| Request URL and route | yes | yes |
+| Request headers and cookies | **yes** | no |
+| Client IP address | **yes** | no |
+| Logged-in username | **yes** | no |
+| Database query parameters | **yes** | no |
+
+The default is `true` because Arcology is normally run as a private
+installation, where knowing *who* hit an error and *with what* is what makes a
+report actionable. Set it to `false` when the Sentry organisation is less
+trusted than the application — a public instance, or a shared Sentry account.
+
+Note that this is about *metadata*, not content: Sentry receives error and
+performance events, never uploaded artefacts, disc images, or extracted files.
+Item and artefact names can appear in request URLs, so a private item's *name*
+may reach Sentry via an error report even though its contents never do.
+
+Performance tracing is sampled separately from errors — see
+`SENTRY_TRACES_SAMPLE_RATE` and the polling-related rates in `.env.example`.
+Setting a trace rate to zero does not affect error reporting.
+
+---
+
 ## Developer Notes
 
 ### Adding a new creation path

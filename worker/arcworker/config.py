@@ -8,7 +8,7 @@ import logging
 import os
 import uuid
 from pathlib import Path
-from arcology_shared.config import parse_byte_size
+from arcology_shared.config import parse_bool, parse_byte_size
 
 
 def _int_env(name: str, default: str) -> int:
@@ -157,6 +157,12 @@ SENTRY_TRACES_SAMPLE_RATE = float(
     os.environ.get('SENTRY_WORKER_TRACES_SAMPLE_RATE')
     or os.environ.get('SENTRY_TRACES_SAMPLE_RATE', '1.0')
 )
+# Defaults on: Arcology is typically a private installation, and request/user
+# detail is what makes an error report actionable.  Same truth table as the web
+# app (arcology_shared.config), so the two agree on what counts as true.
+SENTRY_SEND_DEFAULT_PII = parse_bool(
+    os.environ.get('SENTRY_SEND_DEFAULT_PII'), default=True
+)
 
 if SENTRY_DSN:
     import sentry_sdk
@@ -165,7 +171,7 @@ if SENTRY_DSN:
         dsn=SENTRY_DSN,
         traces_sample_rate=SENTRY_TRACES_SAMPLE_RATE,
         integrations=[LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)],
-        send_default_pii=True,
+        send_default_pii=SENTRY_SEND_DEFAULT_PII,
     )
     log.info("Sentry initialised")
 
