@@ -18,7 +18,7 @@ if __name__ == '__main__':
         extra_files=[path,]
         for dirname, _dirs, files in os.walk(path):
             for filename in files:
-                if ext != None and filename[-len(ext):] != ext:
+                if ext is not None and filename[-len(ext):] != ext:
                     continue
                 filename = os.path.join(dirname, filename)
                 if os.path.isfile(filename):

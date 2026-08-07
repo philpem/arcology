@@ -1900,19 +1900,19 @@ def _view_file_listing(file_form, all_artefact_ids):
         # Hide files whose primary known_file match has a product association.
         files_query = files_query.filter(
             or_(
-                ExtractedFile.known_file_id == None,
-                ~ExtractedFile.known_file.has(KnownFile.product_id != None),
+                ExtractedFile.known_file_id.is_(None),
+                ~ExtractedFile.known_file.has(KnownFile.product_id.isnot(None)),
                 ExtractedFile.is_archive == True,
             )
         )
     elif file_form.filter_products.data == 'only':
         files_query = files_query.filter(
             or_(
-                ExtractedFile.known_file.has(KnownFile.product_id != None),
+                ExtractedFile.known_file.has(KnownFile.product_id.isnot(None)),
                 ExtractedFile.is_archive == True,
             )
         )
-    
+
     per_page, page, view_all = resolve_per_page('FILES_PER_PAGE', 100)
 
     # Column sorting: sort=<col> ascending, sort=-<col> descending

@@ -57,10 +57,18 @@ select = [
 #   C4, PIE, S, FURB, PERF, RUF0xx and the rest of SIM (~90)
 #                 style-only. Sampled sites showed no defect; revisit individually.
 ignore = [
-    # SQLAlchemy filter expressions need ==/!= rather than is/is not, since
-    # `Column == None` compiles to `IS NULL` whereas `Column is None` is a
-    # Python identity check (always False) and breaks the query.
-    "E711",  # comparison to None
+    # SQLAlchemy filter expressions can't use Python's `is`/`not`: `Column is None`
+    # is an identity check (always False) rather than `IS NULL`, and `not Column`
+    # raises, because a Column has no truth value. So Ruff's suggested rewrites are
+    # actively wrong inside a filter() — never autofix these.
+    #
+    # E711 is *not* ignored: `.is_(None)` / `.isnot(None)` express the same query
+    # and are already the house style, so the rule can be enforced everywhere. A
+    # repo-wide ignore was masking a genuine plain-Python `!= None` in devtools/.
+    #
+    # E712 stays ignored because its 16 sites are all ORM boolean comparisons and
+    # nothing plain-Python is currently masked. `.is_(True)` / `.is_(False)` would
+    # let this go too — 16 sites of churn for a rule that today catches nothing.
     "E712",  # comparison to True/False
     # `open(path, 'r')` is preferred over the bare `open(path)` form even though
     # the mode string is technically redundant — being explicit aids readability.
