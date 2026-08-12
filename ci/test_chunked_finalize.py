@@ -7,19 +7,25 @@ machine, the atomic single-winner claim, stale re-drive, the finalise runner's
 success/failure outcomes, and — the key correctness property — that two claim
 attempts never both run a finalise (which would create duplicate artefacts).
 
-Uses SQLite in-memory + LocalStorage (temp dirs).
+Uses LocalStorage (temp dirs) and — unlike the rest of the suite — a *file-backed*
+SQLite DB, because these tests run the finalise thread pool for real.  See
+``_file_backed_db()`` below for why in-memory SQLite is unsafe here.
 
-Run:
+Run (the URI below is the suite-wide default; each test class here overrides it
+with a file-backed DB in its own temp dir — see ``_file_backed_db()``):
+
     SQLALCHEMY_DATABASE_URI=sqlite:///:memory: SECRET_KEY=test WORKER_API_KEY=test \\
         python -m unittest ci.test_chunked_finalize -v
 """
 
+import contextlib
 import os
 import shutil
 import sys
 import tempfile
 import time
 import unittest
+from sqlalchemy.pool import StaticPool
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
@@ -28,6 +34,58 @@ if _REPO_ROOT not in sys.path:
 os.environ.setdefault('SQLALCHEMY_DATABASE_URI', 'sqlite:///:memory:')
 os.environ.setdefault('SECRET_KEY', 'ci-chunked-finalize-secret-key-not-for-prod')
 os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
+
+
+@contextlib.contextmanager
+def _file_backed_db(tmpdir, name):
+    """Point create_app() at a file-backed SQLite DB for the duration.
+
+    This module is the only one in the suite that drives real background threads
+    (the finalise ThreadPoolExecutor) against the ORM, and that makes the rest of
+    the suite's ``sqlite:///:memory:`` URI actively unsafe here: Flask-SQLAlchemy
+    binds an in-memory SQLite DB to a ``StaticPool``, i.e. *one* DBAPI connection
+    handed to every thread.  Two Sessions then interleave their transactions on
+    it — the request thread's app-context teardown issues a ROLLBACK that
+    discards the pool thread's in-flight INSERT — surfacing as StaleDataError /
+    "no such savepoint" / "cannot commit - no transaction is active" inside
+    run_finalize(), recorded as a spurious ``finalize_state='failed'``.  That was
+    gh#736: a ~9% flake under the parallel runner, where the extra CPU pressure
+    widens the interleaving window.
+
+    A file-backed URI gets SQLAlchemy's default QueuePool, so each thread checks
+    out its own connection — the same one-connection-per-thread arrangement the
+    production PostgreSQL backend provides.  The URI must be in the environment
+    *before* create_app(), because Flask-SQLAlchemy builds the engine during
+    init_app(); mutating app.config afterwards is too late.
+    """
+    uri = 'sqlite:///' + os.path.join(tmpdir, name)
+    previous = os.environ.get('SQLALCHEMY_DATABASE_URI')
+    os.environ['SQLALCHEMY_DATABASE_URI'] = uri
+    try:
+        yield
+    finally:
+        if previous is None:
+            del os.environ['SQLALCHEMY_DATABASE_URI']
+        else:
+            os.environ['SQLALCHEMY_DATABASE_URI'] = previous
+
+
+def _require_per_thread_connections(db):
+    """Fail loudly if the engine hands one connection to every thread.
+
+    _file_backed_db() reads like an over-elaborate way to spell "use SQLite", so
+    it is exactly the sort of thing a later tidy-up drops — and dropping it
+    breaks nothing visibly, because the tests still pass locally and only flake
+    under CI's load.  That silence is why gh#736 went unexplained as long as it
+    did.  Assert the property the fix actually buys, so a regression is a
+    deterministic error here rather than a 1-in-10 mystery in someone else's PR.
+    """
+    if isinstance(db.engine.pool, StaticPool):
+        raise RuntimeError(
+            'Engine is on a StaticPool: one DBAPI connection is shared by every '
+            'thread, so the finalise pool thread and the request thread destroy '
+            "each other's transactions.  These tests need a file-backed SQLite "
+            'DB — see _file_backed_db() and gh#736.')
 
 
 class TestChunkedFinalizeCore(unittest.TestCase):
@@ -41,14 +99,22 @@ class TestChunkedFinalizeCore(unittest.TestCase):
         cls._tmpdir = tempfile.mkdtemp(prefix='arcology-ci-finalize-')
         upload_dir = os.path.join(cls._tmpdir, 'uploads')
         output_dir = os.path.join(cls._tmpdir, 'outputs')
+        chunk_dir = os.path.join(cls._tmpdir, 'chunks')
         os.makedirs(upload_dir)
         os.makedirs(output_dir)
+        os.makedirs(chunk_dir)
 
-        cls.app = create_app()
+        with _file_backed_db(cls._tmpdir, 'core.sqlite'):
+            cls.app = create_app()
         cls.app.config.update({
             'TESTING': True,
             'UPLOAD_FOLDER': upload_dir,
             'OUTPUT_FOLDER': output_dir,
+            # Stage chunks under the class temp dir, not the shared
+            # <instance_path>/.chunks: sessions there outlive the run (they are
+            # only purged at 24 h / result-TTL) and every finalise walks the
+            # whole base in purge_stale_chunks().
+            'CHUNK_DIR': chunk_dir,
         })
         from arcology_shared.storage import create_storage
         storage_cfg = dict(cls.app.config)
@@ -59,6 +125,7 @@ class TestChunkedFinalizeCore(unittest.TestCase):
 
         cls.db = _db
         with cls.app.app_context():
+            _require_per_thread_connections(_db)
             _db.create_all()
             cls.item_pk, cls.item_uuid = cls._seed(_db)
 
@@ -261,12 +328,16 @@ class TestChunkedFinalizeCore(unittest.TestCase):
                 uuid_, self._make_finalize_fn(label='ViaPool'))
 
             # Poll for completion (the pool runs the job on another thread).
+            # Break on any terminal state, then assert against the whole status
+            # dict: on 'failed' that reports the error_code rather than a bare
+            # "'failed' != 'done'".
             deadline = time.time() + 10
             while time.time() < deadline:
-                if _chunked.finalize_status(uuid_)['state'] == 'done':
+                status = _chunked.finalize_status(uuid_)
+                if status['state'] in ('done', 'failed'):
                     break
                 time.sleep(0.05)
-            self.assertEqual(_chunked.finalize_status(uuid_)['state'], 'done')
+            self.assertEqual(status['state'], 'done', status)
             self.assertEqual(
                 len(db.session.scalars(
                     db.select(Artefact).filter_by(label='ViaPool')).all()), 1)
@@ -285,14 +356,19 @@ class TestChunkedFinalizeAPIEndpoints(unittest.TestCase):
         cls._tmpdir = tempfile.mkdtemp(prefix='arcology-ci-finalize-api-')
         upload_dir = os.path.join(cls._tmpdir, 'uploads')
         output_dir = os.path.join(cls._tmpdir, 'outputs')
+        chunk_dir = os.path.join(cls._tmpdir, 'chunks')
         os.makedirs(upload_dir)
         os.makedirs(output_dir)
+        os.makedirs(chunk_dir)
 
-        cls.app = create_app()
+        # File-backed DB + private chunk staging: see _file_backed_db (gh#736).
+        with _file_backed_db(cls._tmpdir, 'api.sqlite'):
+            cls.app = create_app()
         cls.app.config.update({
             'TESTING': True,
             'UPLOAD_FOLDER': upload_dir,
             'OUTPUT_FOLDER': output_dir,
+            'CHUNK_DIR': chunk_dir,
         })
         from arcology_shared.storage import create_storage
         storage_cfg = dict(cls.app.config)
@@ -303,6 +379,7 @@ class TestChunkedFinalizeAPIEndpoints(unittest.TestCase):
 
         cls.client = cls.app.test_client()
         with cls.app.app_context():
+            _require_per_thread_connections(_db)
             _db.create_all()
             from myapp.database import Item, Platform
             platform = Platform(name='API Finalize Platform')
@@ -362,7 +439,9 @@ class TestChunkedFinalizeAPIEndpoints(unittest.TestCase):
 
         code, body = self._poll(uuid_)
         self.assertEqual(code, 200)
-        self.assertEqual(body['state'], 'done')
+        # Assert against the whole body: a bare state check reports only
+        # "'failed' != 'done'" and hides the error_code that says why.
+        self.assertEqual(body['state'], 'done', body)
         self.assertEqual(body['artefact']['original_filename'], 'async.img')
         self.assertEqual(body['artefact']['file_size'], 8)
 
@@ -373,7 +452,11 @@ class TestChunkedFinalizeAPIEndpoints(unittest.TestCase):
         self.assertEqual(self._complete_async(uuid_).status_code, 202)
         # A late chunk write must be refused (409) regardless of finalise state.
         self.assertEqual(self._chunk(uuid_, 0, b'XXXX').status_code, 409)
-        self._poll(uuid_)  # drain to done so teardown is clean
+        # Drain so teardown is clean.  Assert the outcome rather than just
+        # waiting for a terminal state: _poll() also returns on 'failed', which
+        # would let a broken finalise pass unnoticed here.
+        _, body = self._poll(uuid_)
+        self.assertEqual(body['state'], 'done', body)
 
     def test_stale_assembling_redriven_via_status(self):
         from myapp.services import chunked_upload as _chunked
@@ -390,7 +473,7 @@ class TestChunkedFinalizeAPIEndpoints(unittest.TestCase):
         # A status poll must re-authorise and re-drive it to completion.
         code, body = self._poll(uuid_)
         self.assertEqual(code, 200)
-        self.assertEqual(body['state'], 'done')
+        self.assertEqual(body['state'], 'done', body)
 
     def test_status_404_for_unknown(self):
         r = self.client.get(
