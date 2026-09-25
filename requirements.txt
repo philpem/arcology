@@ -24,7 +24,10 @@ numpy
 # Production server (optional)
 # gunicorn
 
-# PostgreSQL (optional)
+# PostgreSQL (optional). SQLAlchemy 2.1 uses psycopg 3 for an unqualified
+# ``postgresql://`` URL; keep psycopg2 too for deployments whose existing
+# configuration explicitly selects ``postgresql+psycopg2://``.
+psycopg[binary]
 psycopg2-binary
 
 # Natural sort
