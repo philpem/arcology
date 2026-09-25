@@ -273,10 +273,10 @@ RUN git clone "${SCOTCH_REPO}" /src/scotch && \
 FROM ubuntu:24.04 AS build-riscosarc
 
 # Pinned commit SHA — update this when upgrading riscosarc.
-# Current as of 2026-06-11; branch: master
-ARG RISCOSARC_VERSION=5d0e3f1a353a15b8ab8d15ec74e43c7d1b2bd9b1
-#ARG RISCOSARC_REPO=https://github.com/mjwoodcock/riscosarc.git
-ARG RISCOSARC_REPO=https://github.com/philpem/riscosarc.git
+# Current as of 2026-09-25
+ARG RISCOSARC_VERSION=dd68c1ae98a55ae3991fcb3ff2ec04cbc2057bc1
+ARG RISCOSARC_REPO=https://github.com/mjwoodcock/riscosarc.git
+#ARG RISCOSARC_REPO=https://github.com/philpem/riscosarc.git
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -427,14 +427,14 @@ RUN python3 -m pip install --break-system-packages py-tlsh
 # Install Acorn image conversion libraries.
 # drawfile_render (philpem fork with signed-coordinate fix) — not pip-installable; clone manually.
 # Pinned to a specific commit SHA — update when upgrading.
-# Current as of 2026-04-01.
+# Current as of 2026-06-15.
 # The repo also bundles spritefile.py (by David Boddie) which is not on PyPI;
 # we expose it to the worker by setting PYTHONPATH.
 # riscos-free-fonts is a submodule; --recurse-submodules fetches it, then
 # submodule update pins it to the SHA recorded in the checked-out commit.
 # philpem fork — adds self.warnings and fixes next==0 infinite loop in spritefile.py.
 # Revert to dcf21 once the fix is merged upstream (PR pending).
-ARG DRAWFILE_RENDER_SHA=f5bbbab90b8cf6951dfa43b885ed34d98e1005f6
+ARG DRAWFILE_RENDER_SHA=5d23499441f710b7eb7c0bf867a5c05a42c76eff
 ARG DRAWFILE_RENDER_REPO=https://github.com/philpem/drawfile-render
 #ARG DRAWFILE_RENDER_SHA=7834d3bb626e68a51f49da145978d296599bc24d
 #ARG DRAWFILE_RENDER_REPO=https://github.com/dcf21/drawfile-render.git
