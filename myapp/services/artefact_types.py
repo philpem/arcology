@@ -54,8 +54,8 @@ ANALYSIS_MAP = {
     ArtefactType.DD_GZ: [AnalysisType.PARTITION_DETECT],
     ArtefactType.DD_BZ2: [AnalysisType.PARTITION_DETECT],
 
-    # Documents/images - just metadata/checksums
-    ArtefactType.PDF: [AnalysisType.METADATA_EXTRACT],
+    # PDF — metadata plus text extraction (pdftotext) for search + a text view.
+    ArtefactType.PDF: [AnalysisType.METADATA_EXTRACT, AnalysisType.FORMAT_CONVERT],
 
     # Sidecar/companion files (a disk image's ddrescue .map, readme, checksums)
     # have NO automatic analyses — they exist to be viewed/downloaded alongside
@@ -74,6 +74,9 @@ ANALYSIS_MAP = {
     ArtefactType.ARC: [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.TBAFS:  [AnalysisType.ARCHIVE_EXTRACT],
     ArtefactType.XFILES: [AnalysisType.ARCHIVE_EXTRACT],
+    ArtefactType.LHA:    [AnalysisType.ARCHIVE_EXTRACT],
+    ArtefactType.ARJ:    [AnalysisType.ARCHIVE_EXTRACT],
+    ArtefactType.ZOO:    [AnalysisType.ARCHIVE_EXTRACT],
 
     # Acorn/RISC OS native viewable formats — convert to portable equivalents
     ArtefactType.ACORN_SPRITE: [AnalysisType.FORMAT_CONVERT],
@@ -82,9 +85,14 @@ ANALYSIS_MAP = {
 
     # Word-processor / DTP documents — convert to plain text (search + view)
     ArtefactType.MS_WORD:      [AnalysisType.FORMAT_CONVERT],
+    ArtefactType.MS_EXCEL:     [AnalysisType.FORMAT_CONVERT],
+    ArtefactType.MS_POWERPOINT: [AnalysisType.FORMAT_CONVERT],
+    ArtefactType.RTF:          [AnalysisType.FORMAT_CONVERT],
+    ArtefactType.HTML:         [AnalysisType.FORMAT_CONVERT],
 
     # Common image formats — pass through or convert to PNG/SVG
     ArtefactType.IMAGE: [AnalysisType.FORMAT_CONVERT],
+    ArtefactType.ILBM:  [AnalysisType.FORMAT_CONVERT],   # Amiga IFF/ILBM → PNG
 
     # Time-based media — MEDIA_TRANSCODE probes (ffprobe) every media file for
     # codec/track metadata and only re-encodes the ones browsers can't play

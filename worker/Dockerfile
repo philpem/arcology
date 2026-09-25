@@ -400,11 +400,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 		python3 python3-pip python3-dev python3-requests python3-numpy python3-boto3 git \
 		p7zip-full zstd gzip bzip2 xz-utils \
 		unzip unrar tar util-linux \
+		lhasa arj \
 		file fdisk \
 		default-jre \
-		antiword catdoc \
+		antiword catdoc poppler-utils unrtf \
 		ffmpeg \
 		libcairo2 libfontconfig1 python3-cairo python3-cairocffi python3-pillow \
+		imagemagick \
 		fonts-freefont-ttf \
 		scour
 

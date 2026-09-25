@@ -10,15 +10,23 @@ Currently supported:
   - Microsoft Word ``.doc``  (legacy OLE binary, Word 2-2003) via ``antiword``,
     falling back to ``catdoc``.
   - Microsoft Word ``.docx`` (OOXML) via the standard library.
+  - PDF via ``pdftotext`` (poppler).
 
 See ``doc/plans/DOCUMENT_FULLTEXT_PLAN.md``.
 """
 
+import html.parser
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 from ..config import log
-from .base import exception_result, run_tool_with_output, tool_result
+from .base import (
+    FileTooLargeError,
+    exception_result,
+    read_file_capped,
+    run_tool_with_output,
+    tool_result,
+)
 
 # Bound on the decompressed ``word/document.xml`` we will parse from a .docx.
 # A .docx is a ZIP, so an unbounded read of its markup would be a zip-bomb
@@ -31,6 +39,152 @@ _W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
 # Per-conversion subprocess timeout (antiword/catdoc are fast; this only guards
 # against a pathological input wedging the tool).
 _WORD_TOOL_TIMEOUT = 120
+
+# PDFs can be large; give their extraction a longer bound than the Word tools.
+_DOC_TOOL_TIMEOUT = 300
+
+
+def _text_from_tool(attempts, *, tool, error, postprocess=None):
+    """Run the first available command that emits UTF-8 text to stdout.
+
+    ``attempts`` is a list of argv lists tried in order: a missing binary
+    (``FileNotFoundError``) or a non-zero exit falls through to the next.  On
+    success the stdout is decoded UTF-8 (errors replaced) and, if given, run
+    through ``postprocess(text) -> text``.  Returns the standard
+    ``tool_result`` — success carries ``text``; total failure carries ``error``.
+    """
+    last_output = None
+    for cmd in attempts:
+        try:
+            result, output = run_tool_with_output(cmd, timeout=_DOC_TOOL_TIMEOUT)
+        except FileNotFoundError:
+            log.debug("%s not available for text extraction", cmd[0])
+            continue
+        last_output = output
+        if result.returncode == 0:
+            text = result.stdout.decode('utf-8', errors='replace')
+            if postprocess is not None:
+                text = postprocess(text)
+            return tool_result(True, tool=cmd[0], text=text, process_output=output)
+    return tool_result(False, tool=tool, error=error, process_output=last_output)
+
+
+def pdf_to_text(path: Path) -> dict:
+    """Extract text from a PDF via ``pdftotext`` (poppler).
+
+    ``-nopgbrk`` drops form-feed page breaks; ``-enc UTF-8`` forces UTF-8 out.
+    Image-only (scanned) PDFs legitimately yield little or no text — that's a
+    successful conversion with empty output, not an error (OCR is out of scope).
+    """
+    return _text_from_tool(
+        [['pdftotext', '-q', '-nopgbrk', '-enc', 'UTF-8', str(path), '-']],
+        tool='pdftotext',
+        error='PDF text extraction failed (pdftotext unavailable or errored)')
+
+
+def xls_to_text(path: Path) -> dict:
+    """Extract text from a legacy binary Excel ``.xls`` via ``xls2csv`` (catdoc).
+
+    Emits the cell contents as CSV on stdout (``-d utf-8`` output charset) —
+    linear text that is fine for full-text search and a basic view.
+    """
+    return _text_from_tool(
+        [['xls2csv', '-d', 'utf-8', str(path)]],
+        tool='xls2csv',
+        error='Excel .xls text extraction failed (xls2csv/catdoc unavailable or errored)')
+
+
+def ppt_to_text(path: Path) -> dict:
+    """Extract text from a legacy binary PowerPoint ``.ppt`` via ``catppt`` (catdoc).
+
+    ``-d utf-8`` selects the UTF-8 output charset.  Emits the slides' text.
+    """
+    return _text_from_tool(
+        [['catppt', '-d', 'utf-8', str(path)]],
+        tool='catppt',
+        error='PowerPoint .ppt text extraction failed (catppt/catdoc unavailable or errored)')
+
+
+def _strip_unrtf_header(text: str) -> str:
+    """Drop unrtf's ``###``-prefixed informational lines, leaving the body."""
+    body = '\n'.join(ln for ln in text.splitlines() if not ln.startswith('###'))
+    return body.strip('\n')
+
+
+def rtf_to_text(path: Path) -> dict:
+    """Extract text from an RTF document via ``unrtf --text``.
+
+    ``--nopict`` skips embedded pictures; unrtf prefixes a few ``###`` comment
+    lines which :func:`_strip_unrtf_header` removes.
+    """
+    return _text_from_tool(
+        [['unrtf', '--text', '--nopict', str(path)]],
+        tool='unrtf',
+        error='RTF text extraction failed (unrtf unavailable or errored)',
+        postprocess=_strip_unrtf_header)
+
+
+# Tags that introduce a line break in the extracted text, and tags whose
+# contents are not human-readable body text.
+_HTML_BREAK_TAGS = frozenset({
+    'p', 'br', 'div', 'li', 'tr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'table', 'ul', 'ol', 'blockquote', 'section', 'article', 'header',
+    'footer', 'pre', 'hr',
+})
+_HTML_SKIP_TAGS = frozenset({'script', 'style'})
+
+
+class _HTMLTextExtractor(html.parser.HTMLParser):
+    """Collect readable text from HTML, dropping script/style and marking breaks."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+        self._skip = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in _HTML_SKIP_TAGS:
+            self._skip += 1
+        elif tag in _HTML_BREAK_TAGS:
+            self._parts.append('\n')
+
+    def handle_startendtag(self, tag, attrs):
+        if tag in _HTML_BREAK_TAGS:
+            self._parts.append('\n')
+
+    def handle_endtag(self, tag):
+        if tag in _HTML_SKIP_TAGS and self._skip:
+            self._skip -= 1
+        elif tag in _HTML_BREAK_TAGS:
+            self._parts.append('\n')
+
+    def handle_data(self, data):
+        if not self._skip:
+            self._parts.append(data)
+
+    def get_text(self) -> str:
+        lines = [ln.strip() for ln in ''.join(self._parts).splitlines()]
+        return '\n'.join(ln for ln in lines if ln)
+
+
+def html_to_text(path: Path) -> dict:
+    """Extract readable text from an HTML document using the standard library.
+
+    Drops ``<script>`` / ``<style>`` content and inserts line breaks at block
+    tags; entities are decoded.  No external tool.  Decoded as UTF-8 (errors
+    replaced) — good enough for search across the messy encodings of old pages.
+    """
+    try:
+        raw = read_file_capped(path)
+    except FileTooLargeError as exc:
+        return tool_result(False, tool='html', error=str(exc))
+    extractor = _HTMLTextExtractor()
+    try:
+        extractor.feed(raw.decode('utf-8', errors='replace'))
+        extractor.close()
+    except Exception:
+        return exception_result('html', 'HTML text extraction failed')
+    return tool_result(True, tool='html', text=extractor.get_text())
 
 
 def word_to_text(path: Path) -> dict:

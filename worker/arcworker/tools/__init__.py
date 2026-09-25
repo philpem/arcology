@@ -7,6 +7,8 @@ Contains wrappers for external analysis tools.
 from .archives import (
     decompress_single_file,
     extract_7z,
+    extract_arj,
+    extract_lha,
     extract_rar,
     extract_riscosarc,
     extract_tar,
@@ -14,6 +16,7 @@ from .archives import (
     extract_xfiles,
     extract_zip,
     extract_zip_riscos,
+    extract_zoo,
     has_riscos_zip_metadata,
     list_zip_member_names,
     read_zip_comment,
@@ -33,7 +36,14 @@ from .base import (
     run_tool_with_output,
     tool_result,
 )
-from .documents import word_to_text
+from .documents import (
+    html_to_text,
+    pdf_to_text,
+    ppt_to_text,
+    rtf_to_text,
+    word_to_text,
+    xls_to_text,
+)
 from .extraction import (
     enumerate_extracted_files,
     extract_acorn_disc_image_manager,
@@ -78,6 +88,11 @@ __all__ = [
     'parse_armovie_header',
     'file_has_armovie_magic',
     'word_to_text',
+    'pdf_to_text',
+    'xls_to_text',
+    'ppt_to_text',
+    'rtf_to_text',
+    'html_to_text',
     'run_tool',
     'run_tool_with_output',
     'get_process_output',
@@ -123,6 +138,9 @@ __all__ = [
     'extract_tar',
     'extract_rar',
     'extract_7z',
+    'extract_lha',
+    'extract_arj',
+    'extract_zoo',
     'decompress_single_file',
     'detect_armlock',
     'remove_armlock',

@@ -45,6 +45,11 @@ EXTENSION_MAP = {
     '.pdf': ArtefactType.PDF,
     '.doc':  ArtefactType.MS_WORD,   # legacy binary Word (OLE compound doc)
     '.docx': ArtefactType.MS_WORD,   # OOXML Word
+    '.xls':  ArtefactType.MS_EXCEL,  # legacy binary Excel (OLE compound doc)
+    '.ppt':  ArtefactType.MS_POWERPOINT,  # legacy binary PowerPoint (OLE compound doc)
+    '.rtf':  ArtefactType.RTF,       # Rich Text Format
+    '.html': ArtefactType.HTML,
+    '.htm':  ArtefactType.HTML,
 
     # Archives
     '.zip': ArtefactType.ZIP,
@@ -60,6 +65,10 @@ EXTENSION_MAP = {
     '.b21':   ArtefactType.TBAFS,
     '.tbafs': ArtefactType.TBAFS,
     '.b23':   ArtefactType.XFILES,
+    '.lha':   ArtefactType.LHA,
+    '.lzh':   ArtefactType.LHA,
+    '.arj':   ArtefactType.ARJ,
+    '.zoo':   ArtefactType.ZOO,
 
     # Acorn/RISC OS native viewable formats
     '.spr':  ArtefactType.ACORN_SPRITE,
@@ -82,6 +91,11 @@ EXTENSION_MAP = {
     # Windows vector metafiles (converted to SVG)
     '.wmf':  ArtefactType.IMAGE,
     '.emf':  ArtefactType.IMAGE,
+
+    # Amiga IFF / ILBM bitmaps (converted to PNG via ImageMagick)
+    '.iff':  ArtefactType.ILBM,
+    '.ilbm': ArtefactType.ILBM,
+    '.lbm':  ArtefactType.ILBM,
 }
 
 # --- Time-based media (audio / video) ---------------------------------------
@@ -252,9 +266,18 @@ VIEWABLE_EXTENSIONS: dict[str, ArtefactType] = {
     '.tga':  ArtefactType.IMAGE,
     '.wmf':  ArtefactType.IMAGE,
     '.emf':  ArtefactType.IMAGE,
+    '.iff':  ArtefactType.ILBM,
+    '.ilbm': ArtefactType.ILBM,
+    '.lbm':  ArtefactType.ILBM,
     # Word-processor documents — converted to plain text (searchable + viewable).
     '.doc':  ArtefactType.MS_WORD,
     '.docx': ArtefactType.MS_WORD,
+    '.pdf':  ArtefactType.PDF,
+    '.xls':  ArtefactType.MS_EXCEL,
+    '.ppt':  ArtefactType.MS_POWERPOINT,
+    '.rtf':  ArtefactType.RTF,
+    '.html': ArtefactType.HTML,
+    '.htm':  ArtefactType.HTML,
 }
 # &D94 (ArtWorks), &D87/&D88 (Impression), &D01 (TechWriter) are intentionally
 # omitted — they require bespoke rendering tools.  MS Word documents are
@@ -377,7 +400,8 @@ COMPRESSOR_SUFFIXES = ('.zst', '.gz', '.bz2')
 ARCHIVE_ARTEFACT_TYPES = frozenset({
     ArtefactType.ZIP, ArtefactType.TAR, ArtefactType.TARGZ, ArtefactType.RAR,
     ArtefactType.SEVENZ, ArtefactType.ARC, ArtefactType.TBAFS,
-    ArtefactType.XFILES,
+    ArtefactType.XFILES, ArtefactType.LHA, ArtefactType.ARJ,
+    ArtefactType.ZOO,
 })
 
 # Derived extension sets, for callers that classify by category rather than

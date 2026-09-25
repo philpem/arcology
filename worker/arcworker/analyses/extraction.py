@@ -27,7 +27,9 @@ from ..tools import (
     enumerate_extracted_files,
     extract_7z,
     extract_acorn_disc_image_manager,
+    extract_arj,
     extract_dos_7z,
+    extract_lha,
     extract_rar,
     extract_riscosarc,
     extract_tar,
@@ -35,6 +37,7 @@ from ..tools import (
     extract_xfiles,
     extract_zip,
     extract_zip_riscos,
+    extract_zoo,
     has_riscos_zip_metadata,
     list_zip_member_names,
     parse_iso_riscos_filetypes,
@@ -300,6 +303,9 @@ _BASE_EXTRACTORS = {
     ArchiveType.TARXZ:      partial(extract_tar, archive_type=ArchiveType.TARXZ.value),
     ArchiveType.RAR:        extract_rar,
     ArchiveType.SEVENZ:     extract_7z,
+    ArchiveType.LHA:        extract_lha,
+    ArchiveType.ARJ:        extract_arj,
+    ArchiveType.ZOO:        extract_zoo,
 }
 
 # Nested extraction additionally handles DOS disc images found inside a

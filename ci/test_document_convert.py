@@ -162,6 +162,182 @@ class TestWordDetectionWiring(unittest.TestCase):
         self.assertEqual(ANALYSIS_MAP[ArtefactType.MS_WORD], [AnalysisType.FORMAT_CONVERT])
 
 
+class TestPdfWiring(unittest.TestCase):
+
+    def test_pdf_conversion_graceful_without_tool(self):
+        from worker.arcworker.tools.documents import pdf_to_text
+        # pdftotext lives only in the worker image (absent here), or would reject
+        # this garbage — either way a clean failure, never an exception.
+        p = _write_tmp(b'%PDF-1.4 not really a pdf', '.pdf')
+        try:
+            res = pdf_to_text(p)
+            self.assertFalse(res['success'])
+            self.assertIsInstance(res.get('error'), str)
+        finally:
+            p.unlink(missing_ok=True)
+
+    def test_pdf_detection_and_wiring(self):
+        from arcology_shared.artefact_types import (
+            detect_artefact_type,
+            viewable_artefact_type,
+        )
+        from arcology_shared.content_categories import ContentCategory, classify_content
+        from arcology_shared.enums import ArtefactType
+        self.assertEqual(detect_artefact_type('manual.pdf'), ArtefactType.PDF)
+        self.assertEqual(viewable_artefact_type('manual.pdf', None), ArtefactType.PDF)
+        self.assertIn(ContentCategory.CONVERTIBLE, classify_content('manual.pdf', None))
+
+    def test_pdf_queues_format_convert(self):
+        from arcology_shared.enums import AnalysisType, ArtefactType
+        from myapp.services.artefact_types import ANALYSIS_MAP
+        self.assertIn(AnalysisType.FORMAT_CONVERT, ANALYSIS_MAP[ArtefactType.PDF])
+
+
+class TestExcelWiring(unittest.TestCase):
+
+    def test_xls_conversion_graceful_without_tool(self):
+        from worker.arcworker.tools.documents import xls_to_text
+        p = _write_tmp(b'\xd0\xcf\x11\xe0not-a-real-xls', '.xls')
+        try:
+            res = xls_to_text(p)
+            self.assertFalse(res['success'])
+            self.assertIsInstance(res.get('error'), str)
+        finally:
+            p.unlink(missing_ok=True)
+
+    def test_xls_detection_and_wiring(self):
+        from arcology_shared.artefact_types import (
+            detect_artefact_type,
+            viewable_artefact_type,
+        )
+        from arcology_shared.content_categories import ContentCategory, classify_content
+        from arcology_shared.enums import AnalysisType, ArtefactType
+        from myapp.services.artefact_types import ANALYSIS_MAP
+        self.assertEqual(detect_artefact_type('accounts.xls'), ArtefactType.MS_EXCEL)
+        self.assertEqual(viewable_artefact_type('accounts.xls', None), ArtefactType.MS_EXCEL)
+        self.assertIn(ContentCategory.CONVERTIBLE, classify_content('accounts.xls', None))
+        self.assertEqual(ANALYSIS_MAP[ArtefactType.MS_EXCEL], [AnalysisType.FORMAT_CONVERT])
+
+
+class TestPowerpointWiring(unittest.TestCase):
+
+    def test_ppt_conversion_graceful_without_tool(self):
+        from worker.arcworker.tools.documents import ppt_to_text
+        p = _write_tmp(b'\xd0\xcf\x11\xe0not-a-real-ppt', '.ppt')
+        try:
+            res = ppt_to_text(p)
+            self.assertFalse(res['success'])
+            self.assertIsInstance(res.get('error'), str)
+        finally:
+            p.unlink(missing_ok=True)
+
+    def test_ppt_detection_and_wiring(self):
+        from arcology_shared.artefact_types import (
+            detect_artefact_type,
+            viewable_artefact_type,
+        )
+        from arcology_shared.content_categories import ContentCategory, classify_content
+        from arcology_shared.enums import AnalysisType, ArtefactType
+        from myapp.services.artefact_types import ANALYSIS_MAP
+        self.assertEqual(detect_artefact_type('deck.ppt'), ArtefactType.MS_POWERPOINT)
+        self.assertEqual(viewable_artefact_type('deck.ppt', None), ArtefactType.MS_POWERPOINT)
+        self.assertIn(ContentCategory.CONVERTIBLE, classify_content('deck.ppt', None))
+        self.assertEqual(ANALYSIS_MAP[ArtefactType.MS_POWERPOINT], [AnalysisType.FORMAT_CONVERT])
+
+
+class TestRtfWiring(unittest.TestCase):
+
+    def test_rtf_conversion_graceful_without_tool(self):
+        from worker.arcworker.tools.documents import rtf_to_text
+        p = _write_tmp(rb'{\rtf1 hello}', '.rtf')
+        try:
+            res = rtf_to_text(p)
+            self.assertFalse(res['success'])
+            self.assertIsInstance(res.get('error'), str)
+        finally:
+            p.unlink(missing_ok=True)
+
+    def test_strip_unrtf_header(self):
+        from worker.arcworker.tools.documents import _strip_unrtf_header
+        raw = "### header line\n### fonts: 2\nActual body text\nmore text\n"
+        self.assertEqual(_strip_unrtf_header(raw), "Actual body text\nmore text")
+
+    def test_rtf_detection_and_wiring(self):
+        from arcology_shared.artefact_types import (
+            detect_artefact_type,
+            viewable_artefact_type,
+        )
+        from arcology_shared.content_categories import ContentCategory, classify_content
+        from arcology_shared.enums import AnalysisType, ArtefactType
+        from myapp.services.artefact_types import ANALYSIS_MAP
+        self.assertEqual(detect_artefact_type('letter.rtf'), ArtefactType.RTF)
+        self.assertEqual(viewable_artefact_type('letter.rtf', None), ArtefactType.RTF)
+        self.assertIn(ContentCategory.CONVERTIBLE, classify_content('letter.rtf', None))
+        self.assertEqual(ANALYSIS_MAP[ArtefactType.RTF], [AnalysisType.FORMAT_CONVERT])
+
+
+class TestHtmlConvert(unittest.TestCase):
+    """HTML uses the standard library, so its conversion runs here for real."""
+
+    def _convert(self, html_bytes: bytes):
+        from worker.arcworker.tools.documents import html_to_text
+        p = _write_tmp(html_bytes, '.html')
+        try:
+            return html_to_text(p)
+        finally:
+            p.unlink(missing_ok=True)
+
+    def test_extracts_text_and_drops_script_style(self):
+        html = (b'<html><head><title>T</title><style>.x{color:red}</style></head>'
+                b'<body><h1>Heading</h1><p>Hello &amp; welcome</p>'
+                b'<script>var x = 1;</script><p>line two</p></body></html>')
+        res = self._convert(html)
+        self.assertTrue(res['success'], res)
+        self.assertIn('Hello & welcome', res['text'])
+        self.assertIn('Heading', res['text'])
+        self.assertIn('line two', res['text'])
+        self.assertNotIn('color:red', res['text'])
+        self.assertNotIn('var x', res['text'])
+
+    def test_paragraphs_become_separate_lines(self):
+        res = self._convert(b'<p>alpha</p><p>beta</p>')
+        self.assertEqual(res['text'], 'alpha\nbeta')
+
+    def test_detection_and_wiring(self):
+        from arcology_shared.artefact_types import (
+            detect_artefact_type,
+            viewable_artefact_type,
+        )
+        from arcology_shared.content_categories import ContentCategory, classify_content
+        from arcology_shared.enums import AnalysisType, ArtefactType
+        from myapp.services.artefact_types import ANALYSIS_MAP
+        for name in ('page.html', 'page.htm'):
+            self.assertEqual(detect_artefact_type(name), ArtefactType.HTML)
+            self.assertEqual(viewable_artefact_type(name, None), ArtefactType.HTML)
+            self.assertIn(ContentCategory.CONVERTIBLE, classify_content(name, None))
+        self.assertEqual(ANALYSIS_MAP[ArtefactType.HTML], [AnalysisType.FORMAT_CONVERT])
+
+
+class TestIlbmWiring(unittest.TestCase):
+    # convert_ilbm() itself needs ImageMagick + the worker-only image stack
+    # (scour), so it is exercised in the worker rather than here; the detection
+    # wiring below is the dialect-independent part.
+
+    def test_ilbm_detection_and_wiring(self):
+        from arcology_shared.artefact_types import (
+            detect_artefact_type,
+            viewable_artefact_type,
+        )
+        from arcology_shared.content_categories import ContentCategory, classify_content
+        from arcology_shared.enums import AnalysisType, ArtefactType
+        from myapp.services.artefact_types import ANALYSIS_MAP
+        for name in ('art.iff', 'art.ilbm', 'art.lbm'):
+            self.assertEqual(detect_artefact_type(name), ArtefactType.ILBM)
+            self.assertEqual(viewable_artefact_type(name, None), ArtefactType.ILBM)
+            self.assertIn(ContentCategory.CONVERTIBLE, classify_content(name, None))
+        self.assertEqual(ANALYSIS_MAP[ArtefactType.ILBM], [AnalysisType.FORMAT_CONVERT])
+
+
 if __name__ == '__main__':
     unittest.main()
 

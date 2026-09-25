@@ -1,11 +1,12 @@
 """
 Format-conversion handler.
 
-Renders RISC OS Sprite, DrawFile and Text artefacts, MS Word documents and
-bitmap images into web-viewable outputs.  Two operating modes:
+Renders RISC OS Sprite, DrawFile and Text artefacts, documents (MS Word, PDF,
+…) and bitmap images into web-viewable outputs.  Two operating modes:
 
-  Mode 1 — Direct artefact (artefact_type ∈ {ACORN_SPRITE, ACORN_DRAW,
-           ACORN_TEXT, MS_WORD, IMAGE}): convert the artefact's own file.
+  Mode 1 — Direct artefact (artefact_type is ACORN_SPRITE/DRAW/TEXT, IMAGE, or a
+           document-text type in _DOCUMENT_TEXT_CONVERTERS): convert the
+           artefact's own file.
   Mode 2 — Extraction scan (hints contain ``extraction_path``): walk the
            extraction output directory and convert every viewable file
            found.
@@ -25,9 +26,14 @@ from ..config import log
 from ..tools import (
     convert_draw,
     convert_sprite,
+    html_to_text,
     parse_acorn_filename,
+    pdf_to_text,
+    ppt_to_text,
     read_file_capped,
+    rtf_to_text,
     word_to_text,
+    xls_to_text,
 )
 from ..utils.paths import artefact_output_subdir
 from ._common import analysis_handler, iter_resolved_files, scan_partition_files
@@ -43,6 +49,19 @@ _PER_FILE_CONVERT_TIMEOUT = 120
 # the search_documents row) for a pathological input.  Truncation is flagged so
 # the indexer / UI can note it rather than silently losing content.
 _INDEX_TEXT_CAP = 200_000
+
+# Artefact types converted to plain text via an external/stdlib converter that
+# returns a ``tool_result`` with a ``text`` field.  All are dispatched by one
+# branch in _convert_file_to_outputs_inner and routed through _text_output(), so
+# adding a text format is one entry here plus its detection wiring.
+_DOCUMENT_TEXT_CONVERTERS = {
+    ArtefactType.MS_WORD: word_to_text,
+    ArtefactType.PDF: pdf_to_text,
+    ArtefactType.MS_EXCEL: xls_to_text,
+    ArtefactType.MS_POWERPOINT: ppt_to_text,
+    ArtefactType.RTF: rtf_to_text,
+    ArtefactType.HTML: html_to_text,
+}
 
 
 @contextmanager
@@ -208,21 +227,24 @@ def _convert_file_to_outputs_inner(
             log.warning(f"Text conversion failed for {input_path}: {e}")
             return None, str(e), warnings
 
-    elif artefact_type == ArtefactType.MS_WORD:
+    elif artefact_type in _DOCUMENT_TEXT_CONVERTERS:
         true_name, _ = parse_acorn_filename(input_path.name)
+        converter = _DOCUMENT_TEXT_CONVERTERS[artefact_type]
         with _conversion_timeout(_PER_FILE_CONVERT_TIMEOUT, input_path.name):
-            result = word_to_text(input_path)
+            result = converter(input_path)
         warnings.extend(result.get('warnings', []))
         if not result['success']:
-            log.warning(f"Word conversion failed for {input_path}: {result.get('error')}")
+            log.warning(f"{artefact_type.value} conversion failed for {input_path}: {result.get('error')}")
             return None, result.get('error') or 'Conversion failed', warnings
-        # Normalise line endings; the converter emits UTF-8 already.
+        # Converters emit UTF-8; normalise line endings.  Skip a blank result
+        # (e.g. an image-only scanned PDF) rather than emit an empty .txt.
         text = (result.get('text') or '').replace('\r\n', '\n').replace('\r', '\n')
-        outputs.append(_text_output(
-            self, text, name=true_name, work_dir=work_dir,
-            output_subdir=output_subdir, analysis_uuid=analysis_uuid,
-            file_index=file_index, tool=result.get('tool', 'antiword'),
-        ))
+        if text.strip():
+            outputs.append(_text_output(
+                self, text, name=true_name, work_dir=work_dir,
+                output_subdir=output_subdir, analysis_uuid=analysis_uuid,
+                file_index=file_index, tool=result.get('tool', artefact_type.value),
+            ))
 
     elif artefact_type == ArtefactType.IMAGE:
         from ..tools.images_common import convert_image  # numpy/scour: worker-only
@@ -237,6 +259,28 @@ def _convert_file_to_outputs_inner(
         saved = self.save_output_file(
             Path(result['output_path']),
             f'{analysis_uuid}_{file_index}_image{ext}',
+            subdir=output_subdir,
+        )
+        outputs.append({
+            'type': 'image',
+            'filename': saved,
+            'name': true_name,
+            'description': true_name,
+            'tool': result['tool'],
+        })
+
+    elif artefact_type == ArtefactType.ILBM:
+        from ..tools.images_common import convert_ilbm  # ImageMagick: worker-only
+        true_name, _ = parse_acorn_filename(input_path.name)
+        tmp_out = work_dir / f'ilbm_{file_index}'
+        with _conversion_timeout(_PER_FILE_CONVERT_TIMEOUT, input_path.name):
+            result = convert_ilbm(input_path, tmp_out, analysis_uuid)
+        if not result['success']:
+            log.warning(f"ILBM conversion failed for {input_path}: {result.get('error')}")
+            return None, result.get('error') or 'Conversion failed', warnings
+        saved = self.save_output_file(
+            Path(result['output_path']),
+            f'{analysis_uuid}_{file_index}_ilbm.png',
             subdir=output_subdir,
         )
         outputs.append({
@@ -264,9 +308,10 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
     """
     Process FORMAT_CONVERT analysis.  Supports two modes:
 
-    Mode 1 — Direct artefact (artefact_type is ACORN_SPRITE/DRAW/TEXT,
-      MS_WORD, or IMAGE): Convert the artefact's own file.  Used for
-      directly-uploaded Acorn files and documents; triggered via ANALYSIS_MAP.
+    Mode 1 — Direct artefact (artefact_type is ACORN_SPRITE/DRAW/TEXT, IMAGE, or
+      a document-text type in _DOCUMENT_TEXT_CONVERTERS): Convert the artefact's
+      own file.  Used for directly-uploaded Acorn files and documents; triggered
+      via ANALYSIS_MAP.
 
     Mode 2 — Extraction scan (hints contain 'extraction_path'):
       Scan the extraction output directory for every viewable file, convert
@@ -285,8 +330,9 @@ def process_format_convert(self, analysis: dict, artefact: dict, work_dir: Path)
         ArtefactType.ACORN_SPRITE.value,
         ArtefactType.ACORN_DRAW.value,
         ArtefactType.ACORN_TEXT.value,
-        ArtefactType.MS_WORD.value,
         ArtefactType.IMAGE.value,
+        ArtefactType.ILBM.value,
+        *(t.value for t in _DOCUMENT_TEXT_CONVERTERS),
     )
 
     # --- Mode 1: Direct artefact conversion ---

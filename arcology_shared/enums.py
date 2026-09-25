@@ -44,6 +44,9 @@ class ArtefactType(enum.Enum):
     ARC        = "arc"               # ArcFS / Spark (RISC OS archive)
     TBAFS      = "tbafs"             # TBAFS archive (RISC OS filetype &B21)
     XFILES     = "xfiles"            # X-Files archive (RISC OS filetype &B23)
+    LHA        = "lha"               # LHA / LZH archive (Amiga / BBS era)
+    ARJ        = "arj"               # ARJ archive (PC / BBS era)
+    ZOO        = "zoo"               # Zoo archive (PC / Amiga BBS era)
 
     # Acorn/RISC OS native formats (viewable/convertible)
     ACORN_SPRITE = "acorn_sprite"    # Acorn Sprite file (may contain multiple named images)
@@ -52,9 +55,14 @@ class ArtefactType(enum.Enum):
 
     # Word-processor / DTP documents (converted to plain text for search + viewing)
     MS_WORD      = "ms_word"         # Microsoft Word (.doc legacy binary, .docx OOXML)
+    MS_EXCEL     = "ms_excel"        # Microsoft Excel (.xls legacy binary) → CSV text
+    MS_POWERPOINT = "ms_powerpoint"  # Microsoft PowerPoint (.ppt legacy binary) → text
+    RTF          = "rtf"             # Rich Text Format document → plain text
+    HTML         = "html"            # HTML document → readable plain text
 
     # Common image formats (raster and vector metafiles)
     IMAGE        = "image"           # JPEG, PNG, GIF, BMP, TIFF, WebP, PCX, TGA, WMF, EMF
+    ILBM         = "ilbm"            # Amiga IFF/ILBM bitmap → PNG (ImageMagick)
 
     # Time-based media (playable in the viewer; non-native containers are
     # transcoded to MP4/M4A by MEDIA_TRANSCODE, native ones played directly)
