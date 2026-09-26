@@ -1,0 +1,37 @@
+{% extends "_base.html" %}
+{% block page_title %}API Key Created — {{ user.username }}{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+	<div class="col-md-8">
+		<div class="alert alert-warning" role="alert">
+			<h4 class="alert-heading"><i class="bi bi-exclamation-triangle-fill"></i> Copy this key now</h4>
+			<p>This is the <strong>only time</strong> the API key for
+			<strong>{{ user.username }}</strong> will be shown.
+			It is not stored in plaintext and cannot be recovered.
+			If it is lost, revoke it and create a new one.</p>
+		</div>
+
+		<div class="card mb-4">
+			<div class="card-header d-flex justify-content-between align-items-center">
+				New API key for {{ user.username }}
+				<button type="button" class="btn btn-sm btn-outline-secondary" onclick="copyToClipboard('{{ raw_key }}', this)" title="Copy key">
+					<i class="bi bi-clipboard"></i> Copy
+				</button>
+			</div>
+			<div class="card-body">
+				<pre class="mb-0 user-select-all"><code>{{ raw_key }}</code></pre>
+			</div>
+		</div>
+
+		<p class="text-muted">
+			Send the key in the <code>Authorization</code> HTTP header:
+		</p>
+		<pre><code>Authorization: Bearer {{ raw_key }}</code></pre>
+
+		<a href="{{ url_for('myapp_blueprints_admin.user_keys', user_id=user.id) }}" class="btn btn-primary">
+			<i class="bi bi-arrow-left"></i> Back to API Keys
+		</a>
+	</div>
+</div>
+{% endblock %}

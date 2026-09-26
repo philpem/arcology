@@ -1,0 +1,140 @@
+{% extends "_base.html" %}
+{% from '_confirm_modal.html' import delete_trigger, delete_confirm_modal %}
+{% block page_title %}API Keys — {{ user.username }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+	<div>
+		<h1 class="mb-1">
+			API Keys: {{ user.username }}
+			{% if user.oidc_managed %}
+			<span class="badge bg-info text-dark ms-1" title="Account managed via {{ oidc_provider_name }}">
+				<i class="bi bi-shield-lock"></i> SSO
+			</span>
+			{% endif %}
+		</h1>
+		<p class="text-muted mb-0">
+			Create and revoke API keys for this account. Keys are shown once on
+			creation and cannot be recovered — revoke and recreate if lost.
+		</p>
+	</div>
+	<a href="{{ url_for('myapp_blueprints_admin.index') }}" class="btn btn-outline-secondary">
+		<i class="bi bi-arrow-left"></i> Back to Admin
+	</a>
+</div>
+
+{% if not user.can_use_api %}
+<div class="alert alert-warning">
+	<i class="bi bi-exclamation-triangle-fill"></i>
+	<strong>{{ user.username }}</strong> does not have API key access enabled, so
+	no keys can be created or used.
+	{% if user.oidc_managed %}
+	API access for this SSO-managed account is controlled by
+	{{ oidc_provider_name }} — assign the API access role to enable it.
+	{% else %}
+	Enable <strong>API Key Access</strong> on the
+	<a href="{{ url_for('myapp_blueprints_admin.edit_user', user_id=user.id) }}">edit-user page</a> first.
+	{% endif %}
+</div>
+{% endif %}
+
+<div class="card mb-4">
+	<div class="card-header d-flex justify-content-between align-items-center">
+		<h5 class="mb-0">Active Keys</h5>
+		<span class="text-muted small">{{ keys | length }} key{{ 's' if keys | length != 1 }}</span>
+	</div>
+	<div class="card-body">
+		{% if keys %}
+		<div class="table-responsive">
+		<table class="table table-sm mb-0">
+			<thead class="table-light">
+				<tr>
+					<th>Name</th>
+					<th>Key prefix</th>
+					<th>Permission</th>
+					<th>Created</th>
+					<th>Last used</th>
+					<th></th>
+				</tr>
+			</thead>
+			<tbody>
+			{% for key in keys %}
+				<tr>
+					<td>{{ key.name }}</td>
+					<td><code>arc_{{ key.key_prefix }}…</code></td>
+					<td>
+						{% set eff = key.effective_permission() %}
+						{% if eff.value == 'read_only' %}
+							<span class="badge bg-secondary">Read Only</span>
+						{% elif eff.value == 'read_upload' %}
+							<span class="badge bg-info text-dark">Read + Upload</span>
+						{% else %}
+							<span class="badge bg-primary">Full Read/Write</span>
+						{% endif %}
+						{% if key.permission != eff %}
+							<small class="text-muted ms-1" title="Capped by the user's account permission">(capped)</small>
+						{% endif %}
+					</td>
+					<td><small class="text-muted">{{ key.created_at.strftime('%Y-%m-%d') }}</small></td>
+					<td>
+						<small class="text-muted">
+							{{ key.last_used_at.strftime('%Y-%m-%d %H:%M') if key.last_used_at else 'Never' }}
+						</small>
+					</td>
+					<td>
+						{{ delete_trigger(
+							url_for('myapp_blueprints_admin.revoke_user_key', user_id=user.id, key_id=key.id),
+							key.name, title='Revoke API Key',
+							warning='Applications using this key will stop working immediately.',
+							trigger_label='Revoke', confirm_label='Revoke Key', confirm_icon='bi-key') }}
+					</td>
+				</tr>
+			{% endfor %}
+			</tbody>
+		</table>
+		</div>
+		{% else %}
+		<p class="text-muted mb-0">No active API keys.</p>
+		{% endif %}
+	</div>
+</div>
+
+{% if user.can_use_api %}
+<div class="card mb-4">
+	<div class="card-header"><h5 class="mb-0">Create New Key</h5></div>
+	<div class="card-body">
+		{% if user.permission.value == 'read_only' %}
+		<div class="alert alert-warning py-2" role="alert">
+			<i class="bi bi-exclamation-triangle-fill"></i>
+			This account is limited to <strong>Read Only</strong> access, so any key
+			created here will be capped at Read Only regardless of the permission
+			selected below.
+		</div>
+		{% endif %}
+		<form method="post" action="{{ url_for('myapp_blueprints_admin.create_user_key', user_id=user.id) }}"
+			  class="row g-2 align-items-end">
+			{{ form.hidden_tag() }}
+			<div class="col-md-4">
+				{{ form.name.label(class="form-label") }}
+				{{ form.name(class="form-control" + (" is-invalid" if form.name.errors else ""), placeholder="e.g. Lab workstation") }}
+				{% for error in form.name.errors %}<div class="invalid-feedback">{{ error }}</div>{% endfor %}
+			</div>
+			<div class="col-md-4">
+				{{ form.permission.label(class="form-label") }}
+				{{ form.permission(class="form-select") }}
+			</div>
+			<div class="col-md-2">
+				<button type="submit" class="btn btn-success w-100">
+					<i class="bi bi-plus-lg"></i> Create Key
+				</button>
+			</div>
+		</form>
+		<div class="form-text mt-2">
+			The key's effective permission is capped by {{ user.username }}'s account permission.
+		</div>
+	</div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block modals %}{{ super() }}{{ delete_confirm_modal(csrf_token()) }}{% endblock %}

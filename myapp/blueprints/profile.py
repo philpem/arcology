@@ -4,13 +4,15 @@ Arcology - Profile Blueprint
 User profile management: change password and manage API application keys.
 """
 
-from flask import Blueprint, abort, flash, render_template, session
+from flask import Blueprint, abort, flash, render_template
 from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
 from wtforms import PasswordField, SelectField, StringField
 from wtforms.validators import DataRequired, EqualTo, Length
 from ..database import ApiKey, ApiKeyPermission, UserPermission
+from ..enums import api_key_permission_choices
 from ..extensions import db
+from ..utils.api_keys import set_pending_api_key, take_pending_api_key
 from ..utils.web_forms import flash_form_errors, redirect_local
 
 ROUTENAME = __name__.replace('.', '_')
@@ -124,8 +126,8 @@ def create_key():
         db.session.add(key)
         db.session.commit()
 
-        # Store the raw key in the session for one-time display, then redirect
-        session['new_api_key'] = raw_key
+        # Store the raw key against the owning user for one-time display, then redirect
+        set_pending_api_key(current_user.id, raw_key)
         return _route_redirect('key_created')
 
     flash_form_errors(form)
@@ -135,7 +137,7 @@ def create_key():
 @blueprint.route('/keys/created')
 @login_required
 def key_created():
-    raw_key = session.pop('new_api_key', None)
+    raw_key = take_pending_api_key(current_user.id)
     if not raw_key:
         abort(404)
     return render_template('profile/key_created.html', raw_key=raw_key)
@@ -162,11 +164,7 @@ def _permission_choices() -> list[tuple[str, str]]:
     Return SelectField choices for API key permission, limited to what
     the current user's own permission level allows.
     """
-    all_choices = [
-        (ApiKeyPermission.READ_ONLY.value,   'Read Only — GET requests only'),
-        (ApiKeyPermission.READ_UPLOAD.value, 'Read + Upload — create items & upload artefacts'),
-        (ApiKeyPermission.READ_WRITE.value,  'Full Read/Write — complete access'),
-    ]
+    all_choices = api_key_permission_choices()
     if current_user.permission == UserPermission.READ_ONLY:
         # read-only users can only create read-only keys
         return all_choices[:1]

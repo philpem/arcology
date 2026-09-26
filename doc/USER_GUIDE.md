@@ -581,6 +581,9 @@ status. Administrators can:
 - **Edit users** -- change permission level, admin status, or API access
 - **Delete users** -- permanently remove a user account (requires confirmation)
 - **Toggle API access** -- enable or disable a user's ability to create API keys
+- **Manage API keys** -- the **Keys** action on the admin user list (or on the
+  edit-user page) opens a page where you can view, create, and revoke a user's
+  API keys. Keys can only be created for accounts that have API access enabled.
 - **Manage download bypasses** -- the edit-user page has checkboxes to set the
   user's global per-type restriction bypasses, and lists any per-artefact
   download grants with a revoke button for each. See
@@ -595,6 +598,11 @@ are synchronised from the provider's role assignments on each login, so manual
 changes here may be overridden at next sign-in. Password fields are hidden for
 SSO-managed accounts. To change an SSO user's permissions permanently, update
 their role assignments in the identity provider.
+
+Administrators can still create and revoke API keys for an SSO-managed user
+from the **Keys** page, but a key can only be created while the account has API
+access (that is, while the identity provider grants the API access role). Keys
+are rejected at authentication time if the owner no longer has API access.
 
 See [SSO.md](SSO.md) for full configuration instructions.
 
