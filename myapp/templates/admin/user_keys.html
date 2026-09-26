@@ -103,6 +103,14 @@
 <div class="card mb-4">
 	<div class="card-header"><h5 class="mb-0">Create New Key</h5></div>
 	<div class="card-body">
+		{% if user.permission.value == 'read_only' %}
+		<div class="alert alert-warning py-2" role="alert">
+			<i class="bi bi-exclamation-triangle-fill"></i>
+			This account is limited to <strong>Read Only</strong> access, so any key
+			created here will be capped at Read Only regardless of the permission
+			selected below.
+		</div>
+		{% endif %}
 		<form method="post" action="{{ url_for('myapp_blueprints_admin.create_user_key', user_id=user.id) }}"
 			  class="row g-2 align-items-end">
 			{{ form.hidden_tag() }}

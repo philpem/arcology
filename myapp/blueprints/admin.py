@@ -4,7 +4,7 @@ Arcology - Admin Blueprint
 User management and system configuration for administrators.
 """
 
-from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
 from sqlalchemy import func
@@ -23,7 +23,9 @@ from ..database import (
     UserRestrictionBypass,
     group_memberships,
 )
+from ..enums import api_key_permission_choices
 from ..extensions import db
+from ..utils.api_keys import set_pending_api_key, take_pending_api_key
 from ..utils.web_forms import flash_form_errors, redirect_local
 
 ROUTENAME = __name__.replace('.', '_')
@@ -90,17 +92,11 @@ class EditUserForm(FlaskForm):
     can_prioritise_analyses = BooleanField('Can Prioritise Analyses')
 
 
-API_KEY_PERMISSION_CHOICES = [
-    (ApiKeyPermission.READ_ONLY.value,   'Read Only — GET requests only'),
-    (ApiKeyPermission.READ_UPLOAD.value, 'Read + Upload — create items & upload artefacts'),
-    (ApiKeyPermission.READ_WRITE.value,  'Full Read/Write — complete access'),
-]
-
-
 class AdminApiKeyForm(FlaskForm):
     """Create an API key on behalf of another user."""
     name       = StringField('Key Name', validators=[DataRequired(), Length(max=100)])
-    permission = SelectField('Permission', coerce=str, choices=API_KEY_PERMISSION_CHOICES)
+    permission = SelectField('Permission', coerce=str,
+                             choices=api_key_permission_choices())
 
 
 class GroupForm(FlaskForm):
@@ -390,8 +386,8 @@ def create_user_key(user_id):
         db.session.add(key)
         db.session.commit()
 
-        # Show the raw key exactly once, then discard it from the session.
-        session['new_api_key'] = raw_key
+        # Show the raw key exactly once, bound to the owning user.
+        set_pending_api_key(user.id, raw_key)
         return _route_redirect('user_key_created', user_id=user.id)
 
     flash_form_errors(form)
@@ -400,9 +396,9 @@ def create_user_key(user_id):
 
 @blueprint.route('/users/<int:user_id>/keys/created')
 def user_key_created(user_id):
-    """One-time display of a newly created key."""
+    """One-time display of a newly created key, bound to its owner."""
     user = db.get_or_404(User, user_id)
-    raw_key = session.pop('new_api_key', None)
+    raw_key = take_pending_api_key(user.id)
     if not raw_key:
         abort(404)
     return render_template('admin/key_created.html', user=user, raw_key=raw_key)

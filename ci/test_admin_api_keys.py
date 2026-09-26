@@ -19,6 +19,7 @@ Run:
 """
 
 import os
+import re
 import sys
 import unittest
 
@@ -69,7 +70,11 @@ class TestAdminApiKeys(unittest.TestCase):
                 username='key-sso-with-api', password_hash='!', oidc_managed=True,
                 permission=UserPermission.READ_WRITE, can_use_api=True,
             )
-            db.session.add_all([admin, target, no_api, sso_no_api, sso_with_api])
+            read_only = User(
+                username='key-read-only', password_hash='x',
+                permission=UserPermission.READ_ONLY, can_use_api=True,
+            )
+            db.session.add_all([admin, target, no_api, sso_no_api, sso_with_api, read_only])
             db.session.commit()
 
             cls.admin_id = admin.id
@@ -77,6 +82,7 @@ class TestAdminApiKeys(unittest.TestCase):
             cls.no_api_id = no_api.id
             cls.sso_no_api_id = sso_no_api.id
             cls.sso_with_api_id = sso_with_api.id
+            cls.read_only_id = read_only.id
 
     # ------------------------------------------------------------------
     # Helpers
@@ -127,6 +133,18 @@ class TestAdminApiKeys(unittest.TestCase):
         self.assertEqual(edit.status_code, 200, edit.data)
         self.assertIn(f'/admin/users/{self.target_id}/keys'.encode(), edit.data)
 
+    def test_read_only_account_shows_permission_caution(self):
+        """A read-only account's key form warns that keys will be capped."""
+        client = self._client_for(self.admin_id)
+
+        read_only = client.get(f'/admin/users/{self.read_only_id}/keys')
+        self.assertEqual(read_only.status_code, 200, read_only.data)
+        self.assertIn(b'capped at Read Only', read_only.data)
+
+        read_write = client.get(f'/admin/users/{self.target_id}/keys')
+        self.assertEqual(read_write.status_code, 200, read_write.data)
+        self.assertNotIn(b'capped at Read Only', read_write.data)
+
     # ------------------------------------------------------------------
     # Create
     # ------------------------------------------------------------------
@@ -148,7 +166,6 @@ class TestAdminApiKeys(unittest.TestCase):
         # The raw key is shown exactly once on the follow-up page.
         page = client.get(resp.headers['Location'])
         self.assertEqual(page.status_code, 200, page.data)
-        import re
         m = re.search(rb'(arc_[0-9a-f]{64})', page.data)
         self.assertIsNotNone(m, 'raw API key not shown on creation page')
         raw_key = m.group(1).decode()
@@ -199,6 +216,43 @@ class TestAdminApiKeys(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 302, resp.data)
         self.assertEqual(self._active_key_count(self.sso_with_api_id), before + 1)
+
+    def test_created_page_is_bound_to_key_owner(self):
+        """The one-time display page refuses a key that belongs to another user."""
+        client = self._client_for(self.admin_id)
+        resp = client.post(
+            f'/admin/users/{self.target_id}/keys/create',
+            data={'name': 'bound-key', 'permission': 'read_only'},
+            follow_redirects=False,
+        )
+        self.assertEqual(resp.status_code, 302, resp.data)
+
+        # A different account's created URL must not reveal the pending key.
+        wrong = client.get(f'/admin/users/{self.admin_id}/keys/created')
+        self.assertEqual(wrong.status_code, 404, wrong.data)
+
+        # The mismatch must not consume the key, so the owner's page still works.
+        right = client.get(f'/admin/users/{self.target_id}/keys/created')
+        self.assertEqual(right.status_code, 200, right.data)
+        self.assertIn(b'arc_', right.data)
+
+    def test_profile_key_flow_still_works(self):
+        """The self-service profile key display still works after the refactor."""
+        client = self._client_for(self.admin_id)
+        resp = client.post(
+            '/profile/keys/create',
+            data={'name': 'self-key', 'permission': 'read_only'},
+            follow_redirects=False,
+        )
+        self.assertEqual(resp.status_code, 302, resp.data)
+
+        page = client.get('/profile/keys/created')
+        self.assertEqual(page.status_code, 200, page.data)
+        self.assertIn(b'arc_', page.data)
+
+        # The one-time page is consumed on first view.
+        again = client.get('/profile/keys/created')
+        self.assertEqual(again.status_code, 404, again.data)
 
     # ------------------------------------------------------------------
     # Revoke

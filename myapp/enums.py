@@ -36,6 +36,17 @@ _API_KEY_PERMISSION_ORDER = [
 ]
 
 
+def api_key_permission_choices() -> list[tuple[str, str]]:
+    """Return the ``(value, label)`` choices for an API key permission field.
+
+    Shared by the self-service profile form and the admin key-management form
+    so the labels cannot drift apart.
+    """
+    return [
+        (ApiKeyPermission.READ_ONLY.value,   'Read Only — GET requests only'),
+        (ApiKeyPermission.READ_UPLOAD.value, 'Read + Upload — create items & upload artefacts'),
+        (ApiKeyPermission.READ_WRITE.value,  'Full Read/Write — complete access'),
+    ]
 
 
 class FilesystemType(enum.Enum):
