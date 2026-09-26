@@ -4,7 +4,7 @@ Arcology - Admin Blueprint
 User management and system configuration for administrators.
 """
 
-from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, url_for
+from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
 from sqlalchemy import func
@@ -12,6 +12,7 @@ from wtforms import BooleanField, PasswordField, SelectField, StringField, TextA
 from wtforms.validators import DataRequired, EqualTo, Length, Optional
 from ..database import (
     ApiKey,
+    ApiKeyPermission,
     Artefact,
     Group,
     Item,
@@ -87,6 +88,19 @@ class EditUserForm(FlaskForm):
     permission       = SelectField('Permission', coerce=str, choices=PERMISSION_CHOICES)
     can_use_api      = BooleanField('API Key Access')
     can_prioritise_analyses = BooleanField('Can Prioritise Analyses')
+
+
+API_KEY_PERMISSION_CHOICES = [
+    (ApiKeyPermission.READ_ONLY.value,   'Read Only — GET requests only'),
+    (ApiKeyPermission.READ_UPLOAD.value, 'Read + Upload — create items & upload artefacts'),
+    (ApiKeyPermission.READ_WRITE.value,  'Full Read/Write — complete access'),
+]
+
+
+class AdminApiKeyForm(FlaskForm):
+    """Create an API key on behalf of another user."""
+    name       = StringField('Key Name', validators=[DataRequired(), Length(max=100)])
+    permission = SelectField('Permission', coerce=str, choices=API_KEY_PERMISSION_CHOICES)
 
 
 class GroupForm(FlaskForm):
@@ -311,6 +325,97 @@ def toggle_api(user_id):
     state = 'enabled' if user.can_use_api else 'disabled'
     flash(f'API key access {state} for "{user.username}".', 'success')
     return _route_redirect('index')
+
+
+# =============================================================================
+# API key management (admin)
+# =============================================================================
+
+def _active_keys_for(user_id: int) -> list[ApiKey]:
+    """Return a user's active API keys, newest first."""
+    return (
+        ApiKey.query
+        .filter_by(user_id=user_id, is_active=True)
+        .order_by(ApiKey.created_at.desc())
+        .all()
+    )
+
+
+@blueprint.route('/users/<int:user_id>/keys')
+def user_keys(user_id):
+    """List and manage a user's API keys. Works for any account, including self.
+
+    API *access* for SSO-managed users remains governed by the identity
+    provider's ``OIDC_ROLE_API_ACCESS`` role; this page only manages the keys
+    themselves once access has been granted.
+    """
+    user = db.get_or_404(User, user_id)
+    form = AdminApiKeyForm()
+    return render_template('admin/user_keys.html',
+        user=user,
+        form=form,
+        keys=_active_keys_for(user.id),
+    )
+
+
+@blueprint.route('/users/<int:user_id>/keys/create', methods=['POST'])
+def create_user_key(user_id):
+    """Create an API key on behalf of a user and show the raw value once."""
+    user = db.get_or_404(User, user_id)
+
+    # Keys are rejected at authentication time unless the owner has API access,
+    # so refuse to create one that could never be used.
+    if not user.can_use_api:
+        flash(
+            f'"{user.username}" does not have API key access enabled, so a key '
+            f'cannot be created. Enable it first (local accounts), or grant the '
+            f'API role in the identity provider (SSO accounts).',
+            'error',
+        )
+        return _route_redirect('user_keys', user_id=user.id)
+
+    form = AdminApiKeyForm()
+    if form.validate_on_submit():
+        try:
+            permission = ApiKeyPermission(form.permission.data)
+        except ValueError:
+            flash('Invalid permission level.', 'error')
+            return _route_redirect('user_keys', user_id=user.id)
+
+        key, raw_key = ApiKey.create(
+            user_id=user.id,
+            name=form.name.data,
+            permission=permission,
+        )
+        db.session.add(key)
+        db.session.commit()
+
+        # Show the raw key exactly once, then discard it from the session.
+        session['new_api_key'] = raw_key
+        return _route_redirect('user_key_created', user_id=user.id)
+
+    flash_form_errors(form)
+    return _route_redirect('user_keys', user_id=user.id)
+
+
+@blueprint.route('/users/<int:user_id>/keys/created')
+def user_key_created(user_id):
+    """One-time display of a newly created key."""
+    user = db.get_or_404(User, user_id)
+    raw_key = session.pop('new_api_key', None)
+    if not raw_key:
+        abort(404)
+    return render_template('admin/key_created.html', user=user, raw_key=raw_key)
+
+
+@blueprint.route('/users/<int:user_id>/keys/<int:key_id>/revoke', methods=['POST'])
+def revoke_user_key(user_id, key_id):
+    """Revoke one of a user's API keys."""
+    key = ApiKey.query.filter_by(id=key_id, user_id=user_id).first_or_404()
+    key.is_active = False
+    db.session.commit()
+    flash(f'Key "{key.name}" revoked for "{key.user.username}".', 'success')
+    return _route_redirect('user_keys', user_id=user_id)
 
 
 # =============================================================================

@@ -116,6 +116,12 @@ READ_WRITE either way.
 **Restriction bypass permissions** (malware, PII, copyright, etc.) are always
 managed manually in the Arcology admin panel and are never synced from SSO roles.
 
+**API keys** themselves can be created and revoked by an administrator from the
+**Keys** page in the admin panel. However, API *access* for SSO-managed accounts
+is always governed by `OIDC_ROLE_API_ACCESS` — a key is rejected at
+authentication time if its owner does not currently hold that role, so a key can
+only be created for an SSO account while the role is present.
+
 **Role sync only applies to SSO-managed accounts** — local-only accounts are
 never affected.
 

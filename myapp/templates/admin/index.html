@@ -59,7 +59,11 @@
 				</td>
 				<td class="align-middle">
 					{% set kc = key_counts[user.id] %}
-					{% if kc %}<span class="badge bg-secondary">{{ kc }} active</span>{% else %}<span class="text-muted">—</span>{% endif %}
+					<a href="{{ url_for('myapp_blueprints_admin.user_keys', user_id=user.id) }}"
+					   class="text-decoration-none"
+					   title="Manage API keys for {{ user.username }}">
+						{% if kc %}<span class="badge bg-secondary">{{ kc }} active</span>{% else %}<span class="text-muted">Manage</span>{% endif %}
+					</a>
 				</td>
 				<td class="align-middle">
 					{% if user.oidc_managed %}
@@ -89,6 +93,11 @@
 				</td>
 				<td class="align-middle">
 					<div class="d-flex gap-1">
+						<a href="{{ url_for('myapp_blueprints_admin.user_keys', user_id=user.id) }}"
+						   class="btn btn-sm btn-outline-secondary"
+						   title="Manage API keys for {{ user.username }}">
+							<i class="bi bi-key"></i> Keys
+						</a>
 						{% if user.id != current_user.id %}
 						<a href="{{ url_for('myapp_blueprints_admin.edit_user', user_id=user.id) }}"
 						   class="btn btn-sm btn-outline-secondary">

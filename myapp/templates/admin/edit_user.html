@@ -153,6 +153,9 @@
 
 					<div class="d-flex gap-2">
 						<button type="submit" class="btn btn-primary">Save Changes</button>
+						<a href="{{ url_for('myapp_blueprints_admin.user_keys', user_id=user.id) }}" class="btn btn-outline-secondary">
+							<i class="bi bi-key"></i> Manage API Keys
+						</a>
 						<a href="{{ url_for('myapp_blueprints_admin.index') }}" class="btn btn-secondary">Cancel</a>
 					</div>
 				</form>
