@@ -469,7 +469,7 @@ The sharing unit is one sector (or `2^share_size` sectors on RISC OS 3.6+ discs)
 Old and new directories share a common structure with minor layout differences. Both have:
 
 - A **header** at the start: 1-byte master sequence number (`StartMasSeq`) + 4-byte start name (`StartName`, `"Hugo"` or `"Nick"`).
-- A **body** of fixed-size 26-byte directory entries, sorted alphabetically by name.
+- A **body** of fixed-size 26-byte directory entries, sorted in a case-insensitive collation order.
 - A **tail** at the end: matching end name, title, parent disc address, and a check byte.
 
 **Directory entry (26 bytes):**
@@ -566,7 +566,7 @@ In **large-sector directories** (D, E and F — `0x800` bytes total), the tail s
 
 - `NewDirLastMark` — `0x00` end marker (1 byte)
 - Reserved (2 bytes, zero)
-- `NewDirParent` — parent disc address (3 bytes). Both encodings are indirect disc addresses; what differs is the form. On **D** (old map) it is the byte address shifted right 8, so × 256 gives a byte offset. On **E and F** (new map) it is a **SIN** (§3.2).
+- `NewDirParent` — parent disc address (3 bytes). Both encodings are indirect disc addresses; what differs is the form. On **D** (old map) it is the byte address shifted right 8, so × 256 gives a byte offset. On **E and F** (new map) it is the SIN of the **parent directory** (§3.2); the root directory's `NewDirParent` is its own SIN.
 - `NewDirTitle` — directory title (19 bytes)
 - `NewDirName` — directory name (10 bytes)
 - `EndMasSeq` — end sequence number (1 byte)
@@ -584,6 +584,8 @@ The two layouts also differ in field *order*, not just size: the small-sector on
 Reading title(19) then name(10) gives a title of `"!BootPSLCD"` zero-padded to 19 bytes followed by the 10-byte name — consistent. Reading name(10) then title(19) would require a title field beginning with nine NUL bytes.
 
 A directory is reported as **"Broken"** if the master sequence number and validation string at the start (bytes `0x000`–`0x004`) do not match those at the end (`0x4FA`–`0x4FE` for small directories, `0x7FA`–`0x7FE` for large/new directories).
+
+ADFS and integrity checkers (FSCK, Checkmap) also report a directory as broken if its entries are not in the case-insensitive collation order (§3.3) or if `NewDirParent` is not the parent directory's SIN. RISC OS resolves names against a directory by binary-searching this sorted list, so readers should validate both before declaring a directory healthy.
 
 **Load/execution address encoding:** If the top 12 bits of the load address are all set (`0xFFFxxxxx`), the file is date-stamped: bits 19–8 of the load address are the 12-bit filetype, and the remaining bits of load address and the execution address together form a 40-bit centisecond timestamp (epoch: 00:00:00 1 January 1900). The full split:
 
