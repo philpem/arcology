@@ -8,15 +8,32 @@ are little-endian; offsets and lengths are in bytes.
 
 The earlier format is documented in
 [Hard Disc Companion 1.05](backups_hard_disc_companion_v1.md).
-The 2.55 release notes date version 2.50 to 19 May 1994 and explicitly require
-an older Restore application for backups made by earlier releases. Treat the
-layouts below as specific to 2.55 until compatibility with another version has
-been checked. The 2.06 ReadMe identifies that release as 22 October 1992.
-Its Backup resources already name `data.Chunk_N` and `!Retrieve.LogFile`,
-and its Other-destination template uses
-`!Retrieve.data_N.name_N.Chunk_N`. This establishes the early-V2 chunk family
-independently of the 2.50 release note. The exact 2.06 record layouts still
-require their own compatibility check.
+
+### Version compatibility and the 2.50 break
+
+The 2.55 release notes date version 2.50 to 19 May 1994 and state that 2.50
+**cannot restore backups made by earlier releases**. Treat the layouts below as
+specific to 2.55 until a sample from another version has been checked.
+
+The 2.06 software (ReadMe dated 22 October 1992) is already in the chunk family:
+its Backup resources use `data.Chunk_N` and a `LogFile`, and its
+Other-destination template is `!Retrieve.data_N.name_N.Chunk_N`. Comparing the
+2.06 and 2.55 executables shows the 2.50 break is **not** the chunk container
+but the **catalogue/status structure and destination naming**:
+
+| | 2.06 (pre-break) | 2.55 (post-break) |
+|---|---|---|
+| Restore tool / log | `!Retrieve`, `!Retrieve.LogFile` | `!Restore`, `!Restore.LogFile` |
+| Other destination | `!Retrieve.data_N.name_N.Chunk_N` | `<setname>.!Restore.data_N.name_N.Chunk_N` |
+| Log/status routines | `write_status`, `invalidatelogfile`, `validatelogfile` | `write_status_to_log`, `write_log_entry`, `read_log_entry`, `claim_log_entry` |
+| Log state header | different size | `0x6d4` bytes (this document) |
+
+Both releases are compiled from the same source and carry chunked payloads, but
+their catalogue-entry and status layouts differ. A precise statement of the 2.50
+change needs a 2.50–2.54 sample, which is not currently archived; the table
+above is the difference between the nearest available pre- and post-break
+builds. An extractor should therefore identify the version from the catalogue
+and treat pre-2.50 layouts as a separate case.
 
 ## 1. Storage layout
 
@@ -58,9 +75,21 @@ The Backup message resources define these destination templates:
 | `othrlogf` | `%s.%s.!Restore.LogFile` |
 
 Default backup names include `Full`, `Diff` and `In%s`. Restore constructs
-numbered floppy labels using the set name and underscore padding. For the
-Other destination, the message-resource comments describe grouping a logical
-disc number by division and remainder by ten.
+numbered floppy labels using the set name and underscore padding.
+
+The `flopsset` template's third `%s` is the floppy volume name (`flopvol` =
+`data`), so a floppy set is normally `$.data`. The `remvsset`/`remvchnk`
+templates add a `data_%d` level for removable media; the Other templates add
+`data_%d.name_%d` levels and group by the logical disc number (division and
+remainder by ten, per the message-resource comments).
+
+**Validation status.** The floppy layout is confirmed against real media. The
+removable-media and Other layouts are derived from the message templates and the
+Restore path builder; they have not yet been exercised against a generated
+removable-media or Other backup, so the exact `data_N`/`name_N` grouping and the
+media transition remain to be validated. An extractor should locate chunk files
+by name within each medium and use the catalogue's disc, chunk and group
+indices, rather than assuming a single fixed nesting depth.
 
 ## 2. Chunk records
 
@@ -453,12 +482,20 @@ chunk boundaries, reconstructed metadata, complete-file lengths and files
 assembled from multiple fragments. Archive payloads and their identifying
 details are excluded from this document.
 
-Remaining work is confined to unassigned persisted-state fields and broader
-validation of less-used destination modes, plus a separate record-layout
-analysis for early V2 builds. The 2.55 media-identity rules, catalogue placement,
-record offsets, grouping rules, flags, metadata and LZW packing are resolved
-to the extent represented by this build. Ambiguous provenance and missing data
-cannot be repaired solely from the on-disc structures.
+Remaining work:
+
+- Validate the removable-media and Other destination layouts against generated
+  backups, including the `data_N`/`name_N` grouping and media transitions.
+- Map the remaining unassigned persisted-state fields.
+- Characterise the **2.50 compatibility break** precisely, using a 2.50–2.54
+  sample. The comparison of 2.06 and 2.55 (see "Version compatibility") narrows
+  it to the catalogue/status structure and destination naming, but the exact
+  pre-2.50 catalogue-entry layout still needs its own analysis.
+
+The 2.55 chunk framing, catalogue layout, media identity, metadata, grouping and
+LZW packing are resolved to the extent represented by this build. Ambiguous
+provenance and missing data cannot be repaired solely from the on-disc
+structures.
 
 ## Appendix A — bounded LZW decoder
 
