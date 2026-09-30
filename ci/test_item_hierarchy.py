@@ -471,6 +471,115 @@ class TestMoveArtefact(unittest.TestCase):
             self.assertNotEqual(moved.slug, 'duplicate-label')
             self.assertTrue(moved.slug.startswith('duplicate-label'))
 
+    def test_batch_move_roots_and_derived(self):
+        """A batch move updates selected roots and their full derived trees."""
+        item_a = self._create_item('test-mv-batch-source')
+        item_b = self._create_item('test-mv-batch-target')
+        first = self._create_artefact(item_a, 'batch first')
+        second = self._create_artefact(item_a, 'batch second')
+        untouched = self._create_artefact(item_a, 'not selected')
+        derived = self._create_derived_artefact(first, 'batch derived')
+
+        resp = self._post(
+            f'/api/items/{item_a}/artefacts/batch-move',
+            {'target_item_uuid': item_b, 'artefact_uuids': [first, second]},
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        data = json.loads(resp.data)
+        self.assertEqual(data['root_artefacts_moved'], 2)
+        self.assertEqual(data['derived_artefacts_moved'], 1)
+        self.assertEqual(data['total_artefacts_moved'], 3)
+
+        with self.app.app_context():
+            from myapp.database import Artefact, Item
+            target_id = Item.query.filter_by(uuid=item_b).one().id
+            source_id = Item.query.filter_by(uuid=item_a).one().id
+            self.assertEqual(Artefact.query.filter_by(uuid=first).one().item_id, target_id)
+            self.assertEqual(Artefact.query.filter_by(uuid=second).one().item_id, target_id)
+            self.assertEqual(Artefact.query.filter_by(uuid=derived).one().item_id, target_id)
+            self.assertEqual(Artefact.query.filter_by(uuid=untouched).one().item_id, source_id)
+
+    def test_batch_move_can_create_source_subitem(self):
+        """The API can create the destination beneath the source atomically."""
+        source = self._create_item('test-mv-new-child-source')
+        artefact = self._create_artefact(source, 'move into child')
+
+        resp = self._post(
+            f'/api/items/{source}/artefacts/batch-move',
+            {'new_item_name': 'test-mv-created-child', 'artefact_uuids': [artefact]},
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        data = json.loads(resp.data)
+        self.assertTrue(data['created_target_item'])
+
+        with self.app.app_context():
+            from myapp.database import Artefact, Item
+            parent = Item.query.filter_by(uuid=source).one()
+            child = Item.query.filter_by(uuid=data['target_item_uuid']).one()
+            self.assertEqual(child.parent_id, parent.id)
+            self.assertEqual(Artefact.query.filter_by(uuid=artefact).one().item_id, child.id)
+
+    def test_batch_move_rejects_mixed_source_without_partial_move(self):
+        """A stale or foreign UUID rejects the complete selection."""
+        source = self._create_item('test-mv-atomic-source')
+        other = self._create_item('test-mv-atomic-other')
+        target = self._create_item('test-mv-atomic-target')
+        valid = self._create_artefact(source, 'valid selection')
+        foreign = self._create_artefact(other, 'foreign selection')
+
+        resp = self._post(
+            f'/api/items/{source}/artefacts/batch-move',
+            {'target_item_uuid': target, 'artefact_uuids': [valid, foreign]},
+        )
+        self.assertEqual(resp.status_code, 400, resp.data)
+
+        with self.app.app_context():
+            from myapp.database import Artefact, Item
+            source_id = Item.query.filter_by(uuid=source).one().id
+            self.assertEqual(Artefact.query.filter_by(uuid=valid).one().item_id, source_id)
+
+    def test_batch_move_rolls_back_new_target_for_invalid_selection(self):
+        """Creating a subitem and moving its contents is one transaction."""
+        source = self._create_item('test-mv-new-rollback-source')
+        artefact = self._create_artefact(source, 'valid selection')
+
+        resp = self._post(
+            f'/api/items/{source}/artefacts/batch-move',
+            {
+                'new_item_name': 'test-mv-must-not-remain',
+                'artefact_uuids': [artefact, 'f' * 32],
+            },
+        )
+        self.assertEqual(resp.status_code, 400, resp.data)
+        with self.app.app_context():
+            from myapp.database import Item
+            self.assertIsNone(Item.query.filter_by(name='test-mv-must-not-remain').first())
+
+    def test_batch_move_allocates_unique_slugs_within_batch(self):
+        """Colliding source slugs remain addressable after a combined move."""
+        first_source = self._create_item('test-mv-slugs-source-one')
+        second_source = self._create_item('test-mv-slugs-source-two')
+        target = self._create_item('test-mv-slugs-target')
+        first = self._create_artefact(first_source, 'same label')
+        second = self._create_artefact(second_source, 'same label')
+
+        # Put both roots in one source to model legacy data with colliding slugs.
+        with self.app.app_context():
+            from myapp.database import Artefact, Item
+            source_id = Item.query.filter_by(uuid=first_source).one().id
+            Artefact.query.filter_by(uuid=second).one().item_id = source_id
+            self.db.session.commit()
+
+        resp = self._post(
+            f'/api/items/{first_source}/artefacts/batch-move',
+            {'target_item_uuid': target, 'artefact_uuids': [first, second]},
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        with self.app.app_context():
+            from myapp.database import Artefact
+            slugs = {Artefact.query.filter_by(uuid=value).one().slug for value in (first, second)}
+            self.assertEqual(len(slugs), 2)
+
 
 # =============================================================================
 # indented_item_choices / item_parent_choice_list tests

@@ -1,0 +1,68 @@
+{% extends "_base.html" %}
+{% block page_title %}Review batch move – {{ item.name }}{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.index') }}">Items</a></li>
+        {% for ancestor in item.ancestors %}<li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=ancestor.url_id) }}">{{ ancestor.name }}</a></li>{% endfor %}
+        <li class="breadcrumb-item"><a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}">{{ item.name }}</a></li>
+        <li class="breadcrumb-item active">Review batch move</li>
+    </ol>
+</nav>
+
+<h1>Review batch move</h1>
+<p class="lead">Move {{ artefacts|length }} selected artefact{{ '' if artefacts|length == 1 else 's' }} from <strong>{{ item.name }}</strong>.</p>
+
+<form method="post" action="{{ url_for('myapp_blueprints_items.batch_move', uuid=item.url_id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="artefact_uuids" value="{{ artefact_uuids }}">
+
+    <div class="card mb-4">
+        <div class="card-header"><i class="bi bi-arrow-right-square"></i> Destination</div>
+        <div class="card-body">
+            <div class="row g-4">
+                <div class="col-lg-6">
+                    <label for="targetItem" class="form-label">Existing item</label>
+                    <select id="targetItem" name="target_item_uuid" class="form-select">
+                        <option value="">-- Select an existing item --</option>
+                        {% for uuid, name in target_item_choices %}<option value="{{ uuid }}">{{ name }}</option>{% endfor %}
+                    </select>
+                </div>
+                <div class="col-lg-6 border-start">
+                    <label for="newItemName" class="form-label">Or create a new subitem under {{ item.name }}</label>
+                    <input id="newItemName" name="new_item_name" class="form-control" maxlength="255"
+                           placeholder="IDE Disc Backup John Smith">
+                </div>
+            </div>
+            <div class="form-text mt-3">Choose exactly one destination. Derived artefacts follow their selected root automatically.</div>
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-header"><i class="bi bi-check2-square"></i> Selected artefacts ({{ artefacts|length }})</div>
+        <div class="table-responsive" style="max-height: 55vh;">
+            <table class="table table-striped table-hover mb-0">
+                <thead class="sticky-top bg-body"><tr><th>Label</th><th>Type</th><th>Original filename</th><th class="text-end">Size</th></tr></thead>
+                <tbody>
+                    {% for artefact in artefacts %}
+                    <tr>
+                        <td>{{ artefact.label }}</td>
+                        <td><span class="badge bg-secondary">{{ (artefact.artefact_type | enum_value('unknown')).upper().replace('_', ' ') }}</span></td>
+                        <td><code>{{ artefact.original_filename }}</code></td>
+                        <td class="text-end">{% if artefact.file_size is not none %}{{ artefact.file_size | format_filesize }}{% else %}–{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary"><i class="bi bi-arrow-right-square"></i> Confirm move</button>
+        <a href="{{ url_for('myapp_blueprints_items.view', uuid=item.url_id) }}" class="btn btn-outline-secondary">Back to selection</a>
+    </div>
+</form>
+{% endblock %}
+
+{# vim: ts=4 sw=4 et #}
