@@ -1,392 +1,408 @@
-# Hard Disc Companion II (2.55) — on-disk backup format
+# Hard Disc Companion II 2.55 — backup format
 
-The on-disk backup format produced by **Hard Disc Companion II** version 2.55
-(RISC Developments Ltd, "HDC II"). Reverse-engineered from the 2.55 `!Backup`
-and `!Restore` executables (decompressed AIF images loaded in Ghidra) and
-confirmed against a genuine digital multi-disc backup.
+This document describes the chunk and catalogue formats used by Hard Disc
+Companion II 2.55, published under the RISC Developments name. Beebug and RISC
+Developments were the same company. The description combines static analysis
+of Backup and Restore with binary-format validation. All multi-byte integers
+are little-endian; offsets and lengths are in bytes.
 
-> **Context.** A companion document, `backups_hard_disc_companion_v1.md`,
-> describes the earlier HDC **1.05** (B'up_Hard, Beebug) format
-> (`!saveset`/`FILES`/`names`/`_N`). The 2.xx series does **not** use that
-> layout; it uses the different Chunk-based format described here.
->
-> Items marked **[?]** are open/unknown.
+The earlier format is documented in
+[Hard Disc Companion 1.05](backups_hard_disc_companion_v1.md).
+The 2.55 release notes date version 2.50 to 19 May 1994 and explicitly require
+an older Restore application for backups made by earlier releases. Treat the
+layouts below as specific to 2.55 until compatibility with another version has
+been checked.
 
----
+## 1. Storage layout
 
-## 1. Comparison with HDC 1.05
+File contents are packed into `Chunk_N` files. A binary catalogue, `LogFile`,
+records the directory tree, original metadata and locations of the first
+fragments. A backup may span several media and chunk files. Chunk files have
+RISC OS filetype `0xffd` (Data).
 
-| | HDC 1.05 (B'up_Hard, Beebug) | HDC 2.55 (RISC Developments, "HDC II") |
+For floppy destinations the principal paths are:
+
+```text
+$.data.Chunk_N
+$.!Restore.LogFile
+$.!Restore.!RunImage
+```
+
+The copied Restore application also includes its run scripts and resources.
+Locate the appropriate catalogue by backup identity; a capture filename or its
+position in a directory listing does not establish its logical disc number.
+
+The Backup message resources define these destination templates:
+
+| Token | Template |
+|---|---|
+| `flopvol` | `data` |
+| `floproot` | `%s::%s.$` |
+| `flopsset` | `%s::%s.$.%s` |
+| `flopchnk` | `%s::%s.$.%s.Chunk_%d` |
+| `floprstr` | `%s::%s.$.!Restore` |
+| `floplogf` | `%s::%s.$.!Restore.LogFile` |
+| `remvsset` | `%s::%s.$.%s.data_%d` |
+| `remvchnk` | `%s::%s.$.%s.data_%d.Chunk_%d` |
+| `devrstr` | `%s::%s.$.%s.!Restore` |
+| `devlogf` | `%s::%s.$.%s.!Restore.LogFile` |
+| `othrrstr` | `%s.%s.!Restore` |
+| `othrdata` | `%s.%s.!Restore.data_%d` |
+| `othrflpe` | `%s.%s.!Restore.data_%d.name_%d` |
+| `othrchnk` | `%s.%s.!Restore.data_%d.name_%d.Chunk_%d` |
+| `othrlogf` | `%s.%s.!Restore.LogFile` |
+
+Default backup names include `Full`, `Diff` and `In%s`. Restore constructs
+numbered floppy labels using the set name and underscore padding. For the
+Other destination, the message-resource comments describe grouping a logical
+disc number by division and remainder by ten.
+
+## 2. Chunk records
+
+Each record has the following layout:
+
+```text
+[24-byte header][absolute RISC OS pathname][LF][stored payload]
+```
+
+Records can start at any byte offset. Read the six header words with unaligned
+little-endian loads. Pathnames terminate at LF (`0x0a`); they are not padded.
+Preserve pathname bytes, including non-ASCII filename characters.
+
+### 2.1 Header
+
+| Offset | Size | Field |
 |---|---|---|
-| Container | `!saveset/` tree | `data_N`/`name_N`/`Chunk_N` + `LogFile`/`Status` |
-| Data layout | flat `FILES` recursion of `_N`/`_N_Z` files | independent `Chunk_N` files |
-| Path index | `names` (plain text) | `LogFile` (binary records) |
-| Empty dirs | `emptydirs` text file | rebuilt by the restore from the log/status |
-| Compression | Beebug/CC module, Unix-LZW 13-bit (`_Z`) | internal 12-bit LZW |
-| Tools on disc | `!Backup`/`!Restore` in-tree | `!Restore`/`!Retrieve` copied onto the backup |
-| Runtime | BASIC | compiled C, WIMP, SharedCLibrary + FPEmulator |
+| `0x00` | 4 | Offset of the next record in this chunk, or `0xffffffff` at the end of the chunk |
+| `0x04` | 4 | Original RISC OS load address |
+| `0x08` | 4 | Original RISC OS execution address |
+| `0x0c` | 4 | Stored payload length for a file fragment |
+| `0x10` | 4 | Original access attributes |
+| `0x14` | 4 | Record flags and compression method |
 
----
+The execution word is also the low 32 bits of the timestamp for a stamped
+file. It retains its execution-address meaning for an unstamped file.
 
-## 2. Path templates
+Directory records end immediately after the pathname. Their `0x0c` field may
+retain an object length such as `0x800`; it does not indicate a directory
+payload. Test the directory flag before consuming payload bytes.
 
-These are HDC's own `MessageTrans` strings from the 2.55 resources, so they are
-the authoritative on-disk naming scheme.
+### 2.2 Flags
 
-**Floppy device** (`device::volume`):
+| Bits | Meaning |
+|---|---|
+| 0 | Continuation fragment: append to an already-started file |
+| 1 | Final fragment of this file |
+| 2 | Final object in the backup traversal |
+| 3 | Directory record |
+| 4 | Unstamped load/exec metadata |
+| 5–12 | Compression method: `0` = raw, `1` = fixed 12-bit LZW |
+| 13–31 | Unassigned by the examined header writer |
 
-```
-flopvol : data                                        ; default sub-volume name
-floproot: %s::%s.$
-flopsset: %s::%s.$.%s                                 ; device::volume.$.<setname>
-flopchnk: %s::%s.$.%s.Chunk_%d                        ; device::volume.$.<setname>.Chunk_<N>
-floprstr: %s::%s.$.!Restore                           ; Restore program at disc root
-floplogf: %s::%s.$.!Restore.LogFile
-```
+Thus `0x02` commonly describes a complete raw file, and `0x22` a complete
+LZW-compressed file. The method is extracted as `(flags >> 5) & 0xff`.
+Restore sends a nonzero method to its LZW decoder; the examined Backup emits
+only methods 0 and 1. A new reader should reject unsupported method values.
 
-**Removable device:**
+### 2.3 Boundaries and file splitting
 
-```
-remvsset: %s::%s.$.%s.data_%d
-remvchnk: %s::%s.$.%s.data_%d.Chunk_%d
-devrstr : %s::%s.$.%s.!Restore
-devlogf : %s::%s.$.%s.!Restore.LogFile
-```
+For a regular file record:
 
-**Other (directory) destination:**
-
-```
-othrrstr: %s.%s.!Restore
-othrdata: %s.%s.!Restore.data_%d
-othrflpe: %s.%s.!Restore.data_%d.name_%d
-othrchnk: %s.%s.!Restore.data_%d.name_%d.Chunk_%d
-othrlogf: %s.%s.!Restore.LogFile
+```text
+payload_start = pathname_LF_offset + 1
+record_end    = payload_start + stored_length
 ```
 
-Set/volume names come from `volfull:Full`, `voldiff:Diff`, `volinc:In%s`
-(incremental substitutes the date at `%s`). The Restore side also references a
-**Status** file (`xfindstat`/`invstatus`/`xcrtstat`) alongside `!Restore`
-(`hdciirsr`) and `LogFile` (`hdciilog`).
+A directory record ends at `payload_start`. A normal next-record link points
+to `record_end`. The sentinel `0xffffffff` ends the current chunk; a file may
+continue in another chunk or on another medium.
 
-Data is held in numbered `Chunk_N` files, possibly under `data_N`/`name_N`
-directories. In the observed backup this was a single `data/Chunk_N` per disc.
+Backup reads source data in blocks of at most `0xc000` bytes (48 KiB), further
+limited by available buffer space. Compression and dictionary initialization
+occur separately for each block. Concatenate the decoded fragments of a file
+in order: start a file when bit 0 is clear, append when it is set, and complete
+the file when bit 1 is set. Compare the total decoded length with the original
+length in the catalogue.
 
----
+Use links, lengths and flags to parse chunks. Scanning payloads for pathname
+strings can mistake source-file text for archive structure.
 
-## 3. Backup build process
+## 3. LogFile catalogue
 
-The backup driver's message strings show the order of operations:
+### 3.1 File layout
 
-```
-prepdev : Creating volume directory on device
-doinglog: Making LogFile
-cpyrstr : Copying !Restore program
-doingflp: Writing to floppy %d %s
-hstlgidx: Moving LogFile, copying !Restore
-notfmtdo: Floppy appears to be unformatted: format?
-renmqury: Prepare floppy %s as %s ?
-```
+The catalogue starts with fixed-size state and workspace regions, followed by
+60-byte nodes:
 
-The Backup writes `Chunk_N` files, records everything in a `LogFile`, and copies
-the `!Restore` program onto the first disc and `!Retrieve` onto the last.
+| Offset | Length | Purpose |
+|---|---|---|
+| `0x000` | `0x6d4` | Persisted backup state |
+| `0x6d4` | `0x190` | Traversal workspace: 100 32-bit slots |
+| `0x864` | `0x3c` per node | Linked catalogue nodes |
 
----
+The initial pathname buffers contain working state and may retain bytes after
+their string terminators. Interpret each field using its defined size and
+termination rule.
 
-## 4. Compression
+Some header fields used by Restore are:
 
-Compression uses HDC II's own internal **12-bit LZW** codec. The backup data
-carries no `_Z` suffix and no `1f 9d` Unix-compress stream, and the tool loads
-no external Compress module (its `!Run` loads only SharedCLibrary and
-FPEmulator).
+| Offset | Meaning |
+|---|---|
+| `0x000`, `0x100`, `0x200` | Working pathname buffers, each 256 bytes |
+| `0x300` | Working copy of a 60-byte catalogue node |
+| `0x370` | Current media name buffer |
+| `0x380` | Backup set name buffer |
+| `0x390` | Destination path buffer |
+| `0x490` | Source path buffer |
+| `0x590` | Backup configuration pathname buffer |
+| `0x6a4` | Filing system number used by Restore |
+| `0x6b8`–`0x6bf` | Backup date/time state copied into Restore |
+| `0x6c0`, `0x6c2`, `0x6ca` | Backup/destination mode bytes copied into Restore |
+| `0x6cc` | Traversal-stack depth |
+| `0x6d0` | Offset of an optional media-name string list |
 
-### 4.1 The codec
+The complete policy meaning of every header-state field has not yet been
+mapped. The optional media-name list is read as NUL-terminated strings and
+should be handled separately from the node array when present.
 
-The Restore's `FUN_0000ca70` (and the Backup's matching encoder
-`FUN_00010ae8`) is a fixed 12-bit LZW:
+### 3.2 Node layout
 
-- Codes are 12 bits (0x000–0xFFF); the dictionary is seeded with single-byte
-  literals 0–255 (`count = 0x100`) and capped at `0x1000` entries. It stops
-  growing at the cap — there is no code-width widening.
-- Dictionary entries are 12 bytes (0xc): `{prev_code, length, byte}`, where the
-  byte field is a single byte; an output string is rebuilt backwards by
-  following the `prev` chain `length` times.
-- Codes are extracted by an alternating nibble-stuffed scheme
-  (`bA | (bB & 0xF)<<8` one iteration, `bA>>4 | bB<<4` the next), interleaving
-  the 12-bit codes through the byte stream rather than packing them
-  byte-aligned.
-- The first stream byte doubles as the first output byte and initial decoder
-  state; the classic "KwKwK" back-reference is handled.
+Offsets below are relative to the **node start**, including its two links.
+The name begins eight bytes into the node.
 
-### 4.2 Verified behaviour
+| Offset | Size | Field |
+|---|---|---|
+| `0x00` | 4 | Next sibling node: absolute LogFile byte offset; zero ends the sibling list |
+| `0x04` | 4 | First child node: absolute LogFile byte offset; zero means no children |
+| `0x08` | 16 | NUL-terminated leaf name buffer |
+| `0x18` | 2 | Logical disc number of the first fragment |
+| `0x1a` | 2 | Padding/unused bytes; can contain stale values |
+| `0x1c` | 4 | First-fragment chunk index used by Restore's path builder |
+| `0x20` | 4 | First-fragment grouping index used by Restore's path builder |
+| `0x24` | 4 | Absolute byte offset of the first record header within its chunk |
+| `0x28` | 2 | Signed filetype: `0x000`–`0xfff`, `0x1000` for a directory, `-1` for unstamped metadata |
+| `0x2a` | 2 | Padding/unused bytes |
+| `0x2c` | 4 | Original object length; for files, total uncompressed length |
+| `0x30` | 1 | Access attributes |
+| `0x31` | 1 | Unassigned by the examined node writer |
+| `0x32` | 1 | Directory/traversal flag |
+| `0x33` | 1 | Image-file flag (source object type 3) |
+| `0x34` | 4 | Timestamp low word, or original load address for an unstamped object |
+| `0x38` | 4 | Timestamp high byte in its low byte, or original execution address for an unstamped object |
 
-The decompressor was re-implemented from `FUN_0000ca70` and used to decode real
-files back to their original content (e.g. the `!CoCo.Resources.Messages` file,
-whose stored payload is 4,061 B, was recovered to its original
-`# > Messages file for CoCo 1.10 …` source text), confirming the codec.
-Compression is **per-file and applied only when it helps**: the rule is to
-compress only if the LZW output would be smaller than the original. Correlating
-sizes across the set confirms this; large compressible files (e.g. the `0xdf2`
-font files, whose original size is `0x64ec` and stored size is ~`0x500`) are
-compressed, while small or already-dense files (small Text/Help files, Obey
-`!Boot`/`!Run`, BASIC `!RunImage`s) are stored raw. For this reason the LogFile
-records the **original** size (0x24) separately from the record header's
-**stored** size.
+Only read the defined width of narrow fields. Padding and unused portions of
+words can retain working-memory values. Treating the filetype or attributes
+as 32-bit fields produces misleading values.
 
-### 4.3 Compression levels (ZERO / MEDIUM / HIGH)
+The location at `0x1c` is zero-based: Restore opens `Chunk_{index + 1}`.
+For removable destinations, `0x20` supplies the `data_N` directory index.
+For Other destinations, the logical disc number supplies the grouping:
+`data_{disc // 10}.name_{disc % 10}.Chunk_{index + 1}`. Floppy destinations use
+the logical disc number to select the medium and the chunk index to select
+the file.
 
-Static analysis shows the level has **no effect on the codec or the per-file
-rule**. There is exactly one encoder (`FUN_00010ae8`) and one decoder
-(`FUN_0000ca70`), both fixed 12-bit; structural similarity search on the decoder
-returns only itself, and no level value is read anywhere in the compression
-path. The sole caller of the encoder, `FUN_0000cb44`, decides raw-vs-compressed
-purely by whether the compressed output is smaller than the input.
+### 3.3 Tree traversal and metadata restoration
 
-Consequently:
+Start at the root node at `0x864`. Follow the child link to descend into a
+directory and the sibling link to visit its next peer. Join the leaf names
+with RISC OS path separators. Both links address positions in `LogFile`.
+The linked tree supplies parentage explicitly.
 
-- **ZERO** — no compression (raw copy).
-- **MEDIUM** and **HIGH** — equivalent: identical codec and identical per-file
-  rule. A High backup's files decode with the same `FUN_0000ca70`.
-
-The one thing static analysis cannot settle is the per-file **selection** gate,
-because compression is not applied to every file. The `!Calendar.!RunImage`
-(7.7 KB BASIC, `0xffb`) was stored raw even though the same 12-bit/capped LZW
-would shrink it to about 71 %. So a rule (mirroring 1.05's `check_compress`,
-i.e. a compressible-filetype list and/or size-and-stamp threshold) excludes
-certain files before the codec. That rule appears independent of the level too,
-so it behaves the same under Medium and High. **[?]** The exact rule (which
-filetype list / size threshold) would need a High sample or the `ftypes`
-config; it does not change the compressed format.
-
-### 4.4 Signalling
-
-Compression is signalled by a flag bit in the **chunk record header**, not in
-the chunk content or the LogFile filetype. In the record header flags word
-(`+0x14`), **bit 5** is set for a compressed record. Verified against the real
-data: raw records carry `0x02` in that word, compressed records carry `0x22`.
-The Restore tests this bit and routes the payload through `FUN_0000ca70` (LZW)
-instead of a raw copy. The index itself is also compressed by the log-buffer
-routines (`cmprssize`, `get_logbuffer`, etc.).
-
----
-
-## 5. On-disk layout (real backup)
-
-The observed backup ("30Sep" set, 14 discs, ADFS-E) has this per-disc
-structure:
-
-```
-disc 1:   !Restore/       ; Restore program + resources + LogFile (initial)
-          data/Chunk_1,ffd
-disc 2-10:data/Chunk_1,ffd
-disc 11:  !Restore/       ; complete final LogFile (81,948 B), no data chunk
-disc 12-13:(blank formatted floppies)
-disc 14:  data/Chunk_1,ffd
-```
-
-- Volume names follow `<date><type>__<disc>` (e.g. `30SepEI__1`, `30SepEL_10`).
-  The captured discs interleave two sessions (disc 1 = `30SepEI`, discs 2–14 =
-  `30SepEL`), so the naming is inconsistent across the set.
-- `!Restore` (program + LogFile) appears on the **first** and **last** data
-  disc. Disc 11 holds the complete final LogFile and no data; disc 1 held an
-  initial LogFile plus a small chunk.
-- Some discs in a set are blank formatted floppies (discs 12/13 had no data and
-  carried the default ADFS volume name `09_08_Wed `).
-- Every `Chunk_N` is filetype `0xffd` (Data), and each disc holds a single
-  chunk blob. The `Chunk_N` number is local to the disc.
-- The `LogFile` is the **master index for the whole set**, so a restore tool
-  must read it (from disc 1, or the final disc) to obtain the complete list.
-
-### 5.1 `Chunk_N` framing
-
-A chunk is a concatenated sequence of records, each with the same form:
-
-```
-[0x18-byte record header][full original path string][0x0a LF][data]
-```
-
-- The **0x18-byte record header** precedes each path. Its fields (confirmed by
-  correlating against the LogFile offsets and real data) are:
-  - `+0x00` — **link**: the chunk offset of the *next* record (a forward chain);
-  - `+0x04` — load address (e.g. `0xfffaff43` / `0xffffff43`);
-  - `+0x08` — timestamp (identical to the LogFile timestamp field);
-  - `+0x0c` — **stored** data size (the number of bytes of `data`);
-  - `+0x10`, `+0x14` — flags (word 5 carries the compressed bit, per
-    `FUN_0000cbe8`).
-- The path is the full original path, LF-terminated, with no `_N` relabelling
-  and no filetype suffix.
-- Directories and files use the **same** record form. A directory record has no
-  `data`; a file record's `data` is the raw content, or the LZW stream if the
-  file was compressed.
-- The chunk is **self-describing**: the header's stored-size (`+0x0c`) lets a
-  reader delimit each record, and the link (`+0x00`) lets it walk the records in
-  order. This is the function of the 0x18-byte records written by
-  `FUN_0000cbe8`; it is **not** per-directory metadata as previously thought.
-- Confirmed by correlating the LogFile `offset` (0x1c) with the chunk: each
-  LogFile offset equals exactly the position of the record's 0x18-byte header,
-  which is always 0x18 bytes before that record's path string.
-
-### 5.2 File attributes
-
-Filetype is stored as an **explicit value** in the LogFile (e.g. `0xfff` Text),
-not encoded in a load address as in 1.05. Attributes are split between the two
-places: the **LogFile** carries the origin-identifying data (filetype, original
-size, timestamp, access/load-exec-ish fields), while the **chunk record header**
-carries the load address, timestamp, and stored size needed to read the record
-back. The timestamp appears in both and is identical.
-
-### 5.3 LogFile records
-
-The LogFile is a binary index (the 1.05 `names` was plain text). It is a
-sequence of **fixed `0x3c` (60) byte records**, in DFS order, forming the master
-index for the whole multi-disc set:
-
-```
-offset  size  field
-0x00    ...   leaf filename (null-terminated; the full path is implied by the
-              DFS order, since directories are serialized as their own records)
-0x18    4     reserved (0)
-0x1c    4     chunk offset of this record's 0x18-byte header (absolute)
-0x20    4     filetype (explicit RISC OS value), or 0x1000 for a directory
-0x24    4     ORIGINAL (uncompressed) file size, in bytes
-0x28    4     flags (0x3 for files; larger values for dirs; see note)
-0x2c    4     timestamp / date (identical to the chunk header timestamp)
-0x30    4     access/exec-ish field (e.g. 0x43; or 0x04d545 dir date marker)
-0x34    4     load / offset field
-0x38    4     exec / offset field
-```
-
-- The `0x1c` offset is a real, absolute chunk-file offset — it points at the
-  record's 0x18-byte header, and the path is always at `offset + 0x18`. It is
-  **not** a running counter.
-- The `0x24` size is the **original** size. The *stored* size (which is smaller
-  when the file was compressed) is carried in the chunk record header, so a
-  record whose stored size differs from its LogFile size is compressed.
-
-Observed filetypes: `0xfeb` Obey (`!Boot`/`!Run`), `0xffa` Module (`MsgTrans`,
-`IRQUtils`, CoCo*), `0xfff` Text (`Help`/`Messages`), `0xfec` Template, `0xff9`
-Sprite, `0xffb`/`0xffc`/`0xff6`/`0xffd` Data, and `0x1000` for a directory. The
-filetype is an explicit value — a different scheme from 1.05, which encoded it
-in the load address.
-
-The small records at the top of the LogFile are variable-length **preamble**
-entries: a full absolute source path, a null-separated copy, and a footer naming
-the volume and disc (`…_10`, `30SepEL`, `adfs::0.$`), identifying which set/disc
-each payload belongs to.
-
-### 5.4 Reconciliation with static RE
-
-Static RE showed `0x3c`-byte records written/read at a `0x3c` stride — this is
-the on-disc LogFile record size, confirmed on real media (the leaf names at
-`0x8e4`, `0x920`, `0x95c`, … are each exactly `0x3c` apart). The `0x18`-byte
-records written by `FUN_0000cbe8` are the **record headers inside the Chunk_N**
-(each is exactly `0x18` bytes and precedes a path), not directory metadata and
-not part of the LogFile. This reconciles the static RE with the observed
-structures.
-
----
-
-## 6. Version context
-
-The `ReadMe` shipped with HDC 2.55 documents the lineage: 2.55 (16/06/95), 2.54,
-2.53, 2.52 (image handling reworked; logfile built in memory or on disc), 2.51,
-and 2.50 (19/05/94 — cannot restore backups from earlier versions, so the format
-changed at or before 2.50). The `!Run` scripts brand this line as **"HDCII"**.
-
----
-
-## 7. Confirmed vs open
-
-**Confirmed:**
-- Uses a Chunk/LogFile format, not `!saveset`/`_N`/`names`.
-- Set layout: `data/Chunk_N` per disc, `!Restore/` (program + LogFile) on the
-  first and last data disc, volume names `<date><type>__<disc>`.
-- Chunk framing: each record is `[0x18-byte record header][path][0x0a][data]`;
-  the header's first word is a link to the next record, and word 3 is the stored
-  data size. Directories and files share the same record form (directories have
-  no data). The chunk is self-describing via these headers.
-- LogFile: fixed `0x3c`-byte records with a leaf filename and explicit metadata.
-  The `0x1c` field is an **absolute chunk offset** of the record's header (not a
-  running counter); `0x20` is the explicit filetype; `0x24` is the **original**
-  (uncompressed) size; `0x2c` is the timestamp (matching the chunk header).
-- Payload compression: internal 12-bit LZW applied per-file only when it shrinks
-  the data (not a filetype whitelist). The LogFile records the original size; the
-  chunk header records the stored size. It is HDC's own codec — neither Unix
-  compress nor Squash — and imports no Compress module.
-- Blank/spare formatted floppies can appear in a numbered set.
-- Compression levels: Medium and High are equivalent (single fixed codec, no
-  level parameter); ZERO disables compression.
-
-**Open [?]**
-- The precise meaning of the LogFile `0x30`, `0x34`, `0x38` fields and the
-  directory-record `0x28`/`0x30` encoding (likely access/load-exec, but not
-  isolated).
-- The exact bit-packing of the 12-bit LZW code stream (the decoder reproduces
-  the content, but the nibble-stuffed packing is described from disassembly and
-  has not been byte-for-byte reproduced by an independent encoder).
-- The `Status` file's contents (referenced by the restore messages but absent
-  from this backup).
-
----
-
-## Appendix A — LZW decompressor (reference implementation)
-
-The 12-bit LZW codec is non-standard, so a restore tool cannot rely on
-gzip/uncompress. The following Python is a faithful re-implementation of the
-Restore's `FUN_0000ca70`, validated by decoding real backup files. It expects
-the raw LZW stream (the bytes after the `[path][0x0a]` of a compressed chunk
-entry) and returns the original file content.
+For stamped files, reconstruct the original metadata as:
 
 ```python
-def hdc_lzw_decompress(data):
-    """HDC II 12-bit LZW decoder. data = compressed payload bytes."""
-    dict = []
-    for i in range(0x1000):
-        dict.append([0, 1, i & 0xff])      # [prev, length, byte]
-    count = 0x100
-    out = bytearray()
-    out.append(data[0])                    # first stream byte = first output byte
-    prev_code = data[0] | ((data[1] & 0xF) << 8)
-    pb = 1
-    alternate = True
-
-    def emit(code):
-        # reconstruct string by following prev chain 'length' times, backwards
-        chars = []
-        e = code
-        for _ in range(dict[e][1]):
-            chars.append(dict[e][2])
-            e = dict[e][0]
-        return bytes(reversed(chars))
-
-    while True:
-        pnext = pb + 1
-        if pnext >= len(data):
-            break
-        alternate = not alternate
-        if alternate:
-            code = data[pb] | ((data[pnext] & 0xF) << 8)
-            pb = pnext
-        else:
-            code = (data[pb] >> 4) | (data[pnext] << 4)
-            pb += 2
-        if code >= count:
-            if count < 0x1000:
-                dict.append([prev_code, dict[prev_code][1] + 1, out[0]])
-                count += 1
-            string = emit(code)
-        else:
-            string = emit(code)
-        out += string
-        if count < 0x1000:
-            dict.append([prev_code, dict[prev_code][1] + 1, string[0]])
-            count += 1
-        prev_code = code
-    return bytes(out)
+load = 0xfff00000 | (filetype << 8) | timestamp_high_byte
+exec_address = timestamp_low_word
+timestamp = (timestamp_high_byte << 32) | timestamp_low_word
 ```
 
-Notes:
-- The `prev` field uses `0` as the end-of-chain sentinel; string length is taken
-  from the entry, so chains are walked exactly `length` times (mirroring the
-  ARM code, which copies backwards rather than checking a sentinel).
-- The dictionary is capped at `0x1000` entries and stops growing; the code width
-  never widens.
+The timestamp is the RISC OS 40-bit centisecond count since 1 January 1900.
+For filetype `-1`, use the raw load/exec words at `0x34` and `0x38`.
+The chunk header also stores load, exec and access attributes directly.
+
+Byte `0xa4` in a leaf name is a filename character. Preserve it through the
+[RISC OS character mapping](risc_os_character_set.md); the evidence does not
+establish it as an archive escape or path-compression token. Filename suffixes
+such as `T` are ordinary name bytes.
+
+## 4. Compression and performance settings
+
+### 4.1 Compression-selection test
+
+**Medium and High use the same codec with different admission thresholds.**
+The encoder calls a content-repetition estimator before attempting LZW.
+Filetype filtering in the Filetypes window controls backup inclusion/exclusion.
+The compression estimator examines the bytes of the current source block.
+
+The shipped `!Backup.Setup` defines:
+
+```text
+cmprssize:2
+perfZERO:40
+perfMEDIUM:55
+perfHIGH:70
+```
+
+`cmprssize` is the minimum block length in KiB for attempting compression.
+The code clamps it to 0–1000 KiB; zero disables compression attempts. The
+shipped minimum is 2 KiB. The Setup comments describe this as a minimum file
+size, while the call path applies it to the block passed to the encoder.
+
+The selection test is:
+
+1. Obtain `P` from `perfZERO`, `perfMEDIUM` or `perfHIGH`, according to the
+   performance-setting byte at configuration offset `0x315`. Clamp `P` to
+   40–100.
+2. Reject a disabled or undersized block.
+3. Scan complete, aligned 32-bit words of the block. Track each word's low
+   16 bits in a 65,536-bit bitmap. Count each repeated value as one hit, `R`.
+4. Attempt LZW only when **`R * P > 10 * N`**, where `N` is the block length
+   in bytes. The comparison is strictly greater-than.
+
+For a word-aligned block, Medium requires repeat hits for more than about
+72.7% of its words; High lowers that threshold to about 57.1%. Zero's value
+of 40 cannot pass the strict test. The Setup comments recommend 55 for data
+expected to compress to roughly 70% of its size, and 70 when more compression
+attempts are worth the extra processing time.
+
+High therefore attempts compression on more blocks. Both levels retain the
+raw bytes when an attempted compression fails to make a useful saving. The
+encoder abandons an attempt when its output pointer reaches the input-length
+minus eight-byte guard, and the caller interprets a returned input length as
+the raw-copy result.
+
+### 4.2 Fixed-width LZW
+
+- Codes are fixed at 12 bits, packed least-significant-bit first.
+- The initial dictionary contains the 256 single-byte strings.
+- New entries start at code 256. There are no reserved CLEAR or end codes.
+- The dictionary stops growing at 4096 entries. It is reset for every block.
+- The first code is a literal. An encoder can leave four or eight unused bits
+  after the last complete code; the record's stored length bounds the stream.
+- The `code == next_dictionary_index` case emits the previous string followed
+  by its first byte (the standard LZW special case).
+
+For two codes `a` and `b`, the three packed bytes are:
+
+```python
+byte0 = a & 0xff
+byte1 = ((a >> 8) & 0x0f) | ((b & 0x0f) << 4)
+byte2 = b >> 4
+```
+
+The implementation uses a 12-byte decoder dictionary node with a prefix
+pointer, length and trailing byte. Those nodes are an in-memory detail.
+The backup stream is headerless fixed-width LZW, so `.Z` utilities require a
+different input format. Appendix A supplies a decoder for one bounded payload.
+
+## 5. Persisted state and Status messages
+
+Backup's `readstatus_fromlog` and `write_status_to_log` routines read and write
+the first `0x6d4` bytes of `LogFile`. The reader also reads the following
+400-byte traversal workspace. Restore reads the same catalogue state.
+
+The Restore messages contain `xfindstat`, `invstatus` and `xcrtstat`, referring
+to a Status file. The examined Restore executable has no literal references
+to those tokens or to the filename `Status`. This establishes persisted state
+inside `LogFile`; it does not establish a required separate Status file for
+2.55. A separate Status-file layout remains unsubstantiated and is not needed
+by the chunk/catalogue reader described here.
+
+## 6. Static-analysis anchors
+
+Addresses refer to the decompressed executable AIFs loaded with their headers
+at `0x8000`. The first post-header code is at `0x8080`.
+
+| Program | Address | Role |
+|---|---|---|
+| Backup | `0x0000a90c` | Parses ZERO/MEDIUM/HIGH and stores the selected level |
+| Backup | `0x0001090c` | Reads `perf%s` and `cmprssize`; applies repetition threshold |
+| Backup | `0x00010ae8` | LZW encoder, including preflight test and output-size guard |
+| Backup | `0x0000cb44` | Chooses compressed output or raw bytes |
+| Backup | `0x0000c728` | Builds chunk metadata and control flags |
+| Backup | `0x0000cbe8` | Writes record header, pathname and payload; patches link and length |
+| Backup | `0x0000c9a4` | Reads source blocks, limited to `0xc000` bytes |
+| Backup | `0x0000f6d0` | Updates a node's first-fragment location |
+| Backup | `0x0000f7bc` | Walks sibling/child links during backup |
+| Backup | `0x0000e908`, `0x0000e9dc` | Reads/writes persisted catalogue state |
+| Restore | `0x0000c380` | Resolves path components through the linked catalogue |
+| Restore | `0x0000c5c8` | Opens the catalogue; establishes root offset `0x864` |
+| Restore | `0x000091d4` | Copies catalogue location fields into restore state |
+| Restore | `0x00008590` | Constructs floppy, removable and Other chunk paths |
+| Restore | `0x00008cb8` | Seeks to the header, reads 24 bytes, then reads the pathname |
+| Restore | `0x00008b00` | Reads the stored payload, decompresses and writes/appends |
+| Restore | `0x0000ca10`, `0x0000ca70` | Initializes the dictionary and decodes LZW |
+| Restore | `0x00008540` | Restores load, exec and access metadata |
+
+The layouts and decoder have been checked against linked catalogue traversal,
+chunk boundaries, reconstructed metadata, complete-file lengths and files
+assembled from multiple fragments. Archive payloads and their identifying
+details are excluded from this document.
+
+Remaining work is confined to unassigned persisted-state fields and broader
+validation of less-used destination modes: removable-media name lists and any
+separate Status-file feature in other builds. The record offsets, grouping
+rules, flags, metadata and LZW packing above are resolved for this build.
+
+## Appendix A — bounded LZW decoder
+
+Pass exactly the stored payload of one compressed file fragment. Start a fresh
+decoder for every fragment. `max_output` provides a caller-selected output
+limit; `expected_size` is optional for fragments whose decoded length is known.
+For a split file, validate the concatenated length against the catalogue.
+
+```python
+def hdc_lzw_decompress(data, *, max_output, expected_size=None):
+    """Decode one HDC II fixed-12-bit LZW payload."""
+    if max_output < 0:
+        raise ValueError("negative output limit")
+    if not data:
+        if expected_size not in (None, 0):
+            raise ValueError("empty payload has unexpected length")
+        return b""
+    if len(data) < 2:
+        raise ValueError("truncated first code")
+
+    def codes():
+        # Complete 12-bit codes only; trailing padding bits are unused.
+        for bit in range(0, len(data) * 8 - 11, 12):
+            pos = bit // 8
+            word = int.from_bytes(data[pos:pos + 3], "little")
+            yield (word >> (bit % 8)) & 0xfff
+
+    stream = iter(codes())
+    first = next(stream)
+    if first >= 256:
+        raise ValueError("first code must be a literal")
+    table = [bytes([i]) for i in range(256)]
+    previous = table[first]
+    output = bytearray(previous)
+    if len(output) > max_output:
+        raise ValueError("output limit exceeded")
+
+    for code in stream:
+        if code < len(table):
+            entry = table[code]
+        elif code == len(table) and len(table) < 4096:
+            entry = previous + previous[:1]
+        else:
+            raise ValueError("invalid LZW dictionary reference")
+        if len(output) + len(entry) > max_output:
+            raise ValueError("output limit exceeded")
+        output.extend(entry)
+        if len(table) < 4096:
+            table.append(previous + entry[:1])
+        previous = entry
+
+    if expected_size is not None and len(output) != expected_size:
+        raise ValueError("decoded length mismatch")
+    return bytes(output)
+```
+
+Synthetic examples exercise the literal, dictionary and special-case paths:
+
+```python
+assert hdc_lzw_decompress(bytes.fromhex("4100"), max_output=1) == b"A"
+assert hdc_lzw_decompress(bytes.fromhex("410010"), max_output=3) == b"AAA"
+assert hdc_lzw_decompress(bytes.fromhex("4120040001"), max_output=4) == b"ABAB"
+```
