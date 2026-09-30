@@ -4,6 +4,7 @@ Arcology - Items Blueprint
 CRUD operations for collection items.
 """
 
+import json
 from flask import Blueprint, abort, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
@@ -30,8 +31,11 @@ from ..database import (
 from ..extensions import db
 from ..permissions import public_readable, require_permission, require_visible_item
 from ..services.artefact_lifecycle import (
+    ArtefactMoveError,
     mark_item_pending_deletion,
+    move_artefacts_to_item,
     queue_item_delete,
+    selected_root_artefacts,
 )
 from ..utils.item_helpers import (
     assign_item_fields,
@@ -446,6 +450,95 @@ def view(uuid, item):
                            user_can_edit=user_can_edit,
                            user_can_delete=user_can_delete,
                            reprioritise_choices=REPRIORITISE_CHOICES)
+
+
+def _batch_selection_from_form(item):
+    """Parse and resolve the UUID array posted by the cross-page picker."""
+    try:
+        values = json.loads(request.form.get('artefact_uuids', '[]'))
+    except (TypeError, json.JSONDecodeError):
+        raise ArtefactMoveError('invalid_selection', 'Invalid artefact selection') from None
+    if not isinstance(values, list):
+        raise ArtefactMoveError('invalid_selection', 'Invalid artefact selection')
+    return values, selected_root_artefacts(item, values, current_user)
+
+
+@blueprint.route('/<string:uuid>/artefacts/batch-move/confirm', methods=['POST'])
+@login_required
+@require_permission('read_write')
+@require_visible_item(contribute=True)
+def batch_move_confirm(uuid, item):
+    """Show the authoritative details for a cross-page selection."""
+    try:
+        artefact_uuids, artefacts = _batch_selection_from_form(item)
+    except ArtefactMoveError as e:
+        flash(str(e), 'danger')
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
+
+    choices = indented_item_choices(
+        value_fn=lambda choice: choice.uuid,
+        exclude_ids={item.id},
+        viewer=current_user,
+    )
+    return render_template(
+        'items/batch_move_confirm.html',
+        item=item,
+        artefacts=artefacts,
+        artefact_uuids=json.dumps(artefact_uuids),
+        target_item_choices=choices,
+    )
+
+
+@blueprint.route('/<string:uuid>/artefacts/batch-move', methods=['POST'])
+@login_required
+@require_permission('read_write')
+@require_visible_item(contribute=True)
+def batch_move(uuid, item):
+    """Move an explicitly selected set of roots, optionally to a new child."""
+    try:
+        artefact_uuids, _artefacts = _batch_selection_from_form(item)
+    except ArtefactMoveError as e:
+        flash(str(e), 'danger')
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
+
+    target_uuid = request.form.get('target_item_uuid', '').strip()
+    new_item_name = request.form.get('new_item_name', '').strip()
+    if bool(target_uuid) == bool(new_item_name):
+        flash('Choose an existing target item or enter a new subitem name.', 'danger')
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
+
+    if new_item_name:
+        if len(new_item_name) > 255:
+            flash('The new subitem name must be 255 characters or fewer.', 'danger')
+            return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
+        target_item = Item(name=new_item_name, parent_id=item.id, owner_id=current_user.id)
+        db.session.add(target_item)
+        db.session.flush()
+        recompute_item_privacy(target_item)
+        target_item.slug = ensure_unique_slug(generate_slug(target_item.name), Item)
+    else:
+        target_item = Item.query.filter_by(uuid=target_uuid).first()
+        if target_item is not None and not can_view_item(target_item, current_user):
+            target_item = None
+        if target_item is None:
+            flash('Target item not found.', 'danger')
+            return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
+
+    try:
+        result = move_artefacts_to_item(item, target_item, artefact_uuids, current_user)
+    except ArtefactMoveError as e:
+        db.session.rollback()
+        if e.code in ('source_forbidden', 'target_forbidden'):
+            abort(403)
+        flash(str(e), 'danger')
+        return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
+
+    flash(
+        f'Moved {result.root_count} artefact(s) and {result.derived_count} '
+        f'derived artefact(s) to "{target_item.name}".',
+        'success',
+    )
+    return redirect(url_for(f'{ROUTENAME}.view', uuid=target_item.url_id))
 
 
 @blueprint.route('/<string:uuid>/edit', methods=['GET', 'POST'])

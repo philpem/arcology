@@ -1301,6 +1301,70 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
 
+  /items/{source_uuid}/artefacts/batch-move:
+    parameters:
+      - name: source_uuid
+        in: path
+        required: true
+        schema:
+          type: string
+        description: UUID of the item currently containing every selected root artefact.
+    post:
+      operationId: batch_move_artefacts
+      summary: Move multiple artefacts to one item
+      description: >
+        Atomically move an explicit selection of root artefacts and all their
+        derived descendants. Provide either an existing destination UUID or a
+        name for a new subitem created beneath the source item.
+      tags: [Artefacts, Items]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                artefact_uuids:
+                  type: array
+                  minItems: 1
+                  uniqueItems: true
+                  items:
+                    type: string
+                target_item_uuid:
+                  type: string
+                  description: UUID of an existing destination item.
+                new_item_name:
+                  type: string
+                  maxLength: 255
+                  description: Name of a new subitem to create beneath the source.
+              required: [artefact_uuids]
+              oneOf:
+                - required: [target_item_uuid]
+                - required: [new_item_name]
+      responses:
+        "200":
+          description: Batch moved successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  source_item_uuid: {type: string}
+                  target_item_uuid: {type: string}
+                  target_item_name: {type: string}
+                  root_artefacts_moved: {type: integer}
+                  derived_artefacts_moved: {type: integer}
+                  total_artefacts_moved: {type: integer}
+                  created_target_item: {type: boolean}
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
   /artefacts/{uuid}/partitions:
     parameters:
       - name: uuid
