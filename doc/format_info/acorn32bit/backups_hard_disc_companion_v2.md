@@ -11,7 +11,12 @@ The earlier format is documented in
 The 2.55 release notes date version 2.50 to 19 May 1994 and explicitly require
 an older Restore application for backups made by earlier releases. Treat the
 layouts below as specific to 2.55 until compatibility with another version has
-been checked.
+been checked. The 2.06 ReadMe identifies that release as 22 October 1992.
+Its Backup resources already name `data.Chunk_N` and `!Retrieve.LogFile`,
+and its Other-destination template uses
+`!Retrieve.data_N.name_N.Chunk_N`. This establishes the early-V2 chunk family
+independently of the 2.50 release note. The exact 2.06 record layouts still
+require their own compatibility check.
 
 ## 1. Storage layout
 
@@ -155,9 +160,11 @@ Some header fields used by Restore are:
 | `0x390` | Destination path buffer |
 | `0x490` | Source path buffer |
 | `0x590` | Backup configuration pathname buffer |
+| `0x6a0` | Destination drive number/state; `-1` selects pathname-based access |
 | `0x6a4` | Filing system number used by Restore |
-| `0x6b8`–`0x6bf` | Backup date/time state copied into Restore |
+| `0x6b8`–`0x6bc` | Backup creation time: five meaningful timestamp bytes |
 | `0x6c0`, `0x6c2`, `0x6ca` | Backup/destination mode bytes copied into Restore |
+| `0x6c9` | Catalogue-built flag, set after discovery and before data copying |
 | `0x6cc` | Traversal-stack depth |
 | `0x6d0` | Offset of an optional media-name string list |
 
@@ -308,7 +315,107 @@ inside `LogFile`; it does not establish a required separate Status file for
 2.55. A separate Status-file layout remains unsubstantiated and is not needed
 by the chunk/catalogue reader described here.
 
-## 6. Static-analysis anchors
+## 6. Media identity and catalogue completeness
+
+### 6.1 Set names and logical disc numbers
+
+The persisted set stem is the NUL-terminated string at LogFile `0x380`.
+`0x370` holds the current medium's name; it is working state rather than a
+list of every member of the set. Each node's `uint16` at `+0x18` locates the
+logical disc containing that object's first fragment.
+
+For floppy destinations Restore constructs the expected label as:
+
+```python
+def hdc2_floppy_label(stem, disc):
+    digits = str(disc)
+    return stem + "_" * max(0, 3 - len(digits)) + digits
+
+assert hdc2_floppy_label("Example", 1) == "Example__1"
+assert hdc2_floppy_label("Example", 10) == "Example_10"
+assert hdc2_floppy_label("Example", 100) == "Example100"
+```
+
+The automatic stem generator formats day/month with `%DY%M3` and appends two
+characters encoding the minute of day in base 38:
+
+```python
+alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+_"
+minute_of_day = hour * 60 + minute
+time_code = alphabet[minute_of_day // 38] + alphabet[minute_of_day % 38]
+```
+
+Those two characters encode time; their letters do not select the backup
+type. The short label omits the year and seconds, so label reuse and collisions
+are possible. Full/incremental/differential operation state is stored separately.
+
+Restore obtains the mounted medium's name through the filing system's
+`DescribeDisc` interface, trims trailing spaces from a FileCore name, and
+compares it case-insensitively with the expected label. This check uses the
+name rather than the FileCore numeric disc ID. For removable destinations,
+the optional media-name list at LogFile `0x6d0` supplies the expected name by
+one-based logical disc number. Backup appends NUL-terminated names and retains
+an extra terminating NUL.
+
+### 6.2 Matching an unordered collection
+
+The native records have no globally unique backup identifier or content digest.
+An extractor should use the following evidence together:
+
+1. **Candidate catalogue identity:** set stem (`0x380`), the five-byte creation
+   timestamp (`0x6b8`), source path (`0x490`), and destination mode. Compare
+   defined fields; scratch-buffer tails and structure padding are not identity
+   data.
+2. **Logical media location:** match the expected floppy label or removable
+   name-list entry, then the destination-specific chunk path. Use the native
+   logical number independently of the host-side capture filename.
+3. **Object cross-check:** at a node's first-fragment location, require a valid
+   header and a pathname matching the linked catalogue tree. Check load/exec,
+   access attributes and decoded whole-file length as applicable.
+4. **Duplicate handling:** collapse byte-identical alternatives for the same
+   logical object only after comparison. Preserve conflicting alternatives as
+   separate candidates. Reused labels alone cannot decide which copy is right.
+
+When there is no catalogue, the self-describing chunks still permit recovery
+of paths, fragment bytes and header metadata. Set assignment and original
+whole-file length then have weaker evidence. Keep ambiguous or incomplete
+results labelled accordingly.
+
+### 6.3 Catalogue placement and completion
+
+Backup builds the source catalogue **before** copying payloads. During copying,
+`updatelogentry` records each object's first-fragment location. A catalogue may
+therefore contain the full tree while payload copying is still incomplete.
+The catalogue-built byte at `0x6c9` is set during discovery; it is not a
+completed-backup marker.
+
+At the successful end of data copying, the driver updates and closes the log,
+checks available destination space, and copies the Restore application and
+LogFile to the destination. For floppy/removable output the free-space check
+includes the log length plus a `0x19000`-byte allowance. It can request another
+medium for these files. Consequently, a complete catalogue can be on a final
+log-only medium. The code does not require a copy of `!Restore` on every data
+medium or prove that the first medium always contains the catalogue.
+
+Catalogue length, capture modification time and the highest observed disc
+number are insufficient measures of completeness. Prefer a candidate whose
+identity, linked tree and mapped payloads validate together. If two catalogues
+have matching identity fields but differing locations or object metadata,
+compare the affected payload records and retain unresolved conflicts.
+
+For each required file, validate a starting fragment, every continuation and a
+final fragment. Compare the total decoded length with node `+0x2c`. Chunk-end
+sentinel `0xffffffff` changes chunks/media; it does not by itself complete a
+file or the backup. Bit 2 marks the last object selected by the backup walk:
+for a file, its final-fragment bit must also be reached. A missing last-object
+record, unresolved catalogue location or missing continuation leaves the set
+incomplete. Recoverable complete files can still be exported separately.
+
+This format does not cryptographically authenticate media or payloads. If
+labels, catalogue identity and object-level checks all collide, the correct
+choice between conflicting captures requires external provenance.
+
+## 7. Static-analysis anchors
 
 Addresses refer to the decompressed executable AIFs loaded with their headers
 at `0x8000`. The first post-header code is at `0x8080`.
@@ -325,10 +432,17 @@ at `0x8000`. The first post-header code is at `0x8080`.
 | Backup | `0x0000f6d0` | Updates a node's first-fragment location |
 | Backup | `0x0000f7bc` | Walks sibling/child links during backup |
 | Backup | `0x0000e908`, `0x0000e9dc` | Reads/writes persisted catalogue state |
+| Backup | `0x0000e670` | Generates the day/month and base-38 time stem |
+| Backup | `0x0000f478`, `0x0000f65c` | Builds the catalogue and sets its built flag |
+| Backup | `0x000105f4` | Appends removable-media names to LogFile |
+| Backup | `0x0000d378`, `0x0000d40c` | Checks space and copies the final log/Restore application |
+| Backup | `0x00014664`–`0x0001477c` | End-of-copy driver, log update and optional extra medium |
 | Restore | `0x0000c380` | Resolves path components through the linked catalogue |
 | Restore | `0x0000c5c8` | Opens the catalogue; establishes root offset `0x864` |
 | Restore | `0x000091d4` | Copies catalogue location fields into restore state |
 | Restore | `0x00008590` | Constructs floppy, removable and Other chunk paths |
+| Restore | `0x0000ebb8`, `0x0000c8b8` | Computes expected floppy label or reads removable name list |
+| Restore | `0x00011a34`, `0x0000eb38`–`0x0000eb84` | Reads mounted media name and checks it against the expected name |
 | Restore | `0x00008cb8` | Seeks to the header, reads 24 bytes, then reads the pathname |
 | Restore | `0x00008b00` | Reads the stored payload, decompresses and writes/appends |
 | Restore | `0x0000ca10`, `0x0000ca70` | Initializes the dictionary and decodes LZW |
@@ -340,9 +454,11 @@ assembled from multiple fragments. Archive payloads and their identifying
 details are excluded from this document.
 
 Remaining work is confined to unassigned persisted-state fields and broader
-validation of less-used destination modes: removable-media name lists and any
-separate Status-file feature in other builds. The record offsets, grouping
-rules, flags, metadata and LZW packing above are resolved for this build.
+validation of less-used destination modes, plus a separate record-layout
+analysis for early V2 builds. The 2.55 media-identity rules, catalogue placement,
+record offsets, grouping rules, flags, metadata and LZW packing are resolved
+to the extent represented by this build. Ambiguous provenance and missing data
+cannot be repaired solely from the on-disc structures.
 
 ## Appendix A — bounded LZW decoder
 
