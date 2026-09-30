@@ -5,11 +5,11 @@ Backup/Restore 0.90 applications. The layout is established from their BASIC
 programs and binary-format checks. Byte offsets and lengths are in bytes;
 multi-byte payload integers are little-endian.
 
-The later chunk-format family is introduced in
-[Hard Disc Companion II](backups_hard_disc_companion_v2.md). Software version
-2.06 already uses chunks and a binary catalogue; version 2.50 introduces a
-further restore-compatibility break. Recognise the container layout before
-choosing a parser.
+The later generations are documented separately:
+[early 2.x (2.0–2.4)](backups_hard_disc_companion_v2_early.md) and
+[2.5x (2.55)](backups_hard_disc_companion_v2.md). Both use a chunk container
+rather than `!saveset`. Recognise the container layout before choosing a
+parser.
 
 ## 1. Media layout
 

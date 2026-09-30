@@ -6,8 +6,9 @@ Developments were the same company. The description combines static analysis
 of Backup and Restore with binary-format validation. All multi-byte integers
 are little-endian; offsets and lengths are in bytes.
 
-The earlier format is documented in
-[Hard Disc Companion 1.05](backups_hard_disc_companion_v1.md).
+The earlier formats are documented in
+[Hard Disc Companion 1.05](backups_hard_disc_companion_v1.md) and
+[early 2.x (2.0–2.4)](backups_hard_disc_companion_v2_early.md).
 
 ### Version compatibility and the 2.50 break
 
@@ -18,22 +19,25 @@ specific to 2.55 until a sample from another version has been checked.
 The 2.06 software (ReadMe dated 22 October 1992) is already in the chunk family:
 its Backup resources use `data.Chunk_N` and a `LogFile`, and its
 Other-destination template is `!Retrieve.data_N.name_N.Chunk_N`. Comparing the
-2.06 and 2.55 executables shows the 2.50 break is **not** the chunk container
-but the **catalogue/status structure and destination naming**:
+2.06 and 2.55 executables shows the 2.50 break is **not** the chunk container or
+the compression (the 12-bit LZW codec is byte-for-byte identical) but the
+**identity, catalogue and destination naming**:
 
 | | 2.06 (pre-break) | 2.55 (post-break) |
 |---|---|---|
 | Restore tool / log | `!Retrieve`, `!Retrieve.LogFile` | `!Restore`, `!Restore.LogFile` |
+| Medium identity | per-medium `$.data.Ident` file | volume label + set stem in the catalogue |
 | Other destination | `!Retrieve.data_N.name_N.Chunk_N` | `<setname>.!Restore.data_N.name_N.Chunk_N` |
 | Log/status routines | `write_status`, `invalidatelogfile`, `validatelogfile` | `write_status_to_log`, `write_log_entry`, `read_log_entry`, `claim_log_entry` |
 | Log state header | different size | `0x6d4` bytes (this document) |
 
 Both releases are compiled from the same source and carry chunked payloads, but
-their catalogue-entry and status layouts differ. A precise statement of the 2.50
-change needs a 2.50–2.54 sample, which is not currently archived; the table
-above is the difference between the nearest available pre- and post-break
-builds. An extractor should therefore identify the version from the catalogue
-and treat pre-2.50 layouts as a separate case.
+their catalogue-entry, identity and status layouts differ. The early-2.x format
+is documented in
+[early 2.x (2.0–2.4)](backups_hard_disc_companion_v2_early.md). A precise
+statement of the 2.50 change needs a 2.50–2.54 sample, which is not currently
+archived. An extractor should identify the generation from the container and
+catalogue and treat pre-2.50 layouts as a separate case.
 
 ## 1. Storage layout
 
