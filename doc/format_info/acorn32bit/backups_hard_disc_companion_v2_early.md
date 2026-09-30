@@ -67,6 +67,7 @@ forms cover the supported destinations.
 | Other destination | `!Retrieve.data_N.name_N.Chunk_N` | `<setname>.!Restore.data_N.name_N.Chunk_N` |
 | Removable template | none | `remvsset`/`remvchnk`/`devrstr`/`devlogf` |
 | Compression setting | single `keenness` value | `perfZERO`/`perfMEDIUM`/`perfHIGH` levels |
+| Chunk-header compression method | bits 4–11 of the flags word | bits 5–12 |
 | Log/status routines | `write_status`, `invalidatelogfile`, `validatelogfile` | `write_status_to_log`, `write_log_entry`, `read_log_entry`, `claim_log_entry` |
 
 The 2.06 `Ident` file identifies the medium; the 2.5x format replaces it with
@@ -78,6 +79,10 @@ catalogue-entry change is not pinned here.
 
 - Payloads are packed into numbered `Chunk_N` files (RISC OS filetype `0xffd`,
   Data) under a `data` directory.
+- The **chunk record header is the same 24-byte form** as 2.5x: link to the next
+  record, load address, execution address, stored size, access attributes and a
+  flags word. The 2.06 record writer is structurally identical to the 2.55
+  writer; only the compression-method bit position differs (see §2).
 - A binary `LogFile` catalogue records the tree, metadata and first-fragment
   locations.
 - Compression is the **same internal 12-bit LZW codec** as 2.5x. The 2.06
@@ -90,12 +95,18 @@ catalogue-entry change is not pinned here.
 
 ## 4. Not yet established
 
-- The exact 2.06 `LogFile` record and chunk-header layouts. The 2.06 code has
-  the same routine family as 2.55 but different log/status routines, so the
+- The exact 2.06 `LogFile` **catalogue record layout**. The 2.06 code has the
+  same routine family as 2.5x but different log/status routines, so the
   catalogue entry layout must be confirmed against a real 2.06 backup or by
-  further analysis before it is treated as interchangeable with 2.55.
+  further analysis before it is treated as interchangeable with 2.5x. The chunk
+  payload framing, by contrast, is established.
 - The `Ident` file's byte format and how it is matched to a medium.
 - The 2.06 removable/Other media transitions.
+
+Because the chunk framing and compression are established, an extractor can
+already recover **paths, payload bytes and header metadata** from 2.06 chunks.
+Whole-file assembly and full metadata restoration additionally need the 2.06
+catalogue layout.
 
 An extractor can read 2.06 **chunk payloads and compression** using the 2.55
 rules. Catalogue parsing and medium identity should be treated as a separate,
