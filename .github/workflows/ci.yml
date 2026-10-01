@@ -124,6 +124,11 @@ jobs:
       - name: Check imports
         run: python ci/check_imports.py
 
+      - name: Verify Landlock enforcement (must not skip)
+        env:
+          ARCOLOGY_REQUIRE_LANDLOCK: '1'
+        run: python -m unittest ci.test_worker_sandbox ci.test_zoo_extraction -v
+
       - name: Unit tests (app-level)
         # run_app_tests.py escalates SQLAlchemy warnings (e.g. cartesian-product
         # joins) to test failures so they cannot slip through unnoticed.  A bare
@@ -262,3 +267,10 @@ jobs:
 
       - name: Build worker image
         run: docker build -t arcology-worker:test -f worker/Dockerfile .
+
+      - name: Real worker tool sandbox compatibility
+        run: >-
+          docker run --rm --network none --read-only --tmpfs /tmp:rw,nosuid,nodev
+          --mount type=bind,src=${{ github.workspace }},dst=/work,readonly
+          --workdir /work --entrypoint python3 arcology-worker:test
+          ci/check_worker_sandbox_tools.py

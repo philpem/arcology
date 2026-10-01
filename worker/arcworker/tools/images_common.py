@@ -121,7 +121,7 @@ def convert_ilbm(input_path: Path, output_dir: Path, analysis_uuid: str) -> dict
     out_path = output_dir / f'{analysis_uuid}_ilbm.png'
     try:
         result, output = run_tool_with_output(
-            ['convert', f'ILBM:{input_path}[0]', str(out_path)])
+            ['convert', f'ILBM:{input_path}[0]', str(out_path)], write_dirs=(output_dir,))
     except FileNotFoundError:
         return tool_result(False, tool='imagemagick',
                            error='ImageMagick (convert) not available')
@@ -184,7 +184,7 @@ def _convert_vector(input_path: Path, output_dir: Path,
         out_svg = output_dir / f'{analysis_uuid}_image.svg'
         cmd = build_cmd(input_path, out_svg)
         try:
-            proc, _ = run_tool_with_output(cmd, timeout=60)
+            proc, _ = run_tool_with_output(cmd, timeout=60, write_dirs=(output_dir,))
         except FileNotFoundError:
             errors.append(f'{tool_name} not found')
             continue

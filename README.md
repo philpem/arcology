@@ -15,6 +15,10 @@ A digital artefact catalogue for retrocomputing collections, built on Flask.
 
 ## Quick Start with Docker
 
+The analysis worker requires a Linux host with **Landlock ABI 3 or newer**
+(upstream Linux **6.2+**). See the [minimum versions](#minimum-versions) below
+before starting workers; containers use the host kernel.
+
 ```bash
 # Clone/extract the project
 cd arcology
@@ -59,6 +63,67 @@ docker compose down -v
 
 See [doc/ADMIN_COMMANDS.md](doc/ADMIN_COMMANDS.md) for admin CLI commands
 (rebuild-search-index, rescan-hashes, reanalyse, etc.).
+
+### Minimum versions
+
+| Component | Minimum | Applies to |
+|-----------|---------|------------|
+| Python | 3.10 | Web application and worker |
+| Linux kernel | 6.2 with Landlock ABI ≥3 enabled | Worker host, including Docker/Podman hosts and the Linux VM used by Docker Desktop |
+| Architecture | amd64 (x86_64) or arm64 (aarch64) | Worker's Landlock launcher |
+
+Landlock first appeared in Linux 5.13, but older ABIs cannot restrict file
+truncation. Arcology requires ABI 3 and fails closed: it refuses to start a
+worker, or launch a tool, when confinement cannot be enforced. No unsandboxed
+fallback is available. The web application does not need Landlock and does
+not launch external programs; its version comes from the build-provided
+`VERSION` file. See the [kernel's Landlock ABI documentation](https://www.kernel.org/doc/html/latest/userspace-api/landlock.html).
+
+These are the first distribution releases whose standard kernels meet the
+worker's ABI requirement. This is a general kernel baseline, not a list of
+currently maintained releases or a guarantee for every kernel flavour. Use a
+maintained release and verify support in the actual worker environment.
+
+| Host distribution | Minimum release with a suitable standard kernel | Kernel at release | Notes |
+|-------------------|------------------------------------------------|-------------------|-------|
+| Ubuntu | [23.04](https://discourse.ubuntu.com/t/lunar-lobster-release-notes/31910) | 6.2 | First qualifying interim release; for an LTS with a qualifying GA kernel use [24.04](https://documentation.ubuntu.com/release-notes/24.04/) (6.8). [22.04.3 with the HWE kernel](https://certification.canonical.com/docs/programmes/pdf/server/Policy_Guide.pdf/) also qualifies; 22.04's GA 5.15 kernel does not. |
+| Debian | [13 (trixie)](https://www.debian.org/releases/trixie/release-notes/whats-new.en.html) | 6.12 | Debian 12's standard 6.1 kernel is too old; an appropriately enabled newer/backports kernel can qualify. |
+| Alpine Linux | [3.19](https://www.alpinelinux.org/posts/Alpine-3.19.0-released.html) | 6.6 | Alpine 3.18's standard 6.1 kernel is too old. |
+| Rocky Linux | [10.0](https://docs.rockylinux.org/releases/release_notes/10_0/) | 6.12 | Landlock was introduced in the [RHEL 10 kernel baseline](https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/10/html-single/10.0_release_notes/index#enhancement_kernel); do not infer support from Rocky 8/9's kernel version or assume a backport. |
+
+The running kernel must have `CONFIG_SECURITY_LANDLOCK=y` and include
+`landlock` in its active LSM list (normally visible in
+`/sys/kernel/security/lsm`). An explicit `lsm=` boot parameter must retain
+Landlock alongside the other required LSMs. Container seccomp profiles must
+allow `landlock_create_ruleset`, `landlock_add_rule`, and
+`landlock_restrict_self`; changing the image's Ubuntu version cannot fix an
+older or restricted host kernel. Landlock needs no privileged container or
+extra capabilities. With custom/older seccomp profiles, add these three
+syscalls to that profile rather than disabling seccomp.
+
+Check support from the repository root, or `/app` inside the worker image:
+
+```bash
+python3 -c 'from worker.arcworker.tools.process import check_sandbox; check_sandbox()'
+# In the worker image the package is named arcworker:
+docker compose run --rm --no-deps --entrypoint python3 worker -c \
+  'from arcworker.tools.process import check_sandbox; check_sandbox()'
+```
+
+Every external worker command runs with an explicit write policy: extraction
+and conversion outputs are writable, stdout-only parsers/decompressors have
+no writable output directory, and each invocation gets private temporary,
+home and cache directories. `/dev/null` is writable; other device writes and
+device/FIFO/socket creation are denied. Scratch is removed after the process
+group is stopped. The worker itself retains the access needed for API/storage
+operations and Python-managed output files.
+
+This policy restricts file-content writes, truncation, creation, removal,
+rename and link operations. Reads and program execution remain unrestricted;
+network access and some metadata operations (such as chmod) are not covered.
+Access through descriptors opened before enforcement is also not revoked.
+Keep archive path checks, output sanitisation, timeouts and decompression
+limits in place. In-process libraries are outside this subprocess policy.
 
 For larger deployments — splitting workers into specialised pools (e.g.
 flux-decode vs lightweight metadata), running on Kubernetes, or giving

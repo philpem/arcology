@@ -56,7 +56,7 @@ def _text_from_tool(attempts, *, tool, error, postprocess=None):
     last_output = None
     for cmd in attempts:
         try:
-            result, output = run_tool_with_output(cmd, timeout=_DOC_TOOL_TIMEOUT)
+            result, output = run_tool_with_output(cmd, timeout=_DOC_TOOL_TIMEOUT, write_dirs=())
         except FileNotFoundError:
             log.debug("%s not available for text extraction", cmd[0])
             continue
@@ -213,7 +213,7 @@ def _doc_to_text(path: Path) -> dict:
     last_output = None
     for cmd in attempts:
         try:
-            result, output = run_tool_with_output(cmd, timeout=_WORD_TOOL_TIMEOUT)
+            result, output = run_tool_with_output(cmd, timeout=_WORD_TOOL_TIMEOUT, write_dirs=())
         except FileNotFoundError:
             # Tool not installed — fall through to the next candidate.
             log.debug("%s not available for .doc conversion", cmd[0])
