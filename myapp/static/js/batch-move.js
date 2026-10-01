@@ -5,6 +5,11 @@
     if (!toolbar) return;
 
     const storageKey = `arcology.batch-move.${toolbar.dataset.itemUuid}`;
+    if (toolbar.dataset.clearSource) {
+        try {
+            sessionStorage.removeItem(`arcology.batch-move.${toolbar.dataset.clearSource}`);
+        } catch (_error) { /* no-op */ }
+    }
     const toggle = document.querySelector('[data-batch-move-toggle]');
     const wraps = Array.from(document.querySelectorAll('[data-batch-move-checkbox-wrap]'));
     const checkboxes = Array.from(document.querySelectorAll('[data-batch-move-checkbox]'));

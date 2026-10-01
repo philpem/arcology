@@ -778,7 +778,8 @@ def move_artefact_to_item(artefact, new_item):
     db.session.commit()
 
 
-def selected_root_artefacts(source_item, artefact_uuids, user=None, *, sees_all: bool = False):
+def selected_root_artefacts(source_item, artefact_uuids, user=None, *,
+                            sees_all: bool = False, lock: bool = False):
     """Resolve an explicit selection and reject stale or foreign UUIDs.
 
     The exact-match check is important for confirmation workflows: an
@@ -791,7 +792,7 @@ def selected_root_artefacts(source_item, artefact_uuids, user=None, *, sees_all:
     if any(not isinstance(value, str) or len(value) != 32 for value in uuids):
         raise ArtefactMoveError('invalid_selection', 'Invalid artefact selection')
 
-    artefacts = (
+    query = (
         Artefact.query
         .join(Item, Artefact.item_id == Item.id)
         .filter(
@@ -802,8 +803,14 @@ def selected_root_artefacts(source_item, artefact_uuids, user=None, *, sees_all:
             artefact_visibility_clause(user, sees_all=sees_all),
         )
         .order_by(Artefact.label, Artefact.id)
-        .all()
     )
+    if lock:
+        # Serialize competing moves of the same roots.  PostgreSQL rechecks the
+        # source-item predicate after a lock wait, so a concurrent winner turns
+        # the loser into an invalid-selection response rather than a second
+        # apparent success that silently moves the rows again.
+        query = query.with_for_update(of=Artefact)
+    artefacts = query.all()
     if len(artefacts) != len(uuids):
         raise ArtefactMoveError(
             'invalid_selection',
@@ -822,7 +829,7 @@ def move_artefacts_to_item(source_item, target_item, artefact_uuids, user,
     single-move path.
     """
     roots = selected_root_artefacts(
-        source_item, artefact_uuids, user, sees_all=sees_all,
+        source_item, artefact_uuids, user, sees_all=sees_all, lock=True,
     )
     validate_artefact_move(roots[0], target_item, user, sees_all=sees_all)
 
@@ -846,13 +853,19 @@ def move_artefacts_to_item(source_item, target_item, artefact_uuids, user,
             Artefact.slug.is_not(None),
         )
     ))
+    next_suffix = {}
     for artefact in moved:
         base_slug = artefact.slug or 'untitled'
         candidate = base_slug
-        suffix = 2
-        while candidate in occupied:
+        suffix = next_suffix.get(base_slug, 2)
+        if candidate in occupied:
             candidate = f'{base_slug}-{suffix}'
-            suffix += 1
+            while candidate in occupied:
+                suffix += 1
+                candidate = f'{base_slug}-{suffix}'
+            next_suffix[base_slug] = suffix + 1
+        else:
+            next_suffix[base_slug] = 2
         artefact.slug = candidate
         artefact.item_id = target_item.id
         occupied.add(candidate)

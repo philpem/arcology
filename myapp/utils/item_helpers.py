@@ -38,7 +38,8 @@ def indented_taxonomy_choices(model, placeholder: str):
 
 
 def indented_item_choices(*, value_fn=lambda item: item.id,
-                          exclude_ids=None, viewer=None):
+                          exclude_ids=None, viewer=None,
+                          prune_excluded_subtrees: bool = True):
     """Build a hierarchically-indented choice list of all items.
 
     Items are returned in depth-first tree order (each parent immediately
@@ -48,10 +49,13 @@ def indented_item_choices(*, value_fn=lambda item: item.id,
     Args:
         value_fn: callable returning the choice value for each item
                   (default: item.id; use ``lambda i: i.url_id`` for UUID keys).
-        exclude_ids: optional set of item IDs to omit from the list.
-                     Excluded items and their entire subtrees are skipped.
+        exclude_ids: optional set of item IDs to omit from the list. Their
+                     subtrees are also skipped unless configured otherwise.
         viewer: optional user; when supplied, private items the viewer may not
                 see are filtered out (along with their subtrees).
+        prune_excluded_subtrees: when false, omit excluded items themselves but
+                retain their descendants. Useful when the current item is not a
+                valid target but its existing subitems are.
 
     Returns:
         List of ``(value, indented_name)`` tuples in tree traversal order.
@@ -72,6 +76,8 @@ def indented_item_choices(*, value_fn=lambda item: item.id,
         indent = '\u00a0\u00a0\u00a0\u00a0' * depth
         for item in children_by_parent.get(parent_id, []):
             if item.id in _exclude:
+                if not prune_excluded_subtrees:
+                    _traverse(item.id, depth + 1)
                 continue
             choices.append((value_fn(item), f"{indent}{item.name}"))
             _traverse(item.id, depth + 1)

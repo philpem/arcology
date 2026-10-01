@@ -452,14 +452,20 @@ def view(uuid, item):
                            reprioritise_choices=REPRIORITISE_CHOICES)
 
 
-def _batch_selection_from_form(item):
-    """Parse and resolve the UUID array posted by the cross-page picker."""
+def _batch_selection_values_from_form():
+    """Parse the UUID array posted by the cross-page picker."""
     try:
         values = json.loads(request.form.get('artefact_uuids', '[]'))
     except (TypeError, json.JSONDecodeError):
         raise ArtefactMoveError('invalid_selection', 'Invalid artefact selection') from None
     if not isinstance(values, list):
         raise ArtefactMoveError('invalid_selection', 'Invalid artefact selection')
+    return values
+
+
+def _batch_selection_from_form(item):
+    """Parse and resolve the UUID array for the confirmation page."""
+    values = _batch_selection_values_from_form()
     return values, selected_root_artefacts(item, values, current_user)
 
 
@@ -479,6 +485,7 @@ def batch_move_confirm(uuid, item):
         value_fn=lambda choice: choice.uuid,
         exclude_ids={item.id},
         viewer=current_user,
+        prune_excluded_subtrees=False,
     )
     return render_template(
         'items/batch_move_confirm.html',
@@ -496,7 +503,7 @@ def batch_move_confirm(uuid, item):
 def batch_move(uuid, item):
     """Move an explicitly selected set of roots, optionally to a new child."""
     try:
-        artefact_uuids, _artefacts = _batch_selection_from_form(item)
+        artefact_uuids = _batch_selection_values_from_form()
     except ArtefactMoveError as e:
         flash(str(e), 'danger')
         return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
@@ -538,7 +545,10 @@ def batch_move(uuid, item):
         f'derived artefact(s) to "{target_item.name}".',
         'success',
     )
-    return redirect(url_for(f'{ROUTENAME}.view', uuid=target_item.url_id))
+    return redirect(url_for(
+        f'{ROUTENAME}.view', uuid=target_item.url_id,
+        batch_moved_from=item.uuid,
+    ))
 
 
 @blueprint.route('/<string:uuid>/edit', methods=['GET', 'POST'])
