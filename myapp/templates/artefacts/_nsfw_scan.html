@@ -1,0 +1,72 @@
+{% if details.results is defined %}
+{% set explicit_results = details.results | selectattr('verdict', 'equalto', 'explicit') | list %}
+{% set skipped_results  = details.results | selectattr('verdict', 'equalto', 'skipped')  | list %}
+{% set scanned_count    = details.results | rejectattr('verdict', 'equalto', 'skipped')  | list | length %}
+<div class="card mb-4{% if explicit_results %} border-danger{% endif %}">
+    <div class="card-header d-flex align-items-center{% if explicit_results %} bg-danger bg-opacity-25{% endif %}">
+        <i class="bi bi-shield-exclamation me-2"></i>
+        <strong>Classification Results</strong>
+        {% if details.mode == 'extraction_scan' %}
+        <span class="ms-2 text-muted fw-normal small">native raster images{% if details.path_prefix %} — {{ details.path_prefix }}{% endif %}</span>
+        {% elif details.mode == 'format_convert_scan' %}
+        <span class="ms-2 text-muted fw-normal small">converted Sprite/Draw images{% if details.path_prefix %} — {{ details.path_prefix }}{% endif %}</span>
+        {% endif %}
+        <span class="ms-auto d-flex gap-2">
+            <span class="badge bg-secondary">{{ details.found }} found</span>
+            <span class="badge bg-primary">{{ scanned_count }} scanned</span>
+            {% if skipped_results %}
+            <span class="badge bg-warning text-dark">{{ skipped_results | length }} skipped</span>
+            {% endif %}
+            {% if explicit_results %}
+            <span class="badge bg-danger">{{ explicit_results | length }} explicit</span>
+            {% else %}
+            <span class="badge bg-success">0 explicit</span>
+            {% endif %}
+        </span>
+    </div>
+    {% if details.results %}
+    <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>File</th>
+                    <th class="text-nowrap">Verdict</th>
+                    <th class="text-nowrap">Score</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in details.results %}
+                <tr{% if r.verdict == 'explicit' %} class="table-danger"{% elif r.verdict == 'skipped' %} class="text-muted"{% endif %}>
+                    <td class="text-break">
+                        <code class="small">{{ r.source_file or r.path }}</code>
+                        {% if r.sprite_name is defined %}
+                        <span class="badge bg-secondary ms-1" style="font-size:0.75em;">{{ r.sprite_name }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-nowrap">
+                        {% if r.verdict == 'explicit' %}
+                        <span class="badge bg-danger">explicit</span>
+                        {% elif r.verdict == 'not explicit' %}
+                        <span class="badge bg-success">safe</span>
+                        {% else %}
+                        <span class="badge bg-secondary">skipped</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-nowrap">
+                        {% if r.stage1_score is defined %}
+                        <span class="text-muted small">s1:</span> {{ "%.1f"|format(r.stage1_score * 100) }}% <span class="text-muted">→</span> <span class="text-muted small">s2:</span> {{ "%.1f"|format(r.score * 100) }}%
+                        {% elif r.score is defined %}
+                        <span class="text-muted small">s1:</span> {{ "%.1f"|format(r.score * 100) }}%
+                        {% elif r.reason is defined %}
+                        <small class="text-muted">{{ r.reason | replace('_', ' ') }}</small>
+                        {% else %}—{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+{# vim: ts=4 sw=4 et #}

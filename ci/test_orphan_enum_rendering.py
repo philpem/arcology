@@ -4,7 +4,7 @@ Orphan-enum rendering regression tests.
 artefact_type / analysis_type use the _TolerantEnum column type, which yields
 None for a DB value absent from the Python enum (an orphan row left behind when
 a feature-branch migration is downgraded without cleaning up its rows — e.g.
-NSFW_SCAN after switching off that branch).
+an analysis type from an unmerged branch after switching off it).
 
 A previous fix guarded the JSON API serialiser, but the HTML views and several
 log paths still dereferenced `.value` directly, so any page rendering an
@@ -106,7 +106,7 @@ class TestOrphanEnumRendering(unittest.TestCase):
             )
             db.session.execute(
                 db.text('UPDATE analyses SET analysis_type = :v WHERE id = :i'),
-                {'v': 'NSFW_SCAN', 'i': analysis.id},
+                {'v': 'GONE_ANALYSIS_TYPE', 'i': analysis.id},
             )
             db.session.commit()
 

@@ -20,6 +20,7 @@ bcrypt
 # Worker dependencies
 requests
 numpy
+Pillow
 
 # Production server (optional)
 # gunicorn

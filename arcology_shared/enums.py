@@ -143,6 +143,9 @@ class AnalysisType(enum.Enum):
     RISCOS_MODULE_PARSE    = "riscos_module_parse"    # Parse RISC OS relocatable module metadata (title, version, date, SWIs, commands)
     REPLAY_PROCESS         = "replay_process"         # Index Acorn Replay / ARMovie file: parse header + catalogue AND transcode video to MP4 (scotch + ffmpeg)
 
+    # Explicit-content moderation
+    NSFW_SCAN              = "nsfw_scan"              # Two-stage ONNX explicit-content image classification
+
     # Maintenance
     HASH_RESCAN            = "hash_rescan"             # Re-link extracted files against active hash databases
     CLEANUP                = "cleanup"                 # Delete orphaned storage keys after item deletion or re-analysis
