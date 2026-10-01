@@ -765,6 +765,8 @@ def batch_move_artefacts(source_uuid):
     """Move explicitly selected roots, optionally creating a source subitem."""
     source_item = _get_item_or_404(source_uuid)
     api_user, sees_all = _api_viewer()
+    if not can_view_item(source_item, api_user, sees_all=sees_all):
+        return error_response('Source item not found', 404)
     data, error = _json_object(required=True)
     if error:
         return error

@@ -239,7 +239,8 @@
             </div>
             {% if user_can_contribute %}
             <div class="card-body border-bottom py-2 d-none" data-batch-move-toolbar
-                 data-item-uuid="{{ item.uuid }}">
+                 data-item-uuid="{{ item.uuid }}"
+                 data-clear-source="{{ request.args.get('batch_moved_from', '') }}">
                 <form method="post" action="{{ url_for('myapp_blueprints_items.batch_move_confirm', uuid=item.url_id) }}"
                       class="d-flex align-items-center gap-3 flex-wrap" data-batch-move-form>
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
