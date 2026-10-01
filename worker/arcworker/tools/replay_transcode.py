@@ -55,7 +55,7 @@ def _decode_to_nut(
     if modules_dir:
         decode_cmd += ['--modules-dir', modules_dir]
 
-    result, output = run_tool_with_output(decode_cmd, timeout=timeout)
+    result, output = run_tool_with_output(decode_cmd, timeout=timeout, write_dirs=(nut_path.parent,))
     if result.returncode != 0 or not nut_path.exists() or nut_path.stat().st_size == 0:
         err = result.stderr.decode(errors='replace')[:1000]
         return False, (err or 'replay-transcode produced no output '
@@ -151,7 +151,7 @@ def transcode_armovie_to_mp4(
         mux_cmd += ['-c:a', 'aac', '-b:a', '128k']
     mux_cmd += [str(output_path)]
 
-    mux_result, mux_output = run_tool_with_output(mux_cmd, timeout=timeout)
+    mux_result, mux_output = run_tool_with_output(mux_cmd, timeout=timeout, write_dirs=(output_path.parent,))
 
     if mux_result.returncode != 0 or not output_path.exists():
         return tool_result(
@@ -171,7 +171,7 @@ def transcode_armovie_to_mp4(
             '-frames:v', '1', '-q:v', '3',
             str(poster_path),
         ]
-        poster_result, _ = run_tool_with_output(poster_cmd, timeout=timeout)
+        poster_result, _ = run_tool_with_output(poster_cmd, timeout=timeout, write_dirs=(poster_path.parent,))
         if poster_result.returncode == 0 and poster_path.exists():
             made_poster = str(poster_path)
 
@@ -243,7 +243,7 @@ def transcode_armovie_to_audio(
         '-movflags', '+faststart',
         str(output_path),
     ]
-    enc_result, enc_output = run_tool_with_output(enc_cmd, timeout=timeout)
+    enc_result, enc_output = run_tool_with_output(enc_cmd, timeout=timeout, write_dirs=(output_path.parent,))
 
     if enc_result.returncode != 0 or not output_path.exists():
         return tool_result(

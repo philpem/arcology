@@ -80,7 +80,7 @@ exit
             'DiscImageManager',
             '-s', script_path
         ]
-        result, process_output = run_tool_with_output(cmd)
+        result, process_output = run_tool_with_output(cmd, write_dirs=(output_dir,))
         process_output['script'] = script_content
 
         # DIM can read DOS FAT12/16/32 images but produces double-extension
@@ -181,7 +181,7 @@ def extract_dos_7z(input_path: Path, output_dir: Path) -> dict:
             '-y',  # Yes to all
             str(input_path)
         ]
-        result, process_output = run_tool_with_output(cmd)
+        result, process_output = run_tool_with_output(cmd, write_dirs=(output_dir,))
 
         # Remove the zero-byte phantom file that 7z creates from the FAT
         # ATTR_VOLUME_ID root-directory entry (the volume label).
@@ -851,7 +851,7 @@ def convert_fcfs_to_raw(input_path: Path, output_path: Path) -> dict:
     process_output = None
     try:
         cmd = ['fcfs2raw', '-v', str(input_path), str(output_path)]
-        result, process_output = run_tool_with_output(cmd)
+        result, process_output = run_tool_with_output(cmd, write_dirs=(output_path.parent,))
 
         if result.returncode != 0:
             return tool_result(

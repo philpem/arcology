@@ -4,6 +4,7 @@ Compression handling utilities.
 Handles decompression of compressed input files before analysis.
 """
 
+import os
 import select
 import shutil
 import subprocess
@@ -13,6 +14,7 @@ from pathlib import Path
 from .config import MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT, log
 from .exceptions import JobCancelledException
 from .tools.base import is_cancelled
+from .tools.process import sandboxed_process
 
 COMPRESSION_EXTENSIONS = {
     '.zst': ['zstd', '-d', '-c'],
@@ -87,7 +89,10 @@ def stream_to_file(
                 if proc.poll() is not None:
                     break   # process already exited, no more data
                 continue    # still running, re-check deadline
-            chunk = proc.stdout.read(_CHUNK)
+            # A buffered read(n) can wait for n bytes after select reports just
+            # one byte ready. Read only currently available pipe data so short
+            # writes cannot bypass timeout/cancellation checks.
+            chunk = os.read(proc.stdout.fileno(), _CHUNK)
             if not chunk:
                 break       # EOF
             written += len(chunk)
@@ -138,16 +143,11 @@ def decompress_if_needed(input_path: Path, work_dir: Path) -> Path:
         # mid-stream.  stream_to_file() uses select() so it never blocks longer
         # than ~1 s per iteration regardless of subprocess behaviour.
         log.info(f"Decompressing {input_path.name} with {cmd[0]}")
-        proc = subprocess.Popen(
-            cmd + [str(compressed_copy)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=work_dir,
-        )
-        outcome, stderr_bytes = stream_to_file(
-            proc, decompressed_path, MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT
-        )
-        proc.wait()
+        with sandboxed_process(cmd + [str(compressed_copy)], write_dirs=(), cwd=work_dir) as proc:
+            outcome, stderr_bytes = stream_to_file(
+                proc, decompressed_path, MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT
+            )
+            proc.wait()
 
         if outcome == 'cancelled':
             compressed_copy.unlink(missing_ok=True)

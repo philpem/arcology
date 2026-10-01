@@ -80,7 +80,7 @@ class TestIlbmConversionSafety(unittest.TestCase):
     def test_uses_explicit_ilbm_decoder_for_ilbm_and_pbm(self):
         from worker.arcworker.tools.images_common import convert_ilbm
 
-        def successful_convert(command):
+        def successful_convert(command, *, write_dirs):
             Path(command[-1]).write_bytes(b'png')
             return MagicMock(returncode=0, stderr=b''), {}
 
@@ -97,6 +97,7 @@ class TestIlbmConversionSafety(unittest.TestCase):
                 command = run.call_args.args[0]
                 self.assertEqual(command[0], 'convert')
                 self.assertEqual(command[1], f'ILBM:{src}[0]')
+                self.assertEqual(run.call_args.kwargs['write_dirs'], (self.outdir,))
 
 
 def _make_png(path: Path, size=(10, 10)) -> None:

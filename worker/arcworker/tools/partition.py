@@ -900,7 +900,7 @@ def detect_partitions_sfdisk(input_path: Path) -> dict:
     """
     try:
         cmd = ['sfdisk', '--json', str(input_path)]
-        result, process_output = run_tool_with_output(cmd, timeout=30)
+        result, process_output = run_tool_with_output(cmd, timeout=30, write_dirs=())
     except FileNotFoundError:
         return tool_result(
             False, tool='sfdisk', error='sfdisk not installed', partitions=[],
@@ -1262,7 +1262,7 @@ def detect_format_file_cmd(input_path: Path) -> dict:
     """
     try:
         cmd = ['file', '-b', str(input_path)]
-        result, process_output = run_tool_with_output(cmd, timeout=10)
+        result, process_output = run_tool_with_output(cmd, timeout=10, write_dirs=())
     except FileNotFoundError:
         return tool_result(
             False, tool='file', error='file command not installed', file_type='',

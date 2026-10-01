@@ -1,13 +1,17 @@
-"""Run a command with Linux Landlock restricting filesystem mutations.
+"""Run a command with Linux Landlock restricting filesystem write operations.
 
-Reads and program execution remain unrestricted, while writes, removals, and
-new filesystem objects are permitted only beneath the supplied directory.
+Reads and program execution remain unrestricted. File-content writes,
+truncation, removal, rename, link and creation are confined to supplied roots;
+metadata operations such as chmod are outside this policy.
 This small launcher keeps the Landlock setup out of ``subprocess``'s unsafe
 ``preexec_fn`` path in the multi-threaded worker process.
 """
 
+import argparse
 import ctypes
+import errno
 import os
+import platform
 import sys
 from pathlib import Path
 
@@ -56,13 +60,16 @@ def _syscall(libc: ctypes.CDLL, number: int, *args: object) -> int:
     return int(result)
 
 
-def restrict_writes(allowed_dir: Path) -> None:
-    """Restrict this process and its descendants to writes under *allowed_dir*.
+def restrict_writes(allowed_dirs: tuple[Path, ...], *, allow_dev_null: bool = False) -> None:
+    """Restrict this process and descendants to the supplied write directories.
 
     The operation fails closed when Landlock is unavailable. Callers must not
     run an untrusted extractor after an exception from this function.
     """
+    if platform.machine() not in ('x86_64', 'aarch64'):
+        raise OSError(errno.ENOSYS, 'Landlock launcher supports only amd64 and arm64')
     libc = ctypes.CDLL(None, use_errno=True)
+    libc.syscall.restype = ctypes.c_long
     abi = _syscall(
         libc,
         _LANDLOCK_CREATE_RULESET,
@@ -71,11 +78,11 @@ def restrict_writes(allowed_dir: Path) -> None:
         _LANDLOCK_CREATE_RULESET_VERSION,
     )
 
-    access = _WRITE_ACCESS_ABI_1
-    if abi >= 2:
-        access |= 1 << 13  # REFER (cross-directory rename/link)
-    if abi >= 3:
-        access |= 1 << 14  # TRUNCATE
+    if abi < 3:
+        raise OSError(errno.ENOSYS, f'Landlock ABI 3 or newer required; kernel provides ABI {abi}')
+    access = _WRITE_ACCESS_ABI_1 | (1 << 13) | (1 << 14)  # REFER, TRUNCATE
+    # Handle device/FIFO/socket creation so it is denied even inside outputs.
+    directory_access = access & ~((1 << 6) | (1 << 9) | (1 << 10) | (1 << 11))
 
     ruleset_attr = _RulesetAttr(access)
     ruleset_fd = _syscall(
@@ -85,40 +92,48 @@ def restrict_writes(allowed_dir: Path) -> None:
         ctypes.sizeof(ruleset_attr),
         0,
     )
-    allowed_fd = -1
     try:
-        allowed_fd = os.open(allowed_dir, os.O_PATH | os.O_CLOEXEC)
-        path_attr = _PathBeneathAttr(access, allowed_fd)
-        _syscall(
-            libc,
-            _LANDLOCK_ADD_RULE,
-            ruleset_fd,
-            _LANDLOCK_RULE_PATH_BENEATH,
-            ctypes.byref(path_attr),
-            0,
-        )
+        paths = [(directory, directory_access) for directory in allowed_dirs]
+        if allow_dev_null:
+            paths.append((Path('/dev/null'), 1 << 1))  # WRITE_FILE only
+        for path, rights in paths:
+            allowed_fd = os.open(path, os.O_PATH | os.O_CLOEXEC)
+            try:
+                path_attr = _PathBeneathAttr(rights, allowed_fd)
+                _syscall(
+                    libc, _LANDLOCK_ADD_RULE, ruleset_fd,
+                    _LANDLOCK_RULE_PATH_BENEATH, ctypes.byref(path_attr), 0,
+                )
+            finally:
+                os.close(allowed_fd)
         if libc.prctl(_PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
             error = ctypes.get_errno()
             raise OSError(error, os.strerror(error))
         _syscall(libc, _LANDLOCK_RESTRICT_SELF, ruleset_fd, 0)
     finally:
-        if allowed_fd >= 0:
-            os.close(allowed_fd)
         os.close(ruleset_fd)
 
 
 def main(argv: list[str]) -> int:
     """Apply the sandbox, then replace this process with the requested tool."""
-    if len(argv) < 3:
-        print(f"Usage: {argv[0]} ALLOWED_DIR COMMAND [ARG ...]", file=sys.stderr)
-        return 2
-
-    allowed_dir = Path(argv[1]).resolve(strict=True)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--write-dir', action='append', default=[])
+    parser.add_argument('--allow-dev-null', action='store_true')
+    parser.add_argument('command', nargs=argparse.REMAINDER)
+    args = parser.parse_args(argv[1:])
+    command = args.command
+    if command[:1] == ['--']:
+        command = command[1:]
+    if not command:
+        parser.error('a command is required after --')
     try:
-        restrict_writes(allowed_dir)
-        os.execvp(argv[2], argv[2:])
+        directories = tuple(Path(path).resolve(strict=True) for path in args.write_dir)
+        if any(not path.is_dir() for path in directories):
+            raise OSError(errno.ENOTDIR, 'write roots must be directories')
+        restrict_writes(directories, allow_dev_null=args.allow_dev_null)
+        os.execvp(command[0], command)
     except OSError as exc:
-        print(f"write sandbox could not run {argv[2]!r}: {exc}", file=sys.stderr)
+        print(f"write sandbox could not run {command[0]!r}: {exc}", file=sys.stderr)
         return 127
 
 

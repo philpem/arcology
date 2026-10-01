@@ -15,7 +15,7 @@ if _REPO_ROOT not in sys.path:
 
 class TestZooExtraction(unittest.TestCase):
     def test_extractor_runs_zoo_through_write_sandbox(self):
-        """Zoo remains enabled, but the sandbox is always its parent process."""
+        """Zoo uses the shared extraction runner and its confined output directory."""
         from worker.arcworker.tools import archives
 
         with (
@@ -29,10 +29,9 @@ class TestZooExtraction(unittest.TestCase):
 
         self.assertTrue(result["success"])
         command = run_extractor.call_args.kwargs["cmd"]
-        self.assertEqual(command[0], sys.executable)
-        self.assertEqual(Path(command[1]).name, "write_sandbox.py")
-        self.assertEqual(command[2], str(output_dir.resolve()))
-        self.assertEqual(command[3:5], ["zoo", "x"])
+        self.assertEqual(command[:2], ['zoo', 'x'])
+        self.assertEqual(run_extractor.call_args.kwargs['output_dir'], output_dir)
+
 
     def test_extractor_is_filesystem_confined_before_it_runs(self):
         """A hostile extractor cannot write a traversal destination."""

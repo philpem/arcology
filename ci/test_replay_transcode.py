@@ -51,7 +51,7 @@ def _make_fake_run(*, decode_ok=True, make_nut=True):
     returns returncode 1 and writes nothing.  ``ffprobe`` never reaches here —
     audio detection is mocked separately via :func:`_fake_probe`.
     """
-    def _run(cmd, timeout=None, cwd=None):
+    def _run(cmd, timeout=None, cwd=None, *, write_dirs):
         if cmd[0] == 'replay-transcode':
             if not decode_ok:
                 return subprocess.CompletedProcess(cmd, 1, b'', b'unsupported codec'), {}
@@ -163,10 +163,10 @@ class TestTranscodeTool(unittest.TestCase):
     def test_modules_dir_passed_through(self):
         seen = {}
 
-        def _capture(cmd, timeout=None, cwd=None):
+        def _capture(cmd, timeout=None, cwd=None, *, write_dirs):
             if cmd[0] == 'replay-transcode':
                 seen['cmd'] = cmd
-            return _make_fake_run()(cmd, timeout, cwd)
+            return _make_fake_run()(cmd, timeout, cwd, write_dirs=write_dirs)
 
         with tempfile.TemporaryDirectory() as td:
             work = Path(td)
@@ -189,7 +189,7 @@ class TestTranscodeTool(unittest.TestCase):
         old rawvideo recipe (``-f rawvideo`` / ``-pixel_format``)."""
         captured = {}
 
-        def _run(cmd, timeout=None, cwd=None):
+        def _run(cmd, timeout=None, cwd=None, *, write_dirs):
             if cmd[0] == 'replay-transcode':
                 captured['decode'] = cmd
                 Path(cmd[cmd.index('--output') + 1]).write_bytes(b'\x00' * 16)

@@ -175,6 +175,10 @@ Migrations are managed with Flask-Migrate (Alembic).
 - Python 3.10+
 - PostgreSQL (or SQLite for quick local development)
 - Docker and Docker Compose (for running the full stack including workers)
+- For workers: Linux with Landlock ABI ≥3 (upstream kernel 6.2+), enabled and
+  permitted through container seccomp. See the [minimum version table and
+  runtime check](README.md#minimum-versions). This applies to the host kernel,
+  not the container's distribution.
 
 ### Local Development (Web Only)
 
@@ -252,6 +256,42 @@ PYTHONPATH=/path/to/arcology python worker/worker.py
 
 Inside Docker the `arcology_shared/` directory is copied into the container at build
 time, so no special path setup is needed.
+
+### External worker tools
+
+Launch external commands through `tools/base.py::run_tool` or
+`run_tool_with_output`, supplying `write_dirs=(output_dir,)` for extraction or
+the relevant output parent directories for conversion. Use `write_dirs=()`
+for stdout-only tools. `run_and_build_result` derives the write directory
+from its required `output_path`. Paths come from trusted job setup, never
+archive members, executable names or the current directory.
+
+For bounded streaming output, use `tools/process.py::sandboxed_process`
+with an explicit `write_dirs` policy and keep the stream consumption inside
+its context. Do not use `Popen` elsewhere or `preexec_fn`: the common launcher
+enforces Landlock before executing the tool and confines its descendants.
+Missing binaries still raise `FileNotFoundError` for existing fallback logic.
+
+Each invocation gets private scratch/home/cache directories; honour `TMPDIR`
+and the other settings supplied by the launcher. Java uses `java.io.tmpdir`
+and has performance-data files disabled. Do not grant write access to all
+`/tmp`, uploads, or the outputs volume to accommodate runtime scratch. Add
+only the output directories needed by that invocation. Avoid placing source
+files in a writable output directory when setting up new tool integrations.
+
+Run `ARCOLOGY_REQUIRE_LANDLOCK=1 python -m unittest ci.test_worker_sandbox
+ci.test_zoo_extraction -v` on Linux to check actual enforcement. CI requires
+these tests to run without skipping, and architectural checks guard against
+worker launch bypasses and web-side subprocess use. Real-tool compatibility
+checks can be run in the worker image with
+`python3 ci/check_worker_sandbox_tools.py` from a mounted checkout.
+
+The web process reads `VERSION` and never invokes Git. For local development,
+generate that file outside the server if a version stamp is desired:
+
+```bash
+git describe --tags --always --long > VERSION
+```
 
 ### Debug Tools
 

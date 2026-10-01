@@ -25,6 +25,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
@@ -34,7 +35,6 @@ os.environ.setdefault('SQLALCHEMY_DATABASE_URI', 'sqlite:///:memory:')
 os.environ.setdefault('SECRET_KEY', 'ci-document-convert-test-secret')
 os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 
-from unittest.mock import patch  # noqa: E402
 from worker.arcworker.tools import documents  # noqa: E402
 from worker.arcworker.tools.documents import (  # noqa: E402
     _docx_xml_to_text,
@@ -125,12 +125,12 @@ class TestDocxToText(unittest.TestCase):
 class TestDocPathGraceful(unittest.TestCase):
 
     def test_non_zip_doc_fails_without_crash(self):
-        # A non-ZIP file routes to the legacy .doc path.  antiword/catdoc are
-        # absent here (worker-image only) OR would reject this garbage, so the
-        # result is a clean failure either way — never an exception.
+        # A non-ZIP file routes to the legacy .doc path. Simulate missing tools
+        # explicitly: some catdoc versions accept even malformed documents.
         p = _write_tmp(b'\xd0\xcf\x11\xe0garbage-not-a-real-doc', '.doc')
         try:
-            res = word_to_text(p)
+            with patch('worker.arcworker.tools.process.shutil.which', return_value=None):
+                res = word_to_text(p)
             self.assertFalse(res['success'])
             self.assertIsInstance(res.get('error'), str)
         finally:
@@ -199,7 +199,8 @@ class TestExcelWiring(unittest.TestCase):
         from worker.arcworker.tools.documents import xls_to_text
         p = _write_tmp(b'\xd0\xcf\x11\xe0not-a-real-xls', '.xls')
         try:
-            res = xls_to_text(p)
+            with patch('worker.arcworker.tools.process.shutil.which', return_value=None):
+                res = xls_to_text(p)
             self.assertFalse(res['success'])
             self.assertIsInstance(res.get('error'), str)
         finally:
@@ -225,7 +226,8 @@ class TestPowerpointWiring(unittest.TestCase):
         from worker.arcworker.tools.documents import ppt_to_text
         p = _write_tmp(b'\xd0\xcf\x11\xe0not-a-real-ppt', '.ppt')
         try:
-            res = ppt_to_text(p)
+            with patch('worker.arcworker.tools.process.shutil.which', return_value=None):
+                res = ppt_to_text(p)
             self.assertFalse(res['success'])
             self.assertIsInstance(res.get('error'), str)
         finally:

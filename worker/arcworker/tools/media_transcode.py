@@ -50,7 +50,7 @@ def probe_media(input_path: Path, *, timeout: int | None = None) -> dict:
         '-show_format', '-show_streams',
         str(input_path),
     ]
-    result, output = run_tool_with_output(cmd, timeout=timeout)
+    result, output = run_tool_with_output(cmd, timeout=timeout, write_dirs=())
     if result.returncode != 0:
         return tool_result(
             False,
@@ -110,7 +110,7 @@ def extract_media_poster(
         '-frames:v', '1', '-q:v', '3',
         str(poster_path),
     ]
-    result, _ = run_tool_with_output(cmd, timeout=timeout)
+    result, _ = run_tool_with_output(cmd, timeout=timeout, write_dirs=(poster_path.parent,))
     if result.returncode == 0 and poster_path.exists():
         return str(poster_path)
     return None
@@ -148,7 +148,7 @@ def transcode_media_to_mp4(
         cmd += ['-c:a', 'aac', '-b:a', '128k']
     cmd += [str(output_path)]
 
-    result, output = run_tool_with_output(cmd, timeout=timeout)
+    result, output = run_tool_with_output(cmd, timeout=timeout, write_dirs=(output_path.parent,))
     if result.returncode != 0 or not output_path.exists() or output_path.stat().st_size == 0:
         return tool_result(
             False,
@@ -166,7 +166,7 @@ def transcode_media_to_mp4(
             '-frames:v', '1', '-q:v', '3',
             str(poster_path),
         ]
-        poster_result, _ = run_tool_with_output(poster_cmd, timeout=timeout)
+        poster_result, _ = run_tool_with_output(poster_cmd, timeout=timeout, write_dirs=(poster_path.parent,))
         if poster_result.returncode == 0 and poster_path.exists():
             made_poster = str(poster_path)
 
@@ -204,7 +204,7 @@ def transcode_media_to_audio(
         '-movflags', '+faststart',
         str(output_path),
     ]
-    result, output = run_tool_with_output(cmd, timeout=timeout)
+    result, output = run_tool_with_output(cmd, timeout=timeout, write_dirs=(output_path.parent,))
     if result.returncode != 0 or not output_path.exists() or output_path.stat().st_size == 0:
         return tool_result(
             False,
