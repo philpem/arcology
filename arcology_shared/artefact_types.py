@@ -92,7 +92,7 @@ EXTENSION_MAP = {
     '.wmf':  ArtefactType.IMAGE,
     '.emf':  ArtefactType.IMAGE,
 
-    # Amiga IFF / ILBM bitmaps (converted to PNG via ImageMagick)
+    # Amiga IFF ILBM/PBM bitmaps (converted to PNG via ImageMagick)
     '.iff':  ArtefactType.ILBM,
     '.ilbm': ArtefactType.ILBM,
     '.lbm':  ArtefactType.ILBM,

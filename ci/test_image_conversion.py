@@ -37,6 +37,68 @@ _HAS_WMF2SVG = shutil.which('wmf2svg') is not None
 _HAS_EMF2SVG = Path('/opt/dexvert/emf2svg.py').exists()
 
 
+def _minimal_iff_bitmap(form_type: bytes = b'ILBM') -> bytes:
+    """Build a minimal IFF ILBM or PBM envelope for unit tests."""
+    chunks = b'BMHD' + (20).to_bytes(4, 'big') + bytes(20)
+    chunks += b'BODY' + (0).to_bytes(4, 'big')
+    contents = form_type + chunks
+    return b'FORM' + len(contents).to_bytes(4, 'big') + contents
+
+
+class TestIlbmConversionSafety(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = Path(tempfile.mkdtemp())
+        self.outdir = self.tmpdir / 'out'
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_rejects_disguised_svg_without_invoking_imagemagick(self):
+        from worker.arcworker.tools.images_common import convert_ilbm
+        src = self.tmpdir / 'attack.ilbm'
+        src.write_text('<svg><image href="../private.png"/></svg>')
+
+        with patch('worker.arcworker.tools.images_common.run_tool_with_output') as run:
+            result = convert_ilbm(src, self.outdir, 'testuuid')
+
+        self.assertFalse(result['success'])
+        self.assertIn('not a valid', result['error'])
+        run.assert_not_called()
+
+    def test_rejects_non_bitmap_iff(self):
+        from worker.arcworker.tools.images_common import convert_ilbm
+        src = self.tmpdir / 'sound.iff'
+        src.write_bytes(_minimal_iff_bitmap(b'8SVX'))
+
+        with patch('worker.arcworker.tools.images_common.run_tool_with_output') as run:
+            result = convert_ilbm(src, self.outdir, 'testuuid')
+
+        self.assertFalse(result['success'])
+        run.assert_not_called()
+
+    def test_uses_explicit_ilbm_decoder_for_ilbm_and_pbm(self):
+        from worker.arcworker.tools.images_common import convert_ilbm
+
+        def successful_convert(command):
+            Path(command[-1]).write_bytes(b'png')
+            return MagicMock(returncode=0, stderr=b''), {}
+
+        for form_type in (b'ILBM', b'PBM '):
+            with self.subTest(form_type=form_type):
+                src = self.tmpdir / f'{form_type.decode().strip().lower()}.iff'
+                src.write_bytes(_minimal_iff_bitmap(form_type))
+                with patch(
+                        'worker.arcworker.tools.images_common.run_tool_with_output',
+                        side_effect=successful_convert) as run:
+                    result = convert_ilbm(src, self.outdir, 'testuuid')
+
+                self.assertTrue(result['success'])
+                command = run.call_args.args[0]
+                self.assertEqual(command[0], 'convert')
+                self.assertEqual(command[1], f'ILBM:{src}[0]')
+
+
 def _make_png(path: Path, size=(10, 10)) -> None:
     img = Image.new('RGB', size, color=(255, 0, 0))
     img.save(str(path), 'PNG')
