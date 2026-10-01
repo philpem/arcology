@@ -35,6 +35,7 @@ os.environ.setdefault('SECRET_KEY', 'ci-output-restriction-test-key')
 os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 
 _SECRET = b'TOP-SECRET-RESTRICTED-OUTPUT-CONTENT'
+_SECRET_TEXT = _SECRET.decode()
 
 
 def _user(db, username, *, is_admin=False, api_perm=None):
@@ -119,9 +120,12 @@ class TestOutputRestrictionGate(unittest.TestCase):
             conv = Analysis(artefact_id=art.id, analysis_type=AnalysisType.FORMAT_CONVERT,
                             status=AnalysisStatus.COMPLETED, success=True)
             conv.details = json.dumps({'outputs': [
-                {'type': 'text', 'name': 'conv.txt', 'filename': cls.output_path},
+                {'type': 'text', 'name': 'conv.txt', 'filename': cls.output_path,
+                 'text': _SECRET_TEXT},
             ]})
             db.session.add(conv)
+            db.session.flush()
+            cls.analysis_uuid = conv.uuid
 
             # A transcoded Replay movie on the same restricted artefact: its
             # player/poster are renderings of restricted content, so the viewer
@@ -224,6 +228,35 @@ class TestOutputRestrictionGate(unittest.TestCase):
                             headers={'X-API-Key': self.key_admin})
         self.assertEqual(r.status_code, 200, r.data)
         self.assertIn(_SECRET, r.data)
+
+    # ---- inline converted text in REST API analysis details ----
+    def test_api_analysis_details_hidden_from_non_bypass_key(self):
+        urls = (
+            f'/api/artefacts/{self.art_uuid}/analysis',
+            f'/api/analysis/{self.analysis_uuid}',
+            f'/api/artefacts/{self.art_uuid}/analysis/tree',
+            f'/api/artefacts/{self.art_uuid}/processing-tree',
+            f'/api/artefacts/{self.art_uuid}/analysis/recursive',
+        )
+        for url in urls:
+            with self.subTest(url=url):
+                r = self.client.get(url, headers={'X-API-Key': self.key_viewer})
+                self.assertEqual(r.status_code, 200, r.data)
+                self.assertNotIn(_SECRET, r.data)
+
+    def test_api_analysis_details_visible_to_bypass_key(self):
+        urls = (
+            f'/api/artefacts/{self.art_uuid}/analysis',
+            f'/api/analysis/{self.analysis_uuid}',
+            f'/api/artefacts/{self.art_uuid}/analysis/tree',
+            f'/api/artefacts/{self.art_uuid}/processing-tree',
+            f'/api/artefacts/{self.art_uuid}/analysis/recursive',
+        )
+        for url in urls:
+            with self.subTest(url=url):
+                r = self.client.get(url, headers={'X-API-Key': self.key_admin})
+                self.assertEqual(r.status_code, 200, r.data)
+                self.assertIn(_SECRET, r.data)
 
     # ---- inline text in the converter viewer page ----
     def test_viewer_does_not_embed_restricted_text(self):
