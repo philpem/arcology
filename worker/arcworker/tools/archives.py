@@ -9,6 +9,7 @@ import os
 import re
 import struct
 import subprocess
+import sys
 import tarfile
 import zipfile
 from pathlib import Path
@@ -22,8 +23,16 @@ from .base import run_tool, run_tool_with_output, tool_result
 
 def _validate_entry_path(name: str, fmt: str) -> None:
     """Raise ValueError if *name* is absolute or contains '..' components."""
-    parts = name.replace('\\', '/').split('/')
-    if os.path.isabs(name) or '..' in parts:
+    portable_name = name.replace('\\', '/')
+    parts = portable_name.split('/')
+    # os.path.isabs() only recognises paths for the worker's host OS.  Archive
+    # member names can use either separator and may contain a Windows drive
+    # prefix even though extraction happens on Linux.
+    if (
+        portable_name.startswith('/')
+        or re.match(r'^[A-Za-z]:', portable_name)
+        or '..' in parts
+    ):
         raise ValueError(f'Unsafe path in {fmt} archive: {name!r}')
 
 
@@ -95,6 +104,11 @@ def _check_7z_paths(input_path: Path) -> None:
         result = run_tool(['7z', 'l', '-slt', str(input_path)], timeout=60)
     except subprocess.TimeoutExpired as e:
         raise ValueError('7z listing timed out — archive rejected') from e
+
+    if result.returncode != 0:
+        raise ValueError(
+            f'7z could not safely list archive (exit code {result.returncode})'
+        )
 
     past_header = False
     path = None
@@ -715,17 +729,24 @@ def extract_lha(input_path: Path, output_dir: Path) -> dict[str, Any]:
 
 
 def extract_arj(input_path: Path, output_dir: Path) -> dict[str, Any]:
-    """Extract an ARJ archive via ``arj``.
+    """Safely extract an ARJ archive via ``7z``.
 
-    arj unpacks into the working directory, so it is run with ``cwd`` set to the
-    output dir; ``x`` keeps stored paths and ``-y`` answers prompts yes.
+    Validate every member path and reject links before extraction.  Unlike the
+    native ``arj`` command, this uses the same machine-readable listing and
+    extraction implementation, avoiding reliance on a post-write confinement
+    check after a hostile member may already have escaped the output directory.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        _check_7z_paths(input_path)
+    except ValueError as e:
+        return _archive_error('7z', str(e))
+
     return _run_extraction_command(
-        tool='arj',
-        cmd=['arj', 'x', '-y', str(Path(input_path).resolve())],
+        tool='7z',
+        cmd=['7z', 'x', '-y', f'-o{output_dir}', str(input_path)],
         output_dir=output_dir,
-        cwd=str(output_dir),
         summary='Extracted {file_count} files from ARJ archive',
         assert_confined=True,
     )
@@ -735,8 +756,10 @@ def extract_zoo(input_path: Path, output_dir: Path) -> dict[str, Any]:
     """Extract a Zoo archive via ``zoo``.
 
     zoo unpacks into the working directory, so it is run with ``cwd`` set to the
-    freshly-created (empty) output dir; ``x`` extracts with stored paths and,
-    since the dir starts empty, no overwrite prompts fire.
+    freshly-created (empty) output dir.  Unlike archive tools with a reliable
+    machine-readable listing, zoo cannot be preflighted safely.  Run it through
+    a Landlock launcher that permits filesystem mutations only below the output
+    directory.  The launcher fails closed if the kernel cannot enforce this.
 
     The ``zoo`` binary is not in the worker base image's package repos (Ubuntu
     dropped it), so it may be absent — a missing binary degrades to a clean
@@ -744,18 +767,22 @@ def extract_zoo(input_path: Path, output_dir: Path) -> dict[str, Any]:
     from-source build) to make Zoo extraction functional.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        return _run_extraction_command(
-            tool='zoo',
-            cmd=['zoo', 'x', str(Path(input_path).resolve())],
-            output_dir=output_dir,
-            cwd=str(output_dir),
-            summary='Extracted {file_count} files from Zoo archive',
-            assert_confined=True,
-        )
-    except FileNotFoundError:
-        return _archive_error(
-            'zoo', 'zoo extractor not installed in the worker image')
+    sandbox = Path(__file__).with_name('write_sandbox.py')
+    return _run_extraction_command(
+        tool='zoo',
+        cmd=[
+            sys.executable,
+            str(sandbox),
+            str(output_dir.resolve()),
+            'zoo',
+            'x',
+            str(Path(input_path).resolve()),
+        ],
+        output_dir=output_dir,
+        cwd=str(output_dir),
+        summary='Extracted {file_count} files from Zoo archive',
+        assert_confined=True,
+    )
 
 
 def extract_7z(input_path: Path, output_dir: Path) -> dict[str, Any]:

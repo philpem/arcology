@@ -381,7 +381,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 # Install runtime dependencies:
 # - python3, python3-pip, python3-requests: for Greaseweazle and worker
-# - p7zip-full: for file extraction and 7z archives
+# - p7zip-full: for file extraction and safely validated 7z/ARJ archives
 # - zstd, gzip, bzip2, xz-utils: for decompression
 # - unzip, unrar: for ZIP and RAR archives
 # - tar: for TAR archives
@@ -400,7 +400,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 		python3 python3-pip python3-dev python3-requests python3-numpy python3-boto3 git \
 		p7zip-full zstd gzip bzip2 xz-utils \
 		unzip unrar tar util-linux \
-		lhasa arj \
+		lhasa \
 		file fdisk \
 		default-jre \
 		antiword catdoc poppler-utils unrtf \
