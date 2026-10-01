@@ -9,6 +9,7 @@ import os
 import re
 import struct
 import subprocess
+import sys
 import tarfile
 import zipfile
 from pathlib import Path
@@ -755,8 +756,10 @@ def extract_zoo(input_path: Path, output_dir: Path) -> dict[str, Any]:
     """Extract a Zoo archive via ``zoo``.
 
     zoo unpacks into the working directory, so it is run with ``cwd`` set to the
-    freshly-created (empty) output dir; ``x`` extracts with stored paths and,
-    since the dir starts empty, no overwrite prompts fire.
+    freshly-created (empty) output dir.  Unlike archive tools with a reliable
+    machine-readable listing, zoo cannot be preflighted safely.  Run it through
+    a Landlock launcher that permits filesystem mutations only below the output
+    directory.  The launcher fails closed if the kernel cannot enforce this.
 
     The ``zoo`` binary is not in the worker base image's package repos (Ubuntu
     dropped it), so it may be absent — a missing binary degrades to a clean
@@ -764,18 +767,22 @@ def extract_zoo(input_path: Path, output_dir: Path) -> dict[str, Any]:
     from-source build) to make Zoo extraction functional.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        return _run_extraction_command(
-            tool='zoo',
-            cmd=['zoo', 'x', str(Path(input_path).resolve())],
-            output_dir=output_dir,
-            cwd=str(output_dir),
-            summary='Extracted {file_count} files from Zoo archive',
-            assert_confined=True,
-        )
-    except FileNotFoundError:
-        return _archive_error(
-            'zoo', 'zoo extractor not installed in the worker image')
+    sandbox = Path(__file__).with_name('write_sandbox.py')
+    return _run_extraction_command(
+        tool='zoo',
+        cmd=[
+            sys.executable,
+            str(sandbox),
+            str(output_dir.resolve()),
+            'zoo',
+            'x',
+            str(Path(input_path).resolve()),
+        ],
+        output_dir=output_dir,
+        cwd=str(output_dir),
+        summary='Extracted {file_count} files from Zoo archive',
+        assert_confined=True,
+    )
 
 
 def extract_7z(input_path: Path, output_dir: Path) -> dict[str, Any]:

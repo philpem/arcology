@@ -143,7 +143,7 @@ def file_to_dict(f):
     }
 
 
-def analysis_tree_node(artefact, *, visible_ids=None):
+def analysis_tree_node(artefact, *, visible_ids=None, analysis_serializer=analysis_to_dict):
     """Build a recursive derivation-tree dict for an artefact.
 
     Each artefact node contains its analyses, and each analysis contains
@@ -165,16 +165,23 @@ def analysis_tree_node(artefact, *, visible_ids=None):
     analyses = Analysis.query.filter_by(artefact_id=artefact.id).order_by(Analysis.id).all()
     node['analyses'] = []
     for an in analyses:
-        an_dict = analysis_to_dict(an)
+        an_dict = analysis_serializer(an)
         produced = Artefact.query.filter_by(derived_from_analysis_id=an.id).order_by(Artefact.id).all()
         if visible_ids is not None:
             produced = [p for p in produced if p.id in visible_ids]
-        an_dict['produced_artefacts'] = [analysis_tree_node(p, visible_ids=visible_ids) for p in produced]
+        an_dict['produced_artefacts'] = [
+            analysis_tree_node(
+                p, visible_ids=visible_ids, analysis_serializer=analysis_serializer
+            )
+            for p in produced
+        ]
         node['analyses'].append(an_dict)
     return node
 
 
-def processing_tree_to_dict(root_artefact, *, visible_ids=None):
+def processing_tree_to_dict(
+    root_artefact, *, visible_ids=None, analysis_serializer=analysis_to_dict
+):
     """Return the full processing tree as a JSON-safe dict.
 
     Delegates to _build_processing_tree (efficient flat queries, no N+1) and
@@ -203,7 +210,7 @@ def processing_tree_to_dict(root_artefact, *, visible_ids=None):
 
     def _path_tree_to_dict(node):
         return {
-            'analyses': [analysis_to_dict(a) for a in node['analyses']],
+            'analyses': [analysis_serializer(a) for a in node['analyses']],
             'children': {
                 name: _path_tree_to_dict(child)
                 for name, child in node['children'].items()
@@ -221,7 +228,7 @@ def processing_tree_to_dict(root_artefact, *, visible_ids=None):
             'derived_from_analysis_uuid': (
                 art.derived_from_analysis.uuid if art.derived_from_analysis_id else None
             ),
-            'analyses': [analysis_to_dict(a) for a in node['analyses']],
+            'analyses': [analysis_serializer(a) for a in node['analyses']],
             'path_tree': (
                 _path_tree_to_dict(node['path_tree']) if node['path_tree'] else None
             ),
