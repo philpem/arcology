@@ -695,6 +695,22 @@ class TestItemParentChoiceList(unittest.TestCase):
             self.assertIn('Parent', names)
             self.assertIn('Sibling', names)
 
+    def test_exclude_item_can_retain_descendant_targets(self):
+        """Batch moves may target an existing child of the source item."""
+        with self.app.app_context():
+            from myapp.utils.item_helpers import indented_item_choices
+            source = self._make_item('Source')
+            self._make_item('Existing subitem', parent=source)
+
+            choices = indented_item_choices(
+                exclude_ids={source.id},
+                prune_excluded_subtrees=False,
+            )
+            names = self._choice_names(choices)
+
+            self.assertNotIn('Source', names)
+            self.assertIn('Existing subitem', names)
+
     def test_no_exclude_returns_all_items(self):
         """Without exclusion, all items are returned."""
         with self.app.app_context():

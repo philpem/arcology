@@ -1340,7 +1340,11 @@ paths:
               required: [artefact_uuids]
               oneOf:
                 - required: [target_item_uuid]
+                  not:
+                    required: [new_item_name]
                 - required: [new_item_name]
+                  not:
+                    required: [target_item_uuid]
       responses:
         "200":
           description: Batch moved successfully.
