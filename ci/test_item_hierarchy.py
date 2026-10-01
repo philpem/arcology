@@ -725,5 +725,251 @@ class TestItemParentChoiceList(unittest.TestCase):
             self.assertEqual(len(choices), 2)
 
 
+# =============================================================================
+# Batch move: authorisation with real user keys, and the web confirm/perform
+# routes.  TestMoveArtefact above uses the worker key (sees_all=True), which
+# bypasses every visibility/contribution check — these exercise the model.
+# =============================================================================
+
+class _BatchMoveTestCase(unittest.TestCase):
+    """Shared fixtures: user API keys, private items/shares, artefact rows."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app, cls.db = _create_app_and_db()
+        cls.app.config['WTF_CSRF_ENABLED'] = False
+
+    def setUp(self):
+        from myapp.database import ApiKey, Artefact, Item, ItemShare, User
+        with self.app.app_context():
+            self.db.session.query(ItemShare).delete()
+            self.db.session.query(ApiKey).delete()
+            self.db.session.query(Artefact).delete()
+            self.db.session.query(Item).delete()
+            self.db.session.query(User).delete()
+            self.db.session.commit()
+        self.client = self.app.test_client()
+
+    def _user(self, username, *, perm=None, admin=False, api_permission=None):
+        import bcrypt
+        from myapp.database import ApiKey, ApiKeyPermission, User, UserPermission
+        with self.app.app_context():
+            pw = bcrypt.hashpw(b'testpassword1234', bcrypt.gensalt()).decode('utf-8')
+            user = User(username=username, password_hash=pw, is_admin=admin,
+                        permission=perm or UserPermission.READ_WRITE, can_use_api=True)
+            self.db.session.add(user)
+            self.db.session.flush()
+            key, raw = ApiKey.create(
+                user_id=user.id, name=f'{username}-key',
+                permission=api_permission or ApiKeyPermission.READ_WRITE,
+            )
+            self.db.session.add(key)
+            self.db.session.commit()
+            return user.id, raw
+
+    def _item(self, name, *, owner_id=None, private=False):
+        from myapp.database import Item
+        from myapp.utils.privacy import recompute_item_privacy
+        with self.app.app_context():
+            item = Item(name=name, owner_id=owner_id, is_private=private)
+            self.db.session.add(item)
+            self.db.session.flush()
+            recompute_item_privacy(item)
+            self.db.session.commit()
+            return item.uuid
+
+    def _share(self, item_uuid, user_id, permission):
+        from myapp.database import Item, ItemShare
+        with self.app.app_context():
+            item = Item.query.filter_by(uuid=item_uuid).one()
+            self.db.session.add(ItemShare(item_id=item.id, user_id=user_id,
+                                          permission=permission))
+            self.db.session.commit()
+
+    def _artefact(self, item_uuid, label='art', *, private=False):
+        from arcology_shared.enums import ArtefactType
+        from myapp.database import Artefact, Item
+        from myapp.utils.slugs import ensure_unique_slug, generate_slug
+        with self.app.app_context():
+            item = Item.query.filter_by(uuid=item_uuid).one()
+            slug = ensure_unique_slug(generate_slug(label), Artefact,
+                                      scope_filter={'item_id': item.id})
+            art = Artefact(item_id=item.id, label=label, slug=slug,
+                           artefact_type=ArtefactType.RAW_SECTOR,
+                           original_filename='x.img', storage_path='x.img',
+                           is_private=private)
+            self.db.session.add(art)
+            self.db.session.commit()
+            return art.uuid
+
+    def _api(self, source_uuid, body, key):
+        return self.client.post(
+            f'/api/items/{source_uuid}/artefacts/batch-move',
+            data=json.dumps(body),
+            headers={'X-API-Key': key, 'Content-Type': 'application/json'},
+        )
+
+    def _login(self, user_id):
+        with self.client.session_transaction() as sess:
+            sess['_user_id'] = str(user_id)
+            sess['_fresh'] = True
+
+
+class TestBatchMoveAuthorisation(_BatchMoveTestCase):
+    """Access control for the batch-move endpoint, exercised with user keys."""
+
+    def test_viewer_share_cannot_move_out_of_private_source(self):
+        owner_id, _ = self._user('bm-auth-owner')
+        viewer_id, viewer_key = self._user('bm-auth-viewer')
+        src = self._item('bm-priv-src', owner_id=owner_id, private=True)
+        tgt = self._item('bm-pub-tgt', owner_id=owner_id)
+        self._share(src, viewer_id, 'viewer')
+        art = self._artefact(src, 'movable')
+
+        resp = self._api(src, {'target_item_uuid': tgt, 'artefact_uuids': [art]}, viewer_key)
+        self.assertEqual(resp.status_code, 403, resp.data)
+
+    def test_editor_share_cannot_publish_private_to_public(self):
+        owner_id, _ = self._user('bm-cur-owner')
+        editor_id, editor_key = self._user('bm-cur-editor')
+        src = self._item('bm-cur-priv-src', owner_id=owner_id, private=True)
+        tgt = self._item('bm-cur-pub-tgt', owner_id=owner_id)
+        self._share(src, editor_id, 'editor')
+        art = self._artefact(src, 'movable')
+
+        resp = self._api(src, {'target_item_uuid': tgt, 'artefact_uuids': [art]}, editor_key)
+        self.assertEqual(resp.status_code, 403, resp.data)
+
+    def test_private_target_requires_contribution(self):
+        owner_id, _ = self._user('bm-tgt-owner')
+        viewer_id, viewer_key = self._user('bm-tgt-viewer')
+        src = self._item('bm-tgt-pub-src', owner_id=owner_id)
+        tgt = self._item('bm-tgt-priv', owner_id=owner_id, private=True)
+        self._share(tgt, viewer_id, 'viewer')
+        art = self._artefact(src, 'movable')
+
+        resp = self._api(src, {'target_item_uuid': tgt, 'artefact_uuids': [art]}, viewer_key)
+        self.assertEqual(resp.status_code, 403, resp.data)
+
+    def test_invisible_private_target_is_not_disclosed(self):
+        owner_id, _ = self._user('bm-hide-owner')
+        _viewer_id, viewer_key = self._user('bm-hide-viewer')
+        src = self._item('bm-hide-src', owner_id=owner_id)
+        tgt = self._item('bm-hide-priv', owner_id=owner_id, private=True)
+        art = self._artefact(src, 'movable')
+
+        resp = self._api(src, {'target_item_uuid': tgt, 'artefact_uuids': [art]}, viewer_key)
+        self.assertEqual(resp.status_code, 404, resp.data)
+
+    def test_private_artefact_excluded_from_foreign_selection(self):
+        owner_id, _ = self._user('bm-art-owner')
+        _viewer_id, viewer_key = self._user('bm-art-viewer')
+        src = self._item('bm-art-src', owner_id=owner_id)
+        tgt = self._item('bm-art-tgt', owner_id=owner_id)
+        art = self._artefact(src, 'private art', private=True)
+
+        resp = self._api(src, {'target_item_uuid': tgt, 'artefact_uuids': [art]}, viewer_key)
+        self.assertEqual(resp.status_code, 400, resp.data)
+
+    def test_read_only_key_cannot_batch_move(self):
+        from myapp.database import ApiKeyPermission
+        owner_id, _ = self._user('bm-ro-owner')
+        _ro_id, ro_key = self._user('bm-ro', api_permission=ApiKeyPermission.READ_ONLY)
+        src = self._item('bm-ro-src', owner_id=owner_id)
+        tgt = self._item('bm-ro-tgt', owner_id=owner_id)
+        art = self._artefact(src, 'movable')
+
+        resp = self._api(src, {'target_item_uuid': tgt, 'artefact_uuids': [art]}, ro_key)
+        self.assertEqual(resp.status_code, 403, resp.data)
+
+    def test_new_subitem_requires_contribution_on_private_source(self):
+        owner_id, _ = self._user('bm-sub-owner')
+        viewer_id, viewer_key = self._user('bm-sub-viewer')
+        src = self._item('bm-sub-priv', owner_id=owner_id, private=True)
+        self._share(src, viewer_id, 'viewer')
+
+        resp = self._api(src, {'new_item_name': 'should-not-exist', 'artefact_uuids': []}, viewer_key)
+        self.assertEqual(resp.status_code, 403, resp.data)
+
+    def test_selection_size_is_capped(self):
+        from myapp.services.artefact_lifecycle import MAX_BATCH_MOVE_ARTEFACTS
+        _owner_id, owner_key = self._user('bm-cap-owner')
+        src = self._item('bm-cap-src')
+        tgt = self._item('bm-cap-tgt')
+        too_many = [f'{i:032x}' for i in range(MAX_BATCH_MOVE_ARTEFACTS + 1)]
+
+        resp = self._api(src, {'target_item_uuid': tgt, 'artefact_uuids': too_many}, owner_key)
+        self.assertEqual(resp.status_code, 400, resp.data)
+        self.assertIn(b'at most', resp.data)
+
+
+class TestBatchMoveWeb(_BatchMoveTestCase):
+    """The web confirm/perform routes (previously untested)."""
+
+    def test_confirm_renders_selection(self):
+        owner_id, _ = self._user('bm-web-owner')
+        src = self._item('bm-web-src', owner_id=owner_id)
+        art = self._artefact(src, 'web art')
+        self._login(owner_id)
+
+        resp = self.client.post(f'/items/{src}/artefacts/batch-move/confirm',
+                                data={'artefact_uuids': json.dumps([art])})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertIn(b'Review batch move', resp.data)
+
+    def test_confirm_stale_selection_redirects(self):
+        owner_id, _ = self._user('bm-web-stale')
+        src = self._item('bm-web-stale-src', owner_id=owner_id)
+        self._login(owner_id)
+
+        resp = self.client.post(f'/items/{src}/artefacts/batch-move/confirm',
+                                data={'artefact_uuids': json.dumps(['f' * 32])})
+        self.assertEqual(resp.status_code, 302, resp.data)
+
+    def test_perform_moves_to_existing_item(self):
+        owner_id, _ = self._user('bm-web-mv-owner')
+        src = self._item('bm-web-mv-src', owner_id=owner_id)
+        tgt = self._item('bm-web-mv-tgt', owner_id=owner_id)
+        art = self._artefact(src, 'web art')
+        self._login(owner_id)
+
+        resp = self.client.post(f'/items/{src}/artefacts/batch-move',
+                                data={'artefact_uuids': json.dumps([art]),
+                                      'target_item_uuid': tgt})
+        self.assertEqual(resp.status_code, 302, resp.data)
+        with self.app.app_context():
+            from myapp.database import Artefact, Item
+            target_id = Item.query.filter_by(uuid=tgt).one().id
+            self.assertEqual(Artefact.query.filter_by(uuid=art).one().item_id, target_id)
+
+    def test_perform_creates_subitem_atomically(self):
+        owner_id, _ = self._user('bm-web-new-owner')
+        src = self._item('bm-web-new-src', owner_id=owner_id)
+        art = self._artefact(src, 'web art')
+        self._login(owner_id)
+
+        resp = self.client.post(f'/items/{src}/artefacts/batch-move',
+                                data={'artefact_uuids': json.dumps([art]),
+                                      'new_item_name': 'bm-web-created-child'})
+        self.assertEqual(resp.status_code, 302, resp.data)
+        with self.app.app_context():
+            from myapp.database import Artefact, Item
+            parent = Item.query.filter_by(uuid=src).one()
+            child = Item.query.filter_by(name='bm-web-created-child').one()
+            self.assertEqual(child.parent_id, parent.id)
+            self.assertEqual(Artefact.query.filter_by(uuid=art).one().item_id, child.id)
+
+    def test_viewer_only_denied_on_private_source(self):
+        owner_id, _ = self._user('bm-web-priv-owner')
+        viewer_id, _ = self._user('bm-web-priv-viewer')
+        src = self._item('bm-web-priv-src', owner_id=owner_id, private=True)
+        self._share(src, viewer_id, 'viewer')
+        self._login(viewer_id)
+
+        resp = self.client.post(f'/items/{src}/artefacts/batch-move/confirm',
+                                data={'artefact_uuids': json.dumps([])})
+        self.assertEqual(resp.status_code, 403, resp.data)
+
+
 if __name__ == '__main__':
     unittest.main()

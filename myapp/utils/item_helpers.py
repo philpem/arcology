@@ -4,6 +4,8 @@ from collections.abc import Iterable
 from ..database import Item, Tag
 from ..extensions import db
 from ..visibility import item_visibility_clause
+from .privacy import recompute_item_privacy
+from .slugs import ensure_unique_slug, generate_slug
 
 
 def item_choice_list(model, placeholder: str):
@@ -136,7 +138,7 @@ def assign_item_fields(
 
 
 def assign_item_tags(item: Item, raw_tags):
-    """Replace an item's tags from normalized text or iterable input."""
+    """Replace an item's tags from normalized text or iterable."""
     item.tags.clear()
     for tag_name in parse_tag_names(raw_tags):
         tag = Tag.query.filter_by(name=tag_name).first()
@@ -144,3 +146,37 @@ def assign_item_tags(item: Item, raw_tags):
             tag = Tag(name=tag_name)
             db.session.add(tag)
         item.tags.append(tag)
+
+
+def create_item_record(*, name: str, parent=None, owner=None, description=None,
+                       platform_id=None, category_id=None, is_private: bool = False,
+                       tags=None, commit: bool = False) -> Item:
+    """Create and flush an Item with inherited privacy and a unique slug.
+
+    Shared by the web item form, the REST create-item endpoint, and the
+    batch-move "new subitem" paths so ownership, privacy inheritance and slug
+    allocation stay consistent.  The row is flushed (``item.id`` is usable) but
+    only committed when ``commit`` is true, so callers can keep creation in the
+    same transaction as follow-on work.
+    """
+    item = Item(
+        owner_id=owner.id if owner is not None else None,
+        is_private=is_private,
+    )
+    parent_id = parent.id if parent is not None else None
+    assign_item_fields(
+        item,
+        name=name,
+        description=description,
+        platform_id=platform_id,
+        category_id=category_id,
+        parent_id=parent_id,
+    )
+    assign_item_tags(item, tags)
+    db.session.add(item)
+    db.session.flush()
+    recompute_item_privacy(item)
+    item.slug = ensure_unique_slug(generate_slug(item.name), Item)
+    if commit:
+        db.session.commit()
+    return item

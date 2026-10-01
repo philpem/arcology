@@ -40,13 +40,14 @@ from ..services.artefact_lifecycle import (
 from ..utils.item_helpers import (
     assign_item_fields,
     assign_item_tags,
+    create_item_record,
     indented_item_choices,
     indented_taxonomy_choices,
     item_parent_choice_list,
 )
 from ..utils.pagination import VALID_PER_PAGE, compute_letter_pages, resolve_per_page, resolve_sort
 from ..utils.privacy import recompute_item_privacy
-from ..utils.slugs import ensure_unique_slug, generate_slug, get_or_create_slug
+from ..utils.slugs import ensure_unique_slug, generate_slug
 from ..visibility import (
     SHARE_PERMISSIONS,
     artefact_visibility_clause,
@@ -341,6 +342,7 @@ def new():
 
     if form.validate_on_submit():
         new_parent_id = form.parent_id.data if form.parent_id.data != 0 else None
+        parent = None
         if new_parent_id is not None:
             parent = db.session.get(Item, new_parent_id)
             if parent is None or not can_view_item(parent, current_user):
@@ -352,24 +354,17 @@ def new():
                 return _render_item_form(form, title='New Item',
                                        preset_parent=preset_parent, can_set_private=True)
 
-        item = Item()
-        assign_item_fields(
-            item,
+        item = create_item_record(
             name=form.name.data,
+            parent=parent,
+            owner=current_user,
             description=form.description.data,
             platform_id=form.platform_id.data if form.platform_id.data != 0 else None,
             category_id=form.category_id.data if form.category_id.data != 0 else None,
-            parent_id=new_parent_id,
+            is_private=form.is_private.data,
+            tags=form.tags.data,
+            commit=True,
         )
-        assign_item_tags(item, form.tags.data)
-        item.owner_id = current_user.id
-        item.is_private = form.is_private.data
-
-        db.session.add(item)
-        db.session.flush()
-        recompute_item_privacy(item)
-        db.session.commit()
-        get_or_create_slug(item, 'name')
 
         flash(f'Item "{item.name}" created successfully.', 'success')
         return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
@@ -474,7 +469,14 @@ def _batch_selection_from_form(item):
 @require_permission('read_write')
 @require_visible_item(contribute=True)
 def batch_move_confirm(uuid, item):
-    """Show the authoritative details for a cross-page selection."""
+    """Show the authoritative details for a cross-page selection.
+
+    This is a POST (not GET) because the selection is a client-held,
+    potentially large list of UUIDs — too big for a query string or the
+    signed session cookie (a 500-item selection is ~16 KB). A GET would need
+    a server-side draft store and a Post/Redirect/Get hop; until that exists
+    the POST body is the transport for the selection.
+    """
     try:
         artefact_uuids, artefacts = _batch_selection_from_form(item)
     except ArtefactMoveError as e:
@@ -518,11 +520,9 @@ def batch_move(uuid, item):
         if len(new_item_name) > 255:
             flash('The new subitem name must be 255 characters or fewer.', 'danger')
             return redirect(url_for(f'{ROUTENAME}.view', uuid=item.url_id))
-        target_item = Item(name=new_item_name, parent_id=item.id, owner_id=current_user.id)
-        db.session.add(target_item)
-        db.session.flush()
-        recompute_item_privacy(target_item)
-        target_item.slug = ensure_unique_slug(generate_slug(target_item.name), Item)
+        target_item = create_item_record(
+            name=new_item_name, parent=item, owner=current_user,
+        )
     else:
         target_item = Item.query.filter_by(uuid=target_uuid).first()
         if target_item is not None and not can_view_item(target_item, current_user):

@@ -4,6 +4,10 @@
     const toolbar = document.querySelector('[data-batch-move-toolbar]');
     if (!toolbar) return;
 
+    // A selection is discarded once it is this old, so a stale cross-page
+    // pick cannot silently linger (the server would otherwise reject it at
+    // confirm time with a confusing message).
+    const selectionTtlMs = 6 * 60 * 60 * 1000;
     const storageKey = `arcology.batch-move.${toolbar.dataset.itemUuid}`;
     if (toolbar.dataset.clearSource) {
         try {
@@ -22,14 +26,26 @@
     let selected;
 
     try {
-        selected = new Set(JSON.parse(sessionStorage.getItem(storageKey) || '[]'));
+        const stored = JSON.parse(sessionStorage.getItem(storageKey) || 'null');
+        if (Array.isArray(stored)) {
+            // Legacy shape: a bare array of UUIDs with no timestamp.
+            selected = new Set(stored);
+        } else if (stored && Array.isArray(stored.ids)
+                   && Date.now() - Number(stored.savedAt) < selectionTtlMs) {
+            selected = new Set(stored.ids);
+        } else {
+            selected = new Set();
+            sessionStorage.removeItem(storageKey);
+        }
     } catch (_error) {
         selected = new Set();
     }
 
     function save() {
         const ids = Array.from(selected);
-        try { sessionStorage.setItem(storageKey, JSON.stringify(ids)); } catch (_error) { /* no-op */ }
+        try {
+            sessionStorage.setItem(storageKey, JSON.stringify({ids, savedAt: Date.now()}));
+        } catch (_error) { /* no-op */ }
         values.value = JSON.stringify(ids);
         count.textContent = String(ids.length);
         submit.disabled = ids.length === 0;
