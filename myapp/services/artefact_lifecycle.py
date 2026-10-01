@@ -718,6 +718,12 @@ class ArtefactBatchMoveResult:
         return self.root_count + self.derived_count
 
 
+# Upper bound on an explicit batch-move selection.  Bounds the ``IN (...)``
+# query and the work done before the transactional move, so a single request
+# cannot exhaust a web worker or the database with an enormous UUID list.
+MAX_BATCH_MOVE_ARTEFACTS = 500
+
+
 def validate_artefact_move(artefact, target_item, user, *, sees_all: bool = False):
     """Raise ArtefactMoveError unless *user* may move *artefact* into *target_item*.
 
@@ -786,16 +792,23 @@ def selected_root_artefacts(source_item, artefact_uuids, user=None, *,
     artefact moved or deleted between selection and submission must not turn a
     requested all-or-nothing operation into a silent partial move.
     """
+    if not isinstance(artefact_uuids, (list, tuple)):
+        raise ArtefactMoveError('invalid_selection', 'Invalid artefact selection')
+    if len(artefact_uuids) > MAX_BATCH_MOVE_ARTEFACTS:
+        raise ArtefactMoveError(
+            'invalid_selection',
+            f'Select at most {MAX_BATCH_MOVE_ARTEFACTS} artefacts in one batch',
+        )
     uuids = list(dict.fromkeys(artefact_uuids))
     if not uuids:
         raise ArtefactMoveError('empty_selection', 'Select at least one artefact')
     if any(not isinstance(value, str) or len(value) != 32 for value in uuids):
         raise ArtefactMoveError('invalid_selection', 'Invalid artefact selection')
 
-    query = (
-        Artefact.query
+    stmt = (
+        select(Artefact)
         .join(Item, Artefact.item_id == Item.id)
-        .filter(
+        .where(
             Artefact.uuid.in_(uuids),
             Artefact.item_id == source_item.id,
             Artefact.parent_artefact_id.is_(None),
@@ -809,12 +822,13 @@ def selected_root_artefacts(source_item, artefact_uuids, user=None, *,
         # source-item predicate after a lock wait, so a concurrent winner turns
         # the loser into an invalid-selection response rather than a second
         # apparent success that silently moves the rows again.
-        query = query.with_for_update(of=Artefact)
-    artefacts = query.all()
+        stmt = stmt.with_for_update(of=Artefact)
+    artefacts = list(db.session.scalars(stmt))
     if len(artefacts) != len(uuids):
         raise ArtefactMoveError(
             'invalid_selection',
-            'One or more selected artefacts are no longer available in this item',
+            'Some selected artefacts are no longer in this item — '
+            'reload it and select again',
         )
     return artefacts
 
@@ -824,9 +838,9 @@ def move_artefacts_to_item(source_item, target_item, artefact_uuids, user,
     """Atomically move selected roots and their derived trees to one item.
 
     The selection and every descendant are fetched in a bounded number of
-    queries.  Slugs are allocated from one snapshot of the target namespace,
-    avoiding the per-artefact existence queries used by the interactive
-    single-move path.
+    queries.  Slugs are allocated from one snapshot of the target namespace
+    through the shared ``ensure_unique_slug`` algorithm, avoiding the
+    per-artefact existence queries used by the interactive single-move path.
     """
     roots = selected_root_artefacts(
         source_item, artefact_uuids, user, sees_all=sees_all, lock=True,
@@ -840,12 +854,11 @@ def move_artefacts_to_item(source_item, target_item, artefact_uuids, user,
         select(Artefact.id).where(Artefact.parent_artefact_id == descendants.c.id)
     )
     descendant_ids = list(db.session.scalars(select(descendants.c.id)))
-    moved = (
-        Artefact.query
-        .filter(Artefact.id.in_(root_ids + descendant_ids))
+    moved = list(db.session.scalars(
+        select(Artefact)
+        .where(Artefact.id.in_(root_ids + descendant_ids))
         .order_by(Artefact.id)
-        .all()
-    )
+    ))
 
     occupied = set(db.session.scalars(
         select(Artefact.slug).where(
@@ -853,22 +866,13 @@ def move_artefacts_to_item(source_item, target_item, artefact_uuids, user,
             Artefact.slug.is_not(None),
         )
     ))
-    next_suffix = {}
     for artefact in moved:
-        base_slug = artefact.slug or 'untitled'
-        candidate = base_slug
-        suffix = next_suffix.get(base_slug, 2)
-        if candidate in occupied:
-            candidate = f'{base_slug}-{suffix}'
-            while candidate in occupied:
-                suffix += 1
-                candidate = f'{base_slug}-{suffix}'
-            next_suffix[base_slug] = suffix + 1
-        else:
-            next_suffix[base_slug] = 2
-        artefact.slug = candidate
+        new_slug = ensure_unique_slug(
+            artefact.slug or 'untitled', Artefact, taken=occupied,
+        )
+        artefact.slug = new_slug
         artefact.item_id = target_item.id
-        occupied.add(candidate)
+        occupied.add(new_slug)
 
     db.session.commit()
     return ArtefactBatchMoveResult(
