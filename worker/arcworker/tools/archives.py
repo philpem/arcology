@@ -732,30 +732,18 @@ def extract_arj(input_path: Path, output_dir: Path) -> dict[str, Any]:
 
 
 def extract_zoo(input_path: Path, output_dir: Path) -> dict[str, Any]:
-    """Extract a Zoo archive via ``zoo``.
+    """Reject Zoo extraction until it can be performed with pre-write safety.
 
-    zoo unpacks into the working directory, so it is run with ``cwd`` set to the
-    freshly-created (empty) output dir; ``x`` extracts with stored paths and,
-    since the dir starts empty, no overwrite prompts fire.
-
-    The ``zoo`` binary is not in the worker base image's package repos (Ubuntu
-    dropped it), so it may be absent — a missing binary degrades to a clean
-    failure result rather than crashing the job.  Provide a ``zoo`` on PATH (a
-    from-source build) to make Zoo extraction functional.
+    The classic ``zoo`` tool extracts stored paths directly and offers no
+    machine-readable listing suitable for reliably validating every destination
+    before it writes.  A post-extraction scan cannot detect or undo a file that
+    has already escaped ``output_dir``, so invoking it on uploaded archives is
+    unsafe even when its working directory is set to ``output_dir``.
     """
-    output_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        return _run_extraction_command(
-            tool='zoo',
-            cmd=['zoo', 'x', str(Path(input_path).resolve())],
-            output_dir=output_dir,
-            cwd=str(output_dir),
-            summary='Extracted {file_count} files from Zoo archive',
-            assert_confined=True,
-        )
-    except FileNotFoundError:
-        return _archive_error(
-            'zoo', 'zoo extractor not installed in the worker image')
+    return _archive_error(
+        'zoo',
+        'Zoo extraction is disabled because stored paths cannot be safely validated',
+    )
 
 
 def extract_7z(input_path: Path, output_dir: Path) -> dict[str, Any]:
