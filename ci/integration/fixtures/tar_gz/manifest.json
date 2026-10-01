@@ -1,0 +1,18 @@
+{
+  "input": "archive.tar.gz",
+  "original_filename": "archive.tar.gz",
+  "artefact_type": "TARGZ",
+  "seed_analyses": [
+    {
+      "type": "archive_extract"
+    }
+  ],
+  "run_types": [
+    "archive_extract"
+  ],
+  "required_tools": [
+    "gzip",
+    "tar"
+  ],
+  "max_steps": 20
+}

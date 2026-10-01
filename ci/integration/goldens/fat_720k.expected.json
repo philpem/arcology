@@ -1,0 +1,84 @@
+{
+  "artefacts": [
+    {
+      "artefact_type": "raw_sector",
+      "original_filename": "disk.img",
+      "slug": "root",
+      "storage_directory": "uploads",
+      "storage_path": "disk.img",
+      "uuid": "it-art-0000"
+    }
+  ],
+  "case": "fat_720k",
+  "events": [
+    {
+      "artefact": "it-art-0000",
+      "call": "seed_analysis",
+      "hints": null,
+      "type": "partition_detect"
+    },
+    {
+      "artefact": "it-art-0000",
+      "call": "queue_analysis",
+      "hints": {
+        "filesystem": "fat12",
+        "partition_index": 0
+      },
+      "type": "file_extraction"
+    },
+    {
+      "call": "update_analysis",
+      "details": {
+        "acorn_partitions": {
+          "detected": false
+        },
+        "adfs": {
+          "adfs_detected": false,
+          "adfs_subformat": null,
+          "adfs_variant": null,
+          "boot_block_at": null,
+          "disc_size": 737280,
+          "signatures": []
+        },
+        "file": {
+          "success": true,
+          "tool": "file"
+        },
+        "partitions": [
+          {
+            "description": "No partition table detected (whole disc)",
+            "filesystem": "fat12",
+            "index": 0,
+            "size_bytes": 737280,
+            "start_byte": 0
+          }
+        ],
+        "sfdisk": {
+          "partitions": [],
+          "sector_size": 512,
+          "success": false,
+          "table_type": "dos",
+          "tool": "sfdisk"
+        }
+      },
+      "error_message": null,
+      "output_path": null,
+      "status": "complete",
+      "summary": "Detected 1 partition(s): fat12",
+      "tool_name": "sfdisk,adfs_detect,file",
+      "type": "partition_detect"
+    }
+  ],
+  "final_queue": [
+    {
+      "artefact": "it-art-0000",
+      "hints": {
+        "filesystem": "fat12",
+        "partition_index": 0
+      },
+      "type": "file_extraction"
+    }
+  ],
+  "output_tree": [],
+  "partitions": []
+}

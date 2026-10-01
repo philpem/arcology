@@ -1,0 +1,18 @@
+{
+  "input": "disk.img",
+  "original_filename": "disk.img",
+  "artefact_type": "RAW_SECTOR",
+  "seed_analyses": [
+    {
+      "type": "partition_detect"
+    }
+  ],
+  "run_types": [
+    "partition_detect"
+  ],
+  "required_tools": [
+    "sfdisk",
+    "file"
+  ],
+  "max_steps": 20
+}
