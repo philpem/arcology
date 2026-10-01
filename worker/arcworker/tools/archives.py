@@ -22,8 +22,16 @@ from .base import run_tool, run_tool_with_output, tool_result
 
 def _validate_entry_path(name: str, fmt: str) -> None:
     """Raise ValueError if *name* is absolute or contains '..' components."""
-    parts = name.replace('\\', '/').split('/')
-    if os.path.isabs(name) or '..' in parts:
+    portable_name = name.replace('\\', '/')
+    parts = portable_name.split('/')
+    # os.path.isabs() only recognises paths for the worker's host OS.  Archive
+    # member names can use either separator and may contain a Windows drive
+    # prefix even though extraction happens on Linux.
+    if (
+        portable_name.startswith('/')
+        or re.match(r'^[A-Za-z]:', portable_name)
+        or '..' in parts
+    ):
         raise ValueError(f'Unsafe path in {fmt} archive: {name!r}')
 
 
@@ -95,6 +103,11 @@ def _check_7z_paths(input_path: Path) -> None:
         result = run_tool(['7z', 'l', '-slt', str(input_path)], timeout=60)
     except subprocess.TimeoutExpired as e:
         raise ValueError('7z listing timed out — archive rejected') from e
+
+    if result.returncode != 0:
+        raise ValueError(
+            f'7z could not safely list archive (exit code {result.returncode})'
+        )
 
     past_header = False
     path = None
@@ -715,17 +728,24 @@ def extract_lha(input_path: Path, output_dir: Path) -> dict[str, Any]:
 
 
 def extract_arj(input_path: Path, output_dir: Path) -> dict[str, Any]:
-    """Extract an ARJ archive via ``arj``.
+    """Safely extract an ARJ archive via ``7z``.
 
-    arj unpacks into the working directory, so it is run with ``cwd`` set to the
-    output dir; ``x`` keeps stored paths and ``-y`` answers prompts yes.
+    Validate every member path and reject links before extraction.  Unlike the
+    native ``arj`` command, this uses the same machine-readable listing and
+    extraction implementation, avoiding reliance on a post-write confinement
+    check after a hostile member may already have escaped the output directory.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        _check_7z_paths(input_path)
+    except ValueError as e:
+        return _archive_error('7z', str(e))
+
     return _run_extraction_command(
-        tool='arj',
-        cmd=['arj', 'x', '-y', str(Path(input_path).resolve())],
+        tool='7z',
+        cmd=['7z', 'x', '-y', f'-o{output_dir}', str(input_path)],
         output_dir=output_dir,
-        cwd=str(output_dir),
         summary='Extracted {file_count} files from ARJ archive',
         assert_confined=True,
     )
