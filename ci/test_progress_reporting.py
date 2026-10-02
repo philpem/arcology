@@ -21,7 +21,7 @@ import os
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -33,6 +33,8 @@ os.environ.setdefault('SQLALCHEMY_DATABASE_URI', 'sqlite:///:memory:')
 os.environ.setdefault('SECRET_KEY', 'ci-progress-test-secret-key-not-for-prod')
 os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 _WORKER_KEY = os.environ['WORKER_API_KEY']
+
+from myapp.utils.timeutils import naive_utc_now  # noqa: E402
 
 
 def _create_app_and_db():
@@ -70,7 +72,7 @@ class _ApiBase(unittest.TestCase):
             artefact_id=art.id,
             analysis_type=AnalysisType.FILE_EXTRACTION,
             status=AnalysisStatus.RUNNING,
-            started_at=started_at or datetime.utcnow(),
+            started_at=started_at or naive_utc_now(),
             progress_updated_at=progress_updated_at,
         )
         self.db.session.add(a)
@@ -150,12 +152,12 @@ class TestStaleHeartbeat(_ApiBase):
         from myapp.database import Analysis, AnalysisStatus
 
         with self.app.app_context():
-            old = datetime.utcnow() - timedelta(hours=2)
+            old = naive_utc_now() - timedelta(hours=2)
             # Idle: started long ago, never reported progress -> stale.
             idle = self._running_analysis('idle', started_at=old)
             # Alive: started long ago but heartbeated just now -> not stale.
             alive = self._running_analysis(
-                'alive', started_at=old, progress_updated_at=datetime.utcnow())
+                'alive', started_at=old, progress_updated_at=naive_utc_now())
             alive.progress_message = 'Hashing extracted files'
             alive.progress_current = 5
             alive.progress_total = 9
@@ -200,7 +202,7 @@ class TestStaleRetryCap(_ApiBase):
         from myapp.database import Analysis, AnalysisStatus
 
         with self.app.app_context():
-            old = datetime.utcnow() - timedelta(hours=2)
+            old = naive_utc_now() - timedelta(hours=2)
             a = self._running_analysis('inc', started_at=old)
             aid = a.id
             self.assertEqual(a.stale_reset_count, 0)
@@ -216,7 +218,7 @@ class TestStaleRetryCap(_ApiBase):
         from myapp.database import Analysis, AnalysisStatus
 
         with self.app.app_context():
-            old = datetime.utcnow() - timedelta(hours=2)
+            old = naive_utc_now() - timedelta(hours=2)
             a = self._running_analysis('poison', started_at=old)
             aid = a.id
             # Already re-queued up to the cap: this staleness must fail it.
@@ -239,7 +241,7 @@ class TestStaleRetryCap(_ApiBase):
         from myapp.database import Analysis, AnalysisStatus
 
         with self.app.app_context():
-            old = datetime.utcnow() - timedelta(hours=2)
+            old = naive_utc_now() - timedelta(hours=2)
             a = self._running_analysis('forever', started_at=old)
             aid = a.id
             a.stale_reset_count = 999

@@ -39,7 +39,7 @@ pipeline {
                         python ci/check_imports.py
 
                         echo "=== Running application tests ==="
-                        python -m xmlrunner discover -s ci -p "test_*.py" -o test-results/app
+                        python ci/run_app_tests.py --junit-xml test-results/app
                     '''
                 }
             }
