@@ -902,6 +902,16 @@ class TestBatchMoveAuthorisation(_BatchMoveTestCase):
         self.assertEqual(resp.status_code, 400, resp.data)
         self.assertIn(b'at most', resp.data)
 
+    def test_non_string_selection_element_is_rejected(self):
+        """A JSON object/array element must be a 400, not an unhashable-type 500."""
+        _owner_id, owner_key = self._user('bm-type-owner')
+        src = self._item('bm-type-src')
+        tgt = self._item('bm-type-tgt')
+
+        resp = self._api(src, {'target_item_uuid': tgt, 'artefact_uuids': [{'a': 1}]}, owner_key)
+        self.assertEqual(resp.status_code, 400, resp.data)
+        self.assertNotIn(b'Traceback', resp.data)
+
 
 class TestBatchMoveWeb(_BatchMoveTestCase):
     """The web confirm/perform routes (previously untested)."""
@@ -916,6 +926,16 @@ class TestBatchMoveWeb(_BatchMoveTestCase):
                                 data={'artefact_uuids': json.dumps([art])})
         self.assertEqual(resp.status_code, 200, resp.data)
         self.assertIn(b'Review batch move', resp.data)
+
+    def test_confirm_rejects_non_string_element(self):
+        """A malformed element flashes and redirects rather than 500-ing."""
+        owner_id, _ = self._user('bm-web-type-owner')
+        src = self._item('bm-web-type-src', owner_id=owner_id)
+        self._login(owner_id)
+
+        resp = self.client.post(f'/items/{src}/artefacts/batch-move/confirm',
+                                data={'artefact_uuids': json.dumps([{'a': 1}])})
+        self.assertEqual(resp.status_code, 302, resp.data)
 
     def test_confirm_stale_selection_redirects(self):
         owner_id, _ = self._user('bm-web-stale')
