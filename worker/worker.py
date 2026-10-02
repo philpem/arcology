@@ -36,11 +36,12 @@ _logging.getLogger('urllib3.connection').setLevel(_logging.ERROR)
 del _logging
 
 from arcworker import ARCOLOGY_API, OUTPUT_DIR, UPLOAD_DIR, WORKER_ANALYSIS_TYPES, WORKER_API_KEY, AnalysisWorker
-from arcworker.config import validate_config
+from arcworker.config import configure_logging, validate_config
 from arcworker.tools.process import check_sandbox
 
 
 def main():
+    configure_logging()
     validate_config()
     check_sandbox()
     worker = AnalysisWorker(

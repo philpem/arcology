@@ -40,6 +40,7 @@ Run locally exactly as CI does:
 import argparse
 import glob
 import io
+import logging
 import os
 import sys
 import unittest
@@ -95,6 +96,18 @@ def _discover_module_names():
     return names
 
 
+def _quiet_library_logging():
+    """Suppress INFO/DEBUG chatter emitted while tests build the app.
+
+    Importing the worker package no longer reconfigures the root logger (the
+    entry point calls ``configure_logging()`` explicitly), but modules still log
+    at INFO.  ``logging.disable(INFO)`` keeps test output focused on failures
+    while leaving WARNING and above -- including the ``py.warnings`` capture --
+    visible.
+    """
+    logging.disable(logging.INFO)
+
+
 def _run_module(module_name):
     """Run a single test module in this (worker) process.
 
@@ -102,6 +115,7 @@ def _run_module(module_name):
     concurrent workers don't interleave on the console.
     """
     _install_warning_filters()
+    _quiet_library_logging()
     stream = io.StringIO()
     loader = unittest.TestLoader()
     try:
@@ -130,6 +144,7 @@ def _run_module(module_name):
 
 
 def _run_serial(module_names):
+    _quiet_library_logging()
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
     for name in module_names:
