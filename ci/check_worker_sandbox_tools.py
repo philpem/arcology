@@ -66,7 +66,6 @@ def main():
             assert (destination / payload.name).read_bytes() == payload.read_bytes()
         for name, create, extract in (
             ('7z', ['7z', 'a'], archives.extract_7z),
-            ('arj', ['arj', 'a', '-y'], archives.extract_arj),
         ):
             path = source / f'sample.{name}'
             result = run_tool([*create, str(path), payload.name], cwd=str(source), write_dirs=(source,))
@@ -74,6 +73,12 @@ def main():
             destination = root / name
             successful(extract(path, destination))
             assert (destination / payload.name).read_bytes() == payload.read_bytes()
+        # ARJ is read-only in the image: p7zip can extract ARJ but not create it,
+        # and the native 'arj' binary is deliberately not shipped.  Extract a
+        # committed fixture to smoke-test the image's real 7z ARJ decoder.
+        arj_fixture = ROOT / 'ci' / 'fixtures' / 'sample.arj'
+        successful(archives.extract_arj(arj_fixture, root / 'arj'))
+        assert (root / 'arj' / payload.name).read_bytes() == payload.read_bytes()
         # Level-0 stored LHA member with CRC-16/IBM.
         content = payload.read_bytes()
         filename = payload.name.encode()
